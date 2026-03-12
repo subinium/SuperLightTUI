@@ -52,7 +52,7 @@ use event::Event;
 use terminal::{InlineTerminal, Terminal};
 
 pub use anim::{Spring, Tween};
-pub use context::{Context, Response};
+pub use context::{Context, Response, Widget};
 pub use event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use style::{Align, Border, Color, Constraints, Margin, Modifiers, Padding, Style, Theme};
 pub use widgets::{

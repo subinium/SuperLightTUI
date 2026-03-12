@@ -21,6 +21,80 @@ pub struct Response {
     pub hovered: bool,
 }
 
+/// Trait for creating custom widgets.
+///
+/// Implement this trait to build reusable, composable widgets with full access
+/// to the [`Context`] API — focus, events, theming, layout, and mouse interaction.
+///
+/// # Examples
+///
+/// A simple rating widget:
+///
+/// ```no_run
+/// use slt::{Context, Widget, Color};
+///
+/// struct Rating {
+///     value: u8,
+///     max: u8,
+/// }
+///
+/// impl Rating {
+///     fn new(value: u8, max: u8) -> Self {
+///         Self { value, max }
+///     }
+/// }
+///
+/// impl Widget for Rating {
+///     type Response = bool;
+///
+///     fn ui(&mut self, ui: &mut Context) -> bool {
+///         let focused = ui.register_focusable();
+///         let mut changed = false;
+///
+///         if focused {
+///             if ui.key('+') && self.value < self.max {
+///                 self.value += 1;
+///                 changed = true;
+///             }
+///             if ui.key('-') && self.value > 0 {
+///                 self.value -= 1;
+///                 changed = true;
+///             }
+///         }
+///
+///         let stars: String = (0..self.max).map(|i| {
+///             if i < self.value { '★' } else { '☆' }
+///         }).collect();
+///
+///         let color = if focused { Color::Yellow } else { Color::White };
+///         ui.styled(stars, slt::Style::new().fg(color));
+///
+///         changed
+///     }
+/// }
+///
+/// fn main() -> std::io::Result<()> {
+///     let mut rating = Rating::new(3, 5);
+///     slt::run(|ui| {
+///         if ui.key('q') { ui.quit(); }
+///         ui.text("Rate this:");
+///         ui.widget(&mut rating);
+///     })
+/// }
+/// ```
+pub trait Widget {
+    /// The value returned after rendering. Use `()` for widgets with no return,
+    /// `bool` for widgets that report changes, or [`Response`] for click/hover.
+    type Response;
+
+    /// Render the widget into the given context.
+    ///
+    /// Use [`Context::register_focusable`] to participate in Tab focus cycling,
+    /// [`Context::key`] / [`Context::key_code`] to handle keyboard input,
+    /// and [`Context::interaction`] to detect clicks and hovers.
+    fn ui(&mut self, ctx: &mut Context) -> Self::Response;
+}
+
 /// The main rendering context passed to your closure each frame.
 ///
 /// Provides all methods for building UI: text, containers, widgets, and event
@@ -469,11 +543,28 @@ impl Context {
         }
     }
 
+    /// Render a custom [`Widget`].
+    ///
+    /// Calls [`Widget::ui`] with this context and returns the widget's response.
+    pub fn widget<W: Widget>(&mut self, w: &mut W) -> W::Response {
+        w.ui(self)
+    }
+
+    /// Allocate a click/hover interaction slot and return the [`Response`].
+    ///
+    /// Use this in custom widgets to detect mouse clicks and hovers without
+    /// wrapping content in a container. Each call reserves one slot in the
+    /// hit-test map, so the call order must be stable across frames.
+    pub fn interaction(&mut self) -> Response {
+        let id = self.interaction_count;
+        self.interaction_count += 1;
+        self.response_for(id)
+    }
+
     /// Register a widget as focusable and return whether it currently has focus.
     ///
-    /// Used internally by built-in widgets. Call this when building custom widgets
-    /// that need keyboard focus. Each call increments the internal focus counter,
-    /// so the order of calls must be stable across frames.
+    /// Call this in custom widgets that need keyboard focus. Each call increments
+    /// the internal focus counter, so the call order must be stable across frames.
     pub fn register_focusable(&mut self) -> bool {
         let id = self.focus_count;
         self.focus_count += 1;
