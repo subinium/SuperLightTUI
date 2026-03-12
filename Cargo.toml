@@ -1,0 +1,70 @@
+[package]
+name = "superlighttui"
+version = "0.1.0"
+edition = "2021"
+description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
+license = "MIT"
+repository = "https://github.com/subinium/SuperLightTUI"
+homepage = "https://github.com/subinium/SuperLightTUI"
+documentation = "https://docs.rs/superlighttui"
+readme = "README.md"
+keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
+categories = ["command-line-interface"]
+rust-version = "1.74"
+exclude = ["examples/", ".github/"]
+
+[lib]
+name = "slt"
+
+[dependencies]
+crossterm = "0.28"
+unicode-width = "0.2"
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
+
+[features]
+async = ["dep:tokio"]
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+
+[[example]]
+name = "counter"
+path = "examples/counter.rs"
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
+
+[[example]]
+name = "anim"
+path = "examples/anim.rs"
+
+[[example]]
+name = "inline"
+path = "examples/inline.rs"
+
+[[example]]
+name = "async_demo"
+path = "examples/async_demo.rs"
+required-features = ["async"]
+
+[[example]]
+name = "demo_dashboard"
+path = "examples/demo_dashboard.rs"
+
+[[example]]
+name = "demo_cli"
+path = "examples/demo_cli.rs"
+
+[[example]]
+name = "demo_spreadsheet"
+path = "examples/demo_spreadsheet.rs"
+
+[[example]]
+name = "demo_website"
+path = "examples/demo_website.rs"
+
+[[example]]
+name = "demo_tetris"
+path = "examples/demo_tetris.rs"
