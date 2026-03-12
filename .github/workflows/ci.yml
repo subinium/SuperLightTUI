@@ -22,6 +22,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+      - run: cargo generate-lockfile
       - run: cargo check --all-features
 
   test:
