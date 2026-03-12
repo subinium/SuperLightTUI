@@ -112,7 +112,7 @@ Every widget handles its own keyboard events, focus state, and mouse interaction
 
 ### Widget Demo
 
-<!-- TODO: screenshot -->
+![Widget Demo](assets/demo.png)
 
 All 14 widgets on a single scrollable page. Drag to scroll, Tab to focus, click to interact.
 
@@ -122,7 +122,7 @@ cargo run --example demo
 
 ### System Dashboard
 
-<!-- TODO: screenshot -->
+![System Dashboard](assets/demo_dashboard.png)
 
 Live metrics, process table, log stream with simulated data.
 
@@ -132,8 +132,6 @@ cargo run --example demo_dashboard
 
 ### Package Manager CLI
 
-<!-- TODO: screenshot -->
-
 Search, browse, install packages. Split-pane layout with filtering.
 
 ```sh
@@ -141,8 +139,6 @@ cargo run --example demo_cli
 ```
 
 ### Spreadsheet
-
-<!-- TODO: screenshot -->
 
 20-row data grid with cell navigation, inline editing, and formula bar.
 
@@ -152,12 +148,22 @@ cargo run --example demo_spreadsheet
 
 ### Website Layout
 
-<!-- TODO: screenshot -->
+![Website Layout](assets/demo_website.png)
 
 Navbar, hero section, feature cards, pricing table, blog with markdown-style posts, and footer. All in the terminal.
 
 ```sh
 cargo run --example demo_website
+```
+
+### Tetris
+
+![Tetris](assets/demo_tetris.png)
+
+Playable Tetris with ghost pieces, scoring, levels, and next-piece preview.
+
+```sh
+cargo run --example demo_tetris
 ```
 
 ## Features
