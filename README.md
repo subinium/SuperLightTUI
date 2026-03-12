@@ -2,9 +2,7 @@
 
 # SuperLightTUI
 
-**Build terminal UIs in Rust. Fast.**
-
-Immediate-mode. Two dependencies. Zero `unsafe`. ~5k lines of code.
+**Superfast** to write. **Superlight** to run.
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
