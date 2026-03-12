@@ -117,6 +117,41 @@ ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
 
+### Custom Widgets
+
+Implement the `Widget` trait to build your own:
+
+```rust
+use slt::{Context, Widget, Color, Style};
+
+struct Rating { value: u8, max: u8 }
+
+impl Widget for Rating {
+    type Response = bool;
+
+    fn ui(&mut self, ui: &mut Context) -> bool {
+        let focused = ui.register_focusable();
+        let mut changed = false;
+
+        if focused {
+            if ui.key('+') && self.value < self.max { self.value += 1; changed = true; }
+            if ui.key('-') && self.value > 0 { self.value -= 1; changed = true; }
+        }
+
+        let stars: String = (0..self.max)
+            .map(|i| if i < self.value { '★' } else { '☆' })
+            .collect();
+        let color = if focused { Color::Yellow } else { Color::White };
+        ui.styled(stars, Style::new().fg(color));
+        changed
+    }
+}
+
+// Usage: ui.widget(&mut rating);
+```
+
+Focus, events, theming, layout — all accessible through `Context`. One trait, one method.
+
 ## Features
 
 <details>
