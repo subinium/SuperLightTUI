@@ -1,12 +1,37 @@
-# superlighttui
+<div align="center">
 
-[![Crates.io](https://img.shields.io/crates/v/superlighttui.svg)](https://crates.io/crates/superlighttui)
-[![docs.rs](https://docs.rs/superlighttui/badge.svg)](https://docs.rs/superlighttui)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+# SuperLightTUI
 
 **Build terminal UIs in Rust. Fast.**
 
 Immediate-mode. Two dependencies. Zero `unsafe`. ~5k lines of code.
+
+[![Crate Badge]][Crate]
+[![Docs Badge]][Docs]
+[![License Badge]][License]
+
+[Crate] · [Docs] · [Examples] · [Contributing]
+
+</div>
+
+## Showcase
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
+    <td align="center"><img src="assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="assets/demo_tetris.png" alt="Tetris" /><br/><b>Tetris</b><br/><sub><code>cargo run --example demo_tetris</code></sub></td>
+  </tr>
+</table>
+
+## Getting Started
+
+```sh
+cargo add superlighttui
+```
 
 ```rust
 fn main() -> std::io::Result<()> {
@@ -48,26 +73,16 @@ State lives in your closure. Layout is `row()` and `col()`. Styling chains. That
 
 ## Why SLT
 
-### Your closure IS the app
+**Your closure IS the app** — No framework state. No message passing. No trait implementations. You write a function, SLT calls it every frame.
 
-No framework state. No message passing. No trait implementations. You write a function, SLT calls it every frame. Variables in your closure are your state.
+**Everything auto-wires** — Focus cycles with Tab. Scroll works with mouse wheel. Containers report clicks and hovers. Widgets consume their own events.
 
-### Everything auto-wires
-
-- **Focus** &mdash; Tab/Shift+Tab cycles through widgets. You never call `register_focus()`.
-- **Scroll** &mdash; Mouse wheel and drag just work. You pass `&mut ScrollState`, done.
-- **Click & Hover** &mdash; `col()` and `row()` return `Response { clicked, hovered }`. No event plumbing.
-- **Events** &mdash; Widgets consume their own keypresses. No manual event routing.
-
-### Layout like CSS, syntax like Tailwind
+**Layout like CSS, syntax like Tailwind** — Flexbox with `row()`, `col()`, `grow()`, `gap()`, `spacer()`. Tailwind shorthand: `.p()`, `.px()`, `.py()`, `.m()`, `.mx()`, `.my()`, `.w()`, `.h()`, `.min_w()`, `.max_w()`.
 
 ```rust
 ui.container()
     .border(Border::Rounded)
-    .p(2)            // padding: 2
-    .mx(1)           // margin-x: 1
-    .grow(1)         // flex-grow: 1
-    .max_w(60)       // max-width: 60
+    .p(2).mx(1).grow(1).max_w(60)
     .col(|ui| {
         ui.row(|ui| {
             ui.text("left");
@@ -77,9 +92,11 @@ ui.container()
     });
 ```
 
-Flexbox with `row()`, `col()`, `grow()`, `gap()`, `spacer()`. Tailwind shorthand: `.p()`, `.px()`, `.py()`, `.m()`, `.mx()`, `.my()`, `.w()`, `.h()`, `.min_w()`, `.max_w()`.
+**Two dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. That's the entire dependency tree.
 
-### 14 widgets, zero boilerplate
+## Widgets
+
+14 built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -100,57 +117,41 @@ ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
 
-### Two dependencies
-
-`crossterm` for terminal I/O. `unicode-width` for character measurement. That's the entire dependency tree. You can audit the supply chain in minutes.
-
-### Small enough to read
-
-~5,800 lines of Rust. 11 source files. No macros, no code generation, no build scripts. If something behaves unexpectedly, you can read the source and understand why.
-
-## Showcase
-
-| | |
-|:---:|:---:|
-| ![Widget Demo](assets/demo.png) | ![System Dashboard](assets/demo_dashboard.png) |
-| **Widget Demo** — All 14 widgets | **Dashboard** — Live metrics & logs |
-| `cargo run --example demo` | `cargo run --example demo_dashboard` |
-| ![Website Layout](assets/demo_website.png) | ![Tetris](assets/demo_tetris.png) |
-| **Website** — Full page layout | **Tetris** — Playable game |
-| `cargo run --example demo_website` | `cargo run --example demo_tetris` |
-
-> More examples: `demo_cli` (package manager), `demo_spreadsheet` (data grid), `inline` (inline mode), `anim` (animations)
-
 ## Features
 
-### Layout
+<details>
+<summary><b>Layout</b></summary>
 
 | Feature | API |
 |---------|-----|
 | Vertical stack | `ui.col(\|ui\| { })` |
 | Horizontal stack | `ui.row(\|ui\| { })` |
-| Gap between children | `ui.col_gap(1, \|ui\| { })` or `.gap(1)` |
+| Gap between children | `.gap(1)` |
 | Flex grow | `.grow(1)` |
 | Push to end | `ui.spacer()` |
 | Alignment | `.align(Align::Center)` |
-| Padding | `.pad(1)`, `.p(1)`, `.px(2)`, `.py(1)` |
+| Padding | `.p(1)`, `.px(2)`, `.py(1)` |
 | Margin | `.m(1)`, `.mx(2)`, `.my(1)` |
 | Fixed size | `.w(20)`, `.h(10)` |
-| Constraints | `.min_w(10)`, `.max_w(60)`, `.min_h(5)`, `.max_h(20)` |
+| Constraints | `.min_w(10)`, `.max_w(60)` |
 | Text wrapping | `ui.text_wrap("long text...")` |
 | Borders with titles | `.border(Border::Rounded).title("Panel")` |
 
-### Styling
+</details>
+
+<details>
+<summary><b>Styling</b></summary>
 
 ```rust
 ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 ```
 
-- 16 named colors, 256-color palette, 24-bit RGB
-- 6 modifiers: bold, dim, italic, underline, reversed, strikethrough
-- 4 border styles: Single, Double, Rounded, Thick
+16 named colors · 256-color palette · 24-bit RGB · 6 modifiers · 4 border styles
 
-### Theming
+</details>
+
+<details>
+<summary><b>Theming</b></summary>
 
 ```rust
 slt::run_with(RunConfig { theme: Theme::light(), ..Default::default() }, |ui| {
@@ -158,20 +159,24 @@ slt::run_with(RunConfig { theme: Theme::light(), ..Default::default() }, |ui| {
 });
 ```
 
-Dark and light presets. Custom themes with 13 color slots. All widgets inherit the theme automatically.
+Dark and light presets. Custom themes with 13 color slots. All widgets inherit automatically.
 
-### Rendering
+</details>
 
-- **Double-buffer diff** &mdash; only changed cells hit the terminal
-- **u32 coordinates** &mdash; no overflow on large terminals
-- **Clipping** &mdash; content outside container bounds is hidden
-- **Resize handling** &mdash; automatic reflow on terminal resize
+<details>
+<summary><b>Rendering</b></summary>
 
-### Animation
+- **Double-buffer diff** — only changed cells hit the terminal
+- **u32 coordinates** — no overflow on large terminals
+- **Clipping** — content outside container bounds is hidden
+- **Resize handling** — automatic reflow on terminal resize
+
+</details>
+
+<details>
+<summary><b>Animation</b></summary>
 
 ```rust
-use slt::{Tween, Spring, anim::ease_out_bounce};
-
 let mut tween = Tween::new(0.0, 100.0, 60).easing(ease_out_bounce);
 let value = tween.value(ui.tick());
 
@@ -179,9 +184,12 @@ let mut spring = Spring::new(0.0, 180.0, 12.0);
 spring.set_target(100.0);
 ```
 
-Tween with 9 easing functions. Spring with configurable stiffness and damping. Both advance with the frame tick automatically.
+Tween with 9 easing functions. Spring with configurable stiffness and damping.
 
-### Inline Mode
+</details>
+
+<details>
+<summary><b>Inline Mode</b></summary>
 
 ```rust
 slt::run_inline(3, |ui| {
@@ -190,32 +198,30 @@ slt::run_inline(3, |ui| {
 });
 ```
 
-Render a fixed-height UI below the cursor. No alternate screen, no full takeover. For CLI tools that need a small interactive widget inline.
+Render a fixed-height UI below the cursor without taking over the terminal.
 
-### Async
+</details>
+
+<details>
+<summary><b>Async</b></summary>
 
 ```rust
 let tx = slt::run_async(|ui, messages: &mut Vec<String>| {
-    for msg in messages.drain(..) {
-        ui.text(msg);
-    }
+    for msg in messages.drain(..) { ui.text(msg); }
 })?;
 tx.send("Hello from background!".into()).await?;
 ```
 
-Optional tokio integration. Background tasks send messages to the UI through a channel. Enable with `cargo add superlighttui --features async`.
+Optional tokio integration. Enable with `cargo add superlighttui --features async`.
 
-### Debug
+</details>
+
+<details>
+<summary><b>Debug</b></summary>
 
 Press **F12** in any SLT app to toggle the layout debugger overlay. Shows container bounds, nesting depth, and layout structure.
 
-## Install
-
-```sh
-cargo add superlighttui
-```
-
-Then `use slt::*;` &mdash; the crate name is descriptive, the import is short.
+</details>
 
 ## Examples
 
@@ -228,6 +234,7 @@ Then `use slt::*;` &mdash; the crate name is descriptive, the import is short.
 | demo_cli | `cargo run --example demo_cli` | CLI tool layout |
 | demo_spreadsheet | `cargo run --example demo_spreadsheet` | Data grid |
 | demo_website | `cargo run --example demo_website` | Website in terminal |
+| demo_tetris | `cargo run --example demo_tetris` | Playable Tetris |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
@@ -235,11 +242,29 @@ Then `use slt::*;` &mdash; the crate name is descriptive, the import is short.
 ## Architecture
 
 ```
-Closure -> Context collects Commands -> build_tree() -> flexbox layout -> diff buffer -> flush
+Closure → Context collects Commands → build_tree() → flexbox layout → diff buffer → flush
 ```
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
+~5,800 lines of Rust. 11 source files. No macros, no code generation, no build scripts.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## License
 
-MIT
+[MIT](LICENSE)
+
+<!-- Badge definitions -->
+[Crate Badge]: https://img.shields.io/crates/v/superlighttui?style=flat-square&logo=rust&color=E05D44
+[Docs Badge]: https://img.shields.io/docsrs/superlighttui?style=flat-square&logo=docs.rs
+[License Badge]: https://img.shields.io/crates/l/superlighttui?style=flat-square&color=1370D3
+
+<!-- Link definitions -->
+[Crate]: https://crates.io/crates/superlighttui
+[Docs]: https://docs.rs/superlighttui
+[Examples]: https://github.com/subinium/SuperLightTUI/tree/main/examples
+[Contributing]: https://github.com/subinium/SuperLightTUI/blob/main/CONTRIBUTING.md
+[License]: ./LICENSE
