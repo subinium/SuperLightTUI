@@ -996,6 +996,7 @@ impl Context {
     /// ```
     pub fn text_input(&mut self, state: &mut TextInputState) -> &mut Self {
         let focused = self.register_focusable();
+        state.cursor = state.cursor.min(state.value.chars().count());
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -1319,6 +1320,8 @@ impl Context {
             state.selected = 0;
             return self;
         }
+
+        state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
 
@@ -1856,6 +1859,7 @@ impl Context {
     }
 }
 
+#[inline]
 fn byte_index_for_char(value: &str, char_index: usize) -> usize {
     if char_index == 0 {
         return 0;

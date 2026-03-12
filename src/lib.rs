@@ -43,6 +43,7 @@ pub mod layout;
 pub mod rect;
 pub mod style;
 mod terminal;
+pub mod test_utils;
 pub mod widgets;
 
 use std::io;
@@ -52,6 +53,7 @@ use std::time::Duration;
 use event::Event;
 use terminal::{InlineTerminal, Terminal};
 
+pub use crate::test_utils::TestBackend;
 pub use anim::{Spring, Tween};
 pub use context::{Context, Response, Widget};
 pub use event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};

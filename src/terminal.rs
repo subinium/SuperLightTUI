@@ -5,6 +5,7 @@ use crossterm::style::{
     Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
     SetForegroundColor,
 };
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crossterm::{cursor, execute, queue, terminal};
 
 use unicode_width::UnicodeWidthStr;
@@ -60,6 +61,7 @@ impl Terminal {
 
     pub fn flush(&mut self) -> io::Result<()> {
         let updates = self.current.diff(&self.previous);
+        queue!(self.stdout, BeginSynchronizedUpdate)?;
 
         if !updates.is_empty() {
             let mut last_style = Style::new();
@@ -87,8 +89,10 @@ impl Terminal {
             }
 
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-            self.stdout.flush()?;
         }
+
+        queue!(self.stdout, EndSynchronizedUpdate)?;
+        self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);
         self.current.reset();
@@ -142,6 +146,8 @@ impl InlineTerminal {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
+        queue!(self.stdout, BeginSynchronizedUpdate)?;
+
         if !self.reserved {
             queue!(self.stdout, cursor::MoveToColumn(0))?;
             for _ in 0..self.height {
@@ -188,6 +194,7 @@ impl InlineTerminal {
 
         let end_row = self.start_row + self.height.saturating_sub(1) as u16;
         queue!(self.stdout, cursor::MoveTo(0, end_row))?;
+        queue!(self.stdout, EndSynchronizedUpdate)?;
         self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);

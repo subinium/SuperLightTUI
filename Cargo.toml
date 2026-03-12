@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -20,6 +20,9 @@ name = "slt"
 crossterm = "0.28"
 unicode-width = "0.2"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 async = ["dep:tokio"]
@@ -68,3 +71,7 @@ path = "examples/demo_website.rs"
 [[example]]
 name = "demo_tetris"
 path = "examples/demo_tetris.rs"
+
+[[bench]]
+name = "benchmarks"
+harness = false
