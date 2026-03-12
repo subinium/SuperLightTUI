@@ -312,6 +312,45 @@ fn custom_widget_renders() {
 }
 
 #[test]
+fn error_boundary_catches_panic() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.error_boundary(|_| {
+            panic!("test panic");
+        });
+    });
+    tb.assert_contains("Error");
+    tb.assert_contains("test panic");
+}
+
+#[test]
+fn error_boundary_passes_through_normal() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.error_boundary(|ui| {
+            ui.text("safe content");
+        });
+    });
+    tb.assert_contains("safe content");
+}
+
+#[test]
+fn error_boundary_with_custom_fallback() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.error_boundary_with(
+            |_| {
+                panic!("oops");
+            },
+            |ui, msg| {
+                ui.text(format!("Caught: {msg}"));
+            },
+        );
+    });
+    tb.assert_contains("Caught: oops");
+}
+
+#[test]
 fn toast_renders_message() {
     let mut tb = TestBackend::new(40, 5);
     let mut toasts = ToastState::new();

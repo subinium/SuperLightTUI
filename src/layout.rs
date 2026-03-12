@@ -904,10 +904,26 @@ fn visible_area(node: &LayoutNode, y_offset: u32) -> Option<Rect> {
 }
 
 fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
+    if node.size.0 == 0 || node.size.1 == 0 {
+        return;
+    }
+
+    let sy = screen_y(node.pos.1, y_offset);
+    let sx = i64::from(node.pos.0);
+    let ex = sx.saturating_add(i64::from(node.size.0));
+    let ey = sy.saturating_add(i64::from(node.size.1));
+    let viewport_left = i64::from(buf.area.x);
+    let viewport_top = i64::from(buf.area.y);
+    let viewport_right = viewport_left.saturating_add(i64::from(buf.area.width));
+    let viewport_bottom = viewport_top.saturating_add(i64::from(buf.area.height));
+
+    if ex <= viewport_left || ey <= viewport_top || sx >= viewport_right || sy >= viewport_bottom {
+        return;
+    }
+
     match node.kind {
         NodeKind::Text => {
             if let Some(ref text) = node.content {
-                let sy = screen_y(node.pos.1, y_offset);
                 if node.wrap {
                     let lines = wrap_lines(text, node.size.0);
                     for (i, line) in lines.iter().enumerate() {

@@ -1,9 +1,85 @@
 use crate::buffer::Buffer;
 use crate::context::Context;
-use crate::event::Event;
+use crate::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 use crate::layout;
 use crate::rect::Rect;
 use crate::style::Theme;
+
+pub struct EventBuilder {
+    events: Vec<Event>,
+}
+
+impl EventBuilder {
+    pub fn new() -> Self {
+        Self { events: Vec::new() }
+    }
+
+    pub fn key(mut self, c: char) -> Self {
+        self.events.push(Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+        }));
+        self
+    }
+
+    pub fn key_code(mut self, code: KeyCode) -> Self {
+        self.events.push(Event::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }));
+        self
+    }
+
+    pub fn key_with(mut self, code: KeyCode, modifiers: KeyModifiers) -> Self {
+        self.events.push(Event::Key(KeyEvent { code, modifiers }));
+        self
+    }
+
+    pub fn click(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::Mouse(MouseEvent {
+            kind: MouseKind::Down(MouseButton::Left),
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        self
+    }
+
+    pub fn scroll_up(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::Mouse(MouseEvent {
+            kind: MouseKind::ScrollUp,
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        self
+    }
+
+    pub fn scroll_down(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::Mouse(MouseEvent {
+            kind: MouseKind::ScrollDown,
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        self
+    }
+
+    pub fn resize(mut self, width: u32, height: u32) -> Self {
+        self.events.push(Event::Resize(width, height));
+        self
+    }
+
+    pub fn build(self) -> Vec<Event> {
+        self.events
+    }
+}
+
+impl Default for EventBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub struct TestBackend {
     buffer: Buffer,
@@ -72,6 +148,10 @@ impl TestBackend {
         layout::compute(&mut tree, area);
         self.buffer.reset();
         layout::render(&tree, &mut self.buffer);
+    }
+
+    pub fn run_with_events(&mut self, events: Vec<Event>, f: impl FnOnce(&mut crate::Context)) {
+        self.render_with_events(events, 0, 0, f);
     }
 
     /// Get the rendered text content of row y (trimmed trailing spaces)

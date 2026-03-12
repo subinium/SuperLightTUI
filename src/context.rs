@@ -153,6 +153,7 @@ pub struct Context {
 ///     });
 /// # });
 /// ```
+#[must_use = "configure and finalize with .col() or .row()"]
 pub struct ContainerBuilder<'a> {
     ctx: &'a mut Context,
     gap: u32,
@@ -165,6 +166,154 @@ pub struct ContainerBuilder<'a> {
     title: Option<(String, Style)>,
     grow: u16,
     scroll_offset: Option<u32>,
+}
+
+/// Drawing context for the [`Context::canvas`] widget.
+///
+/// Provides pixel-level drawing on a braille character grid. Each terminal
+/// cell maps to a 2x4 dot matrix, so a canvas of `width` columns x `height`
+/// rows gives `width*2` x `height*4` pixel resolution.
+pub struct CanvasContext {
+    grid: Vec<Vec<u32>>,
+    px_w: usize,
+    px_h: usize,
+}
+
+impl CanvasContext {
+    fn new(cols: usize, rows: usize) -> Self {
+        Self {
+            grid: vec![vec![0u32; cols]; rows],
+            px_w: cols * 2,
+            px_h: rows * 4,
+        }
+    }
+
+    /// Get the pixel width of the canvas.
+    pub fn width(&self) -> usize {
+        self.px_w
+    }
+
+    /// Get the pixel height of the canvas.
+    pub fn height(&self) -> usize {
+        self.px_h
+    }
+
+    /// Set a single pixel at `(x, y)`.
+    pub fn dot(&mut self, x: usize, y: usize) {
+        if x >= self.px_w || y >= self.px_h {
+            return;
+        }
+
+        let char_col = x / 2;
+        let char_row = y / 4;
+        let sub_col = x % 2;
+        let sub_row = y % 4;
+        const LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
+        const RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+
+        self.grid[char_row][char_col] |= if sub_col == 0 {
+            LEFT_BITS[sub_row]
+        } else {
+            RIGHT_BITS[sub_row]
+        };
+    }
+
+    /// Draw a line from `(x0, y0)` to `(x1, y1)` using Bresenham's algorithm.
+    pub fn line(&mut self, x0: usize, y0: usize, x1: usize, y1: usize) {
+        let (mut x, mut y) = (x0 as isize, y0 as isize);
+        let (x1, y1) = (x1 as isize, y1 as isize);
+        let dx = (x1 - x).abs();
+        let dy = -(y1 - y).abs();
+        let sx = if x < x1 { 1 } else { -1 };
+        let sy = if y < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+
+        loop {
+            if x >= 0 && y >= 0 {
+                self.dot(x as usize, y as usize);
+            }
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    /// Draw a rectangle outline from `(x, y)` with `w` width and `h` height.
+    pub fn rect(&mut self, x: usize, y: usize, w: usize, h: usize) {
+        if w == 0 || h == 0 {
+            return;
+        }
+
+        self.line(x, y, x + w.saturating_sub(1), y);
+        self.line(
+            x + w.saturating_sub(1),
+            y,
+            x + w.saturating_sub(1),
+            y + h.saturating_sub(1),
+        );
+        self.line(
+            x + w.saturating_sub(1),
+            y + h.saturating_sub(1),
+            x,
+            y + h.saturating_sub(1),
+        );
+        self.line(x, y + h.saturating_sub(1), x, y);
+    }
+
+    /// Draw a circle outline centered at `(cx, cy)` with radius `r`.
+    pub fn circle(&mut self, cx: usize, cy: usize, r: usize) {
+        let mut x = r as isize;
+        let mut y: isize = 0;
+        let mut err: isize = 1 - x;
+        let (cx, cy) = (cx as isize, cy as isize);
+
+        while x >= y {
+            for &(dx, dy) in &[
+                (x, y),
+                (y, x),
+                (-x, y),
+                (-y, x),
+                (x, -y),
+                (y, -x),
+                (-x, -y),
+                (-y, -x),
+            ] {
+                let px = cx + dx;
+                let py = cy + dy;
+                if px >= 0 && py >= 0 {
+                    self.dot(px as usize, py as usize);
+                }
+            }
+
+            y += 1;
+            if err < 0 {
+                err += 2 * y + 1;
+            } else {
+                x -= 1;
+                err += 2 * (y - x) + 1;
+            }
+        }
+    }
+
+    fn render(&self) -> Vec<String> {
+        self.grid
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|&bits| char::from_u32(0x2800 + bits).unwrap_or(' '))
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 impl<'a> ContainerBuilder<'a> {
@@ -548,6 +697,79 @@ impl Context {
     /// Calls [`Widget::ui`] with this context and returns the widget's response.
     pub fn widget<W: Widget>(&mut self, w: &mut W) -> W::Response {
         w.ui(self)
+    }
+
+    /// Wrap child widgets in a panic boundary.
+    ///
+    /// If the closure panics, the panic is caught and an error message is
+    /// rendered in place of the children. The app continues running.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.error_boundary(|ui| {
+    ///     ui.text("risky widget");
+    /// });
+    /// # });
+    /// ```
+    pub fn error_boundary(&mut self, f: impl FnOnce(&mut Context)) {
+        self.error_boundary_with(f, |ui, msg| {
+            ui.styled(
+                format!("⚠ Error: {msg}"),
+                Style::new().fg(ui.theme.error).bold(),
+            );
+        });
+    }
+
+    /// Like [`error_boundary`](Self::error_boundary), but renders a custom
+    /// fallback instead of the default error message.
+    ///
+    /// The fallback closure receives the panic message as a [`String`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.error_boundary_with(
+    ///     |ui| {
+    ///         ui.text("risky widget");
+    ///     },
+    ///     |ui, msg| {
+    ///         ui.text(format!("Recovered from panic: {msg}"));
+    ///     },
+    /// );
+    /// # });
+    /// ```
+    pub fn error_boundary_with(
+        &mut self,
+        f: impl FnOnce(&mut Context),
+        fallback: impl FnOnce(&mut Context, String),
+    ) {
+        let cmd_count = self.commands.len();
+        let last_text_idx = self.last_text_idx;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f(self);
+        }));
+
+        match result {
+            Ok(()) => {}
+            Err(panic_info) => {
+                self.commands.truncate(cmd_count);
+                self.last_text_idx = last_text_idx;
+
+                let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "widget panicked".to_string()
+                };
+
+                fallback(self, msg);
+            }
+        }
     }
 
     /// Allocate a click/hover interaction slot and return the [`Response`].
@@ -1311,6 +1533,394 @@ impl Context {
         self.text(bar)
     }
 
+    /// Render a horizontal bar chart from `(label, value)` pairs.
+    ///
+    /// Bars are normalized against the largest value and rendered with `█` up to
+    /// `max_width` characters.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let data = [
+    ///     ("Sales", 160.0),
+    ///     ("Revenue", 120.0),
+    ///     ("Users", 220.0),
+    ///     ("Costs", 60.0),
+    /// ];
+    /// ui.bar_chart(&data, 24);
+    /// # });
+    /// ```
+    pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> &mut Self {
+        if data.is_empty() {
+            return self;
+        }
+
+        let max_label_width = data
+            .iter()
+            .map(|(label, _)| UnicodeWidthStr::width(*label))
+            .max()
+            .unwrap_or(0);
+        let max_value = data
+            .iter()
+            .map(|(_, value)| *value)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            border: None,
+            border_style: Style::new().fg(self.theme.border),
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        for (label, value) in data {
+            let label_width = UnicodeWidthStr::width(*label);
+            let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+            let normalized = (*value / denom).clamp(0.0, 1.0);
+            let bar_len = (normalized * max_width as f64).round() as usize;
+            let bar = "█".repeat(bar_len);
+
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                border: None,
+                border_style: Style::new().fg(self.theme.border),
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+            });
+            self.styled(
+                format!("{label}{label_padding}"),
+                Style::new().fg(self.theme.text),
+            );
+            self.styled(bar, Style::new().fg(self.theme.primary));
+            self.styled(
+                format_compact_number(*value),
+                Style::new().fg(self.theme.text_dim),
+            );
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        self
+    }
+
+    /// Render a single-line sparkline from numeric data.
+    ///
+    /// Uses the last `width` points (or fewer if the data is shorter) and maps
+    /// each point to one of `▁▂▃▄▅▆▇█`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let samples = [12.0, 9.0, 14.0, 18.0, 16.0, 21.0, 20.0, 24.0];
+    /// ui.sparkline(&samples, 16);
+    /// # });
+    /// ```
+    pub fn sparkline(&mut self, data: &[f64], width: u32) -> &mut Self {
+        const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+        let w = width as usize;
+        let window = if data.len() > w {
+            &data[data.len() - w..]
+        } else {
+            data
+        };
+
+        if window.is_empty() {
+            return self;
+        }
+
+        let min = window.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = window.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let range = max - min;
+
+        let line: String = window
+            .iter()
+            .map(|&value| {
+                let normalized = if range == 0.0 {
+                    0.5
+                } else {
+                    (value - min) / range
+                };
+                let idx = (normalized * 7.0).round() as usize;
+                BLOCKS[idx.min(7)]
+            })
+            .collect();
+
+        self.styled(line, Style::new().fg(self.theme.primary))
+    }
+
+    /// Render a multi-row line chart using braille characters.
+    ///
+    /// `width` and `height` are terminal cell dimensions. Internally this uses
+    /// braille dot resolution (`width*2` x `height*4`) for smoother plotting.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let data = [1.0, 3.0, 2.0, 5.0, 4.0, 6.0, 3.0, 7.0];
+    /// ui.line_chart(&data, 40, 8);
+    /// # });
+    /// ```
+    pub fn line_chart(&mut self, data: &[f64], width: u32, height: u32) -> &mut Self {
+        if data.is_empty() || width == 0 || height == 0 {
+            return self;
+        }
+
+        let cols = width as usize;
+        let rows = height as usize;
+        let px_w = cols * 2;
+        let px_h = rows * 4;
+
+        let min = data.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let range = if (max - min).abs() < f64::EPSILON {
+            1.0
+        } else {
+            max - min
+        };
+
+        let points: Vec<usize> = (0..px_w)
+            .map(|px| {
+                let data_idx = if px_w <= 1 {
+                    0.0
+                } else {
+                    px as f64 * (data.len() - 1) as f64 / (px_w - 1) as f64
+                };
+                let idx = data_idx.floor() as usize;
+                let frac = data_idx - idx as f64;
+                let value = if idx + 1 < data.len() {
+                    data[idx] * (1.0 - frac) + data[idx + 1] * frac
+                } else {
+                    data[idx.min(data.len() - 1)]
+                };
+
+                let normalized = (value - min) / range;
+                let py = ((1.0 - normalized) * (px_h - 1) as f64).round() as usize;
+                py.min(px_h - 1)
+            })
+            .collect();
+
+        const LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
+        const RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+
+        let mut grid = vec![vec![0u32; cols]; rows];
+
+        for i in 0..points.len() {
+            let px = i;
+            let py = points[i];
+            let char_col = px / 2;
+            let char_row = py / 4;
+            let sub_col = px % 2;
+            let sub_row = py % 4;
+
+            if char_col < cols && char_row < rows {
+                grid[char_row][char_col] |= if sub_col == 0 {
+                    LEFT_BITS[sub_row]
+                } else {
+                    RIGHT_BITS[sub_row]
+                };
+            }
+
+            if i + 1 < points.len() {
+                let py_next = points[i + 1];
+                let (y_start, y_end) = if py <= py_next {
+                    (py, py_next)
+                } else {
+                    (py_next, py)
+                };
+                for y in y_start..=y_end {
+                    let cell_row = y / 4;
+                    let sub_y = y % 4;
+                    if char_col < cols && cell_row < rows {
+                        grid[cell_row][char_col] |= if sub_col == 0 {
+                            LEFT_BITS[sub_y]
+                        } else {
+                            RIGHT_BITS[sub_y]
+                        };
+                    }
+                }
+            }
+        }
+
+        let style = Style::new().fg(self.theme.primary);
+        for row in grid {
+            let line: String = row
+                .iter()
+                .map(|&bits| char::from_u32(0x2800 + bits).unwrap_or(' '))
+                .collect();
+            self.styled(line, style);
+        }
+
+        self
+    }
+
+    /// Render a braille drawing canvas.
+    ///
+    /// The closure receives a [`CanvasContext`] for pixel-level drawing. Each
+    /// terminal cell maps to a 2x4 braille dot matrix, giving `width*2` x
+    /// `height*4` pixel resolution.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.canvas(40, 10, |cv| {
+    ///     cv.line(0, 0, cv.width() - 1, cv.height() - 1);
+    ///     cv.circle(40, 20, 15);
+    /// });
+    /// # });
+    /// ```
+    pub fn canvas(
+        &mut self,
+        width: u32,
+        height: u32,
+        draw: impl FnOnce(&mut CanvasContext),
+    ) -> &mut Self {
+        if width == 0 || height == 0 {
+            return self;
+        }
+
+        let mut canvas = CanvasContext::new(width as usize, height as usize);
+        draw(&mut canvas);
+
+        let style = Style::new().fg(self.theme.primary);
+        for line in canvas.render() {
+            self.styled(line, style);
+        }
+
+        self
+    }
+
+    /// Render children in a fixed grid with the given number of columns.
+    ///
+    /// Children are placed left-to-right, top-to-bottom. Each cell has equal
+    /// width (`area_width / cols`). Rows wrap automatically.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.grid(3, |ui| {
+    ///     for i in 0..9 {
+    ///         ui.text(format!("Cell {i}"));
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn grid(&mut self, cols: u32, f: impl FnOnce(&mut Context)) -> Response {
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let border = self.theme.border;
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            border: None,
+            border_style: Style::new().fg(border),
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        let children_start = self.commands.len();
+        f(self);
+        let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
+
+        let mut elements: Vec<Vec<Command>> = Vec::new();
+        let mut iter = child_commands.into_iter().peekable();
+        while let Some(cmd) = iter.next() {
+            match cmd {
+                Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                    let mut depth = 1_u32;
+                    let mut element = vec![cmd];
+                    for next in iter.by_ref() {
+                        match next {
+                            Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                                depth += 1;
+                            }
+                            Command::EndContainer => {
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                        let at_end = matches!(next, Command::EndContainer) && depth == 0;
+                        element.push(next);
+                        if at_end {
+                            break;
+                        }
+                    }
+                    elements.push(element);
+                }
+                Command::EndContainer => {}
+                _ => elements.push(vec![cmd]),
+            }
+        }
+
+        let cols = cols.max(1) as usize;
+        for row in elements.chunks(cols) {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                border: None,
+                border_style: Style::new().fg(border),
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+            });
+
+            for element in row {
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Column,
+                    gap: 0,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 1,
+                });
+                self.commands.extend(element.iter().cloned());
+                self.commands.push(Command::EndContainer);
+            }
+
+            self.commands.push(Command::EndContainer);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        self.response_for(interaction_id)
+    }
+
     /// Render a selectable list. Handles Up/Down (and `k`/`j`) navigation when focused.
     ///
     /// The selected item is highlighted with the theme's primary color. If the
@@ -1879,4 +2489,19 @@ fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String
         parts.push(format!("{cell}{}", " ".repeat(padding)));
     }
     parts.join(separator)
+}
+
+fn format_compact_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        return format!("{value:.0}");
+    }
+
+    let mut s = format!("{value:.2}");
+    while s.contains('.') && s.ends_with('0') {
+        s.pop();
+    }
+    if s.ends_with('.') {
+        s.pop();
+    }
+    s
 }

@@ -4,6 +4,7 @@
 /// 24-bit RGB true color. Use [`Color::Reset`] to restore the terminal's
 /// default foreground or background.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Color {
     /// Reset to the terminal's default color.
     Reset,
@@ -35,6 +36,7 @@ pub enum Color {
 /// theme by filling in the fields directly. Pass the theme via [`crate::RunConfig`]
 /// and every widget will pick up the colors without any extra wiring.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Theme {
     /// Primary accent color, used for focused borders and highlights.
     pub primary: Color,
@@ -111,6 +113,7 @@ impl Default for Theme {
 /// Pass to `Context::bordered()` to draw a box around a container.
 /// Each variant uses a different set of Unicode box-drawing characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Border {
     /// Single-line box: `┌─┐│└─┘`
     Single,
@@ -187,6 +190,7 @@ impl Border {
 /// Shrinks the content area inward from each edge. All values are in terminal
 /// columns/rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Padding {
     /// Padding on the top edge.
     pub top: u32,
@@ -235,6 +239,7 @@ impl Padding {
 /// Adds space around the outside of a container's border. All values are in
 /// terminal columns/rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Margin {
     /// Margin on the top edge.
     pub top: u32,
@@ -291,6 +296,8 @@ impl Margin {
 /// let c = Constraints::default().min_w(10).max_w(40);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[must_use = "configure constraints using the returned value"]
 pub struct Constraints {
     /// Minimum width in terminal columns, if any.
     pub min_width: Option<u32>,
@@ -334,6 +341,7 @@ impl Constraints {
 /// container's main axis. For a `row()`, this is vertical alignment; for a
 /// `col()`, this is horizontal alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Align {
     /// Align children to the start of the cross axis (default).
     #[default]
@@ -349,6 +357,8 @@ pub enum Align {
 /// Combine modifiers with `|` or [`Modifiers::insert`]. Check membership with
 /// [`Modifiers::contains`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Modifiers(pub u8);
 
 impl Modifiers {
@@ -415,6 +425,8 @@ impl std::ops::BitOrAssign for Modifiers {
 /// let style = Style::new().fg(Color::Cyan).bold();
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[must_use = "build and pass the returned Style value"]
 pub struct Style {
     /// Foreground color, or `None` to use the terminal default.
     pub fg: Option<Color>,

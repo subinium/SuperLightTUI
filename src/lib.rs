@@ -33,6 +33,7 @@
 //! | Flag | Description |
 //! |------|-------------|
 //! | `async` | Enable `run_async()` with tokio channel-based message passing |
+//! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
 
 pub mod anim;
 pub mod buffer;
@@ -47,15 +48,16 @@ pub mod test_utils;
 pub mod widgets;
 
 use std::io;
+use std::io::IsTerminal;
 use std::sync::Once;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use event::Event;
 use terminal::{InlineTerminal, Terminal};
 
-pub use crate::test_utils::TestBackend;
+pub use crate::test_utils::{EventBuilder, TestBackend};
 pub use anim::{Spring, Tween};
-pub use context::{Context, Response, Widget};
+pub use context::{CanvasContext, Context, Response, Widget};
 pub use event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use style::{Align, Border, Color, Constraints, Margin, Modifiers, Padding, Style, Theme};
 pub use widgets::{
@@ -99,8 +101,10 @@ fn install_panic_hook() {
 ///     tick_rate: Duration::from_millis(50),
 ///     mouse: true,
 ///     theme: Theme::light(),
+///     max_fps: Some(60),
 /// };
 /// ```
+#[must_use = "configure loop behavior before passing to run_with or run_inline_with"]
 pub struct RunConfig {
     /// How long to wait for input before triggering a tick with no events.
     ///
@@ -116,6 +120,11 @@ pub struct RunConfig {
     ///
     /// Defaults to [`Theme::dark()`].
     pub theme: Theme,
+    /// Optional maximum frame rate.
+    ///
+    /// `None` means unlimited frame rate. `Some(fps)` sleeps at the end of each
+    /// loop iteration to target that frame time.
+    pub max_fps: Option<u32>,
 }
 
 impl Default for RunConfig {
@@ -124,6 +133,7 @@ impl Default for RunConfig {
             tick_rate: Duration::from_millis(100),
             mouse: false,
             theme: Theme::dark(),
+            max_fps: None,
         }
     }
 }
@@ -166,6 +176,10 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 /// }
 /// ```
 pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
+    if !io::stdout().is_terminal() {
+        return Ok(());
+    }
+
     install_panic_hook();
     let mut term = Terminal::new(config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
@@ -178,8 +192,10 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     let mut last_mouse_pos: Option<(u32, u32)> = None;
 
     loop {
+        let frame_start = Instant::now();
         let (w, h) = term.size();
         if w == 0 || h == 0 {
+            sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
         let mut ctx = Context::new(
@@ -269,6 +285,8 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             prev_scroll_infos.clear();
             last_mouse_pos = None;
         }
+
+        sleep_for_fps_cap(config.max_fps, frame_start);
     }
 
     Ok(())
@@ -329,6 +347,10 @@ fn run_async_loop<M: Send + 'static>(
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
     mut rx: tokio::sync::mpsc::Receiver<M>,
 ) -> io::Result<()> {
+    if !io::stdout().is_terminal() {
+        return Ok(());
+    }
+
     install_panic_hook();
     let mut term = Terminal::new(config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
@@ -340,6 +362,7 @@ fn run_async_loop<M: Send + 'static>(
     let mut last_mouse_pos: Option<(u32, u32)> = None;
 
     loop {
+        let frame_start = Instant::now();
         let mut messages: Vec<M> = Vec::new();
         while let Ok(message) = rx.try_recv() {
             messages.push(message);
@@ -347,6 +370,7 @@ fn run_async_loop<M: Send + 'static>(
 
         let (w, h) = term.size();
         if w == 0 || h == 0 {
+            sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
         let mut ctx = Context::new(
@@ -421,6 +445,8 @@ fn run_async_loop<M: Send + 'static>(
                 last_mouse_pos = Some((mouse.x, mouse.y));
             }
         }
+
+        sleep_for_fps_cap(config.max_fps, frame_start);
     }
 
     Ok(())
@@ -454,6 +480,10 @@ pub fn run_inline_with(
     config: RunConfig,
     mut f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
+    if !io::stdout().is_terminal() {
+        return Ok(());
+    }
+
     install_panic_hook();
     let mut term = InlineTerminal::new(height, config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
@@ -466,8 +496,10 @@ pub fn run_inline_with(
     let mut last_mouse_pos: Option<(u32, u32)> = None;
 
     loop {
+        let frame_start = Instant::now();
         let (w, h) = term.size();
         if w == 0 || h == 0 {
+            sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
         let mut ctx = Context::new(
@@ -557,6 +589,8 @@ pub fn run_inline_with(
             prev_scroll_infos.clear();
             last_mouse_pos = None;
         }
+
+        sleep_for_fps_cap(config.max_fps, frame_start);
     }
 
     Ok(())
@@ -570,4 +604,14 @@ fn is_ctrl_c(ev: &Event) -> bool {
             modifiers,
         }) if modifiers.contains(KeyModifiers::CONTROL)
     )
+}
+
+fn sleep_for_fps_cap(max_fps: Option<u32>, frame_start: Instant) {
+    if let Some(fps) = max_fps.filter(|fps| *fps > 0) {
+        let target = Duration::from_secs_f64(1.0 / fps as f64);
+        let elapsed = frame_start.elapsed();
+        if elapsed < target {
+            std::thread::sleep(target - elapsed);
+        }
+    }
 }

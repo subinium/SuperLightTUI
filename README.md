@@ -90,11 +90,11 @@ ui.container()
     });
 ```
 
-**Two dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. That's the entire dependency tree.
+**Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization.
 
 ## Widgets
 
-14 built-in widgets, zero boilerplate:
+18 built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -111,6 +111,10 @@ ui.scrollable(&mut scroll).col(|ui| { });    // scroll container
 ui.toast(&mut toasts);                       // notifications
 ui.separator();                              // horizontal line
 ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
+ui.bar_chart(&data, 24);                     // horizontal bars
+ui.sparkline(&values, 16);                   // trend line ▁▂▃▅▇
+ui.line_chart(&data, 40, 10);                // braille line chart
+ui.canvas(40, 10, |cv| { cv.circle(20, 20, 15); }); // braille canvas
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -159,6 +163,7 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 |---------|-----|
 | Vertical stack | `ui.col(\|ui\| { })` |
 | Horizontal stack | `ui.row(\|ui\| { })` |
+| Grid layout | `ui.grid(3, \|ui\| { })` |
 | Gap between children | `.gap(1)` |
 | Flex grow | `.grow(1)` |
 | Push to end | `ui.spacer()` |
@@ -202,6 +207,9 @@ Dark and light presets. Custom themes with 13 color slots. All widgets inherit a
 - **Double-buffer diff** — only changed cells hit the terminal
 - **u32 coordinates** — no overflow on large terminals
 - **Clipping** — content outside container bounds is hidden
+- **Viewport culling** — off-screen widgets are skipped entirely
+- **FPS cap** — `RunConfig { max_fps: Some(60), .. }` for CPU control
+- **Non-TTY safety** — graceful exit when stdout is not a terminal
 - **Resize handling** — automatic reflow on terminal resize
 
 </details>
@@ -250,6 +258,53 @@ Optional tokio integration. Enable with `cargo add superlighttui --features asyn
 </details>
 
 <details>
+<summary><b>Error Boundary</b></summary>
+
+```rust
+ui.error_boundary(|ui| {
+    ui.text("If this panics, the app keeps running.");
+});
+
+ui.error_boundary_with(
+    |ui| { /* risky code */ },
+    |ui, msg| { ui.text(format!("Recovered: {msg}")); },
+);
+```
+
+Catch widget panics without crashing the app. Partial commands are rolled back and a fallback is rendered.
+
+</details>
+
+<details>
+<summary><b>Serde</b></summary>
+
+```sh
+cargo add superlighttui --features serde
+```
+
+Serialize/deserialize `Style`, `Color`, `Theme`, `Border`, `Padding`, `Margin`, `Constraints`, and `Modifiers`.
+
+</details>
+
+<details>
+<summary><b>Testing</b></summary>
+
+```rust
+use slt::{TestBackend, EventBuilder, KeyCode};
+
+let mut backend = TestBackend::new(80, 24);
+let events = EventBuilder::new().key('q').key_code(KeyCode::Enter).build();
+backend.run_with_events(events, |ui| {
+    ui.text("test content");
+});
+assert!(backend.to_string().contains("test content"));
+```
+
+Headless rendering with `TestBackend` and event simulation with `EventBuilder` for automated testing.
+
+</details>
+
+<details>
 <summary><b>Debug</b></summary>
 
 Press **F12** in any SLT app to toggle the layout debugger overlay. Shows container bounds, nesting depth, and layout structure.
@@ -262,7 +317,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 |---------|---------|---------------|
 | hello | `cargo run --example hello` | Minimal setup |
 | counter | `cargo run --example counter` | State + keyboard |
-| demo | `cargo run --example demo` | All 14 widgets |
+| demo | `cargo run --example demo` | All widgets |
 | demo_dashboard | `cargo run --example demo_dashboard` | Live dashboard |
 | demo_cli | `cargo run --example demo_cli` | CLI tool layout |
 | demo_spreadsheet | `cargo run --example demo_spreadsheet` | Data grid |
@@ -270,6 +325,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_tetris | `cargo run --example demo_tetris` | Playable Tetris |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring |
+| demo_infoviz | `cargo run --example demo_infoviz` | Data visualization |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
 
 ## Architecture
@@ -280,7 +336,7 @@ Closure → Context collects Commands → build_tree() → flexbox layout → di
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
-~5,800 lines of Rust. 11 source files. No macros, no code generation, no build scripts.
+~6,800 lines of Rust. 12 source files. No macros, no code generation, no build scripts.
 
 ## Contributing
 
