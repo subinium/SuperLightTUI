@@ -110,61 +110,16 @@ Every widget handles its own keyboard events, focus state, and mouse interaction
 
 ## Showcase
 
-### Widget Demo
+| | |
+|:---:|:---:|
+| ![Widget Demo](assets/demo.png) | ![System Dashboard](assets/demo_dashboard.png) |
+| **Widget Demo** — All 14 widgets | **Dashboard** — Live metrics & logs |
+| `cargo run --example demo` | `cargo run --example demo_dashboard` |
+| ![Website Layout](assets/demo_website.png) | ![Tetris](assets/demo_tetris.png) |
+| **Website** — Full page layout | **Tetris** — Playable game |
+| `cargo run --example demo_website` | `cargo run --example demo_tetris` |
 
-![Widget Demo](assets/demo.png)
-
-All 14 widgets on a single scrollable page. Drag to scroll, Tab to focus, click to interact.
-
-```sh
-cargo run --example demo
-```
-
-### System Dashboard
-
-![System Dashboard](assets/demo_dashboard.png)
-
-Live metrics, process table, log stream with simulated data.
-
-```sh
-cargo run --example demo_dashboard
-```
-
-### Package Manager CLI
-
-Search, browse, install packages. Split-pane layout with filtering.
-
-```sh
-cargo run --example demo_cli
-```
-
-### Spreadsheet
-
-20-row data grid with cell navigation, inline editing, and formula bar.
-
-```sh
-cargo run --example demo_spreadsheet
-```
-
-### Website Layout
-
-![Website Layout](assets/demo_website.png)
-
-Navbar, hero section, feature cards, pricing table, blog with markdown-style posts, and footer. All in the terminal.
-
-```sh
-cargo run --example demo_website
-```
-
-### Tetris
-
-![Tetris](assets/demo_tetris.png)
-
-Playable Tetris with ghost pieces, scoring, levels, and next-piece preview.
-
-```sh
-cargo run --example demo_tetris
-```
+> More examples: `demo_cli` (package manager), `demo_spreadsheet` (data grid), `inline` (inline mode), `anim` (animations)
 
 ## Features
 
