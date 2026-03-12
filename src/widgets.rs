@@ -22,6 +22,7 @@ pub struct TextInputState {
     pub cursor: usize,
     /// Placeholder text shown when `value` is empty.
     pub placeholder: String,
+    pub max_length: Option<usize>,
 }
 
 impl TextInputState {
@@ -31,6 +32,7 @@ impl TextInputState {
             value: String::new(),
             cursor: 0,
             placeholder: String::new(),
+            max_length: None,
         }
     }
 
@@ -40,6 +42,11 @@ impl TextInputState {
             placeholder: p.into(),
             ..Self::new()
         }
+    }
+
+    pub fn max_length(mut self, len: usize) -> Self {
+        self.max_length = Some(len);
+        self
     }
 }
 
@@ -154,6 +161,7 @@ pub struct TextareaState {
     pub cursor_row: usize,
     /// Column index of the cursor within the current row (character index).
     pub cursor_col: usize,
+    pub max_length: Option<usize>,
 }
 
 impl TextareaState {
@@ -163,6 +171,7 @@ impl TextareaState {
             lines: vec![String::new()],
             cursor_row: 0,
             cursor_col: 0,
+            max_length: None,
         }
     }
 
@@ -182,6 +191,11 @@ impl TextareaState {
         }
         self.cursor_row = 0;
         self.cursor_col = 0;
+    }
+
+    pub fn max_length(mut self, len: usize) -> Self {
+        self.max_length = Some(len);
+        self
     }
 }
 

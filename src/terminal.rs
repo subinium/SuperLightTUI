@@ -70,7 +70,7 @@ impl Terminal {
                     continue;
                 }
 
-                let need_move = last_pos.is_none_or(|(lx, ly)| ly != y || lx != x);
+                let need_move = last_pos.map_or(true, |(lx, ly)| ly != y || lx != x);
                 if need_move {
                     queue!(self.stdout, cursor::MoveTo(x as u16, y as u16))?;
                 }
@@ -167,7 +167,7 @@ impl InlineTerminal {
                 }
 
                 let abs_y = self.start_row as u32 + y;
-                let need_move = last_pos.is_none_or(|(lx, ly)| ly != abs_y || lx != x);
+                let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
                 if need_move {
                     queue!(self.stdout, cursor::MoveTo(x as u16, abs_y as u16))?;
                 }

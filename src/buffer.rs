@@ -104,7 +104,7 @@ impl Buffer {
                 continue;
             }
 
-            let in_clip = clip.is_none_or(|clip| {
+            let in_clip = clip.map_or(true, |clip| {
                 x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
             });
 
@@ -135,9 +135,9 @@ impl Buffer {
     ///
     /// No-ops if `(x, y)` is out of bounds or outside the current clip region.
     pub fn set_char(&mut self, x: u32, y: u32, ch: char, style: Style) {
-        let in_clip = self
-            .effective_clip()
-            .is_none_or(|clip| x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom());
+        let in_clip = self.effective_clip().map_or(true, |clip| {
+            x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
+        });
         if !self.in_bounds(x, y) || !in_clip {
             return;
         }

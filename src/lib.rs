@@ -46,6 +46,7 @@ mod terminal;
 pub mod widgets;
 
 use std::io;
+use std::sync::Once;
 use std::time::Duration;
 
 use event::Event;
@@ -59,6 +60,27 @@ pub use widgets::{
     ListState, ScrollState, SpinnerState, TableState, TabsState, TextInputState, TextareaState,
     ToastLevel, ToastMessage, ToastState,
 };
+
+static PANIC_HOOK_ONCE: Once = Once::new();
+
+fn install_panic_hook() {
+    PANIC_HOOK_ONCE.call_once(|| {
+        let original = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let mut stdout = io::stdout();
+            let _ = crossterm::execute!(
+                stdout,
+                crossterm::terminal::LeaveAlternateScreen,
+                crossterm::cursor::Show,
+                crossterm::event::DisableMouseCapture,
+                crossterm::style::ResetColor,
+                crossterm::style::SetAttribute(crossterm::style::Attribute::Reset)
+            );
+            original(panic_info);
+        }));
+    });
+}
 
 /// Configuration for a TUI run loop.
 ///
@@ -142,6 +164,7 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 /// }
 /// ```
 pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
+    install_panic_hook();
     let mut term = Terminal::new(config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
     let mut debug_mode: bool = false;
@@ -154,8 +177,11 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 
     loop {
         let (w, h) = term.size();
+        if w == 0 || h == 0 {
+            continue;
+        }
         let mut ctx = Context::new(
-            events.clone(),
+            std::mem::take(&mut events),
             w,
             h,
             tick,
@@ -301,6 +327,7 @@ fn run_async_loop<M: Send + 'static>(
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
     mut rx: tokio::sync::mpsc::Receiver<M>,
 ) -> io::Result<()> {
+    install_panic_hook();
     let mut term = Terminal::new(config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
     let mut tick: u64 = 0;
@@ -317,8 +344,11 @@ fn run_async_loop<M: Send + 'static>(
         }
 
         let (w, h) = term.size();
+        if w == 0 || h == 0 {
+            continue;
+        }
         let mut ctx = Context::new(
-            events.clone(),
+            std::mem::take(&mut events),
             w,
             h,
             tick,
@@ -422,6 +452,7 @@ pub fn run_inline_with(
     config: RunConfig,
     mut f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
+    install_panic_hook();
     let mut term = InlineTerminal::new(height, config.mouse)?;
     let mut events: Vec<Event> = Vec::new();
     let mut debug_mode: bool = false;
@@ -434,8 +465,11 @@ pub fn run_inline_with(
 
     loop {
         let (w, h) = term.size();
+        if w == 0 || h == 0 {
+            continue;
+        }
         let mut ctx = Context::new(
-            events.clone(),
+            std::mem::take(&mut events),
             w,
             h,
             tick,

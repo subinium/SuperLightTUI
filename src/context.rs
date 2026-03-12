@@ -1003,6 +1003,11 @@ impl Context {
                 if let Event::Key(key) = event {
                     match key.code {
                         KeyCode::Char(ch) => {
+                            if let Some(max) = state.max_length {
+                                if state.value.chars().count() >= max {
+                                    continue;
+                                }
+                            }
                             let index = byte_index_for_char(&state.value, state.cursor);
                             state.value.insert(index, ch);
                             state.cursor += 1;
@@ -1134,6 +1139,13 @@ impl Context {
                 if let Event::Key(key) = event {
                     match key.code {
                         KeyCode::Char(ch) => {
+                            if let Some(max) = state.max_length {
+                                let total: usize =
+                                    state.lines.iter().map(|line| line.chars().count()).sum();
+                                if total >= max {
+                                    continue;
+                                }
+                            }
                             let index = byte_index_for_char(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col,
@@ -1320,7 +1332,8 @@ impl Context {
                             consumed_indices.push(i);
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            state.selected = (state.selected + 1).min(state.items.len() - 1);
+                            state.selected =
+                                (state.selected + 1).min(state.items.len().saturating_sub(1));
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -1372,7 +1385,8 @@ impl Context {
                             consumed_indices.push(i);
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            state.selected = (state.selected + 1).min(state.rows.len() - 1);
+                            state.selected =
+                                (state.selected + 1).min(state.rows.len().saturating_sub(1));
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -1425,7 +1439,7 @@ impl Context {
             return self;
         }
 
-        state.selected = state.selected.min(state.labels.len() - 1);
+        state.selected = state.selected.min(state.labels.len().saturating_sub(1));
         let focused = self.register_focusable();
 
         if focused {
@@ -1435,7 +1449,7 @@ impl Context {
                     match key.code {
                         KeyCode::Left => {
                             state.selected = if state.selected == 0 {
-                                state.labels.len() - 1
+                                state.labels.len().saturating_sub(1)
                             } else {
                                 state.selected - 1
                             };
