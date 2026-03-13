@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -24,6 +24,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+insta = "1"
 
 [features]
 async = ["dep:tokio"]
@@ -77,6 +78,10 @@ path = "examples/demo_tetris.rs"
 [[example]]
 name = "demo_infoviz"
 path = "examples/demo_infoviz.rs"
+
+[[example]]
+name = "demo_v050"
+path = "examples/demo_v050.rs"
 
 [[example]]
 name = "test_mouse"

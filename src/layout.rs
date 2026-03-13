@@ -1,6 +1,6 @@
 use crate::buffer::Buffer;
 use crate::rect::Rect;
-use crate::style::{Align, Border, Color, Constraints, Margin, Padding, Style};
+use crate::style::{Align, Border, Color, Constraints, Justify, Margin, Padding, Style};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,8 +25,10 @@ pub(crate) enum Command {
         direction: Direction,
         gap: u32,
         align: Align,
+        justify: Justify,
         border: Option<Border>,
         border_style: Style,
+        bg_color: Option<Color>,
         padding: Padding,
         margin: Margin,
         constraints: Constraints,
@@ -43,11 +45,28 @@ pub(crate) enum Command {
         title: Option<(String, Style)>,
         scroll_offset: u32,
     },
+    Link {
+        text: String,
+        url: String,
+        style: Style,
+        margin: Margin,
+        constraints: Constraints,
+    },
     EndContainer,
+    BeginOverlay {
+        modal: bool,
+    },
+    EndOverlay,
     Spacer {
         grow: u16,
     },
     FocusMarker(usize),
+}
+
+#[derive(Debug, Clone)]
+struct OverlayLayer {
+    node: LayoutNode,
+    modal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,10 +83,12 @@ pub(crate) struct LayoutNode {
     style: Style,
     pub grow: u16,
     align: Align,
+    justify: Justify,
     wrap: bool,
     gap: u32,
     border: Option<Border>,
     border_style: Style,
+    bg_color: Option<Color>,
     padding: Padding,
     margin: Margin,
     constraints: Constraints,
@@ -80,14 +101,18 @@ pub(crate) struct LayoutNode {
     content_height: u32,
     cached_wrapped: Option<Vec<String>>,
     pub(crate) focus_id: Option<usize>,
+    link_url: Option<String>,
+    overlays: Vec<OverlayLayer>,
 }
 
 #[derive(Debug, Clone)]
 struct ContainerConfig {
     gap: u32,
     align: Align,
+    justify: Justify,
     border: Option<Border>,
     border_style: Style,
+    bg_color: Option<Color>,
     padding: Padding,
     margin: Margin,
     constraints: Constraints,
@@ -112,10 +137,12 @@ impl LayoutNode {
             style,
             grow,
             align,
+            justify: Justify::Start,
             wrap,
             gap: 0,
             border: None,
             border_style: Style::new(),
+            bg_color: None,
             padding: Padding::default(),
             margin,
             constraints,
@@ -128,6 +155,8 @@ impl LayoutNode {
             content_height: 0,
             cached_wrapped: None,
             focus_id: None,
+            link_url: None,
+            overlays: Vec::new(),
         }
     }
 
@@ -138,10 +167,12 @@ impl LayoutNode {
             style: Style::new(),
             grow: config.grow,
             align: config.align,
+            justify: config.justify,
             wrap: false,
             gap: config.gap,
             border: config.border,
             border_style: config.border_style,
+            bg_color: config.bg_color,
             padding: config.padding,
             margin: config.margin,
             constraints: config.constraints,
@@ -154,6 +185,8 @@ impl LayoutNode {
             content_height: 0,
             cached_wrapped: None,
             focus_id: None,
+            link_url: None,
+            overlays: Vec::new(),
         }
     }
 
@@ -164,10 +197,12 @@ impl LayoutNode {
             style: Style::new(),
             grow,
             align: Align::Start,
+            justify: Justify::Start,
             wrap: false,
             gap: 0,
             border: None,
             border_style: Style::new(),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -180,6 +215,8 @@ impl LayoutNode {
             content_height: 0,
             cached_wrapped: None,
             focus_id: None,
+            link_url: None,
+            overlays: Vec::new(),
         }
     }
 
@@ -223,6 +260,10 @@ impl LayoutNode {
         };
 
         let width = width.max(self.constraints.min_width.unwrap_or(0));
+        let width = match self.constraints.max_width {
+            Some(max_w) => width.min(max_w),
+            None => width,
+        };
         width.saturating_add(self.margin.horizontal())
     }
 
@@ -404,25 +445,36 @@ fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
 }
 
 pub(crate) fn build_tree(commands: &[Command]) -> LayoutNode {
-    let mut root = LayoutNode::container(
-        Direction::Column,
-        ContainerConfig {
-            gap: 0,
-            align: Align::Start,
-            border: None,
-            border_style: Style::new(),
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-        },
-    );
-    build_children(&mut root, commands, &mut 0);
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut overlays: Vec<OverlayLayer> = Vec::new();
+    build_children(&mut root, commands, &mut 0, &mut overlays, false);
+    root.overlays = overlays;
     root
 }
 
-fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize) {
+fn default_container_config() -> ContainerConfig {
+    ContainerConfig {
+        gap: 0,
+        align: Align::Start,
+        justify: Justify::Start,
+        border: None,
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+    }
+}
+
+fn build_children(
+    parent: &mut LayoutNode,
+    commands: &[Command],
+    pos: &mut usize,
+    overlays: &mut Vec<OverlayLayer>,
+    stop_on_end_overlay: bool,
+) {
     let mut pending_focus_id: Option<usize> = None;
     while *pos < commands.len() {
         match &commands[*pos] {
@@ -452,12 +504,35 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                 parent.children.push(node);
                 *pos += 1;
             }
+            Command::Link {
+                text,
+                url,
+                style,
+                margin,
+                constraints,
+            } => {
+                let mut node = LayoutNode::text(
+                    text.clone(),
+                    *style,
+                    0,
+                    Align::Start,
+                    false,
+                    *margin,
+                    *constraints,
+                );
+                node.link_url = Some(url.clone());
+                node.focus_id = pending_focus_id.take();
+                parent.children.push(node);
+                *pos += 1;
+            }
             Command::BeginContainer {
                 direction,
                 gap,
                 align,
+                justify,
                 border,
                 border_style,
+                bg_color,
                 padding,
                 margin,
                 constraints,
@@ -469,8 +544,10 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                     ContainerConfig {
                         gap: *gap,
                         align: *align,
+                        justify: *justify,
                         border: *border,
                         border_style: *border_style,
+                        bg_color: *bg_color,
                         padding: *padding,
                         margin: *margin,
                         constraints: *constraints,
@@ -480,7 +557,7 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                 );
                 node.focus_id = pending_focus_id.take();
                 *pos += 1;
-                build_children(&mut node, commands, pos);
+                build_children(&mut node, commands, pos, overlays, false);
                 parent.children.push(node);
             }
             Command::BeginScrollable {
@@ -498,8 +575,10 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                     ContainerConfig {
                         gap: 0,
                         align: Align::Start,
+                        justify: Justify::Start,
                         border: *border,
                         border_style: *border_style,
+                        bg_color: None,
                         padding: *padding,
                         margin: *margin,
                         constraints: *constraints,
@@ -511,8 +590,18 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                 node.scroll_offset = *scroll_offset;
                 node.focus_id = pending_focus_id.take();
                 *pos += 1;
-                build_children(&mut node, commands, pos);
+                build_children(&mut node, commands, pos, overlays, false);
                 parent.children.push(node);
+            }
+            Command::BeginOverlay { modal } => {
+                *pos += 1;
+                let mut overlay_node =
+                    LayoutNode::container(Direction::Column, default_container_config());
+                build_children(&mut overlay_node, commands, pos, overlays, true);
+                overlays.push(OverlayLayer {
+                    node: overlay_node,
+                    modal: *modal,
+                });
             }
             Command::Spacer { grow } => {
                 parent.children.push(LayoutNode::spacer(*grow));
@@ -521,6 +610,12 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
             Command::EndContainer => {
                 *pos += 1;
                 return;
+            }
+            Command::EndOverlay => {
+                *pos += 1;
+                if stop_on_end_overlay {
+                    return;
+                }
             }
         }
     }
@@ -602,6 +697,16 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
             }
         }
     }
+
+    for overlay in &mut node.overlays {
+        let width = overlay.node.min_width().min(area.width);
+        let height = overlay.node.min_height_for_width(width).min(area.height);
+        let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
+        let y = area
+            .y
+            .saturating_add(area.height.saturating_sub(height) / 2);
+        compute(&mut overlay.node, Rect::new(x, y, width, height));
+    }
 }
 
 fn scroll_content_height(node: &LayoutNode, inner_y: u32) -> u32 {
@@ -621,6 +726,32 @@ fn scroll_content_height(node: &LayoutNode, inner_y: u32) -> u32 {
     };
 
     max_bottom.saturating_sub(inner_y)
+}
+
+fn justify_offsets(justify: Justify, remaining: u32, n: u32, gap: u32) -> (u32, u32) {
+    if n <= 1 {
+        let start = match justify {
+            Justify::Center => remaining / 2,
+            Justify::End => remaining,
+            _ => 0,
+        };
+        return (start, gap);
+    }
+
+    match justify {
+        Justify::Start => (0, gap),
+        Justify::Center => (remaining.saturating_sub((n - 1) * gap) / 2, gap),
+        Justify::End => (remaining.saturating_sub((n - 1) * gap), gap),
+        Justify::SpaceBetween => (0, remaining / (n - 1)),
+        Justify::SpaceAround => {
+            let slot = remaining / n;
+            (slot / 2, slot)
+        }
+        Justify::SpaceEvenly => {
+            let slot = remaining / (n + 1);
+            (slot, slot)
+        }
+    }
 }
 
 fn inner_area(node: &LayoutNode, area: Rect) -> Rect {
@@ -644,7 +775,8 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
         return;
     }
 
-    let total_gaps = (node.children.len() as u32 - 1) * node.gap;
+    let n = node.children.len() as u32;
+    let total_gaps = (n - 1) * node.gap;
     let available = area.width.saturating_sub(total_gaps);
     let min_widths: Vec<u32> = node
         .children
@@ -664,9 +796,9 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
 
     let mut flex_space = available.saturating_sub(fixed_width);
     let mut remaining_grow = total_grow;
-    let mut x = area.x;
 
-    for (i, child) in node.children.iter_mut().enumerate() {
+    let mut child_widths: Vec<u32> = Vec::with_capacity(node.children.len());
+    for (i, child) in node.children.iter().enumerate() {
         let w = if child.grow > 0 && total_grow > 0 {
             let share = if remaining_grow == 0 {
                 0
@@ -679,7 +811,16 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
         } else {
             min_widths[i].min(available)
         };
+        child_widths.push(w);
+    }
 
+    let total_children_width: u32 = child_widths.iter().sum();
+    let remaining = area.width.saturating_sub(total_children_width);
+    let (start_offset, inter_gap) = justify_offsets(node.justify, remaining, n, node.gap);
+
+    let mut x = area.x + start_offset;
+    for (i, child) in node.children.iter_mut().enumerate() {
+        let w = child_widths[i];
         let child_outer_h = match node.align {
             Align::Start => area.height,
             _ => child.min_height_for_width(w).min(area.height),
@@ -696,7 +837,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
             Align::End => area.height.saturating_sub(child_total_h),
         };
         child.pos.1 = child.pos.1.saturating_add(y_offset);
-        x += w + node.gap;
+        x += w + inter_gap;
     }
 }
 
@@ -705,7 +846,8 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
         return;
     }
 
-    let total_gaps = (node.children.len() as u32 - 1) * node.gap;
+    let n = node.children.len() as u32;
+    let total_gaps = (n - 1) * node.gap;
     let available = area.height.saturating_sub(total_gaps);
     let min_heights: Vec<u32> = node
         .children
@@ -725,9 +867,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
 
     let mut flex_space = available.saturating_sub(fixed_height);
     let mut remaining_grow = total_grow;
-    let mut y = area.y;
 
-    for (i, child) in node.children.iter_mut().enumerate() {
+    let mut child_heights: Vec<u32> = Vec::with_capacity(node.children.len());
+    for (i, child) in node.children.iter().enumerate() {
         let h = if child.grow > 0 && total_grow > 0 {
             let share = if remaining_grow == 0 {
                 0
@@ -740,7 +882,16 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
         } else {
             min_heights[i].min(available)
         };
+        child_heights.push(h);
+    }
 
+    let total_children_height: u32 = child_heights.iter().sum();
+    let remaining = area.height.saturating_sub(total_children_height);
+    let (start_offset, inter_gap) = justify_offsets(node.justify, remaining, n, node.gap);
+
+    let mut y = area.y + start_offset;
+    for (i, child) in node.children.iter_mut().enumerate() {
+        let h = child_heights[i];
         let child_outer_w = match node.align {
             Align::Start => area.width,
             _ => child.min_width().min(area.width),
@@ -757,12 +908,28 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
             Align::End => area.width.saturating_sub(child_total_w),
         };
         child.pos.0 = child.pos.0.saturating_add(x_offset);
-        y += h + node.gap;
+        y += h + inter_gap;
     }
 }
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
-    render_inner(node, buf, 0);
+    render_inner(node, buf, 0, None);
+    buf.clip_stack.clear();
+    for overlay in &node.overlays {
+        if overlay.modal {
+            dim_entire_buffer(buf);
+        }
+        render_inner(&overlay.node, buf, 0, None);
+    }
+}
+
+fn dim_entire_buffer(buf: &mut Buffer) {
+    for y in buf.area.y..buf.area.bottom() {
+        for x in buf.area.x..buf.area.right() {
+            let cell = buf.get_mut(x, y);
+            cell.style.modifiers |= crate::style::Modifiers::DIM;
+        }
+    }
 }
 
 pub(crate) fn render_debug_overlay(node: &LayoutNode, buf: &mut Buffer) {
@@ -934,7 +1101,7 @@ fn visible_area(node: &LayoutNode, y_offset: u32) -> Option<Rect> {
     Some(Rect::new(node.pos.0, clamped_y, node.size.0, clamped_h))
 }
 
-fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
+fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: Option<Color>) {
     if node.size.0 == 0 || node.size.1 == 0 {
         return;
     }
@@ -955,6 +1122,10 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
     match node.kind {
         NodeKind::Text => {
             if let Some(ref text) = node.content {
+                let mut style = node.style;
+                if style.bg.is_none() {
+                    style.bg = parent_bg;
+                }
                 if node.wrap {
                     let fallback;
                     let lines = if let Some(cached) = &node.cached_wrapped {
@@ -982,7 +1153,7 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
                             node.pos.0.saturating_add(x_offset),
                             line_y as u32,
                             line,
-                            node.style,
+                            style,
                         );
                     }
                 } else {
@@ -999,18 +1170,29 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
                     } else {
                         0
                     };
-                    buf.set_string(
-                        node.pos.0.saturating_add(x_offset),
-                        sy as u32,
-                        text,
-                        node.style,
-                    );
+                    let draw_x = node.pos.0.saturating_add(x_offset);
+                    if let Some(ref url) = node.link_url {
+                        buf.set_string_linked(draw_x, sy as u32, text, style, url);
+                    } else {
+                        buf.set_string(draw_x, sy as u32, text, style);
+                    }
                 }
             }
         }
         NodeKind::Spacer => {}
         NodeKind::Container(_) => {
-            render_container_border(node, buf, y_offset);
+            if let Some(color) = node.bg_color {
+                if let Some(area) = visible_area(node, y_offset) {
+                    let fill_style = Style::new().bg(color);
+                    for y in area.y..area.bottom() {
+                        for x in area.x..area.right() {
+                            buf.set_string(x, y, " ", fill_style);
+                        }
+                    }
+                }
+            }
+            let child_bg = node.bg_color.or(parent_bg);
+            render_container_border(node, buf, y_offset, child_bg);
             if node.is_scrollable {
                 let Some(area) = visible_area(node, y_offset) else {
                     return;
@@ -1026,10 +1208,10 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
                     if child_bottom <= render_y_start || child_top >= render_y_end {
                         continue;
                     }
-                    render_inner(child, buf, child_offset);
+                    render_inner(child, buf, child_offset, child_bg);
                 }
                 buf.pop_clip();
-                render_scroll_indicators(node, inner, buf);
+                render_scroll_indicators(node, inner, buf, child_bg);
             } else {
                 let Some(area) = visible_area(node, y_offset) else {
                     return;
@@ -1037,7 +1219,7 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
                 let clip = inner_area(node, area);
                 buf.push_clip(clip);
                 for child in &node.children {
-                    render_inner(child, buf, y_offset);
+                    render_inner(child, buf, y_offset, child_bg);
                 }
                 buf.pop_clip();
             }
@@ -1045,7 +1227,12 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
     }
 }
 
-fn render_container_border(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
+fn render_container_border(
+    node: &LayoutNode,
+    buf: &mut Buffer,
+    y_offset: u32,
+    inherit_bg: Option<Color>,
+) {
     let Some(border) = node.border else {
         return;
     };
@@ -1057,6 +1244,11 @@ fn render_container_border(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
         return;
     }
 
+    let mut style = node.border_style;
+    if style.bg.is_none() {
+        style.bg = inherit_bg;
+    }
+
     let top_i = screen_y(node.pos.1, y_offset);
     let bottom_i = top_i + h as i64 - 1;
     if bottom_i < 0 {
@@ -1066,76 +1258,93 @@ fn render_container_border(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
 
     if w == 1 && h == 1 {
         if top_i >= 0 {
-            buf.set_char(x, top_i as u32, chars.tl, node.border_style);
+            buf.set_char(x, top_i as u32, chars.tl, style);
         }
     } else if h == 1 {
         if top_i >= 0 {
             let y = top_i as u32;
             for xx in x..=right {
-                buf.set_char(xx, y, chars.h, node.border_style);
+                buf.set_char(xx, y, chars.h, style);
             }
         }
     } else if w == 1 {
         let vert_start = (top_i.max(0)) as u32;
         let vert_end = bottom_i as u32;
         for yy in vert_start..=vert_end {
-            buf.set_char(x, yy, chars.v, node.border_style);
+            buf.set_char(x, yy, chars.v, style);
         }
     } else {
         if top_i >= 0 {
             let y = top_i as u32;
-            buf.set_char(x, y, chars.tl, node.border_style);
-            buf.set_char(right, y, chars.tr, node.border_style);
+            buf.set_char(x, y, chars.tl, style);
+            buf.set_char(right, y, chars.tr, style);
             for xx in (x + 1)..right {
-                buf.set_char(xx, y, chars.h, node.border_style);
+                buf.set_char(xx, y, chars.h, style);
             }
         }
 
         let bot = bottom_i as u32;
-        buf.set_char(x, bot, chars.bl, node.border_style);
-        buf.set_char(right, bot, chars.br, node.border_style);
+        buf.set_char(x, bot, chars.bl, style);
+        buf.set_char(right, bot, chars.br, style);
         for xx in (x + 1)..right {
-            buf.set_char(xx, bot, chars.h, node.border_style);
+            buf.set_char(xx, bot, chars.h, style);
         }
 
         let vert_start = ((top_i + 1).max(0)) as u32;
         let vert_end = bottom_i as u32;
         for yy in vert_start..vert_end {
-            buf.set_char(x, yy, chars.v, node.border_style);
-            buf.set_char(right, yy, chars.v, node.border_style);
+            buf.set_char(x, yy, chars.v, style);
+            buf.set_char(right, yy, chars.v, style);
         }
     }
 
     if top_i >= 0 {
         if let Some((title, title_style)) = &node.title {
+            let mut ts = *title_style;
+            if ts.bg.is_none() {
+                ts.bg = inherit_bg;
+            }
             let y = top_i as u32;
             let title_x = x.saturating_add(2);
             if title_x <= right {
                 let max_width = (right - title_x + 1) as usize;
                 let trimmed: String = title.chars().take(max_width).collect();
-                buf.set_string(title_x, y, &trimmed, *title_style);
+                buf.set_string(title_x, y, &trimmed, ts);
             }
         }
     }
 }
 
-fn render_scroll_indicators(node: &LayoutNode, inner: Rect, buf: &mut Buffer) {
+fn render_scroll_indicators(
+    node: &LayoutNode,
+    inner: Rect,
+    buf: &mut Buffer,
+    inherit_bg: Option<Color>,
+) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
 
+    let mut style = node.border_style;
+    if style.bg.is_none() {
+        style.bg = inherit_bg;
+    }
+
     let indicator_x = inner.right() - 1;
     if node.scroll_offset > 0 {
-        buf.set_char(indicator_x, inner.y, '▲', node.border_style);
+        buf.set_char(indicator_x, inner.y, '▲', style);
     }
     if node.scroll_offset.saturating_add(inner.height) < node.content_height {
-        buf.set_char(indicator_x, inner.bottom() - 1, '▼', node.border_style);
+        buf.set_char(indicator_x, inner.bottom() - 1, '▼', style);
     }
 }
 
 pub(crate) fn collect_scroll_infos(node: &LayoutNode) -> Vec<(u32, u32)> {
     let mut infos = Vec::new();
     collect_scroll_infos_inner(node, &mut infos);
+    for overlay in &node.overlays {
+        collect_scroll_infos_inner(&overlay.node, &mut infos);
+    }
     infos
 }
 
@@ -1143,6 +1352,9 @@ pub(crate) fn collect_hit_areas(node: &LayoutNode) -> Vec<Rect> {
     let mut areas = Vec::new();
     for child in &node.children {
         collect_hit_areas_inner(child, &mut areas);
+    }
+    for overlay in &node.overlays {
+        collect_hit_areas_inner(&overlay.node, &mut areas);
     }
     areas
 }
@@ -1158,7 +1370,7 @@ fn collect_scroll_infos_inner(node: &LayoutNode, infos: &mut Vec<(u32, u32)>) {
 }
 
 fn collect_hit_areas_inner(node: &LayoutNode, areas: &mut Vec<Rect>) {
-    if matches!(node.kind, NodeKind::Container(_)) {
+    if matches!(node.kind, NodeKind::Container(_)) || node.link_url.is_some() {
         areas.push(Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1));
     }
     for child in &node.children {
@@ -1170,6 +1382,9 @@ pub(crate) fn collect_content_areas(node: &LayoutNode) -> Vec<(Rect, Rect)> {
     let mut areas = Vec::new();
     for child in &node.children {
         collect_content_areas_inner(child, &mut areas);
+    }
+    for overlay in &node.overlays {
+        collect_content_areas_inner(&overlay.node, &mut areas);
     }
     areas
 }
@@ -1192,6 +1407,9 @@ fn collect_content_areas_inner(node: &LayoutNode, areas: &mut Vec<(Rect, Rect)>)
 pub(crate) fn collect_focus_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
     let mut rects = Vec::new();
     collect_focus_rects_inner(node, &mut rects);
+    for overlay in &node.overlays {
+        collect_focus_rects_inner(&overlay.node, &mut rects);
+    }
     rects
 }
 
@@ -1248,7 +1466,7 @@ mod tests {
     fn diagnostic_demo_layout() {
         use super::{compute, ContainerConfig, Direction, LayoutNode};
         use crate::rect::Rect;
-        use crate::style::{Align, Border, Constraints, Margin, Padding, Style};
+        use crate::style::{Align, Border, Constraints, Justify, Margin, Padding, Style};
 
         // Build the tree structure matching demo.rs:
         // Root (Column, grow:0)
@@ -1267,8 +1485,10 @@ mod tests {
             ContainerConfig {
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new(),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -1283,8 +1503,10 @@ mod tests {
             ContainerConfig {
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: Some(Border::Rounded),
                 border_style: Style::new(),
+                bg_color: None,
                 padding: Padding::all(1),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -1321,8 +1543,10 @@ mod tests {
             ContainerConfig {
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new(),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -1502,8 +1726,10 @@ mod tests {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: Some(Border::Single),
                 border_style: Style::new(),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Default::default(),
                 constraints: Default::default(),

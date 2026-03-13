@@ -1,0 +1,9 @@
+---
+source: tests/snapshots.rs
+assertion_line: 21
+expression: tb
+---
+╭────────────────────────────╮
+│title                       │
+│body                        │
+╰────────────────────────────╯

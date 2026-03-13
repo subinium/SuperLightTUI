@@ -117,6 +117,7 @@ impl TestBackend {
             false,
             Theme::dark(),
             None,
+            false,
         );
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
@@ -147,6 +148,7 @@ impl TestBackend {
             false,
             Theme::dark(),
             None,
+            false,
         );
         ctx.process_focus_keys();
         f(&mut ctx);
@@ -212,5 +214,26 @@ impl TestBackend {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Return the full rendered buffer as a multi-line string.
+    ///
+    /// Each row is trimmed of trailing spaces and joined with newlines.
+    /// Useful for snapshot testing with `insta::assert_snapshot!`.
+    pub fn to_string_trimmed(&self) -> String {
+        let mut lines = Vec::with_capacity(self.height as usize);
+        for y in 0..self.height {
+            lines.push(self.line(y));
+        }
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+}
+
+impl std::fmt::Display for TestBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string_trimmed())
     }
 }

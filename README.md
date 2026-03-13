@@ -111,6 +111,10 @@ ui.scrollable(&mut scroll).col(|ui| { });    // scroll container
 ui.toast(&mut toasts);                       // notifications
 ui.separator();                              // horizontal line
 ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
+ui.link("Docs", "https://docs.rs/slt");      // clickable hyperlink (OSC 8)
+ui.modal(|ui| { ui.text("overlay"); });      // modal with dim backdrop
+ui.overlay(|ui| { ui.text("floating"); });   // overlay without backdrop
+ui.form_field(&mut field);                   // labeled input with validation
 ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // line/scatter/bar chart
 ui.histogram(&values, 40, 12);               // auto-binned histogram
 ui.bar_chart(&data, 24);                     // horizontal bars
@@ -174,6 +178,7 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 | Margin | `.m(1)`, `.mx(2)`, `.my(1)` |
 | Fixed size | `.w(20)`, `.h(10)` |
 | Constraints | `.min_w(10)`, `.max_w(60)` |
+| Justify | `.space_between()`, `.space_around()`, `.space_evenly()` |
 | Text wrapping | `ui.text_wrap("long text...")` |
 | Borders with titles | `.border(Border::Rounded).title("Panel")` |
 
@@ -207,6 +212,7 @@ Dark and light presets. Custom themes with 13 color slots. All widgets inherit a
 <summary><b>Rendering</b></summary>
 
 - **Double-buffer diff** — only changed cells hit the terminal
+- **Synchronized output** — DECSET 2026 prevents tearing on supported terminals
 - **u32 coordinates** — no overflow on large terminals
 - **Clipping** — content outside container bounds is hidden
 - **Viewport culling** — off-screen widgets are skipped entirely
@@ -225,9 +231,20 @@ let value = tween.value(ui.tick());
 
 let mut spring = Spring::new(0.0, 180.0, 12.0);
 spring.set_target(100.0);
+
+let mut kf = Keyframes::new(120)
+    .stop(0.0, 0.0).stop(0.5, 100.0).stop(1.0, 50.0)
+    .loop_mode(LoopMode::PingPong);
+
+let mut seq = Sequence::new()
+    .then(0.0, 50.0, 30, ease_out_quad)
+    .then(50.0, 100.0, 30, ease_in_out_cubic);
+
+let mut stagger = Stagger::new(0.0, 1.0, 40).delay(8);
+let val = stagger.value(tick, item_index);
 ```
 
-Tween with 9 easing functions. Spring with configurable stiffness and damping.
+Tween with 9 easing functions. Spring physics. Keyframe timelines with loop modes. Sequence chains. Stagger for list animations.
 
 </details>
 
@@ -274,6 +291,74 @@ ui.error_boundary_with(
 ```
 
 Catch widget panics without crashing the app. Partial commands are rolled back and a fallback is rendered.
+
+</details>
+
+<details>
+<summary><b>Input Validation</b></summary>
+
+```rust
+let mut email = TextInputState::with_placeholder("you@example.com");
+ui.text_input(&mut email);
+email.validate(|v| {
+    if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
+});
+```
+
+Call `.validate()` after `text_input()` to show inline error messages. Works with `form_field()` for grouped form validation.
+
+</details>
+
+<details>
+<summary><b>Modal & Overlay</b></summary>
+
+```rust
+ui.modal(|ui| {
+    ui.bordered(Border::Rounded).pad(2).col(|ui| {
+        ui.text("Confirm?").bold();
+        if ui.button("OK") { show = false; }
+    });
+});
+
+ui.overlay(|ui| {
+    ui.row(|ui| {
+        ui.spacer();
+        ui.text("Status: Online").fg(Color::Green);
+    });
+});
+```
+
+`modal()` dims the background and renders content on top. `overlay()` renders floating content without dimming. Both support full layout and interaction.
+
+</details>
+
+<details>
+<summary><b>Hyperlinks</b></summary>
+
+```rust
+ui.link("Documentation", "https://docs.rs/superlighttui");
+```
+
+Renders clickable OSC 8 hyperlinks. Ctrl/Cmd+click opens in browser on supporting terminals (iTerm2, WezTerm, Ghostty, Windows Terminal).
+
+</details>
+
+<details>
+<summary><b>Snapshot Testing</b></summary>
+
+```rust
+use slt::TestBackend;
+
+let mut backend = TestBackend::new(40, 10);
+backend.run(|ui| {
+    ui.bordered(Border::Rounded).pad(1).col(|ui| {
+        ui.text("Hello");
+    });
+});
+insta::assert_snapshot!(backend.to_string_trimmed());
+```
+
+Use with [insta](https://crates.io/crates/insta) for snapshot-based UI regression tests.
 
 </details>
 
@@ -326,7 +411,8 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_website | `cargo run --example demo_website` | Website in terminal |
 | demo_tetris | `cargo run --example demo_tetris` | Playable Tetris |
 | inline | `cargo run --example inline` | Inline mode |
-| anim | `cargo run --example anim` | Tween + Spring |
+| anim | `cargo run --example anim` | Tween + Spring + Keyframes |
+| demo_v050 | `cargo run --example demo_v050` | v0.5.0 features |
 | demo_infoviz | `cargo run --example demo_infoviz` | Data visualization |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
 
@@ -338,7 +424,7 @@ Closure → Context collects Commands → build_tree() → flexbox layout → di
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
-~9,100 lines of Rust. 13 source files. No macros, no code generation, no build scripts.
+~11,300 lines of Rust. 13 source files. No macros, no code generation, no build scripts.
 
 ## Contributing
 

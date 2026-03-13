@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+assertion_line: 34
+expression: tb
+---
+left                     right

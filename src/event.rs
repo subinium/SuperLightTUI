@@ -13,6 +13,10 @@ pub enum Event {
     Resize(u32, u32),
     /// Pasted text (bracketed paste). May contain newlines.
     Paste(String),
+    /// The terminal window gained focus.
+    FocusGained,
+    /// The terminal window lost focus. Used to clear hover state.
+    FocusLost,
 }
 
 /// A keyboard event with key code and modifiers.
@@ -211,6 +215,7 @@ pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
             Some(Event::Resize(cols as u32, rows as u32))
         }
         crossterm::event::Event::Paste(s) => Some(Event::Paste(s)),
-        _ => None,
+        crossterm::event::Event::FocusGained => Some(Event::FocusGained),
+        crossterm::event::Event::FocusLost => Some(Event::FocusLost),
     }
 }

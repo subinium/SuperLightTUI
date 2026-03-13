@@ -16,7 +16,7 @@ pub struct Buffer {
     pub area: Rect,
     /// Flat row-major storage of all cells. Length equals `area.width * area.height`.
     pub content: Vec<Cell>,
-    clip_stack: Vec<Rect>,
+    pub(crate) clip_stack: Vec<Rect>,
 }
 
 impl Buffer {
@@ -137,6 +137,64 @@ impl Buffer {
                     let next = self.get_mut(next_x, y);
                     next.symbol.clear();
                     next.style = style;
+                }
+            }
+
+            x = x.saturating_add(char_width);
+        }
+    }
+
+    /// Write a hyperlinked string into the buffer starting at `(x, y)`.
+    ///
+    /// Like [`Buffer::set_string`] but attaches an OSC 8 hyperlink URL to each
+    /// cell. The terminal renders these cells as clickable links.
+    pub fn set_string_linked(&mut self, mut x: u32, y: u32, s: &str, style: Style, url: &str) {
+        if y >= self.area.bottom() {
+            return;
+        }
+        let clip = self.effective_clip().copied();
+        let link = Some(url.to_string());
+        for ch in s.chars() {
+            if x >= self.area.right() {
+                break;
+            }
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+            if char_width == 0 {
+                if x > self.area.x {
+                    let prev_in_clip = clip.map_or(true, |clip| {
+                        (x - 1) >= clip.x
+                            && (x - 1) < clip.right()
+                            && y >= clip.y
+                            && y < clip.bottom()
+                    });
+                    if prev_in_clip {
+                        self.get_mut(x - 1, y).symbol.push(ch);
+                    }
+                }
+                continue;
+            }
+
+            let in_clip = clip.map_or(true, |clip| {
+                x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
+            });
+
+            if !in_clip {
+                x = x.saturating_add(char_width);
+                continue;
+            }
+
+            let cell = self.get_mut(x, y);
+            cell.set_char(ch);
+            cell.set_style(style);
+            cell.hyperlink = link.clone();
+
+            if char_width > 1 {
+                let next_x = x + 1;
+                if next_x < self.area.right() {
+                    let next = self.get_mut(next_x, y);
+                    next.symbol.clear();
+                    next.style = style;
+                    next.hyperlink = link.clone();
                 }
             }
 

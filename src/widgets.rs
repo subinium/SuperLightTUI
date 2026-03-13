@@ -1,5 +1,7 @@
 use unicode_width::UnicodeWidthStr;
 
+type FormValidator = fn(&str) -> Result<(), String>;
+
 /// State for a single-line text input widget.
 ///
 /// Pass a mutable reference to `Context::text_input` each frame. The widget
@@ -23,6 +25,8 @@ pub struct TextInputState {
     /// Placeholder text shown when `value` is empty.
     pub placeholder: String,
     pub max_length: Option<usize>,
+    /// The most recent validation error message, if any.
+    pub validation_error: Option<String>,
 }
 
 impl TextInputState {
@@ -33,6 +37,7 @@ impl TextInputState {
             cursor: 0,
             placeholder: String::new(),
             max_length: None,
+            validation_error: None,
         }
     }
 
@@ -48,9 +53,101 @@ impl TextInputState {
         self.max_length = Some(len);
         self
     }
+
+    /// Validate the current value and store the latest error message.
+    ///
+    /// Sets [`TextInputState::validation_error`] to `None` when validation
+    /// succeeds, or to `Some(error)` when validation fails.
+    pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
+        self.validation_error = validator(&self.value).err();
+    }
 }
 
 impl Default for TextInputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A single form field with label and validation.
+pub struct FormField {
+    /// Field label shown above the input.
+    pub label: String,
+    /// Text input state for this field.
+    pub input: TextInputState,
+    /// Validation error shown below the input when present.
+    pub error: Option<String>,
+}
+
+impl FormField {
+    /// Create a new form field with the given label.
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            input: TextInputState::new(),
+            error: None,
+        }
+    }
+
+    /// Set placeholder text for this field's input.
+    pub fn placeholder(mut self, p: impl Into<String>) -> Self {
+        self.input.placeholder = p.into();
+        self
+    }
+}
+
+/// State for a form with multiple fields.
+pub struct FormState {
+    /// Ordered list of form fields.
+    pub fields: Vec<FormField>,
+    /// Whether the form has been successfully submitted.
+    pub submitted: bool,
+}
+
+impl FormState {
+    /// Create an empty form state.
+    pub fn new() -> Self {
+        Self {
+            fields: Vec::new(),
+            submitted: false,
+        }
+    }
+
+    /// Add a field and return the updated form for chaining.
+    pub fn field(mut self, field: FormField) -> Self {
+        self.fields.push(field);
+        self
+    }
+
+    /// Validate all fields with the given validators.
+    ///
+    /// Returns `true` when all validations pass.
+    pub fn validate(&mut self, validators: &[FormValidator]) -> bool {
+        let mut all_valid = true;
+        for (i, field) in self.fields.iter_mut().enumerate() {
+            if let Some(validator) = validators.get(i) {
+                match validator(&field.input.value) {
+                    Ok(()) => field.error = None,
+                    Err(msg) => {
+                        field.error = Some(msg);
+                        all_valid = false;
+                    }
+                }
+            }
+        }
+        all_valid
+    }
+
+    /// Get field value by index.
+    pub fn value(&self, index: usize) -> &str {
+        self.fields
+            .get(index)
+            .map(|f| f.input.value.as_str())
+            .unwrap_or("")
+    }
+}
+
+impl Default for FormState {
     fn default() -> Self {
         Self::new()
     }
@@ -157,11 +254,15 @@ impl Default for ToastState {
 pub struct TextareaState {
     /// The lines of text, one entry per line.
     pub lines: Vec<String>,
-    /// Row index of the cursor (0-based).
+    /// Row index of the cursor (0-based, logical line).
     pub cursor_row: usize,
     /// Column index of the cursor within the current row (character index).
     pub cursor_col: usize,
     pub max_length: Option<usize>,
+    /// When set, lines longer than this display-column width are soft-wrapped.
+    pub wrap_width: Option<u32>,
+    /// First visible visual line (managed internally by `textarea()`).
+    pub scroll_offset: usize,
 }
 
 impl TextareaState {
@@ -172,6 +273,8 @@ impl TextareaState {
             cursor_row: 0,
             cursor_col: 0,
             max_length: None,
+            wrap_width: None,
+            scroll_offset: 0,
         }
     }
 
@@ -191,10 +294,17 @@ impl TextareaState {
         }
         self.cursor_row = 0;
         self.cursor_col = 0;
+        self.scroll_offset = 0;
     }
 
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
+        self
+    }
+
+    /// Enable soft word-wrap at the given display-column width.
+    pub fn word_wrap(mut self, width: u32) -> Self {
+        self.wrap_width = Some(width);
         self
     }
 }
@@ -432,4 +542,26 @@ impl Default for ScrollState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Visual variant for buttons.
+///
+/// Controls the color scheme used when rendering a button. Pass to
+/// [`Context::button_with`] to create styled button variants.
+///
+/// - `Default` — theme text color, primary when focused (same as `button()`)
+/// - `Primary` — primary color background with contrasting text
+/// - `Danger` — error/red color for destructive actions
+/// - `Outline` — bordered appearance without fill
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ButtonVariant {
+    /// Standard button style.
+    #[default]
+    Default,
+    /// Filled button with primary background color.
+    Primary,
+    /// Filled button with error/danger background color.
+    Danger,
+    /// Bordered button without background fill.
+    Outline,
 }

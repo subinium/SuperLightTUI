@@ -1,5 +1,5 @@
-use slt::anim::ease_in_out_cubic;
-use slt::{Border, Context, KeyCode, Spring, Tween};
+use slt::anim::{ease_in_out_cubic, ease_out_bounce, ease_out_quad};
+use slt::{Border, Color, Context, KeyCode, Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
 
 fn main() -> std::io::Result<()> {
     let mut progress_target = 0.2;
@@ -9,6 +9,27 @@ fn main() -> std::io::Result<()> {
 
     let mut spring_target = 0.0;
     let mut spring = Spring::new(0.0, 0.15, 0.85);
+
+    let mut kf = Keyframes::new(120)
+        .stop(0.0, 0.0)
+        .stop(0.3, 100.0)
+        .stop(0.7, 20.0)
+        .stop(1.0, 80.0)
+        .loop_mode(LoopMode::PingPong);
+
+    let mut seq = Sequence::new()
+        .then(0.0, 80.0, 40, ease_out_quad)
+        .then(80.0, 20.0, 30, ease_in_out_cubic)
+        .then(20.0, 60.0, 20, ease_out_bounce)
+        .loop_mode(LoopMode::Repeat);
+
+    let mut stagger = Stagger::new(0.0, 1.0, 30)
+        .delay(6)
+        .easing(ease_out_quad)
+        .items(5)
+        .loop_mode(slt::LoopMode::Repeat);
+
+    let mut anim_started = false;
 
     slt::run(|ui: &mut Context| {
         if ui.key('q') {
@@ -20,6 +41,26 @@ fn main() -> std::io::Result<()> {
             progress_target = if progress_target < 0.5 { 0.9 } else { 0.1 };
             progress_tween = Tween::new(current, progress_target, 12).easing(ease_in_out_cubic);
             progress_tween.reset(ui.tick());
+        }
+
+        if ui.key('r') {
+            let t = ui.tick();
+            kf.reset(t);
+            seq.reset(t);
+            stagger.reset(t);
+            anim_started = true;
+            progress_tween = Tween::new(0.1, 0.9, 12).easing(ease_in_out_cubic);
+            progress_tween.reset(t);
+            spring_target = 0.0;
+            spring = Spring::new(0.0, 0.15, 0.85);
+        }
+
+        if !anim_started {
+            let t = ui.tick();
+            kf.reset(t);
+            seq.reset(t);
+            stagger.reset(t);
+            anim_started = true;
         }
 
         if ui.key_code(KeyCode::Up) || ui.key('k') {
@@ -35,7 +76,7 @@ fn main() -> std::io::Result<()> {
         let progress = progress_tween.value(ui.tick());
 
         ui.bordered(Border::Rounded)
-            .title("Animation Primitives")
+            .title("Animation Primitives — SLT v0.5.0")
             .pad(1)
             .gap(1)
             .col(|ui| {
@@ -68,7 +109,55 @@ fn main() -> std::io::Result<()> {
                         ));
                     });
 
-                ui.text("space tween | up/down spring | q quit").dim();
+                ui.bordered(Border::Single)
+                    .title("Keyframes")
+                    .pad(1)
+                    .gap(1)
+                    .col(|ui| {
+                        let kf_val = kf.value(ui.tick());
+                        ui.progress(kf_val / 100.0);
+                        ui.text(format!(
+                            "value {:.1} | done {} | mode PingPong",
+                            kf_val,
+                            kf.is_done()
+                        ));
+                        ui.text("4 stops: 0→100→20→80").dim();
+                    });
+
+                ui.bordered(Border::Single)
+                    .title("Sequence")
+                    .pad(1)
+                    .gap(1)
+                    .col(|ui| {
+                        let seq_val = seq.value(ui.tick());
+                        ui.progress(seq_val / 100.0);
+                        ui.text(format!(
+                            "value {:.1} | done {} | mode Repeat",
+                            seq_val,
+                            seq.is_done()
+                        ));
+                        ui.text("3 chained: 0→80→20→60").dim();
+                    });
+
+                ui.bordered(Border::Single)
+                    .title("Stagger")
+                    .pad(1)
+                    .gap(1)
+                    .col(|ui| {
+                        let labels = ["Item A", "Item B", "Item C", "Item D", "Item E"];
+                        for (i, label) in labels.iter().enumerate() {
+                            let val = stagger.value(ui.tick(), i);
+                            ui.row(|ui| {
+                                ui.text(format!("{label}:"));
+                                ui.progress(val);
+                            });
+                        }
+                        ui.text("5 items, 6-tick delay each").dim();
+                    });
+
+                ui.text("space tween | up/down spring | r restart all | q quit")
+                    .dim()
+                    .fg(Color::Cyan);
             });
     })
 }

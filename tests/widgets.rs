@@ -102,6 +102,116 @@ fn text_input_renders_value() {
 }
 
 #[test]
+fn text_input_validation_error_renders() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.validation_error = Some("too short".into());
+    tb.render(|ui| {
+        ui.text_input(&mut input);
+    });
+    tb.assert_contains("⚠ too short");
+}
+
+#[test]
+fn text_input_validate_method() {
+    let mut input = TextInputState::new();
+    input.value = "abc".into();
+
+    input.validate(|value| {
+        if value.len() >= 5 {
+            Ok(())
+        } else {
+            Err("too short".into())
+        }
+    });
+    assert_eq!(input.validation_error.as_deref(), Some("too short"));
+
+    input.value = "abcdef".into();
+    input.validate(|value| {
+        if value.len() >= 5 {
+            Ok(())
+        } else {
+            Err("too short".into())
+        }
+    });
+    assert_eq!(input.validation_error, None);
+}
+
+#[test]
+fn form_renders_fields() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut form = FormState::new()
+        .field(FormField::new("Email").placeholder("you@example.com"))
+        .field(FormField::new("Password").placeholder("********"));
+
+    tb.render(|ui| {
+        ui.form(&mut form, |ui, form| {
+            for field in form.fields.iter_mut() {
+                ui.form_field(field);
+            }
+        });
+    });
+
+    tb.assert_contains("Email");
+    tb.assert_contains("Password");
+}
+
+#[test]
+fn form_validation() {
+    let mut form = FormState::new()
+        .field(FormField::new("Email"))
+        .field(FormField::new("Password"));
+
+    form.fields[0].input.value = "invalid-email".into();
+    form.fields[1].input.value = "short".into();
+
+    let valid = form.validate(&[
+        |v| {
+            if v.contains('@') {
+                Ok(())
+            } else {
+                Err("invalid email".into())
+            }
+        },
+        |v| {
+            if v.len() >= 8 {
+                Ok(())
+            } else {
+                Err("too short".into())
+            }
+        },
+    ]);
+
+    assert!(!valid);
+    assert_eq!(form.fields[0].error.as_deref(), Some("invalid email"));
+    assert_eq!(form.fields[1].error.as_deref(), Some("too short"));
+
+    form.fields[0].input.value = "user@example.com".into();
+    form.fields[1].input.value = "long-enough".into();
+
+    let valid = form.validate(&[
+        |v| {
+            if v.contains('@') {
+                Ok(())
+            } else {
+                Err("invalid email".into())
+            }
+        },
+        |v| {
+            if v.len() >= 8 {
+                Ok(())
+            } else {
+                Err("too short".into())
+            }
+        },
+    ]);
+
+    assert!(valid);
+    assert_eq!(form.fields[0].error, None);
+    assert_eq!(form.fields[1].error, None);
+}
+
+#[test]
 fn list_renders_items() {
     let mut tb = TestBackend::new(40, 10);
     let mut list = ListState::new(vec!["Apple", "Banana", "Cherry"]);
@@ -677,4 +787,319 @@ fn text_renders_korean() {
         ui.text("한글 텍스트 렌더링");
     });
     tb.assert_contains("한글 텍스트 렌더링");
+}
+
+#[test]
+fn link_renders_text() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.link("SLT Docs", "https://docs.rs/superlighttui");
+    });
+    tb.assert_contains("SLT Docs");
+}
+
+#[test]
+fn link_style_chaining() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.link("Bold Link", "https://example.com").bold();
+    });
+    tb.assert_contains("Bold Link");
+}
+
+#[test]
+fn modal_renders_on_top() {
+    let mut tb = TestBackend::new(5, 1);
+    tb.render(|ui| {
+        ui.text("aaaaa");
+        ui.modal(|ui| {
+            ui.text("TOP");
+        });
+    });
+
+    let line = tb.line(0);
+    assert!(
+        line.contains("TOP"),
+        "Expected modal content on top, got: {line}"
+    );
+}
+
+#[test]
+fn overlay_renders_content() {
+    let mut tb = TestBackend::new(6, 1);
+    tb.render(|ui| {
+        ui.text("aaaaaa");
+        ui.overlay(|ui| {
+            ui.text("OVR");
+        });
+    });
+
+    let line = tb.line(0);
+    assert!(
+        line.contains("OVR"),
+        "Expected overlay content to render, got: {line}"
+    );
+}
+
+#[test]
+fn link_sets_hyperlink_on_cells() {
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        ui.link("Click Me", "https://example.com");
+    });
+    tb.assert_contains("Click Me");
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(
+        cell.hyperlink.as_deref(),
+        Some("https://example.com"),
+        "Expected hyperlink URL on link cell, got: {:?}",
+        cell.hyperlink
+    );
+    let empty_cell = tb.buffer().get(20, 0);
+    assert!(
+        empty_cell.hyperlink.is_none(),
+        "Non-link cell should not have hyperlink"
+    );
+}
+
+#[test]
+fn link_default_style_is_underlined_cyan() {
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        ui.link("Docs", "https://docs.rs");
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert!(
+        cell.style
+            .modifiers
+            .contains(slt::style::Modifiers::UNDERLINE),
+        "Link should be underlined by default"
+    );
+    assert_eq!(
+        cell.style.fg,
+        Some(slt::Color::Cyan),
+        "Link should be cyan (theme.primary) by default"
+    );
+}
+
+#[test]
+fn modal_dims_background_content() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.text("Background Text");
+        ui.modal(|ui| {
+            ui.text("Modal Content");
+        });
+    });
+    let bg_cell = tb.buffer().get(0, 0);
+    assert!(
+        bg_cell.style.modifiers.contains(slt::style::Modifiers::DIM),
+        "Background should be dimmed when modal is active, got modifiers: {:?}",
+        bg_cell.style.modifiers
+    );
+    tb.assert_contains("Modal Content");
+}
+
+#[test]
+fn modal_renders_centered_on_large_screen() {
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.text("background");
+        ui.modal(|ui| {
+            ui.bordered(slt::Border::Rounded).pad(1).col(|ui| {
+                ui.text("Hello Modal");
+                if ui.button("OK") {}
+            });
+        });
+    });
+    tb.assert_contains("Hello Modal");
+    tb.assert_contains("OK");
+}
+
+#[test]
+fn modal_button_activates_with_enter() {
+    use slt::{EventBuilder, KeyCode};
+    let mut activated = false;
+    let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut tb = TestBackend::new(40, 10);
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.modal(|ui| {
+            if ui.button("Confirm") {
+                activated = true;
+            }
+        });
+    });
+    assert!(activated, "Button inside modal should activate with Enter");
+}
+
+#[test]
+fn textarea_word_wrap_renders_wrapped_lines() {
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(10);
+    state.set_value("abcdefghijklmno");
+    tb.render(|ui| {
+        ui.textarea(&mut state, 5);
+    });
+    tb.assert_line_contains(0, "abcdefghij");
+    tb.assert_line_contains(1, "klmno");
+}
+
+#[test]
+fn textarea_word_wrap_cursor_down_navigates_visual() {
+    use slt::{EventBuilder, KeyCode};
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(5);
+    state.set_value("abcdefghij");
+    state.cursor_row = 0;
+    state.cursor_col = 2;
+    let events = EventBuilder::new().key_code(KeyCode::Down).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.cursor_row, 0);
+    assert_eq!(state.cursor_col, 7);
+}
+
+#[test]
+fn textarea_word_wrap_cursor_up_navigates_visual() {
+    use slt::{EventBuilder, KeyCode};
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(5);
+    state.set_value("abcdefghij");
+    state.cursor_row = 0;
+    state.cursor_col = 7;
+    let events = EventBuilder::new().key_code(KeyCode::Up).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.cursor_row, 0);
+    assert_eq!(state.cursor_col, 2);
+}
+
+#[test]
+fn textarea_word_wrap_scroll_follows_cursor() {
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(5);
+    state.set_value("abcdefghijklmnopqrstuvwxyz");
+    state.cursor_row = 0;
+    state.cursor_col = 24;
+    tb.render(|ui| {
+        ui.textarea(&mut state, 3);
+    });
+    assert!(state.scroll_offset > 0);
+}
+
+#[test]
+fn textarea_word_wrap_korean() {
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(8);
+    state.set_value("가나다라마바사아");
+    tb.render(|ui| {
+        ui.textarea(&mut state, 5);
+    });
+    tb.assert_line_contains(0, "가나다라");
+    tb.assert_line_contains(1, "마바사아");
+}
+
+#[test]
+fn modal_with_max_w_renders_centered() {
+    let mut tb = TestBackend::new(80, 20);
+    tb.render(|ui| {
+        ui.text("bg");
+        ui.modal(|ui| {
+            ui.bordered(slt::Border::Rounded)
+                .pad(1)
+                .max_w(30)
+                .col(|ui| {
+                    ui.text("Center Me");
+                });
+        });
+    });
+    for y in 0..20u32 {
+        let line = tb.line(y);
+        if line.contains("Center Me") {
+            let x = line.find("Center Me").unwrap();
+            assert!(
+                x >= 20,
+                "Modal should be centered (x={x}), but appears left-aligned"
+            );
+            return;
+        }
+    }
+    panic!("Modal content 'Center Me' not found in buffer");
+}
+
+#[test]
+fn container_bg_propagates_to_text() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.container().bg(slt::Color::Red).col(|ui| {
+            ui.text("Hello");
+        });
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(
+        cell.style.bg,
+        Some(slt::Color::Red),
+        "Text cell should inherit container bg(Red), got: {:?}",
+        cell.style.bg
+    );
+}
+
+#[test]
+fn container_bg_propagates_to_border() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.container()
+            .bg(slt::Color::Blue)
+            .border(slt::Border::Rounded)
+            .col(|ui: &mut slt::Context| {
+                ui.text("Inside");
+            });
+    });
+    let corner_cell = tb.buffer().get(0, 0);
+    assert_eq!(
+        corner_cell.style.bg,
+        Some(slt::Color::Blue),
+        "Border corner cell should inherit container bg(Blue), got: {:?}",
+        corner_cell.style.bg
+    );
+}
+
+#[test]
+fn nested_container_bg_inheritance() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.container().bg(slt::Color::Green).col(|ui| {
+            ui.container().col(|ui| {
+                ui.text("Deep");
+            });
+        });
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(
+        cell.style.bg,
+        Some(slt::Color::Green),
+        "Nested text cell should inherit outer container bg(Green), got: {:?}",
+        cell.style.bg
+    );
+}
+
+#[test]
+fn child_bg_overrides_parent_bg() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.container().bg(slt::Color::Red).col(|ui| {
+            ui.container().bg(slt::Color::Yellow).col(|ui| {
+                ui.text("Override");
+            });
+        });
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(
+        cell.style.bg,
+        Some(slt::Color::Yellow),
+        "Child container bg should override parent bg, got: {:?}",
+        cell.style.bg
+    );
 }

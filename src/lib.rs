@@ -56,17 +56,19 @@ use std::time::{Duration, Instant};
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
-pub use anim::{Spring, Tween};
+pub use anim::{Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
 pub use chart::{
     Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
     HistogramBuilder, LegendPosition, Marker,
 };
 pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, Widget};
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
-pub use style::{Align, Border, Color, Constraints, Margin, Modifiers, Padding, Style, Theme};
+pub use style::{
+    Align, Border, Color, Constraints, Justify, Margin, Modifiers, Padding, Style, Theme,
+};
 pub use widgets::{
-    ListState, ScrollState, SpinnerState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastMessage, ToastState,
+    ButtonVariant, FormField, FormState, ListState, ScrollState, SpinnerState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
 };
 
 static PANIC_HOOK_ONCE: Once = Once::new();
@@ -86,6 +88,31 @@ fn install_panic_hook() {
                 crossterm::style::ResetColor,
                 crossterm::style::SetAttribute(crossterm::style::Attribute::Reset)
             );
+
+            // Print friendly panic header
+            eprintln!("\n\x1b[1;31m━━━ SLT Panic ━━━\x1b[0m\n");
+
+            // Print location if available
+            if let Some(location) = panic_info.location() {
+                eprintln!(
+                    "\x1b[90m{}:{}:{}\x1b[0m",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                );
+            }
+
+            // Print message
+            if let Some(msg) = panic_info.payload().downcast_ref::<&str>() {
+                eprintln!("\x1b[1m{}\x1b[0m", msg);
+            } else if let Some(msg) = panic_info.payload().downcast_ref::<String>() {
+                eprintln!("\x1b[1m{}\x1b[0m", msg);
+            }
+
+            eprintln!(
+                "\n\x1b[90mTerminal state restored. Report bugs at https://github.com/subinium/SuperLightTUI/issues\x1b[0m\n"
+            );
+
             original(panic_info);
         }));
     });
@@ -135,10 +162,10 @@ pub struct RunConfig {
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
-            tick_rate: Duration::from_millis(100),
+            tick_rate: Duration::from_millis(16),
             mouse: false,
             theme: Theme::dark(),
-            max_fps: None,
+            max_fps: Some(60),
         }
     }
 }
@@ -197,6 +224,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
 
     loop {
@@ -219,6 +247,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             debug_mode,
             config.theme,
             last_mouse_pos,
+            prev_modal_active,
         );
         ctx.process_focus_keys();
 
@@ -227,6 +256,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         if ctx.should_quit {
             break;
         }
+        prev_modal_active = ctx.modal_active;
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -316,8 +346,14 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         }
 
         for ev in &events {
-            if let Event::Mouse(mouse) = ev {
-                last_mouse_pos = Some((mouse.x, mouse.y));
+            match ev {
+                Event::Mouse(mouse) => {
+                    last_mouse_pos = Some((mouse.x, mouse.y));
+                }
+                Event::FocusLost => {
+                    last_mouse_pos = None;
+                }
+                _ => {}
             }
         }
 
@@ -405,6 +441,7 @@ fn run_async_loop<M: Send + 'static>(
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
 
     loop {
@@ -432,6 +469,7 @@ fn run_async_loop<M: Send + 'static>(
             false,
             config.theme,
             last_mouse_pos,
+            prev_modal_active,
         );
         ctx.process_focus_keys();
 
@@ -440,6 +478,7 @@ fn run_async_loop<M: Send + 'static>(
         if ctx.should_quit {
             break;
         }
+        prev_modal_active = ctx.modal_active;
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -524,8 +563,14 @@ fn run_async_loop<M: Send + 'static>(
         }
 
         for ev in &events {
-            if let Event::Mouse(mouse) = ev {
-                last_mouse_pos = Some((mouse.x, mouse.y));
+            match ev {
+                Event::Mouse(mouse) => {
+                    last_mouse_pos = Some((mouse.x, mouse.y));
+                }
+                Event::FocusLost => {
+                    last_mouse_pos = None;
+                }
+                _ => {}
             }
         }
 
@@ -579,6 +624,7 @@ pub fn run_inline_with(
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
 
     loop {
@@ -601,6 +647,7 @@ pub fn run_inline_with(
             debug_mode,
             config.theme,
             last_mouse_pos,
+            prev_modal_active,
         );
         ctx.process_focus_keys();
 
@@ -609,6 +656,7 @@ pub fn run_inline_with(
         if ctx.should_quit {
             break;
         }
+        prev_modal_active = ctx.modal_active;
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -698,8 +746,14 @@ pub fn run_inline_with(
         }
 
         for ev in &events {
-            if let Event::Mouse(mouse) = ev {
-                last_mouse_pos = Some((mouse.x, mouse.y));
+            match ev {
+                Event::Mouse(mouse) => {
+                    last_mouse_pos = Some((mouse.x, mouse.y));
+                }
+                Event::FocusLost => {
+                    last_mouse_pos = None;
+                }
+                _ => {}
             }
         }
 

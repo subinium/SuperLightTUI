@@ -12,6 +12,9 @@ pub struct Cell {
     pub symbol: String,
     /// The visual style (colors and modifiers) for this cell.
     pub style: Style,
+    /// Optional OSC 8 hyperlink URL. When set, the terminal renders this cell
+    /// as a clickable link.
+    pub hyperlink: Option<String>,
 }
 
 impl Default for Cell {
@@ -19,6 +22,7 @@ impl Default for Cell {
         Self {
             symbol: " ".into(),
             style: Style::new(),
+            hyperlink: None,
         }
     }
 }
@@ -49,5 +53,6 @@ impl Cell {
         self.symbol.clear();
         self.symbol.push(' ');
         self.style = Style::new();
+        self.hyperlink = None;
     }
 }

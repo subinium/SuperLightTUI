@@ -1,14 +1,41 @@
-use slt::{Border, Color, Context, Padding, ScrollState, Style, TabsState, Theme, ToastState};
+use slt::{
+    Border, ButtonVariant, Color, Context, FormField, FormState, KeyCode, Padding, ScrollState,
+    Style, TabsState, Theme, ToastState,
+};
 
 fn main() -> std::io::Result<()> {
     let mut nav = TabsState::new(vec!["Home", "Docs", "Blog", "Pricing", "Contact"]);
     let mut scroll = ScrollState::new();
-    let mut dark_mode = true;
+    let themes: [fn() -> Theme; 7] = [
+        Theme::dark,
+        Theme::light,
+        Theme::dracula,
+        Theme::catppuccin,
+        Theme::nord,
+        Theme::solarized_dark,
+        Theme::tokyo_night,
+    ];
+    let theme_names = [
+        "Dark",
+        "Light",
+        "Dracula",
+        "Catppuccin",
+        "Nord",
+        "Solarized",
+        "Tokyo Night",
+    ];
+    let mut theme_idx: usize = 0;
     let mut email = slt::TextInputState::with_placeholder("you@example.com");
     let mut blog_view: Option<usize> = None;
     let mut toasts = ToastState::new();
     let mut subscribed = false;
     let mut nav_target: Option<usize> = None;
+    let mut show_modal = false;
+    let mut selected_plan = String::new();
+    let mut contact_form = FormState::new()
+        .field(FormField::new("Name").placeholder("Jane Doe"))
+        .field(FormField::new("Email").placeholder("jane@example.com"))
+        .field(FormField::new("Message").placeholder("How can we help?"));
 
     slt::run_with(
         slt::RunConfig {
@@ -16,13 +43,16 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         |ui: &mut Context| {
+            let tick = ui.tick();
+
             if ui.key('q') {
                 ui.quit();
             }
             if ui.key('t') {
-                dark_mode = !dark_mode;
+                theme_idx = (theme_idx + 1) % themes.len();
+                toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
             }
-            if ui.key_code(slt::KeyCode::Esc) {
+            if ui.key_code(KeyCode::Esc) {
                 blog_view = None;
             }
             for (i, ch) in ['1', '2', '3', '4', '5'].iter().enumerate() {
@@ -30,13 +60,7 @@ fn main() -> std::io::Result<()> {
                     nav_target = Some(i);
                 }
             }
-            ui.set_theme(if dark_mode {
-                Theme::dark()
-            } else {
-                Theme::light()
-            });
-
-            let tick = ui.tick();
+            ui.set_theme(themes[theme_idx]());
 
             if let Some(target) = nav_target.take() {
                 nav.selected = target;
@@ -44,15 +68,24 @@ fn main() -> std::io::Result<()> {
             }
 
             ui.container().grow(1).col(|ui| {
+                let theme = *ui.theme();
+
                 // ── navbar ──
-                ui.bordered(Border::Thick).pad(1).col(|ui| {
-                    ui.row(|ui| {
-                        ui.text("SLT").bold().fg(Color::Cyan);
-                        ui.text("Framework").fg(Color::Indexed(245));
-                        ui.spacer();
-                        ui.tabs(&mut nav);
+                ui.container()
+                    .bg(theme.surface)
+                    .padding(Padding::xy(2, 0))
+                    .col(|ui| {
+                        ui.row(|ui| {
+                            ui.text("SLT").bold().fg(theme.primary);
+                            ui.text(" ").fg(theme.text_dim);
+                            ui.spacer();
+                            ui.tabs(&mut nav);
+                            ui.styled(
+                                format!(" {} ", theme_names[theme_idx]),
+                                Style::new().fg(theme.text).bg(theme.surface_hover),
+                            );
+                        });
                     });
-                });
 
                 let selected = nav.selected;
                 ui.scrollable(&mut scroll).grow(1).col(|ui| {
@@ -67,30 +100,42 @@ fn main() -> std::io::Result<()> {
                         ),
                         1 => render_docs(ui),
                         2 => render_blog(ui, &mut blog_view),
-                        3 => render_pricing(ui, &mut toasts, tick),
-                        _ => render_contact(ui, &mut nav_target),
+                        3 => render_pricing(
+                            ui,
+                            &mut toasts,
+                            tick,
+                            &mut show_modal,
+                            &mut selected_plan,
+                        ),
+                        _ => render_contact(
+                            ui,
+                            &mut nav_target,
+                            &mut contact_form,
+                            &mut toasts,
+                            tick,
+                        ),
                     }
 
                     // ── footer ──
-                    ui.separator();
-                    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-                        ui.row(|ui| {
-                            ui.text("SLT Framework").bold().fg(Color::Cyan);
-                            ui.spacer();
-                            ui.text("MIT License").dim();
+                    ui.container()
+                        .bg(theme.surface)
+                        .padding(Padding::xy(2, 1))
+                        .col(|ui| {
+                            ui.row(|ui| {
+                                ui.text("SLT").bold().fg(theme.primary);
+                                ui.text("Framework").fg(theme.surface_text);
+                                ui.spacer();
+                                ui.text("MIT License").fg(theme.surface_text);
+                            });
+                            ui.text("");
+                            ui.row(|ui| {
+                                ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
+                                ui.link("Docs", "https://docs.rs/superlighttui");
+                                ui.link("Discord", "https://discord.gg/slt");
+                                ui.spacer();
+                                ui.text("v0.5.0").fg(theme.surface_text);
+                            });
                         });
-                        ui.row(|ui| {
-                            ui.text("GitHub").fg(Color::Blue).underline();
-                            ui.text(" · ").dim();
-                            if ui.button("Docs") {
-                                nav_target = Some(1);
-                            }
-                            ui.text(" · ").dim();
-                            ui.text("Discord").fg(Color::Blue).underline();
-                            ui.spacer();
-                            ui.text("Built with SLT v0.1.0").dim();
-                        });
-                    });
                 });
 
                 ui.toast(&mut toasts);
@@ -111,60 +156,55 @@ fn main() -> std::io::Result<()> {
 // Markdown-like rendering helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn md_h1(ui: &mut Context, text: &str) {
-    ui.text(text).bold().fg(Color::Cyan);
-    ui.text("━".repeat(text.len().min(60)))
-        .fg(Color::Indexed(240));
+fn md_h1(ui: &mut Context, theme: &Theme, text: &str) {
+    ui.text(text).bold().fg(theme.primary);
     ui.text("");
 }
 
-fn md_h2(ui: &mut Context, text: &str) {
-    ui.text(format!("## {text}")).bold().fg(Color::Cyan);
+fn md_h2(ui: &mut Context, theme: &Theme, text: &str) {
+    ui.text(text).bold().fg(theme.primary);
     ui.text("");
 }
 
-fn md_h3(ui: &mut Context, text: &str) {
-    ui.text(format!("### {text}")).bold().fg(Color::White);
+fn md_h3(ui: &mut Context, theme: &Theme, text: &str) {
+    ui.text(text).bold().fg(theme.secondary);
+    ui.text("");
 }
 
 fn md_p(ui: &mut Context, text: &str) {
     ui.text_wrap(text);
+}
+
+fn md_p_dim(ui: &mut Context, theme: &Theme, text: &str) {
+    ui.text_wrap(text).fg(theme.text_dim);
+}
+
+fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
+    for line in text.lines() {
+        ui.row(|ui| {
+            ui.text(" ▎ ").fg(theme.primary);
+            ui.text_wrap(line).italic().fg(theme.text_dim);
+        });
+    }
     ui.text("");
 }
 
-fn md_p_dim(ui: &mut Context, text: &str) {
-    ui.text_wrap(text).dim();
-    ui.text("");
-}
-
-fn md_blockquote(ui: &mut Context, text: &str) {
-    ui.container().padding(Padding::new(0, 0, 2, 0)).col(|ui| {
-        for line in text.lines() {
-            ui.row(|ui| {
-                ui.text("  ▎ ").fg(Color::Indexed(245));
-                ui.text_wrap(line).italic().fg(Color::Indexed(252));
-            });
-        }
-    });
-    ui.text("");
-}
-
-fn md_bullet(ui: &mut Context, items: &[&str]) {
+fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
     for item in items {
         ui.row(|ui| {
-            ui.text("  • ").fg(Color::Cyan);
+            ui.text("  • ").fg(theme.primary);
             ui.text_wrap(*item);
         });
     }
     ui.text("");
 }
 
-fn md_numbered(ui: &mut Context, items: &[&str]) {
+fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
     for (i, item) in items.iter().enumerate() {
         ui.row(|ui| {
             ui.styled(
                 format!("  {}. ", i + 1),
-                Style::new().fg(Color::Cyan).bold(),
+                Style::new().fg(theme.primary).bold(),
             );
             ui.text_wrap(*item);
         });
@@ -172,53 +212,44 @@ fn md_numbered(ui: &mut Context, items: &[&str]) {
     ui.text("");
 }
 
-fn md_code_block(ui: &mut Context, lang: &str, code: &str) {
-    ui.bordered(Border::Rounded).pad(1).col(|ui| {
-        ui.row(|ui| {
-            ui.text(format!(" {lang} "))
-                .fg(Color::Black)
-                .bg(Color::Indexed(245));
-            ui.spacer();
-        });
-        ui.text("");
+fn md_code_block(ui: &mut Context, theme: &Theme, lang: &str, code: &str) {
+    ui.container().bg(theme.surface).p(1).col(|ui| {
+        ui.text(lang).fg(theme.surface_text);
         for line in code.lines() {
-            ui.text(line).fg(Color::Green);
+            ui.text(line).fg(theme.text);
         }
     });
     ui.text("");
 }
 
-fn md_inline_code(ui: &mut Context, text: &str) {
+fn md_inline_code(ui: &mut Context, theme: &Theme, text: &str) {
     ui.styled(
         format!(" {text} "),
-        Style::new().fg(Color::Yellow).bg(Color::Indexed(236)),
+        Style::new().fg(theme.warning).bg(theme.surface),
     );
 }
 
 fn md_link(ui: &mut Context, label: &str, url: &str) {
-    ui.row(|ui| {
-        ui.text(label).fg(Color::Blue).underline();
-        ui.text(format!(" ({url})")).dim();
-    });
+    ui.link(label, url);
 }
 
 fn md_hr(ui: &mut Context) {
-    ui.separator();
+    ui.text("");
     ui.text("");
 }
 
-fn md_tag(ui: &mut Context, tag: &str, color: Color) {
+fn md_tag(ui: &mut Context, theme: &Theme, tag: &str, color: Color) {
     ui.styled(
         format!(" {tag} "),
-        Style::new().fg(Color::Black).bg(color).bold(),
+        Style::new().fg(color).bg(theme.surface).bold(),
     );
 }
 
-fn md_meta(ui: &mut Context, date: &str, reading_time: &str) {
+fn md_meta(ui: &mut Context, theme: &Theme, date: &str, reading_time: &str) {
     ui.row(|ui| {
-        ui.text(date).dim();
-        ui.text(" · ").dim();
-        ui.text(reading_time).dim();
+        ui.text(date).fg(theme.text_dim);
+        ui.text(" · ").fg(theme.text_dim);
+        ui.text(reading_time).fg(theme.text_dim);
     });
 }
 
@@ -234,47 +265,64 @@ fn render_home(
     subscribed: &mut bool,
     tick: u64,
 ) {
-    // hero
-    ui.container()
-        .px(4)
-        .py(2)
-        .col(|ui| {
-            ui.text("Build TUIs in minutes, not hours.").bold().fg(Color::Cyan);
-            ui.text("");
-            md_p(ui, "SLT is a lightweight, immediate-mode terminal UI framework for Rust. \
-                       Describe your UI each frame with closures. No retained state, no virtual DOM, \
-                       no message passing. Just Rust.");
-            ui.row(|ui| {
-                md_inline_code(ui, "cargo add superlighttui");
-            });
-            ui.text("");
-            ui.row(|ui| {
-                if ui.button("Get Started") {
-                    *nav_target = Some(1);
-                }
-                if ui.button("View on GitHub") {
-                    toasts.info("github.com/user/superlighttui", tick);
-                }
-            });
+    let theme = *ui.theme();
+
+    ui.container().px(2).py(1).col(|ui| {
+        let art = [
+            r"  _____ _   _____",
+            r" / ___// |  \_  _\",
+            r" \___ \| |   | |",
+            r" ____) | |___| |",
+            r"|_____/|_____|_|",
+        ];
+        for line in &art {
+            ui.text(*line).bold().fg(theme.primary);
+        }
+        ui.text("");
+        ui.text("Superfast to write. Superlight to run.").bold();
+        ui.text("Immediate-mode TUI framework for Rust")
+            .fg(theme.text_dim);
+        ui.text("");
+        ui.row(|ui| {
+            md_inline_code(ui, &theme, "cargo add superlighttui");
         });
+        ui.text("");
+        ui.row(|ui| {
+            if ui.button_with("Get Started", ButtonVariant::Primary) {
+                *nav_target = Some(1);
+            }
+            ui.text(" ");
+            ui.link("GitHub →", "https://github.com/subinium/SuperLightTUI");
+        });
+    });
 
     md_hr(ui);
 
     // stats
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        ui.row(|ui| {
-            stat_block(ui, "~5k", "Lines of Code");
-            stat_block(ui, "14", "Widgets");
-            stat_block(ui, "2", "Dependencies");
-            stat_block(ui, "0", "unsafe blocks");
-        });
+    ui.row(|ui| {
+        for (val, label) in [
+            ("~11k", "Lines"),
+            ("20+", "Widgets"),
+            ("2", "Deps"),
+            ("0", "unsafe"),
+        ] {
+            ui.container()
+                .bg(theme.surface)
+                .grow(1)
+                .center()
+                .p(1)
+                .col(|ui| {
+                    ui.text(val).bold().fg(theme.primary);
+                    ui.text(label).fg(theme.surface_text);
+                });
+        }
     });
 
     md_hr(ui);
 
     // quick start guide
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h2(ui, "Quick Start");
+        md_h2(ui, &theme, "Quick Start");
 
         md_p(
             ui,
@@ -284,6 +332,7 @@ fn render_home(
 
         md_code_block(
             ui,
+            &theme,
             "rust",
             "fn main() -> std::io::Result<()> {\n\
              \x20   slt::run(|ui: &mut slt::Context| {\n\
@@ -303,7 +352,7 @@ fn render_home(
 
     // why SLT
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h2(ui, "Why SLT?");
+        md_h2(ui, &theme, "Why SLT?");
 
         md_p(
             ui,
@@ -316,11 +365,13 @@ fn render_home(
         ui.row(|ui| {
             feature_card(
                 ui,
+                &theme,
                 "Immediate Mode",
                 "No retained state. Your closure IS the UI. Like egui, but for terminals.",
             );
             feature_card(
                 ui,
+                &theme,
                 "Flexbox Layout",
                 "row() and col() with gap, grow, align. CSS Flexbox semantics without the CSS.",
             );
@@ -328,11 +379,13 @@ fn render_home(
         ui.row(|ui| {
             feature_card(
                 ui,
+                &theme,
                 "Auto Everything",
                 "Focus cycling, scroll, hit testing, event consumption. Zero boilerplate.",
             );
             feature_card(
                 ui,
+                &theme,
                 "Two Dependencies",
                 "crossterm + unicode-width. No OpenSSL, no system libs, compiles everywhere.",
             );
@@ -342,19 +395,33 @@ fn render_home(
     md_hr(ui);
 
     // newsletter
-    ui.container().px(4).py(1).col(|ui| {
-        md_h2(ui, "Stay Updated");
+    ui.container().px(2).py(1).col(|ui| {
+        md_h2(ui, &theme, "Stay Updated");
         if *subscribed {
-            ui.text("Subscribed!").bold().fg(Color::Green);
-            md_p_dim(ui, "You'll receive updates at the address you provided.");
+            ui.text("Subscribed!").bold().fg(theme.success);
+            md_p_dim(
+                ui,
+                &theme,
+                "You'll receive updates at the address you provided.",
+            );
         } else {
             md_p_dim(
                 ui,
+                &theme,
                 "Get notified about new releases, tutorials, and community highlights.",
             );
             ui.row(|ui| {
                 ui.text_input(email);
-                if ui.button("Subscribe") {
+                email.validate(|v| {
+                    if v.is_empty() {
+                        Ok(())
+                    } else if v.contains('@') && v.contains('.') {
+                        Ok(())
+                    } else {
+                        Err("Enter a valid email".into())
+                    }
+                });
+                if ui.button_with("Subscribe", ButtonVariant::Primary) {
                     if !email.value.is_empty() {
                         *subscribed = true;
                         toasts.success("Subscribed!", tick);
@@ -372,36 +439,39 @@ fn render_home(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn render_docs(ui: &mut Context) {
+    let theme = *ui.theme();
+
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, "Documentation");
+        md_h1(ui, &theme, "Documentation");
 
         // ── Getting Started ──
-        md_h2(ui, "Getting Started");
+        md_h2(ui, &theme, "Getting Started");
         md_p(ui, "Add SLT to your project:");
-        md_code_block(ui, "sh", "cargo add superlighttui");
+        md_code_block(ui, &theme, "sh", "cargo add superlighttui");
         md_p(
             ui,
             "The crate re-exports everything under `slt`, so you can write:",
         );
-        md_code_block(ui, "rust", "use slt::*;");
+        md_code_block(ui, &theme, "rust", "use slt::*;");
 
         md_hr(ui);
 
         // ── Layout System ──
-        md_h2(ui, "Layout System");
+        md_h2(ui, &theme, "Layout System");
         md_p(
             ui,
             "SLT uses a flexbox-inspired layout. Every container is either a column (vertical) \
                    or a row (horizontal). Children are placed in order along the main axis.",
         );
 
-        md_h3(ui, "Columns and Rows");
+        md_h3(ui, &theme, "Columns and Rows");
         md_p(
             ui,
             "Use `col()` for vertical stacking and `row()` for horizontal placement:",
         );
         md_code_block(
             ui,
+            &theme,
             "rust",
             "ui.col(|ui| {\n\
              \x20   ui.text(\"top\");\n\
@@ -414,13 +484,14 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, "Growing and Spacing");
+        md_h3(ui, &theme, "Growing and Spacing");
         md_p(
             ui,
             "Use `grow()` to distribute remaining space. `spacer()` pushes siblings apart:",
         );
         md_code_block(
             ui,
+            &theme,
             "rust",
             "ui.row(|ui| {\n\
              \x20   ui.text(\"left\");\n\
@@ -433,10 +504,11 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, "Gap, Padding, Margin");
+        md_h3(ui, &theme, "Gap, Padding, Margin");
         md_p(ui, "Chain layout modifiers on containers:");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "ui.container()\n\
              \x20   .gap(1)                // space between children\n\
@@ -449,24 +521,27 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Styling ──
-        md_h2(ui, "Styling");
+        md_h2(ui, &theme, "Styling");
         md_p(
             ui,
             "Style text by chaining methods. Colors support named, 256-indexed, and RGB:",
         );
         md_code_block(
             ui,
+            &theme,
             "rust",
-            "ui.text(\"Bold cyan\").bold().fg(Color::Cyan);\n\
+            "let theme = *ui.theme();\n\
+             ui.text(\"Primary\").bold().fg(theme.primary);\n\
              ui.text(\"Dim italic\").dim().italic();\n\
-             ui.text(\"Custom\").fg(Color::Rgb(255, 100, 50));\n\
-             ui.text(\"Indexed\").fg(Color::Indexed(208));",
+             ui.text(\"Warning\").fg(theme.warning);\n\
+             ui.text(\"Accent\").fg(theme.accent);",
         );
 
-        md_h3(ui, "Borders and Titles");
+        md_h3(ui, &theme, "Borders and Titles");
         md_p(ui, "Containers can have borders with optional titles:");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "ui.bordered(Border::Rounded)\n\
              \x20   .title(\"My Section\")\n\
@@ -476,19 +551,20 @@ fn render_docs(ui: &mut Context) {
              \x20   });",
         );
 
-        md_h3(ui, "Themes");
+        md_h3(ui, &theme, "Themes");
         md_p(ui, "Switch the entire color scheme in one call:");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "// In your run loop:\n\
              ui.set_theme(Theme::dark());   // or Theme::light()\n\
              \n\
              // Custom theme:\n\
              let my_theme = Theme {\n\
-             \x20   bg: Color::Rgb(30, 30, 46),\n\
-             \x20   fg: Color::Rgb(205, 214, 244),\n\
-             \x20   accent: Color::Rgb(137, 180, 250),\n\
+             \x20   bg: theme.bg,\n\
+             \x20   text: theme.text,\n\
+             \x20   accent: theme.accent,\n\
              \x20   ..Theme::dark()\n\
              };",
         );
@@ -496,51 +572,56 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Widgets Reference ──
-        md_h2(ui, "Widget Reference");
+        md_h2(ui, &theme, "Widget Reference");
         md_p(
             ui,
             "SLT ships 14 widgets. All handle their own keyboard/mouse events. \
                    Focus cycling via Tab/Shift+Tab is automatic.",
         );
 
-        md_h3(ui, "Text Input");
+        md_h3(ui, &theme, "Text Input");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut state = TextInputState::with_placeholder(\"Email...\");\n\
              ui.text_input(&mut state);\n\
              // state.value() returns the current text",
         );
 
-        md_h3(ui, "Textarea");
+        md_h3(ui, &theme, "Textarea");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut state = TextareaState::new();\n\
              ui.textarea(&mut state, 5);  // 5 visible rows",
         );
 
-        md_h3(ui, "Button");
+        md_h3(ui, &theme, "Button");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "if ui.button(\"Submit\") {\n\
              \x20   // clicked!\n\
              }",
         );
 
-        md_h3(ui, "Checkbox & Toggle");
+        md_h3(ui, &theme, "Checkbox & Toggle");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut dark = true;\n\
              ui.checkbox(\"Dark mode\", &mut dark);\n\
              ui.toggle(\"Notifications\", &mut enabled);",
         );
 
-        md_h3(ui, "Tabs");
+        md_h3(ui, &theme, "Tabs");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut tabs = TabsState::new(vec![\"Home\", \"Settings\"]);\n\
              ui.tabs(&mut tabs);\n\
@@ -550,9 +631,10 @@ fn render_docs(ui: &mut Context) {
              }",
         );
 
-        md_h3(ui, "List & Table");
+        md_h3(ui, &theme, "List & Table");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut list = ListState::new(vec![\"Alpha\", \"Beta\"]);\n\
              ui.list(&mut list);\n\
@@ -564,13 +646,14 @@ fn render_docs(ui: &mut Context) {
              ui.table(&mut table);",
         );
 
-        md_h3(ui, "Scrollable");
+        md_h3(ui, &theme, "Scrollable");
         md_p(
             ui,
             "Wraps any content in a scrollable viewport. Handles mouse wheel and drag-to-scroll:",
         );
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut scroll = ScrollState::new();\n\
              ui.scrollable(&mut scroll).grow(1).col(|ui| {\n\
@@ -580,9 +663,10 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, "Spinner, Progress, Toast");
+        md_h3(ui, &theme, "Spinner, Progress, Toast");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let spinner = SpinnerState::dots();\n\
              ui.spinner(&spinner);\n\
@@ -596,7 +680,7 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Events ──
-        md_h2(ui, "Event Handling");
+        md_h2(ui, &theme, "Event Handling");
         md_p(
             ui,
             "Events are checked per-frame. Widgets auto-consume their events so you \
@@ -605,6 +689,7 @@ fn render_docs(ui: &mut Context) {
 
         md_code_block(
             ui,
+            &theme,
             "rust",
             "if ui.key('q') { ui.quit(); }\n\
              if ui.key('j') { scroll_down(); }\n\
@@ -615,12 +700,13 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Advanced ──
-        md_h2(ui, "Advanced Topics");
+        md_h2(ui, &theme, "Advanced Topics");
 
-        md_h3(ui, "Animation");
+        md_h3(ui, &theme, "Animation");
         md_p(ui, "Tween and Spring primitives for smooth transitions:");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let mut tween = Tween::new(0.0, 100.0, 60);\n\
              let value = tween.value(ui.tick());\n\
@@ -629,30 +715,36 @@ fn render_docs(ui: &mut Context) {
              spring.set_target(50.0);",
         );
 
-        md_h3(ui, "Inline Mode");
+        md_h3(ui, &theme, "Inline Mode");
         md_p(
             ui,
             "Render below the prompt without entering the alternate screen:",
         );
         md_code_block(
             ui,
+            &theme,
             "rust",
             "slt::run_inline(3, |ui| {\n\
              \x20   ui.text(\"No alt screen!\");\n\
              });",
         );
 
-        md_h3(ui, "Async");
+        md_h3(ui, &theme, "Async");
         md_p(ui, "Optional tokio integration for background data:");
         md_code_block(
             ui,
+            &theme,
             "rust",
             "let tx = slt::run_async(|ui, msgs: &mut Vec<String>| {\n\
              \x20   for m in msgs.drain(..) { ui.text(m); }\n\
              })?;\n\
              tx.send(\"hello\".into()).await?;",
         );
-        md_p_dim(ui, "Requires: cargo add superlighttui --features async");
+        md_p_dim(
+            ui,
+            &theme,
+            "Requires: cargo add superlighttui --features async",
+        );
     });
 }
 
@@ -664,9 +756,30 @@ struct BlogPost {
     date: &'static str,
     title: &'static str,
     reading_time: &'static str,
-    tags: &'static [(&'static str, Color)],
+    tags: &'static [(&'static str, TagTone)],
     excerpt: &'static str,
-    render: fn(&mut Context),
+    render: fn(&mut Context, &Theme),
+}
+
+#[derive(Clone, Copy)]
+enum TagTone {
+    Primary,
+    Secondary,
+    Accent,
+    Success,
+    Warning,
+    Error,
+}
+
+fn tag_tone_color(theme: &Theme, tone: TagTone) -> Color {
+    match tone {
+        TagTone::Primary => theme.primary,
+        TagTone::Secondary => theme.secondary,
+        TagTone::Accent => theme.accent,
+        TagTone::Success => theme.success,
+        TagTone::Warning => theme.warning,
+        TagTone::Error => theme.error,
+    }
 }
 
 const BLOG_POSTS: &[BlogPost] = &[
@@ -674,7 +787,7 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-10",
         title: "Announcing SLT v0.1.0",
         reading_time: "5 min read",
-        tags: &[("release", Color::Green), ("announcement", Color::Cyan)],
+        tags: &[("release", TagTone::Success), ("announcement", TagTone::Primary)],
         excerpt: "The first public release of Super Light TUI is here. Two dependencies, zero unsafe, 14 widgets, and an API that gets out of your way.",
         render: render_post_announcement,
     },
@@ -682,7 +795,7 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-08",
         title: "Why Immediate Mode for TUIs?",
         reading_time: "8 min read",
-        tags: &[("architecture", Color::Magenta), ("deep-dive", Color::Yellow)],
+        tags: &[("architecture", TagTone::Accent), ("deep-dive", TagTone::Warning)],
         excerpt: "How egui-style rendering makes terminal UI development 10x faster, and why retained-mode frameworks add complexity you don't need.",
         render: render_post_immediate_mode,
     },
@@ -690,7 +803,7 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-05",
         title: "Building a Dashboard in 50 Lines",
         reading_time: "4 min read",
-        tags: &[("tutorial", Color::Blue), ("beginner", Color::Green)],
+        tags: &[("tutorial", TagTone::Secondary), ("beginner", TagTone::Success)],
         excerpt: "Step-by-step guide to building a real-time system dashboard with SLT. Metrics, tables, and live updates in under a minute of reading.",
         render: render_post_dashboard_tutorial,
     },
@@ -698,7 +811,7 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-01",
         title: "The Case for u32 Coordinates",
         reading_time: "3 min read",
-        tags: &[("technical", Color::Red), ("design-decision", Color::Indexed(208))],
+        tags: &[("technical", TagTone::Error), ("design-decision", TagTone::Accent)],
         excerpt: "Why every TUI library using u16 coordinates has a latent overflow bug, and how SLT avoids it with u32 at zero runtime cost.",
         render: render_post_u32,
     },
@@ -706,48 +819,56 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-02-25",
         title: "Flexbox for Terminals: How SLT Layout Works",
         reading_time: "6 min read",
-        tags: &[("internals", Color::Magenta), ("layout", Color::Cyan)],
+        tags: &[("internals", TagTone::Accent), ("layout", TagTone::Primary)],
         excerpt: "A deep dive into SLT's layout engine: how row(), col(), grow(), and gap() map to CSS Flexbox concepts, and where they intentionally diverge.",
         render: render_post_flexbox,
     },
 ];
 
 fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
+    let theme = *ui.theme();
+
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         if let Some(idx) = *blog_view {
             // ── Single post view ──
             if let Some(post) = BLOG_POSTS.get(idx) {
                 ui.row(|ui| {
-                    if ui.button("<< Back to Blog") {
+                    if ui.button_with("<< Back to Blog", ButtonVariant::Outline) {
                         *blog_view = None;
                     }
                     ui.spacer();
                 });
                 ui.text("");
-                (post.render)(ui);
+                (post.render)(ui, &theme);
             }
         } else {
             // ── Blog listing ──
-            md_h1(ui, "Blog");
+            md_h1(ui, &theme, "Blog");
             md_p_dim(
                 ui,
+                &theme,
                 "Thoughts on terminal UI design, Rust patterns, and building tools that developers actually enjoy using.",
             );
 
             for (i, post) in BLOG_POSTS.iter().enumerate() {
-                let resp = ui.bordered(Border::Rounded).pad(1).col(|ui| {
-                    md_meta(ui, post.date, post.reading_time);
-                    ui.text(post.title).bold().fg(Color::Cyan);
+                let resp = ui.container().bg(theme.surface).pad(1).col(|ui| {
                     ui.row(|ui| {
-                        for (tag, color) in post.tags {
-                            md_tag(ui, tag, *color);
+                        ui.text(post.date).fg(theme.surface_text);
+                        ui.text(" · ").fg(theme.surface_text);
+                        ui.text(post.reading_time).fg(theme.surface_text);
+                    });
+                    ui.text(post.title).bold().fg(theme.primary);
+                    ui.row(|ui| {
+                        for (tag, tone) in post.tags {
+                            let color = tag_tone_color(&theme, *tone);
+                            md_tag(ui, &theme, tag, color);
                             ui.text(" ");
                         }
                     });
                     ui.text("");
                     ui.text_wrap(post.excerpt);
                     ui.text("");
-                    ui.text("Read more ->").fg(Color::Cyan);
+                    ui.text("Read more ->").fg(theme.primary);
                 });
                 if resp.clicked {
                     *blog_view = Some(i);
@@ -760,9 +881,9 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
 
 // ── Blog Post: Announcing SLT v0.1.0 ──
 
-fn render_post_announcement(ui: &mut Context) {
-    md_h1(ui, "Announcing SLT v0.1.0");
-    md_meta(ui, "2025-03-10", "5 min read");
+fn render_post_announcement(ui: &mut Context, theme: &Theme) {
+    md_h1(ui, theme, "Announcing SLT v0.1.0");
+    md_meta(ui, theme, "2025-03-10", "5 min read");
     ui.text("");
 
     md_p(
@@ -772,7 +893,7 @@ fn render_post_announcement(ui: &mut Context) {
               we're headed.",
     );
 
-    md_h2(ui, "What is SLT?");
+    md_h2(ui, theme, "What is SLT?");
     md_p(
         ui,
         "SLT is an immediate-mode terminal UI framework for Rust. If you've used egui for \
@@ -783,12 +904,14 @@ fn render_post_announcement(ui: &mut Context) {
 
     md_blockquote(
         ui,
+        theme,
         "The name is longer than your hello world.\nThat's the point.",
     );
 
-    md_h2(ui, "Design Principles");
+    md_h2(ui, theme, "Design Principles");
     md_numbered(
         ui,
+        theme,
         &[
             "Minimal API surface: learn 5 methods, build anything.",
             "Zero boilerplate: no App struct, no Model/Update/View, no trait impls.",
@@ -798,10 +921,11 @@ fn render_post_announcement(ui: &mut Context) {
         ],
     );
 
-    md_h2(ui, "Hello World");
+    md_h2(ui, theme, "Hello World");
     md_p(ui, "The smallest SLT program is genuinely 5 lines:");
     md_code_block(
         ui,
+        theme,
         "rust",
         "fn main() -> std::io::Result<()> {\n\
          \x20   slt::run(|ui: &mut slt::Context| {\n\
@@ -815,8 +939,8 @@ fn render_post_announcement(ui: &mut Context) {
               State lives in your closure's scope as regular Rust variables.",
     );
 
-    md_h2(ui, "What's Included in v0.1.0");
-    md_bullet(ui, &[
+    md_h2(ui, theme, "What's Included in v0.1.0");
+    md_bullet(ui, theme, &[
         "14 widgets: TextInput, Textarea, Button, Checkbox, Toggle, Tabs, List, Table, Spinner, Progress, Scrollable, Toast, Separator, HelpBar",
         "Flexbox layout engine with row/col, gap, grow, shrink, alignment",
         "Double-buffer diff rendering (only changed cells hit the terminal)",
@@ -829,10 +953,11 @@ fn render_post_announcement(ui: &mut Context) {
         "Layout debugger (F12)",
     ]);
 
-    md_h2(ui, "What's Next");
+    md_h2(ui, theme, "What's Next");
     md_p(ui, "v0.2.0 will focus on:");
     md_bullet(
         ui,
+        theme,
         &[
             "Custom widget API for third-party extensions",
             "Color palette presets (Catppuccin, Dracula, Nord, etc.)",
@@ -847,6 +972,7 @@ fn render_post_announcement(ui: &mut Context) {
     );
     md_code_block(
         ui,
+        theme,
         "sh",
         "cargo add superlighttui\ncargo run --example demo",
     );
@@ -854,9 +980,9 @@ fn render_post_announcement(ui: &mut Context) {
 
 // ── Blog Post: Why Immediate Mode? ──
 
-fn render_post_immediate_mode(ui: &mut Context) {
-    md_h1(ui, "Why Immediate Mode for TUIs?");
-    md_meta(ui, "2025-03-08", "8 min read");
+fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
+    md_h1(ui, theme, "Why Immediate Mode for TUIs?");
+    md_meta(ui, theme, "2025-03-08", "8 min read");
     ui.text("");
 
     md_p(
@@ -873,7 +999,7 @@ fn render_post_immediate_mode(ui: &mut Context) {
               You simply describe what should be on screen right now.",
     );
 
-    md_h2(ui, "The Problem with Retained Mode");
+    md_h2(ui, theme, "The Problem with Retained Mode");
     md_p(
         ui,
         "Retained-mode TUI frameworks inherit a problem from GUI frameworks: state \
@@ -884,6 +1010,7 @@ fn render_post_immediate_mode(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "// Retained mode: state lives in two places\n\
          struct App {\n\
@@ -909,7 +1036,7 @@ fn render_post_immediate_mode(ui: &mut Context) {
               The entire Elm/MVU architecture exists to manage this complexity.",
     );
 
-    md_h2(ui, "Immediate Mode: No Sync Required");
+    md_h2(ui, theme, "Immediate Mode: No Sync Required");
     md_p(
         ui,
         "In immediate mode, there is no framework state to sync. Your closure runs \
@@ -918,6 +1045,7 @@ fn render_post_immediate_mode(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "// Immediate mode: state lives in one place\n\
          let mut items = vec![\"alpha\", \"beta\"];\n\
@@ -935,10 +1063,11 @@ fn render_post_immediate_mode(ui: &mut Context) {
 
     md_blockquote(
         ui,
+        theme,
         "Your UI is always a pure function of your state.\nThere is nothing to get out of sync.",
     );
 
-    md_h2(ui, "Performance Concerns");
+    md_h2(ui, theme, "Performance Concerns");
     md_p(
         ui,
         "The common objection: doesn't re-describing the entire UI every frame waste \
@@ -955,10 +1084,11 @@ fn render_post_immediate_mode(ui: &mut Context) {
               full redraws, which is what most TUI frameworks actually do.",
     );
 
-    md_h2(ui, "When Retained Mode Wins");
+    md_h2(ui, theme, "When Retained Mode Wins");
     md_p(ui, "Retained mode is better when:");
     md_bullet(
         ui,
+        theme,
         &[
             "You have thousands of widgets (terminal UIs rarely do)",
             "Widget construction is expensive (network calls, etc.)",
@@ -975,9 +1105,9 @@ fn render_post_immediate_mode(ui: &mut Context) {
 
 // ── Blog Post: Dashboard Tutorial ──
 
-fn render_post_dashboard_tutorial(ui: &mut Context) {
-    md_h1(ui, "Building a Dashboard in 50 Lines");
-    md_meta(ui, "2025-03-05", "4 min read");
+fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
+    md_h1(ui, theme, "Building a Dashboard in 50 Lines");
+    md_meta(ui, theme, "2025-03-05", "4 min read");
     ui.text("");
 
     md_p(
@@ -986,7 +1116,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
               memory, a process table, and a log stream. The whole thing fits in 50 lines.",
     );
 
-    md_h2(ui, "Step 1: Scaffold");
+    md_h2(ui, theme, "Step 1: Scaffold");
     md_p(
         ui,
         "Start with the standard SLT boilerplate. We need mouse support for our table:",
@@ -994,6 +1124,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "use slt::*;\n\
          \n\
@@ -1010,7 +1141,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
          }",
     );
 
-    md_h2(ui, "Step 2: Metrics Row");
+    md_h2(ui, theme, "Step 2: Metrics Row");
     md_p(
         ui,
         "Use `row()` with `grow(1)` containers to create evenly spaced metric cards:",
@@ -1018,22 +1149,23 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "ui.row(|ui| {\n\
          \x20   ui.bordered(Border::Rounded).grow(1).pad(1).col(|ui| {\n\
          \x20       ui.text(\"CPU\").dim();\n\
-         \x20       ui.text(\"42%\").bold().fg(Color::Cyan);\n\
+         \x20       ui.text(\"42%\").bold().fg(theme.primary);\n\
          \x20       ui.progress(0.42);\n\
          \x20   });\n\
          \x20   ui.bordered(Border::Rounded).grow(1).pad(1).col(|ui| {\n\
          \x20       ui.text(\"Memory\").dim();\n\
-         \x20       ui.text(\"2.1 GB / 8 GB\").bold().fg(Color::Green);\n\
+         \x20       ui.text(\"2.1 GB / 8 GB\").bold().fg(theme.success);\n\
          \x20       ui.progress(0.26);\n\
          \x20   });\n\
          });",
     );
 
-    md_h2(ui, "Step 3: Process Table");
+    md_h2(ui, theme, "Step 3: Process Table");
     md_p(
         ui,
         "SLT's Table widget handles headers, selection, and column sizing:",
@@ -1041,6 +1173,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "let mut table = TableState::new(\n\
          \x20   vec![\"PID\", \"Name\", \"CPU\", \"Memory\"],\n\
@@ -1052,7 +1185,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
          ui.table(&mut table);",
     );
 
-    md_h2(ui, "Step 4: Log Stream");
+    md_h2(ui, theme, "Step 4: Log Stream");
     md_p(
         ui,
         "Wrap logs in a scrollable container. New entries push older ones up:",
@@ -1060,6 +1193,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "ui.scrollable(&mut scroll).max_height(10).col(|ui| {\n\
          \x20   for log in &logs {\n\
@@ -1076,15 +1210,16 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_blockquote(
         ui,
+        theme,
         "The full example is 120 lines including simulated data.\n50 lines is just the UI code.",
     );
 }
 
 // ── Blog Post: u32 Coordinates ──
 
-fn render_post_u32(ui: &mut Context) {
-    md_h1(ui, "The Case for u32 Coordinates");
-    md_meta(ui, "2025-03-01", "3 min read");
+fn render_post_u32(ui: &mut Context, theme: &Theme) {
+    md_h1(ui, theme, "The Case for u32 Coordinates");
+    md_meta(ui, theme, "2025-03-01", "3 min read");
     ui.text("");
 
     md_p(
@@ -1094,7 +1229,7 @@ fn render_post_u32(ui: &mut Context) {
               like more than enough — no terminal is 65K columns wide. So why does SLT use u32?",
     );
 
-    md_h2(ui, "The Overflow Bug");
+    md_h2(ui, theme, "The Overflow Bug");
     md_p(
         ui,
         "The problem isn't the terminal size. It's arithmetic. When you compute layouts, \
@@ -1104,6 +1239,7 @@ fn render_post_u32(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "// Ratatui-style u16 arithmetic:\n\
          let total_width: u16 = col_count * col_width + (col_count - 1) * gap;\n\
@@ -1114,10 +1250,11 @@ fn render_post_u32(ui: &mut Context) {
          let total_width: u32 = col_count * col_width + (col_count - 1) * gap;",
     );
 
-    md_h2(ui, "Real-World Triggers");
+    md_h2(ui, theme, "Real-World Triggers");
     md_p(ui, "This isn't theoretical. It triggers in practice:");
     md_bullet(
         ui,
+        theme,
         &[
             "Scrollable containers with large content (1000+ rows)",
             "Tables with many columns and wide data",
@@ -1126,9 +1263,9 @@ fn render_post_u32(ui: &mut Context) {
         ],
     );
 
-    md_h2(ui, "Why Not Just Use i32 or usize?");
+    md_h2(ui, theme, "Why Not Just Use i32 or usize?");
     md_p(ui, "We considered all options:");
-    md_bullet(ui, &[
+    md_bullet(ui, theme, &[
         "i32: Negative coordinates are meaningless for layout. Wastes a sign bit and allows invalid states.",
         "usize: 64-bit on most platforms. Wastes memory in the character buffer (millions of cells).",
         "u32: 4 billion max. More than enough for intermediate arithmetic. Same size as u16 after padding on most structs.",
@@ -1143,9 +1280,9 @@ fn render_post_u32(ui: &mut Context) {
 
 // ── Blog Post: Flexbox for Terminals ──
 
-fn render_post_flexbox(ui: &mut Context) {
-    md_h1(ui, "Flexbox for Terminals");
-    md_meta(ui, "2025-02-25", "6 min read");
+fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
+    md_h1(ui, theme, "Flexbox for Terminals");
+    md_meta(ui, theme, "2025-02-25", "6 min read");
     ui.text("");
 
     md_p(
@@ -1155,15 +1292,15 @@ fn render_post_flexbox(ui: &mut Context) {
               SLT layout works. This post maps CSS concepts to SLT API calls.",
     );
 
-    md_h2(ui, "The Mapping");
+    md_h2(ui, theme, "The Mapping");
 
     ui.bordered(Border::Rounded).pad(1).col(|ui| {
         ui.row(|ui| {
             ui.styled(
                 format!("{:<32}", "CSS"),
-                Style::new().bold().fg(Color::Cyan),
+                Style::new().bold().fg(theme.primary),
             );
-            ui.text("SLT").bold().fg(Color::Green);
+            ui.text("SLT").bold().fg(theme.success);
         });
         ui.separator();
         let mappings = [
@@ -1186,22 +1323,22 @@ fn render_post_flexbox(ui: &mut Context) {
         ];
         for (css, slt_api) in &mappings {
             ui.row(|ui| {
-                ui.styled(format!("{:<32}", css), Style::new().fg(Color::Indexed(252)));
-                ui.text(*slt_api).fg(Color::Green);
+                ui.styled(format!("{:<32}", css), Style::new().fg(theme.text));
+                ui.text(*slt_api).fg(theme.success);
             });
         }
     });
     ui.text("");
 
-    md_h2(ui, "How Layout Works Internally");
+    md_h2(ui, theme, "How Layout Works Internally");
     md_p(ui, "SLT's layout algorithm runs in two passes:");
 
-    md_numbered(ui, &[
+    md_numbered(ui, theme, &[
         "Measure pass: each node computes its minimum size. Text measures its string width. Containers sum their children (column = sum heights, row = sum widths).",
         "Layout pass: starting from the root (terminal size), each container distributes space to children. Fixed-size children get their minimum. Remaining space goes to children with grow > 0, proportional to their grow factor.",
     ]);
 
-    md_h2(ui, "Where We Diverge from CSS");
+    md_h2(ui, theme, "Where We Diverge from CSS");
     md_p(
         ui,
         "SLT intentionally simplifies Flexbox in places that don't matter for terminals:",
@@ -1209,6 +1346,7 @@ fn render_post_flexbox(ui: &mut Context) {
 
     md_bullet(
         ui,
+        theme,
         &[
             "No flex-wrap: terminal rows don't wrap. Use nested row/col instead.",
             "No order property: children render in declaration order. Always.",
@@ -1223,7 +1361,7 @@ fn render_post_flexbox(ui: &mut Context) {
               covering 95% of real-world terminal layouts.",
     );
 
-    md_h2(ui, "A Complete Example");
+    md_h2(ui, theme, "A Complete Example");
     md_p(
         ui,
         "Here's a typical dashboard layout using the flexbox primitives:",
@@ -1231,6 +1369,7 @@ fn render_post_flexbox(ui: &mut Context) {
 
     md_code_block(
         ui,
+        theme,
         "rust",
         "ui.col(|ui| {\n\
          \x20   // Top bar: logo left, nav right\n\
@@ -1265,59 +1404,180 @@ fn render_post_flexbox(ui: &mut Context) {
 // PRICING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn render_pricing(ui: &mut Context, toasts: &mut ToastState, tick: u64) {
+fn render_pricing(
+    ui: &mut Context,
+    toasts: &mut ToastState,
+    tick: u64,
+    show_modal: &mut bool,
+    selected_plan: &mut String,
+) {
+    let theme = *ui.theme();
+
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, "Pricing");
+        md_h1(ui, &theme, "Pricing");
         md_p_dim(
             ui,
+            &theme,
             "SLT is free and open source forever. Sponsorship helps us ship faster.",
         );
 
         ui.row(|ui| {
-            price_card(ui, "Open Source", "Free", "forever", &[
-                "Full library access",
-                "All 14 widgets",
-                "MIT License",
-                "Community support",
-                "All examples included",
-            ], Color::Green, false, toasts, tick);
+            ui.text("Transparent plans for solo builders to enterprise teams.")
+                .fg(theme.text);
+            ui.spacer();
+            ui.text("★ Recommended").bold().fg(theme.warning);
+        });
+        ui.text("");
 
-            price_card(ui, "Sponsor", "$5", "/month", &[
-                "Everything in Free",
-                "Priority issue response",
-                "Logo on README",
-                "Early access to features",
-                "Private Discord channel",
-            ], Color::Cyan, true, toasts, tick);
+        ui.row(|ui| {
+            price_card(
+                ui,
+                "Open Source",
+                "Free",
+                "forever",
+                &[
+                    "Full library access",
+                    "All 14 widgets",
+                    "MIT License",
+                    "Community support",
+                    "All examples included",
+                ],
+                theme.success,
+                false,
+                &theme,
+                show_modal,
+                selected_plan,
+            );
 
-            price_card(ui, "Enterprise", "Custom", "pricing", &[
-                "Everything in Sponsor",
-                "Dedicated support",
-                "Custom widget development",
-                "SLA guarantee",
-                "Architecture consulting",
-            ], Color::Magenta, false, toasts, tick);
+            ui.container().grow(1).col(|ui| {
+                ui.text("★ Recommended for most teams")
+                    .bold()
+                    .fg(theme.warning);
+                price_card(
+                    ui,
+                    "Sponsor",
+                    "$5",
+                    "/month",
+                    &[
+                        "Everything in Free",
+                        "Priority issue response",
+                        "Logo on README",
+                        "Early access to features",
+                        "Private Discord channel",
+                    ],
+                    theme.primary,
+                    true,
+                    &theme,
+                    show_modal,
+                    selected_plan,
+                );
+            });
+
+            price_card(
+                ui,
+                "Enterprise",
+                "Custom",
+                "engagement",
+                &[
+                    "Everything in Sponsor",
+                    "Dedicated support",
+                    "Custom widget development",
+                    "SLA guarantee",
+                    "Architecture consulting",
+                ],
+                theme.accent,
+                false,
+                &theme,
+                show_modal,
+                selected_plan,
+            );
         });
 
         ui.text("");
-        md_h2(ui, "FAQ");
+
+        md_h2(ui, &theme, "FAQ");
         faq_item(
             ui,
+            &theme,
             "Is SLT really free?",
             "Yes. MIT licensed. Use it in commercial products, modify it, redistribute it. No strings.",
         );
         faq_item(
             ui,
+            &theme,
             "What does sponsorship fund?",
             "Full-time development, CI infrastructure, documentation, and community management. \
              Every dollar goes directly into making SLT better.",
         );
         faq_item(
             ui,
+            &theme,
             "Can I use SLT in production?",
             "Yes. The API is pre-1.0 so breaking changes may happen, but the core is stable \
              and well-tested. Pin your version and you'll be fine.",
         );
+
+        ui.text("");
+        ui.container()
+            .bg(theme.surface)
+            .pad(1)
+            .col(|ui| {
+                ui.text("Ship faster with SLT").bold().fg(theme.primary);
+                ui.text_wrap(
+                    "Start for free, upgrade when your team needs priority support and direct access.",
+                )
+                .fg(theme.surface_text);
+                ui.text("");
+                ui.row(|ui| {
+                    if ui.button_with("Choose Sponsor", ButtonVariant::Primary) {
+                        *show_modal = true;
+                        *selected_plan = "Sponsor".to_string();
+                    }
+                    if ui.button_with("Talk to Enterprise", ButtonVariant::Outline) {
+                        *show_modal = true;
+                        *selected_plan = "Enterprise".to_string();
+                    }
+                });
+            });
+
+        if *show_modal {
+            ui.modal(|ui| {
+                if ui.key_code(KeyCode::Esc) {
+                    *show_modal = false;
+                }
+                ui.bordered(Border::Rounded)
+                    .bg(theme.surface)
+                    .pad(2)
+                    .max_w(56)
+                    .col(|ui| {
+                        ui.text("✦ Confirm Subscription").bold().fg(theme.primary);
+                        ui.text("Choose how you want to support SLT.")
+                            .fg(theme.surface_text);
+                        ui.text("");
+                        ui.separator();
+                        ui.text("");
+                        ui.text("Selected plan").fg(theme.surface_text);
+                        ui.text(selected_plan.as_str()).bold().fg(theme.accent);
+                        ui.text("Thank you for supporting SLT!").fg(theme.surface_text);
+                        ui.text("");
+                        ui.row(|ui| {
+                            if ui.button_with("  Subscribe  ", ButtonVariant::Primary) {
+                                toasts.success(
+                                    format!("Subscribed to {} plan!", selected_plan),
+                                    tick,
+                                );
+                                *show_modal = false;
+                            }
+                            ui.text("  ");
+                            if ui.button_with("  Cancel  ", ButtonVariant::Outline) {
+                                *show_modal = false;
+                            }
+                        });
+                        ui.text("");
+                        ui.text("Press Esc to close").fg(theme.surface_text);
+                    });
+            });
+        }
     });
 }
 
@@ -1325,15 +1585,48 @@ fn render_pricing(ui: &mut Context, toasts: &mut ToastState, tick: u64) {
 // CONTACT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn render_contact(ui: &mut Context, nav_target: &mut Option<usize>) {
+fn validate_name(value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        Err("Name is required".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_email(value: &str) -> Result<(), String> {
+    if value.contains('@') && value.contains('.') {
+        Ok(())
+    } else {
+        Err("Enter a valid email".into())
+    }
+}
+
+fn validate_message(value: &str) -> Result<(), String> {
+    if value.trim().len() >= 10 {
+        Ok(())
+    } else {
+        Err("Message must be at least 10 characters".into())
+    }
+}
+
+fn render_contact(
+    ui: &mut Context,
+    nav_target: &mut Option<usize>,
+    contact_form: &mut FormState,
+    toasts: &mut ToastState,
+    tick: u64,
+) {
+    let theme = *ui.theme();
+
     ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, "Contact & Community");
+        md_h1(ui, &theme, "Contact & Community");
 
         md_p(ui, "SLT is built in the open. Here's how to get involved:");
 
-        md_h2(ui, "Get Help");
+        md_h2(ui, &theme, "Get Help");
         md_bullet(
             ui,
+            &theme,
             &[
                 "GitHub Issues — Bug reports and feature requests",
                 "GitHub Discussions — Questions and community help",
@@ -1341,23 +1634,46 @@ fn render_contact(ui: &mut Context, nav_target: &mut Option<usize>) {
             ],
         );
 
-        md_h2(ui, "Links");
-        md_link(ui, "GitHub Repository", "github.com/user/superlighttui");
-        md_link(ui, "API Documentation", "docs.rs/superlighttui");
-        md_link(ui, "Crates.io", "crates.io/crates/superlighttui");
-        md_link(ui, "Discord Server", "discord.gg/slt");
+        md_h2(ui, &theme, "Links");
+        md_link(
+            ui,
+            "GitHub Repository",
+            "https://github.com/subinium/SuperLightTUI",
+        );
+        md_link(ui, "API Documentation", "https://docs.rs/superlighttui");
+        md_link(ui, "Crates.io", "https://crates.io/crates/superlighttui");
+        md_link(ui, "Discord Server", "https://discord.gg/slt");
         ui.text("");
         ui.row(|ui| {
-            if ui.button("View Docs") {
+            if ui.button_with("View Docs", ButtonVariant::Primary) {
                 *nav_target = Some(1);
             }
-            if ui.button("View Pricing") {
+            if ui.button_with("View Pricing", ButtonVariant::Outline) {
                 *nav_target = Some(3);
             }
         });
 
         ui.text("");
-        md_h2(ui, "Contributing");
+        md_h2(ui, &theme, "Send a Message");
+        ui.form(contact_form, |ui, form| {
+            for field in form.fields.iter_mut() {
+                ui.form_field(field);
+            }
+        });
+        if ui.form_submit("Send") {
+            if contact_form.validate(&[validate_name, validate_email, validate_message]) {
+                toasts.success("Thanks for reaching out! We'll reply soon.", tick);
+                contact_form.submitted = true;
+            } else {
+                toasts.error("Please fix the form errors", tick);
+            }
+        }
+        if contact_form.submitted {
+            ui.text("Message received.").fg(theme.success).bold();
+        }
+
+        ui.text("");
+        md_h2(ui, &theme, "Contributing");
         md_p(
             ui,
             "We welcome contributions of all kinds: bug fixes, new widgets, documentation \
@@ -1366,6 +1682,7 @@ fn render_contact(ui: &mut Context, nav_target: &mut Option<usize>) {
 
         md_numbered(
             ui,
+            &theme,
             &[
                 "Fork the repository on GitHub",
                 "Create a feature branch: git checkout -b feat/my-widget",
@@ -1375,27 +1692,28 @@ fn render_contact(ui: &mut Context, nav_target: &mut Option<usize>) {
             ],
         );
 
-        md_h2(ui, "Code of Conduct");
+        md_h2(ui, &theme, "Code of Conduct");
         md_p(
             ui,
             "We follow the Rust community's Code of Conduct. Be kind, be constructive, \
                    and assume good intent. We're all here to build great terminal UIs.",
         );
 
-        md_h2(ui, "Maintainers");
-        ui.bordered(Border::Rounded).pad(1).col(|ui| {
+        md_h2(ui, &theme, "Maintainers");
+        ui.container().bg(theme.surface).p(1).col(|ui| {
             ui.row(|ui| {
-                ui.text("@subinium").bold().fg(Color::Cyan);
-                ui.text(" — ").dim();
-                ui.text("Creator & lead maintainer");
+                ui.text("@subinium").bold().fg(theme.primary);
+                ui.text(" — Creator & lead maintainer")
+                    .fg(theme.surface_text);
             });
         });
 
         ui.text("");
-        md_h2(ui, "Acknowledgements");
+        md_h2(ui, &theme, "Acknowledgements");
         md_p(ui, "SLT wouldn't exist without the Rust TUI ecosystem:");
         md_bullet(
             ui,
+            &theme,
             &[
                 "crossterm — The rock-solid terminal abstraction we build on",
                 "ratatui — Proved that Rust TUIs can be production-quality",
@@ -1411,17 +1729,10 @@ fn render_contact(ui: &mut Context, nav_target: &mut Option<usize>) {
 // Shared Components
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn stat_block(ui: &mut Context, value: &str, label: &str) {
-    ui.container().grow(1).center().col(|ui| {
-        ui.text(value).bold().fg(Color::Cyan);
-        ui.text(label).dim();
-    });
-}
-
-fn feature_card(ui: &mut Context, title: &str, desc: &str) {
-    ui.container().rounded().p(1).grow(1).col(|ui| {
-        ui.text(title).bold().fg(Color::Cyan);
-        ui.text_wrap(desc).dim();
+fn feature_card(ui: &mut Context, theme: &Theme, title: &str, desc: &str) {
+    ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
+        ui.text(format!("◆ {title}")).bold().fg(theme.primary);
+        ui.text_wrap(desc).fg(theme.surface_text);
     });
 }
 
@@ -1433,39 +1744,65 @@ fn price_card(
     features: &[&str],
     color: Color,
     highlight: bool,
-    toasts: &mut ToastState,
-    tick: u64,
+    theme: &Theme,
+    show_modal: &mut bool,
+    selected_plan: &mut String,
 ) {
-    let border = if highlight {
-        Border::Double
+    let cta_label = if highlight {
+        "Get Sponsor"
+    } else if tier == "Enterprise" {
+        "Contact Sales"
     } else {
-        Border::Rounded
+        "Start Free"
     };
-    ui.bordered(border).pad(1).grow(1).col(|ui| {
+    let cta_variant = if highlight {
+        ButtonVariant::Primary
+    } else {
+        ButtonVariant::Outline
+    };
+    let mut card_content = |ui: &mut Context| {
         ui.text(tier).bold().fg(color);
+        ui.text("");
         ui.row(|ui| {
             ui.text(price).bold().fg(color);
-            ui.text(format!(" {period}")).dim();
+            ui.text(format!(" {period}")).fg(theme.surface_text);
         });
         ui.separator();
+        ui.text("");
         for feat in features {
             ui.row(|ui| {
-                ui.text(" + ").fg(Color::Green);
-                ui.text(*feat);
+                ui.text("✓ ").fg(theme.success);
+                ui.text(*feat).fg(theme.text);
             });
         }
         ui.text("");
-        let label = if highlight { "Sponsor" } else { "Select" };
-        if ui.button(label) {
-            toasts.success(format!("Selected: {tier} plan"), tick);
+        if ui.button_with(cta_label, cta_variant) {
+            *show_modal = true;
+            *selected_plan = tier.to_string();
         }
-    });
+    };
+
+    if highlight {
+        ui.bordered(Border::Rounded)
+            .bg(theme.surface)
+            .pad(1)
+            .grow(1)
+            .col(|ui| {
+                card_content(ui);
+            });
+    } else {
+        ui.container().bg(theme.surface).pad(1).grow(1).col(|ui| {
+            card_content(ui);
+        });
+    }
 }
 
-fn faq_item(ui: &mut Context, question: &str, answer: &str) {
-    ui.container().padding(Padding::new(0, 1, 0, 0)).col(|ui| {
-        ui.text(format!("Q: {question}")).bold();
-        ui.text_wrap(format!("A: {answer}")).dim();
+fn faq_item(ui: &mut Context, theme: &Theme, question: &str, answer: &str) {
+    ui.container().padding(Padding::xy(1, 0)).col(|ui| {
+        ui.text(question).bold().fg(theme.primary);
+        ui.container().padding(Padding::xy(2, 0)).col(|ui| {
+            ui.text_wrap(answer).fg(theme.text_dim);
+        });
     });
     ui.text("");
 }

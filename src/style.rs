@@ -30,6 +30,150 @@ pub enum Color {
     Indexed(u8),
 }
 
+impl Color {
+    /// Resolve to `(r, g, b)` for luminance and blending operations.
+    ///
+    /// Named colors map to their typical terminal palette values.
+    /// [`Color::Reset`] maps to black; [`Color::Indexed`] maps to the xterm-256 palette.
+    fn to_rgb(self) -> (u8, u8, u8) {
+        match self {
+            Color::Rgb(r, g, b) => (r, g, b),
+            Color::Black => (0, 0, 0),
+            Color::Red => (205, 49, 49),
+            Color::Green => (13, 188, 121),
+            Color::Yellow => (229, 229, 16),
+            Color::Blue => (36, 114, 200),
+            Color::Magenta => (188, 63, 188),
+            Color::Cyan => (17, 168, 205),
+            Color::White => (229, 229, 229),
+            Color::Reset => (0, 0, 0),
+            Color::Indexed(idx) => xterm256_to_rgb(idx),
+        }
+    }
+
+    /// Compute relative luminance using ITU-R BT.709 coefficients.
+    ///
+    /// Returns a value in `[0.0, 1.0]` where 0 is darkest and 1 is brightest.
+    /// Use this to determine whether text on a given background should be
+    /// light or dark.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// let dark = Color::Rgb(30, 30, 46);
+    /// assert!(dark.luminance() < 0.15);
+    ///
+    /// let light = Color::Rgb(205, 214, 244);
+    /// assert!(light.luminance() > 0.6);
+    /// ```
+    pub fn luminance(self) -> f32 {
+        let (r, g, b) = self.to_rgb();
+        let rf = r as f32 / 255.0;
+        let gf = g as f32 / 255.0;
+        let bf = b as f32 / 255.0;
+        0.2126 * rf + 0.7152 * gf + 0.0722 * bf
+    }
+
+    /// Return a contrasting foreground color for the given background.
+    ///
+    /// Uses the BT.709 luminance threshold (0.5) to decide between white
+    /// and black text. For theme-aware contrast, prefer using this over
+    /// hardcoding `theme.bg` as the foreground.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// let bg = Color::Rgb(189, 147, 249); // Dracula purple
+    /// let fg = Color::contrast_fg(bg);
+    /// // Purple is mid-bright → returns black for readable text
+    /// ```
+    pub fn contrast_fg(bg: Color) -> Color {
+        if bg.luminance() > 0.5 {
+            Color::Rgb(0, 0, 0)
+        } else {
+            Color::Rgb(255, 255, 255)
+        }
+    }
+
+    /// Blend this color over another with the given alpha.
+    ///
+    /// `alpha` is in `[0.0, 1.0]` where 0.0 returns `other` unchanged and
+    /// 1.0 returns `self` unchanged. Both colors are resolved to RGB.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// let white = Color::Rgb(255, 255, 255);
+    /// let black = Color::Rgb(0, 0, 0);
+    /// let gray = white.blend(black, 0.5);
+    /// // ≈ Rgb(128, 128, 128)
+    /// ```
+    pub fn blend(self, other: Color, alpha: f32) -> Color {
+        let alpha = alpha.clamp(0.0, 1.0);
+        let (r1, g1, b1) = self.to_rgb();
+        let (r2, g2, b2) = other.to_rgb();
+        let r = (r1 as f32 * alpha + r2 as f32 * (1.0 - alpha)) as u8;
+        let g = (g1 as f32 * alpha + g2 as f32 * (1.0 - alpha)) as u8;
+        let b = (b1 as f32 * alpha + b2 as f32 * (1.0 - alpha)) as u8;
+        Color::Rgb(r, g, b)
+    }
+
+    /// Lighten this color by the given amount (0.0–1.0).
+    ///
+    /// Blends toward white. `amount = 0.0` returns the original color;
+    /// `amount = 1.0` returns white.
+    pub fn lighten(self, amount: f32) -> Color {
+        Color::Rgb(255, 255, 255).blend(self, 1.0 - amount.clamp(0.0, 1.0))
+    }
+
+    /// Darken this color by the given amount (0.0–1.0).
+    ///
+    /// Blends toward black. `amount = 0.0` returns the original color;
+    /// `amount = 1.0` returns black.
+    pub fn darken(self, amount: f32) -> Color {
+        Color::Rgb(0, 0, 0).blend(self, 1.0 - amount.clamp(0.0, 1.0))
+    }
+}
+
+fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
+    match idx {
+        0 => (0, 0, 0),
+        1 => (128, 0, 0),
+        2 => (0, 128, 0),
+        3 => (128, 128, 0),
+        4 => (0, 0, 128),
+        5 => (128, 0, 128),
+        6 => (0, 128, 128),
+        7 => (192, 192, 192),
+        8 => (128, 128, 128),
+        9 => (255, 0, 0),
+        10 => (0, 255, 0),
+        11 => (255, 255, 0),
+        12 => (0, 0, 255),
+        13 => (255, 0, 255),
+        14 => (0, 255, 255),
+        15 => (255, 255, 255),
+        16..=231 => {
+            let n = idx - 16;
+            let b_idx = n % 6;
+            let g_idx = (n / 6) % 6;
+            let r_idx = n / 36;
+            let to_val = |i: u8| if i == 0 { 0u8 } else { 55 + 40 * i };
+            (to_val(r_idx), to_val(g_idx), to_val(b_idx))
+        }
+        232..=255 => {
+            let v = 8 + 10 * (idx - 232);
+            (v, v, v)
+        }
+    }
+}
+
 /// A color theme that flows through all widgets automatically.
 ///
 /// Construct with [`Theme::dark()`] or [`Theme::light()`], or build a custom
@@ -62,6 +206,19 @@ pub struct Theme {
     pub selected_bg: Color,
     /// Foreground color for selected list/table rows.
     pub selected_fg: Color,
+    /// Subtle surface color for card backgrounds and elevated containers.
+    pub surface: Color,
+    /// Hover/active surface color, one step brighter than `surface`.
+    ///
+    /// Used for interactive element hover states. Should be visually
+    /// distinguishable from both `surface` and `border`.
+    pub surface_hover: Color,
+    /// Secondary text color guaranteed readable on `surface` backgrounds.
+    ///
+    /// Use this instead of `text_dim` when rendering on `surface`-colored
+    /// containers. `text_dim` is tuned for the main `bg`; on `surface` it
+    /// may lack contrast.
+    pub surface_text: Color,
 }
 
 impl Theme {
@@ -80,6 +237,9 @@ impl Theme {
             error: Color::Red,
             selected_bg: Color::Cyan,
             selected_fg: Color::Black,
+            surface: Color::Indexed(236),
+            surface_hover: Color::Indexed(238),
+            surface_text: Color::Indexed(250),
         }
     }
 
@@ -98,6 +258,114 @@ impl Theme {
             error: Color::Red,
             selected_bg: Color::Blue,
             selected_fg: Color::White,
+            surface: Color::Indexed(254),
+            surface_hover: Color::Indexed(252),
+            surface_text: Color::Indexed(238),
+        }
+    }
+
+    /// Dracula theme — purple primary on dark gray.
+    pub fn dracula() -> Self {
+        Self {
+            primary: Color::Rgb(189, 147, 249),
+            secondary: Color::Rgb(139, 233, 253),
+            accent: Color::Rgb(255, 121, 198),
+            text: Color::Rgb(248, 248, 242),
+            text_dim: Color::Rgb(98, 114, 164),
+            border: Color::Rgb(68, 71, 90),
+            bg: Color::Rgb(40, 42, 54),
+            success: Color::Rgb(80, 250, 123),
+            warning: Color::Rgb(241, 250, 140),
+            error: Color::Rgb(255, 85, 85),
+            selected_bg: Color::Rgb(189, 147, 249),
+            selected_fg: Color::Rgb(40, 42, 54),
+            surface: Color::Rgb(68, 71, 90),
+            surface_hover: Color::Rgb(98, 100, 120),
+            surface_text: Color::Rgb(191, 194, 210),
+        }
+    }
+
+    /// Catppuccin Mocha theme — lavender primary on dark base.
+    pub fn catppuccin() -> Self {
+        Self {
+            primary: Color::Rgb(180, 190, 254),
+            secondary: Color::Rgb(137, 180, 250),
+            accent: Color::Rgb(245, 194, 231),
+            text: Color::Rgb(205, 214, 244),
+            text_dim: Color::Rgb(127, 132, 156),
+            border: Color::Rgb(88, 91, 112),
+            bg: Color::Rgb(30, 30, 46),
+            success: Color::Rgb(166, 227, 161),
+            warning: Color::Rgb(249, 226, 175),
+            error: Color::Rgb(243, 139, 168),
+            selected_bg: Color::Rgb(180, 190, 254),
+            selected_fg: Color::Rgb(30, 30, 46),
+            surface: Color::Rgb(49, 50, 68),
+            surface_hover: Color::Rgb(69, 71, 90),
+            surface_text: Color::Rgb(166, 173, 200),
+        }
+    }
+
+    /// Nord theme — frost blue primary on polar night.
+    pub fn nord() -> Self {
+        Self {
+            primary: Color::Rgb(136, 192, 208),
+            secondary: Color::Rgb(129, 161, 193),
+            accent: Color::Rgb(180, 142, 173),
+            text: Color::Rgb(236, 239, 244),
+            text_dim: Color::Rgb(76, 86, 106),
+            border: Color::Rgb(76, 86, 106),
+            bg: Color::Rgb(46, 52, 64),
+            success: Color::Rgb(163, 190, 140),
+            warning: Color::Rgb(235, 203, 139),
+            error: Color::Rgb(191, 97, 106),
+            selected_bg: Color::Rgb(136, 192, 208),
+            selected_fg: Color::Rgb(46, 52, 64),
+            surface: Color::Rgb(59, 66, 82),
+            surface_hover: Color::Rgb(67, 76, 94),
+            surface_text: Color::Rgb(216, 222, 233),
+        }
+    }
+
+    /// Solarized Dark theme — blue primary on dark base.
+    pub fn solarized_dark() -> Self {
+        Self {
+            primary: Color::Rgb(38, 139, 210),
+            secondary: Color::Rgb(42, 161, 152),
+            accent: Color::Rgb(211, 54, 130),
+            text: Color::Rgb(131, 148, 150),
+            text_dim: Color::Rgb(88, 110, 117),
+            border: Color::Rgb(88, 110, 117),
+            bg: Color::Rgb(0, 43, 54),
+            success: Color::Rgb(133, 153, 0),
+            warning: Color::Rgb(181, 137, 0),
+            error: Color::Rgb(220, 50, 47),
+            selected_bg: Color::Rgb(38, 139, 210),
+            selected_fg: Color::Rgb(253, 246, 227),
+            surface: Color::Rgb(7, 54, 66),
+            surface_hover: Color::Rgb(23, 72, 85),
+            surface_text: Color::Rgb(147, 161, 161),
+        }
+    }
+
+    /// Tokyo Night theme — blue primary on dark storm base.
+    pub fn tokyo_night() -> Self {
+        Self {
+            primary: Color::Rgb(122, 162, 247),
+            secondary: Color::Rgb(125, 207, 255),
+            accent: Color::Rgb(187, 154, 247),
+            text: Color::Rgb(169, 177, 214),
+            text_dim: Color::Rgb(86, 95, 137),
+            border: Color::Rgb(54, 58, 79),
+            bg: Color::Rgb(26, 27, 38),
+            success: Color::Rgb(158, 206, 106),
+            warning: Color::Rgb(224, 175, 104),
+            error: Color::Rgb(247, 118, 142),
+            selected_bg: Color::Rgb(122, 162, 247),
+            selected_fg: Color::Rgb(26, 27, 38),
+            surface: Color::Rgb(36, 40, 59),
+            surface_hover: Color::Rgb(41, 46, 66),
+            surface_text: Color::Rgb(192, 202, 245),
         }
     }
 }
@@ -350,6 +618,32 @@ pub enum Align {
     Center,
     /// Align children to the end of the cross axis.
     End,
+}
+
+/// Main-axis content distribution within a container.
+///
+/// Controls how children are distributed along the main axis. For a `row()`,
+/// this is horizontal distribution; for a `col()`, this is vertical.
+///
+/// When children have `grow > 0`, they consume remaining space before justify
+/// distribution applies. Justify modes only affect the leftover space after
+/// flex-grow allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Justify {
+    /// Pack children at the start (default). Uses `gap` for spacing.
+    #[default]
+    Start,
+    /// Center children along the main axis with `gap` spacing.
+    Center,
+    /// Pack children at the end with `gap` spacing.
+    End,
+    /// First child at start, last at end, equal space between.
+    SpaceBetween,
+    /// Equal space around each child (half-size space at edges).
+    SpaceAround,
+    /// Equal space between all children and at both edges.
+    SpaceEvenly,
 }
 
 /// Text modifier bitflags stored as a `u8`.

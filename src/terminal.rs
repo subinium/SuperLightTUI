@@ -1,7 +1,8 @@
 use std::io::{self, Stdout, Write};
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture,
 };
 use crossterm::style::{
     Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
@@ -49,7 +50,7 @@ impl Terminal {
             EnableBracketedPaste
         )?;
         if mouse {
-            execute!(stdout, EnableMouseCapture)?;
+            execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
         }
 
         Ok(Self {
@@ -76,6 +77,7 @@ impl Terminal {
         if !updates.is_empty() {
             let mut last_style = Style::new();
             let mut last_pos: Option<(u32, u32)> = None;
+            let mut active_link: Option<&str> = None;
 
             for &(x, y, cell) in &updates {
                 if cell.symbol.is_empty() {
@@ -93,11 +95,24 @@ impl Terminal {
                     last_style = cell.style;
                 }
 
+                let cell_link = cell.hyperlink.as_deref();
+                if cell_link != active_link {
+                    if let Some(url) = cell_link {
+                        queue!(self.stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                    } else {
+                        queue!(self.stdout, Print("\x1b]8;;\x07"))?;
+                    }
+                    active_link = cell_link;
+                }
+
                 queue!(self.stdout, Print(&cell.symbol))?;
                 let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
                 last_pos = Some((x + char_width, y));
             }
 
+            if active_link.is_some() {
+                queue!(self.stdout, Print("\x1b]8;;\x07"))?;
+            }
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
@@ -150,7 +165,7 @@ impl InlineTerminal {
         terminal::enable_raw_mode()?;
         execute!(stdout, cursor::Hide, EnableBracketedPaste)?;
         if mouse {
-            execute!(stdout, EnableMouseCapture)?;
+            execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
         }
 
         let (_, cursor_row) = cursor::position()?;
@@ -195,6 +210,7 @@ impl InlineTerminal {
         if !updates.is_empty() {
             let mut last_style = Style::new();
             let mut last_pos: Option<(u32, u32)> = None;
+            let mut active_link: Option<&str> = None;
 
             for &(x, y, cell) in &updates {
                 if cell.symbol.is_empty() {
@@ -213,11 +229,24 @@ impl InlineTerminal {
                     last_style = cell.style;
                 }
 
+                let cell_link = cell.hyperlink.as_deref();
+                if cell_link != active_link {
+                    if let Some(url) = cell_link {
+                        queue!(self.stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                    } else {
+                        queue!(self.stdout, Print("\x1b]8;;\x07"))?;
+                    }
+                    active_link = cell_link;
+                }
+
                 queue!(self.stdout, Print(&cell.symbol))?;
                 let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
                 last_pos = Some((x + char_width, abs_y));
             }
 
+            if active_link.is_some() {
+                queue!(self.stdout, Print("\x1b]8;;\x07"))?;
+            }
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
@@ -267,7 +296,7 @@ impl InlineTerminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         if self.mouse_enabled {
-            let _ = execute!(self.stdout, DisableMouseCapture);
+            let _ = execute!(self.stdout, DisableMouseCapture, DisableFocusChange);
         }
         let _ = execute!(
             self.stdout,
@@ -284,7 +313,7 @@ impl Drop for Terminal {
 impl Drop for InlineTerminal {
     fn drop(&mut self) {
         if self.mouse_enabled {
-            let _ = execute!(self.stdout, DisableMouseCapture);
+            let _ = execute!(self.stdout, DisableMouseCapture, DisableFocusChange);
         }
         let _ = execute!(
             self.stdout,

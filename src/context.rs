@@ -2,12 +2,31 @@ use crate::chart::{build_histogram_config, render_chart, ChartBuilder, Histogram
 use crate::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseKind};
 use crate::layout::{Command, Direction};
 use crate::rect::Rect;
-use crate::style::{Align, Border, Color, Constraints, Margin, Modifiers, Padding, Style, Theme};
-use crate::widgets::{
-    ListState, ScrollState, SpinnerState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastState,
+use crate::style::{
+    Align, Border, Color, Constraints, Justify, Margin, Modifiers, Padding, Style, Theme,
 };
-use unicode_width::UnicodeWidthStr;
+use crate::widgets::{
+    ButtonVariant, FormField, FormState, ListState, ScrollState, SpinnerState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastState,
+};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+#[allow(dead_code)]
+fn slt_assert(condition: bool, msg: &str) {
+    if !condition {
+        panic!("[SLT] {}", msg);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[allow(dead_code)]
+fn slt_warn(msg: &str) {
+    eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
+}
+
+#[cfg(not(debug_assertions))]
+#[allow(dead_code)]
+fn slt_warn(_msg: &str) {}
 
 /// Result of a container mouse interaction.
 ///
@@ -186,6 +205,9 @@ pub struct Context {
     mouse_pos: Option<(u32, u32)>,
     click_pos: Option<(u32, u32)>,
     last_text_idx: Option<usize>,
+    overlay_depth: usize,
+    pub(crate) modal_active: bool,
+    prev_modal_active: bool,
     debug: bool,
     theme: Theme,
 }
@@ -215,8 +237,10 @@ pub struct ContainerBuilder<'a> {
     ctx: &'a mut Context,
     gap: u32,
     align: Align,
+    justify: Justify,
     border: Option<Border>,
     border_style: Style,
+    bg_color: Option<Color>,
     padding: Padding,
     margin: Margin,
     constraints: Constraints,
@@ -675,6 +699,11 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    pub fn bg(mut self, color: Color) -> Self {
+        self.bg_color = Some(color);
+        self
+    }
+
     // ── padding (Tailwind: p, px, py, pt, pr, pb, pl) ───────────────
 
     /// Set uniform padding on all sides. Alias for [`pad`](Self::pad).
@@ -881,6 +910,27 @@ impl<'a> ContainerBuilder<'a> {
         self.align(Align::Center)
     }
 
+    /// Set the main-axis content distribution mode.
+    pub fn justify(mut self, justify: Justify) -> Self {
+        self.justify = justify;
+        self
+    }
+
+    /// Distribute children with equal space between; first at start, last at end.
+    pub fn space_between(self) -> Self {
+        self.justify(Justify::SpaceBetween)
+    }
+
+    /// Distribute children with equal space around each child.
+    pub fn space_around(self) -> Self {
+        self.justify(Justify::SpaceAround)
+    }
+
+    /// Distribute children with equal space between all children and edges.
+    pub fn space_evenly(self) -> Self {
+        self.justify(Justify::SpaceEvenly)
+    }
+
     // ── title ────────────────────────────────────────────────────────
 
     /// Set a plain-text title rendered in the top border.
@@ -938,8 +988,10 @@ impl<'a> ContainerBuilder<'a> {
                 direction,
                 gap: self.gap,
                 align: self.align,
+                justify: self.justify,
                 border: self.border,
                 border_style: self.border_style,
+                bg_color: self.bg_color,
                 padding: self.padding,
                 margin: self.margin,
                 constraints: self.constraints,
@@ -970,6 +1022,7 @@ impl Context {
         debug: bool,
         theme: Theme,
         last_mouse_pos: Option<(u32, u32)>,
+        prev_modal_active: bool,
     ) -> Self {
         let consumed = vec![false; events.len()];
 
@@ -1018,6 +1071,9 @@ impl Context {
             mouse_pos,
             click_pos,
             last_text_idx: None,
+            overlay_depth: 0,
+            modal_active: false,
+            prev_modal_active,
             debug,
             theme,
         }
@@ -1133,6 +1189,9 @@ impl Context {
     /// wrapping content in a container. Each call reserves one slot in the
     /// hit-test map, so the call order must be stable across frames.
     pub fn interaction(&mut self) -> Response {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return Response::default();
+        }
         let id = self.interaction_count;
         self.interaction_count += 1;
         self.response_for(id)
@@ -1143,6 +1202,9 @@ impl Context {
     /// Call this in custom widgets that need keyboard focus. Each call increments
     /// the internal focus counter, so the call order must be stable across frames.
     pub fn register_focusable(&mut self) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         let id = self.focus_count;
         self.focus_count += 1;
         self.commands.push(Command::FocusMarker(id));
@@ -1172,6 +1234,60 @@ impl Context {
             grow: 0,
             align: Align::Start,
             wrap: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.last_text_idx = Some(self.commands.len() - 1);
+        self
+    }
+
+    /// Render a clickable hyperlink.
+    ///
+    /// The link is interactive: clicking it (or pressing Enter/Space when
+    /// focused) opens the URL in the system browser. OSC 8 is also emitted
+    /// for terminals that support native hyperlinks.
+    pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
+        let url_str = url.into();
+        let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let response = self.response_for(interaction_id);
+
+        let mut activated = response.clicked;
+        if focused {
+            for (i, event) in self.events.iter().enumerate() {
+                if let Event::Key(key) = event {
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                        activated = true;
+                        self.consumed[i] = true;
+                    }
+                }
+            }
+        }
+
+        if activated {
+            let _ = open_url(&url_str);
+        }
+
+        let style = if focused {
+            Style::new()
+                .fg(self.theme.primary)
+                .bg(self.theme.surface_hover)
+                .underline()
+                .bold()
+        } else if response.hovered {
+            Style::new()
+                .fg(self.theme.accent)
+                .bg(self.theme.surface_hover)
+                .underline()
+        } else {
+            Style::new().fg(self.theme.primary).underline()
+        };
+
+        self.commands.push(Command::Link {
+            text: text.into(),
+            url: url_str,
+            style,
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
@@ -1287,8 +1403,9 @@ impl Context {
 
     fn modify_last_style(&mut self, f: impl FnOnce(&mut Style)) {
         if let Some(idx) = self.last_text_idx {
-            if let Command::Text { style, .. } = &mut self.commands[idx] {
-                f(style);
+            match &mut self.commands[idx] {
+                Command::Text { style, .. } | Command::Link { style, .. } => f(style),
+                _ => {}
             }
         }
     }
@@ -1348,6 +1465,25 @@ impl Context {
         self.push_container(Direction::Row, gap, f)
     }
 
+    pub fn modal(&mut self, f: impl FnOnce(&mut Context)) {
+        self.commands.push(Command::BeginOverlay { modal: true });
+        self.overlay_depth += 1;
+        self.modal_active = true;
+        f(self);
+        self.overlay_depth = self.overlay_depth.saturating_sub(1);
+        self.commands.push(Command::EndOverlay);
+        self.last_text_idx = None;
+    }
+
+    pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) {
+        self.commands.push(Command::BeginOverlay { modal: false });
+        self.overlay_depth += 1;
+        f(self);
+        self.overlay_depth = self.overlay_depth.saturating_sub(1);
+        self.commands.push(Command::EndOverlay);
+        self.last_text_idx = None;
+    }
+
     /// Create a container with a fluent builder.
     ///
     /// Use this for borders, padding, grow, constraints, and titles. Chain
@@ -1374,8 +1510,10 @@ impl Context {
             ctx: self,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -1479,8 +1617,10 @@ impl Context {
             direction,
             gap,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -1495,6 +1635,9 @@ impl Context {
     }
 
     fn response_for(&self, interaction_id: usize) -> Response {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return Response::default();
+        }
         if let Some(rect) = self.prev_hit_map.get(interaction_id) {
             let clicked = self
                 .click_pos
@@ -1549,6 +1692,41 @@ impl Context {
         self
     }
 
+    /// Render a form that groups input fields vertically.
+    ///
+    /// Use [`Context::form_field`] inside the closure to render each field.
+    pub fn form(
+        &mut self,
+        state: &mut FormState,
+        f: impl FnOnce(&mut Context, &mut FormState),
+    ) -> &mut Self {
+        self.col(|ui| {
+            f(ui, state);
+        });
+        self
+    }
+
+    /// Render a single form field with label and input.
+    ///
+    /// Shows a validation error below the input when present.
+    pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
+        self.col(|ui| {
+            ui.styled(field.label.clone(), Style::new().bold().fg(ui.theme.text));
+            ui.text_input(&mut field.input);
+            if let Some(error) = field.error.as_deref() {
+                ui.styled(error.to_string(), Style::new().dim().fg(ui.theme.error));
+            }
+        });
+        self
+    }
+
+    /// Render a submit button.
+    ///
+    /// Returns `true` when the button is clicked or activated.
+    pub fn form_submit(&mut self, label: impl Into<String>) -> bool {
+        self.button(label)
+    }
+
     /// Render a single-line text input. Auto-handles cursor, typing, and backspace.
     ///
     /// The widget claims focus via [`Context::register_focusable`]. When focused,
@@ -1565,6 +1743,10 @@ impl Context {
     /// # });
     /// ```
     pub fn text_input(&mut self, state: &mut TextInputState) -> &mut Self {
+        slt_assert(
+            !state.value.contains('\n'),
+            "text_input got a newline — use textarea instead",
+        );
         let focused = self.register_focusable();
         state.cursor = state.cursor.min(state.value.chars().count());
 
@@ -1641,24 +1823,56 @@ impl Context {
             }
         }
 
-        if state.value.is_empty() {
-            self.styled(
-                state.placeholder.clone(),
-                Style::new().dim().fg(self.theme.text_dim),
-            )
+        let show_cursor = focused && (self.tick / 30).is_multiple_of(2);
+
+        let input_text = if state.value.is_empty() {
+            if state.placeholder.len() > 100 {
+                slt_warn(
+                    "text_input placeholder is very long (>100 chars) — consider shortening it",
+                );
+            }
+            state.placeholder.clone()
         } else {
             let mut rendered = String::new();
             for (idx, ch) in state.value.chars().enumerate() {
-                if focused && idx == state.cursor {
+                if show_cursor && idx == state.cursor {
                     rendered.push('▎');
                 }
                 rendered.push(ch);
             }
-            if focused && state.cursor >= state.value.chars().count() {
+            if show_cursor && state.cursor >= state.value.chars().count() {
                 rendered.push('▎');
             }
-            self.styled(rendered, Style::new().fg(self.theme.text))
+            rendered
+        };
+        let input_style = if state.value.is_empty() {
+            Style::new().dim().fg(self.theme.text_dim)
+        } else {
+            Style::new().fg(self.theme.text)
+        };
+
+        let border_color = if focused {
+            self.theme.primary
+        } else if state.validation_error.is_some() {
+            self.theme.error
+        } else {
+            self.theme.border
+        };
+
+        self.bordered(Border::Rounded)
+            .border_style(Style::new().fg(border_color))
+            .px(1)
+            .col(|ui| {
+                ui.styled(input_text, input_style);
+            });
+
+        if let Some(error) = state.validation_error.clone() {
+            self.styled(
+                format!("⚠ {error}"),
+                Style::new().dim().fg(self.theme.error),
+            );
         }
+        self
     }
 
     /// Render an animated spinner.
@@ -1688,8 +1902,10 @@ impl Context {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -1715,6 +1931,9 @@ impl Context {
     ///
     /// When focused, handles character input, Enter (new line), Backspace,
     /// arrow keys, Home, and End. The cursor is rendered as a block character.
+    ///
+    /// Set [`TextareaState::word_wrap`] to enable soft-wrapping at a given
+    /// display-column width. Up/Down then navigate visual lines.
     pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> &mut Self {
         if state.lines.is_empty() {
             state.lines.push(String::new());
@@ -1725,6 +1944,10 @@ impl Context {
             .min(state.lines[state.cursor_row].chars().count());
 
         let focused = self.register_focusable();
+        let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
+        let wrapping = state.wrap_width.is_some();
+
+        let pre_vlines = textarea_build_visual_lines(&state.lines, wrap_w);
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -1798,7 +2021,19 @@ impl Context {
                             consumed_indices.push(i);
                         }
                         KeyCode::Up => {
-                            if state.cursor_row > 0 {
+                            if wrapping {
+                                let (vrow, vcol) = textarea_logical_to_visual(
+                                    &pre_vlines,
+                                    state.cursor_row,
+                                    state.cursor_col,
+                                );
+                                if vrow > 0 {
+                                    let (lr, lc) =
+                                        textarea_visual_to_logical(&pre_vlines, vrow - 1, vcol);
+                                    state.cursor_row = lr;
+                                    state.cursor_col = lc;
+                                }
+                            } else if state.cursor_row > 0 {
                                 state.cursor_row -= 1;
                                 state.cursor_col = state
                                     .cursor_col
@@ -1807,7 +2042,19 @@ impl Context {
                             consumed_indices.push(i);
                         }
                         KeyCode::Down => {
-                            if state.cursor_row + 1 < state.lines.len() {
+                            if wrapping {
+                                let (vrow, vcol) = textarea_logical_to_visual(
+                                    &pre_vlines,
+                                    state.cursor_row,
+                                    state.cursor_col,
+                                );
+                                if vrow + 1 < pre_vlines.len() {
+                                    let (lr, lc) =
+                                        textarea_visual_to_logical(&pre_vlines, vrow + 1, vcol);
+                                    state.cursor_row = lr;
+                                    state.cursor_col = lc;
+                                }
+                            } else if state.cursor_row + 1 < state.lines.len() {
                                 state.cursor_row += 1;
                                 state.cursor_col = state
                                     .cursor_col
@@ -1880,37 +2127,64 @@ impl Context {
             }
         }
 
+        let vlines = textarea_build_visual_lines(&state.lines, wrap_w);
+        let (cursor_vrow, cursor_vcol) =
+            textarea_logical_to_visual(&vlines, state.cursor_row, state.cursor_col);
+
+        if cursor_vrow < state.scroll_offset {
+            state.scroll_offset = cursor_vrow;
+        }
+        if cursor_vrow >= state.scroll_offset + visible_rows as usize {
+            state.scroll_offset = cursor_vrow + 1 - visible_rows as usize;
+        }
+
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
             title: None,
             grow: 0,
         });
-        for row in 0..visible_rows as usize {
-            let line = state.lines.get(row).cloned().unwrap_or_default();
-            let mut rendered = line.clone();
-            let mut style = if line.is_empty() {
+
+        let show_cursor = focused && (self.tick / 30).is_multiple_of(2);
+        for vi in 0..visible_rows as usize {
+            let actual_vi = state.scroll_offset + vi;
+            let (seg_text, is_cursor_line) = if let Some(vl) = vlines.get(actual_vi) {
+                let line = &state.lines[vl.logical_row];
+                let text: String = line
+                    .chars()
+                    .skip(vl.char_start)
+                    .take(vl.char_count)
+                    .collect();
+                (text, actual_vi == cursor_vrow)
+            } else {
+                (String::new(), false)
+            };
+
+            let mut rendered = seg_text.clone();
+            let mut style = if seg_text.is_empty() {
                 Style::new().fg(self.theme.text_dim)
             } else {
                 Style::new().fg(self.theme.text)
             };
 
-            if focused && row == state.cursor_row {
+            if is_cursor_line {
                 rendered.clear();
-                for (idx, ch) in line.chars().enumerate() {
-                    if idx == state.cursor_col {
+                for (idx, ch) in seg_text.chars().enumerate() {
+                    if show_cursor && idx == cursor_vcol {
                         rendered.push('▎');
                     }
                     rendered.push(ch);
                 }
-                if state.cursor_col >= line.chars().count() {
+                if show_cursor && cursor_vcol >= seg_text.chars().count() {
                     rendered.push('▎');
                 }
                 style = Style::new().fg(self.theme.text);
@@ -1991,8 +2265,10 @@ impl Context {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -2012,8 +2288,10 @@ impl Context {
                 direction: Direction::Row,
                 gap: 1,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -2083,8 +2361,10 @@ impl Context {
                     direction: Direction::Column,
                     gap: 0,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2105,8 +2385,10 @@ impl Context {
                         direction: Direction::Row,
                         gap: 1,
                         align: Align::Start,
+                        justify: Justify::Start,
                         border: None,
                         border_style: Style::new().fg(self.theme.border),
+                        bg_color: None,
                         padding: Padding::default(),
                         margin: Margin::default(),
                         constraints: Constraints::default(),
@@ -2161,8 +2443,10 @@ impl Context {
                     direction: Direction::Column,
                     gap: 0,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2175,8 +2459,10 @@ impl Context {
                     direction: Direction::Row,
                     gap: 1,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2198,8 +2484,10 @@ impl Context {
                         direction: Direction::Row,
                         gap: 1,
                         align: Align::Start,
+                        justify: Justify::Start,
                         border: None,
                         border_style: Style::new().fg(self.theme.border),
+                        bg_color: None,
                         padding: Padding::default(),
                         margin: Margin::default(),
                         constraints: Constraints::default(),
@@ -2235,8 +2523,10 @@ impl Context {
                     direction: Direction::Row,
                     gap: 1,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2302,8 +2592,10 @@ impl Context {
             direction: Direction::Column,
             gap: 1,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -2326,8 +2618,10 @@ impl Context {
                     direction: Direction::Row,
                     gap: 1,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2479,8 +2773,10 @@ impl Context {
             direction: Direction::Row,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -2649,8 +2945,10 @@ impl Context {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new(),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -2696,8 +2994,10 @@ impl Context {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -2743,8 +3043,10 @@ impl Context {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -2778,6 +3080,7 @@ impl Context {
     /// # });
     /// ```
     pub fn grid(&mut self, cols: u32, f: impl FnOnce(&mut Context)) -> Response {
+        slt_assert(cols > 0, "grid() requires at least 1 column");
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
         let border = self.theme.border;
@@ -2786,8 +3089,10 @@ impl Context {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -2836,8 +3141,10 @@ impl Context {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
+                justify: Justify::Start,
                 border: None,
                 border_style: Style::new().fg(border),
+                bg_color: None,
                 padding: Padding::default(),
                 margin: Margin::default(),
                 constraints: Constraints::default(),
@@ -2851,8 +3158,10 @@ impl Context {
                     direction: Direction::Column,
                     gap: 0,
                     align: Align::Start,
+                    justify: Justify::Start,
                     border: None,
                     border_style: Style::new().fg(border),
+                    bg_color: None,
                     padding: Padding::default(),
                     margin: Margin::default(),
                     constraints: Constraints::default(),
@@ -2885,6 +3194,8 @@ impl Context {
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -2910,6 +3221,46 @@ impl Context {
             }
         }
 
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+                    let clicked_idx = (mouse.y - rect.y) as usize;
+                    if clicked_idx < state.items.len() {
+                        state.selected = clicked_idx;
+                        self.consumed[i] = true;
+                    }
+                }
+            }
+        }
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
         for (idx, item) in state.items.iter().enumerate() {
             if idx == state.selected {
                 if focused {
@@ -2925,6 +3276,9 @@ impl Context {
             }
         }
 
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
         self
     }
 
@@ -2938,6 +3292,8 @@ impl Context {
         }
 
         let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
 
         if focused && !state.rows.is_empty() {
             let mut consumed_indices = Vec::new();
@@ -2962,7 +3318,52 @@ impl Context {
             }
         }
 
+        if !state.rows.is_empty() {
+            if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+                for (i, event) in self.events.iter().enumerate() {
+                    if self.consumed[i] {
+                        continue;
+                    }
+                    if let Event::Mouse(mouse) = event {
+                        if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                            continue;
+                        }
+                        let in_bounds = mouse.x >= rect.x
+                            && mouse.x < rect.right()
+                            && mouse.y >= rect.y
+                            && mouse.y < rect.bottom();
+                        if !in_bounds {
+                            continue;
+                        }
+                        if mouse.y < rect.y + 2 {
+                            continue;
+                        }
+                        let clicked_idx = (mouse.y - rect.y - 2) as usize;
+                        if clicked_idx < state.rows.len() {
+                            state.selected = clicked_idx;
+                            self.consumed[i] = true;
+                        }
+                    }
+                }
+            }
+        }
+
         state.selected = state.selected.min(state.rows.len().saturating_sub(1));
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
 
         let header_line = format_table_row(&state.headers, state.column_widths(), " │ ");
         self.styled(header_line, Style::new().bold().fg(self.theme.text));
@@ -2990,6 +3391,9 @@ impl Context {
             }
         }
 
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
         self
     }
 
@@ -3005,6 +3409,7 @@ impl Context {
 
         state.selected = state.selected.min(state.labels.len().saturating_sub(1));
         let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -3033,13 +3438,47 @@ impl Context {
             }
         }
 
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+
+                    let mut x_offset = 0u32;
+                    let rel_x = mouse.x - rect.x;
+                    for (idx, label) in state.labels.iter().enumerate() {
+                        let tab_width = UnicodeWidthStr::width(label.as_str()) as u32 + 4;
+                        if rel_x >= x_offset && rel_x < x_offset + tab_width {
+                            state.selected = idx;
+                            self.consumed[i] = true;
+                            break;
+                        }
+                        x_offset += tab_width + 1;
+                    }
+                }
+            }
+        }
+
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -3092,20 +3531,28 @@ impl Context {
             }
         }
 
+        let hovered = response.hovered;
         let style = if focused {
             Style::new().fg(self.theme.primary).bold()
-        } else if response.hovered {
+        } else if hovered {
             Style::new().fg(self.theme.accent)
         } else {
             Style::new().fg(self.theme.text)
+        };
+        let hover_bg = if hovered || focused {
+            Some(self.theme.surface_hover)
+        } else {
+            None
         };
 
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 0,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -3113,6 +3560,119 @@ impl Context {
             grow: 0,
         });
         self.styled(format!("[ {} ]", label.into()), style);
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        activated
+    }
+
+    /// Render a styled button variant. Returns `true` when activated.
+    ///
+    /// Use [`ButtonVariant::Primary`] for call-to-action, [`ButtonVariant::Danger`]
+    /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
+    pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> bool {
+        let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let response = self.response_for(interaction_id);
+
+        let mut activated = response.clicked;
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if let Event::Key(key) = event {
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                        activated = true;
+                        consumed_indices.push(i);
+                    }
+                }
+            }
+            for index in consumed_indices {
+                self.consumed[index] = true;
+            }
+        }
+
+        let label = label.into();
+        let hover_bg = if response.hovered || focused {
+            Some(self.theme.surface_hover)
+        } else {
+            None
+        };
+        let (text, style, bg_color, border) = match variant {
+            ButtonVariant::Default => {
+                let style = if focused {
+                    Style::new().fg(self.theme.primary).bold()
+                } else if response.hovered {
+                    Style::new().fg(self.theme.accent)
+                } else {
+                    Style::new().fg(self.theme.text)
+                };
+                (format!("[ {label} ]"), style, hover_bg, None)
+            }
+            ButtonVariant::Primary => {
+                let style = if focused {
+                    Style::new().fg(self.theme.bg).bg(self.theme.primary).bold()
+                } else if response.hovered {
+                    Style::new().fg(self.theme.bg).bg(self.theme.accent)
+                } else {
+                    Style::new().fg(self.theme.bg).bg(self.theme.primary)
+                };
+                (format!(" {label} "), style, hover_bg, None)
+            }
+            ButtonVariant::Danger => {
+                let style = if focused {
+                    Style::new().fg(self.theme.bg).bg(self.theme.error).bold()
+                } else if response.hovered {
+                    Style::new().fg(self.theme.bg).bg(self.theme.warning)
+                } else {
+                    Style::new().fg(self.theme.bg).bg(self.theme.error)
+                };
+                (format!(" {label} "), style, hover_bg, None)
+            }
+            ButtonVariant::Outline => {
+                let border_color = if focused {
+                    self.theme.primary
+                } else if response.hovered {
+                    self.theme.accent
+                } else {
+                    self.theme.border
+                };
+                let style = if focused {
+                    Style::new().fg(self.theme.primary).bold()
+                } else if response.hovered {
+                    Style::new().fg(self.theme.accent)
+                } else {
+                    Style::new().fg(self.theme.text)
+                };
+                (
+                    format!(" {label} "),
+                    style,
+                    hover_bg,
+                    Some((Border::Rounded, Style::new().fg(border_color))),
+                )
+            }
+        };
+
+        let (btn_border, btn_border_style) = border.unwrap_or((Border::Rounded, Style::new()));
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 0,
+            align: Align::Center,
+            justify: Justify::Center,
+            border: if border.is_some() {
+                Some(btn_border)
+            } else {
+                None
+            },
+            border_style: btn_border_style,
+            bg_color,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+        self.styled(text, style);
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
@@ -3150,12 +3710,19 @@ impl Context {
             *checked = !*checked;
         }
 
+        let hover_bg = if response.hovered || focused {
+            Some(self.theme.surface_hover)
+        } else {
+            None
+        };
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -3214,12 +3781,19 @@ impl Context {
             *on = !*on;
         }
 
+        let hover_bg = if response.hovered || focused {
+            Some(self.theme.surface_hover)
+        } else {
+            None
+        };
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 2,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -3282,8 +3856,10 @@ impl Context {
             direction: Direction::Row,
             gap: 2,
             align: Align::Start,
+            justify: Justify::Start,
             border: None,
             border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -3309,6 +3885,9 @@ impl Context {
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
     pub fn key(&self, c: char) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         self.events.iter().enumerate().any(|(i, e)| {
             !self.consumed[i] && matches!(e, Event::Key(k) if k.code == KeyCode::Char(c))
         })
@@ -3318,6 +3897,9 @@ impl Context {
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
     pub fn key_code(&self, code: KeyCode) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         self.events
             .iter()
             .enumerate()
@@ -3328,6 +3910,9 @@ impl Context {
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
     pub fn key_mod(&self, c: char, modifiers: KeyModifiers) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         self.events.iter().enumerate().any(|(i, e)| {
             !self.consumed[i]
                 && matches!(e, Event::Key(k) if k.code == KeyCode::Char(c) && k.modifiers.contains(modifiers))
@@ -3338,6 +3923,9 @@ impl Context {
     ///
     /// Returns `None` if no unconsumed mouse-down event occurred.
     pub fn mouse_down(&self) -> Option<(u32, u32)> {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return None;
+        }
         self.events.iter().enumerate().find_map(|(i, event)| {
             if self.consumed[i] {
                 return None;
@@ -3361,6 +3949,9 @@ impl Context {
 
     /// Return the first unconsumed paste event text, if any.
     pub fn paste(&self) -> Option<&str> {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return None;
+        }
         self.events.iter().enumerate().find_map(|(i, event)| {
             if self.consumed[i] {
                 return None;
@@ -3374,6 +3965,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-up event occurred this frame.
     pub fn scroll_up(&self) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         self.events.iter().enumerate().any(|(i, event)| {
             !self.consumed[i]
                 && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollUp))
@@ -3382,6 +3976,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-down event occurred this frame.
     pub fn scroll_down(&self) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
         self.events.iter().enumerate().any(|(i, event)| {
             !self.consumed[i]
                 && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollDown))
@@ -3480,4 +4077,104 @@ fn center_text(text: &str, width: usize) -> String {
     let left = total / 2;
     let right = total - left;
     format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+}
+
+struct TextareaVLine {
+    logical_row: usize,
+    char_start: usize,
+    char_count: usize,
+}
+
+fn textarea_build_visual_lines(lines: &[String], wrap_width: u32) -> Vec<TextareaVLine> {
+    let mut out = Vec::new();
+    for (row, line) in lines.iter().enumerate() {
+        if line.is_empty() || wrap_width == u32::MAX {
+            out.push(TextareaVLine {
+                logical_row: row,
+                char_start: 0,
+                char_count: line.chars().count(),
+            });
+            continue;
+        }
+        let mut seg_start = 0usize;
+        let mut seg_chars = 0usize;
+        let mut seg_width = 0u32;
+        for (idx, ch) in line.chars().enumerate() {
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+            if seg_width + cw > wrap_width && seg_chars > 0 {
+                out.push(TextareaVLine {
+                    logical_row: row,
+                    char_start: seg_start,
+                    char_count: seg_chars,
+                });
+                seg_start = idx;
+                seg_chars = 0;
+                seg_width = 0;
+            }
+            seg_chars += 1;
+            seg_width += cw;
+        }
+        out.push(TextareaVLine {
+            logical_row: row,
+            char_start: seg_start,
+            char_count: seg_chars,
+        });
+    }
+    out
+}
+
+fn textarea_logical_to_visual(
+    vlines: &[TextareaVLine],
+    logical_row: usize,
+    logical_col: usize,
+) -> (usize, usize) {
+    for (i, vl) in vlines.iter().enumerate() {
+        if vl.logical_row != logical_row {
+            continue;
+        }
+        let seg_end = vl.char_start + vl.char_count;
+        if logical_col >= vl.char_start && logical_col < seg_end {
+            return (i, logical_col - vl.char_start);
+        }
+        if logical_col == seg_end {
+            let is_last_seg = vlines
+                .get(i + 1)
+                .map_or(true, |next| next.logical_row != logical_row);
+            if is_last_seg {
+                return (i, logical_col - vl.char_start);
+            }
+        }
+    }
+    (vlines.len().saturating_sub(1), 0)
+}
+
+fn textarea_visual_to_logical(
+    vlines: &[TextareaVLine],
+    visual_row: usize,
+    visual_col: usize,
+) -> (usize, usize) {
+    if let Some(vl) = vlines.get(visual_row) {
+        let logical_col = vl.char_start + visual_col.min(vl.char_count);
+        (vl.logical_row, logical_col)
+    } else {
+        (0, 0)
+    }
+}
+
+fn open_url(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .spawn()?;
+    }
+    Ok(())
 }

@@ -181,6 +181,515 @@ impl Tween {
     }
 }
 
+/// Defines how an animation behaves after reaching its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopMode {
+    /// Play once, then stay at the final value.
+    Once,
+    /// Restart from the beginning each cycle.
+    Repeat,
+    /// Alternate forward and backward each cycle.
+    PingPong,
+}
+
+#[derive(Clone, Copy)]
+struct KeyframeStop {
+    position: f64,
+    value: f64,
+}
+
+/// Multi-stop keyframe animation over a fixed tick duration.
+///
+/// `Keyframes` is similar to CSS `@keyframes`: define multiple stops in the
+/// normalized `[0.0, 1.0]` timeline, then sample the value with
+/// [`Keyframes::value`] using the current render tick.
+///
+/// Stops are sorted by position when sampled. Each segment between adjacent
+/// stops can use its own easing function.
+///
+/// # Example
+///
+/// ```
+/// use slt::anim::{ease_in_cubic, ease_out_quad, Keyframes, LoopMode};
+///
+/// let mut keyframes = Keyframes::new(60)
+///     .stop(0.0, 0.0)
+///     .stop(0.5, 100.0)
+///     .stop(1.0, 40.0)
+///     .segment_easing(0, ease_out_quad)
+///     .segment_easing(1, ease_in_cubic)
+///     .loop_mode(LoopMode::PingPong);
+///
+/// keyframes.reset(10);
+/// let _ = keyframes.value(40);
+/// ```
+pub struct Keyframes {
+    duration_ticks: u64,
+    start_tick: u64,
+    stops: Vec<KeyframeStop>,
+    default_easing: fn(f64) -> f64,
+    segment_easing: Vec<fn(f64) -> f64>,
+    loop_mode: LoopMode,
+    done: bool,
+}
+
+impl Keyframes {
+    /// Create a new keyframe animation with total `duration_ticks`.
+    ///
+    /// Uses linear easing by default and [`LoopMode::Once`]. Add stops with
+    /// [`Keyframes::stop`], optionally configure easing, then call
+    /// [`Keyframes::reset`] before sampling.
+    pub fn new(duration_ticks: u64) -> Self {
+        Self {
+            duration_ticks,
+            start_tick: 0,
+            stops: Vec::new(),
+            default_easing: ease_linear,
+            segment_easing: Vec::new(),
+            loop_mode: LoopMode::Once,
+            done: false,
+        }
+    }
+
+    /// Add a keyframe stop at normalized `position` with `value`.
+    ///
+    /// `position` is clamped to `[0.0, 1.0]`.
+    pub fn stop(mut self, position: f64, value: f64) -> Self {
+        self.stops.push(KeyframeStop {
+            position: clamp01(position),
+            value,
+        });
+        if self.stops.len() >= 2 {
+            self.segment_easing.push(self.default_easing);
+        }
+        self
+    }
+
+    /// Set the default easing used for segments without explicit overrides.
+    ///
+    /// Existing segments are updated to this easing, unless you later override
+    /// them with [`Keyframes::segment_easing`].
+    pub fn easing(mut self, f: fn(f64) -> f64) -> Self {
+        self.default_easing = f;
+        self.segment_easing.fill(f);
+        self
+    }
+
+    /// Override easing for a specific segment index.
+    ///
+    /// Segment `0` is between the first and second stop, segment `1` between
+    /// the second and third, and so on. Out-of-range indices are ignored.
+    pub fn segment_easing(mut self, segment_index: usize, f: fn(f64) -> f64) -> Self {
+        if let Some(slot) = self.segment_easing.get_mut(segment_index) {
+            *slot = f;
+        }
+        self
+    }
+
+    /// Set loop behavior used after the first full pass.
+    pub fn loop_mode(mut self, mode: LoopMode) -> Self {
+        self.loop_mode = mode;
+        self
+    }
+
+    /// Return the interpolated keyframe value at `tick`.
+    pub fn value(&mut self, tick: u64) -> f64 {
+        if self.stops.is_empty() {
+            self.done = true;
+            return 0.0;
+        }
+        if self.stops.len() == 1 {
+            self.done = true;
+            return self.stops[0].value;
+        }
+
+        let mut stops = self.stops.clone();
+        stops.sort_by(|a, b| a.position.total_cmp(&b.position));
+
+        let end_value = stops.last().map_or(0.0, |s| s.value);
+        let loop_tick = match map_loop_tick(
+            tick,
+            self.start_tick,
+            self.duration_ticks,
+            self.loop_mode,
+            &mut self.done,
+        ) {
+            Some(v) => v,
+            None => return end_value,
+        };
+
+        let progress = loop_tick as f64 / self.duration_ticks as f64;
+
+        if progress <= stops[0].position {
+            return stops[0].value;
+        }
+        if progress >= 1.0 {
+            return end_value;
+        }
+
+        for i in 0..(stops.len() - 1) {
+            let a = stops[i];
+            let b = stops[i + 1];
+            if progress <= b.position {
+                let span = b.position - a.position;
+                if span <= f64::EPSILON {
+                    return b.value;
+                }
+                let local = clamp01((progress - a.position) / span);
+                let easing = self
+                    .segment_easing
+                    .get(i)
+                    .copied()
+                    .unwrap_or(self.default_easing);
+                let eased = easing(local);
+                return lerp(a.value, b.value, eased);
+            }
+        }
+
+        end_value
+    }
+
+    /// Returns `true` if the animation finished in [`LoopMode::Once`].
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// Restart the keyframe animation from `tick`.
+    pub fn reset(&mut self, tick: u64) {
+        self.start_tick = tick;
+        self.done = false;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SequenceSegment {
+    from: f64,
+    to: f64,
+    duration_ticks: u64,
+    easing: fn(f64) -> f64,
+}
+
+/// Sequential timeline that chains multiple animation segments.
+///
+/// Use [`Sequence::then`] to append segments. Sampling automatically advances
+/// through each segment as ticks increase.
+///
+/// # Example
+///
+/// ```
+/// use slt::anim::{ease_in_cubic, ease_out_quad, LoopMode, Sequence};
+///
+/// let mut seq = Sequence::new()
+///     .then(0.0, 100.0, 30, ease_out_quad)
+///     .then(100.0, 50.0, 20, ease_in_cubic)
+///     .loop_mode(LoopMode::Repeat);
+///
+/// seq.reset(0);
+/// let _ = seq.value(25);
+/// ```
+pub struct Sequence {
+    segments: Vec<SequenceSegment>,
+    loop_mode: LoopMode,
+    start_tick: u64,
+    done: bool,
+}
+
+impl Default for Sequence {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sequence {
+    /// Create an empty sequence.
+    ///
+    /// Defaults to [`LoopMode::Once`]. Add segments with [`Sequence::then`]
+    /// and call [`Sequence::reset`] before sampling.
+    pub fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+            loop_mode: LoopMode::Once,
+            start_tick: 0,
+            done: false,
+        }
+    }
+
+    /// Append a segment from `from` to `to` over `duration_ticks` ticks.
+    pub fn then(mut self, from: f64, to: f64, duration_ticks: u64, easing: fn(f64) -> f64) -> Self {
+        self.segments.push(SequenceSegment {
+            from,
+            to,
+            duration_ticks,
+            easing,
+        });
+        self
+    }
+
+    /// Set loop behavior used after the first full pass.
+    pub fn loop_mode(mut self, mode: LoopMode) -> Self {
+        self.loop_mode = mode;
+        self
+    }
+
+    /// Return the sequence value at `tick`.
+    pub fn value(&mut self, tick: u64) -> f64 {
+        if self.segments.is_empty() {
+            self.done = true;
+            return 0.0;
+        }
+
+        let total_duration = self
+            .segments
+            .iter()
+            .fold(0_u64, |acc, s| acc.saturating_add(s.duration_ticks));
+        let end_value = self.segments.last().map_or(0.0, |s| s.to);
+
+        let loop_tick = match map_loop_tick(
+            tick,
+            self.start_tick,
+            total_duration,
+            self.loop_mode,
+            &mut self.done,
+        ) {
+            Some(v) => v,
+            None => return end_value,
+        };
+
+        let mut remaining = loop_tick;
+        for segment in &self.segments {
+            if segment.duration_ticks == 0 {
+                continue;
+            }
+            if remaining < segment.duration_ticks {
+                let progress = remaining as f64 / segment.duration_ticks as f64;
+                let eased = (segment.easing)(clamp01(progress));
+                return lerp(segment.from, segment.to, eased);
+            }
+            remaining -= segment.duration_ticks;
+        }
+
+        end_value
+    }
+
+    /// Returns `true` if the sequence finished in [`LoopMode::Once`].
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// Restart the sequence, treating `tick` as the new start time.
+    pub fn reset(&mut self, tick: u64) {
+        self.start_tick = tick;
+        self.done = false;
+    }
+}
+
+/// Parallel staggered animation where each item starts after a fixed delay.
+///
+/// `Stagger` applies one tween configuration to many items. The start tick for
+/// each item is `start_tick + delay_ticks * item_index`.
+///
+/// By default the animation plays once ([`LoopMode::Once`]). Use
+/// [`Stagger::loop_mode`] to repeat or ping-pong. The total cycle length
+/// includes the delay of every item, so all items finish before the next
+/// cycle begins.
+///
+/// # Example
+///
+/// ```
+/// use slt::anim::{ease_out_quad, Stagger, LoopMode};
+///
+/// let mut stagger = Stagger::new(0.0, 100.0, 30)
+///     .easing(ease_out_quad)
+///     .delay(5)
+///     .loop_mode(LoopMode::Repeat);
+///
+/// stagger.reset(100);
+/// let _ = stagger.value(120, 3);
+/// ```
+pub struct Stagger {
+    from: f64,
+    to: f64,
+    duration_ticks: u64,
+    start_tick: u64,
+    delay_ticks: u64,
+    easing: fn(f64) -> f64,
+    loop_mode: LoopMode,
+    item_count: usize,
+    done: bool,
+}
+
+impl Stagger {
+    /// Create a new stagger animation template.
+    ///
+    /// Uses linear easing, zero delay, and [`LoopMode::Once`] by default.
+    pub fn new(from: f64, to: f64, duration_ticks: u64) -> Self {
+        Self {
+            from,
+            to,
+            duration_ticks,
+            start_tick: 0,
+            delay_ticks: 0,
+            easing: ease_linear,
+            loop_mode: LoopMode::Once,
+            item_count: 0,
+            done: false,
+        }
+    }
+
+    /// Set easing for each item's tween.
+    pub fn easing(mut self, f: fn(f64) -> f64) -> Self {
+        self.easing = f;
+        self
+    }
+
+    /// Set delay in ticks between consecutive item starts.
+    pub fn delay(mut self, ticks: u64) -> Self {
+        self.delay_ticks = ticks;
+        self
+    }
+
+    /// Set loop behavior. [`LoopMode::Repeat`] restarts after all items
+    /// finish; [`LoopMode::PingPong`] reverses direction each cycle.
+    pub fn loop_mode(mut self, mode: LoopMode) -> Self {
+        self.loop_mode = mode;
+        self
+    }
+
+    /// Set the number of items for cycle length calculation.
+    ///
+    /// When using [`LoopMode::Repeat`] or [`LoopMode::PingPong`], the total
+    /// cycle length is `duration_ticks + delay_ticks * (item_count - 1)`.
+    /// If not set, it is inferred from the highest `item_index` seen.
+    pub fn items(mut self, count: usize) -> Self {
+        self.item_count = count;
+        self
+    }
+
+    /// Return the value for `item_index` at `tick`.
+    pub fn value(&mut self, tick: u64, item_index: usize) -> f64 {
+        if item_index >= self.item_count {
+            self.item_count = item_index + 1;
+        }
+
+        let total_cycle = self.total_cycle_ticks();
+
+        let effective_tick = if self.loop_mode == LoopMode::Once {
+            tick
+        } else {
+            let elapsed = tick.wrapping_sub(self.start_tick);
+            let mapped = match self.loop_mode {
+                LoopMode::Repeat => {
+                    if total_cycle == 0 {
+                        0
+                    } else {
+                        elapsed % total_cycle
+                    }
+                }
+                LoopMode::PingPong => {
+                    if total_cycle == 0 {
+                        0
+                    } else {
+                        let full = total_cycle.saturating_mul(2);
+                        let phase = elapsed % full;
+                        if phase < total_cycle {
+                            phase
+                        } else {
+                            full - phase
+                        }
+                    }
+                }
+                LoopMode::Once => unreachable!(),
+            };
+            self.start_tick.wrapping_add(mapped)
+        };
+
+        let delay = self.delay_ticks.wrapping_mul(item_index as u64);
+        let item_start = self.start_tick.wrapping_add(delay);
+
+        if effective_tick < item_start {
+            self.done = false;
+            return self.from;
+        }
+
+        if self.duration_ticks == 0 {
+            self.done = true;
+            return self.to;
+        }
+
+        let elapsed = effective_tick - item_start;
+        if elapsed >= self.duration_ticks {
+            self.done = true;
+            return self.to;
+        }
+
+        self.done = false;
+        let progress = elapsed as f64 / self.duration_ticks as f64;
+        let eased = (self.easing)(clamp01(progress));
+        lerp(self.from, self.to, eased)
+    }
+
+    fn total_cycle_ticks(&self) -> u64 {
+        let max_delay = self
+            .delay_ticks
+            .wrapping_mul(self.item_count.saturating_sub(1) as u64);
+        self.duration_ticks.saturating_add(max_delay)
+    }
+
+    /// Returns `true` if the most recently sampled item reached its end value.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// Restart stagger timing, treating `tick` as the base start time.
+    pub fn reset(&mut self, tick: u64) {
+        self.start_tick = tick;
+        self.done = false;
+    }
+}
+
+fn map_loop_tick(
+    tick: u64,
+    start_tick: u64,
+    duration_ticks: u64,
+    loop_mode: LoopMode,
+    done: &mut bool,
+) -> Option<u64> {
+    if duration_ticks == 0 {
+        *done = true;
+        return None;
+    }
+
+    let elapsed = tick.wrapping_sub(start_tick);
+    match loop_mode {
+        LoopMode::Once => {
+            if elapsed >= duration_ticks {
+                *done = true;
+                None
+            } else {
+                *done = false;
+                Some(elapsed)
+            }
+        }
+        LoopMode::Repeat => {
+            *done = false;
+            Some(elapsed % duration_ticks)
+        }
+        LoopMode::PingPong => {
+            *done = false;
+            let cycle = duration_ticks.saturating_mul(2);
+            if cycle == 0 {
+                return Some(0);
+            }
+            let phase = elapsed % cycle;
+            if phase < duration_ticks {
+                Some(phase)
+            } else {
+                Some(cycle - phase)
+            }
+        }
+    }
+}
+
 /// Spring physics animation that settles toward a target value.
 ///
 /// Models a damped harmonic oscillator. Call [`Spring::set_target`] to change
@@ -336,5 +845,100 @@ mod tests {
         assert_eq!(lerp(0.0, 10.0, 0.0), 0.0);
         assert_eq!(lerp(0.0, 10.0, 0.5), 5.0);
         assert_eq!(lerp(0.0, 10.0, 1.0), 10.0);
+    }
+
+    #[test]
+    fn keyframes_interpolates_across_multiple_stops() {
+        let mut keyframes = Keyframes::new(100)
+            .stop(0.0, 0.0)
+            .stop(0.3, 100.0)
+            .stop(0.7, 50.0)
+            .stop(1.0, 80.0)
+            .easing(ease_linear);
+
+        keyframes.reset(0);
+        assert_eq!(keyframes.value(0), 0.0);
+        assert_eq!(keyframes.value(15), 50.0);
+        assert_eq!(keyframes.value(30), 100.0);
+        assert_eq!(keyframes.value(50), 75.0);
+        assert_eq!(keyframes.value(70), 50.0);
+        assert_eq!(keyframes.value(85), 65.0);
+        assert_eq!(keyframes.value(100), 80.0);
+        assert!(keyframes.is_done());
+    }
+
+    #[test]
+    fn keyframes_repeat_loop_restarts() {
+        let mut keyframes = Keyframes::new(10)
+            .stop(0.0, 0.0)
+            .stop(1.0, 10.0)
+            .loop_mode(LoopMode::Repeat);
+
+        keyframes.reset(0);
+        assert_eq!(keyframes.value(5), 5.0);
+        assert_eq!(keyframes.value(10), 0.0);
+        assert_eq!(keyframes.value(12), 2.0);
+        assert!(!keyframes.is_done());
+    }
+
+    #[test]
+    fn keyframes_pingpong_reverses_direction() {
+        let mut keyframes = Keyframes::new(10)
+            .stop(0.0, 0.0)
+            .stop(1.0, 10.0)
+            .loop_mode(LoopMode::PingPong);
+
+        keyframes.reset(0);
+        assert_eq!(keyframes.value(8), 8.0);
+        assert_eq!(keyframes.value(10), 10.0);
+        assert_eq!(keyframes.value(12), 8.0);
+        assert_eq!(keyframes.value(15), 5.0);
+        assert!(!keyframes.is_done());
+    }
+
+    #[test]
+    fn sequence_chains_segments_in_order() {
+        let mut sequence = Sequence::new()
+            .then(0.0, 100.0, 30, ease_linear)
+            .then(100.0, 50.0, 20, ease_linear)
+            .then(50.0, 200.0, 40, ease_linear);
+
+        sequence.reset(0);
+        assert_eq!(sequence.value(15), 50.0);
+        assert_eq!(sequence.value(30), 100.0);
+        assert_eq!(sequence.value(40), 75.0);
+        assert_eq!(sequence.value(50), 50.0);
+        assert_eq!(sequence.value(70), 125.0);
+        assert_eq!(sequence.value(90), 200.0);
+        assert!(sequence.is_done());
+    }
+
+    #[test]
+    fn sequence_loop_modes_repeat_and_pingpong_work() {
+        let mut repeat = Sequence::new()
+            .then(0.0, 10.0, 10, ease_linear)
+            .loop_mode(LoopMode::Repeat);
+        repeat.reset(0);
+        assert_eq!(repeat.value(12), 2.0);
+        assert!(!repeat.is_done());
+
+        let mut pingpong = Sequence::new()
+            .then(0.0, 10.0, 10, ease_linear)
+            .loop_mode(LoopMode::PingPong);
+        pingpong.reset(0);
+        assert_eq!(pingpong.value(12), 8.0);
+        assert!(!pingpong.is_done());
+    }
+
+    #[test]
+    fn stagger_applies_per_item_delay() {
+        let mut stagger = Stagger::new(0.0, 100.0, 20).easing(ease_linear).delay(5);
+
+        stagger.reset(0);
+        assert_eq!(stagger.value(4, 3), 0.0);
+        assert_eq!(stagger.value(15, 3), 0.0);
+        assert_eq!(stagger.value(20, 3), 25.0);
+        assert_eq!(stagger.value(35, 3), 100.0);
+        assert!(stagger.is_done());
     }
 }
