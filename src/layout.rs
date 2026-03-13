@@ -47,6 +47,7 @@ pub(crate) enum Command {
     Spacer {
         grow: u16,
     },
+    FocusMarker(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +78,8 @@ pub(crate) struct LayoutNode {
     is_scrollable: bool,
     scroll_offset: u32,
     content_height: u32,
+    cached_wrapped: Option<Vec<String>>,
+    pub(crate) focus_id: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +126,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrapped: None,
+            focus_id: None,
         }
     }
 
@@ -147,6 +152,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrapped: None,
+            focus_id: None,
         }
     }
 
@@ -171,6 +178,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrapped: None,
+            focus_id: None,
         }
     }
 
@@ -414,8 +423,13 @@ pub(crate) fn build_tree(commands: &[Command]) -> LayoutNode {
 }
 
 fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize) {
+    let mut pending_focus_id: Option<usize> = None;
     while *pos < commands.len() {
         match &commands[*pos] {
+            Command::FocusMarker(id) => {
+                pending_focus_id = Some(*id);
+                *pos += 1;
+            }
             Command::Text {
                 content,
                 style,
@@ -425,7 +439,7 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                 margin,
                 constraints,
             } => {
-                parent.children.push(LayoutNode::text(
+                let mut node = LayoutNode::text(
                     content.clone(),
                     *style,
                     *grow,
@@ -433,7 +447,9 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                     *wrap,
                     *margin,
                     *constraints,
-                ));
+                );
+                node.focus_id = pending_focus_id.take();
+                parent.children.push(node);
                 *pos += 1;
             }
             Command::BeginContainer {
@@ -462,6 +478,7 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                         grow: *grow,
                     },
                 );
+                node.focus_id = pending_focus_id.take();
                 *pos += 1;
                 build_children(&mut node, commands, pos);
                 parent.children.push(node);
@@ -492,6 +509,7 @@ fn build_children(parent: &mut LayoutNode, commands: &[Command], pos: &mut usize
                 );
                 node.is_scrollable = true;
                 node.scroll_offset = *scroll_offset;
+                node.focus_id = pending_focus_id.take();
                 *pos += 1;
                 build_children(&mut node, commands, pos);
                 parent.children.push(node);
@@ -524,6 +542,9 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     if matches!(node.kind, NodeKind::Text) && node.wrap {
         let lines = wrap_lines(node.content.as_deref().unwrap_or(""), area.width);
         node.size = (area.width, lines.len().max(1) as u32);
+        node.cached_wrapped = Some(lines);
+    } else {
+        node.cached_wrapped = None;
     }
 
     match node.kind {
@@ -625,14 +646,19 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
 
     let total_gaps = (node.children.len() as u32 - 1) * node.gap;
     let available = area.width.saturating_sub(total_gaps);
+    let min_widths: Vec<u32> = node
+        .children
+        .iter()
+        .map(|child| child.min_width())
+        .collect();
 
     let mut total_grow: u32 = 0;
     let mut fixed_width: u32 = 0;
-    for child in &node.children {
+    for (child, &min_width) in node.children.iter().zip(min_widths.iter()) {
         if child.grow > 0 {
             total_grow += child.grow as u32;
         } else {
-            fixed_width += child.min_width();
+            fixed_width += min_width;
         }
     }
 
@@ -640,7 +666,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
     let mut remaining_grow = total_grow;
     let mut x = area.x;
 
-    for child in &mut node.children {
+    for (i, child) in node.children.iter_mut().enumerate() {
         let w = if child.grow > 0 && total_grow > 0 {
             let share = if remaining_grow == 0 {
                 0
@@ -651,7 +677,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            child.min_width().min(available)
+            min_widths[i].min(available)
         };
 
         let child_outer_h = match node.align {
@@ -681,14 +707,19 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
 
     let total_gaps = (node.children.len() as u32 - 1) * node.gap;
     let available = area.height.saturating_sub(total_gaps);
+    let min_heights: Vec<u32> = node
+        .children
+        .iter()
+        .map(|child| child.min_height_for_width(area.width))
+        .collect();
 
     let mut total_grow: u32 = 0;
     let mut fixed_height: u32 = 0;
-    for child in &node.children {
+    for (child, &min_height) in node.children.iter().zip(min_heights.iter()) {
         if child.grow > 0 {
             total_grow += child.grow as u32;
         } else {
-            fixed_height += child.min_height_for_width(area.width);
+            fixed_height += min_height;
         }
     }
 
@@ -696,7 +727,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let mut remaining_grow = total_grow;
     let mut y = area.y;
 
-    for child in &mut node.children {
+    for (i, child) in node.children.iter_mut().enumerate() {
         let h = if child.grow > 0 && total_grow > 0 {
             let share = if remaining_grow == 0 {
                 0
@@ -707,7 +738,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            child.min_height_for_width(area.width).min(available)
+            min_heights[i].min(available)
         };
 
         let child_outer_w = match node.align {
@@ -925,7 +956,13 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32) {
         NodeKind::Text => {
             if let Some(ref text) = node.content {
                 if node.wrap {
-                    let lines = wrap_lines(text, node.size.0);
+                    let fallback;
+                    let lines = if let Some(cached) = &node.cached_wrapped {
+                        cached.as_slice()
+                    } else {
+                        fallback = wrap_lines(text, node.size.0);
+                        fallback.as_slice()
+                    };
                     for (i, line) in lines.iter().enumerate() {
                         let line_y = sy + i as i64;
                         if line_y < 0 {
@@ -1126,6 +1163,47 @@ fn collect_hit_areas_inner(node: &LayoutNode, areas: &mut Vec<Rect>) {
     }
     for child in &node.children {
         collect_hit_areas_inner(child, areas);
+    }
+}
+
+pub(crate) fn collect_content_areas(node: &LayoutNode) -> Vec<(Rect, Rect)> {
+    let mut areas = Vec::new();
+    for child in &node.children {
+        collect_content_areas_inner(child, &mut areas);
+    }
+    areas
+}
+
+fn collect_content_areas_inner(node: &LayoutNode, areas: &mut Vec<(Rect, Rect)>) {
+    if matches!(node.kind, NodeKind::Container(_)) {
+        let full = Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1);
+        let inset_x = node.padding.left + node.border_inset();
+        let inset_y = node.padding.top + node.border_inset();
+        let inner_w = node.size.0.saturating_sub(node.frame_horizontal());
+        let inner_h = node.size.1.saturating_sub(node.frame_vertical());
+        let content = Rect::new(node.pos.0 + inset_x, node.pos.1 + inset_y, inner_w, inner_h);
+        areas.push((full, content));
+    }
+    for child in &node.children {
+        collect_content_areas_inner(child, areas);
+    }
+}
+
+pub(crate) fn collect_focus_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
+    let mut rects = Vec::new();
+    collect_focus_rects_inner(node, &mut rects);
+    rects
+}
+
+fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>) {
+    if let Some(id) = node.focus_id {
+        rects.push((
+            id,
+            Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
+        ));
+    }
+    for child in &node.children {
+        collect_focus_rects_inner(child, rects);
     }
 }
 
@@ -1370,5 +1448,88 @@ mod tests {
         eprintln!("  Outer container size: {:?}", outer.size);
         eprintln!("  Inner container size: {:?}", inner.size);
         eprintln!("  Inner container pos: {:?}", inner.pos);
+    }
+
+    #[test]
+    fn collect_focus_rects_from_markers() {
+        use super::*;
+        use crate::style::Style;
+
+        let commands = vec![
+            Command::FocusMarker(0),
+            Command::Text {
+                content: "input1".into(),
+                style: Style::new(),
+                grow: 0,
+                align: Align::Start,
+                wrap: false,
+                margin: Default::default(),
+                constraints: Default::default(),
+            },
+            Command::FocusMarker(1),
+            Command::Text {
+                content: "input2".into(),
+                style: Style::new(),
+                grow: 0,
+                align: Align::Start,
+                wrap: false,
+                margin: Default::default(),
+                constraints: Default::default(),
+            },
+        ];
+
+        let mut tree = build_tree(&commands);
+        let area = crate::rect::Rect::new(0, 0, 40, 10);
+        compute(&mut tree, area);
+
+        let rects = collect_focus_rects(&tree);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0].0, 0);
+        assert_eq!(rects[1].0, 1);
+        assert!(rects[0].1.width > 0);
+        assert!(rects[1].1.width > 0);
+        assert_ne!(rects[0].1.y, rects[1].1.y);
+    }
+
+    #[test]
+    fn focus_marker_tags_container() {
+        use super::*;
+        use crate::style::{Border, Style};
+
+        let commands = vec![
+            Command::FocusMarker(0),
+            Command::BeginContainer {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                border: Some(Border::Single),
+                border_style: Style::new(),
+                padding: Padding::default(),
+                margin: Default::default(),
+                constraints: Default::default(),
+                title: None,
+                grow: 0,
+            },
+            Command::Text {
+                content: "inside".into(),
+                style: Style::new(),
+                grow: 0,
+                align: Align::Start,
+                wrap: false,
+                margin: Default::default(),
+                constraints: Default::default(),
+            },
+            Command::EndContainer,
+        ];
+
+        let mut tree = build_tree(&commands);
+        let area = crate::rect::Rect::new(0, 0, 40, 10);
+        compute(&mut tree, area);
+
+        let rects = collect_focus_rects(&tree);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].0, 0);
+        assert!(rects[0].1.width >= 8);
+        assert!(rects[0].1.height >= 3);
     }
 }

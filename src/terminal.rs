@@ -1,6 +1,8 @@
 use std::io::{self, Stdout, Write};
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::style::{
     Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
     SetForegroundColor,
@@ -19,6 +21,7 @@ pub(crate) struct Terminal {
     current: Buffer,
     previous: Buffer,
     mouse_enabled: bool,
+    cursor_visible: bool,
 }
 
 pub(crate) struct InlineTerminal {
@@ -26,6 +29,7 @@ pub(crate) struct InlineTerminal {
     current: Buffer,
     previous: Buffer,
     mouse_enabled: bool,
+    cursor_visible: bool,
     height: u32,
     start_row: u16,
     reserved: bool,
@@ -38,7 +42,12 @@ impl Terminal {
 
         let mut stdout = io::stdout();
         terminal::enable_raw_mode()?;
-        execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
+        execute!(
+            stdout,
+            terminal::EnterAlternateScreen,
+            cursor::Hide,
+            EnableBracketedPaste
+        )?;
         if mouse {
             execute!(stdout, EnableMouseCapture)?;
         }
@@ -48,6 +57,7 @@ impl Terminal {
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             mouse_enabled: mouse,
+            cursor_visible: false,
         })
     }
 
@@ -92,6 +102,24 @@ impl Terminal {
         }
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
+
+        let cursor_pos = find_cursor_marker(&self.current);
+        match cursor_pos {
+            Some((cx, cy)) => {
+                if !self.cursor_visible {
+                    queue!(self.stdout, cursor::Show)?;
+                    self.cursor_visible = true;
+                }
+                queue!(self.stdout, cursor::MoveTo(cx as u16, cy as u16))?;
+            }
+            None => {
+                if self.cursor_visible {
+                    queue!(self.stdout, cursor::Hide)?;
+                    self.cursor_visible = false;
+                }
+            }
+        }
+
         self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);
@@ -120,7 +148,7 @@ impl InlineTerminal {
 
         let mut stdout = io::stdout();
         terminal::enable_raw_mode()?;
-        execute!(stdout, cursor::Hide)?;
+        execute!(stdout, cursor::Hide, EnableBracketedPaste)?;
         if mouse {
             execute!(stdout, EnableMouseCapture)?;
         }
@@ -131,6 +159,7 @@ impl InlineTerminal {
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             mouse_enabled: mouse,
+            cursor_visible: false,
             height,
             start_row: cursor_row,
             reserved: false,
@@ -192,9 +221,28 @@ impl InlineTerminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
-        let end_row = self.start_row + self.height.saturating_sub(1) as u16;
-        queue!(self.stdout, cursor::MoveTo(0, end_row))?;
         queue!(self.stdout, EndSynchronizedUpdate)?;
+
+        let cursor_pos = find_cursor_marker(&self.current);
+        match cursor_pos {
+            Some((cx, cy)) => {
+                let abs_cy = self.start_row as u32 + cy;
+                if !self.cursor_visible {
+                    queue!(self.stdout, cursor::Show)?;
+                    self.cursor_visible = true;
+                }
+                queue!(self.stdout, cursor::MoveTo(cx as u16, abs_cy as u16))?;
+            }
+            None => {
+                if self.cursor_visible {
+                    queue!(self.stdout, cursor::Hide)?;
+                    self.cursor_visible = false;
+                }
+                let end_row = self.start_row + self.height.saturating_sub(1) as u16;
+                queue!(self.stdout, cursor::MoveTo(0, end_row))?;
+            }
+        }
+
         self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);
@@ -226,6 +274,7 @@ impl Drop for Terminal {
             ResetColor,
             SetAttribute(Attribute::Reset),
             cursor::Show,
+            DisableBracketedPaste,
             terminal::LeaveAlternateScreen
         );
         let _ = terminal::disable_raw_mode();
@@ -241,7 +290,8 @@ impl Drop for InlineTerminal {
             self.stdout,
             ResetColor,
             SetAttribute(Attribute::Reset),
-            cursor::Show
+            cursor::Show,
+            DisableBracketedPaste
         );
         if self.reserved {
             let _ = execute!(
@@ -256,6 +306,221 @@ impl Drop for InlineTerminal {
         }
         let _ = terminal::disable_raw_mode();
     }
+}
+
+// ── Text selection ──────────────────────────────────────────────
+
+#[derive(Default)]
+pub(crate) struct SelectionState {
+    pub anchor: Option<(u32, u32)>,
+    pub current: Option<(u32, u32)>,
+    pub widget_rect: Option<Rect>,
+    pub active: bool,
+}
+
+impl SelectionState {
+    pub fn mouse_down(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
+        self.anchor = Some((x, y));
+        self.current = Some((x, y));
+        self.widget_rect = find_innermost_rect(hit_map, x, y);
+        self.active = false;
+    }
+
+    pub fn mouse_drag(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
+        if let Some(anchor) = self.anchor {
+            self.current = Some((x, y));
+            if x.abs_diff(anchor.0) > 1 || y.abs_diff(anchor.1) > 0 {
+                self.active = true;
+            }
+            if let Some(rect) = self.widget_rect {
+                if y < rect.y || y >= rect.bottom() || x < rect.x || x >= rect.right() {
+                    self.widget_rect = find_containing_rect(hit_map, anchor, (x, y));
+                }
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn find_containing_rect(hit_map: &[(Rect, Rect)], a: (u32, u32), b: (u32, u32)) -> Option<Rect> {
+    hit_map
+        .iter()
+        .filter(|(full, _)| {
+            a.0 >= full.x
+                && a.0 < full.right()
+                && a.1 >= full.y
+                && a.1 < full.bottom()
+                && b.0 >= full.x
+                && b.0 < full.right()
+                && b.1 >= full.y
+                && b.1 < full.bottom()
+        })
+        .min_by_key(|(full, _)| (full.width as u64) * (full.height as u64))
+        .map(|(_, content)| *content)
+}
+
+fn find_innermost_rect(hit_map: &[(Rect, Rect)], x: u32, y: u32) -> Option<Rect> {
+    hit_map
+        .iter()
+        .filter(|(full, _)| x >= full.x && x < full.right() && y >= full.y && y < full.bottom())
+        .min_by_key(|(full, _)| (full.width as u64) * (full.height as u64))
+        .map(|(_, content)| *content)
+}
+
+fn is_border_cell(x: u32, y: u32, content_map: &[(Rect, Rect)]) -> bool {
+    for &(full, content) in content_map {
+        if x >= full.x
+            && x < full.right()
+            && y >= full.y
+            && y < full.bottom()
+            && !(x >= content.x && x < content.right() && y >= content.y && y < content.bottom())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn normalize_selection(anchor: (u32, u32), current: (u32, u32)) -> ((u32, u32), (u32, u32)) {
+    if (anchor.1, anchor.0) <= (current.1, current.0) {
+        (anchor, current)
+    } else {
+        (current, anchor)
+    }
+}
+
+pub(crate) fn apply_selection_overlay(
+    buffer: &mut Buffer,
+    sel: &SelectionState,
+    content_map: &[(Rect, Rect)],
+) {
+    if !sel.active {
+        return;
+    }
+    let (Some(anchor), Some(current), Some(rect)) = (sel.anchor, sel.current, sel.widget_rect)
+    else {
+        return;
+    };
+    let (start, end) = normalize_selection(anchor, current);
+
+    for y in rect.y..rect.bottom() {
+        if y < start.1 || y > end.1 {
+            continue;
+        }
+        for x in rect.x..rect.right() {
+            if is_border_cell(x, y, content_map) {
+                continue;
+            }
+            let in_sel = if start.1 == end.1 {
+                y == start.1 && x >= start.0 && x <= end.0
+            } else if y == start.1 {
+                x >= start.0
+            } else if y == end.1 {
+                x <= end.0
+            } else {
+                true
+            };
+            if in_sel {
+                let cell = buffer.get_mut(x, y);
+                cell.style.modifiers |= Modifiers::REVERSED;
+            }
+        }
+    }
+}
+
+pub(crate) fn extract_selection_text(
+    buffer: &Buffer,
+    sel: &SelectionState,
+    content_map: &[(Rect, Rect)],
+) -> String {
+    if !sel.active {
+        return String::new();
+    }
+    let (Some(anchor), Some(current), Some(rect)) = (sel.anchor, sel.current, sel.widget_rect)
+    else {
+        return String::new();
+    };
+    let (start, end) = normalize_selection(anchor, current);
+    let y_lo = start.1.max(rect.y);
+    let y_hi = end.1.min(rect.bottom().saturating_sub(1));
+
+    let mut lines: Vec<String> = Vec::new();
+    for y in y_lo..=y_hi {
+        let mut line = String::new();
+        let x_lo = if y == start.1 {
+            start.0.max(rect.x)
+        } else {
+            rect.x
+        };
+        let x_hi = if y == end.1 {
+            end.0.min(rect.right().saturating_sub(1))
+        } else {
+            rect.right().saturating_sub(1)
+        };
+        for x in x_lo..=x_hi {
+            if is_border_cell(x, y, content_map) {
+                continue;
+            }
+            let sym = &buffer.get(x, y).symbol;
+            if !sym.is_empty() {
+                line.push_str(sym);
+            }
+        }
+        lines.push(line.trim_end().to_string());
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            CHARS[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            CHARS[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+pub(crate) fn copy_to_clipboard(w: &mut impl Write, text: &str) -> io::Result<()> {
+    let encoded = base64_encode(text.as_bytes());
+    write!(w, "\x1b]52;c;{encoded}\x1b\\")?;
+    w.flush()
+}
+
+// ── Cursor marker ───────────────────────────────────────────────
+
+const CURSOR_MARKER: &str = "▎";
+
+fn find_cursor_marker(buffer: &Buffer) -> Option<(u32, u32)> {
+    let area = buffer.area;
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if buffer.get(x, y).symbol == CURSOR_MARKER {
+                return Some((x, y));
+            }
+        }
+    }
+    None
 }
 
 fn apply_style(w: &mut impl Write, style: &Style) -> io::Result<()> {
@@ -300,5 +565,345 @@ fn to_crossterm_color(color: Color) -> CtColor {
         Color::White => CtColor::White,
         Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
         Color::Indexed(i) => CtColor::AnsiValue(i),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_encode_empty() {
+        assert_eq!(base64_encode(b""), "");
+    }
+
+    #[test]
+    fn base64_encode_hello() {
+        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
+    }
+
+    #[test]
+    fn base64_encode_padding() {
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+    }
+
+    #[test]
+    fn base64_encode_unicode() {
+        assert_eq!(base64_encode("한글".as_bytes()), "7ZWc6riA");
+    }
+
+    fn pair(r: Rect) -> (Rect, Rect) {
+        (r, r)
+    }
+
+    #[test]
+    fn find_innermost_rect_picks_smallest() {
+        let rects = vec![
+            pair(Rect::new(0, 0, 80, 24)),
+            pair(Rect::new(5, 2, 30, 10)),
+            pair(Rect::new(10, 4, 10, 5)),
+        ];
+        let result = find_innermost_rect(&rects, 12, 5);
+        assert_eq!(result, Some(Rect::new(10, 4, 10, 5)));
+    }
+
+    #[test]
+    fn find_innermost_rect_no_match() {
+        let rects = vec![pair(Rect::new(10, 10, 5, 5))];
+        assert_eq!(find_innermost_rect(&rects, 0, 0), None);
+    }
+
+    #[test]
+    fn find_innermost_rect_empty() {
+        assert_eq!(find_innermost_rect(&[], 5, 5), None);
+    }
+
+    #[test]
+    fn find_innermost_rect_returns_content_rect() {
+        let rects = vec![
+            (Rect::new(0, 0, 80, 24), Rect::new(1, 1, 78, 22)),
+            (Rect::new(5, 2, 30, 10), Rect::new(6, 3, 28, 8)),
+        ];
+        let result = find_innermost_rect(&rects, 10, 5);
+        assert_eq!(result, Some(Rect::new(6, 3, 28, 8)));
+    }
+
+    #[test]
+    fn normalize_selection_already_ordered() {
+        let (s, e) = normalize_selection((2, 1), (5, 3));
+        assert_eq!(s, (2, 1));
+        assert_eq!(e, (5, 3));
+    }
+
+    #[test]
+    fn normalize_selection_reversed() {
+        let (s, e) = normalize_selection((5, 3), (2, 1));
+        assert_eq!(s, (2, 1));
+        assert_eq!(e, (5, 3));
+    }
+
+    #[test]
+    fn normalize_selection_same_row() {
+        let (s, e) = normalize_selection((10, 5), (3, 5));
+        assert_eq!(s, (3, 5));
+        assert_eq!(e, (10, 5));
+    }
+
+    #[test]
+    fn selection_state_mouse_down_finds_rect() {
+        let hit_map = vec![pair(Rect::new(0, 0, 80, 24)), pair(Rect::new(5, 2, 20, 10))];
+        let mut sel = SelectionState::default();
+        sel.mouse_down(10, 5, &hit_map);
+        assert_eq!(sel.anchor, Some((10, 5)));
+        assert_eq!(sel.current, Some((10, 5)));
+        assert_eq!(sel.widget_rect, Some(Rect::new(5, 2, 20, 10)));
+        assert!(!sel.active);
+    }
+
+    #[test]
+    fn selection_state_drag_activates() {
+        let hit_map = vec![pair(Rect::new(0, 0, 80, 24))];
+        let mut sel = SelectionState::default();
+        sel.anchor = Some((10, 5));
+        sel.current = Some((10, 5));
+        sel.widget_rect = Some(Rect::new(0, 0, 80, 24));
+        sel.mouse_drag(10, 5, &hit_map);
+        assert!(!sel.active, "no movement = not active");
+        sel.mouse_drag(11, 5, &hit_map);
+        assert!(!sel.active, "1 cell horizontal = not active yet");
+        sel.mouse_drag(13, 5, &hit_map);
+        assert!(sel.active, ">1 cell horizontal = active");
+    }
+
+    #[test]
+    fn selection_state_drag_vertical_activates() {
+        let hit_map = vec![pair(Rect::new(0, 0, 80, 24))];
+        let mut sel = SelectionState::default();
+        sel.anchor = Some((10, 5));
+        sel.current = Some((10, 5));
+        sel.widget_rect = Some(Rect::new(0, 0, 80, 24));
+        sel.mouse_drag(10, 6, &hit_map);
+        assert!(sel.active, "any vertical movement = active");
+    }
+
+    #[test]
+    fn selection_state_drag_expands_widget_rect() {
+        let hit_map = vec![
+            pair(Rect::new(0, 0, 80, 24)),
+            pair(Rect::new(5, 2, 30, 10)),
+            pair(Rect::new(5, 2, 30, 3)),
+        ];
+        let mut sel = SelectionState::default();
+        sel.anchor = Some((10, 3));
+        sel.current = Some((10, 3));
+        sel.widget_rect = Some(Rect::new(5, 2, 30, 3));
+        sel.mouse_drag(10, 6, &hit_map);
+        assert_eq!(sel.widget_rect, Some(Rect::new(5, 2, 30, 10)));
+    }
+
+    #[test]
+    fn selection_state_clear_resets() {
+        let mut sel = SelectionState {
+            anchor: Some((1, 2)),
+            current: Some((3, 4)),
+            widget_rect: Some(Rect::new(0, 0, 10, 10)),
+            active: true,
+        };
+        sel.clear();
+        assert_eq!(sel.anchor, None);
+        assert_eq!(sel.current, None);
+        assert_eq!(sel.widget_rect, None);
+        assert!(!sel.active);
+    }
+
+    #[test]
+    fn extract_selection_text_single_line() {
+        let area = Rect::new(0, 0, 20, 5);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "Hello World", Style::default());
+        let sel = SelectionState {
+            anchor: Some((0, 0)),
+            current: Some((4, 0)),
+            widget_rect: Some(area),
+            active: true,
+        };
+        let text = extract_selection_text(&buf, &sel, &[]);
+        assert_eq!(text, "Hello");
+    }
+
+    #[test]
+    fn extract_selection_text_multi_line() {
+        let area = Rect::new(0, 0, 20, 5);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "Line one", Style::default());
+        buf.set_string(0, 1, "Line two", Style::default());
+        buf.set_string(0, 2, "Line three", Style::default());
+        let sel = SelectionState {
+            anchor: Some((5, 0)),
+            current: Some((3, 2)),
+            widget_rect: Some(area),
+            active: true,
+        };
+        let text = extract_selection_text(&buf, &sel, &[]);
+        assert_eq!(text, "one\nLine two\nLine");
+    }
+
+    #[test]
+    fn extract_selection_text_clamped_to_widget() {
+        let area = Rect::new(0, 0, 40, 10);
+        let widget = Rect::new(5, 2, 10, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(5, 2, "ABCDEFGHIJ", Style::default());
+        buf.set_string(5, 3, "KLMNOPQRST", Style::default());
+        let sel = SelectionState {
+            anchor: Some((3, 1)),
+            current: Some((20, 5)),
+            widget_rect: Some(widget),
+            active: true,
+        };
+        let text = extract_selection_text(&buf, &sel, &[]);
+        assert_eq!(text, "ABCDEFGHIJ\nKLMNOPQRST");
+    }
+
+    #[test]
+    fn extract_selection_text_inactive_returns_empty() {
+        let area = Rect::new(0, 0, 10, 5);
+        let buf = Buffer::empty(area);
+        let sel = SelectionState {
+            anchor: Some((0, 0)),
+            current: Some((5, 2)),
+            widget_rect: Some(area),
+            active: false,
+        };
+        assert_eq!(extract_selection_text(&buf, &sel, &[]), "");
+    }
+
+    #[test]
+    fn apply_selection_overlay_reverses_cells() {
+        let area = Rect::new(0, 0, 10, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "ABCDE", Style::default());
+        let sel = SelectionState {
+            anchor: Some((1, 0)),
+            current: Some((3, 0)),
+            widget_rect: Some(area),
+            active: true,
+        };
+        apply_selection_overlay(&mut buf, &sel, &[]);
+        assert!(!buf.get(0, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(buf.get(1, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(buf.get(2, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(buf.get(3, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(!buf.get(4, 0).style.modifiers.contains(Modifiers::REVERSED));
+    }
+
+    #[test]
+    fn extract_selection_text_skips_border_cells() {
+        // Simulate two bordered columns side by side:
+        // Col1: full=(0,0,20,5) content=(1,1,18,3)
+        // Col2: full=(20,0,20,5) content=(21,1,18,3)
+        // Parent widget_rect covers both: (0,0,40,5)
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        // Col1 border characters
+        buf.set_string(0, 0, "╭", Style::default());
+        buf.set_string(0, 1, "│", Style::default());
+        buf.set_string(0, 2, "│", Style::default());
+        buf.set_string(0, 3, "│", Style::default());
+        buf.set_string(0, 4, "╰", Style::default());
+        buf.set_string(19, 0, "╮", Style::default());
+        buf.set_string(19, 1, "│", Style::default());
+        buf.set_string(19, 2, "│", Style::default());
+        buf.set_string(19, 3, "│", Style::default());
+        buf.set_string(19, 4, "╯", Style::default());
+        // Col2 border characters
+        buf.set_string(20, 0, "╭", Style::default());
+        buf.set_string(20, 1, "│", Style::default());
+        buf.set_string(20, 2, "│", Style::default());
+        buf.set_string(20, 3, "│", Style::default());
+        buf.set_string(20, 4, "╰", Style::default());
+        buf.set_string(39, 0, "╮", Style::default());
+        buf.set_string(39, 1, "│", Style::default());
+        buf.set_string(39, 2, "│", Style::default());
+        buf.set_string(39, 3, "│", Style::default());
+        buf.set_string(39, 4, "╯", Style::default());
+        // Content inside Col1
+        buf.set_string(1, 1, "Hello Col1", Style::default());
+        buf.set_string(1, 2, "Line2 Col1", Style::default());
+        // Content inside Col2
+        buf.set_string(21, 1, "Hello Col2", Style::default());
+        buf.set_string(21, 2, "Line2 Col2", Style::default());
+
+        let content_map = vec![
+            (Rect::new(0, 0, 20, 5), Rect::new(1, 1, 18, 3)),
+            (Rect::new(20, 0, 20, 5), Rect::new(21, 1, 18, 3)),
+        ];
+
+        // Select across both columns, rows 1-2
+        let sel = SelectionState {
+            anchor: Some((0, 1)),
+            current: Some((39, 2)),
+            widget_rect: Some(area),
+            active: true,
+        };
+        let text = extract_selection_text(&buf, &sel, &content_map);
+        // Should NOT contain border characters (│, ╭, ╮, etc.)
+        assert!(!text.contains('│'), "Border char │ found in: {text}");
+        assert!(!text.contains('╭'), "Border char ╭ found in: {text}");
+        assert!(!text.contains('╮'), "Border char ╮ found in: {text}");
+        // Should contain actual content
+        assert!(
+            text.contains("Hello Col1"),
+            "Missing Col1 content in: {text}"
+        );
+        assert!(
+            text.contains("Hello Col2"),
+            "Missing Col2 content in: {text}"
+        );
+        assert!(text.contains("Line2 Col1"), "Missing Col1 line2 in: {text}");
+        assert!(text.contains("Line2 Col2"), "Missing Col2 line2 in: {text}");
+    }
+
+    #[test]
+    fn apply_selection_overlay_skips_border_cells() {
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "│", Style::default());
+        buf.set_string(1, 0, "ABC", Style::default());
+        buf.set_string(19, 0, "│", Style::default());
+
+        let content_map = vec![(Rect::new(0, 0, 20, 3), Rect::new(1, 0, 18, 3))];
+        let sel = SelectionState {
+            anchor: Some((0, 0)),
+            current: Some((19, 0)),
+            widget_rect: Some(area),
+            active: true,
+        };
+        apply_selection_overlay(&mut buf, &sel, &content_map);
+        // Border cells at x=0 and x=19 should NOT be reversed
+        assert!(
+            !buf.get(0, 0).style.modifiers.contains(Modifiers::REVERSED),
+            "Left border cell should not be reversed"
+        );
+        assert!(
+            !buf.get(19, 0).style.modifiers.contains(Modifiers::REVERSED),
+            "Right border cell should not be reversed"
+        );
+        // Content cells should be reversed
+        assert!(buf.get(1, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(buf.get(2, 0).style.modifiers.contains(Modifiers::REVERSED));
+        assert!(buf.get(3, 0).style.modifiers.contains(Modifiers::REVERSED));
+    }
+
+    #[test]
+    fn copy_to_clipboard_writes_osc52() {
+        let mut output: Vec<u8> = Vec::new();
+        copy_to_clipboard(&mut output, "test").unwrap();
+        let s = String::from_utf8(output).unwrap();
+        assert!(s.starts_with("\x1b]52;c;"));
+        assert!(s.ends_with("\x1b\\"));
+        assert!(s.contains(&base64_encode(b"test")));
     }
 }

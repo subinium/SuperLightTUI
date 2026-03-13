@@ -11,6 +11,8 @@ pub enum Event {
     Mouse(MouseEvent),
     /// The terminal was resized to the given `(columns, rows)`.
     Resize(u32, u32),
+    /// Pasted text (bracketed paste). May contain newlines.
+    Paste(String),
 }
 
 /// A keyboard event with key code and modifiers.
@@ -157,7 +159,7 @@ fn convert_button(button: crossterm::event::MouseButton) -> MouseButton {
 // ── crossterm conversions ────────────────────────────────────────────
 
 /// Convert a raw crossterm event into our lightweight [`Event`].
-/// Returns `None` for event kinds we don't handle (mouse, paste, …).
+/// Returns `None` for event kinds we don't handle.
 pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
     match raw {
         crossterm::event::Event::Key(k) => {
@@ -208,6 +210,7 @@ pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
         crossterm::event::Event::Resize(cols, rows) => {
             Some(Event::Resize(cols as u32, rows as u32))
         }
+        crossterm::event::Event::Paste(s) => Some(Event::Paste(s)),
         _ => None,
     }
 }

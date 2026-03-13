@@ -101,6 +101,19 @@ impl Buffer {
             }
             let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
             if char_width == 0 {
+                // Append zero-width char (combining mark, ZWJ, variation selector)
+                // to the previous cell so grapheme clusters stay intact.
+                if x > self.area.x {
+                    let prev_in_clip = clip.map_or(true, |clip| {
+                        (x - 1) >= clip.x
+                            && (x - 1) < clip.right()
+                            && y >= clip.y
+                            && y < clip.bottom()
+                    });
+                    if prev_in_clip {
+                        self.get_mut(x - 1, y).symbol.push(ch);
+                    }
+                }
                 continue;
             }
 

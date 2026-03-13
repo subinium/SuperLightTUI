@@ -94,7 +94,7 @@ ui.container()
 
 ## Widgets
 
-18 built-in widgets, zero boilerplate:
+20+ built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -111,10 +111,12 @@ ui.scrollable(&mut scroll).col(|ui| { });    // scroll container
 ui.toast(&mut toasts);                       // notifications
 ui.separator();                              // horizontal line
 ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
+ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // line/scatter/bar chart
+ui.histogram(&values, 40, 12);               // auto-binned histogram
 ui.bar_chart(&data, 24);                     // horizontal bars
 ui.sparkline(&values, 16);                   // trend line ▁▂▃▅▇
-ui.line_chart(&data, 40, 10);                // braille line chart
 ui.canvas(40, 10, |cv| { cv.circle(20, 20, 15); }); // braille canvas
+ui.grid(3, |ui| { /* 3-column grid */ });    // grid layout
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -336,7 +338,7 @@ Closure → Context collects Commands → build_tree() → flexbox layout → di
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
-~6,800 lines of Rust. 12 source files. No macros, no code generation, no build scripts.
+~9,100 lines of Rust. 13 source files. No macros, no code generation, no build scripts.
 
 ## Contributing
 

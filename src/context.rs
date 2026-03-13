@@ -1,3 +1,4 @@
+use crate::chart::{build_histogram_config, render_chart, ChartBuilder, HistogramBuilder};
 use crate::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseKind};
 use crate::layout::{Command, Direction};
 use crate::rect::Rect;
@@ -19,6 +20,62 @@ pub struct Response {
     pub clicked: bool,
     /// Whether the mouse is over the container.
     pub hovered: bool,
+}
+
+/// Direction for bar chart rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarDirection {
+    /// Bars grow horizontally (default, current behavior).
+    Horizontal,
+    /// Bars grow vertically from bottom to top.
+    Vertical,
+}
+
+/// A single bar in a styled bar chart.
+#[derive(Debug, Clone)]
+pub struct Bar {
+    /// Display label for this bar.
+    pub label: String,
+    /// Numeric value.
+    pub value: f64,
+    /// Bar color. If None, uses theme.primary.
+    pub color: Option<Color>,
+}
+
+impl Bar {
+    /// Create a new bar with a label and value.
+    pub fn new(label: impl Into<String>, value: f64) -> Self {
+        Self {
+            label: label.into(),
+            value,
+            color: None,
+        }
+    }
+
+    /// Set the bar color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+/// A group of bars rendered together (for grouped bar charts).
+#[derive(Debug, Clone)]
+pub struct BarGroup {
+    /// Group label displayed below the bars.
+    pub label: String,
+    /// Bars in this group.
+    pub bars: Vec<Bar>,
+}
+
+impl BarGroup {
+    /// Create a new bar group with a label and bars.
+    pub fn new(label: impl Into<String>, bars: Vec<Bar>) -> Self {
+        Self {
+            label: label.into(),
+            bars,
+        }
+    }
 }
 
 /// Trait for creating custom widgets.
@@ -124,10 +181,10 @@ pub struct Context {
     scroll_count: usize,
     prev_scroll_infos: Vec<(u32, u32)>,
     interaction_count: usize,
-    prev_hit_map: Vec<Rect>,
+    pub(crate) prev_hit_map: Vec<Rect>,
+    _prev_focus_rects: Vec<(usize, Rect)>,
     mouse_pos: Option<(u32, u32)>,
     click_pos: Option<(u32, u32)>,
-    last_mouse_pos: Option<(u32, u32)>,
     last_text_idx: Option<usize>,
     debug: bool,
     theme: Theme,
@@ -173,18 +230,101 @@ pub struct ContainerBuilder<'a> {
 /// Provides pixel-level drawing on a braille character grid. Each terminal
 /// cell maps to a 2x4 dot matrix, so a canvas of `width` columns x `height`
 /// rows gives `width*2` x `height*4` pixel resolution.
+/// A colored pixel in the canvas grid.
+#[derive(Debug, Clone, Copy)]
+struct CanvasPixel {
+    bits: u32,
+    color: Color,
+}
+
+/// Text label placed on the canvas.
+#[derive(Debug, Clone)]
+struct CanvasLabel {
+    x: usize,
+    y: usize,
+    text: String,
+    color: Color,
+}
+
+/// A layer in the canvas, supporting z-ordering.
+#[derive(Debug, Clone)]
+struct CanvasLayer {
+    grid: Vec<Vec<CanvasPixel>>,
+    labels: Vec<CanvasLabel>,
+}
+
 pub struct CanvasContext {
-    grid: Vec<Vec<u32>>,
+    layers: Vec<CanvasLayer>,
+    cols: usize,
+    rows: usize,
     px_w: usize,
     px_h: usize,
+    current_color: Color,
 }
 
 impl CanvasContext {
     fn new(cols: usize, rows: usize) -> Self {
         Self {
-            grid: vec![vec![0u32; cols]; rows],
+            layers: vec![Self::new_layer(cols, rows)],
+            cols,
+            rows,
             px_w: cols * 2,
             px_h: rows * 4,
+            current_color: Color::Reset,
+        }
+    }
+
+    fn new_layer(cols: usize, rows: usize) -> CanvasLayer {
+        CanvasLayer {
+            grid: vec![
+                vec![
+                    CanvasPixel {
+                        bits: 0,
+                        color: Color::Reset,
+                    };
+                    cols
+                ];
+                rows
+            ],
+            labels: Vec::new(),
+        }
+    }
+
+    fn current_layer_mut(&mut self) -> Option<&mut CanvasLayer> {
+        self.layers.last_mut()
+    }
+
+    fn dot_with_color(&mut self, x: usize, y: usize, color: Color) {
+        if x >= self.px_w || y >= self.px_h {
+            return;
+        }
+
+        let char_col = x / 2;
+        let char_row = y / 4;
+        let sub_col = x % 2;
+        let sub_row = y % 4;
+        const LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
+        const RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+
+        let bit = if sub_col == 0 {
+            LEFT_BITS[sub_row]
+        } else {
+            RIGHT_BITS[sub_row]
+        };
+
+        if let Some(layer) = self.current_layer_mut() {
+            let cell = &mut layer.grid[char_row][char_col];
+            let new_bits = cell.bits | bit;
+            if new_bits != cell.bits {
+                cell.bits = new_bits;
+                cell.color = color;
+            }
+        }
+    }
+
+    fn dot_isize(&mut self, x: isize, y: isize) {
+        if x >= 0 && y >= 0 {
+            self.dot(x as usize, y as usize);
         }
     }
 
@@ -200,22 +340,7 @@ impl CanvasContext {
 
     /// Set a single pixel at `(x, y)`.
     pub fn dot(&mut self, x: usize, y: usize) {
-        if x >= self.px_w || y >= self.px_h {
-            return;
-        }
-
-        let char_col = x / 2;
-        let char_row = y / 4;
-        let sub_col = x % 2;
-        let sub_row = y % 4;
-        const LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
-        const RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
-
-        self.grid[char_row][char_col] |= if sub_col == 0 {
-            LEFT_BITS[sub_row]
-        } else {
-            RIGHT_BITS[sub_row]
-        };
+        self.dot_with_color(x, y, self.current_color);
     }
 
     /// Draw a line from `(x0, y0)` to `(x1, y1)` using Bresenham's algorithm.
@@ -229,9 +354,7 @@ impl CanvasContext {
         let mut err = dx + dy;
 
         loop {
-            if x >= 0 && y >= 0 {
-                self.dot(x as usize, y as usize);
-            }
+            self.dot_isize(x, y);
             if x == x1 && y == y1 {
                 break;
             }
@@ -289,9 +412,7 @@ impl CanvasContext {
             ] {
                 let px = cx + dx;
                 let py = cy + dy;
-                if px >= 0 && py >= 0 {
-                    self.dot(px as usize, py as usize);
-                }
+                self.dot_isize(px, py);
             }
 
             y += 1;
@@ -304,15 +425,233 @@ impl CanvasContext {
         }
     }
 
-    fn render(&self) -> Vec<String> {
-        self.grid
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|&bits| char::from_u32(0x2800 + bits).unwrap_or(' '))
-                    .collect()
-            })
-            .collect()
+    /// Set the drawing color for subsequent shapes.
+    pub fn set_color(&mut self, color: Color) {
+        self.current_color = color;
+    }
+
+    /// Get the current drawing color.
+    pub fn color(&self) -> Color {
+        self.current_color
+    }
+
+    /// Draw a filled rectangle.
+    pub fn filled_rect(&mut self, x: usize, y: usize, w: usize, h: usize) {
+        if w == 0 || h == 0 {
+            return;
+        }
+
+        let x_end = x.saturating_add(w).min(self.px_w);
+        let y_end = y.saturating_add(h).min(self.px_h);
+        if x >= x_end || y >= y_end {
+            return;
+        }
+
+        for yy in y..y_end {
+            self.line(x, yy, x_end.saturating_sub(1), yy);
+        }
+    }
+
+    /// Draw a filled circle.
+    pub fn filled_circle(&mut self, cx: usize, cy: usize, r: usize) {
+        let (cx, cy, r) = (cx as isize, cy as isize, r as isize);
+        for y in (cy - r)..=(cy + r) {
+            let dy = y - cy;
+            let span_sq = (r * r - dy * dy).max(0);
+            let dx = (span_sq as f64).sqrt() as isize;
+            for x in (cx - dx)..=(cx + dx) {
+                self.dot_isize(x, y);
+            }
+        }
+    }
+
+    /// Draw a triangle outline.
+    pub fn triangle(&mut self, x0: usize, y0: usize, x1: usize, y1: usize, x2: usize, y2: usize) {
+        self.line(x0, y0, x1, y1);
+        self.line(x1, y1, x2, y2);
+        self.line(x2, y2, x0, y0);
+    }
+
+    /// Draw a filled triangle.
+    pub fn filled_triangle(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        x1: usize,
+        y1: usize,
+        x2: usize,
+        y2: usize,
+    ) {
+        let vertices = [
+            (x0 as isize, y0 as isize),
+            (x1 as isize, y1 as isize),
+            (x2 as isize, y2 as isize),
+        ];
+        let min_y = vertices.iter().map(|(_, y)| *y).min().unwrap_or(0);
+        let max_y = vertices.iter().map(|(_, y)| *y).max().unwrap_or(-1);
+
+        for y in min_y..=max_y {
+            let mut intersections: Vec<f64> = Vec::new();
+
+            for edge in [(0usize, 1usize), (1usize, 2usize), (2usize, 0usize)] {
+                let (x_a, y_a) = vertices[edge.0];
+                let (x_b, y_b) = vertices[edge.1];
+                if y_a == y_b {
+                    continue;
+                }
+
+                let (x_start, y_start, x_end, y_end) = if y_a < y_b {
+                    (x_a, y_a, x_b, y_b)
+                } else {
+                    (x_b, y_b, x_a, y_a)
+                };
+
+                if y < y_start || y >= y_end {
+                    continue;
+                }
+
+                let t = (y - y_start) as f64 / (y_end - y_start) as f64;
+                intersections.push(x_start as f64 + t * (x_end - x_start) as f64);
+            }
+
+            intersections.sort_by(|a, b| a.total_cmp(b));
+            let mut i = 0usize;
+            while i + 1 < intersections.len() {
+                let x_start = intersections[i].ceil() as isize;
+                let x_end = intersections[i + 1].floor() as isize;
+                for x in x_start..=x_end {
+                    self.dot_isize(x, y);
+                }
+                i += 2;
+            }
+        }
+
+        self.triangle(x0, y0, x1, y1, x2, y2);
+    }
+
+    /// Draw multiple points at once.
+    pub fn points(&mut self, pts: &[(usize, usize)]) {
+        for &(x, y) in pts {
+            self.dot(x, y);
+        }
+    }
+
+    /// Draw a polyline connecting the given points in order.
+    pub fn polyline(&mut self, pts: &[(usize, usize)]) {
+        for window in pts.windows(2) {
+            if let [(x0, y0), (x1, y1)] = window {
+                self.line(*x0, *y0, *x1, *y1);
+            }
+        }
+    }
+
+    /// Place a text label at pixel position `(x, y)`.
+    /// Text is rendered in regular characters overlaying the braille grid.
+    pub fn print(&mut self, x: usize, y: usize, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        let color = self.current_color;
+        if let Some(layer) = self.current_layer_mut() {
+            layer.labels.push(CanvasLabel {
+                x,
+                y,
+                text: text.to_string(),
+                color,
+            });
+        }
+    }
+
+    /// Start a new drawing layer. Shapes on later layers overlay earlier ones.
+    pub fn layer(&mut self) {
+        self.layers.push(Self::new_layer(self.cols, self.rows));
+    }
+
+    pub(crate) fn render(&self) -> Vec<Vec<(String, Color)>> {
+        let mut final_grid = vec![
+            vec![
+                CanvasPixel {
+                    bits: 0,
+                    color: Color::Reset,
+                };
+                self.cols
+            ];
+            self.rows
+        ];
+        let mut labels_overlay: Vec<Vec<Option<(char, Color)>>> =
+            vec![vec![None; self.cols]; self.rows];
+
+        for layer in &self.layers {
+            for (row, final_row) in final_grid.iter_mut().enumerate().take(self.rows) {
+                for (col, dst) in final_row.iter_mut().enumerate().take(self.cols) {
+                    let src = layer.grid[row][col];
+                    if src.bits == 0 {
+                        continue;
+                    }
+
+                    let merged = dst.bits | src.bits;
+                    if merged != dst.bits {
+                        dst.bits = merged;
+                        dst.color = src.color;
+                    }
+                }
+            }
+
+            for label in &layer.labels {
+                let row = label.y / 4;
+                if row >= self.rows {
+                    continue;
+                }
+                let start_col = label.x / 2;
+                for (offset, ch) in label.text.chars().enumerate() {
+                    let col = start_col + offset;
+                    if col >= self.cols {
+                        break;
+                    }
+                    labels_overlay[row][col] = Some((ch, label.color));
+                }
+            }
+        }
+
+        let mut lines: Vec<Vec<(String, Color)>> = Vec::with_capacity(self.rows);
+        for row in 0..self.rows {
+            let mut segments: Vec<(String, Color)> = Vec::new();
+            let mut current_color: Option<Color> = None;
+            let mut current_text = String::new();
+
+            for col in 0..self.cols {
+                let (ch, color) = if let Some((label_ch, label_color)) = labels_overlay[row][col] {
+                    (label_ch, label_color)
+                } else {
+                    let bits = final_grid[row][col].bits;
+                    let ch = char::from_u32(0x2800 + bits).unwrap_or(' ');
+                    (ch, final_grid[row][col].color)
+                };
+
+                match current_color {
+                    Some(c) if c == color => {
+                        current_text.push(ch);
+                    }
+                    Some(c) => {
+                        segments.push((std::mem::take(&mut current_text), c));
+                        current_text.push(ch);
+                        current_color = Some(color);
+                    }
+                    None => {
+                        current_text.push(ch);
+                        current_color = Some(color);
+                    }
+                }
+            }
+
+            if let Some(color) = current_color {
+                segments.push((current_text, color));
+            }
+            lines.push(segments);
+        }
+
+        lines
     }
 }
 
@@ -623,10 +962,11 @@ impl Context {
         width: u32,
         height: u32,
         tick: u64,
-        focus_index: usize,
+        mut focus_index: usize,
         prev_focus_count: usize,
         prev_scroll_infos: Vec<(u32, u32)>,
         prev_hit_map: Vec<Rect>,
+        prev_focus_rects: Vec<(usize, Rect)>,
         debug: bool,
         theme: Theme,
         last_mouse_pos: Option<(u32, u32)>,
@@ -641,6 +981,21 @@ impl Context {
                 if matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
                     click_pos = Some((mouse.x, mouse.y));
                 }
+            }
+        }
+
+        if let Some((mx, my)) = click_pos {
+            let mut best: Option<(usize, u64)> = None;
+            for &(fid, rect) in &prev_focus_rects {
+                if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
+                    let area = rect.width as u64 * rect.height as u64;
+                    if best.map_or(true, |(_, ba)| area < ba) {
+                        best = Some((fid, area));
+                    }
+                }
+            }
+            if let Some((fid, _)) = best {
+                focus_index = fid;
             }
         }
 
@@ -659,9 +1014,9 @@ impl Context {
             prev_scroll_infos,
             interaction_count: 0,
             prev_hit_map,
+            _prev_focus_rects: prev_focus_rects,
             mouse_pos,
             click_pos,
-            last_mouse_pos,
             last_text_idx: None,
             debug,
             theme,
@@ -790,6 +1145,7 @@ impl Context {
     pub fn register_focusable(&mut self) -> bool {
         let id = self.focus_count;
         self.focus_count += 1;
+        self.commands.push(Command::FocusMarker(id));
         if self.prev_focus_count == 0 {
             return true;
         }
@@ -1065,7 +1421,6 @@ impl Context {
     }
 
     fn auto_scroll(&mut self, rect: &Rect, state: &mut ScrollState) {
-        let last_y = self.last_mouse_pos.map(|(_, y)| y);
         let mut to_consume: Vec<usize> = Vec::new();
 
         for (i, event) in self.events.iter().enumerate() {
@@ -1090,15 +1445,8 @@ impl Context {
                         to_consume.push(i);
                     }
                     MouseKind::Drag(MouseButton::Left) => {
-                        if let Some(prev_y) = last_y {
-                            let delta = mouse.y as i32 - prev_y as i32;
-                            if delta < 0 {
-                                state.scroll_down((-delta) as usize);
-                            } else if delta > 0 {
-                                state.scroll_up(delta as usize);
-                            }
-                        }
-                        to_consume.push(i);
+                        // Left-drag is reserved for text selection.
+                        // Scroll via mouse wheel instead.
                     }
                     _ => {}
                 }
@@ -1257,12 +1605,34 @@ impl Context {
                             state.cursor = 0;
                             consumed_indices.push(i);
                         }
+                        KeyCode::Delete => {
+                            let len = state.value.chars().count();
+                            if state.cursor < len {
+                                let start = byte_index_for_char(&state.value, state.cursor);
+                                let end = byte_index_for_char(&state.value, state.cursor + 1);
+                                state.value.replace_range(start..end, "");
+                            }
+                            consumed_indices.push(i);
+                        }
                         KeyCode::End => {
                             state.cursor = state.value.chars().count();
                             consumed_indices.push(i);
                         }
                         _ => {}
                     }
+                }
+                if let Event::Paste(ref text) = event {
+                    for ch in text.chars() {
+                        if let Some(max) = state.max_length {
+                            if state.value.chars().count() >= max {
+                                break;
+                            }
+                        }
+                        let index = byte_index_for_char(&state.value, state.cursor);
+                        state.value.insert(index, ch);
+                        state.cursor += 1;
+                    }
+                    consumed_indices.push(i);
                 }
             }
 
@@ -1449,12 +1819,59 @@ impl Context {
                             state.cursor_col = 0;
                             consumed_indices.push(i);
                         }
+                        KeyCode::Delete => {
+                            let line_len = state.lines[state.cursor_row].chars().count();
+                            if state.cursor_col < line_len {
+                                let start = byte_index_for_char(
+                                    &state.lines[state.cursor_row],
+                                    state.cursor_col,
+                                );
+                                let end = byte_index_for_char(
+                                    &state.lines[state.cursor_row],
+                                    state.cursor_col + 1,
+                                );
+                                state.lines[state.cursor_row].replace_range(start..end, "");
+                            } else if state.cursor_row + 1 < state.lines.len() {
+                                let next = state.lines.remove(state.cursor_row + 1);
+                                state.lines[state.cursor_row].push_str(&next);
+                            }
+                            consumed_indices.push(i);
+                        }
                         KeyCode::End => {
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                             consumed_indices.push(i);
                         }
                         _ => {}
                     }
+                }
+                if let Event::Paste(ref text) = event {
+                    for ch in text.chars() {
+                        if ch == '\n' || ch == '\r' {
+                            let split_index = byte_index_for_char(
+                                &state.lines[state.cursor_row],
+                                state.cursor_col,
+                            );
+                            let remainder = state.lines[state.cursor_row].split_off(split_index);
+                            state.cursor_row += 1;
+                            state.lines.insert(state.cursor_row, remainder);
+                            state.cursor_col = 0;
+                        } else {
+                            if let Some(max) = state.max_length {
+                                let total: usize =
+                                    state.lines.iter().map(|l| l.chars().count()).sum();
+                                if total >= max {
+                                    break;
+                                }
+                            }
+                            let index = byte_index_for_char(
+                                &state.lines[state.cursor_row],
+                                state.cursor_col,
+                            );
+                            state.lines[state.cursor_row].insert(index, ch);
+                            state.cursor_col += 1;
+                        }
+                    }
+                    consumed_indices.push(i);
                 }
             }
 
@@ -1549,6 +1966,8 @@ impl Context {
     ///     ("Costs", 60.0),
     /// ];
     /// ui.bar_chart(&data, 24);
+    ///
+    /// For styled bars with per-bar colors, see [`bar_chart_styled`].
     /// # });
     /// ```
     pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> &mut Self {
@@ -1620,6 +2039,324 @@ impl Context {
         self
     }
 
+    /// Render a styled bar chart with per-bar colors, grouping, and direction control.
+    ///
+    /// # Example
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Bar, Color};
+    /// let bars = vec![
+    ///     Bar::new("Q1", 32.0).color(Color::Cyan),
+    ///     Bar::new("Q2", 46.0).color(Color::Green),
+    ///     Bar::new("Q3", 28.0).color(Color::Yellow),
+    ///     Bar::new("Q4", 54.0).color(Color::Red),
+    /// ];
+    /// ui.bar_chart_styled(&bars, 30, slt::BarDirection::Horizontal);
+    /// # });
+    /// ```
+    pub fn bar_chart_styled(
+        &mut self,
+        bars: &[Bar],
+        max_width: u32,
+        direction: BarDirection,
+    ) -> &mut Self {
+        if bars.is_empty() {
+            return self;
+        }
+
+        let max_value = bars
+            .iter()
+            .map(|bar| bar.value)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+
+        match direction {
+            BarDirection::Horizontal => {
+                let max_label_width = bars
+                    .iter()
+                    .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+                    .max()
+                    .unwrap_or(0);
+
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Column,
+                    gap: 0,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(self.theme.border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                });
+
+                for bar in bars {
+                    let label_width = UnicodeWidthStr::width(bar.label.as_str());
+                    let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+                    let normalized = (bar.value / denom).clamp(0.0, 1.0);
+                    let bar_len = (normalized * max_width as f64).round() as usize;
+                    let bar_text = "█".repeat(bar_len);
+                    let color = bar.color.unwrap_or(self.theme.primary);
+
+                    self.interaction_count += 1;
+                    self.commands.push(Command::BeginContainer {
+                        direction: Direction::Row,
+                        gap: 1,
+                        align: Align::Start,
+                        border: None,
+                        border_style: Style::new().fg(self.theme.border),
+                        padding: Padding::default(),
+                        margin: Margin::default(),
+                        constraints: Constraints::default(),
+                        title: None,
+                        grow: 0,
+                    });
+                    self.styled(
+                        format!("{}{label_padding}", bar.label),
+                        Style::new().fg(self.theme.text),
+                    );
+                    self.styled(bar_text, Style::new().fg(color));
+                    self.styled(
+                        format_compact_number(bar.value),
+                        Style::new().fg(self.theme.text_dim),
+                    );
+                    self.commands.push(Command::EndContainer);
+                    self.last_text_idx = None;
+                }
+
+                self.commands.push(Command::EndContainer);
+                self.last_text_idx = None;
+            }
+            BarDirection::Vertical => {
+                const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+
+                let chart_height = max_width.max(1) as usize;
+                let value_labels: Vec<String> = bars
+                    .iter()
+                    .map(|bar| format_compact_number(bar.value))
+                    .collect();
+                let col_width = bars
+                    .iter()
+                    .zip(value_labels.iter())
+                    .map(|(bar, value)| {
+                        UnicodeWidthStr::width(bar.label.as_str())
+                            .max(UnicodeWidthStr::width(value.as_str()))
+                            .max(1)
+                    })
+                    .max()
+                    .unwrap_or(1);
+
+                let bar_units: Vec<usize> = bars
+                    .iter()
+                    .map(|bar| {
+                        let normalized = (bar.value / denom).clamp(0.0, 1.0);
+                        (normalized * chart_height as f64 * 8.0).round() as usize
+                    })
+                    .collect();
+
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Column,
+                    gap: 0,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(self.theme.border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                });
+
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Row,
+                    gap: 1,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(self.theme.border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                });
+                for value in &value_labels {
+                    self.styled(
+                        center_text(value, col_width),
+                        Style::new().fg(self.theme.text_dim),
+                    );
+                }
+                self.commands.push(Command::EndContainer);
+                self.last_text_idx = None;
+
+                for row in (0..chart_height).rev() {
+                    self.interaction_count += 1;
+                    self.commands.push(Command::BeginContainer {
+                        direction: Direction::Row,
+                        gap: 1,
+                        align: Align::Start,
+                        border: None,
+                        border_style: Style::new().fg(self.theme.border),
+                        padding: Padding::default(),
+                        margin: Margin::default(),
+                        constraints: Constraints::default(),
+                        title: None,
+                        grow: 0,
+                    });
+
+                    let row_base = row * 8;
+                    for (bar, units) in bars.iter().zip(bar_units.iter()) {
+                        let fill = if *units <= row_base {
+                            ' '
+                        } else {
+                            let delta = *units - row_base;
+                            if delta >= 8 {
+                                '█'
+                            } else {
+                                FRACTION_BLOCKS[delta]
+                            }
+                        };
+
+                        self.styled(
+                            center_text(&fill.to_string(), col_width),
+                            Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
+                        );
+                    }
+
+                    self.commands.push(Command::EndContainer);
+                    self.last_text_idx = None;
+                }
+
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Row,
+                    gap: 1,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(self.theme.border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                });
+                for bar in bars {
+                    self.styled(
+                        center_text(&bar.label, col_width),
+                        Style::new().fg(self.theme.text),
+                    );
+                }
+                self.commands.push(Command::EndContainer);
+                self.last_text_idx = None;
+
+                self.commands.push(Command::EndContainer);
+                self.last_text_idx = None;
+            }
+        }
+
+        self
+    }
+
+    /// Render a grouped bar chart.
+    ///
+    /// Each group contains multiple bars rendered side by side. Useful for
+    /// comparing categories across groups (e.g., quarterly revenue by product).
+    ///
+    /// # Example
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Bar, BarGroup, Color};
+    /// let groups = vec![
+    ///     BarGroup::new("2023", vec![Bar::new("Rev", 100.0).color(Color::Cyan), Bar::new("Cost", 60.0).color(Color::Red)]),
+    ///     BarGroup::new("2024", vec![Bar::new("Rev", 140.0).color(Color::Cyan), Bar::new("Cost", 80.0).color(Color::Red)]),
+    /// ];
+    /// ui.bar_chart_grouped(&groups, 40);
+    /// # });
+    /// ```
+    pub fn bar_chart_grouped(&mut self, groups: &[BarGroup], max_width: u32) -> &mut Self {
+        if groups.is_empty() {
+            return self;
+        }
+
+        let all_bars: Vec<&Bar> = groups.iter().flat_map(|group| group.bars.iter()).collect();
+        if all_bars.is_empty() {
+            return self;
+        }
+
+        let max_label_width = all_bars
+            .iter()
+            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .max()
+            .unwrap_or(0);
+        let max_value = all_bars
+            .iter()
+            .map(|bar| bar.value)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 1,
+            align: Align::Start,
+            border: None,
+            border_style: Style::new().fg(self.theme.border),
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        for group in groups {
+            self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
+
+            for bar in &group.bars {
+                let label_width = UnicodeWidthStr::width(bar.label.as_str());
+                let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+                let normalized = (bar.value / denom).clamp(0.0, 1.0);
+                let bar_len = (normalized * max_width as f64).round() as usize;
+                let bar_text = "█".repeat(bar_len);
+
+                self.interaction_count += 1;
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Row,
+                    gap: 1,
+                    align: Align::Start,
+                    border: None,
+                    border_style: Style::new().fg(self.theme.border),
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                });
+                self.styled(
+                    format!("  {}{label_padding}", bar.label),
+                    Style::new().fg(self.theme.text),
+                );
+                self.styled(
+                    bar_text,
+                    Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
+                );
+                self.styled(
+                    format_compact_number(bar.value),
+                    Style::new().fg(self.theme.text_dim),
+                );
+                self.commands.push(Command::EndContainer);
+                self.last_text_idx = None;
+            }
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        self
+    }
+
     /// Render a single-line sparkline from numeric data.
     ///
     /// Uses the last `width` points (or fewer if the data is shorter) and maps
@@ -1631,6 +2368,8 @@ impl Context {
     /// # slt::run(|ui: &mut slt::Context| {
     /// let samples = [12.0, 9.0, 14.0, 18.0, 16.0, 21.0, 20.0, 24.0];
     /// ui.sparkline(&samples, 16);
+    ///
+    /// For per-point colors and missing values, see [`sparkline_styled`].
     /// # });
     /// ```
     pub fn sparkline(&mut self, data: &[f64], width: u32) -> &mut Self {
@@ -1665,6 +2404,108 @@ impl Context {
             .collect();
 
         self.styled(line, Style::new().fg(self.theme.primary))
+    }
+
+    /// Render a sparkline with per-point colors.
+    ///
+    /// Each point can have its own color via `(f64, Option<Color>)` tuples.
+    /// Use `f64::NAN` for absent values (rendered as spaces).
+    ///
+    /// # Example
+    /// ```ignore
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// let data: Vec<(f64, Option<Color>)> = vec![
+    ///     (12.0, Some(Color::Green)),
+    ///     (9.0, Some(Color::Red)),
+    ///     (14.0, Some(Color::Green)),
+    ///     (f64::NAN, None),
+    ///     (18.0, Some(Color::Cyan)),
+    /// ];
+    /// ui.sparkline_styled(&data, 16);
+    /// # });
+    /// ```
+    pub fn sparkline_styled(&mut self, data: &[(f64, Option<Color>)], width: u32) -> &mut Self {
+        const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+        let w = width as usize;
+        let window = if data.len() > w {
+            &data[data.len() - w..]
+        } else {
+            data
+        };
+
+        if window.is_empty() {
+            return self;
+        }
+
+        let mut finite_values = window
+            .iter()
+            .map(|(value, _)| *value)
+            .filter(|value| !value.is_nan());
+        let Some(first) = finite_values.next() else {
+            return self.styled(
+                " ".repeat(window.len()),
+                Style::new().fg(self.theme.text_dim),
+            );
+        };
+
+        let mut min = first;
+        let mut max = first;
+        for value in finite_values {
+            min = f64::min(min, value);
+            max = f64::max(max, value);
+        }
+        let range = max - min;
+
+        let mut cells: Vec<(char, Color)> = Vec::with_capacity(window.len());
+        for (value, color) in window {
+            if value.is_nan() {
+                cells.push((' ', self.theme.text_dim));
+                continue;
+            }
+
+            let normalized = if range == 0.0 {
+                0.5
+            } else {
+                ((*value - min) / range).clamp(0.0, 1.0)
+            };
+            let idx = (normalized * 7.0).round() as usize;
+            cells.push((BLOCKS[idx.min(7)], color.unwrap_or(self.theme.primary)));
+        }
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 0,
+            align: Align::Start,
+            border: None,
+            border_style: Style::new().fg(self.theme.border),
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        let mut seg = String::new();
+        let mut seg_color = cells[0].1;
+        for (ch, color) in cells {
+            if color != seg_color {
+                self.styled(seg, Style::new().fg(seg_color));
+                seg = String::new();
+                seg_color = color;
+            }
+            seg.push(ch);
+        }
+        if !seg.is_empty() {
+            self.styled(seg, Style::new().fg(seg_color));
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        self
     }
 
     /// Render a multi-row line chart using braille characters.
@@ -1802,9 +2643,119 @@ impl Context {
         let mut canvas = CanvasContext::new(width as usize, height as usize);
         draw(&mut canvas);
 
-        let style = Style::new().fg(self.theme.primary);
-        for line in canvas.render() {
-            self.styled(line, style);
+        for segments in canvas.render() {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                border: None,
+                border_style: Style::new(),
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+            });
+            for (text, color) in segments {
+                let c = if color == Color::Reset {
+                    self.theme.primary
+                } else {
+                    color
+                };
+                self.styled(text, Style::new().fg(c));
+            }
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        self
+    }
+
+    /// Render a multi-series chart with axes, legend, and auto-scaling.
+    pub fn chart(
+        &mut self,
+        configure: impl FnOnce(&mut ChartBuilder),
+        width: u32,
+        height: u32,
+    ) -> &mut Self {
+        if width == 0 || height == 0 {
+            return self;
+        }
+
+        let axis_style = Style::new().fg(self.theme.text_dim);
+        let mut builder = ChartBuilder::new(width, height, axis_style, axis_style);
+        configure(&mut builder);
+
+        let config = builder.build();
+        let rows = render_chart(&config);
+
+        for row in rows {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                border: None,
+                border_style: Style::new().fg(self.theme.border),
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+            });
+            for (text, style) in row.segments {
+                self.styled(text, style);
+            }
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        self
+    }
+
+    /// Render a histogram from raw data with auto-binning.
+    pub fn histogram(&mut self, data: &[f64], width: u32, height: u32) -> &mut Self {
+        self.histogram_with(data, |_| {}, width, height)
+    }
+
+    /// Render a histogram with configuration options.
+    pub fn histogram_with(
+        &mut self,
+        data: &[f64],
+        configure: impl FnOnce(&mut HistogramBuilder),
+        width: u32,
+        height: u32,
+    ) -> &mut Self {
+        if width == 0 || height == 0 {
+            return self;
+        }
+
+        let mut options = HistogramBuilder::default();
+        configure(&mut options);
+        let axis_style = Style::new().fg(self.theme.text_dim);
+        let config = build_histogram_config(data, &options, width, height, axis_style);
+        let rows = render_chart(&config);
+
+        for row in rows {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                border: None,
+                border_style: Style::new().fg(self.theme.border),
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+            });
+            for (text, style) in row.segments {
+                self.styled(text, style);
+            }
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
         }
 
         self
@@ -2408,6 +3359,19 @@ impl Context {
         self.mouse_pos
     }
 
+    /// Return the first unconsumed paste event text, if any.
+    pub fn paste(&self) -> Option<&str> {
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Paste(ref text) = event {
+                return Some(text.as_str());
+            }
+            None
+        })
+    }
+
     /// Check if an unconsumed scroll-up event occurred this frame.
     pub fn scroll_up(&self) -> bool {
         self.events.iter().enumerate().any(|(i, event)| {
@@ -2504,4 +3468,16 @@ fn format_compact_number(value: f64) -> String {
         s.pop();
     }
     s
+}
+
+fn center_text(text: &str, width: usize) -> String {
+    let text_width = UnicodeWidthStr::width(text);
+    if text_width >= width {
+        return text.to_string();
+    }
+
+    let total = width - text_width;
+    let left = total / 2;
+    let right = total - left;
+    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
 }

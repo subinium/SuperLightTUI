@@ -65,6 +65,11 @@ impl EventBuilder {
         self
     }
 
+    pub fn paste(mut self, text: impl Into<String>) -> Self {
+        self.events.push(Event::Paste(text.into()));
+        self
+    }
+
     pub fn resize(mut self, width: u32, height: u32) -> Self {
         self.events.push(Event::Resize(width, height));
         self
@@ -108,6 +113,7 @@ impl TestBackend {
             0,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             false,
             Theme::dark(),
             None,
@@ -135,6 +141,7 @@ impl TestBackend {
             0,
             focus_index,
             prev_focus_count,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             false,

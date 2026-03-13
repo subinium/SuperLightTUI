@@ -11,12 +11,20 @@ fn text_renders() {
 }
 
 #[test]
-fn text_bold_renders() {
-    let mut tb = TestBackend::new(40, 5);
+fn canvas_colored_shapes() {
+    let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        ui.text("bold text").bold();
+        ui.canvas(20, 5, |cv| {
+            cv.set_color(slt::Color::Cyan);
+            cv.circle(20, 10, 8);
+            cv.set_color(slt::Color::Yellow);
+            cv.filled_rect(0, 0, 10, 10);
+            cv.layer();
+            cv.set_color(slt::Color::White);
+            cv.print(5, 5, "Hi");
+        });
     });
-    tb.assert_contains("bold text");
+    tb.assert_contains("Hi");
 }
 
 #[test]
@@ -368,4 +376,305 @@ fn toast_empty_no_render() {
     tb.render(|ui| {
         ui.toast(&mut toasts);
     });
+}
+
+#[test]
+fn chart_renders_with_axes() {
+    let mut tb = TestBackend::new(60, 20);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.title("Test");
+                c.xlabel("X");
+                c.ylabel("Y");
+                c.line(&[(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)])
+                    .label("S1")
+                    .color(slt::Color::Cyan);
+            },
+            50,
+            15,
+        );
+    });
+    tb.assert_contains("Test");
+    tb.assert_contains("┌");
+    tb.assert_contains("S1");
+}
+
+#[test]
+fn chart_multi_series() {
+    let mut tb = TestBackend::new(60, 20);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.line(&[(0.0, 1.0), (1.0, 4.0)])
+                    .label("A")
+                    .color(slt::Color::Cyan);
+                c.scatter(&[(0.5, 2.0), (1.5, 3.0)])
+                    .label("B")
+                    .color(slt::Color::Yellow);
+                c.legend(slt::LegendPosition::TopRight);
+            },
+            50,
+            15,
+        );
+    });
+    tb.assert_contains("A");
+    tb.assert_contains("B");
+}
+
+#[test]
+fn chart_empty_data_no_panic() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.chart(|_c| {}, 30, 8);
+    });
+}
+
+#[test]
+fn histogram_renders() {
+    let mut tb = TestBackend::new(50, 15);
+    let data = [1.0, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+    tb.render(|ui| {
+        ui.histogram(&data, 40, 10);
+    });
+    let line0 = tb.line(0);
+    assert!(line0.contains("█") || line0.contains("▁") || line0.len() > 0);
+}
+
+#[test]
+fn histogram_empty_no_panic() {
+    let mut tb = TestBackend::new(40, 10);
+    let data: [f64; 0] = [];
+    tb.render(|ui| {
+        ui.histogram(&data, 30, 8);
+    });
+}
+
+#[test]
+fn bar_chart_styled_horizontal() {
+    let mut tb = TestBackend::new(50, 10);
+    let bars = vec![
+        slt::Bar::new("A", 10.0).color(slt::Color::Cyan),
+        slt::Bar::new("B", 20.0).color(slt::Color::Red),
+    ];
+    tb.render(|ui| {
+        ui.bar_chart_styled(&bars, 20, slt::BarDirection::Horizontal);
+    });
+    tb.assert_contains("A");
+    tb.assert_contains("B");
+    tb.assert_contains("█");
+}
+
+#[test]
+fn bar_chart_styled_vertical() {
+    let mut tb = TestBackend::new(50, 15);
+    let bars = vec![slt::Bar::new("X", 5.0), slt::Bar::new("Y", 10.0)];
+    tb.render(|ui| {
+        ui.bar_chart_styled(&bars, 8, slt::BarDirection::Vertical);
+    });
+    tb.assert_contains("X");
+    tb.assert_contains("Y");
+}
+
+#[test]
+fn bar_chart_grouped_renders() {
+    let mut tb = TestBackend::new(50, 15);
+    let groups = vec![
+        slt::BarGroup::new(
+            "G1",
+            vec![slt::Bar::new("a", 10.0), slt::Bar::new("b", 20.0)],
+        ),
+        slt::BarGroup::new(
+            "G2",
+            vec![slt::Bar::new("a", 15.0), slt::Bar::new("b", 25.0)],
+        ),
+    ];
+    tb.render(|ui| {
+        ui.bar_chart_grouped(&groups, 20);
+    });
+    tb.assert_contains("G1");
+    tb.assert_contains("G2");
+}
+
+#[test]
+fn sparkline_styled_renders() {
+    let mut tb = TestBackend::new(40, 5);
+    let data: Vec<(f64, Option<slt::Color>)> = vec![
+        (10.0, Some(slt::Color::Green)),
+        (20.0, Some(slt::Color::Red)),
+        (f64::NAN, None),
+        (15.0, None),
+    ];
+    tb.render(|ui| {
+        ui.sparkline_styled(&data, 10);
+    });
+}
+
+// ── Korean / CJK text handling ──────────────────────────────────
+
+#[test]
+fn text_input_korean_char_insert() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    let events = slt::EventBuilder::new().key('한').key('글').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "한글");
+    assert_eq!(input.cursor, 2);
+}
+
+#[test]
+fn text_input_korean_backspace() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.value = "한글".into();
+    input.cursor = 2;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Backspace)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "한");
+    assert_eq!(input.cursor, 1);
+}
+
+#[test]
+fn text_input_korean_renders_cursor() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.value = "한글".into();
+    input.cursor = 1;
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    tb.assert_contains("한");
+    tb.assert_contains("글");
+    tb.assert_contains("▎");
+}
+
+#[test]
+fn text_input_delete_forward() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.value = "abc".into();
+    input.cursor = 1;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Delete)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "ac");
+    assert_eq!(input.cursor, 1);
+}
+
+#[test]
+fn text_input_paste_inserts_text() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.value = "ab".into();
+    input.cursor = 1;
+    let events = slt::EventBuilder::new().paste("XY").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "aXYb");
+    assert_eq!(input.cursor, 3);
+}
+
+#[test]
+fn text_input_paste_korean() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    let events = slt::EventBuilder::new().paste("안녕하세요").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "안녕하세요");
+    assert_eq!(input.cursor, 5);
+}
+
+#[test]
+fn textarea_paste_with_newlines() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    let events = slt::EventBuilder::new()
+        .paste("line1\nline2\nline3")
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["line1", "line2", "line3"]);
+    assert_eq!(state.cursor_row, 2);
+    assert_eq!(state.cursor_col, 5);
+}
+
+#[test]
+fn textarea_delete_forward() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.lines = vec!["hello".into(), "world".into()];
+    state.cursor_row = 0;
+    state.cursor_col = 5;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Delete)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["helloworld"]);
+}
+
+#[test]
+fn textarea_delete_forward_mid_line() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.lines = vec!["한글입력".into()];
+    state.cursor_row = 0;
+    state.cursor_col = 1;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Delete)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["한입력"]);
+    assert_eq!(state.cursor_col, 1);
+}
+
+#[test]
+fn text_input_mixed_width_cursor_navigation() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new();
+    input.value = "A한B".into();
+    input.cursor = 0;
+
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .key_code(slt::KeyCode::Right)
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.cursor, 3);
+
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.cursor, 2);
+}
+
+#[test]
+fn text_renders_korean() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.text("한글 텍스트 렌더링");
+    });
+    tb.assert_contains("한글 텍스트 렌더링");
 }

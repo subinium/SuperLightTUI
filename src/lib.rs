@@ -18,7 +18,7 @@
 //! ## Features
 //!
 //! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
-//! - **14 built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, separator, help bar, scrollable
+//! - **20+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, separator, help bar, scrollable, chart, bar chart, sparkline, histogram, canvas, grid
 //! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
 //! - **Mouse** — click, hover, drag-to-scroll
 //! - **Focus** — automatic Tab/Shift+Tab cycling
@@ -38,6 +38,7 @@
 pub mod anim;
 pub mod buffer;
 pub mod cell;
+pub mod chart;
 pub mod context;
 pub mod event;
 pub mod layout;
@@ -52,13 +53,16 @@ use std::io::IsTerminal;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use event::Event;
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
 pub use anim::{Spring, Tween};
-pub use context::{CanvasContext, Context, Response, Widget};
-pub use event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
+pub use chart::{
+    Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
+    HistogramBuilder, LegendPosition, Marker,
+};
+pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, Widget};
+pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use style::{Align, Border, Color, Constraints, Margin, Modifiers, Padding, Style, Theme};
 pub use widgets::{
     ListState, ScrollState, SpinnerState, TableState, TabsState, TextInputState, TextareaState,
@@ -78,6 +82,7 @@ fn install_panic_hook() {
                 crossterm::terminal::LeaveAlternateScreen,
                 crossterm::cursor::Show,
                 crossterm::event::DisableMouseCapture,
+                crossterm::event::DisableBracketedPaste,
                 crossterm::style::ResetColor,
                 crossterm::style::SetAttribute(crossterm::style::Attribute::Reset)
             );
@@ -189,7 +194,10 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
+    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut selection = terminal::SelectionState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -207,6 +215,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_focus_rects),
             debug_mode,
             config.theme,
             last_mouse_pos,
@@ -219,6 +228,24 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             break;
         }
 
+        let mut should_copy_selection = false;
+        for ev in ctx.events.iter() {
+            if let Event::Mouse(mouse) = ev {
+                match mouse.kind {
+                    event::MouseKind::Down(event::MouseButton::Left) => {
+                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Drag(event::MouseButton::Left) => {
+                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Up(event::MouseButton::Left) => {
+                        should_copy_selection = selection.active;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         focus_index = ctx.focus_index;
         prev_focus_count = ctx.focus_count;
 
@@ -227,9 +254,23 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_content_map = layout::collect_content_areas(&tree);
+        prev_focus_rects = layout::collect_focus_rects(&tree);
         layout::render(&tree, term.buffer_mut());
         if debug_mode {
             layout::render_debug_overlay(&tree, term.buffer_mut());
+        }
+
+        if selection.active {
+            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
+        }
+        if should_copy_selection {
+            let text =
+                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
+            if !text.is_empty() {
+                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+            }
+            selection.clear();
         }
 
         term.flush()?;
@@ -282,6 +323,8 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
             prev_hit_map.clear();
+            prev_content_map.clear();
+            prev_focus_rects.clear();
             prev_scroll_infos.clear();
             last_mouse_pos = None;
         }
@@ -359,7 +402,10 @@ fn run_async_loop<M: Send + 'static>(
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
+    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut selection = terminal::SelectionState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -382,6 +428,7 @@ fn run_async_loop<M: Send + 'static>(
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_focus_rects),
             false,
             config.theme,
             last_mouse_pos,
@@ -394,6 +441,24 @@ fn run_async_loop<M: Send + 'static>(
             break;
         }
 
+        let mut should_copy_selection = false;
+        for ev in ctx.events.iter() {
+            if let Event::Mouse(mouse) = ev {
+                match mouse.kind {
+                    event::MouseKind::Down(event::MouseButton::Left) => {
+                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Drag(event::MouseButton::Left) => {
+                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Up(event::MouseButton::Left) => {
+                        should_copy_selection = selection.active;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         focus_index = ctx.focus_index;
         prev_focus_count = ctx.focus_count;
 
@@ -402,7 +467,21 @@ fn run_async_loop<M: Send + 'static>(
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_content_map = layout::collect_content_areas(&tree);
+        prev_focus_rects = layout::collect_focus_rects(&tree);
         layout::render(&tree, term.buffer_mut());
+
+        if selection.active {
+            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
+        }
+        if should_copy_selection {
+            let text =
+                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
+            if !text.is_empty() {
+                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+            }
+            selection.clear();
+        }
 
         term.flush()?;
         tick = tick.wrapping_add(1);
@@ -417,6 +496,8 @@ fn run_async_loop<M: Send + 'static>(
                 if let Event::Resize(_, _) = &ev {
                     term.handle_resize()?;
                     prev_hit_map.clear();
+                    prev_content_map.clear();
+                    prev_focus_rects.clear();
                     prev_scroll_infos.clear();
                     last_mouse_pos = None;
                 }
@@ -432,6 +513,8 @@ fn run_async_loop<M: Send + 'static>(
                     if let Event::Resize(_, _) = &ev {
                         term.handle_resize()?;
                         prev_hit_map.clear();
+                        prev_content_map.clear();
+                        prev_focus_rects.clear();
                         prev_scroll_infos.clear();
                         last_mouse_pos = None;
                     }
@@ -493,7 +576,10 @@ pub fn run_inline_with(
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
+    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
+    let mut selection = terminal::SelectionState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -511,6 +597,7 @@ pub fn run_inline_with(
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_focus_rects),
             debug_mode,
             config.theme,
             last_mouse_pos,
@@ -523,6 +610,24 @@ pub fn run_inline_with(
             break;
         }
 
+        let mut should_copy_selection = false;
+        for ev in ctx.events.iter() {
+            if let Event::Mouse(mouse) = ev {
+                match mouse.kind {
+                    event::MouseKind::Down(event::MouseButton::Left) => {
+                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Drag(event::MouseButton::Left) => {
+                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
+                    }
+                    event::MouseKind::Up(event::MouseButton::Left) => {
+                        should_copy_selection = selection.active;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         focus_index = ctx.focus_index;
         prev_focus_count = ctx.focus_count;
 
@@ -531,9 +636,23 @@ pub fn run_inline_with(
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_content_map = layout::collect_content_areas(&tree);
+        prev_focus_rects = layout::collect_focus_rects(&tree);
         layout::render(&tree, term.buffer_mut());
         if debug_mode {
             layout::render_debug_overlay(&tree, term.buffer_mut());
+        }
+
+        if selection.active {
+            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
+        }
+        if should_copy_selection {
+            let text =
+                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
+            if !text.is_empty() {
+                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+            }
+            selection.clear();
         }
 
         term.flush()?;
@@ -586,6 +705,8 @@ pub fn run_inline_with(
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
             prev_hit_map.clear();
+            prev_content_map.clear();
+            prev_focus_rects.clear();
             prev_scroll_infos.clear();
             last_mouse_pos = None;
         }
