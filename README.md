@@ -21,7 +21,7 @@
   </tr>
   <tr>
     <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
-    <td align="center"><img src="assets/demo_tetris.png" alt="Tetris" /><br/><b>Tetris</b><br/><sub><code>cargo run --example demo_tetris</code></sub></td>
+    <td align="center"><img src="assets/demo_game.png" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
   </tr>
 </table>
 
@@ -409,7 +409,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_cli | `cargo run --example demo_cli` | CLI tool layout |
 | demo_spreadsheet | `cargo run --example demo_spreadsheet` | Data grid |
 | demo_website | `cargo run --example demo_website` | Website in terminal |
-| demo_tetris | `cargo run --example demo_tetris` | Playable Tetris |
+| demo_game | `cargo run --example demo_game` | Tetris + Snake + Minesweeper |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
 | demo_v050 | `cargo run --example demo_v050` | v0.5.0 features |

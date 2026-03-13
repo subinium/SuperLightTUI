@@ -124,7 +124,9 @@ impl TetrisGame {
     }
 
     fn random_kind(&mut self) -> usize {
-        self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
         (self.rng % 7) as usize
     }
 
@@ -307,7 +309,9 @@ impl SnakeGame {
     }
 
     fn next_rand(&mut self) -> u64 {
-        self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
         self.rng
     }
 
@@ -447,7 +451,9 @@ impl MinesweeperGame {
     }
 
     fn next_rand(&mut self) -> u64 {
-        self.rng = self.rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
         self.rng
     }
 
@@ -811,9 +817,7 @@ fn render_header(ui: &mut Context, active: ActiveGame, theme: Theme, theme_name:
 
 fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
     let game_w = 45_u32;
-    let game_h = 24_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
-    let top = ui.height().saturating_sub(game_h) / 2;
 
     ui.bordered(Border::Rounded)
         .title_styled(" T E T R I S ", Style::new().bold().fg(theme.primary))
@@ -821,7 +825,6 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
         .bg(theme.surface)
         .w(game_w)
         .ml(left)
-        .mt(top)
         .col(|ui| {
             ui.row_gap(1, |ui| {
                 ui.bordered(Border::Single)
@@ -887,9 +890,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
 
 fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
     let game_w = 58_u32;
-    let game_h = 22_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
-    let top = ui.height().saturating_sub(game_h) / 2;
 
     ui.container()
         .bg(theme.surface)
@@ -898,7 +899,6 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
         .border_style(Style::new().fg(theme.border))
         .w(game_w)
         .ml(left)
-        .mt(top)
         .col(|ui| {
             ui.row_gap(1, |ui| {
                 ui.bordered(Border::Single)
@@ -936,9 +936,7 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
 
 fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Theme) {
     let game_w = 56_u32;
-    let game_h = 24_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
-    let top = ui.height().saturating_sub(game_h) / 2;
 
     ui.container()
         .bg(theme.surface)
@@ -950,7 +948,6 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
         .border_style(Style::new().fg(theme.border))
         .w(game_w)
         .ml(left)
-        .mt(top)
         .col(|ui| {
             ui.row_gap(1, |ui| {
                 ui.bordered(Border::Single)
@@ -1144,18 +1141,13 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            ui.container().grow(1).col(|ui| {
-                render_header(ui, active, theme, theme_names[theme_idx]);
-                ui.spacer();
+            render_header(ui, active, theme, theme_names[theme_idx]);
 
-                match active {
-                    ActiveGame::Tetris => render_tetris_screen(ui, &tetris, theme),
-                    ActiveGame::Snake => render_snake_screen(ui, &snake, theme),
-                    ActiveGame::Minesweeper => render_minesweeper_screen(ui, &mines, theme),
-                }
-
-                ui.spacer();
-            });
+            match active {
+                ActiveGame::Tetris => render_tetris_screen(ui, &tetris, theme),
+                ActiveGame::Snake => render_snake_screen(ui, &snake, theme),
+                ActiveGame::Minesweeper => render_minesweeper_screen(ui, &mines, theme),
+            }
         },
     )
 }
