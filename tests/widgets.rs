@@ -1103,3 +1103,295 @@ fn child_bg_overrides_parent_bg() {
         cell.style.bg
     );
 }
+
+#[test]
+fn select_renders_closed() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.selected = 1;
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("Banana");
+}
+
+#[test]
+fn select_renders_open() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("Apple");
+    tb.assert_contains("Banana");
+    tb.assert_contains("Cherry");
+}
+
+#[test]
+fn radio_renders_options() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = RadioState::new(vec!["One", "Two", "Three"]);
+
+    tb.render(|ui| {
+        ui.radio(&mut state);
+    });
+
+    tb.assert_contains("● One");
+    tb.assert_contains("○ Two");
+    tb.assert_contains("○ Three");
+}
+
+#[test]
+fn radio_selected_marker() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = RadioState::new(vec!["One", "Two", "Three"]);
+    state.selected = 1;
+
+    tb.render(|ui| {
+        ui.radio(&mut state);
+    });
+
+    tb.assert_contains("○ One");
+    tb.assert_contains("● Two");
+    tb.assert_contains("○ Three");
+}
+
+#[test]
+fn multi_select_renders_options() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = MultiSelectState::new(vec!["One", "Two", "Three"]);
+
+    tb.render(|ui| {
+        ui.multi_select(&mut state);
+    });
+
+    tb.assert_contains("[ ] One");
+    tb.assert_contains("[ ] Two");
+    tb.assert_contains("[ ] Three");
+}
+
+#[test]
+fn multi_select_checked_items() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = MultiSelectState::new(vec!["One", "Two", "Three"]);
+    state.selected.insert(0);
+    state.selected.insert(2);
+
+    tb.render(|ui| {
+        ui.multi_select(&mut state);
+    });
+
+    tb.assert_contains("[x] One");
+    tb.assert_contains("[ ] Two");
+    tb.assert_contains("[x] Three");
+}
+
+#[test]
+fn tree_renders_root() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = TreeState::new(vec![TreeNode::new("Root")]);
+
+    tb.render(|ui| {
+        ui.tree(&mut state);
+    });
+
+    tb.assert_contains("Root");
+}
+
+#[test]
+fn tree_renders_expanded() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = TreeState::new(vec![TreeNode::new("Root")
+        .expanded()
+        .children(vec![TreeNode::new("Child A"), TreeNode::new("Child B")])]);
+
+    tb.render(|ui| {
+        ui.tree(&mut state);
+    });
+
+    tb.assert_contains("Root");
+    tb.assert_contains("Child A");
+    tb.assert_contains("Child B");
+}
+
+#[test]
+fn tree_renders_collapsed() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = TreeState::new(vec![
+        TreeNode::new("Root").children(vec![TreeNode::new("Hidden Child")])
+    ]);
+
+    tb.render(|ui| {
+        ui.tree(&mut state);
+    });
+
+    tb.assert_contains("Root");
+    assert!(!tb.to_string().contains("Hidden Child"));
+}
+
+#[test]
+fn virtual_list_renders_items() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = ListState::new(vec![
+        "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5",
+    ]);
+
+    tb.render(|ui| {
+        ui.virtual_list(&mut state, 3, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    tb.assert_contains("Item 0");
+    tb.assert_contains("Item 1");
+    tb.assert_contains("Item 2");
+    assert!(!tb.to_string().contains("Item 3"));
+}
+
+#[test]
+fn command_palette_closed() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+    ]);
+    state.open = false;
+
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+
+    assert!(!tb.to_string().contains("Open File"));
+    assert!(!tb.to_string().contains("Save File"));
+}
+
+#[test]
+fn command_palette_open() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+    ]);
+    state.open = true;
+
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+
+    tb.assert_contains("Open File");
+    tb.assert_contains("Save File");
+}
+
+#[test]
+fn markdown_heading() {
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.markdown("# Hello");
+    });
+    tb.assert_contains("Hello");
+}
+
+#[test]
+fn markdown_bold() {
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.markdown("**bold**");
+    });
+    tb.assert_contains("bold");
+}
+
+#[test]
+fn markdown_list() {
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.markdown("- item1\n- item2");
+    });
+    tb.assert_contains("item1");
+    tb.assert_contains("item2");
+}
+
+#[test]
+fn key_seq_matches_sequence() {
+    let mut tb = TestBackend::new(80, 24);
+    let events = slt::EventBuilder::new().key('g').key('g').build();
+    let mut matched = false;
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        matched = ui.key_seq("gg");
+    });
+
+    assert!(matched);
+}
+
+#[test]
+fn key_seq_rejects_non_sequence() {
+    let mut tb = TestBackend::new(80, 24);
+    let events = slt::EventBuilder::new().key('g').key('x').build();
+    let mut matched = false;
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        matched = ui.key_seq("gg");
+    });
+
+    assert!(!matched);
+}
+
+#[test]
+fn password_masked() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut input = TextInputState::new();
+    input.value = "secret".into();
+    input.cursor = input.value.chars().count();
+    input.masked = true;
+
+    tb.render(|ui| {
+        ui.text_input(&mut input);
+    });
+
+    tb.assert_contains("••••••");
+    assert!(!tb.to_string().contains("secret"));
+}
+
+#[test]
+fn password_unmasked() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut input = TextInputState::new();
+    input.value = "secret".into();
+    input.cursor = input.value.chars().count();
+    input.masked = false;
+
+    tb.render(|ui| {
+        ui.text_input(&mut input);
+    });
+
+    tb.assert_contains("secret");
+}
+
+#[test]
+fn percentage_width() {
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.row(|ui| {
+            ui.container()
+                .w_pct(50)
+                .border(slt::Border::Rounded)
+                .col(|ui| {
+                    ui.text("Half Width");
+                });
+            ui.container()
+                .w_pct(50)
+                .border(slt::Border::Rounded)
+                .col(|ui| {
+                    ui.text("Other Half");
+                });
+        });
+    });
+
+    tb.assert_contains("Half Width");
+    tb.assert_contains("Other Half");
+}

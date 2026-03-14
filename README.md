@@ -23,6 +23,9 @@
     <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
     <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
+  </tr>
 </table>
 
 ## Getting Started
@@ -94,7 +97,7 @@ ui.container()
 
 ## Widgets
 
-20+ built-in widgets, zero boilerplate:
+30+ built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -104,6 +107,11 @@ ui.checkbox("Dark mode", &mut dark);         // toggle checkbox
 ui.toggle("Notifications", &mut on);         // on/off switch
 ui.tabs(&mut tabs);                          // tab navigation
 ui.list(&mut items);                         // selectable list
+ui.select(&mut sel);                         // dropdown select
+ui.radio(&mut radio);                        // radio button group
+ui.multi_select(&mut multi);                 // multi-select checkboxes
+ui.tree(&mut tree);                          // expandable tree view
+ui.virtual_list(&mut list, 20, |ui, i| {}); // virtualized list
 ui.table(&mut data);                         // data table
 ui.spinner(&spin);                           // loading animation
 ui.progress(0.75);                           // progress bar
@@ -114,6 +122,8 @@ ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
 ui.link("Docs", "https://docs.rs/slt");      // clickable hyperlink (OSC 8)
 ui.modal(|ui| { ui.text("overlay"); });      // modal with dim backdrop
 ui.overlay(|ui| { ui.text("floating"); });   // overlay without backdrop
+ui.command_palette(&mut palette);            // searchable command palette
+ui.markdown("# Hello **world**");            // markdown rendering
 ui.form_field(&mut field);                   // labeled input with validation
 ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // line/scatter/bar chart
 ui.histogram(&values, 40, 12);               // auto-binned histogram
@@ -178,9 +188,11 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 | Margin | `.m(1)`, `.mx(2)`, `.my(1)` |
 | Fixed size | `.w(20)`, `.h(10)` |
 | Constraints | `.min_w(10)`, `.max_w(60)` |
+| Percentage sizing | `.w_pct(50)`, `.h_pct(80)` |
 | Justify | `.space_between()`, `.space_around()`, `.space_evenly()` |
 | Text wrapping | `ui.text_wrap("long text...")` |
 | Borders with titles | `.border(Border::Rounded).title("Panel")` |
+| Per-side borders | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 
 </details>
 
@@ -410,6 +422,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_spreadsheet | `cargo run --example demo_spreadsheet` | Data grid |
 | demo_website | `cargo run --example demo_website` | Website in terminal |
 | demo_game | `cargo run --example demo_game` | Tetris + Snake + Minesweeper |
+| demo_fire | `cargo run --release --example demo_fire` | DOOM fire effect (half-block) |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
 | demo_v050 | `cargo run --example demo_v050` | v0.5.0 features |
