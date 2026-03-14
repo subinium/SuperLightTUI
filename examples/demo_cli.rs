@@ -148,14 +148,14 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         |ui: &mut Context| {
-            if ui.key('q') && !search_focused(&search) {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) {
                 ui.quit();
             }
             if ui.key_code(slt::KeyCode::Esc) {
                 installing = false;
                 install_progress = 0.0;
             }
-            if ui.key('t') && !search_focused(&search) {
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
                 dark_mode = !dark_mode;
             }
             ui.set_theme(if dark_mode {

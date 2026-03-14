@@ -911,33 +911,6 @@ fn scatter_renders_points() {
 }
 
 #[test]
-fn pie_chart_renders_labels() {
-    let mut tb = TestBackend::new(40, 20);
-    tb.render(|ui| {
-        ui.pie_chart(&[("Rust", 60.0), ("Go", 30.0), ("Python", 10.0)], 8);
-    });
-    let output = tb.to_string();
-    assert!(output.contains("Rust"));
-    assert!(output.contains("Go"));
-    assert!(output.contains("Python"));
-}
-
-#[test]
-fn area_chart_renders() {
-    let mut tb = TestBackend::new(60, 20);
-    tb.render(|ui| {
-        ui.chart(
-            |c| {
-                c.area(&[(0.0, 0.0), (1.0, 5.0), (2.0, 3.0), (3.0, 7.0)]);
-            },
-            50,
-            16,
-        );
-    });
-    assert!(!tb.to_string().trim().is_empty());
-}
-
-#[test]
 fn chart_empty_data_no_panic() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {

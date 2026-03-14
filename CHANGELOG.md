@@ -6,9 +6,16 @@
 - **ListState filter rendering**: `list()` now renders only filtered items via `view_indices` — previously `set_filter()` updated indices but rendering ignored them
 - **ThemeBuilder export**: `ThemeBuilder` now exported from `slt::ThemeBuilder` — was inaccessible in v0.8.0
 
+### Removed
+- **Pie chart**: `pie_chart()` removed — not practical for terminal display
+- **Area chart**: `GraphType::Area` and `ChartBuilder::area()` removed
+
 ### Improvements
 - Add rustdoc to group hover/focus public API methods
-- Demo: add group hover, area chart, and use_memo sections to v0.8.0 tab
+- Demo: add group hover and use_memo sections to v0.8.0 tab
+- Demo: interactive theme builder with Coral/Ocean/Forest presets
+- Demo: all keyboard shortcuts changed to Ctrl+key to prevent input conflicts
+- Other demos (spreadsheet, dashboard, cli): same Ctrl+key migration
 
 ## [0.8.0] — 2026-03-14
 
@@ -21,8 +28,6 @@
 - **ListState filter**: `list.set_filter("rust")` — multi-token AND matching (same as TableState)
 - **Animation callbacks**: `.on_complete()` for Tween/Keyframes/Sequence/Stagger, `.on_settle()` for Spring
 - **Scatter plot**: `ui.scatter(&data, w, h)` — standalone braille scatter chart
-- **Pie chart**: `ui.pie_chart(&[("Rust", 60.0), ...], radius)` — block-character pie with legend
-- **Area chart**: `ui.chart(|c| { c.area(&data); }, w, h)` — filled area under line
 
 ### Changed
 - Demo example: added "v0.8.0" tab showcasing all new features

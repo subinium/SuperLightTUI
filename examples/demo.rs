@@ -129,33 +129,33 @@ fn main() -> std::io::Result<()> {
         |ui: &mut Context| {
             let tick = ui.tick();
 
-            if ui.key('q') {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();
             }
-            if ui.key('t') {
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
                 theme_idx = (theme_idx + 1) % themes.len();
                 toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
             }
-            if ui.key('h') {
+            if ui.key_mod('h', slt::KeyModifiers::CONTROL) {
                 progress = (progress - 0.05).max(0.0);
             }
-            if ui.key('l') {
+            if ui.key_mod('l', slt::KeyModifiers::CONTROL) {
                 progress = (progress + 0.05).min(1.0);
             }
-            if ui.key('m') {
+            if ui.key_mod('m', slt::KeyModifiers::CONTROL) {
                 show_modal = !show_modal;
             }
-            if ui.key('o') {
+            if ui.key_mod('o', slt::KeyModifiers::CONTROL) {
                 show_overlay = !show_overlay;
             }
             if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
                 palette.open = !palette.open;
             }
-            if ui.key_seq("gg") {
+            if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
                 scroll.offset = 0;
             }
             for i in 1..=8u8 {
-                if ui.key((b'0' + i) as char) {
+                if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
                     page_tabs.selected = (i - 1) as usize;
                 }
             }
@@ -235,14 +235,14 @@ fn main() -> std::io::Result<()> {
 
                     ui.separator();
                     ui.help(&[
-                        ("q", "quit"),
-                        ("t", "next theme"),
-                        ("m", "toggle modal"),
-                        ("o", "toggle overlay"),
-                        ("h/l", "progress -/+"),
-                        ("Ctrl+P", "palette"),
-                        ("1-8", "tab"),
-                        ("gg", "top"),
+                        ("^Q/Esc", "quit"),
+                        ("^T", "theme"),
+                        ("^M", "modal"),
+                        ("^O", "overlay"),
+                        ("^H/^L", "progress"),
+                        ("^P", "palette"),
+                        ("^1-8", "tab"),
+                        ("^G", "top"),
                         ("Tab", "focus"),
                         ("F12", "debug"),
                     ]);
@@ -1122,20 +1122,13 @@ fn render_v080(
         ui.set_theme(presets[idx % presets.len()].1);
     });
 
-    section(ui, "NEW CHARTS");
-    ui.row(|ui| {
-        card(ui, |ui| {
-            ui.text("Pie Chart").bold().fg(theme.primary);
-            ui.pie_chart(&[("Rust", 45.0), ("Go", 30.0), ("Python", 25.0)], 6);
-        });
-        card(ui, |ui| {
-            ui.text("Scatter Plot").bold().fg(theme.secondary);
-            ui.scatter(
-                &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
-                30,
-                10,
-            );
-        });
+    section(ui, "SCATTER PLOT");
+    card(ui, |ui| {
+        ui.scatter(
+            &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
+            40,
+            10,
+        );
     });
 
     section(ui, "ANIMATION CALLBACK");
@@ -1173,24 +1166,6 @@ fn render_v080(
                     ui.text("Hover to highlight").dim();
                 });
         }
-    });
-
-    section(ui, "AREA CHART");
-    card(ui, |ui| {
-        ui.chart(
-            |c| {
-                c.area(&[
-                    (0.0, 1.0),
-                    (1.0, 4.0),
-                    (2.0, 2.0),
-                    (3.0, 6.0),
-                    (4.0, 3.0),
-                    (5.0, 7.0),
-                ]);
-            },
-            40,
-            10,
-        );
     });
 
     section(ui, "HOOKS (use_state + use_memo)");
