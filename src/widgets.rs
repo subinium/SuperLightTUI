@@ -771,10 +771,8 @@ impl TreeState {
                 return true;
             }
             *counter += 1;
-            if node.expanded {
-                if Self::toggle_recursive(&mut node.children, target, counter) {
-                    return true;
-                }
+            if node.expanded && Self::toggle_recursive(&mut node.children, target, counter) {
+                return true;
             }
         }
         false
