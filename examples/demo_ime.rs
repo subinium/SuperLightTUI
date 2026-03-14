@@ -1,4 +1,4 @@
-use slt::{Border, Context, KeyCode, RunConfig};
+use slt::{Context, KeyCode, RunConfig};
 
 fn main() -> std::io::Result<()> {
     let mut name = slt::TextInputState::with_placeholder("이름을 입력하세요");
@@ -31,6 +31,7 @@ fn main() -> std::io::Result<()> {
             }
 
             let theme = *ui.theme();
+            let term_h = ui.height();
 
             ui.col(|ui| {
                 ui.container().grow(1).gap(1).p(1).col(|ui| {
@@ -40,18 +41,20 @@ fn main() -> std::io::Result<()> {
 
                     ui.row_gap(2, |ui| {
                         ui.container().grow(1).gap(1).col(|ui| {
-                            ui.text("Text Input").bold();
+                            ui.text("Name").bold();
                             ui.text_input(&mut name);
                             if !name.value.is_empty() {
                                 ui.line(|ui| {
-                                    ui.text("입력값: ");
+                                    ui.text("→ ");
                                     ui.text(&name.value).fg(theme.accent);
                                     ui.text(format!(" ({} chars)", name.value.chars().count()))
                                         .dim();
                                 });
                             }
+                        });
 
-                            ui.text("Search (multi-token filter)").bold();
+                        ui.container().grow(1).gap(1).col(|ui| {
+                            ui.text("Search").bold();
                             ui.text_input(&mut search);
 
                             let query = search.value.to_lowercase();
@@ -64,36 +67,20 @@ fn main() -> std::io::Result<()> {
                                 })
                                 .map(|s| s.to_string())
                                 .collect();
-
-                            ui.bordered(Border::Rounded).col(|ui| {
-                                if results.is_empty() {
-                                    ui.text("검색 결과 없음").dim();
-                                } else {
-                                    for item in &results {
-                                        ui.text(item);
-                                    }
-                                }
-                            });
                             ui.text(format!("{}/{} items", results.len(), items.len()))
                                 .dim();
                         });
-
-                        ui.container().grow(1).gap(1).col(|ui| {
-                            ui.text("Textarea (auto word-wrap)").bold();
-                            let half_w = ui.width() / 2;
-                            message.wrap_width = Some(half_w.saturating_sub(4));
-                            ui.textarea(&mut message, 8);
-                            let total: usize =
-                                message.lines.iter().map(|l| l.chars().count()).sum();
-                            ui.text(format!(
-                                "{} lines, {} chars, wrap@{}",
-                                message.lines.len(),
-                                total,
-                                half_w.saturating_sub(4),
-                            ))
-                            .dim();
-                        });
                     });
+
+                    ui.separator();
+
+                    ui.text("Message").bold();
+                    let rows = term_h.saturating_sub(16).max(5);
+                    ui.textarea(&mut message, rows);
+
+                    let total: usize = message.lines.iter().map(|l| l.chars().count()).sum();
+                    ui.text(format!("{} lines, {} chars", message.lines.len(), total,))
+                        .dim();
                 });
 
                 ui.help(&[
