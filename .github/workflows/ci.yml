@@ -28,6 +28,7 @@ jobs:
         with:
           toolchain: "1.74"
       - uses: Swatinem/rust-cache@v2
+      - run: cargo generate-lockfile
       - run: cargo check --features async,serde
 
   test:
