@@ -339,6 +339,54 @@ fn table_filter_no_match() {
 }
 
 #[test]
+fn table_filter_multi_token_cross_column() {
+    let mut table = TableState::new(
+        vec!["Level", "Message"],
+        vec![
+            vec!["ERROR", "deploy failed"],
+            vec!["INFO", "deploy success"],
+            vec!["ERROR", "health check ok"],
+        ],
+    );
+    table.set_filter("ERROR deploy");
+    assert_eq!(table.visible_indices(), &[0]);
+}
+
+#[test]
+fn table_filter_multi_token_same_column() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![vec!["Alice", "Seoul"], vec!["Bob", "Busan"]],
+    );
+    table.set_filter("Ali ce");
+    assert_eq!(table.visible_indices(), &[0]);
+}
+
+#[test]
+fn table_filter_single_token_unchanged() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![
+            vec!["Alice", "Seoul"],
+            vec!["Bob", "Busan"],
+            vec!["Lila", "Jeju"],
+        ],
+    );
+    table.set_filter("li");
+    assert_eq!(table.visible_indices(), &[0, 2]);
+}
+
+#[test]
+fn table_filter_whitespace_only_shows_all() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![vec!["Alice", "Seoul"], vec!["Bob", "Busan"]],
+    );
+    table.set_filter("   ");
+    assert_eq!(table.visible_indices(), &[0, 1]);
+}
+
+#[test]
 fn table_pagination_basic() {
     let mut table = TableState::new(
         vec!["Name", "Value"],

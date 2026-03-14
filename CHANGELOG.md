@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.1] — 2026-03-14
+
+### Changed
+- **Multi-token table filter**: `TableState::set_filter` now splits input by whitespace and matches all tokens (AND logic) across any cell in a row — e.g. `"ERROR deploy"` matches rows where one cell contains "error" and another contains "deploy"
+
 ## [0.7.0] — 2026-03-14
 
 ### Features
