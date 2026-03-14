@@ -788,11 +788,13 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Background color applied when the parent group is hovered.
     pub fn group_hover_bg(mut self, color: Color) -> Self {
         self.group_hover_bg = Some(color);
         self
     }
 
+    /// Border style applied when the parent group is hovered.
     pub fn group_hover_border_style(mut self, style: Style) -> Self {
         self.group_hover_border_style = Some(style);
         self
@@ -2618,6 +2620,7 @@ impl Context {
         }
     }
 
+    /// Returns true if the named group is currently hovered by the mouse.
     pub fn is_group_hovered(&self, name: &str) -> bool {
         if let Some(pos) = self.mouse_pos {
             self.prev_group_rects.iter().any(|(n, rect)| {
@@ -2632,6 +2635,7 @@ impl Context {
         }
     }
 
+    /// Returns true if the named group contains the currently focused widget.
     pub fn is_group_focused(&self, name: &str) -> bool {
         if self.prev_focus_count == 0 {
             return false;
@@ -4366,12 +4370,15 @@ impl Context {
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
     pub fn list(&mut self, state: &mut ListState) -> &mut Self {
-        if state.items.is_empty() {
+        let visible = state.visible_indices().to_vec();
+        if visible.is_empty() && state.items.is_empty() {
             state.selected = 0;
             return self;
         }
 
-        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        if !visible.is_empty() {
+            state.selected = state.selected.min(visible.len().saturating_sub(1));
+        }
 
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
@@ -4391,7 +4398,7 @@ impl Context {
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             state.selected =
-                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                                (state.selected + 1).min(visible.len().saturating_sub(1));
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -4421,7 +4428,7 @@ impl Context {
                         continue;
                     }
                     let clicked_idx = (mouse.y - rect.y) as usize;
-                    if clicked_idx < state.items.len() {
+                    if clicked_idx < visible.len() {
                         state.selected = clicked_idx;
                         self.consumed[i] = true;
                     }
@@ -4446,8 +4453,9 @@ impl Context {
             group_name: None,
         });
 
-        for (idx, item) in state.items.iter().enumerate() {
-            if idx == state.selected {
+        for (view_idx, &item_idx) in visible.iter().enumerate() {
+            let item = &state.items[item_idx];
+            if view_idx == state.selected {
                 if focused {
                     self.styled(
                         format!("▸ {item}"),

@@ -1131,11 +1131,49 @@ fn render_v080(
         }
     });
 
-    section(ui, "HOOKS (use_state)");
+    section(ui, "GROUP HOVER");
+    ui.row_gap(1, |ui| {
+        for name in &["Card A", "Card B", "Card C"] {
+            ui.group(name)
+                .border(Border::Rounded)
+                .p(1)
+                .grow(1)
+                .group_hover_bg(Color::Indexed(238))
+                .col(|ui| {
+                    ui.text(*name).bold();
+                    ui.text("Hover to highlight").dim();
+                });
+        }
+    });
+
+    section(ui, "AREA CHART");
+    card(ui, |ui| {
+        ui.chart(
+            |c| {
+                c.area(&[
+                    (0.0, 1.0),
+                    (1.0, 4.0),
+                    (2.0, 2.0),
+                    (3.0, 6.0),
+                    (4.0, 3.0),
+                    (5.0, 7.0),
+                ]);
+            },
+            40,
+            10,
+        );
+    });
+
+    section(ui, "HOOKS (use_state + use_memo)");
     card(ui, |ui| {
         let counter = ui.use_state(|| 0i32);
+        let count_val = *counter.get(ui);
+        let doubled = *ui.use_memo(&count_val, |c| c * 2);
+        let tripled = *ui.use_memo(&count_val, |c| c * 3);
         ui.row_gap(1, |ui| {
-            ui.text(format!("Count: {}", counter.get(ui)));
+            ui.text(format!("Count: {count_val}"));
+            ui.text(format!("×2 = {doubled}")).fg(Color::Cyan);
+            ui.text(format!("×3 = {tripled}")).fg(Color::Green);
             if ui.button("+1") {
                 *counter.get_mut(ui) += 1;
             }
@@ -1146,6 +1184,7 @@ fn render_v080(
                 *counter.get_mut(ui) = 0;
             }
         });
+        ui.text("use_memo recomputes only when deps change").dim();
     });
 }
 

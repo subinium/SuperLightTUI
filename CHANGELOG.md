@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1] — 2026-03-15
+
+### Bug Fixes
+- **ListState filter rendering**: `list()` now renders only filtered items via `view_indices` — previously `set_filter()` updated indices but rendering ignored them
+- **ThemeBuilder export**: `ThemeBuilder` now exported from `slt::ThemeBuilder` — was inaccessible in v0.8.0
+
+### Improvements
+- Add rustdoc to group hover/focus public API methods
+- Demo: add group hover, area chart, and use_memo sections to v0.8.0 tab
+
 ## [0.8.0] — 2026-03-14
 
 ### Features
