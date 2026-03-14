@@ -228,6 +228,33 @@ let theme = Theme::builder()
 </details>
 
 <details>
+<summary><b>Style Recipes</b></summary>
+
+```rust
+use slt::{ContainerStyle, Border, Color};
+
+// Define reusable styles — const for zero runtime cost
+const CARD: ContainerStyle = ContainerStyle::new()
+    .border(Border::Rounded).p(1).bg(Color::Indexed(236));
+
+const DANGER: ContainerStyle = ContainerStyle::new()
+    .bg(Color::Red);
+
+// Apply one
+ui.container().apply(&CARD).col(|ui| { ... });
+
+// Compose multiple — last write wins
+ui.container().apply(&CARD).apply(&DANGER).col(|ui| { ... });
+
+// Mix with inline overrides
+ui.container().apply(&CARD).grow(1).gap(2).col(|ui| { ... });
+```
+
+Define once, apply anywhere. `const` styles have zero runtime cost. Compose by chaining `.apply()` calls — inline methods always override.
+
+</details>
+
+<details>
 <summary><b>Dark Mode</b></summary>
 
 ```rust
