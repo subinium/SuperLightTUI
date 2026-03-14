@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.1] — 2026-03-14
+
+### Features
+- **Table sorting**: click column header to sort ASC/DESC with ▲/▼ indicator — numeric sort when both values parse as numbers, lexicographic otherwise
+- **Table filtering**: `set_filter()` applies case-insensitive substring match across all cells
+- **Table pagination**: `page_size` field enables paged display with PageUp/PageDown navigation and "Page X/Y" footer
+- **Rich text `line()`**: inline row with gap-0 for composing styled text segments
+- **Rich text `line_wrap()`**: segment-aware word wrapping that preserves style boundaries
+- **Markdown inline styles**: `markdown()` now renders **bold**, *italic*, and `code` with actual terminal styles
+
+### New Methods on `TableState`
+- `toggle_sort(column)` — sort by column, click again to reverse
+- `sort_by(column)` — sort ascending by column
+- `clear_sort()` — remove sorting
+- `set_filter(text)` — filter visible rows
+- `next_page()` / `prev_page()` — page navigation
+- `total_pages()` — total page count
+- `visible_indices()` — filtered + sorted row indices
+
+### New Example
+- `demo_table` — interactive showcase for table sorting, filtering, and pagination with 20-row dataset
+
 ## [0.6.0] — 2026-03-14
 
 ### Features

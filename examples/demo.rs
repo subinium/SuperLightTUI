@@ -20,14 +20,18 @@ fn main() -> std::io::Result<()> {
     let mut textarea = TextareaState::new();
     let mut list = ListState::new(vec!["Rust", "Go", "Python", "TypeScript", "Zig", "C++"]);
     let mut table = TableState::new(
-        vec!["Name", "Lang", "Arch"],
+        vec!["Name", "Lang", "Stars"],
         vec![
-            vec!["SLT", "Rust", "Immediate"],
-            vec!["Ratatui", "Rust", "Retained"],
-            vec!["Bubbletea", "Go", "Elm"],
-            vec!["Ink", "JS/TS", "React"],
+            vec!["SLT", "Rust", "500"],
+            vec!["Ratatui", "Rust", "12000"],
+            vec!["Bubbletea", "Go", "30000"],
+            vec!["Ink", "JS/TS", "8000"],
+            vec!["Textual", "Python", "26000"],
+            vec!["Cursive", "Rust", "4200"],
         ],
     );
+    table.page_size = 3;
+    let mut table_filter = TextInputState::with_placeholder("Filter table...");
     let spinner = SpinnerState::dots();
     let mut progress = 0.64_f64;
     let mut dark_mode = true;
@@ -165,7 +169,13 @@ fn main() -> std::io::Result<()> {
                                 &mut saves,
                             ),
                             1 => render_dataviz(ui),
-                            2 => render_layout(ui, &mut list, &mut table, &mut show_overlay),
+                            2 => render_layout(
+                                ui,
+                                &mut list,
+                                &mut table,
+                                &mut table_filter,
+                                &mut show_overlay,
+                            ),
                             3 => render_forms(ui, &mut form, &mut password),
                             4 => render_feedback(ui, &spinner, progress),
                             5 => render_advanced(
@@ -230,6 +240,7 @@ fn main() -> std::io::Result<()> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_core(
     ui: &mut Context,
     section_tabs: &mut TabsState,
@@ -383,6 +394,7 @@ fn render_layout(
     ui: &mut Context,
     list: &mut ListState,
     table: &mut TableState,
+    table_filter: &mut TextInputState,
     show_overlay: &mut bool,
 ) {
     let theme = *ui.theme();
@@ -415,7 +427,16 @@ fn render_layout(
                     .fg(theme.primary);
             });
             ui.separator();
+            ui.text("Sort: click header · Filter + Pagination").dim();
+            ui.text_input(table_filter);
+            table.set_filter(&table_filter.value);
             ui.table(table);
+            if let Some(row) = table.selected_row() {
+                ui.row(|ui| {
+                    ui.text("Selected:").fg(theme.surface_text);
+                    ui.text(row.join(", ")).fg(theme.primary);
+                });
+            }
         });
     });
 
@@ -607,6 +628,42 @@ fn render_advanced(
         });
 
         card(ui, |ui| {
+            ui.text("Rich Text").bold().fg(theme.secondary);
+            ui.text("line() and line_wrap()").fg(theme.surface_text);
+
+            ui.line(|ui| {
+                ui.text("Status: ");
+                ui.text("Online").bold().fg(Color::Green);
+                ui.text(" · ");
+                ui.text("3 tasks").fg(theme.accent);
+            });
+
+            ui.line(|ui| {
+                ui.text("Error: ").fg(Color::Red);
+                ui.text("file ").fg(theme.surface_text);
+                ui.text("config.toml").bold().fg(theme.primary);
+                ui.text(" not found").fg(theme.surface_text);
+            });
+
+            ui.container()
+                .bg(theme.surface_hover)
+                .border(Border::Rounded)
+                .pad(1)
+                .col(|ui| {
+                    ui.text("line_wrap()").bold().fg(theme.accent);
+                    ui.line_wrap(|ui| {
+                        ui.text("This ");
+                        ui.text("wraps ").bold();
+                        ui.text("across lines while keeping ");
+                        ui.text("styles").fg(Color::Cyan).bold();
+                        ui.text(" on each segment.");
+                    });
+                });
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
             ui.text("Borders + Percent Sizing").bold().fg(theme.accent);
             ui.text("Per-side borders and 30/70 layout").fg(theme.surface_text);
 
@@ -646,6 +703,14 @@ fn render_advanced(
                         ui.text("70%").fg(theme.secondary);
                     });
             });
+        });
+
+        card(ui, |ui| {
+            ui.text("Markdown Inline Styles").bold().fg(theme.primary);
+            ui.text("**bold**, *italic*, `code` now styled").fg(theme.surface_text);
+            ui.markdown(
+                "Inline: **bold text** and *italic text* and `code blocks` all render with proper styling.\n\n- List with **bold** items\n- And `inline code` too",
+            );
         });
     });
 }

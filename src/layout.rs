@@ -62,6 +62,13 @@ pub(crate) enum Command {
         margin: Margin,
         constraints: Constraints,
     },
+    RichText {
+        segments: Vec<(String, Style)>,
+        wrap: bool,
+        align: Align,
+        margin: Margin,
+        constraints: Constraints,
+    },
     EndContainer,
     BeginOverlay {
         modal: bool,
@@ -111,6 +118,8 @@ pub(crate) struct LayoutNode {
     scroll_offset: u32,
     content_height: u32,
     cached_wrapped: Option<Vec<String>>,
+    segments: Option<Vec<(String, Style)>>,
+    cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
     pub(crate) focus_id: Option<usize>,
     link_url: Option<String>,
     overlays: Vec<OverlayLayer>,
@@ -167,6 +176,51 @@ impl LayoutNode {
             scroll_offset: 0,
             content_height: 0,
             cached_wrapped: None,
+            segments: None,
+            cached_wrapped_segments: None,
+            focus_id: None,
+            link_url: None,
+            overlays: Vec::new(),
+        }
+    }
+
+    fn rich_text(
+        segments: Vec<(String, Style)>,
+        wrap: bool,
+        align: Align,
+        margin: Margin,
+        constraints: Constraints,
+    ) -> Self {
+        let width: u32 = segments
+            .iter()
+            .map(|(s, _)| UnicodeWidthStr::width(s.as_str()) as u32)
+            .sum();
+        Self {
+            kind: NodeKind::Text,
+            content: None,
+            style: Style::new(),
+            grow: 0,
+            align,
+            justify: Justify::Start,
+            wrap,
+            gap: 0,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin,
+            constraints,
+            title: None,
+            children: Vec::new(),
+            pos: (0, 0),
+            size: (width, 1),
+            is_scrollable: false,
+            scroll_offset: 0,
+            content_height: 0,
+            cached_wrapped: None,
+            segments: Some(segments),
+            cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
             overlays: Vec::new(),
@@ -198,6 +252,8 @@ impl LayoutNode {
             scroll_offset: 0,
             content_height: 0,
             cached_wrapped: None,
+            segments: None,
+            cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
             overlays: Vec::new(),
@@ -229,6 +285,8 @@ impl LayoutNode {
             scroll_offset: 0,
             content_height: 0,
             cached_wrapped: None,
+            segments: None,
+            cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
             overlays: Vec::new(),
@@ -344,9 +402,13 @@ impl LayoutNode {
     fn min_height_for_width(&self, available_width: u32) -> u32 {
         match self.kind {
             NodeKind::Text if self.wrap => {
-                let text = self.content.as_deref().unwrap_or("");
                 let inner_width = available_width.saturating_sub(self.margin.horizontal());
-                let lines = wrap_lines(text, inner_width).len().max(1) as u32;
+                let lines = if let Some(ref segs) = self.segments {
+                    wrap_segments(segs, inner_width).len().max(1) as u32
+                } else {
+                    let text = self.content.as_deref().unwrap_or("");
+                    wrap_lines(text, inner_width).len().max(1) as u32
+                };
                 lines.saturating_add(self.margin.vertical())
             }
             _ => self.min_height(),
@@ -491,6 +553,90 @@ fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
     }
 }
 
+fn wrap_segments(segments: &[(String, Style)], max_width: u32) -> Vec<Vec<(String, Style)>> {
+    if max_width == 0 || segments.is_empty() {
+        return vec![vec![]];
+    }
+    let mut chars: Vec<(char, Style)> = Vec::new();
+    for (text, style) in segments {
+        for ch in text.chars() {
+            chars.push((ch, *style));
+        }
+    }
+    if chars.is_empty() {
+        return vec![vec![]];
+    }
+
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let mut line_chars: Vec<(char, Style)> = Vec::new();
+        let mut line_width: u32 = 0;
+
+        if !lines.is_empty() {
+            while i < chars.len() && chars[i].0 == ' ' {
+                i += 1;
+            }
+        }
+
+        while i < chars.len() {
+            let (ch, st) = chars[i];
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+            if line_width + ch_width > max_width && line_width > 0 {
+                if let Some(bp) = line_chars.iter().rposition(|(c, _)| *c == ' ') {
+                    let rewind = line_chars.len() - bp - 1;
+                    i -= rewind;
+                    line_chars.truncate(bp);
+                }
+                break;
+            }
+            line_chars.push((ch, st));
+            line_width += ch_width;
+            i += 1;
+        }
+
+        let mut line_segs: Vec<(String, Style)> = Vec::new();
+        let mut cur = String::new();
+        let mut cur_style: Option<Style> = None;
+        for (ch, st) in &line_chars {
+            if cur_style == Some(*st) {
+                cur.push(*ch);
+            } else {
+                if let Some(s) = cur_style {
+                    if !cur.is_empty() {
+                        line_segs.push((std::mem::take(&mut cur), s));
+                    }
+                }
+                cur_style = Some(*st);
+                cur.push(*ch);
+            }
+        }
+        if let Some(s) = cur_style {
+            if !cur.is_empty() {
+                let trimmed = cur.trim_end().to_string();
+                if !trimmed.is_empty() {
+                    line_segs.push((trimmed, s));
+                } else if !line_segs.is_empty() {
+                    if let Some(last) = line_segs.last_mut() {
+                        let t = last.0.trim_end().to_string();
+                        if t.is_empty() {
+                            line_segs.pop();
+                        } else {
+                            last.0 = t;
+                        }
+                    }
+                }
+            }
+        }
+        lines.push(line_segs);
+    }
+    if lines.is_empty() {
+        vec![vec![]]
+    } else {
+        lines
+    }
+}
+
 pub(crate) fn build_tree(commands: &[Command]) -> LayoutNode {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut overlays: Vec<OverlayLayer> = Vec::new();
@@ -548,6 +694,19 @@ fn build_children(
                     *margin,
                     *constraints,
                 );
+                node.focus_id = pending_focus_id.take();
+                parent.children.push(node);
+                *pos += 1;
+            }
+            Command::RichText {
+                segments,
+                wrap,
+                align,
+                margin,
+                constraints,
+            } => {
+                let mut node =
+                    LayoutNode::rich_text(segments.clone(), *wrap, *align, *margin, *constraints);
                 node.focus_id = pending_focus_id.take();
                 parent.children.push(node);
                 *pos += 1;
@@ -700,11 +859,20 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     );
 
     if matches!(node.kind, NodeKind::Text) && node.wrap {
-        let lines = wrap_lines(node.content.as_deref().unwrap_or(""), area.width);
-        node.size = (area.width, lines.len().max(1) as u32);
-        node.cached_wrapped = Some(lines);
+        if let Some(ref segs) = node.segments {
+            let wrapped = wrap_segments(segs, area.width);
+            node.size = (area.width, wrapped.len().max(1) as u32);
+            node.cached_wrapped_segments = Some(wrapped);
+            node.cached_wrapped = None;
+        } else {
+            let lines = wrap_lines(node.content.as_deref().unwrap_or(""), area.width);
+            node.size = (area.width, lines.len().max(1) as u32);
+            node.cached_wrapped = Some(lines);
+            node.cached_wrapped_segments = None;
+        }
     } else {
         node.cached_wrapped = None;
+        node.cached_wrapped_segments = None;
     }
 
     match node.kind {
@@ -1215,7 +1383,45 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
 
     match node.kind {
         NodeKind::Text => {
-            if let Some(ref text) = node.content {
+            if let Some(ref segs) = node.segments {
+                if node.wrap {
+                    let fallback;
+                    let wrapped = if let Some(cached) = &node.cached_wrapped_segments {
+                        cached.as_slice()
+                    } else {
+                        fallback = wrap_segments(segs, node.size.0);
+                        &fallback
+                    };
+                    for (i, line_segs) in wrapped.iter().enumerate() {
+                        let line_y = sy + i as i64;
+                        if line_y < 0 {
+                            continue;
+                        }
+                        let mut x = node.pos.0;
+                        for (text, style) in line_segs {
+                            let mut s = *style;
+                            if s.bg.is_none() {
+                                s.bg = parent_bg;
+                            }
+                            buf.set_string(x, line_y as u32, text, s);
+                            x += UnicodeWidthStr::width(text.as_str()) as u32;
+                        }
+                    }
+                } else {
+                    if sy < 0 {
+                        return;
+                    }
+                    let mut x = node.pos.0;
+                    for (text, style) in segs {
+                        let mut s = *style;
+                        if s.bg.is_none() {
+                            s.bg = parent_bg;
+                        }
+                        buf.set_string(x, sy as u32, text, s);
+                        x += UnicodeWidthStr::width(text.as_str()) as u32;
+                    }
+                }
+            } else if let Some(ref text) = node.content {
                 let mut style = node.style;
                 if style.bg.is_none() {
                     style.bg = parent_bg;

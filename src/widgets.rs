@@ -438,6 +438,17 @@ pub struct TableState {
     pub selected: usize,
     column_widths: Vec<u32>,
     dirty: bool,
+    /// Sorted column index (`None` means no sorting).
+    pub sort_column: Option<usize>,
+    /// Sort direction (`true` for ascending).
+    pub sort_ascending: bool,
+    /// Case-insensitive substring filter applied across all cells.
+    pub filter: String,
+    /// Current page (0-based) when pagination is enabled.
+    pub page: usize,
+    /// Rows per page (`0` disables pagination).
+    pub page_size: usize,
+    view_indices: Vec<usize>,
 }
 
 impl TableState {
@@ -454,7 +465,14 @@ impl TableState {
             selected: 0,
             column_widths: Vec::new(),
             dirty: true,
+            sort_column: None,
+            sort_ascending: true,
+            filter: String::new(),
+            page: 0,
+            page_size: 0,
+            view_indices: Vec::new(),
         };
+        state.rebuild_view();
         state.recompute_widths();
         state
     }
@@ -468,20 +486,147 @@ impl TableState {
             .into_iter()
             .map(|r| r.into_iter().map(Into::into).collect())
             .collect();
-        self.dirty = true;
-        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+        self.rebuild_view();
+    }
+
+    /// Sort by a specific column index. If already sorted by this column, toggles direction.
+    pub fn toggle_sort(&mut self, column: usize) {
+        if self.sort_column == Some(column) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = Some(column);
+            self.sort_ascending = true;
+        }
+        self.rebuild_view();
+    }
+
+    /// Sort by column without toggling (always sets to ascending first).
+    pub fn sort_by(&mut self, column: usize) {
+        self.sort_column = Some(column);
+        self.sort_ascending = true;
+        self.rebuild_view();
+    }
+
+    /// Set the filter string. Empty string disables filtering.
+    pub fn set_filter(&mut self, filter: impl Into<String>) {
+        self.filter = filter.into();
+        self.page = 0;
+        self.rebuild_view();
+    }
+
+    /// Clear sorting.
+    pub fn clear_sort(&mut self) {
+        self.sort_column = None;
+        self.sort_ascending = true;
+        self.rebuild_view();
+    }
+
+    /// Move to the next page. Does nothing if already on the last page.
+    pub fn next_page(&mut self) {
+        if self.page_size == 0 {
+            return;
+        }
+        let last_page = self.total_pages().saturating_sub(1);
+        self.page = (self.page + 1).min(last_page);
+    }
+
+    /// Move to the previous page. Does nothing if already on page 0.
+    pub fn prev_page(&mut self) {
+        self.page = self.page.saturating_sub(1);
+    }
+
+    /// Total number of pages based on filtered rows and page_size. Returns 1 if page_size is 0.
+    pub fn total_pages(&self) -> usize {
+        if self.page_size == 0 {
+            return 1;
+        }
+
+        let len = self.view_indices.len();
+        if len == 0 {
+            1
+        } else {
+            len.div_ceil(self.page_size)
+        }
+    }
+
+    /// Get the visible row indices after filtering and sorting (used internally by table()).
+    pub fn visible_indices(&self) -> &[usize] {
+        &self.view_indices
     }
 
     /// Get the currently selected row data, or `None` if the table is empty.
     pub fn selected_row(&self) -> Option<&[String]> {
-        self.rows.get(self.selected).map(|r| r.as_slice())
+        if self.view_indices.is_empty() {
+            return None;
+        }
+        let data_idx = self.view_indices.get(self.selected)?;
+        self.rows.get(*data_idx).map(|r| r.as_slice())
+    }
+
+    /// Recompute view_indices based on current sort + filter settings.
+    fn rebuild_view(&mut self) {
+        let mut indices: Vec<usize> = (0..self.rows.len()).collect();
+
+        if !self.filter.is_empty() {
+            let needle = self.filter.to_lowercase();
+            indices.retain(|&idx| {
+                self.rows
+                    .get(idx)
+                    .map(|row| {
+                        row.iter()
+                            .any(|cell| cell.to_lowercase().contains(needle.as_str()))
+                    })
+                    .unwrap_or(false)
+            });
+        }
+
+        if let Some(column) = self.sort_column {
+            indices.sort_by(|a, b| {
+                let left = self
+                    .rows
+                    .get(*a)
+                    .and_then(|row| row.get(column))
+                    .map(String::as_str)
+                    .unwrap_or("");
+                let right = self
+                    .rows
+                    .get(*b)
+                    .and_then(|row| row.get(column))
+                    .map(String::as_str)
+                    .unwrap_or("");
+
+                match (left.parse::<f64>(), right.parse::<f64>()) {
+                    (Ok(l), Ok(r)) => l.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
+                    _ => left.to_lowercase().cmp(&right.to_lowercase()),
+                }
+            });
+
+            if !self.sort_ascending {
+                indices.reverse();
+            }
+        }
+
+        self.view_indices = indices;
+
+        if self.page_size > 0 {
+            self.page = self.page.min(self.total_pages().saturating_sub(1));
+        } else {
+            self.page = 0;
+        }
+
+        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        self.dirty = true;
     }
 
     pub(crate) fn recompute_widths(&mut self) {
         let col_count = self.headers.len();
         self.column_widths = vec![0u32; col_count];
         for (i, header) in self.headers.iter().enumerate() {
-            self.column_widths[i] = UnicodeWidthStr::width(header.as_str()) as u32;
+            let mut width = UnicodeWidthStr::width(header.as_str()) as u32;
+            if self.sort_column == Some(i) {
+                width += 2;
+            }
+            self.column_widths[i] = width;
         }
         for row in &self.rows {
             for (i, cell) in row.iter().enumerate() {

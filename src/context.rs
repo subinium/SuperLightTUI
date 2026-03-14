@@ -1013,6 +1013,15 @@ impl<'a> ContainerBuilder<'a> {
         self.finish(Direction::Row, f)
     }
 
+    /// Finalize the builder as an inline text line.
+    ///
+    /// Like [`row`](ContainerBuilder::row) but gap is forced to zero
+    /// for seamless inline rendering of mixed-style text.
+    pub fn line(mut self, f: impl FnOnce(&mut Context)) -> Response {
+        self.gap = 0;
+        self.finish(Direction::Row, f)
+    }
+
     fn finish(self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.interaction_count;
         self.ctx.interaction_count += 1;
@@ -1510,6 +1519,65 @@ impl Context {
     /// `gap` is the number of blank columns inserted between each child.
     pub fn row_gap(&mut self, gap: u32, f: impl FnOnce(&mut Context)) -> Response {
         self.push_container(Direction::Row, gap, f)
+    }
+
+    /// Render inline text with mixed styles on a single line.
+    ///
+    /// Unlike [`row`](Context::row), `line()` is designed for rich text —
+    /// children are rendered as continuous inline text without gaps.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::Color;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.line(|ui| {
+    ///     ui.text("Status: ");
+    ///     ui.text("Online").bold().fg(Color::Green);
+    /// });
+    /// # });
+    /// ```
+    pub fn line(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
+        let _ = self.push_container(Direction::Row, 0, f);
+        self
+    }
+
+    /// Render inline text with mixed styles, wrapping at word boundaries.
+    ///
+    /// Like [`line`](Context::line), but when the combined text exceeds
+    /// the container width it wraps across multiple lines while
+    /// preserving per-segment styles.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::{Color, Style};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.line_wrap(|ui| {
+    ///     ui.text("This is a long ");
+    ///     ui.text("important").bold().fg(Color::Red);
+    ///     ui.text(" message that wraps across lines");
+    /// });
+    /// # });
+    /// ```
+    pub fn line_wrap(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
+        let start = self.commands.len();
+        f(self);
+        let mut segments: Vec<(String, Style)> = Vec::new();
+        for cmd in self.commands.drain(start..) {
+            if let Command::Text { content, style, .. } = cmd {
+                segments.push((content, style));
+            }
+        }
+        self.commands.push(Command::RichText {
+            segments,
+            wrap: true,
+            align: Align::Start,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.last_text_idx = None;
+        self
     }
 
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) {
@@ -3366,18 +3434,57 @@ impl Context {
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
 
-        if focused && !state.rows.is_empty() {
+        if focused && !state.visible_indices().is_empty() {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
+                            let visible_len = if state.page_size > 0 {
+                                let start = state
+                                    .page
+                                    .saturating_mul(state.page_size)
+                                    .min(state.visible_indices().len());
+                                let end =
+                                    (start + state.page_size).min(state.visible_indices().len());
+                                end.saturating_sub(start)
+                            } else {
+                                state.visible_indices().len()
+                            };
+                            state.selected = state.selected.min(visible_len.saturating_sub(1));
                             state.selected = state.selected.saturating_sub(1);
                             consumed_indices.push(i);
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
+                            let visible_len = if state.page_size > 0 {
+                                let start = state
+                                    .page
+                                    .saturating_mul(state.page_size)
+                                    .min(state.visible_indices().len());
+                                let end =
+                                    (start + state.page_size).min(state.visible_indices().len());
+                                end.saturating_sub(start)
+                            } else {
+                                state.visible_indices().len()
+                            };
                             state.selected =
-                                (state.selected + 1).min(state.rows.len().saturating_sub(1));
+                                (state.selected + 1).min(visible_len.saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageUp => {
+                            let old_page = state.page;
+                            state.prev_page();
+                            if state.page != old_page {
+                                state.selected = 0;
+                            }
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageDown => {
+                            let old_page = state.page;
+                            state.next_page();
+                            if state.page != old_page {
+                                state.selected = 0;
+                            }
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -3389,7 +3496,7 @@ impl Context {
             }
         }
 
-        if !state.rows.is_empty() {
+        if !state.visible_indices().is_empty() || !state.headers.is_empty() {
             if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
                 for (i, event) in self.events.iter().enumerate() {
                     if self.consumed[i] {
@@ -3406,11 +3513,41 @@ impl Context {
                         if !in_bounds {
                             continue;
                         }
+
+                        if mouse.y == rect.y {
+                            let rel_x = mouse.x.saturating_sub(rect.x);
+                            let mut x_offset = 0u32;
+                            for (col_idx, width) in state.column_widths().iter().enumerate() {
+                                if rel_x >= x_offset && rel_x < x_offset + *width {
+                                    state.toggle_sort(col_idx);
+                                    state.selected = 0;
+                                    self.consumed[i] = true;
+                                    break;
+                                }
+                                x_offset += *width;
+                                if col_idx + 1 < state.column_widths().len() {
+                                    x_offset += 3;
+                                }
+                            }
+                            continue;
+                        }
+
                         if mouse.y < rect.y + 2 {
                             continue;
                         }
+
+                        let visible_len = if state.page_size > 0 {
+                            let start = state
+                                .page
+                                .saturating_mul(state.page_size)
+                                .min(state.visible_indices().len());
+                            let end = (start + state.page_size).min(state.visible_indices().len());
+                            end.saturating_sub(start)
+                        } else {
+                            state.visible_indices().len()
+                        };
                         let clicked_idx = (mouse.y - rect.y - 2) as usize;
-                        if clicked_idx < state.rows.len() {
+                        if clicked_idx < visible_len {
                             state.selected = clicked_idx;
                             self.consumed[i] = true;
                         }
@@ -3419,7 +3556,26 @@ impl Context {
             }
         }
 
-        state.selected = state.selected.min(state.rows.len().saturating_sub(1));
+        if state.is_dirty() {
+            state.recompute_widths();
+        }
+
+        let total_visible = state.visible_indices().len();
+        let page_start = if state.page_size > 0 {
+            state
+                .page
+                .saturating_mul(state.page_size)
+                .min(total_visible)
+        } else {
+            0
+        };
+        let page_end = if state.page_size > 0 {
+            (page_start + state.page_size).min(total_visible)
+        } else {
+            total_visible
+        };
+        let visible_len = page_end.saturating_sub(page_start);
+        state.selected = state.selected.min(visible_len.saturating_sub(1));
 
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
@@ -3437,7 +3593,23 @@ impl Context {
             grow: 0,
         });
 
-        let header_line = format_table_row(&state.headers, state.column_widths(), " │ ");
+        let header_cells = state
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(i, header)| {
+                if state.sort_column == Some(i) {
+                    if state.sort_ascending {
+                        format!("{header} ▲")
+                    } else {
+                        format!("{header} ▼")
+                    }
+                } else {
+                    header.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        let header_line = format_table_row(&header_cells, state.column_widths(), " │ ");
         self.styled(header_line, Style::new().bold().fg(self.theme.text));
 
         let separator = state
@@ -3448,7 +3620,11 @@ impl Context {
             .join("─┼─");
         self.text(separator);
 
-        for (idx, row) in state.rows.iter().enumerate() {
+        for idx in 0..visible_len {
+            let data_idx = state.visible_indices()[page_start + idx];
+            let Some(row) = state.rows.get(data_idx) else {
+                continue;
+            };
             let line = format_table_row(row, state.column_widths(), " │ ");
             if idx == state.selected {
                 let mut style = Style::new()
@@ -3461,6 +3637,13 @@ impl Context {
             } else {
                 self.styled(line, Style::new().fg(self.theme.text));
             }
+        }
+
+        if state.page_size > 0 && state.total_pages() > 1 {
+            self.styled(
+                format!("Page {}/{}", state.page + 1, state.total_pages()),
+                Style::new().dim().fg(self.theme.text_dim),
+            );
         }
 
         self.commands.push(Command::EndContainer);
@@ -4609,6 +4792,10 @@ impl Context {
         });
         self.interaction_count += 1;
 
+        let text_style = Style::new().fg(self.theme.text);
+        let bold_style = Style::new().fg(self.theme.text).bold();
+        let code_style = Style::new().fg(self.theme.accent);
+
         for line in text.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -4629,17 +4816,32 @@ impl Context {
                 .strip_prefix("- ")
                 .or_else(|| trimmed.strip_prefix("* "))
             {
-                self.styled(
-                    format!("  • {}", Self::render_inline_md(item)),
-                    Style::new().fg(self.theme.text),
-                );
+                let segs = Self::parse_inline_segments(item, text_style, bold_style, code_style);
+                if segs.len() <= 1 {
+                    self.styled(format!("  • {item}"), text_style);
+                } else {
+                    self.line(|ui| {
+                        ui.styled("  • ", text_style);
+                        for (s, st) in segs {
+                            ui.styled(s, st);
+                        }
+                    });
+                }
             } else if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(". ") {
                 let parts: Vec<&str> = trimmed.splitn(2, ". ").collect();
                 if parts.len() == 2 {
-                    self.styled(
-                        format!("  {}. {}", parts[0], Self::render_inline_md(parts[1])),
-                        Style::new().fg(self.theme.text),
-                    );
+                    let segs =
+                        Self::parse_inline_segments(parts[1], text_style, bold_style, code_style);
+                    if segs.len() <= 1 {
+                        self.styled(format!("  {}. {}", parts[0], parts[1]), text_style);
+                    } else {
+                        self.line(|ui| {
+                            ui.styled(format!("  {}. ", parts[0]), text_style);
+                            for (s, st) in segs {
+                                ui.styled(s, st);
+                            }
+                        });
+                    }
                 } else {
                     self.text(trimmed);
                 }
@@ -4647,10 +4849,16 @@ impl Context {
                 let _ = code;
                 self.styled("  ┌─code─", Style::new().fg(self.theme.border).dim());
             } else {
-                self.styled(
-                    Self::render_inline_md(trimmed).to_string(),
-                    Style::new().fg(self.theme.text),
-                );
+                let segs = Self::parse_inline_segments(trimmed, text_style, bold_style, code_style);
+                if segs.len() <= 1 {
+                    self.styled(trimmed, text_style);
+                } else {
+                    self.line(|ui| {
+                        for (s, st) in segs {
+                            ui.styled(s, st);
+                        }
+                    });
+                }
             }
         }
 
@@ -4659,33 +4867,57 @@ impl Context {
         self
     }
 
-    fn render_inline_md(text: &str) -> String {
-        let mut result = String::with_capacity(text.len());
+    fn parse_inline_segments(
+        text: &str,
+        base: Style,
+        bold: Style,
+        code: Style,
+    ) -> Vec<(String, Style)> {
+        let mut segments: Vec<(String, Style)> = Vec::new();
+        let mut current = String::new();
         let chars: Vec<char> = text.chars().collect();
         let mut i = 0;
         while i < chars.len() {
             if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
                 if let Some(end) = text[i + 2..].find("**") {
-                    let inner = &text[i + 2..i + 2 + end];
-                    result.push_str(inner);
+                    if !current.is_empty() {
+                        segments.push((std::mem::take(&mut current), base));
+                    }
+                    segments.push((text[i + 2..i + 2 + end].to_string(), bold));
                     i += 4 + end;
+                    continue;
+                }
+            }
+            if chars[i] == '*'
+                && (i + 1 >= chars.len() || chars[i + 1] != '*')
+                && (i == 0 || chars[i - 1] != '*')
+            {
+                if let Some(end) = text[i + 1..].find('*') {
+                    if !current.is_empty() {
+                        segments.push((std::mem::take(&mut current), base));
+                    }
+                    segments.push((text[i + 1..i + 1 + end].to_string(), base.italic()));
+                    i += 2 + end;
                     continue;
                 }
             }
             if chars[i] == '`' {
                 if let Some(end) = text[i + 1..].find('`') {
-                    let inner = &text[i + 1..i + 1 + end];
-                    result.push('`');
-                    result.push_str(inner);
-                    result.push('`');
+                    if !current.is_empty() {
+                        segments.push((std::mem::take(&mut current), base));
+                    }
+                    segments.push((text[i + 1..i + 1 + end].to_string(), code));
                     i += 2 + end;
                     continue;
                 }
             }
-            result.push(chars[i]);
+            current.push(chars[i]);
             i += 1;
         }
-        result
+        if !current.is_empty() {
+            segments.push((current, base));
+        }
+        segments
     }
 
     // ── key sequence ─────────────────────────────────────────────────

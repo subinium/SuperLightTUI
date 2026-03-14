@@ -258,6 +258,189 @@ fn table_empty_rows_no_panic() {
 }
 
 #[test]
+fn table_sort_ascending() {
+    let mut table = TableState::new(
+        vec!["Name", "Score"],
+        vec![
+            vec!["Bob", "10"],
+            vec!["Alice", "20"],
+            vec!["Charlie", "30"],
+        ],
+    );
+    table.sort_by(0);
+    assert_eq!(table.visible_indices(), &[1, 0, 2]);
+
+    let mut tb = TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    tb.assert_contains("▲");
+}
+
+#[test]
+fn table_sort_descending_toggle() {
+    let mut table = TableState::new(
+        vec!["Name", "Score"],
+        vec![
+            vec!["Bob", "10"],
+            vec!["Alice", "20"],
+            vec!["Charlie", "30"],
+        ],
+    );
+    table.toggle_sort(0);
+    assert_eq!(table.visible_indices(), &[1, 0, 2]);
+    table.toggle_sort(0);
+    assert_eq!(table.visible_indices(), &[2, 0, 1]);
+}
+
+#[test]
+fn table_sort_numeric() {
+    let mut table = TableState::new(
+        vec!["Name", "Value"],
+        vec![vec!["A", "2"], vec!["B", "10"], vec!["C", "1"]],
+    );
+    table.sort_by(1);
+    assert_eq!(table.visible_indices(), &[2, 0, 1]);
+}
+
+#[test]
+fn table_filter_basic() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![
+            vec!["Alice", "Seoul"],
+            vec!["Bob", "Busan"],
+            vec!["Lila", "Jeju"],
+        ],
+    );
+    table.set_filter("li");
+    assert_eq!(table.visible_indices(), &[0, 2]);
+}
+
+#[test]
+fn table_filter_case_insensitive() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![vec!["Alice", "Seoul"], vec!["Bob", "Busan"]],
+    );
+    table.set_filter("ALICE");
+    assert_eq!(table.visible_indices(), &[0]);
+}
+
+#[test]
+fn table_filter_no_match() {
+    let mut table = TableState::new(
+        vec!["Name", "City"],
+        vec![vec!["Alice", "Seoul"], vec!["Bob", "Busan"]],
+    );
+    table.set_filter("zzz");
+    assert_eq!(table.visible_indices(), &[]);
+    assert_eq!(table.selected_row(), None);
+}
+
+#[test]
+fn table_pagination_basic() {
+    let mut table = TableState::new(
+        vec!["Name", "Value"],
+        vec![
+            vec!["A", "1"],
+            vec!["B", "2"],
+            vec!["C", "3"],
+            vec!["D", "4"],
+            vec!["E", "5"],
+        ],
+    );
+    table.page_size = 2;
+    assert_eq!(table.total_pages(), 3);
+    assert_eq!(table.page, 0);
+
+    let mut tb = TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    tb.assert_contains("Page 1/3");
+
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::PageDown)
+        .build();
+    tb.run_with_events(events, |ui| {
+        ui.table(&mut table);
+    });
+
+    assert_eq!(table.page, 1);
+}
+
+#[test]
+fn table_pagination_last_page() {
+    let mut table = TableState::new(
+        vec!["Name", "Value"],
+        vec![vec!["A", "1"], vec!["B", "2"], vec!["C", "3"]],
+    );
+    table.page_size = 2;
+    table.next_page();
+    table.next_page();
+    assert_eq!(table.page, 1);
+    assert_eq!(table.total_pages(), 2);
+    table.prev_page();
+    assert_eq!(table.page, 0);
+}
+
+#[test]
+fn table_sort_and_filter_combined() {
+    let mut table = TableState::new(
+        vec!["Name", "Value"],
+        vec![vec!["Alpha", "20"], vec!["Beta", "3"], vec!["Alfred", "10"]],
+    );
+    table.sort_by(1);
+    table.set_filter("al");
+    assert_eq!(table.visible_indices(), &[2, 0]);
+}
+
+#[test]
+fn table_selected_row_with_sort() {
+    let mut table = TableState::new(
+        vec!["Name", "Value"],
+        vec![vec!["Bob", "2"], vec!["Alice", "1"], vec!["Carol", "3"]],
+    );
+    table.sort_by(0);
+    table.selected = 1;
+    let selected = table
+        .selected_row()
+        .expect("expected selected row after sorting");
+    assert_eq!(selected[0], "Bob");
+}
+
+#[test]
+fn table_backward_compat() {
+    let mut table = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"]],
+    );
+
+    assert_eq!(table.sort_column, None);
+    assert!(table.sort_ascending);
+    assert_eq!(table.filter, "");
+    assert_eq!(table.page, 0);
+    assert_eq!(table.page_size, 0);
+    assert_eq!(table.visible_indices(), &[0, 1]);
+
+    table.selected = 1;
+    let selected = table
+        .selected_row()
+        .expect("expected selected row in default behavior");
+    assert_eq!(selected[0], "Bob");
+
+    let mut tb = TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    let output = tb.to_string();
+    assert!(!output.contains("▲"));
+    assert!(!output.contains("▼"));
+    assert!(!output.contains("Page "));
+}
+
+#[test]
 fn tabs_renders_labels() {
     let mut tb = TestBackend::new(40, 5);
     let mut tabs = TabsState::new(vec!["Tab1", "Tab2", "Tab3"]);
@@ -1394,4 +1577,171 @@ fn percentage_width() {
 
     tb.assert_contains("Half Width");
     tb.assert_contains("Other Half");
+}
+
+#[test]
+fn line_renders_inline_text() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.line(|ui| {
+            ui.text("hello ");
+            ui.text("world");
+        });
+    });
+    tb.assert_contains("hello world");
+}
+
+#[test]
+fn line_preserves_different_styles() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.line(|ui| {
+            ui.text("normal ");
+            ui.text("bold").bold();
+        });
+    });
+    tb.assert_contains("normal bold");
+    let buf = tb.buffer();
+    let bold_cell = buf.get(7, 0);
+    assert!(
+        bold_cell.style.modifiers.contains(slt::Modifiers::BOLD),
+        "expected bold modifier on 'b' at x=7"
+    );
+    let normal_cell = buf.get(0, 0);
+    assert!(
+        !normal_cell.style.modifiers.contains(slt::Modifiers::BOLD),
+        "expected no bold on 'n' at x=0"
+    );
+}
+
+#[test]
+fn line_with_fg_colors() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.line(|ui| {
+            ui.text("Status: ");
+            ui.text("Online").fg(slt::Color::Green);
+        });
+    });
+    tb.assert_contains("Status: Online");
+    let buf = tb.buffer();
+    let green_cell = buf.get(8, 0);
+    assert_eq!(green_cell.style.fg, Some(slt::Color::Green));
+}
+
+#[test]
+fn line_in_container_builder() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.container().border(slt::Border::Rounded).line(|ui| {
+            ui.text("a");
+            ui.text("b").bold();
+        });
+    });
+    tb.assert_contains("ab");
+}
+
+#[test]
+fn markdown_inline_bold_styled() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("This is **bold** text");
+    });
+    tb.assert_contains("This is bold text");
+    let buf = tb.buffer();
+    let b_cell = buf.get(8, 0);
+    assert!(
+        b_cell.style.modifiers.contains(slt::Modifiers::BOLD),
+        "expected bold on 'b' at x=8"
+    );
+    let t_cell = buf.get(0, 0);
+    assert!(
+        !t_cell.style.modifiers.contains(slt::Modifiers::BOLD),
+        "expected no bold on 'T' at x=0"
+    );
+}
+
+#[test]
+fn markdown_inline_code_styled() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("Use `slt::run` here");
+    });
+    tb.assert_contains("Use slt::run here");
+}
+
+#[test]
+fn markdown_inline_italic_styled() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("This is *italic* text");
+    });
+    tb.assert_contains("This is italic text");
+    let buf = tb.buffer();
+    let i_cell = buf.get(8, 0);
+    assert!(
+        i_cell.style.modifiers.contains(slt::Modifiers::ITALIC),
+        "expected italic on 'i' at x=8"
+    );
+}
+
+#[test]
+fn markdown_list_with_bold() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("- a **bold** item");
+    });
+    tb.assert_contains("bold");
+    tb.assert_contains("item");
+}
+
+#[test]
+fn line_wrap_wraps_segments() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.line_wrap(|ui| {
+            ui.text("hello ");
+            ui.text("world ").bold();
+            ui.text("this wraps");
+        });
+    });
+    tb.assert_contains("hello");
+    tb.assert_contains("world");
+    let output = tb.to_string();
+    let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        lines.len() >= 2,
+        "expected wrapping into 2+ lines, got {lines:?}"
+    );
+}
+
+#[test]
+fn line_wrap_preserves_styles_across_lines() {
+    let mut tb = TestBackend::new(15, 5);
+    tb.render(|ui| {
+        ui.line_wrap(|ui| {
+            ui.text("aaa ");
+            ui.text("bbb").bold();
+            ui.text(" ccc ddd");
+        });
+    });
+    tb.assert_contains("bbb");
+    let buf = tb.buffer();
+    let b_cell = buf.get(4, 0);
+    assert!(
+        b_cell.style.modifiers.contains(slt::Modifiers::BOLD),
+        "expected bold on 'b' at x=4"
+    );
+}
+
+#[test]
+fn line_wrap_single_line_no_wrap() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.line_wrap(|ui| {
+            ui.text("short ");
+            ui.text("text");
+        });
+    });
+    tb.assert_contains("short text");
 }
