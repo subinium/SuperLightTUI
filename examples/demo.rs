@@ -1071,12 +1071,46 @@ fn render_v080(
 
     section(ui, "THEME BUILDER");
     card(ui, |ui| {
-        ui.text("Custom themes from Theme::builder()").dim();
-        let custom = slt::Theme::builder()
-            .primary(Color::Rgb(255, 107, 107))
-            .secondary(Color::Rgb(78, 205, 196))
-            .accent(Color::Rgb(255, 230, 109))
-            .build();
+        let presets: &[(&str, slt::Theme)] = &[
+            (
+                "Coral",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(255, 107, 107))
+                    .secondary(Color::Rgb(78, 205, 196))
+                    .accent(Color::Rgb(255, 230, 109))
+                    .build(),
+            ),
+            (
+                "Ocean",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(86, 156, 214))
+                    .secondary(Color::Rgb(78, 201, 176))
+                    .accent(Color::Rgb(209, 154, 102))
+                    .build(),
+            ),
+            (
+                "Forest",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(152, 195, 121))
+                    .secondary(Color::Rgb(229, 192, 123))
+                    .accent(Color::Rgb(198, 120, 221))
+                    .build(),
+            ),
+        ];
+        let idx_state = ui.use_state(|| 0usize);
+        let idx = *idx_state.get(ui);
+        let (name, ref custom) = presets[idx % presets.len()];
+
+        ui.row_gap(1, |ui| {
+            for (i, (label, _)) in presets.iter().enumerate() {
+                if i == idx {
+                    ui.text(format!("● {label}")).bold().fg(custom.primary);
+                } else if ui.button(*label) {
+                    *idx_state.get_mut(ui) = i;
+                }
+            }
+            ui.text("  →  applies to entire app").dim();
+        });
         ui.row_gap(1, |ui| {
             ui.text("■ Primary").fg(custom.primary);
             ui.text("■ Secondary").fg(custom.secondary);
@@ -1085,12 +1119,7 @@ fn render_v080(
             ui.text("■ Warning").fg(custom.warning);
             ui.text("■ Error").fg(custom.error);
         });
-        ui.text("").dim();
-        ui.text("Theme::builder()").fg(custom.accent);
-        ui.text("    .primary(Color::Rgb(255, 107, 107))").dim();
-        ui.text("    .secondary(Color::Rgb(78, 205, 196))").dim();
-        ui.text("    .accent(Color::Rgb(255, 230, 109))").dim();
-        ui.text("    .build()").dim();
+        ui.set_theme(presets[idx % presets.len()].1);
     });
 
     section(ui, "NEW CHARTS");
