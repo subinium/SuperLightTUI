@@ -1,3 +1,12 @@
+//! Terminal input events.
+//!
+//! This module defines the event types that SLT delivers to your UI closure
+//! each frame: keyboard, mouse, resize, paste, and focus events. In most
+//! cases you'll use the convenience methods on [`crate::Context`] (e.g.,
+//! [`Context::key`](crate::Context::key),
+//! [`Context::mouse_down`](crate::Context::mouse_down)) instead of matching
+//! on these types directly.
+
 /// A terminal input event.
 ///
 /// Produced each frame by the run loop and passed to your UI closure via

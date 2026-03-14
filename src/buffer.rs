@@ -1,3 +1,9 @@
+//! Double-buffer grid of [`Cell`]s with clip-stack support.
+//!
+//! Two buffers are maintained per frame (current and previous). Only the diff
+//! is flushed to the terminal, giving immediate-mode ergonomics with
+//! retained-mode efficiency.
+
 use crate::cell::Cell;
 use crate::rect::Rect;
 use crate::style::Style;

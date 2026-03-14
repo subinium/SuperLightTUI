@@ -1,3 +1,5 @@
+//! Single terminal cell — the smallest unit of the render buffer.
+
 use crate::style::Style;
 
 /// A single terminal cell containing a character and style.

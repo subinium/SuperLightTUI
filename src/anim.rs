@@ -1,3 +1,9 @@
+//! Animation primitives: tweens, springs, keyframes, sequences, and staggers.
+//!
+//! All animations are tick-based — call the `value()` method each frame with
+//! the current [`Context::tick`](crate::Context::tick) to advance. No timers
+//! or threads involved.
+
 use std::f64::consts::PI;
 
 /// Linear interpolation between `a` and `b` at position `t` (0.0..=1.0).

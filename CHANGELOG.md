@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.1] — 2026-03-14
+
+### Documentation
+- Added module-level rustdoc (`//!`) to all 10 public modules
+- Documented `EventBuilder` and `TestBackend` public API in `test_utils`
+- Documented `Direction` enum variants in `layout`
+- Documented `max_length` fields and methods in `TextInputState` / `TextareaState`
+- Removed hardcoded line count from README Architecture section
+
+### Bug Fixes
+- Fixed RNG infinite loop in demo_game — replaced LCG with xorshift64 for all 3 games
+- Fixed MSRV clippy error — replaced `is_multiple_of(2)` with `% 2 == 0` (requires Rust 1.74+)
+- Fixed game layout — nav pinned to top, game content centered vertically
+
 ## [0.5.0] — 2026-03-14
 
 ### Features

@@ -1,3 +1,9 @@
+//! Data visualization: line charts, scatter plots, bar charts, and histograms.
+//!
+//! Build a chart with [`ChartBuilder`], then pass it to
+//! [`Context::chart`](crate::Context::chart). Histograms use
+//! [`Context::histogram`](crate::Context::histogram) directly.
+
 use crate::style::{Color, Style};
 use unicode_width::UnicodeWidthStr;
 

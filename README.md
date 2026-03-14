@@ -424,7 +424,7 @@ Closure → Context collects Commands → build_tree() → flexbox layout → di
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
-~11,300 lines of Rust. 13 source files. No macros, no code generation, no build scripts.
+Pure Rust. No macros, no code generation, no build scripts.
 
 ## Contributing
 

@@ -1,3 +1,8 @@
+//! Visual styling primitives.
+//!
+//! Colors, themes, borders, padding, margin, constraints, alignment, and
+//! text modifiers. Every widget inherits these through [`Theme`] automatically.
+
 /// Terminal color.
 ///
 /// Covers the standard 16 named colors, 256-color palette indices, and

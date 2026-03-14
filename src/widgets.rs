@@ -1,3 +1,9 @@
+//! Widget state types passed to [`Context`](crate::Context) widget methods.
+//!
+//! Each interactive widget (text input, list, tabs, table, etc.) has a
+//! corresponding state struct defined here. Create the state once, then pass
+//! a `&mut` reference each frame.
+
 use unicode_width::UnicodeWidthStr;
 
 type FormValidator = fn(&str) -> Result<(), String>;
@@ -24,6 +30,7 @@ pub struct TextInputState {
     pub cursor: usize,
     /// Placeholder text shown when `value` is empty.
     pub placeholder: String,
+    /// Maximum character count. Input is rejected beyond this limit.
     pub max_length: Option<usize>,
     /// The most recent validation error message, if any.
     pub validation_error: Option<String>,
@@ -49,6 +56,7 @@ impl TextInputState {
         }
     }
 
+    /// Set the maximum allowed character count.
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
@@ -258,6 +266,7 @@ pub struct TextareaState {
     pub cursor_row: usize,
     /// Column index of the cursor within the current row (character index).
     pub cursor_col: usize,
+    /// Maximum total character count across all lines.
     pub max_length: Option<usize>,
     /// When set, lines longer than this display-column width are soft-wrapped.
     pub wrap_width: Option<u32>,
@@ -297,6 +306,7 @@ impl TextareaState {
         self.scroll_offset = 0;
     }
 
+    /// Set the maximum allowed total character count.
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
@@ -547,7 +557,7 @@ impl Default for ScrollState {
 /// Visual variant for buttons.
 ///
 /// Controls the color scheme used when rendering a button. Pass to
-/// [`Context::button_with`] to create styled button variants.
+/// [`crate::Context::button_with`] to create styled button variants.
 ///
 /// - `Default` — theme text color, primary when focused (same as `button()`)
 /// - `Primary` — primary color background with contrasting text

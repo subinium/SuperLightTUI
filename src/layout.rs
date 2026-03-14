@@ -1,12 +1,18 @@
+//! Flexbox layout engine: builds a tree from commands, computes positions,
+//! and renders to a [`Buffer`].
+
 use crate::buffer::Buffer;
 use crate::rect::Rect;
 use crate::style::{Align, Border, Color, Constraints, Justify, Margin, Padding, Style};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+/// Main axis direction for a container's children.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
+    /// Lay out children horizontally (left to right).
     Row,
+    /// Lay out children vertically (top to bottom).
     Column,
 }
 

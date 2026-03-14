@@ -1,3 +1,6 @@
+//! Axis-aligned rectangle type used throughout SLT for layout regions,
+//! clipping bounds, and hit-test areas.
+
 /// An axis-aligned rectangle with `u32` coordinates.
 ///
 /// Uses `u32` rather than `u16` to avoid overflow bugs that affect other TUI
