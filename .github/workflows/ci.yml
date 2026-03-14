@@ -11,19 +11,25 @@ env:
 
 jobs:
   check:
-    name: Check
+    name: Check (stable)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable, "1.74"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+
+  check-msrv:
+    name: Check (MSRV 1.74)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: "1.74"
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
-      - run: cargo check --all-features
+      - run: cargo check --features async,serde
 
   test:
     name: Test

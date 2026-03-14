@@ -1,8 +1,9 @@
 use slt::{
-    Align, Border, BorderSides, Color, CommandPaletteState, Context, FormField, FormState, Justify,
-    ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
-    SpinnerState, TableState, TabsState, TextInputState, TextareaState, Theme, ToastState,
-    TreeNode, TreeState,
+    Align, ApprovalAction, Border, BorderSides, Breakpoint, Color, CommandPaletteState, Context,
+    ContextItem, FormField, FormState, HalfBlockImage, Justify, KeyCode, ListState,
+    MultiSelectState, PaletteCommand, RadioState, RunConfig, ScrollState, SelectState,
+    SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme,
+    ToastState, ToolApprovalState, TreeNode, TreeState,
 };
 
 fn main() -> std::io::Result<()> {
@@ -13,6 +14,7 @@ fn main() -> std::io::Result<()> {
         "Forms",
         "Feedback",
         "Advanced",
+        "v0.7.0",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -98,10 +100,15 @@ fn main() -> std::io::Result<()> {
         PaletteCommand::new("Toggle Overlay", "Show/hide overlay"),
         PaletteCommand::new("Quit", "Exit the application"),
     ]);
+    let mut v7_scroll = ScrollState::new();
+    let mut v7_stream = StreamingTextState::new();
+    let mut v7_tool = ToolApprovalState::new("read_file", "Read contents of config.toml");
+    let mut v7_stream_tick: u64 = 0;
 
     slt::run_with(
-        slt::RunConfig {
+        RunConfig {
             mouse: true,
+            kitty_keyboard: true,
             ..Default::default()
         },
         |ui: &mut Context| {
@@ -185,6 +192,13 @@ fn main() -> std::io::Result<()> {
                                 &mut multi,
                                 &mut tree,
                                 &mut vlist,
+                            ),
+                            6 => render_v070(
+                                ui,
+                                &mut v7_scroll,
+                                &mut v7_stream,
+                                &mut v7_tool,
+                                &mut v7_stream_tick,
                             ),
                             _ => {}
                         });
@@ -623,7 +637,7 @@ fn render_advanced(
         card(ui, |ui| {
             ui.text("Markdown").bold().fg(theme.primary);
             ui.markdown(
-                "# v0.6.0\n\n**New widgets**: select, radio, multi-select, tree, virtual list.\n\n- Command palette (`Ctrl+P`)\n- Key sequence demo (`gg`)\n\n---\n\n`Theme-aware` and production-ready.",
+                "# v0.7.0\n\n**9 new features**: dashed borders, Kitty keyboard, color downsampling, scrollbar, breakpoints, clipboard, DevTools, half-block image, AI widgets.\n\n- Check the **v0.7.0** tab →\n- Press **F12** for DevTools\n\n---\n\n`Theme-aware` and production-ready.",
             );
         });
 
@@ -740,6 +754,212 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
             .fg(theme.surface_text);
             ui.link("Docs", "https://docs.rs/superlighttui");
             ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
+        });
+    });
+}
+
+fn render_v070(
+    ui: &mut Context,
+    scroll: &mut ScrollState,
+    stream: &mut StreamingTextState,
+    tool: &mut ToolApprovalState,
+    stream_tick: &mut u64,
+) {
+    let theme = *ui.theme();
+    let tick = ui.tick();
+    section(ui, "v0.7.0 FEATURES");
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Dashed Borders").bold().fg(theme.primary);
+            ui.text("2 new border variants").fg(theme.surface_text);
+
+            ui.container().border(Border::Dashed).pad(1).col(|ui| {
+                ui.text("Border::Dashed").fg(theme.text);
+            });
+            ui.container().border(Border::DashedThick).pad(1).col(|ui| {
+                ui.text("Border::DashedThick").fg(theme.text);
+            });
+        });
+
+        card(ui, |ui| {
+            ui.text("All 6 Border Styles").bold().fg(theme.secondary);
+            let borders = [
+                ("Single", Border::Single),
+                ("Double", Border::Double),
+                ("Rounded", Border::Rounded),
+                ("Thick", Border::Thick),
+                ("Dashed", Border::Dashed),
+                ("DashedThick", Border::DashedThick),
+            ];
+            for (name, border) in borders {
+                ui.container().border(border).col(|ui| {
+                    ui.text(name).fg(theme.surface_text);
+                });
+            }
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Scrollbar").bold().fg(theme.primary);
+            let focused = ui.register_focusable();
+            if focused {
+                ui.text("⇅ Use ↑↓ to scroll").fg(theme.secondary);
+                if ui.key_code(KeyCode::Up) {
+                    scroll.scroll_up(1);
+                }
+                if ui.key_code(KeyCode::Down) {
+                    scroll.scroll_down(1);
+                }
+            } else {
+                ui.text("Tab to focus, then ↑↓").fg(theme.text_dim);
+            }
+            ui.row(|ui| {
+                ui.scrollable(scroll).grow(1).h(8).col(|ui| {
+                    for i in 0..30 {
+                        let fg = if focused && i == scroll.offset {
+                            theme.primary
+                        } else if i % 2 == 0 {
+                            theme.text
+                        } else {
+                            theme.text_dim
+                        };
+                        ui.text(format!("  Line {i}")).fg(fg);
+                    }
+                });
+                ui.scrollbar(scroll);
+            });
+        });
+
+        card(ui, |ui| {
+            ui.text("Responsive Breakpoint").bold().fg(theme.secondary);
+            ui.text("Adapts to terminal width").fg(theme.surface_text);
+            let bp = ui.breakpoint();
+            let (label, color) = match bp {
+                Breakpoint::Xs => ("Xs (<40)", theme.error),
+                Breakpoint::Sm => ("Sm (40-79)", theme.warning),
+                Breakpoint::Md => ("Md (80-119)", theme.secondary),
+                Breakpoint::Lg => ("Lg (120-159)", theme.success),
+                Breakpoint::Xl => ("Xl (160+)", theme.primary),
+            };
+            ui.row(|ui| {
+                ui.text("Current: ").fg(theme.surface_text);
+                ui.text(label).bold().fg(color);
+            });
+            ui.text(format!("Terminal: {}×{}", ui.width(), ui.height()))
+                .dim();
+            ui.text("Resize terminal to see changes").fg(theme.text_dim);
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("StreamingText").bold().fg(theme.primary);
+            ui.text("AI response with cursor").fg(theme.surface_text);
+
+            let full_text = "Hello! I'm an AI assistant powered by SLT. This text streams in character by character, just like a real LLM response.";
+
+            if !stream.streaming && stream.content.is_empty() {
+                stream.start();
+                *stream_tick = tick;
+            }
+            if stream.streaming {
+                let elapsed = tick.saturating_sub(*stream_tick);
+                let chars_to_show = (elapsed / 4) as usize;
+                stream.content = full_text.chars().take(chars_to_show).collect();
+                if chars_to_show >= full_text.chars().count() {
+                    stream.finish();
+                }
+            }
+            ui.streaming_text(stream);
+
+            if !stream.streaming && !stream.content.is_empty() && ui.button("↻ Replay") {
+                stream.content.clear();
+            }
+        });
+
+        card(ui, |ui| {
+            ui.text("ToolApproval").bold().fg(theme.secondary);
+            ui.text("Human-in-the-loop gate").fg(theme.surface_text);
+            ui.tool_approval(tool);
+            if tool.action != ApprovalAction::Pending && ui.button("Reset") {
+                tool.reset();
+            }
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("ContextBar").bold().fg(theme.primary);
+            ui.text("Token usage indicator").fg(theme.surface_text);
+            let items = vec![
+                ContextItem::new("main.rs", 1200),
+                ContextItem::new("lib.rs", 3400),
+                ContextItem::new("README.md", 800),
+            ];
+            ui.context_bar(&items);
+        });
+
+        card(ui, |ui| {
+            ui.text("Half-Block Image").bold().fg(theme.secondary);
+            ui.text("2x vertical resolution").fg(theme.surface_text);
+
+            let w: u32 = 24;
+            let h: u32 = 6;
+            let pixel_h = h * 2;
+            let mut rgb = Vec::with_capacity((w * pixel_h * 3) as usize);
+            for y in 0..pixel_h {
+                for x in 0..w {
+                    let r = (x as f32 / w as f32 * 255.0) as u8;
+                    let g = (y as f32 / pixel_h as f32 * 255.0) as u8;
+                    let b = 128;
+                    rgb.push(r);
+                    rgb.push(g);
+                    rgb.push(b);
+                }
+            }
+            let img = HalfBlockImage::from_rgb(&rgb, w, h);
+            ui.image(&img);
+        });
+    });
+
+    card(ui, |ui| {
+        ui.text("More v0.7.0").bold().fg(theme.accent);
+        ui.row(|ui| {
+            ui.container().grow(1).col(|ui| {
+                ui.text("Color Downsampling").bold().fg(theme.primary);
+                ui.text("RGB → 256 → 16 color").fg(theme.surface_text);
+                let colors = [
+                    ("Coral", Color::Rgb(255, 127, 80)),
+                    ("Teal", Color::Rgb(0, 128, 128)),
+                    ("Gold", Color::Rgb(255, 215, 0)),
+                    ("Violet", Color::Rgb(138, 43, 226)),
+                ];
+                for (name, c) in colors {
+                    ui.line(|ui| {
+                        ui.text(format!("{name}: ")).fg(theme.surface_text);
+                        ui.text("████").fg(c);
+                        ui.text(" → ").dim();
+                        ui.text("████").fg(c.downsampled(slt::ColorDepth::EightBit));
+                        ui.text(" → ").dim();
+                        ui.text("████").fg(c.downsampled(slt::ColorDepth::Basic));
+                    });
+                }
+            });
+            ui.container().grow(1).col(|ui| {
+                ui.text("Kitty Keyboard").bold().fg(theme.secondary);
+                ui.text("Key release events enabled").fg(theme.surface_text);
+                ui.text("kitty_keyboard: true").fg(theme.secondary);
+                ui.separator();
+                ui.text("OSC 52 Clipboard").bold().fg(theme.accent);
+                ui.text("copy_to_clipboard()").fg(theme.surface_text);
+                if ui.button("Copy 'SLT v0.7.0'") {
+                    ui.copy_to_clipboard("SLT v0.7.0");
+                }
+                ui.separator();
+                ui.text("DevTools: Press F12").bold().fg(theme.warning);
+            });
         });
     });
 }

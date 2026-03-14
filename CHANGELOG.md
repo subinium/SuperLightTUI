@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.7.0] — 2026-03-14
+
+### Features
+- **Dashed borders**: `Border::Dashed` and `Border::DashedThick` variants for dashed/heavy-dashed box drawing
+- **Kitty keyboard protocol**: `RunConfig { kitty_keyboard: true }` enables key release/repeat events via `KeyEventKind` — silently ignored on unsupported terminals
+- **Color auto-downsampling**: `ColorDepth` enum with auto-detection from `$COLORTERM`/`$TERM`; `Color::downsampled()` converts RGB to 256/16-color; `RunConfig { color_depth }` for override
+- **Scrollbar widget**: `ui.scrollbar(&scroll)` renders proportional thumb alongside `scrollable()` containers
+- **Responsive breakpoints**: `Breakpoint` enum (`Xs`/`Sm`/`Md`/`Lg`/`Xl`) with `ui.breakpoint()` for terminal-width-adaptive layouts
+- **OSC 52 clipboard API**: `ui.copy_to_clipboard(text)` writes to system clipboard via OSC 52 (works over SSH)
+- **Enhanced DevTools overlay**: F12 now shows widget count, frame time, FPS, and terminal dimensions
+- **Half-block image widget**: `HalfBlockImage` renders images at 2× vertical resolution using `▀` characters; `from_rgb()` always available, `from_dynamic()` behind `image` feature flag
+- **AI native widgets**: `streaming_text()` with blinking cursor, `tool_approval()` with approve/reject buttons, `context_bar()` with token counts
+
+### New Types
+- `KeyEventKind` — `Press`, `Release`, `Repeat`
+- `ColorDepth` — `TrueColor`, `EightBit`, `Basic`
+- `Breakpoint` — `Xs`, `Sm`, `Md`, `Lg`, `Xl`
+- `HalfBlockImage` — terminal-renderable image grid
+- `StreamingTextState` — streaming text accumulator
+- `ToolApprovalState` / `ApprovalAction` — tool call approval
+- `ContextItem` — context bar entry with token count
+
+### New Methods
+- `Color::downsampled(ColorDepth)` — downsample to target depth
+- `ColorDepth::detect()` — auto-detect from environment
+- `ScrollState::content_height()`, `viewport_height()`, `progress()`
+- `Context::scrollbar(&ScrollState)` — vertical scrollbar
+- `Context::breakpoint()` — responsive width class
+- `Context::copy_to_clipboard(text)` — OSC 52 clipboard
+- `Context::image(&HalfBlockImage)` — half-block image render
+- `Context::streaming_text(&mut StreamingTextState)` — streaming text
+- `Context::tool_approval(&mut ToolApprovalState)` — tool approval widget
+- `Context::context_bar(&[ContextItem])` — context bar
+- `Context::key_release(char)`, `key_code_release(KeyCode)` — key release detection
+
+### Feature Flags
+- `image` — enables `HalfBlockImage::from_dynamic()` (adds `image` crate dependency)
+
 ## [0.6.1] — 2026-03-14
 
 ### Features

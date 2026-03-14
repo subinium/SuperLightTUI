@@ -1,15 +1,17 @@
 use crate::chart::{build_histogram_config, render_chart, ChartBuilder, HistogramBuilder};
-use crate::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseKind};
+use crate::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseKind};
+use crate::halfblock::HalfBlockImage;
 use crate::layout::{Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
-    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Modifiers, Padding, Style,
-    Theme,
+    Align, Border, BorderSides, Breakpoint, Color, Constraints, Justify, Margin, Modifiers,
+    Padding, Style, Theme,
 };
 use crate::widgets::{
-    ButtonVariant, CommandPaletteState, FormField, FormState, ListState, MultiSelectState,
-    RadioState, ScrollState, SelectState, SpinnerState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastState, TreeState,
+    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
+    ListState, MultiSelectState, RadioState, ScrollState, SelectState, SpinnerState,
+    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
+    ToastState, ToolApprovalState, TreeState,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -201,6 +203,7 @@ pub struct Context {
     prev_focus_count: usize,
     scroll_count: usize,
     prev_scroll_infos: Vec<(u32, u32)>,
+    prev_scroll_rects: Vec<Rect>,
     interaction_count: usize,
     pub(crate) prev_hit_map: Vec<Rect>,
     _prev_focus_rects: Vec<(usize, Rect)>,
@@ -210,6 +213,7 @@ pub struct Context {
     overlay_depth: usize,
     pub(crate) modal_active: bool,
     prev_modal_active: bool,
+    pub(crate) clipboard_text: Option<String>,
     debug: bool,
     theme: Theme,
 }
@@ -1073,6 +1077,7 @@ impl Context {
         mut focus_index: usize,
         prev_focus_count: usize,
         prev_scroll_infos: Vec<(u32, u32)>,
+        prev_scroll_rects: Vec<Rect>,
         prev_hit_map: Vec<Rect>,
         prev_focus_rects: Vec<(usize, Rect)>,
         debug: bool,
@@ -1121,6 +1126,7 @@ impl Context {
             prev_focus_count,
             scroll_count: 0,
             prev_scroll_infos,
+            prev_scroll_rects,
             interaction_count: 0,
             prev_hit_map,
             _prev_focus_rects: prev_focus_rects,
@@ -1130,6 +1136,7 @@ impl Context {
             overlay_depth: 0,
             modal_active: false,
             prev_modal_active,
+            clipboard_text: None,
             debug,
             theme,
         }
@@ -1138,6 +1145,9 @@ impl Context {
     pub(crate) fn process_focus_keys(&mut self) {
         for (i, event) in self.events.iter().enumerate() {
             if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::SHIFT) {
                     if self.prev_focus_count > 0 {
                         self.focus_index = (self.focus_index + 1) % self.prev_focus_count;
@@ -1313,6 +1323,9 @@ impl Context {
         if focused {
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                         activated = true;
                         self.consumed[i] = true;
@@ -1445,6 +1458,160 @@ impl Context {
         });
         self.last_text_idx = Some(self.commands.len() - 1);
         self
+    }
+
+    /// Render a half-block image in the terminal.
+    ///
+    /// Each terminal cell displays two vertical pixels using the `▀` character
+    /// with foreground (upper pixel) and background (lower pixel) colors.
+    ///
+    /// Create a [`HalfBlockImage`] from a file (requires `image` feature):
+    /// ```ignore
+    /// let img = image::open("photo.png").unwrap();
+    /// let half = HalfBlockImage::from_dynamic(&img, 40, 20);
+    /// ui.image(&half);
+    /// ```
+    ///
+    /// Or from raw RGB data (no feature needed):
+    /// ```no_run
+    /// # use slt::{Context, HalfBlockImage};
+    /// # slt::run(|ui: &mut Context| {
+    /// let rgb = vec![255u8; 30 * 20 * 3];
+    /// let half = HalfBlockImage::from_rgb(&rgb, 30, 10);
+    /// ui.image(&half);
+    /// # });
+    /// ```
+    pub fn image(&mut self, img: &HalfBlockImage) {
+        let width = img.width;
+        let height = img.height;
+
+        self.container().w(width).h(height).gap(0).col(|ui| {
+            for row in 0..height {
+                ui.container().gap(0).row(|ui| {
+                    for col in 0..width {
+                        let idx = (row * width + col) as usize;
+                        if let Some(&(upper, lower)) = img.pixels.get(idx) {
+                            ui.styled("▀", Style::new().fg(upper).bg(lower));
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /// Render streaming text with a typing cursor indicator.
+    ///
+    /// Displays the accumulated text content. While `streaming` is true,
+    /// shows a blinking cursor (`▌`) at the end.
+    ///
+    /// ```no_run
+    /// # use slt::widgets::StreamingTextState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut stream = StreamingTextState::new();
+    /// stream.start();
+    /// stream.push("Hello from ");
+    /// stream.push("the AI!");
+    /// ui.streaming_text(&mut stream);
+    /// # });
+    /// ```
+    pub fn streaming_text(&mut self, state: &mut StreamingTextState) {
+        if state.streaming {
+            state.cursor_tick = state.cursor_tick.wrapping_add(1);
+            state.cursor_visible = (state.cursor_tick / 8) % 2 == 0;
+        }
+
+        if state.content.is_empty() && state.streaming {
+            let cursor = if state.cursor_visible { "▌" } else { " " };
+            let primary = self.theme.primary;
+            self.text(cursor).fg(primary);
+            return;
+        }
+
+        if !state.content.is_empty() {
+            if state.streaming && state.cursor_visible {
+                self.text_wrap(format!("{}▌", state.content));
+            } else {
+                self.text_wrap(&state.content);
+            }
+        }
+    }
+
+    /// Render a tool approval widget with approve/reject buttons.
+    ///
+    /// Shows the tool name, description, and two action buttons.
+    /// Returns the updated [`ApprovalAction`] each frame.
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{ApprovalAction, ToolApprovalState};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut tool = ToolApprovalState::new("read_file", "Read contents of config.toml");
+    /// ui.tool_approval(&mut tool);
+    /// if tool.action == ApprovalAction::Approved {
+    /// }
+    /// # });
+    /// ```
+    pub fn tool_approval(&mut self, state: &mut ToolApprovalState) {
+        let theme = self.theme;
+        self.bordered(Border::Rounded).col(|ui| {
+            ui.row(|ui| {
+                ui.text("⚡").fg(theme.warning);
+                ui.text(&state.tool_name).bold().fg(theme.primary);
+            });
+            ui.text(&state.description).dim();
+
+            if state.action == ApprovalAction::Pending {
+                ui.row(|ui| {
+                    if ui.button("✓ Approve") {
+                        state.action = ApprovalAction::Approved;
+                    }
+                    if ui.button("✗ Reject") {
+                        state.action = ApprovalAction::Rejected;
+                    }
+                });
+            } else {
+                let (label, color) = match state.action {
+                    ApprovalAction::Approved => ("✓ Approved", theme.success),
+                    ApprovalAction::Rejected => ("✗ Rejected", theme.error),
+                    ApprovalAction::Pending => unreachable!(),
+                };
+                ui.text(label).fg(color).bold();
+            }
+        });
+    }
+
+    /// Render a context bar showing active context items with token counts.
+    ///
+    /// Displays a horizontal bar of context sources (files, URLs, etc.)
+    /// with their token counts, useful for AI chat interfaces.
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ContextItem;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let items = vec![ContextItem::new("main.rs", 1200), ContextItem::new("lib.rs", 800)];
+    /// ui.context_bar(&items);
+    /// # });
+    /// ```
+    pub fn context_bar(&mut self, items: &[ContextItem]) {
+        if items.is_empty() {
+            return;
+        }
+
+        let theme = self.theme;
+        let total: usize = items.iter().map(|item| item.tokens).sum();
+
+        self.container().row(|ui| {
+            ui.text("📎").dim();
+            for item in items {
+                ui.text(format!(
+                    "{} ({})",
+                    item.label,
+                    format_token_count(item.tokens)
+                ))
+                .fg(theme.secondary);
+            }
+            ui.spacer();
+            ui.text(format!("Σ {}", format_token_count(total))).dim();
+        });
     }
 
     /// Enable word-boundary wrapping on the last rendered text element.
@@ -1668,13 +1835,87 @@ impl Context {
 
         let next_id = self.interaction_count;
         if let Some(rect) = self.prev_hit_map.get(next_id).copied() {
-            self.auto_scroll(&rect, state);
+            let inner_rects: Vec<Rect> = self
+                .prev_scroll_rects
+                .iter()
+                .enumerate()
+                .filter(|&(j, sr)| {
+                    j != index
+                        && sr.width > 0
+                        && sr.height > 0
+                        && sr.x >= rect.x
+                        && sr.right() <= rect.right()
+                        && sr.y >= rect.y
+                        && sr.bottom() <= rect.bottom()
+                })
+                .map(|(_, sr)| *sr)
+                .collect();
+            self.auto_scroll_nested(&rect, state, &inner_rects);
         }
 
         self.container().scroll_offset(state.offset as u32)
     }
 
-    fn auto_scroll(&mut self, rect: &Rect, state: &mut ScrollState) {
+    /// Render a vertical scrollbar reflecting the given scroll state.
+    ///
+    /// Displays a track (`│`) with a proportional thumb (`█`). The thumb size
+    /// and position are calculated from the scroll state's content height,
+    /// viewport height, and current offset.
+    ///
+    /// Typically placed beside a `scrollable()` container in a `row()`:
+    /// ```no_run
+    /// # use slt::widgets::ScrollState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut scroll = ScrollState::new();
+    /// ui.row(|ui| {
+    ///     ui.scrollable(&mut scroll).grow(1).col(|ui| {
+    ///         for i in 0..100 { ui.text(format!("Line {i}")); }
+    ///     });
+    ///     ui.scrollbar(&scroll);
+    /// });
+    /// # });
+    /// ```
+    pub fn scrollbar(&mut self, state: &ScrollState) {
+        let vh = state.viewport_height();
+        let ch = state.content_height();
+        if vh == 0 || ch <= vh {
+            return;
+        }
+
+        let track_height = vh;
+        let thumb_height = ((vh as f64 * vh as f64 / ch as f64).ceil() as u32).max(1);
+        let max_offset = ch.saturating_sub(vh);
+        let thumb_pos = if max_offset == 0 {
+            0
+        } else {
+            ((state.offset as f64 / max_offset as f64) * (track_height - thumb_height) as f64)
+                .round() as u32
+        };
+
+        let theme = self.theme;
+        let track_char = '│';
+        let thumb_char = '█';
+
+        self.container().w(1).h(track_height).col(|ui| {
+            for i in 0..track_height {
+                if i >= thumb_pos && i < thumb_pos + thumb_height {
+                    ui.styled(thumb_char.to_string(), Style::new().fg(theme.primary));
+                } else {
+                    ui.styled(
+                        track_char.to_string(),
+                        Style::new().fg(theme.text_dim).dim(),
+                    );
+                }
+            }
+        });
+    }
+
+    fn auto_scroll_nested(
+        &mut self,
+        rect: &Rect,
+        state: &mut ScrollState,
+        inner_scroll_rects: &[Rect],
+    ) {
         let mut to_consume: Vec<usize> = Vec::new();
 
         for (i, event) in self.events.iter().enumerate() {
@@ -1689,6 +1930,15 @@ impl Context {
                 if !in_bounds {
                     continue;
                 }
+                let in_inner = inner_scroll_rects.iter().any(|sr| {
+                    mouse.x >= sr.x
+                        && mouse.x < sr.right()
+                        && mouse.y >= sr.y
+                        && mouse.y < sr.bottom()
+                });
+                if in_inner {
+                    continue;
+                }
                 match mouse.kind {
                     MouseKind::ScrollUp => {
                         state.scroll_up(1);
@@ -1698,10 +1948,7 @@ impl Context {
                         state.scroll_down(1);
                         to_consume.push(i);
                     }
-                    MouseKind::Drag(MouseButton::Left) => {
-                        // Left-drag is reserved for text selection.
-                        // Scroll via mouse wheel instead.
-                    }
+                    MouseKind::Drag(MouseButton::Left) => {}
                     _ => {}
                 }
             }
@@ -1873,6 +2120,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Char(ch) => {
                             if let Some(max) = state.max_length {
@@ -2073,6 +2323,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Char(ch) => {
                             if let Some(max) = state.max_length {
@@ -3339,6 +3592,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             state.selected = state.selected.saturating_sub(1);
@@ -3438,6 +3694,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             let visible_len = if state.page_size > 0 {
@@ -3670,6 +3929,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Left => {
                             state.selected = if state.selected == 0 {
@@ -3775,6 +4037,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                         activated = true;
                         consumed_indices.push(i);
@@ -3838,6 +4103,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                         activated = true;
                         consumed_indices.push(i);
@@ -3952,6 +4220,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                         should_toggle = true;
                         consumed_indices.push(i);
@@ -4024,6 +4295,9 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                         should_toggle = true;
                         consumed_indices.push(i);
@@ -4114,6 +4388,9 @@ impl Context {
                     continue;
                 }
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if state.open {
                         match key.code {
                             KeyCode::Up | KeyCode::Char('k') => {
@@ -4241,6 +4518,9 @@ impl Context {
                     continue;
                 }
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             state.selected = state.selected.saturating_sub(1);
@@ -4349,6 +4629,9 @@ impl Context {
                     continue;
                 }
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             state.cursor = state.cursor.saturating_sub(1);
@@ -4455,6 +4738,9 @@ impl Context {
                     continue;
                 }
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             state.selected = state.selected.saturating_sub(1);
@@ -4554,6 +4840,9 @@ impl Context {
                     continue;
                 }
                 if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             state.selected = state.selected.saturating_sub(1);
@@ -4658,6 +4947,9 @@ impl Context {
                 continue;
             }
             if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match key.code {
                     KeyCode::Esc => {
                         state.open = false;
@@ -4940,6 +5232,9 @@ impl Context {
                 continue;
             }
             if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 if let KeyCode::Char(c) = key.code {
                     if c == target[matched] {
                         matched += 1;
@@ -5025,7 +5320,8 @@ impl Context {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
-            !self.consumed[i] && matches!(e, Event::Key(k) if k.code == KeyCode::Char(c))
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c))
         })
     }
 
@@ -5036,10 +5332,36 @@ impl Context {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
             return false;
         }
-        self.events
-            .iter()
-            .enumerate()
-            .any(|(i, e)| !self.consumed[i] && matches!(e, Event::Key(k) if k.code == code))
+        self.events.iter().enumerate().any(|(i, e)| {
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == code)
+        })
+    }
+
+    /// Check if a character key was released this frame.
+    ///
+    /// Returns `true` if the key release event has not been consumed by another widget.
+    pub fn key_release(&self, c: char) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        self.events.iter().enumerate().any(|(i, e)| {
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Release && k.code == KeyCode::Char(c))
+        })
+    }
+
+    /// Check if a specific key code was released this frame.
+    ///
+    /// Returns `true` if the key release event has not been consumed by another widget.
+    pub fn key_code_release(&self, code: KeyCode) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        self.events.iter().enumerate().any(|(i, e)| {
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Release && k.code == code)
+        })
     }
 
     /// Check if a character key with specific modifiers was pressed this frame.
@@ -5051,7 +5373,7 @@ impl Context {
         }
         self.events.iter().enumerate().any(|(i, e)| {
             !self.consumed[i]
-                && matches!(e, Event::Key(k) if k.code == KeyCode::Char(c) && k.modifiers.contains(modifiers))
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c) && k.modifiers.contains(modifiers))
         })
     }
 
@@ -5126,6 +5448,17 @@ impl Context {
         self.should_quit = true;
     }
 
+    /// Copy text to the system clipboard via OSC 52.
+    ///
+    /// Works transparently over SSH connections. The text is queued and
+    /// written to the terminal after the current frame renders.
+    ///
+    /// Requires a terminal that supports OSC 52 (most modern terminals:
+    /// Ghostty, kitty, WezTerm, iTerm2, Windows Terminal).
+    pub fn copy_to_clipboard(&mut self, text: impl Into<String>) {
+        self.clipboard_text = Some(text.into());
+    }
+
     /// Get the current theme.
     pub fn theme(&self) -> &Theme {
         &self.theme
@@ -5143,6 +5476,44 @@ impl Context {
     /// Get the terminal width in cells.
     pub fn width(&self) -> u32 {
         self.area_width
+    }
+
+    /// Get the current terminal width breakpoint.
+    ///
+    /// Returns a [`Breakpoint`] based on the terminal width:
+    /// - `Xs`: < 40 columns
+    /// - `Sm`: 40-79 columns
+    /// - `Md`: 80-119 columns
+    /// - `Lg`: 120-159 columns
+    /// - `Xl`: >= 160 columns
+    ///
+    /// Use this for responsive layouts that adapt to terminal size:
+    /// ```no_run
+    /// # use slt::{Breakpoint, Context};
+    /// # slt::run(|ui: &mut Context| {
+    /// match ui.breakpoint() {
+    ///     Breakpoint::Xs | Breakpoint::Sm => {
+    ///         ui.col(|ui| { ui.text("Stacked layout"); });
+    ///     }
+    ///     _ => {
+    ///         ui.row(|ui| { ui.text("Side-by-side layout"); });
+    ///     }
+    /// }
+    /// # });
+    /// ```
+    pub fn breakpoint(&self) -> Breakpoint {
+        let w = self.area_width;
+        if w < 40 {
+            Breakpoint::Xs
+        } else if w < 80 {
+            Breakpoint::Sm
+        } else if w < 120 {
+            Breakpoint::Md
+        } else if w < 160 {
+            Breakpoint::Lg
+        } else {
+            Breakpoint::Xl
+        }
     }
 
     /// Get the terminal height in cells.
@@ -5175,6 +5546,16 @@ fn byte_index_for_char(value: &str, char_index: usize) -> usize {
         .char_indices()
         .nth(char_index)
         .map_or(value.len(), |(idx, _)| idx)
+}
+
+fn format_token_count(count: usize) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}k", count as f64 / 1_000.0)
+    } else {
+        format!("{count}")
+    }
 }
 
 fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {

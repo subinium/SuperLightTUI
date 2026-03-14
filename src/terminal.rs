@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::Buffer;
 use crate::rect::Rect;
-use crate::style::{Color, Modifiers, Style};
+use crate::style::{Color, ColorDepth, Modifiers, Style};
 
 pub(crate) struct Terminal {
     stdout: Stdout,
@@ -23,6 +23,8 @@ pub(crate) struct Terminal {
     previous: Buffer,
     mouse_enabled: bool,
     cursor_visible: bool,
+    kitty_keyboard: bool,
+    color_depth: ColorDepth,
 }
 
 pub(crate) struct InlineTerminal {
@@ -34,10 +36,11 @@ pub(crate) struct InlineTerminal {
     height: u32,
     start_row: u16,
     reserved: bool,
+    color_depth: ColorDepth,
 }
 
 impl Terminal {
-    pub fn new(mouse: bool) -> io::Result<Self> {
+    pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
 
@@ -52,6 +55,16 @@ impl Terminal {
         if mouse {
             execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
         }
+        if kitty_keyboard {
+            use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+            let _ = execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                )
+            );
+        }
 
         Ok(Self {
             stdout,
@@ -59,6 +72,8 @@ impl Terminal {
             previous: Buffer::empty(area),
             mouse_enabled: mouse,
             cursor_visible: false,
+            kitty_keyboard,
+            color_depth,
         })
     }
 
@@ -91,7 +106,7 @@ impl Terminal {
 
                 if cell.style != last_style {
                     queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                    apply_style(&mut self.stdout, &cell.style)?;
+                    apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
                     last_style = cell.style;
                 }
 
@@ -157,7 +172,7 @@ impl Terminal {
 }
 
 impl InlineTerminal {
-    pub fn new(height: u32, mouse: bool) -> io::Result<Self> {
+    pub fn new(height: u32, mouse: bool, color_depth: ColorDepth) -> io::Result<Self> {
         let (cols, _) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, height);
 
@@ -178,6 +193,7 @@ impl InlineTerminal {
             height,
             start_row: cursor_row,
             reserved: false,
+            color_depth,
         })
     }
 
@@ -225,7 +241,7 @@ impl InlineTerminal {
 
                 if cell.style != last_style {
                     queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                    apply_style(&mut self.stdout, &cell.style)?;
+                    apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
                     last_style = cell.style;
                 }
 
@@ -295,6 +311,10 @@ impl InlineTerminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
+        if self.kitty_keyboard {
+            use crossterm::event::PopKeyboardEnhancementFlags;
+            let _ = execute!(self.stdout, PopKeyboardEnhancementFlags);
+        }
         if self.mouse_enabled {
             let _ = execute!(self.stdout, DisableMouseCapture, DisableFocusChange);
         }
@@ -552,12 +572,12 @@ fn find_cursor_marker(buffer: &Buffer) -> Option<(u32, u32)> {
     None
 }
 
-fn apply_style(w: &mut impl Write, style: &Style) -> io::Result<()> {
+fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
     if let Some(fg) = style.fg {
-        queue!(w, SetForegroundColor(to_crossterm_color(fg)))?;
+        queue!(w, SetForegroundColor(to_crossterm_color(fg, depth)))?;
     }
     if let Some(bg) = style.bg {
-        queue!(w, SetBackgroundColor(to_crossterm_color(bg)))?;
+        queue!(w, SetBackgroundColor(to_crossterm_color(bg, depth)))?;
     }
     let m = style.modifiers;
     if m.contains(Modifiers::BOLD) {
@@ -581,7 +601,8 @@ fn apply_style(w: &mut impl Write, style: &Style) -> io::Result<()> {
     Ok(())
 }
 
-fn to_crossterm_color(color: Color) -> CtColor {
+fn to_crossterm_color(color: Color, depth: ColorDepth) -> CtColor {
+    let color = color.downsampled(depth);
     match color {
         Color::Reset => CtColor::Reset,
         Color::Black => CtColor::Black,
