@@ -1005,16 +1005,23 @@ impl CommandPaletteState {
     }
 
     pub(crate) fn filtered_indices(&self) -> Vec<usize> {
-        if self.input.is_empty() {
+        let tokens: Vec<String> = self
+            .input
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect();
+        if tokens.is_empty() {
             return (0..self.commands.len()).collect();
         }
-        let query = self.input.to_lowercase();
         self.commands
             .iter()
             .enumerate()
             .filter(|(_, cmd)| {
-                cmd.label.to_lowercase().contains(&query)
-                    || cmd.description.to_lowercase().contains(&query)
+                let label = cmd.label.to_lowercase();
+                let desc = cmd.description.to_lowercase();
+                tokens
+                    .iter()
+                    .all(|token| label.contains(token.as_str()) || desc.contains(token.as_str()))
             })
             .map(|(i, _)| i)
             .collect()

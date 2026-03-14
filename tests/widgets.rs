@@ -1519,6 +1519,74 @@ fn command_palette_open() {
 }
 
 #[test]
+fn command_palette_filter_single_token() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+        PaletteCommand::new("Quit", "Exit the application"),
+    ]);
+    state.open = true;
+    state.input = "open".into();
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+    tb.assert_contains("Open File");
+    assert!(!tb.to_string().contains("Save File"));
+    assert!(!tb.to_string().contains("Quit"));
+}
+
+#[test]
+fn command_palette_filter_multi_token_cross_field() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+        PaletteCommand::new("Quit", "Exit the application"),
+    ]);
+    state.open = true;
+    state.input = "save buffer".into();
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+    tb.assert_contains("Save File");
+    assert!(!tb.to_string().contains("Open File"));
+    assert!(!tb.to_string().contains("Quit"));
+}
+
+#[test]
+fn command_palette_filter_multi_token_no_match() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+    ]);
+    state.open = true;
+    state.input = "open buffer".into();
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+    assert!(!tb.to_string().contains("Open File"));
+    assert!(!tb.to_string().contains("Save File"));
+}
+
+#[test]
+fn command_palette_filter_whitespace_shows_all() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Open File", "Open a file from disk"),
+        PaletteCommand::new("Save File", "Save current buffer"),
+    ]);
+    state.open = true;
+    state.input = "   ".into();
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+    tb.assert_contains("Open File");
+    tb.assert_contains("Save File");
+}
+
+#[test]
 fn markdown_heading() {
     let mut tb = TestBackend::new(80, 24);
     tb.render(|ui| {
