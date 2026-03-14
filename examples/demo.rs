@@ -116,6 +116,9 @@ fn main() -> std::io::Result<()> {
         "Haskell",
     ]);
     let mut list_filter_input = TextInputState::with_placeholder("Filter list...");
+    let mut v8_dark_mode = false;
+    let mut v8_tween = slt::anim::Tween::new(0.0, 100.0, 120);
+    let mut v8_anim_done = false;
 
     slt::run_with(
         RunConfig {
@@ -151,8 +154,14 @@ fn main() -> std::io::Result<()> {
             if ui.key_seq("gg") {
                 scroll.offset = 0;
             }
+            for i in 1..=8u8 {
+                if ui.key((b'0' + i) as char) {
+                    page_tabs.selected = (i - 1) as usize;
+                }
+            }
 
             ui.set_theme(themes[theme_idx]());
+            ui.set_dark_mode(v8_dark_mode);
 
             let theme = *ui.theme();
             ui.container()
@@ -212,7 +221,15 @@ fn main() -> std::io::Result<()> {
                                 &mut v7_tool,
                                 &mut v7_stream_tick,
                             ),
-                            7 => render_v080(ui, &mut list_with_filter, &mut list_filter_input),
+                            7 => render_v080(
+                                ui,
+                                &mut list_with_filter,
+                                &mut list_filter_input,
+                                &mut v8_dark_mode,
+                                &mut v8_tween,
+                                &mut v8_anim_done,
+                                tick,
+                            ),
                             _ => {}
                         });
 
@@ -224,6 +241,7 @@ fn main() -> std::io::Result<()> {
                         ("o", "toggle overlay"),
                         ("h/l", "progress -/+"),
                         ("Ctrl+P", "palette"),
+                        ("1-8", "tab"),
                         ("gg", "top"),
                         ("Tab", "focus"),
                         ("F12", "debug"),
@@ -981,6 +999,10 @@ fn render_v080(
     ui: &mut Context,
     list_with_filter: &mut ListState,
     list_filter_input: &mut TextInputState,
+    v8_dark_mode: &mut bool,
+    v8_tween: &mut slt::anim::Tween,
+    v8_anim_done: &mut bool,
+    tick: u64,
 ) {
     let theme = *ui.theme();
     section(ui, "v0.8.0 FEATURES");
@@ -989,16 +1011,21 @@ fn render_v080(
     card(ui, |ui| {
         ui.row_gap(2, |ui| {
             ui.container()
-                .bg(Color::White)
-                .dark_bg(Color::Indexed(236))
+                .bg(Color::Rgb(240, 240, 240))
+                .dark_bg(Color::Rgb(30, 30, 46))
                 .p(1)
                 .col(|ui| {
-                    ui.text("Auto-adapts to dark/light mode");
+                    ui.text("This background changes with dark/light mode");
                 });
             if ui.button("Toggle Dark") {
-                let current = ui.is_dark_mode();
-                ui.set_dark_mode(!current);
+                *v8_dark_mode = !*v8_dark_mode;
             }
+            ui.text(if *v8_dark_mode {
+                "Mode: Dark"
+            } else {
+                "Mode: Light"
+            })
+            .dim();
         });
     });
 
@@ -1027,27 +1054,43 @@ fn render_v080(
 
     section(ui, "LIST FILTER");
     card(ui, |ui| {
+        ui.text("Type to filter (multi-token AND: 'ty script' matches TypeScript)")
+            .dim();
         ui.text_input(list_filter_input);
         if list_filter_input.value != list_with_filter.filter {
             list_with_filter.set_filter(&list_filter_input.value);
         }
         ui.list(list_with_filter);
+        ui.text(format!(
+            "{}/{} items shown",
+            list_with_filter.visible_indices().len(),
+            8
+        ))
+        .dim();
     });
 
     section(ui, "THEME BUILDER");
     card(ui, |ui| {
-        ui.text("Theme::builder().primary(Color::Rgb(255,107,107)).build()")
-            .dim();
+        ui.text("Custom themes from Theme::builder()").dim();
         let custom = slt::Theme::builder()
             .primary(Color::Rgb(255, 107, 107))
             .secondary(Color::Rgb(78, 205, 196))
             .accent(Color::Rgb(255, 230, 109))
             .build();
         ui.row_gap(1, |ui| {
-            ui.text("Primary").fg(custom.primary);
-            ui.text("Secondary").fg(custom.secondary);
-            ui.text("Accent").fg(custom.accent);
+            ui.text("■ Primary").fg(custom.primary);
+            ui.text("■ Secondary").fg(custom.secondary);
+            ui.text("■ Accent").fg(custom.accent);
+            ui.text("■ Success").fg(custom.success);
+            ui.text("■ Warning").fg(custom.warning);
+            ui.text("■ Error").fg(custom.error);
         });
+        ui.text("").dim();
+        ui.text("Theme::builder()").fg(custom.accent);
+        ui.text("    .primary(Color::Rgb(255, 107, 107))").dim();
+        ui.text("    .secondary(Color::Rgb(78, 205, 196))").dim();
+        ui.text("    .accent(Color::Rgb(255, 230, 109))").dim();
+        ui.text("    .build()").dim();
     });
 
     section(ui, "NEW CHARTS");
@@ -1068,10 +1111,24 @@ fn render_v080(
 
     section(ui, "ANIMATION CALLBACK");
     card(ui, |ui| {
-        ui.text("Tween/Spring/Sequence now support .on_complete()")
-            .dim();
-        ui.text("let tween = Tween::new(0.0, 100.0, 60).on_complete(|| done = true);")
-            .dim();
+        let val = v8_tween.value(tick);
+        let progress = val / 100.0;
+        ui.progress(progress);
+
+        ui.row_gap(1, |ui| {
+            ui.text(format!("Value: {:.0}", val));
+            if *v8_anim_done {
+                ui.text("✓ on_complete fired!").fg(Color::Green).bold();
+            }
+            if ui.button("Restart") {
+                v8_tween.reset(tick);
+                *v8_anim_done = false;
+            }
+        });
+
+        if v8_tween.is_done() && !*v8_anim_done {
+            *v8_anim_done = true;
+        }
     });
 
     section(ui, "HOOKS (use_state)");
