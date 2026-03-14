@@ -4,8 +4,8 @@ use crate::halfblock::HalfBlockImage;
 use crate::layout::{Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
-    Align, Border, BorderSides, Breakpoint, Color, Constraints, Justify, Margin, Modifiers,
-    Padding, Style, Theme,
+    Align, Border, BorderSides, Breakpoint, Color, Constraints, ContainerStyle, Justify, Margin,
+    Modifiers, Padding, Style, Theme,
 };
 use crate::widgets::{
     ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
@@ -722,6 +722,74 @@ impl CanvasContext {
 
 impl<'a> ContainerBuilder<'a> {
     // ── border ───────────────────────────────────────────────────────
+
+    /// Apply a reusable [`ContainerStyle`] recipe. Only set fields override
+    /// the builder's current values. Chain multiple `.apply()` calls to compose.
+    pub fn apply(mut self, style: &ContainerStyle) -> Self {
+        if let Some(v) = style.border {
+            self.border = Some(v);
+        }
+        if let Some(v) = style.border_sides {
+            self.border_sides = v;
+        }
+        if let Some(v) = style.border_style {
+            self.border_style = v;
+        }
+        if let Some(v) = style.bg {
+            self.bg_color = Some(v);
+        }
+        if let Some(v) = style.dark_bg {
+            self.dark_bg_color = Some(v);
+        }
+        if let Some(v) = style.dark_border_style {
+            self.dark_border_style = Some(v);
+        }
+        if let Some(v) = style.padding {
+            self.padding = v;
+        }
+        if let Some(v) = style.margin {
+            self.margin = v;
+        }
+        if let Some(v) = style.gap {
+            self.gap = v;
+        }
+        if let Some(v) = style.grow {
+            self.grow = v;
+        }
+        if let Some(v) = style.align {
+            self.align = v;
+        }
+        if let Some(v) = style.justify {
+            self.justify = v;
+        }
+        if let Some(w) = style.w {
+            self.constraints.min_width = Some(w);
+            self.constraints.max_width = Some(w);
+        }
+        if let Some(h) = style.h {
+            self.constraints.min_height = Some(h);
+            self.constraints.max_height = Some(h);
+        }
+        if let Some(v) = style.min_w {
+            self.constraints.min_width = Some(v);
+        }
+        if let Some(v) = style.max_w {
+            self.constraints.max_width = Some(v);
+        }
+        if let Some(v) = style.min_h {
+            self.constraints.min_height = Some(v);
+        }
+        if let Some(v) = style.max_h {
+            self.constraints.max_height = Some(v);
+        }
+        if let Some(v) = style.w_pct {
+            self.constraints.width_pct = Some(v);
+        }
+        if let Some(v) = style.h_pct {
+            self.constraints.height_pct = Some(v);
+        }
+        self
+    }
 
     /// Set the border style.
     pub fn border(mut self, border: Border) -> Self {

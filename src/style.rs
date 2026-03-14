@@ -1196,3 +1196,210 @@ impl Style {
         self
     }
 }
+
+/// Reusable container style recipe.
+///
+/// Define once, apply anywhere with [`ContainerBuilder::apply`]. All fields
+/// are optional — only set fields override the builder's current values.
+/// Styles compose: apply multiple recipes in sequence, last write wins.
+///
+/// # Example
+///
+/// ```ignore
+/// use slt::{ContainerStyle, Border, Color};
+///
+/// const CARD: ContainerStyle = ContainerStyle::new()
+///     .border(Border::Rounded)
+///     .p(1)
+///     .bg(Color::Indexed(236));
+///
+/// const DANGER: ContainerStyle = ContainerStyle::new()
+///     .bg(Color::Red);
+///
+/// // Apply one or compose multiple:
+/// ui.container().apply(&CARD).col(|ui| { ... });
+/// ui.container().apply(&CARD).apply(&DANGER).col(|ui| { ... });
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ContainerStyle {
+    pub border: Option<Border>,
+    pub border_sides: Option<BorderSides>,
+    pub border_style: Option<Style>,
+    pub bg: Option<Color>,
+    pub dark_bg: Option<Color>,
+    pub dark_border_style: Option<Style>,
+    pub padding: Option<Padding>,
+    pub margin: Option<Margin>,
+    pub gap: Option<u32>,
+    pub grow: Option<u16>,
+    pub align: Option<Align>,
+    pub justify: Option<Justify>,
+    pub w: Option<u32>,
+    pub h: Option<u32>,
+    pub min_w: Option<u32>,
+    pub max_w: Option<u32>,
+    pub min_h: Option<u32>,
+    pub max_h: Option<u32>,
+    pub w_pct: Option<u8>,
+    pub h_pct: Option<u8>,
+}
+
+impl ContainerStyle {
+    /// Create an empty container style with no overrides.
+    pub const fn new() -> Self {
+        Self {
+            border: None,
+            border_sides: None,
+            border_style: None,
+            bg: None,
+            dark_bg: None,
+            dark_border_style: None,
+            padding: None,
+            margin: None,
+            gap: None,
+            grow: None,
+            align: None,
+            justify: None,
+            w: None,
+            h: None,
+            min_w: None,
+            max_w: None,
+            min_h: None,
+            max_h: None,
+            w_pct: None,
+            h_pct: None,
+        }
+    }
+
+    /// Set the border style.
+    pub const fn border(mut self, border: Border) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    /// Set which border sides to render.
+    pub const fn border_sides(mut self, sides: BorderSides) -> Self {
+        self.border_sides = Some(sides);
+        self
+    }
+
+    /// Set the background color.
+    pub const fn bg(mut self, color: Color) -> Self {
+        self.bg = Some(color);
+        self
+    }
+
+    /// Set the dark-mode background color.
+    pub const fn dark_bg(mut self, color: Color) -> Self {
+        self.dark_bg = Some(color);
+        self
+    }
+
+    /// Set uniform padding on all sides.
+    pub const fn p(mut self, value: u32) -> Self {
+        self.padding = Some(Padding {
+            top: value,
+            bottom: value,
+            left: value,
+            right: value,
+        });
+        self
+    }
+
+    /// Set horizontal padding.
+    pub const fn px(mut self, value: u32) -> Self {
+        let p = match self.padding {
+            Some(p) => Padding {
+                left: value,
+                right: value,
+                ..p
+            },
+            None => Padding {
+                top: 0,
+                bottom: 0,
+                left: value,
+                right: value,
+            },
+        };
+        self.padding = Some(p);
+        self
+    }
+
+    /// Set vertical padding.
+    pub const fn py(mut self, value: u32) -> Self {
+        let p = match self.padding {
+            Some(p) => Padding {
+                top: value,
+                bottom: value,
+                ..p
+            },
+            None => Padding {
+                top: value,
+                bottom: value,
+                left: 0,
+                right: 0,
+            },
+        };
+        self.padding = Some(p);
+        self
+    }
+
+    /// Set uniform margin on all sides.
+    pub const fn m(mut self, value: u32) -> Self {
+        self.margin = Some(Margin {
+            top: value,
+            bottom: value,
+            left: value,
+            right: value,
+        });
+        self
+    }
+
+    /// Set the gap between children.
+    pub const fn gap(mut self, value: u32) -> Self {
+        self.gap = Some(value);
+        self
+    }
+
+    /// Set the flex-grow factor.
+    pub const fn grow(mut self, value: u16) -> Self {
+        self.grow = Some(value);
+        self
+    }
+
+    /// Set fixed width.
+    pub const fn w(mut self, value: u32) -> Self {
+        self.w = Some(value);
+        self
+    }
+
+    /// Set fixed height.
+    pub const fn h(mut self, value: u32) -> Self {
+        self.h = Some(value);
+        self
+    }
+
+    /// Set minimum width.
+    pub const fn min_w(mut self, value: u32) -> Self {
+        self.min_w = Some(value);
+        self
+    }
+
+    /// Set maximum width.
+    pub const fn max_w(mut self, value: u32) -> Self {
+        self.max_w = Some(value);
+        self
+    }
+
+    /// Set cross-axis alignment.
+    pub const fn align(mut self, value: Align) -> Self {
+        self.align = Some(value);
+        self
+    }
+
+    /// Set main-axis justification.
+    pub const fn justify(mut self, value: Justify) -> Self {
+        self.justify = Some(value);
+        self
+    }
+}

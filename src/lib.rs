@@ -66,8 +66,8 @@ pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response,
 pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use halfblock::HalfBlockImage;
 pub use style::{
-    Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, Justify, Margin,
-    Modifiers, Padding, Style, Theme, ThemeBuilder,
+    Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
+    Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder,
 };
 pub use widgets::{
     ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
