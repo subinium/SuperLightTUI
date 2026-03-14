@@ -69,6 +69,31 @@ User closure -> Context collects Commands -> build_tree() -> flexbox compute -> 
 - **Flexbox**: Row/column layout with gap, grow, shrink
 - **One-frame delay**: Layout-computed data (focus count, scroll bounds, hit areas) feeds back to the next frame via `prev_*` fields
 
+## Releasing
+
+Releases are automated via GitHub Actions. To publish a new version:
+
+```sh
+# 1. Bump version in Cargo.toml
+# 2. Update CHANGELOG.md with new section
+# 3. Commit and push
+git add Cargo.toml Cargo.lock CHANGELOG.md
+git commit -m "chore: release vX.Y.Z"
+git push
+
+# 4. Tag triggers the release pipeline
+git tag vX.Y.Z
+git push --tags
+```
+
+The release workflow (`.github/workflows/release.yml`) will:
+1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.74
+2. Verify tag matches `Cargo.toml` version
+3. Publish to crates.io
+4. Create GitHub Release with notes extracted from CHANGELOG.md
+
+**Do not** run `cargo publish` manually — let the workflow handle it.
+
 ## Dependencies
 
 Only `crossterm` and `unicode-width`. `tokio` is optional behind the `async` feature flag. Do not add new dependencies without discussion.
