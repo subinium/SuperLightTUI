@@ -15,6 +15,7 @@ fn main() -> std::io::Result<()> {
         "Feedback",
         "Advanced",
         "v0.7.0",
+        "v0.8.0",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -104,6 +105,17 @@ fn main() -> std::io::Result<()> {
     let mut v7_stream = StreamingTextState::new();
     let mut v7_tool = ToolApprovalState::new("read_file", "Read contents of config.toml");
     let mut v7_stream_tick: u64 = 0;
+    let mut list_with_filter = ListState::new(vec![
+        "Rust",
+        "Go",
+        "Python",
+        "TypeScript",
+        "JavaScript",
+        "C++",
+        "Zig",
+        "Haskell",
+    ]);
+    let mut list_filter_input = TextInputState::with_placeholder("Filter list...");
 
     slt::run_with(
         RunConfig {
@@ -200,6 +212,7 @@ fn main() -> std::io::Result<()> {
                                 &mut v7_tool,
                                 &mut v7_stream_tick,
                             ),
+                            7 => render_v080(ui, &mut list_with_filter, &mut list_filter_input),
                             _ => {}
                         });
 
@@ -960,6 +973,121 @@ fn render_v070(
                 ui.separator();
                 ui.text("DevTools: Press F12").bold().fg(theme.warning);
             });
+        });
+    });
+}
+
+fn render_v080(
+    ui: &mut Context,
+    list_with_filter: &mut ListState,
+    list_filter_input: &mut TextInputState,
+) {
+    let theme = *ui.theme();
+    section(ui, "v0.8.0 FEATURES");
+
+    section(ui, "DARK MODE");
+    card(ui, |ui| {
+        ui.row_gap(2, |ui| {
+            ui.container()
+                .bg(Color::White)
+                .dark_bg(Color::Indexed(236))
+                .p(1)
+                .col(|ui| {
+                    ui.text("Auto-adapts to dark/light mode");
+                });
+            if ui.button("Toggle Dark") {
+                let current = ui.is_dark_mode();
+                ui.set_dark_mode(!current);
+            }
+        });
+    });
+
+    section(ui, "RESPONSIVE LAYOUT");
+    card(ui, |ui| {
+        ui.text(format!("Breakpoint: {:?}", ui.breakpoint())).dim();
+        ui.row_gap(1, |ui| {
+            ui.container()
+                .w(20)
+                .md_w(30)
+                .lg_w(40)
+                .border(Border::Rounded)
+                .p(1)
+                .col(|ui| {
+                    ui.text("Responsive width");
+                });
+            ui.container()
+                .grow(1)
+                .border(Border::Single)
+                .p(1)
+                .col(|ui| {
+                    ui.text("Grows to fill");
+                });
+        });
+    });
+
+    section(ui, "LIST FILTER");
+    card(ui, |ui| {
+        ui.text_input(list_filter_input);
+        if list_filter_input.value != list_with_filter.filter {
+            list_with_filter.set_filter(&list_filter_input.value);
+        }
+        ui.list(list_with_filter);
+    });
+
+    section(ui, "THEME BUILDER");
+    card(ui, |ui| {
+        ui.text("Theme::builder().primary(Color::Rgb(255,107,107)).build()")
+            .dim();
+        let custom = slt::Theme::builder()
+            .primary(Color::Rgb(255, 107, 107))
+            .secondary(Color::Rgb(78, 205, 196))
+            .accent(Color::Rgb(255, 230, 109))
+            .build();
+        ui.row_gap(1, |ui| {
+            ui.text("Primary").fg(custom.primary);
+            ui.text("Secondary").fg(custom.secondary);
+            ui.text("Accent").fg(custom.accent);
+        });
+    });
+
+    section(ui, "NEW CHARTS");
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Pie Chart").bold().fg(theme.primary);
+            ui.pie_chart(&[("Rust", 45.0), ("Go", 30.0), ("Python", 25.0)], 6);
+        });
+        card(ui, |ui| {
+            ui.text("Scatter Plot").bold().fg(theme.secondary);
+            ui.scatter(
+                &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
+                30,
+                10,
+            );
+        });
+    });
+
+    section(ui, "ANIMATION CALLBACK");
+    card(ui, |ui| {
+        ui.text("Tween/Spring/Sequence now support .on_complete()")
+            .dim();
+        ui.text("let tween = Tween::new(0.0, 100.0, 60).on_complete(|| done = true);")
+            .dim();
+    });
+
+    section(ui, "HOOKS (use_state)");
+    card(ui, |ui| {
+        let counter = ui.use_state(|| 0i32);
+        ui.row_gap(1, |ui| {
+            ui.text(format!("Count: {}", counter.get(ui)));
+            if ui.button("+1") {
+                *counter.get_mut(ui) += 1;
+            }
+            if ui.button("-1") {
+                *counter.get_mut(ui) -= 1;
+            }
+            if ui.button("Reset") {
+                *counter.get_mut(ui) = 0;
+            }
         });
     });
 }

@@ -381,20 +381,62 @@ pub struct ListState {
     pub items: Vec<String>,
     /// Index of the currently selected item.
     pub selected: usize,
+    /// Case-insensitive substring filter applied to list items.
+    pub filter: String,
+    view_indices: Vec<usize>,
 }
 
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
+        let len = items.len();
         Self {
             items: items.into_iter().map(Into::into).collect(),
             selected: 0,
+            filter: String::new(),
+            view_indices: (0..len).collect(),
         }
+    }
+
+    /// Set the filter string. Multiple space-separated tokens are AND'd
+    /// together — all tokens must match across any cell in the same row.
+    /// Empty string disables filtering.
+    pub fn set_filter(&mut self, filter: impl Into<String>) {
+        self.filter = filter.into();
+        self.rebuild_view();
+    }
+
+    /// Returns indices of items visible after filtering.
+    pub fn visible_indices(&self) -> &[usize] {
+        &self.view_indices
     }
 
     /// Get the currently selected item text, or `None` if the list is empty.
     pub fn selected_item(&self) -> Option<&str> {
-        self.items.get(self.selected).map(String::as_str)
+        let data_idx = *self.view_indices.get(self.selected)?;
+        self.items.get(data_idx).map(String::as_str)
+    }
+
+    fn rebuild_view(&mut self) {
+        let tokens: Vec<String> = self
+            .filter
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect();
+        self.view_indices = if tokens.is_empty() {
+            (0..self.items.len()).collect()
+        } else {
+            (0..self.items.len())
+                .filter(|&i| {
+                    tokens
+                        .iter()
+                        .all(|token| self.items[i].to_lowercase().contains(token.as_str()))
+                })
+                .collect()
+        };
+        if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
+            self.selected = self.view_indices.len() - 1;
+        }
     }
 }
 
@@ -507,7 +549,9 @@ impl TableState {
         self.rebuild_view();
     }
 
-    /// Set the filter string. Empty string disables filtering.
+    /// Set the filter string. Multiple space-separated tokens are AND'd
+    /// together — all tokens must match across any cell in the same row.
+    /// Empty string disables filtering.
     pub fn set_filter(&mut self, filter: impl Into<String>) {
         self.filter = filter.into();
         self.page = 0;

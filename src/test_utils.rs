@@ -150,6 +150,7 @@ pub struct TestBackend {
     buffer: Buffer,
     width: u32,
     height: u32,
+    hook_states: Vec<Box<dyn std::any::Any>>,
 }
 
 impl TestBackend {
@@ -160,6 +161,7 @@ impl TestBackend {
             buffer: Buffer::empty(area),
             width,
             height,
+            hook_states: Vec::new(),
         }
     }
 
@@ -176,6 +178,9 @@ impl TestBackend {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::mem::take(&mut self.hook_states),
             false,
             Theme::dark(),
             None,
@@ -183,6 +188,7 @@ impl TestBackend {
         );
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
+        self.hook_states = ctx.hook_states;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
         self.buffer.reset();
@@ -208,6 +214,9 @@ impl TestBackend {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::mem::take(&mut self.hook_states),
             false,
             Theme::dark(),
             None,
@@ -216,6 +225,7 @@ impl TestBackend {
         ctx.process_focus_keys();
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
+        self.hook_states = ctx.hook_states;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
         self.buffer.reset();
