@@ -54,8 +54,6 @@ pub enum GraphType {
     Scatter,
     /// Vertical bars from the x-axis baseline.
     Bar,
-    /// Filled area under a connected line.
-    Area,
 }
 
 /// Legend placement.
@@ -306,11 +304,6 @@ impl ChartBuilder {
     /// Add a bar dataset.
     pub fn bar(&mut self, data: &[(f64, f64)]) -> &mut DatasetEntry {
         self.push_dataset(data, GraphType::Bar, Marker::Block)
-    }
-
-    /// Add an area dataset.
-    pub fn area(&mut self, data: &[(f64, f64)]) -> &mut DatasetEntry {
-        self.push_dataset(data, GraphType::Area, Marker::Braille)
     }
 
     /// Build the final chart config.
@@ -599,17 +592,6 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         match dataset.graph_type {
             GraphType::Line | GraphType::Scatter => {
                 draw_braille_dataset(
-                    dataset,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &mut plot_chars,
-                    &mut plot_styles,
-                );
-            }
-            GraphType::Area => {
-                draw_area_dataset(
                     dataset,
                     x_min,
                     x_max,
@@ -1017,106 +999,10 @@ fn build_legend_items(datasets: &[Dataset]) -> Vec<(char, String, Color)> {
                 GraphType::Line => '─',
                 GraphType::Scatter => marker_char(d.marker),
                 GraphType::Bar => '█',
-                GraphType::Area => '▄',
             };
             (symbol, d.name.clone(), d.color)
         })
         .collect()
-}
-
-fn draw_area_dataset(
-    dataset: &Dataset,
-    x_min: f64,
-    x_max: f64,
-    y_min: f64,
-    y_max: f64,
-    plot_chars: &mut [Vec<char>],
-    plot_styles: &mut [Vec<Style>],
-) {
-    if dataset.data.is_empty() || plot_chars.is_empty() || plot_chars[0].is_empty() {
-        return;
-    }
-
-    let rows = plot_chars.len();
-    let cols = plot_chars[0].len();
-    let zero_row = map_value_to_cell(0.0, y_min, y_max, rows, true);
-
-    let points: Vec<(usize, usize)> = dataset
-        .data
-        .iter()
-        .filter(|(x, y)| x.is_finite() && y.is_finite())
-        .map(|(x, y)| {
-            (
-                map_value_to_cell(*x, x_min, x_max, cols, false),
-                map_value_to_cell(*y, y_min, y_max, rows, true),
-            )
-        })
-        .collect();
-
-    if points.is_empty() {
-        return;
-    }
-
-    let mut line_rows: Vec<Option<usize>> = vec![None; cols];
-    if points.len() == 1 {
-        line_rows[points[0].0] = Some(points[0].1);
-    } else {
-        for pair in points.windows(2) {
-            if let [a, b] = pair {
-                let (x0, y0) = (a.0 as isize, a.1 as isize);
-                let (x1, y1) = (b.0 as isize, b.1 as isize);
-
-                if x0 == x1 {
-                    let col = x0.max(0) as usize;
-                    if col < cols {
-                        let row = y0.min(y1).max(0) as usize;
-                        line_rows[col] = Some(row.min(rows.saturating_sub(1)));
-                    }
-                    continue;
-                }
-
-                let (start_x, end_x) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
-                for x in start_x..=end_x {
-                    let t = (x - x0) as f64 / (x1 - x0) as f64;
-                    let y = (y0 as f64 + (y1 - y0) as f64 * t).round() as isize;
-                    if x < 0 || y < 0 {
-                        continue;
-                    }
-                    let col = x as usize;
-                    let row = (y as usize).min(rows.saturating_sub(1));
-                    if col < cols {
-                        line_rows[col] = Some(row);
-                    }
-                }
-            }
-        }
-    }
-
-    let fill_style = Style::new().fg(dataset.color).dim();
-    for (col, line_row) in line_rows.into_iter().enumerate() {
-        if let Some(row) = line_row {
-            let start = row.min(zero_row).saturating_add(1);
-            let end = row.max(zero_row);
-            for fill_row in start..=end.min(rows.saturating_sub(1)) {
-                if plot_chars[fill_row][col] == ' ' || plot_chars[fill_row][col] == '·' {
-                    plot_chars[fill_row][col] = '▄';
-                    plot_styles[fill_row][col] = fill_style;
-                }
-            }
-        }
-    }
-
-    let mut line_dataset = dataset.clone();
-    line_dataset.graph_type = GraphType::Line;
-    draw_braille_dataset(
-        &line_dataset,
-        x_min,
-        x_max,
-        y_min,
-        y_max,
-        plot_chars,
-        plot_styles,
-    );
 }
 
 fn marker_char(marker: Marker) -> char {

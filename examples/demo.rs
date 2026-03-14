@@ -129,33 +129,33 @@ fn main() -> std::io::Result<()> {
         |ui: &mut Context| {
             let tick = ui.tick();
 
-            if ui.key('q') {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();
             }
-            if ui.key('t') {
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
                 theme_idx = (theme_idx + 1) % themes.len();
                 toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
             }
-            if ui.key('h') {
+            if ui.key_mod('h', slt::KeyModifiers::CONTROL) {
                 progress = (progress - 0.05).max(0.0);
             }
-            if ui.key('l') {
+            if ui.key_mod('l', slt::KeyModifiers::CONTROL) {
                 progress = (progress + 0.05).min(1.0);
             }
-            if ui.key('m') {
+            if ui.key_mod('m', slt::KeyModifiers::CONTROL) {
                 show_modal = !show_modal;
             }
-            if ui.key('o') {
+            if ui.key_mod('o', slt::KeyModifiers::CONTROL) {
                 show_overlay = !show_overlay;
             }
             if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
                 palette.open = !palette.open;
             }
-            if ui.key_seq("gg") {
+            if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
                 scroll.offset = 0;
             }
             for i in 1..=8u8 {
-                if ui.key((b'0' + i) as char) {
+                if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
                     page_tabs.selected = (i - 1) as usize;
                 }
             }
@@ -235,14 +235,14 @@ fn main() -> std::io::Result<()> {
 
                     ui.separator();
                     ui.help(&[
-                        ("q", "quit"),
-                        ("t", "next theme"),
-                        ("m", "toggle modal"),
-                        ("o", "toggle overlay"),
-                        ("h/l", "progress -/+"),
-                        ("Ctrl+P", "palette"),
-                        ("1-8", "tab"),
-                        ("gg", "top"),
+                        ("^Q/Esc", "quit"),
+                        ("^T", "theme"),
+                        ("^M", "modal"),
+                        ("^O", "overlay"),
+                        ("^H/^L", "progress"),
+                        ("^P", "palette"),
+                        ("^1-8", "tab"),
+                        ("^G", "top"),
                         ("Tab", "focus"),
                         ("F12", "debug"),
                     ]);
@@ -1071,12 +1071,46 @@ fn render_v080(
 
     section(ui, "THEME BUILDER");
     card(ui, |ui| {
-        ui.text("Custom themes from Theme::builder()").dim();
-        let custom = slt::Theme::builder()
-            .primary(Color::Rgb(255, 107, 107))
-            .secondary(Color::Rgb(78, 205, 196))
-            .accent(Color::Rgb(255, 230, 109))
-            .build();
+        let presets: &[(&str, slt::Theme)] = &[
+            (
+                "Coral",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(255, 107, 107))
+                    .secondary(Color::Rgb(78, 205, 196))
+                    .accent(Color::Rgb(255, 230, 109))
+                    .build(),
+            ),
+            (
+                "Ocean",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(86, 156, 214))
+                    .secondary(Color::Rgb(78, 201, 176))
+                    .accent(Color::Rgb(209, 154, 102))
+                    .build(),
+            ),
+            (
+                "Forest",
+                slt::Theme::builder()
+                    .primary(Color::Rgb(152, 195, 121))
+                    .secondary(Color::Rgb(229, 192, 123))
+                    .accent(Color::Rgb(198, 120, 221))
+                    .build(),
+            ),
+        ];
+        let idx_state = ui.use_state(|| 0usize);
+        let idx = *idx_state.get(ui);
+        let (name, ref custom) = presets[idx % presets.len()];
+
+        ui.row_gap(1, |ui| {
+            for (i, (label, _)) in presets.iter().enumerate() {
+                if i == idx {
+                    ui.text(format!("● {label}")).bold().fg(custom.primary);
+                } else if ui.button(*label) {
+                    *idx_state.get_mut(ui) = i;
+                }
+            }
+            ui.text("  →  applies to entire app").dim();
+        });
         ui.row_gap(1, |ui| {
             ui.text("■ Primary").fg(custom.primary);
             ui.text("■ Secondary").fg(custom.secondary);
@@ -1085,28 +1119,16 @@ fn render_v080(
             ui.text("■ Warning").fg(custom.warning);
             ui.text("■ Error").fg(custom.error);
         });
-        ui.text("").dim();
-        ui.text("Theme::builder()").fg(custom.accent);
-        ui.text("    .primary(Color::Rgb(255, 107, 107))").dim();
-        ui.text("    .secondary(Color::Rgb(78, 205, 196))").dim();
-        ui.text("    .accent(Color::Rgb(255, 230, 109))").dim();
-        ui.text("    .build()").dim();
+        ui.set_theme(presets[idx % presets.len()].1);
     });
 
-    section(ui, "NEW CHARTS");
-    ui.row(|ui| {
-        card(ui, |ui| {
-            ui.text("Pie Chart").bold().fg(theme.primary);
-            ui.pie_chart(&[("Rust", 45.0), ("Go", 30.0), ("Python", 25.0)], 6);
-        });
-        card(ui, |ui| {
-            ui.text("Scatter Plot").bold().fg(theme.secondary);
-            ui.scatter(
-                &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
-                30,
-                10,
-            );
-        });
+    section(ui, "SCATTER PLOT");
+    card(ui, |ui| {
+        ui.scatter(
+            &[(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 7.0), (5.0, 4.0)],
+            40,
+            10,
+        );
     });
 
     section(ui, "ANIMATION CALLBACK");
@@ -1131,11 +1153,31 @@ fn render_v080(
         }
     });
 
-    section(ui, "HOOKS (use_state)");
+    section(ui, "GROUP HOVER");
+    ui.row_gap(1, |ui| {
+        for name in &["Card A", "Card B", "Card C"] {
+            ui.group(name)
+                .border(Border::Rounded)
+                .p(1)
+                .grow(1)
+                .group_hover_bg(Color::Indexed(238))
+                .col(|ui| {
+                    ui.text(*name).bold();
+                    ui.text("Hover to highlight").dim();
+                });
+        }
+    });
+
+    section(ui, "HOOKS (use_state + use_memo)");
     card(ui, |ui| {
         let counter = ui.use_state(|| 0i32);
+        let count_val = *counter.get(ui);
+        let doubled = *ui.use_memo(&count_val, |c| c * 2);
+        let tripled = *ui.use_memo(&count_val, |c| c * 3);
         ui.row_gap(1, |ui| {
-            ui.text(format!("Count: {}", counter.get(ui)));
+            ui.text(format!("Count: {count_val}"));
+            ui.text(format!("×2 = {doubled}")).fg(Color::Cyan);
+            ui.text(format!("×3 = {tripled}")).fg(Color::Green);
             if ui.button("+1") {
                 *counter.get_mut(ui) += 1;
             }
@@ -1146,6 +1188,7 @@ fn render_v080(
                 *counter.get_mut(ui) = 0;
             }
         });
+        ui.text("use_memo recomputes only when deps change").dim();
     });
 }
 

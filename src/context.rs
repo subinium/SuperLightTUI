@@ -13,7 +13,6 @@ use crate::widgets::{
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
     ToastState, ToolApprovalState, TreeState,
 };
-use std::f64::consts::TAU;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]
@@ -788,11 +787,13 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Background color applied when the parent group is hovered.
     pub fn group_hover_bg(mut self, color: Color) -> Self {
         self.group_hover_bg = Some(color);
         self
     }
 
+    /// Border style applied when the parent group is hovered.
     pub fn group_hover_border_style(mut self, style: Style) -> Self {
         self.group_hover_border_style = Some(style);
         self
@@ -2618,6 +2619,7 @@ impl Context {
         }
     }
 
+    /// Returns true if the named group is currently hovered by the mouse.
     pub fn is_group_hovered(&self, name: &str) -> bool {
         if let Some(pos) = self.mouse_pos {
             self.prev_group_rects.iter().any(|(n, rect)| {
@@ -2632,6 +2634,7 @@ impl Context {
         }
     }
 
+    /// Returns true if the named group contains the currently focused widget.
     pub fn is_group_focused(&self, name: &str) -> bool {
         if self.prev_focus_count == 0 {
             return false;
@@ -4051,141 +4054,6 @@ impl Context {
         )
     }
 
-    /// Renders a pie chart using block characters.
-    ///
-    /// `data` is a slice of `(label, value)`. `radius` is the height in rows.
-    pub fn pie_chart(&mut self, data: &[(&str, f64)], radius: u32) -> &mut Self {
-        if radius == 0 {
-            return self;
-        }
-
-        let slices: Vec<(&str, f64)> = data
-            .iter()
-            .copied()
-            .filter(|(_, value)| value.is_finite() && *value > 0.0)
-            .collect();
-
-        if slices.is_empty() {
-            return self;
-        }
-
-        let total: f64 = slices.iter().map(|(_, value)| *value).sum();
-        if total <= 0.0 {
-            return self;
-        }
-
-        let palette = [
-            self.theme.primary,
-            self.theme.secondary,
-            self.theme.accent,
-            self.theme.success,
-            self.theme.warning,
-            self.theme.error,
-        ];
-
-        let mut ranges: Vec<(f64, f64, Color, &str, f64)> = Vec::with_capacity(slices.len());
-        let mut cursor = 0.0;
-        for (index, (label, value)) in slices.iter().enumerate() {
-            let ratio = *value / total;
-            let span = ratio * TAU;
-            let start = cursor;
-            let end = (cursor + span).min(TAU);
-            let color = palette[index % palette.len()];
-            ranges.push((start, end, color, *label, ratio * 100.0));
-            cursor = end;
-        }
-        if let Some(last) = ranges.last_mut() {
-            last.1 = TAU;
-        }
-
-        let r = radius as i32;
-        let x_radius = (radius as f64 * 2.0).max(1.0);
-        for y in -r..=r {
-            self.interaction_count += 1;
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
-
-            let mut current_style = Style::new();
-            let mut buffer = String::new();
-
-            for x in (-2 * r)..=(2 * r) {
-                let nx = x as f64 / x_radius;
-                let ny = y as f64 / radius as f64;
-                let inside = nx * nx + ny * ny <= 1.0;
-
-                let (ch, style) = if inside {
-                    let mut angle = (-ny).atan2(nx);
-                    if angle < 0.0 {
-                        angle += TAU;
-                    }
-
-                    let segment = ranges
-                        .iter()
-                        .position(|(start, end, _, _, _)| angle >= *start && angle < *end)
-                        .unwrap_or_else(|| ranges.len().saturating_sub(1));
-                    ('█', Style::new().fg(ranges[segment].2))
-                } else {
-                    (' ', Style::new())
-                };
-
-                if buffer.is_empty() {
-                    current_style = style;
-                } else if style != current_style {
-                    self.styled(std::mem::take(&mut buffer), current_style);
-                    current_style = style;
-                }
-
-                buffer.push(ch);
-            }
-
-            if !buffer.is_empty() {
-                self.styled(buffer, current_style);
-            }
-
-            self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
-        }
-
-        for (_, _, color, label, percent) in ranges {
-            self.interaction_count += 1;
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
-            self.styled(format!("■ {label} ({percent:.1}%)"), Style::new().fg(color));
-            self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
-        }
-
-        self
-    }
-
     /// Render a histogram from raw data with auto-binning.
     pub fn histogram(&mut self, data: &[f64], width: u32, height: u32) -> &mut Self {
         self.histogram_with(data, |_| {}, width, height)
@@ -4366,12 +4234,15 @@ impl Context {
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
     pub fn list(&mut self, state: &mut ListState) -> &mut Self {
-        if state.items.is_empty() {
+        let visible = state.visible_indices().to_vec();
+        if visible.is_empty() && state.items.is_empty() {
             state.selected = 0;
             return self;
         }
 
-        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        if !visible.is_empty() {
+            state.selected = state.selected.min(visible.len().saturating_sub(1));
+        }
 
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
@@ -4391,7 +4262,7 @@ impl Context {
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             state.selected =
-                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                                (state.selected + 1).min(visible.len().saturating_sub(1));
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -4421,7 +4292,7 @@ impl Context {
                         continue;
                     }
                     let clicked_idx = (mouse.y - rect.y) as usize;
-                    if clicked_idx < state.items.len() {
+                    if clicked_idx < visible.len() {
                         state.selected = clicked_idx;
                         self.consumed[i] = true;
                     }
@@ -4446,8 +4317,9 @@ impl Context {
             group_name: None,
         });
 
-        for (idx, item) in state.items.iter().enumerate() {
-            if idx == state.selected {
+        for (view_idx, &item_idx) in visible.iter().enumerate() {
+            let item = &state.items[item_idx];
+            if view_idx == state.selected {
                 if focused {
                     self.styled(
                         format!("▸ {item}"),

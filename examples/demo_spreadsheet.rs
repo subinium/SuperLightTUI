@@ -265,10 +265,14 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         |ui: &mut Context| {
-            if ui.key('q') && !editing {
-                ui.quit();
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
+                if editing {
+                    editing = false;
+                } else {
+                    ui.quit();
+                }
             }
-            if ui.key('t') && !editing {
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
                 dark_mode = !dark_mode;
             }
             ui.set_theme(if dark_mode {
@@ -290,7 +294,7 @@ fn main() -> std::io::Result<()> {
                 if ui.key_code(slt::KeyCode::Right) {
                     sheet.cursor_col = (sheet.cursor_col + 1).min(sheet.total_cols() - 1);
                 }
-                if ui.key_code(slt::KeyCode::Enter) || ui.key('e') {
+                if ui.key_code(slt::KeyCode::Enter) {
                     editing = true;
                     edit_input.value = sheet.cell(sheet.cursor_row, sheet.cursor_col).to_string();
                     edit_input.cursor = edit_input.value.len();

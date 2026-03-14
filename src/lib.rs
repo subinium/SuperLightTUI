@@ -67,7 +67,7 @@ pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEv
 pub use halfblock::HalfBlockImage;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, Justify, Margin,
-    Modifiers, Padding, Style, Theme,
+    Modifiers, Padding, Style, Theme, ThemeBuilder,
 };
 pub use widgets::{
     ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
