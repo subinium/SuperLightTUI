@@ -35,6 +35,19 @@ pub struct KeyEvent {
     pub code: KeyCode,
     /// Modifier keys held at the time of the press.
     pub modifiers: KeyModifiers,
+    /// The type of key event. Always `Press` without Kitty keyboard protocol.
+    pub kind: KeyEventKind,
+}
+
+/// The type of key event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEventKind {
+    /// Key was pressed.
+    Press,
+    /// Key was released (requires Kitty keyboard protocol).
+    Release,
+    /// Key is being held/repeated (requires Kitty keyboard protocol).
+    Repeat,
 }
 
 /// Key identifier.
@@ -176,10 +189,6 @@ fn convert_button(button: crossterm::event::MouseButton) -> MouseButton {
 pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
     match raw {
         crossterm::event::Event::Key(k) => {
-            // Only handle key-press (not repeat/release) to avoid double-fire.
-            if k.kind != crossterm::event::KeyEventKind::Press {
-                return None;
-            }
             let code = match k.code {
                 crossterm::event::KeyCode::Char(c) => KeyCode::Char(c),
                 crossterm::event::KeyCode::Enter => KeyCode::Enter,
@@ -200,7 +209,16 @@ pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
                 _ => return None,
             };
             let modifiers = convert_modifiers(k.modifiers);
-            Some(Event::Key(KeyEvent { code, modifiers }))
+            let kind = match k.kind {
+                crossterm::event::KeyEventKind::Press => KeyEventKind::Press,
+                crossterm::event::KeyEventKind::Repeat => KeyEventKind::Repeat,
+                crossterm::event::KeyEventKind::Release => KeyEventKind::Release,
+            };
+            Some(Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+            }))
         }
         crossterm::event::Event::Mouse(m) => {
             let kind = match m.kind {

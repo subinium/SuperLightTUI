@@ -680,6 +680,26 @@ impl ScrollState {
         (self.offset as u32) + self.viewport_height < self.content_height
     }
 
+    /// Get the total content height in rows.
+    pub fn content_height(&self) -> u32 {
+        self.content_height
+    }
+
+    /// Get the viewport height in rows.
+    pub fn viewport_height(&self) -> u32 {
+        self.viewport_height
+    }
+
+    /// Get the scroll progress as a ratio in [0.0, 1.0].
+    pub fn progress(&self) -> f32 {
+        let max = self.content_height.saturating_sub(self.viewport_height);
+        if max == 0 {
+            0.0
+        } else {
+            self.offset as f32 / max as f32
+        }
+    }
+
     /// Scroll up by the given number of rows, clamped to 0.
     pub fn scroll_up(&mut self, amount: usize) {
         self.offset = self.offset.saturating_sub(amount);
@@ -1001,5 +1021,123 @@ impl CommandPaletteState {
 
     pub(crate) fn set_selected(&mut self, s: usize) {
         self.selected = s;
+    }
+}
+
+/// State for a streaming text display.
+///
+/// Accumulates text chunks as they arrive from an LLM stream.
+/// Pass to [`Context::streaming_text`](crate::Context::streaming_text) each frame.
+pub struct StreamingTextState {
+    /// The accumulated text content.
+    pub content: String,
+    /// Whether the stream is still receiving data.
+    pub streaming: bool,
+    /// Cursor blink state (for the typing indicator).
+    pub(crate) cursor_visible: bool,
+    pub(crate) cursor_tick: u64,
+}
+
+impl StreamingTextState {
+    /// Create a new empty streaming text state.
+    pub fn new() -> Self {
+        Self {
+            content: String::new(),
+            streaming: false,
+            cursor_visible: true,
+            cursor_tick: 0,
+        }
+    }
+
+    /// Append a chunk of text (e.g., from an LLM stream delta).
+    pub fn push(&mut self, chunk: &str) {
+        self.content.push_str(chunk);
+    }
+
+    /// Mark the stream as complete (hides the typing cursor).
+    pub fn finish(&mut self) {
+        self.streaming = false;
+    }
+
+    /// Start a new streaming session, clearing previous content.
+    pub fn start(&mut self) {
+        self.content.clear();
+        self.streaming = true;
+        self.cursor_visible = true;
+        self.cursor_tick = 0;
+    }
+
+    /// Clear all content and reset state.
+    pub fn clear(&mut self) {
+        self.content.clear();
+        self.streaming = false;
+        self.cursor_visible = true;
+        self.cursor_tick = 0;
+    }
+}
+
+impl Default for StreamingTextState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Approval state for a tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalAction {
+    /// No action taken yet.
+    Pending,
+    /// User approved the tool call.
+    Approved,
+    /// User rejected the tool call.
+    Rejected,
+}
+
+/// State for a tool approval widget.
+///
+/// Displays a tool call with approve/reject buttons for human-in-the-loop
+/// AI workflows. Pass to [`Context::tool_approval`](crate::Context::tool_approval)
+/// each frame.
+pub struct ToolApprovalState {
+    /// The name of the tool being invoked.
+    pub tool_name: String,
+    /// A human-readable description of what the tool will do.
+    pub description: String,
+    /// The current approval status.
+    pub action: ApprovalAction,
+}
+
+impl ToolApprovalState {
+    /// Create a new tool approval prompt.
+    pub fn new(tool_name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            description: description.into(),
+            action: ApprovalAction::Pending,
+        }
+    }
+
+    /// Reset to pending state.
+    pub fn reset(&mut self) {
+        self.action = ApprovalAction::Pending;
+    }
+}
+
+/// Item in a context bar showing active context sources.
+#[derive(Debug, Clone)]
+pub struct ContextItem {
+    /// Display label for this context source.
+    pub label: String,
+    /// Token count or size indicator.
+    pub tokens: usize,
+}
+
+impl ContextItem {
+    /// Create a new context item with a label and token count.
+    pub fn new(label: impl Into<String>, tokens: usize) -> Self {
+        Self {
+            label: label.into(),
+            tokens,
+        }
     }
 }

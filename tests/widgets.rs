@@ -1745,3 +1745,318 @@ fn line_wrap_single_line_no_wrap() {
     });
     tb.assert_contains("short text");
 }
+
+#[test]
+fn border_dashed_renders() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.bordered(slt::Border::Dashed).col(|ui| {
+            ui.text("dashed");
+        });
+    });
+    tb.assert_contains("dashed");
+    let output = tb.to_string();
+    assert!(
+        output.contains('┄'),
+        "Should contain dashed horizontal char"
+    );
+}
+
+#[test]
+fn border_dashed_thick_renders() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.bordered(slt::Border::DashedThick).col(|ui| {
+            ui.text("thick");
+        });
+    });
+    tb.assert_contains("thick");
+    let output = tb.to_string();
+    assert!(
+        output.contains('┅'),
+        "Should contain thick dashed horizontal char"
+    );
+}
+
+#[test]
+fn key_event_kind_default_is_press() {
+    use slt::{EventBuilder, KeyEventKind};
+
+    let events = EventBuilder::new().key('a').build();
+    for event in &events {
+        if let slt::Event::Key(ke) = event {
+            assert_eq!(ke.kind, KeyEventKind::Press);
+        }
+    }
+}
+
+#[test]
+fn key_release_not_matched_by_key() {
+    use slt::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    let mut tb = TestBackend::new(40, 5);
+    let events = vec![Event::Key(KeyEvent {
+        code: KeyCode::Char('q'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Release,
+    })];
+    let mut pressed = false;
+    tb.run_with_events(events, |ui| {
+        if ui.key('q') {
+            pressed = true;
+        }
+        ui.text("test");
+    });
+    assert!(!pressed, "key() should NOT match Release events");
+}
+
+#[test]
+fn color_downsample_truecolor_passthrough() {
+    use slt::{Color, ColorDepth};
+
+    let c = Color::Rgb(123, 45, 67);
+    assert_eq!(c.downsampled(ColorDepth::TrueColor), c);
+}
+
+#[test]
+fn color_downsample_eightbit_converts_rgb() {
+    use slt::{Color, ColorDepth};
+
+    let c = Color::Rgb(255, 0, 0);
+    let d = c.downsampled(ColorDepth::EightBit);
+    match d {
+        Color::Indexed(_) => {}
+        _ => panic!("Expected Indexed color, got {:?}", d),
+    }
+}
+
+#[test]
+fn color_downsample_basic_converts_rgb() {
+    use slt::{Color, ColorDepth};
+
+    let c = Color::Rgb(255, 0, 0);
+    let d = c.downsampled(ColorDepth::Basic);
+    assert_eq!(d, Color::Red, "Pure red RGB should map to Red");
+}
+
+#[test]
+fn color_downsample_basic_named_passthrough() {
+    use slt::{Color, ColorDepth};
+
+    assert_eq!(Color::Green.downsampled(ColorDepth::Basic), Color::Green);
+    assert_eq!(Color::Reset.downsampled(ColorDepth::Basic), Color::Reset);
+}
+
+#[test]
+fn scrollbar_renders_thumb() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    tb.render(|ui| {
+        ui.container().h(8).row(|ui| {
+            ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                for i in 0..50 {
+                    ui.text(format!("Line {i}"));
+                }
+            });
+            ui.scrollbar(&scroll);
+        });
+    });
+    tb.render(|ui| {
+        ui.container().h(8).row(|ui| {
+            ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                for i in 0..50 {
+                    ui.text(format!("Line {i}"));
+                }
+            });
+            ui.scrollbar(&scroll);
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("Line 0"));
+}
+
+#[test]
+fn scrollbar_no_render_when_content_fits() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    tb.render(|ui| {
+        ui.container().h(8).row(|ui| {
+            ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                ui.text("short content");
+            });
+            ui.scrollbar(&scroll);
+        });
+    });
+    tb.render(|ui| {
+        ui.container().h(8).row(|ui| {
+            ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                ui.text("short content");
+            });
+            ui.scrollbar(&scroll);
+        });
+    });
+    let output = tb.to_string();
+    assert!(!scroll.can_scroll_down());
+    assert!(
+        !output.contains('█'),
+        "No thumb when content fits in viewport"
+    );
+}
+
+#[test]
+fn breakpoint_xs_under_40() {
+    use slt::Breakpoint;
+
+    let mut tb = TestBackend::new(30, 10);
+    let mut bp = Breakpoint::Md;
+    tb.render(|ui| {
+        bp = ui.breakpoint();
+    });
+    assert_eq!(bp, Breakpoint::Xs);
+}
+
+#[test]
+fn breakpoint_md_at_80() {
+    use slt::Breakpoint;
+
+    let mut tb = TestBackend::new(80, 24);
+    let mut bp = Breakpoint::Xs;
+    tb.render(|ui| {
+        bp = ui.breakpoint();
+    });
+    assert_eq!(bp, Breakpoint::Md);
+}
+
+#[test]
+fn breakpoint_xl_at_160() {
+    use slt::Breakpoint;
+
+    let mut tb = TestBackend::new(160, 24);
+    let mut bp = Breakpoint::Xs;
+    tb.render(|ui| {
+        bp = ui.breakpoint();
+    });
+    assert_eq!(bp, Breakpoint::Xl);
+}
+
+#[test]
+fn copy_to_clipboard_sets_field() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.copy_to_clipboard("test data");
+        ui.text("clipboard");
+    });
+    tb.assert_contains("clipboard");
+}
+
+#[test]
+fn streaming_text_renders_content() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut state = StreamingTextState::new();
+    state.push("Hello AI");
+    tb.render(|ui| {
+        ui.streaming_text(&mut state);
+    });
+    tb.assert_contains("Hello AI");
+}
+
+#[test]
+fn streaming_text_shows_cursor_when_active() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut state = StreamingTextState::new();
+    state.start();
+    state.push("typing");
+    tb.render(|ui| {
+        ui.streaming_text(&mut state);
+    });
+    let output = tb.to_string();
+    assert!(output.contains("typing"), "Content should be visible");
+}
+
+#[test]
+fn streaming_text_start_clears() {
+    let mut state = StreamingTextState::new();
+    state.push("old");
+    state.start();
+    assert!(state.content.is_empty());
+    assert!(state.streaming);
+}
+
+#[test]
+fn tool_approval_renders_pending() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut tool = ToolApprovalState::new("read_file", "Read config.toml");
+    tb.render(|ui| {
+        ui.tool_approval(&mut tool);
+    });
+    tb.assert_contains("read_file");
+    tb.assert_contains("Read config.toml");
+    tb.assert_contains("Approve");
+    tb.assert_contains("Reject");
+}
+
+#[test]
+fn tool_approval_action_default_pending() {
+    use slt::ApprovalAction;
+
+    let tool = ToolApprovalState::new("test", "desc");
+    assert_eq!(tool.action, ApprovalAction::Pending);
+}
+
+#[test]
+fn context_bar_renders_items() {
+    use slt::widgets::ContextItem;
+
+    let mut tb = TestBackend::new(60, 5);
+    let items = vec![
+        ContextItem::new("main.rs", 1200),
+        ContextItem::new("lib.rs", 800),
+    ];
+    tb.render(|ui| {
+        ui.context_bar(&items);
+    });
+    tb.assert_contains("main.rs");
+    tb.assert_contains("lib.rs");
+}
+
+#[test]
+fn context_bar_empty_no_render() {
+    use slt::widgets::ContextItem;
+
+    let mut tb = TestBackend::new(40, 5);
+    let items: Vec<ContextItem> = vec![];
+    tb.render(|ui| {
+        ui.context_bar(&items);
+    });
+    let output = tb.to_string();
+    assert!(!output.contains("main.rs"));
+}
+
+#[test]
+fn halfblock_image_from_rgb_renders() {
+    use slt::HalfBlockImage;
+
+    let rgb = vec![255u8; 4 * 2 * 3];
+    let img = HalfBlockImage::from_rgb(&rgb, 4, 1);
+    assert_eq!(img.width, 4);
+    assert_eq!(img.height, 1);
+    assert_eq!(img.pixels.len(), 4);
+
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.image(&img);
+    });
+    let output = tb.to_string();
+    assert!(output.contains('▀'), "Should render half-block chars");
+}
+
+#[test]
+fn halfblock_image_zero_size_no_panic() {
+    use slt::HalfBlockImage;
+
+    let img = HalfBlockImage::from_rgb(&[], 0, 0);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.image(&img);
+    });
+}

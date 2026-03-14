@@ -144,6 +144,144 @@ impl Color {
     pub fn darken(self, amount: f32) -> Color {
         Color::Rgb(0, 0, 0).blend(self, 1.0 - amount.clamp(0.0, 1.0))
     }
+
+    /// Downsample this color to fit the given color depth.
+    ///
+    /// - `TrueColor`: returns self unchanged.
+    /// - `EightBit`: converts `Rgb` to the nearest `Indexed` color.
+    /// - `Basic`: converts `Rgb` and `Indexed` to the nearest named color.
+    ///
+    /// Named colors (`Red`, `Green`, etc.) and `Reset` pass through all depths.
+    pub fn downsampled(self, depth: ColorDepth) -> Color {
+        match depth {
+            ColorDepth::TrueColor => self,
+            ColorDepth::EightBit => match self {
+                Color::Rgb(r, g, b) => Color::Indexed(rgb_to_ansi256(r, g, b)),
+                other => other,
+            },
+            ColorDepth::Basic => match self {
+                Color::Rgb(r, g, b) => rgb_to_ansi16(r, g, b),
+                Color::Indexed(i) => {
+                    let (r, g, b) = xterm256_to_rgb(i);
+                    rgb_to_ansi16(r, g, b)
+                }
+                other => other,
+            },
+        }
+    }
+}
+
+/// Terminal color depth capability.
+///
+/// Determines the maximum number of colors a terminal can display.
+/// Use [`ColorDepth::detect`] for automatic detection via environment
+/// variables, or specify explicitly in [`RunConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ColorDepth {
+    /// 24-bit true color (16 million colors).
+    TrueColor,
+    /// 256-color palette (xterm-256color).
+    EightBit,
+    /// 16 basic ANSI colors.
+    Basic,
+}
+
+impl ColorDepth {
+    /// Detect the terminal's color depth from environment variables.
+    ///
+    /// Checks `$COLORTERM` for `truecolor`/`24bit`, then `$TERM` for
+    /// `256color`. Falls back to `Basic` (16 colors) if neither is set.
+    pub fn detect() -> Self {
+        if let Ok(ct) = std::env::var("COLORTERM") {
+            let ct = ct.to_lowercase();
+            if ct == "truecolor" || ct == "24bit" {
+                return Self::TrueColor;
+            }
+        }
+        if let Ok(term) = std::env::var("TERM") {
+            if term.contains("256color") {
+                return Self::EightBit;
+            }
+        }
+        Self::Basic
+    }
+}
+
+fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
+    if r == g && g == b {
+        if r < 8 {
+            return 16;
+        }
+        if r > 248 {
+            return 231;
+        }
+        return 232 + (((r as u16 - 8) * 24 / 240) as u8);
+    }
+
+    let ri = if r < 48 {
+        0
+    } else {
+        ((r as u16 - 35) / 40) as u8
+    };
+    let gi = if g < 48 {
+        0
+    } else {
+        ((g as u16 - 35) / 40) as u8
+    };
+    let bi = if b < 48 {
+        0
+    } else {
+        ((b as u16 - 35) / 40) as u8
+    };
+    16 + 36 * ri.min(5) + 6 * gi.min(5) + bi.min(5)
+}
+
+fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
+    let lum =
+        0.2126 * (r as f32 / 255.0) + 0.7152 * (g as f32 / 255.0) + 0.0722 * (b as f32 / 255.0);
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let saturation = if max == 0 {
+        0.0
+    } else {
+        (max - min) as f32 / max as f32
+    };
+
+    if saturation < 0.2 {
+        return if lum < 0.15 {
+            Color::Black
+        } else {
+            Color::White
+        };
+    }
+
+    let rf = r as f32;
+    let gf = g as f32;
+    let bf = b as f32;
+
+    if rf >= gf && rf >= bf {
+        if gf > bf * 1.5 {
+            Color::Yellow
+        } else if bf > gf * 1.5 {
+            Color::Magenta
+        } else {
+            Color::Red
+        }
+    } else if gf >= rf && gf >= bf {
+        if bf > rf * 1.5 {
+            Color::Cyan
+        } else {
+            Color::Green
+        }
+    } else if rf > gf * 1.5 {
+        Color::Magenta
+    } else if gf > rf * 1.5 {
+        Color::Cyan
+    } else {
+        Color::Blue
+    }
 }
 
 fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
@@ -381,6 +519,24 @@ impl Default for Theme {
     }
 }
 
+/// Terminal size breakpoint for responsive layouts.
+///
+/// Based on the current terminal width. Use [`Context::breakpoint`] to
+/// get the active breakpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Breakpoint {
+    /// Width < 40 columns (phone-sized)
+    Xs,
+    /// Width 40-79 columns (small terminal)
+    Sm,
+    /// Width 80-119 columns (standard terminal)
+    Md,
+    /// Width 120-159 columns (wide terminal)
+    Lg,
+    /// Width >= 160 columns (ultra-wide)
+    Xl,
+}
+
 /// Border style for containers.
 ///
 /// Pass to `Context::bordered()` to draw a box around a container.
@@ -396,6 +552,10 @@ pub enum Border {
     Rounded,
     /// Thick single-line box: `┏━┓┃┗━┛`
     Thick,
+    /// Dashed border using light dash characters: ┄╌┄╌
+    Dashed,
+    /// Heavy dashed border: ┅╍┅╍
+    DashedThick,
 }
 
 /// Character set for a specific border style.
@@ -515,6 +675,22 @@ impl Border {
                 br: '┛',
                 h: '━',
                 v: '┃',
+            },
+            Self::Dashed => BorderChars {
+                tl: '┌',
+                tr: '┐',
+                bl: '└',
+                br: '┘',
+                h: '┄',
+                v: '┆',
+            },
+            Self::DashedThick => BorderChars {
+                tl: '┏',
+                tr: '┓',
+                bl: '┗',
+                br: '┛',
+                h: '┅',
+                v: '┇',
             },
         }
     }

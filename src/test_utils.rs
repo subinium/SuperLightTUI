@@ -6,7 +6,9 @@
 
 use crate::buffer::Buffer;
 use crate::context::Context;
-use crate::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
+use crate::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+};
 use crate::layout;
 use crate::rect::Rect;
 use crate::style::Theme;
@@ -44,6 +46,7 @@ impl EventBuilder {
         self.events.push(Event::Key(KeyEvent {
             code: KeyCode::Char(c),
             modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
         }));
         self
     }
@@ -53,13 +56,18 @@ impl EventBuilder {
         self.events.push(Event::Key(KeyEvent {
             code,
             modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
         }));
         self
     }
 
     /// Append a key-press event with modifier keys (Ctrl, Shift, Alt).
     pub fn key_with(mut self, code: KeyCode, modifiers: KeyModifiers) -> Self {
-        self.events.push(Event::Key(KeyEvent { code, modifiers }));
+        self.events.push(Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+        }));
         self
     }
 
@@ -167,6 +175,7 @@ impl TestBackend {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             false,
             Theme::dark(),
             None,
@@ -195,6 +204,7 @@ impl TestBackend {
             0,
             focus_index,
             prev_focus_count,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),

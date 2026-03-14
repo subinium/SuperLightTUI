@@ -41,6 +41,7 @@ pub mod cell;
 pub mod chart;
 pub mod context;
 pub mod event;
+pub mod halfblock;
 pub mod layout;
 pub mod rect;
 pub mod style;
@@ -62,15 +63,17 @@ pub use chart::{
     HistogramBuilder, LegendPosition, Marker,
 };
 pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, Widget};
-pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
+pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
+pub use halfblock::HalfBlockImage;
 pub use style::{
-    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Modifiers, Padding, Style,
-    Theme,
+    Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, Justify, Margin,
+    Modifiers, Padding, Style, Theme,
 };
 pub use widgets::{
-    ButtonVariant, CommandPaletteState, FormField, FormState, ListState, MultiSelectState,
-    PaletteCommand, RadioState, ScrollState, SelectState, SpinnerState, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, TreeNode, TreeState,
+    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
+    ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
+    SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
+    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
 };
 
 static PANIC_HOOK_ONCE: Once = Once::new();
@@ -134,7 +137,9 @@ fn install_panic_hook() {
 /// let config = RunConfig {
 ///     tick_rate: Duration::from_millis(50),
 ///     mouse: true,
+///     kitty_keyboard: false,
 ///     theme: Theme::light(),
+///     color_depth: None,
 ///     max_fps: Some(60),
 /// };
 /// ```
@@ -150,10 +155,23 @@ pub struct RunConfig {
     /// When `true`, the terminal captures mouse clicks, scrolls, and movement.
     /// Defaults to `false`.
     pub mouse: bool,
+    /// Whether to enable the Kitty keyboard protocol for enhanced input.
+    ///
+    /// When `true`, enables disambiguated key events, key release events,
+    /// and modifier-only key reporting on supporting terminals (kitty, Ghostty, WezTerm).
+    /// Terminals that don't support it silently ignore the request.
+    /// Defaults to `false`.
+    pub kitty_keyboard: bool,
     /// The color theme applied to all widgets automatically.
     ///
     /// Defaults to [`Theme::dark()`].
     pub theme: Theme,
+    /// Color depth override.
+    ///
+    /// `None` means auto-detect from `$COLORTERM` and `$TERM` environment
+    /// variables. Set explicitly to force a specific color depth regardless
+    /// of terminal capabilities.
+    pub color_depth: Option<ColorDepth>,
     /// Optional maximum frame rate.
     ///
     /// `None` means unlimited frame rate. `Some(fps)` sleeps at the end of each
@@ -166,7 +184,9 @@ impl Default for RunConfig {
         Self {
             tick_rate: Duration::from_millis(16),
             mouse: false,
+            kitty_keyboard: false,
             theme: Theme::dark(),
+            color_depth: None,
             max_fps: Some(60),
         }
     }
@@ -215,19 +235,22 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     }
 
     install_panic_hook();
-    let mut term = Terminal::new(config.mouse)?;
+    let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
+    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
     let mut debug_mode: bool = false;
     let mut tick: u64 = 0;
     let mut focus_index: usize = 0;
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
+    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
     let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
+    let mut fps_ema: f32 = 0.0;
 
     loop {
         let frame_start = Instant::now();
@@ -244,6 +267,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             focus_index,
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
+            std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
             std::mem::take(&mut prev_focus_rects),
             debug_mode,
@@ -259,6 +283,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             break;
         }
         prev_modal_active = ctx.modal_active;
+        let clipboard_text = ctx.clipboard_text.take();
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -285,12 +310,26 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
+        prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
         layout::render(&tree, term.buffer_mut());
+        let frame_time = frame_start.elapsed();
+        let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
+        let frame_secs = frame_time.as_secs_f32();
+        let inst_fps = if frame_secs > 0.0 {
+            1.0 / frame_secs
+        } else {
+            0.0
+        };
+        fps_ema = if fps_ema == 0.0 {
+            inst_fps
+        } else {
+            (fps_ema * 0.9) + (inst_fps * 0.1)
+        };
         if debug_mode {
-            layout::render_debug_overlay(&tree, term.buffer_mut());
+            layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, fps_ema);
         }
 
         if selection.active {
@@ -306,6 +345,9 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         }
 
         term.flush()?;
+        if let Some(text) = clipboard_text {
+            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
+        }
         tick = tick.wrapping_add(1);
 
         events.clear();
@@ -339,6 +381,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                     ev,
                     Event::Key(event::KeyEvent {
                         code: KeyCode::F(12),
+                        kind: event::KeyEventKind::Press,
                         ..
                     })
                 ) {
@@ -364,6 +407,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             prev_content_map.clear();
             prev_focus_rects.clear();
             prev_scroll_infos.clear();
+            prev_scroll_rects.clear();
             last_mouse_pos = None;
         }
 
@@ -433,12 +477,14 @@ fn run_async_loop<M: Send + 'static>(
     }
 
     install_panic_hook();
-    let mut term = Terminal::new(config.mouse)?;
+    let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
+    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
     let mut tick: u64 = 0;
     let mut focus_index: usize = 0;
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
+    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
@@ -466,6 +512,7 @@ fn run_async_loop<M: Send + 'static>(
             focus_index,
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
+            std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
             std::mem::take(&mut prev_focus_rects),
             false,
@@ -481,6 +528,7 @@ fn run_async_loop<M: Send + 'static>(
             break;
         }
         prev_modal_active = ctx.modal_active;
+        let clipboard_text = ctx.clipboard_text.take();
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -507,6 +555,7 @@ fn run_async_loop<M: Send + 'static>(
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
+        prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
@@ -525,6 +574,9 @@ fn run_async_loop<M: Send + 'static>(
         }
 
         term.flush()?;
+        if let Some(text) = clipboard_text {
+            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
+        }
         tick = tick.wrapping_add(1);
 
         events.clear();
@@ -540,6 +592,7 @@ fn run_async_loop<M: Send + 'static>(
                     prev_content_map.clear();
                     prev_focus_rects.clear();
                     prev_scroll_infos.clear();
+                    prev_scroll_rects.clear();
                     last_mouse_pos = None;
                 }
                 events.push(ev);
@@ -557,6 +610,7 @@ fn run_async_loop<M: Send + 'static>(
                         prev_content_map.clear();
                         prev_focus_rects.clear();
                         prev_scroll_infos.clear();
+                        prev_scroll_rects.clear();
                         last_mouse_pos = None;
                     }
                     events.push(ev);
@@ -615,19 +669,22 @@ pub fn run_inline_with(
     }
 
     install_panic_hook();
-    let mut term = InlineTerminal::new(height, config.mouse)?;
+    let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
+    let mut term = InlineTerminal::new(height, config.mouse, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
     let mut debug_mode: bool = false;
     let mut tick: u64 = 0;
     let mut focus_index: usize = 0;
     let mut prev_focus_count: usize = 0;
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
+    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
     let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
+    let mut fps_ema: f32 = 0.0;
 
     loop {
         let frame_start = Instant::now();
@@ -644,6 +701,7 @@ pub fn run_inline_with(
             focus_index,
             prev_focus_count,
             std::mem::take(&mut prev_scroll_infos),
+            std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
             std::mem::take(&mut prev_focus_rects),
             debug_mode,
@@ -659,6 +717,7 @@ pub fn run_inline_with(
             break;
         }
         prev_modal_active = ctx.modal_active;
+        let clipboard_text = ctx.clipboard_text.take();
 
         let mut should_copy_selection = false;
         for ev in ctx.events.iter() {
@@ -685,12 +744,26 @@ pub fn run_inline_with(
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
+        prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
         layout::render(&tree, term.buffer_mut());
+        let frame_time = frame_start.elapsed();
+        let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
+        let frame_secs = frame_time.as_secs_f32();
+        let inst_fps = if frame_secs > 0.0 {
+            1.0 / frame_secs
+        } else {
+            0.0
+        };
+        fps_ema = if fps_ema == 0.0 {
+            inst_fps
+        } else {
+            (fps_ema * 0.9) + (inst_fps * 0.1)
+        };
         if debug_mode {
-            layout::render_debug_overlay(&tree, term.buffer_mut());
+            layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, fps_ema);
         }
 
         if selection.active {
@@ -706,6 +779,9 @@ pub fn run_inline_with(
         }
 
         term.flush()?;
+        if let Some(text) = clipboard_text {
+            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
+        }
         tick = tick.wrapping_add(1);
 
         events.clear();
@@ -739,6 +815,7 @@ pub fn run_inline_with(
                     ev,
                     Event::Key(event::KeyEvent {
                         code: KeyCode::F(12),
+                        kind: event::KeyEventKind::Press,
                         ..
                     })
                 ) {
@@ -764,6 +841,7 @@ pub fn run_inline_with(
             prev_content_map.clear();
             prev_focus_rects.clear();
             prev_scroll_infos.clear();
+            prev_scroll_rects.clear();
             last_mouse_pos = None;
         }
 
@@ -779,6 +857,7 @@ fn is_ctrl_c(ev: &Event) -> bool {
         Event::Key(event::KeyEvent {
             code: KeyCode::Char('c'),
             modifiers,
+            kind: event::KeyEventKind::Press,
         }) if modifiers.contains(KeyModifiers::CONTROL)
     )
 }
