@@ -1823,7 +1823,7 @@ impl Context {
             }
         }
 
-        let show_cursor = focused && (self.tick / 30).is_multiple_of(2);
+        let show_cursor = focused && (self.tick / 30) % 2 == 0;
 
         let input_text = if state.value.is_empty() {
             if state.placeholder.len() > 100 {
@@ -2154,7 +2154,7 @@ impl Context {
             grow: 0,
         });
 
-        let show_cursor = focused && (self.tick / 30).is_multiple_of(2);
+        let show_cursor = focused && (self.tick / 30) % 2 == 0;
         for vi in 0..visible_rows as usize {
             let actual_vi = state.scroll_offset + vi;
             let (seg_text, is_cursor_line) = if let Some(vl) = vlines.get(actual_vi) {

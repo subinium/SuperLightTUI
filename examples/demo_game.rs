@@ -1141,13 +1141,17 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            render_header(ui, active, theme, theme_names[theme_idx]);
+            ui.container().grow(1).col(|ui| {
+                ui.spacer();
+                render_header(ui, active, theme, theme_names[theme_idx]);
 
-            match active {
-                ActiveGame::Tetris => render_tetris_screen(ui, &tetris, theme),
-                ActiveGame::Snake => render_snake_screen(ui, &snake, theme),
-                ActiveGame::Minesweeper => render_minesweeper_screen(ui, &mines, theme),
-            }
+                match active {
+                    ActiveGame::Tetris => render_tetris_screen(ui, &tetris, theme),
+                    ActiveGame::Snake => render_snake_screen(ui, &snake, theme),
+                    ActiveGame::Minesweeper => render_minesweeper_screen(ui, &mines, theme),
+                }
+                ui.spacer();
+            });
         },
     )
 }
