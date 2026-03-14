@@ -122,6 +122,7 @@ pub struct Tween {
     start_tick: u64,
     easing: fn(f64) -> f64,
     done: bool,
+    on_complete: Option<Box<dyn FnMut()>>,
 }
 
 impl Tween {
@@ -138,6 +139,7 @@ impl Tween {
             start_tick: 0,
             easing: ease_linear,
             done: false,
+            on_complete: None,
         }
     }
 
@@ -150,23 +152,40 @@ impl Tween {
         self
     }
 
+    /// Register a callback that runs once when the tween completes.
+    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Self {
+        self.on_complete = Some(Box::new(f));
+        self
+    }
+
     /// Return the interpolated value at the given `tick`.
     ///
     /// Returns `to` immediately if the tween has finished or `duration_ticks`
     /// is zero. Marks the tween as done once `tick >= start_tick + duration_ticks`.
     pub fn value(&mut self, tick: u64) -> f64 {
+        let was_done = self.done;
         if self.done {
             return self.to;
         }
 
         if self.duration_ticks == 0 {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return self.to;
         }
 
         let elapsed = tick.wrapping_sub(self.start_tick);
         if elapsed >= self.duration_ticks {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return self.to;
         }
 
@@ -237,6 +256,7 @@ pub struct Keyframes {
     segment_easing: Vec<fn(f64) -> f64>,
     loop_mode: LoopMode,
     done: bool,
+    on_complete: Option<Box<dyn FnMut()>>,
 }
 
 impl Keyframes {
@@ -254,6 +274,7 @@ impl Keyframes {
             segment_easing: Vec::new(),
             loop_mode: LoopMode::Once,
             done: false,
+            on_complete: None,
         }
     }
 
@@ -298,14 +319,31 @@ impl Keyframes {
         self
     }
 
+    /// Register a callback that runs once when the animation completes.
+    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Self {
+        self.on_complete = Some(Box::new(f));
+        self
+    }
+
     /// Return the interpolated keyframe value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
+        let was_done = self.done;
         if self.stops.is_empty() {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return 0.0;
         }
         if self.stops.len() == 1 {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return self.stops[0].value;
         }
 
@@ -321,7 +359,14 @@ impl Keyframes {
             &mut self.done,
         ) {
             Some(v) => v,
-            None => return end_value,
+            None => {
+                if !was_done && self.done {
+                    if let Some(cb) = &mut self.on_complete {
+                        cb();
+                    }
+                }
+                return end_value;
+            }
         };
 
         let progress = loop_tick as f64 / self.duration_ticks as f64;
@@ -398,6 +443,7 @@ pub struct Sequence {
     loop_mode: LoopMode,
     start_tick: u64,
     done: bool,
+    on_complete: Option<Box<dyn FnMut()>>,
 }
 
 impl Default for Sequence {
@@ -417,6 +463,7 @@ impl Sequence {
             loop_mode: LoopMode::Once,
             start_tick: 0,
             done: false,
+            on_complete: None,
         }
     }
 
@@ -437,10 +484,22 @@ impl Sequence {
         self
     }
 
+    /// Register a callback that runs once when the sequence completes.
+    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Self {
+        self.on_complete = Some(Box::new(f));
+        self
+    }
+
     /// Return the sequence value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
+        let was_done = self.done;
         if self.segments.is_empty() {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return 0.0;
         }
 
@@ -458,7 +517,14 @@ impl Sequence {
             &mut self.done,
         ) {
             Some(v) => v,
-            None => return end_value,
+            None => {
+                if !was_done && self.done {
+                    if let Some(cb) = &mut self.on_complete {
+                        cb();
+                    }
+                }
+                return end_value;
+            }
         };
 
         let mut remaining = loop_tick;
@@ -522,6 +588,7 @@ pub struct Stagger {
     loop_mode: LoopMode,
     item_count: usize,
     done: bool,
+    on_complete: Option<Box<dyn FnMut()>>,
 }
 
 impl Stagger {
@@ -539,6 +606,7 @@ impl Stagger {
             loop_mode: LoopMode::Once,
             item_count: 0,
             done: false,
+            on_complete: None,
         }
     }
 
@@ -561,6 +629,12 @@ impl Stagger {
         self
     }
 
+    /// Register a callback that runs once when the sampled item completes.
+    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Self {
+        self.on_complete = Some(Box::new(f));
+        self
+    }
+
     /// Set the number of items for cycle length calculation.
     ///
     /// When using [`LoopMode::Repeat`] or [`LoopMode::PingPong`], the total
@@ -573,6 +647,7 @@ impl Stagger {
 
     /// Return the value for `item_index` at `tick`.
     pub fn value(&mut self, tick: u64, item_index: usize) -> f64 {
+        let was_done = self.done;
         if item_index >= self.item_count {
             self.item_count = item_index + 1;
         }
@@ -619,12 +694,22 @@ impl Stagger {
 
         if self.duration_ticks == 0 {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return self.to;
         }
 
         let elapsed = effective_tick - item_start;
         if elapsed >= self.duration_ticks {
             self.done = true;
+            if !was_done && self.done {
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
+                }
+            }
             return self.to;
         }
 
@@ -727,6 +812,8 @@ pub struct Spring {
     velocity: f64,
     stiffness: f64,
     damping: f64,
+    settled: bool,
+    on_settle: Option<Box<dyn FnMut()>>,
 }
 
 impl Spring {
@@ -741,12 +828,21 @@ impl Spring {
             velocity: 0.0,
             stiffness,
             damping,
+            settled: true,
+            on_settle: None,
         }
+    }
+
+    /// Register a callback that runs once when the spring settles.
+    pub fn on_settle(mut self, f: impl FnMut() + 'static) -> Self {
+        self.on_settle = Some(Box::new(f));
+        self
     }
 
     /// Set the target value the spring will move toward.
     pub fn set_target(&mut self, target: f64) {
         self.target = target;
+        self.settled = self.is_settled();
     }
 
     /// Advance the spring simulation by one tick.
@@ -757,6 +853,14 @@ impl Spring {
         let spring_force = displacement * self.stiffness;
         self.velocity = (self.velocity + spring_force) * self.damping;
         self.value += self.velocity;
+
+        let is_settled = self.is_settled();
+        if !self.settled && is_settled {
+            self.settled = true;
+            if let Some(cb) = &mut self.on_settle {
+                cb();
+            }
+        }
     }
 
     /// Return the current spring position.
@@ -780,6 +884,8 @@ fn clamp01(t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     fn assert_endpoints(f: fn(f64) -> f64) {
         assert_eq!(f(0.0), 0.0);
@@ -831,6 +937,27 @@ mod tests {
     }
 
     #[test]
+    fn tween_on_complete_fires_once() {
+        let count = Rc::new(Cell::new(0));
+        let callback_count = Rc::clone(&count);
+        let mut tween = Tween::new(0.0, 10.0, 10).on_complete(move || {
+            callback_count.set(callback_count.get() + 1);
+        });
+
+        tween.reset(0);
+        assert_eq!(count.get(), 0);
+
+        assert_eq!(tween.value(5), 5.0);
+        assert_eq!(count.get(), 0);
+
+        assert_eq!(tween.value(10), 10.0);
+        assert_eq!(count.get(), 1);
+
+        assert_eq!(tween.value(11), 10.0);
+        assert_eq!(count.get(), 1);
+    }
+
+    #[test]
     fn spring_settles_to_target() {
         let mut spring = Spring::new(0.0, 0.2, 0.85);
         spring.set_target(10.0);
@@ -844,6 +971,32 @@ mod tests {
 
         assert!(spring.is_settled());
         assert!((spring.value() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn spring_on_settle_fires_once() {
+        let count = Rc::new(Cell::new(0));
+        let callback_count = Rc::clone(&count);
+        let mut spring = Spring::new(0.0, 0.2, 0.85).on_settle(move || {
+            callback_count.set(callback_count.get() + 1);
+        });
+        spring.set_target(10.0);
+
+        for _ in 0..500 {
+            spring.tick();
+            if spring.is_settled() {
+                break;
+            }
+        }
+
+        assert!(spring.is_settled());
+        assert_eq!(count.get(), 1);
+
+        for _ in 0..50 {
+            spring.tick();
+        }
+
+        assert_eq!(count.get(), 1);
     }
 
     #[test]

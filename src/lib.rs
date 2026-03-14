@@ -62,7 +62,7 @@ pub use chart::{
     Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
     HistogramBuilder, LegendPosition, Marker,
 };
-pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, Widget};
+pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, State, Widget};
 pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use halfblock::HalfBlockImage;
 pub use style::{
@@ -245,8 +245,11 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
+    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
+    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
     let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
@@ -269,7 +272,10 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_group_rects),
             std::mem::take(&mut prev_focus_rects),
+            std::mem::take(&mut prev_focus_groups),
+            std::mem::take(&mut hook_states),
             debug_mode,
             config.theme,
             last_mouse_pos,
@@ -312,9 +318,12 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_group_rects = layout::collect_group_rects(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
+        prev_focus_groups = layout::collect_focus_groups(&tree);
         layout::render(&tree, term.buffer_mut());
+        hook_states = ctx.hook_states;
         let frame_time = frame_start.elapsed();
         let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
         let frame_secs = frame_time.as_secs_f32();
@@ -404,8 +413,10 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
             prev_hit_map.clear();
+            prev_group_rects.clear();
             prev_content_map.clear();
             prev_focus_rects.clear();
+            prev_focus_groups.clear();
             prev_scroll_infos.clear();
             prev_scroll_rects.clear();
             last_mouse_pos = None;
@@ -486,8 +497,11 @@ fn run_async_loop<M: Send + 'static>(
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
+    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
+    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
     let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
@@ -514,7 +528,10 @@ fn run_async_loop<M: Send + 'static>(
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_group_rects),
             std::mem::take(&mut prev_focus_rects),
+            std::mem::take(&mut prev_focus_groups),
+            std::mem::take(&mut hook_states),
             false,
             config.theme,
             last_mouse_pos,
@@ -557,9 +574,12 @@ fn run_async_loop<M: Send + 'static>(
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_group_rects = layout::collect_group_rects(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
+        prev_focus_groups = layout::collect_focus_groups(&tree);
         layout::render(&tree, term.buffer_mut());
+        hook_states = ctx.hook_states;
 
         if selection.active {
             terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
@@ -589,8 +609,10 @@ fn run_async_loop<M: Send + 'static>(
                 if let Event::Resize(_, _) = &ev {
                     term.handle_resize()?;
                     prev_hit_map.clear();
+                    prev_group_rects.clear();
                     prev_content_map.clear();
                     prev_focus_rects.clear();
+                    prev_focus_groups.clear();
                     prev_scroll_infos.clear();
                     prev_scroll_rects.clear();
                     last_mouse_pos = None;
@@ -607,8 +629,10 @@ fn run_async_loop<M: Send + 'static>(
                     if let Event::Resize(_, _) = &ev {
                         term.handle_resize()?;
                         prev_hit_map.clear();
+                        prev_group_rects.clear();
                         prev_content_map.clear();
                         prev_focus_rects.clear();
+                        prev_focus_groups.clear();
                         prev_scroll_infos.clear();
                         prev_scroll_rects.clear();
                         last_mouse_pos = None;
@@ -679,8 +703,11 @@ pub fn run_inline_with(
     let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
     let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
     let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
+    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
     let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
     let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
+    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
+    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
     let mut last_mouse_pos: Option<(u32, u32)> = None;
     let mut prev_modal_active = false;
     let mut selection = terminal::SelectionState::default();
@@ -703,7 +730,10 @@ pub fn run_inline_with(
             std::mem::take(&mut prev_scroll_infos),
             std::mem::take(&mut prev_scroll_rects),
             std::mem::take(&mut prev_hit_map),
+            std::mem::take(&mut prev_group_rects),
             std::mem::take(&mut prev_focus_rects),
+            std::mem::take(&mut prev_focus_groups),
+            std::mem::take(&mut hook_states),
             debug_mode,
             config.theme,
             last_mouse_pos,
@@ -746,9 +776,12 @@ pub fn run_inline_with(
         prev_scroll_infos = layout::collect_scroll_infos(&tree);
         prev_scroll_rects = layout::collect_scroll_rects(&tree);
         prev_hit_map = layout::collect_hit_areas(&tree);
+        prev_group_rects = layout::collect_group_rects(&tree);
         prev_content_map = layout::collect_content_areas(&tree);
         prev_focus_rects = layout::collect_focus_rects(&tree);
+        prev_focus_groups = layout::collect_focus_groups(&tree);
         layout::render(&tree, term.buffer_mut());
+        hook_states = ctx.hook_states;
         let frame_time = frame_start.elapsed();
         let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
         let frame_secs = frame_time.as_secs_f32();
@@ -838,8 +871,10 @@ pub fn run_inline_with(
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
             prev_hit_map.clear();
+            prev_group_rects.clear();
             prev_content_map.clear();
             prev_focus_rects.clear();
+            prev_focus_groups.clear();
             prev_scroll_infos.clear();
             prev_scroll_rects.clear();
             last_mouse_pos = None;

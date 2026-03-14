@@ -43,6 +43,17 @@ fn main() -> std::io::Result<()> {
 
 5 lines. No `App` struct. No `Model`/`Update`/`View`. No event loop. Ctrl+C just works.
 
+## New in v0.8.0
+
+- Dark-mode style prefixes for containers: `ui.container().bg(Color::White).dark_bg(Color::Black).dark_border_style(Style::new().fg(Color::Cyan))`.
+- Responsive size variants from `xs` to `xl`: `ui.container().xs_w(18).sm_w(24).md_w(32).lg_w(40).xl_w(56).col(|ui| { ... })`.
+- Hook-style state and memoization in closures: `let count = ui.use_state(|| 0); let doubled = ui.use_memo(|| *count.get(ui) * 2, *count.get(ui));`.
+- Group hover/focus styling across related containers: `ui.group("nav").group_hover_bg(Color::Indexed(236)).group_hover_border_style(Style::new().bold()).col(|ui| { ... })`.
+- Fluent theme composition with `Theme::builder()`: `let theme = Theme::builder().primary(Color::Cyan).surface(Color::Indexed(236)).build();`.
+- List filtering with multi-token AND matching: `list.set_filter("error auth"); // keeps rows matching both tokens`.
+- Animation completion callbacks: `let mut tween = Tween::new(0.0, 1.0, 30).on_complete(|| { /* done */ });`.
+- New chart primitives for infoviz: `ui.scatter(&points, 50, 14); ui.pie_chart(&slices, 10); ui.chart(|c| { c.area(&series); }, 50, 14);`.
+
 ## A Real App
 
 ```rust

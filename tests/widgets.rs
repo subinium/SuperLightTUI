@@ -11,6 +11,88 @@ fn text_renders() {
 }
 
 #[test]
+fn use_state_persists_across_renders() {
+    let mut tb = TestBackend::new(40, 10);
+
+    tb.render(|ui| {
+        let s = ui.use_state(|| 42i32);
+        assert_eq!(*s.get(ui), 42);
+    });
+
+    tb.render(|ui| {
+        let s = ui.use_state(|| 0i32);
+        assert_eq!(*s.get(ui), 42);
+    });
+}
+
+#[test]
+fn use_state_mutation_persists() {
+    let mut tb = TestBackend::new(40, 10);
+
+    tb.render(|ui| {
+        let s = ui.use_state(|| 10i32);
+        *s.get_mut(ui) = 99;
+    });
+
+    tb.render(|ui| {
+        let s = ui.use_state(|| 0i32);
+        assert_eq!(*s.get(ui), 99);
+    });
+}
+
+#[test]
+fn use_memo_caches_when_deps_unchanged() {
+    let mut tb = TestBackend::new(40, 10);
+    let call_count = std::rc::Rc::new(std::cell::Cell::new(0));
+
+    let first = call_count.clone();
+    tb.render(|ui| {
+        let val = ui.use_memo(&5i32, |d| {
+            first.set(first.get() + 1);
+            d * 2
+        });
+        assert_eq!(*val, 10);
+    });
+
+    let second = call_count.clone();
+    tb.render(|ui| {
+        let val = ui.use_memo(&5i32, |d| {
+            second.set(second.get() + 1);
+            d * 2
+        });
+        assert_eq!(*val, 10);
+    });
+
+    assert_eq!(call_count.get(), 1);
+}
+
+#[test]
+fn use_memo_recomputes_on_dep_change() {
+    let mut tb = TestBackend::new(40, 10);
+    let call_count = std::rc::Rc::new(std::cell::Cell::new(0));
+
+    let first = call_count.clone();
+    tb.render(|ui| {
+        let val = ui.use_memo(&3i32, |d| {
+            first.set(first.get() + 1);
+            d * 10
+        });
+        assert_eq!(*val, 30);
+    });
+
+    let second = call_count.clone();
+    tb.render(|ui| {
+        let val = ui.use_memo(&7i32, |d| {
+            second.set(second.get() + 1);
+            d * 10
+        });
+        assert_eq!(*val, 70);
+    });
+
+    assert_eq!(call_count.get(), 2);
+}
+
+#[test]
 fn canvas_colored_shapes() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
@@ -230,6 +312,39 @@ fn list_empty_no_panic() {
     tb.render(|ui| {
         ui.list(&mut list);
     });
+}
+
+#[test]
+fn list_filter_single_token() {
+    let mut list = ListState::new(vec!["deploy failed", "health check", "deploy success"]);
+    list.set_filter("deploy");
+    assert_eq!(list.visible_indices(), &[0, 2]);
+}
+
+#[test]
+fn list_filter_multi_token() {
+    let mut list = ListState::new(vec![
+        "error deploy failed",
+        "deploy success",
+        "error health check",
+    ]);
+    list.set_filter("error deploy");
+    assert_eq!(list.visible_indices(), &[0]);
+}
+
+#[test]
+fn list_filter_no_match() {
+    let mut list = ListState::new(vec!["alpha", "beta", "gamma"]);
+    list.set_filter("zzz");
+    assert_eq!(list.visible_indices(), &[]);
+}
+
+#[test]
+fn list_filter_empty_shows_all() {
+    let mut list = ListState::new(vec!["alpha", "beta", "gamma"]);
+    list.set_filter("alpha");
+    list.set_filter("");
+    assert_eq!(list.visible_indices(), &[0, 1, 2]);
 }
 
 #[test]
@@ -641,6 +756,29 @@ fn nested_containers() {
 }
 
 #[test]
+fn group_hover_bg_applied() {
+    let mut tb = TestBackend::new(40, 10);
+    let events = slt::EventBuilder::new().click(5, 2).build();
+    tb.run_with_events(events, |ui| {
+        ui.group("card").group_hover_bg(slt::Color::Blue).col(|ui| {
+            ui.text("Card content");
+        });
+    });
+    tb.assert_contains("Card content");
+}
+
+#[test]
+fn group_renders_normally_without_hover() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.group("card").bg(slt::Color::Black).col(|ui| {
+            ui.text("Normal");
+        });
+    });
+    tb.assert_contains("Normal");
+}
+
+#[test]
 fn custom_widget_renders() {
     struct Label(String);
 
@@ -761,6 +899,42 @@ fn chart_multi_series() {
     });
     tb.assert_contains("A");
     tb.assert_contains("B");
+}
+
+#[test]
+fn scatter_renders_points() {
+    let mut tb = TestBackend::new(60, 20);
+    tb.render(|ui| {
+        ui.scatter(&[(1.0, 2.0), (3.0, 4.0), (5.0, 1.0)], 50, 16);
+    });
+    assert!(!tb.to_string().trim().is_empty());
+}
+
+#[test]
+fn pie_chart_renders_labels() {
+    let mut tb = TestBackend::new(40, 20);
+    tb.render(|ui| {
+        ui.pie_chart(&[("Rust", 60.0), ("Go", 30.0), ("Python", 10.0)], 8);
+    });
+    let output = tb.to_string();
+    assert!(output.contains("Rust"));
+    assert!(output.contains("Go"));
+    assert!(output.contains("Python"));
+}
+
+#[test]
+fn area_chart_renders() {
+    let mut tb = TestBackend::new(60, 20);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.area(&[(0.0, 0.0), (1.0, 5.0), (2.0, 3.0), (3.0, 7.0)]);
+            },
+            50,
+            16,
+        );
+    });
+    assert!(!tb.to_string().trim().is_empty());
 }
 
 #[test]
@@ -1333,6 +1507,70 @@ fn child_bg_overrides_parent_bg() {
         "Child container bg should override parent bg, got: {:?}",
         cell.style.bg
     );
+}
+
+#[test]
+fn dark_mode_bg_applied() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.set_dark_mode(true);
+        ui.container()
+            .bg(slt::Color::White)
+            .dark_bg(slt::Color::Black)
+            .col(|ui| {
+                ui.text("Dark");
+            });
+    });
+
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(cell.style.bg, Some(slt::Color::Black));
+}
+
+#[test]
+fn dark_mode_off_uses_normal_bg() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.set_dark_mode(false);
+        ui.container()
+            .bg(slt::Color::White)
+            .dark_bg(slt::Color::Black)
+            .col(|ui| {
+                ui.text("Light");
+            });
+    });
+
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(cell.style.bg, Some(slt::Color::White));
+}
+
+#[test]
+fn responsive_md_w_applied_at_80_cols() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.row(|ui| {
+            ui.container().w(20).md_w(40).h(1).col(|_ui| {});
+            ui.text("X");
+        });
+    });
+
+    let line = tb.line(0);
+    let x = line.find('X').expect("marker should be rendered");
+    assert_eq!(x, 40, "md_w(40) should override base w(20) at 80 cols");
+}
+
+#[test]
+fn responsive_sm_w_ignored_at_80_cols() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.row(|ui| {
+            ui.container().w(20).sm_w(40).h(1).col(|_ui| {});
+            ui.text("X");
+        });
+    });
+
+    let line = tb.line(0);
+    let x = line.find('X').expect("marker should be rendered");
+    assert_eq!(x, 20, "sm_w(40) should be ignored at 80 cols (Md)");
 }
 
 #[test]
@@ -2175,4 +2413,40 @@ fn halfblock_image_zero_size_no_panic() {
     tb.render(|ui| {
         ui.image(&img);
     });
+}
+
+#[test]
+fn theme_builder_defaults_from_dark() {
+    let theme = slt::Theme::builder().build();
+    let dark = slt::Theme::dark();
+
+    assert_eq!(theme.primary, dark.primary);
+    assert_eq!(theme.secondary, dark.secondary);
+    assert_eq!(theme.accent, dark.accent);
+    assert_eq!(theme.text, dark.text);
+    assert_eq!(theme.text_dim, dark.text_dim);
+    assert_eq!(theme.border, dark.border);
+    assert_eq!(theme.bg, dark.bg);
+    assert_eq!(theme.success, dark.success);
+    assert_eq!(theme.warning, dark.warning);
+    assert_eq!(theme.error, dark.error);
+    assert_eq!(theme.selected_bg, dark.selected_bg);
+    assert_eq!(theme.selected_fg, dark.selected_fg);
+    assert_eq!(theme.surface, dark.surface);
+    assert_eq!(theme.surface_hover, dark.surface_hover);
+    assert_eq!(theme.surface_text, dark.surface_text);
+}
+
+#[test]
+fn theme_builder_overrides() {
+    let theme = slt::Theme::builder()
+        .primary(slt::Color::Red)
+        .text(slt::Color::Green)
+        .build();
+    let dark = slt::Theme::dark();
+
+    assert_eq!(theme.primary, slt::Color::Red);
+    assert_eq!(theme.text, slt::Color::Green);
+    assert_eq!(theme.accent, dark.accent);
+    assert_eq!(theme.surface_text, dark.surface_text);
 }

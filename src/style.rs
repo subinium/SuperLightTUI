@@ -407,6 +407,38 @@ impl Theme {
         }
     }
 
+    /// Create a [`ThemeBuilder`] for configuring a custom theme.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, Theme};
+    ///
+    /// let theme = Theme::builder()
+    ///     .primary(Color::Rgb(255, 107, 107))
+    ///     .accent(Color::Cyan)
+    ///     .build();
+    /// ```
+    pub fn builder() -> ThemeBuilder {
+        ThemeBuilder {
+            primary: None,
+            secondary: None,
+            accent: None,
+            text: None,
+            text_dim: None,
+            border: None,
+            bg: None,
+            success: None,
+            warning: None,
+            error: None,
+            selected_bg: None,
+            selected_fg: None,
+            surface: None,
+            surface_hover: None,
+            surface_text: None,
+        }
+    }
+
     /// Dracula theme — purple primary on dark gray.
     pub fn dracula() -> Self {
         Self {
@@ -509,6 +541,123 @@ impl Theme {
             surface: Color::Rgb(36, 40, 59),
             surface_hover: Color::Rgb(41, 46, 66),
             surface_text: Color::Rgb(192, 202, 245),
+        }
+    }
+}
+
+/// Builder for creating custom themes with defaults from `Theme::dark()`.
+pub struct ThemeBuilder {
+    primary: Option<Color>,
+    secondary: Option<Color>,
+    accent: Option<Color>,
+    text: Option<Color>,
+    text_dim: Option<Color>,
+    border: Option<Color>,
+    bg: Option<Color>,
+    success: Option<Color>,
+    warning: Option<Color>,
+    error: Option<Color>,
+    selected_bg: Option<Color>,
+    selected_fg: Option<Color>,
+    surface: Option<Color>,
+    surface_hover: Option<Color>,
+    surface_text: Option<Color>,
+}
+
+impl ThemeBuilder {
+    pub fn primary(mut self, color: Color) -> Self {
+        self.primary = Some(color);
+        self
+    }
+
+    pub fn secondary(mut self, color: Color) -> Self {
+        self.secondary = Some(color);
+        self
+    }
+
+    pub fn accent(mut self, color: Color) -> Self {
+        self.accent = Some(color);
+        self
+    }
+
+    pub fn text(mut self, color: Color) -> Self {
+        self.text = Some(color);
+        self
+    }
+
+    pub fn text_dim(mut self, color: Color) -> Self {
+        self.text_dim = Some(color);
+        self
+    }
+
+    pub fn border(mut self, color: Color) -> Self {
+        self.border = Some(color);
+        self
+    }
+
+    pub fn bg(mut self, color: Color) -> Self {
+        self.bg = Some(color);
+        self
+    }
+
+    pub fn success(mut self, color: Color) -> Self {
+        self.success = Some(color);
+        self
+    }
+
+    pub fn warning(mut self, color: Color) -> Self {
+        self.warning = Some(color);
+        self
+    }
+
+    pub fn error(mut self, color: Color) -> Self {
+        self.error = Some(color);
+        self
+    }
+
+    pub fn selected_bg(mut self, color: Color) -> Self {
+        self.selected_bg = Some(color);
+        self
+    }
+
+    pub fn selected_fg(mut self, color: Color) -> Self {
+        self.selected_fg = Some(color);
+        self
+    }
+
+    pub fn surface(mut self, color: Color) -> Self {
+        self.surface = Some(color);
+        self
+    }
+
+    pub fn surface_hover(mut self, color: Color) -> Self {
+        self.surface_hover = Some(color);
+        self
+    }
+
+    pub fn surface_text(mut self, color: Color) -> Self {
+        self.surface_text = Some(color);
+        self
+    }
+
+    pub fn build(self) -> Theme {
+        let defaults = Theme::dark();
+        Theme {
+            primary: self.primary.unwrap_or(defaults.primary),
+            secondary: self.secondary.unwrap_or(defaults.secondary),
+            accent: self.accent.unwrap_or(defaults.accent),
+            text: self.text.unwrap_or(defaults.text),
+            text_dim: self.text_dim.unwrap_or(defaults.text_dim),
+            border: self.border.unwrap_or(defaults.border),
+            bg: self.bg.unwrap_or(defaults.bg),
+            success: self.success.unwrap_or(defaults.success),
+            warning: self.warning.unwrap_or(defaults.warning),
+            error: self.error.unwrap_or(defaults.error),
+            selected_bg: self.selected_bg.unwrap_or(defaults.selected_bg),
+            selected_fg: self.selected_fg.unwrap_or(defaults.selected_fg),
+            surface: self.surface.unwrap_or(defaults.surface),
+            surface_hover: self.surface_hover.unwrap_or(defaults.surface_hover),
+            surface_text: self.surface_text.unwrap_or(defaults.surface_text),
         }
     }
 }

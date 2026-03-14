@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0] — 2026-03-14
+
+### Features
+- **Hooks**: `use_state()` / `use_memo()` — React-style persistent state with `State<T>` handle pattern
+- **Dark mode prefix**: `dark_bg()`, `dark_border_style()` — conditional container styles for dark/light modes
+- **Responsive variants**: `xs_w()` through `xl_w()`, `_h`, `_min_w`, `_max_w`, `_gap`, `_p`, `_grow` (35 methods) — breakpoint-conditional layout
+- **Group hover/focus**: `ui.group("card").col(...)` with `group_hover_bg()` — parent hover state affects children
+- **Theme builder**: `Theme::builder().primary(Color::Red).build()` — 15-field builder with dark defaults
+- **ListState filter**: `list.set_filter("rust")` — multi-token AND matching (same as TableState)
+- **Animation callbacks**: `.on_complete()` for Tween/Keyframes/Sequence/Stagger, `.on_settle()` for Spring
+- **Scatter plot**: `ui.scatter(&data, w, h)` — standalone braille scatter chart
+- **Pie chart**: `ui.pie_chart(&[("Rust", 60.0), ...], radius)` — block-character pie with legend
+- **Area chart**: `ui.chart(|c| { c.area(&data); }, w, h)` — filled area under line
+
+### Changed
+- Demo example: added "v0.8.0" tab showcasing all new features
+
 ## [0.7.2] — 2026-03-14
 
 ### Changed

@@ -13,6 +13,7 @@ use crate::widgets::{
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
     ToastState, ToolApprovalState, TreeState,
 };
+use std::f64::consts::TAU;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]
@@ -31,6 +32,28 @@ fn slt_warn(msg: &str) {
 #[cfg(not(debug_assertions))]
 #[allow(dead_code)]
 fn slt_warn(_msg: &str) {}
+
+/// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
+pub struct State<T> {
+    idx: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: 'static> State<T> {
+    /// Read the current value.
+    pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
+        ui.hook_states[self.idx]
+            .downcast_ref::<T>()
+            .expect("use_state type mismatch")
+    }
+
+    /// Mutably access the current value.
+    pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
+        ui.hook_states[self.idx]
+            .downcast_mut::<T>()
+            .expect("use_state type mismatch")
+    }
+}
 
 /// Result of a container mouse interaction.
 ///
@@ -200,12 +223,18 @@ pub struct Context {
     pub(crate) tick: u64,
     pub(crate) focus_index: usize,
     pub(crate) focus_count: usize,
+    pub(crate) hook_states: Vec<Box<dyn std::any::Any>>,
+    pub(crate) hook_cursor: usize,
     prev_focus_count: usize,
     scroll_count: usize,
     prev_scroll_infos: Vec<(u32, u32)>,
     prev_scroll_rects: Vec<Rect>,
     interaction_count: usize,
     pub(crate) prev_hit_map: Vec<Rect>,
+    pub(crate) group_stack: Vec<String>,
+    pub(crate) prev_group_rects: Vec<(String, Rect)>,
+    group_count: usize,
+    prev_focus_groups: Vec<Option<String>>,
     _prev_focus_rects: Vec<(usize, Rect)>,
     mouse_pos: Option<(u32, u32)>,
     click_pos: Option<(u32, u32)>,
@@ -216,6 +245,7 @@ pub struct Context {
     pub(crate) clipboard_text: Option<String>,
     debug: bool,
     theme: Theme,
+    pub(crate) dark_mode: bool,
 }
 
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
@@ -248,6 +278,11 @@ pub struct ContainerBuilder<'a> {
     border_sides: BorderSides,
     border_style: Style,
     bg_color: Option<Color>,
+    dark_bg_color: Option<Color>,
+    dark_border_style: Option<Style>,
+    group_hover_bg: Option<Color>,
+    group_hover_border_style: Option<Style>,
+    group_name: Option<String>,
     padding: Padding,
     margin: Margin,
     constraints: Constraints,
@@ -736,8 +771,30 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Border style used when dark mode is active.
+    pub fn dark_border_style(mut self, style: Style) -> Self {
+        self.dark_border_style = Some(style);
+        self
+    }
+
     pub fn bg(mut self, color: Color) -> Self {
         self.bg_color = Some(color);
+        self
+    }
+
+    /// Background color used when dark mode is active.
+    pub fn dark_bg(mut self, color: Color) -> Self {
+        self.dark_bg_color = Some(color);
+        self
+    }
+
+    pub fn group_hover_bg(mut self, color: Color) -> Self {
+        self.group_hover_bg = Some(color);
+        self
+    }
+
+    pub fn group_hover_border_style(mut self, style: Style) -> Self {
+        self.group_hover_border_style = Some(style);
         self
     }
 
@@ -859,11 +916,116 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Width applied only at Xs breakpoint (< 40 cols).
+    ///
+    /// # Example
+    /// ```ignore
+    /// ui.container().w(20).md_w(40).lg_w(60).col(|ui| { ... });
+    /// ```
+    pub fn xs_w(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Width applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_w(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Width applied only at Md breakpoint (80-119 cols).
+    pub fn md_w(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Width applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_w(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Width applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_w(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.w(value)
+        } else {
+            self
+        }
+    }
+
     /// Set a fixed height (sets both min and max height).
     pub fn h(mut self, value: u32) -> Self {
         self.constraints.min_height = Some(value);
         self.constraints.max_height = Some(value);
         self
+    }
+
+    /// Height applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_h(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.h(value)
+        } else {
+            self
+        }
+    }
+
+    /// Height applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_h(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.h(value)
+        } else {
+            self
+        }
+    }
+
+    /// Height applied only at Md breakpoint (80-119 cols).
+    pub fn md_h(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.h(value)
+        } else {
+            self
+        }
+    }
+
+    /// Height applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_h(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.h(value)
+        } else {
+            self
+        }
+    }
+
+    /// Height applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_h(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.h(value)
+        } else {
+            self
+        }
     }
 
     /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
@@ -872,10 +1034,110 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Minimum width applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_min_w(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.min_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Minimum width applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_min_w(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.min_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Minimum width applied only at Md breakpoint (80-119 cols).
+    pub fn md_min_w(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.min_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Minimum width applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_min_w(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.min_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Minimum width applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_min_w(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.min_w(value)
+        } else {
+            self
+        }
+    }
+
     /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
     pub fn max_w(mut self, value: u32) -> Self {
         self.constraints.max_width = Some(value);
         self
+    }
+
+    /// Maximum width applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_max_w(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.max_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Maximum width applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_max_w(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.max_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Maximum width applied only at Md breakpoint (80-119 cols).
+    pub fn md_max_w(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.max_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Maximum width applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_max_w(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.max_w(value)
+        } else {
+            self
+        }
+    }
+
+    /// Maximum width applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_max_w(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.max_w(value)
+        } else {
+            self
+        }
     }
 
     /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
@@ -940,10 +1202,165 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Gap applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_gap(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.gap(value)
+        } else {
+            self
+        }
+    }
+
+    /// Gap applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_gap(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.gap(value)
+        } else {
+            self
+        }
+    }
+
+    /// Gap applied only at Md breakpoint (80-119 cols).
+    ///
+    /// # Example
+    /// ```ignore
+    /// ui.container().gap(0).md_gap(2).col(|ui| { ... });
+    /// ```
+    pub fn md_gap(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.gap(value)
+        } else {
+            self
+        }
+    }
+
+    /// Gap applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_gap(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.gap(value)
+        } else {
+            self
+        }
+    }
+
+    /// Gap applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_gap(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.gap(value)
+        } else {
+            self
+        }
+    }
+
     /// Set the flex-grow factor. `1` means the container expands to fill available space.
     pub fn grow(mut self, grow: u16) -> Self {
         self.grow = grow;
         self
+    }
+
+    /// Grow factor applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_grow(self, value: u16) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.grow(value)
+        } else {
+            self
+        }
+    }
+
+    /// Grow factor applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_grow(self, value: u16) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.grow(value)
+        } else {
+            self
+        }
+    }
+
+    /// Grow factor applied only at Md breakpoint (80-119 cols).
+    pub fn md_grow(self, value: u16) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.grow(value)
+        } else {
+            self
+        }
+    }
+
+    /// Grow factor applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_grow(self, value: u16) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.grow(value)
+        } else {
+            self
+        }
+    }
+
+    /// Grow factor applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_grow(self, value: u16) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.grow(value)
+        } else {
+            self
+        }
+    }
+
+    /// Uniform padding applied only at Xs breakpoint (< 40 cols).
+    pub fn xs_p(self, value: u32) -> Self {
+        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
+        if is_xs {
+            self.p(value)
+        } else {
+            self
+        }
+    }
+
+    /// Uniform padding applied only at Sm breakpoint (40-79 cols).
+    pub fn sm_p(self, value: u32) -> Self {
+        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
+        if is_sm {
+            self.p(value)
+        } else {
+            self
+        }
+    }
+
+    /// Uniform padding applied only at Md breakpoint (80-119 cols).
+    pub fn md_p(self, value: u32) -> Self {
+        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
+        if is_md {
+            self.p(value)
+        } else {
+            self
+        }
+    }
+
+    /// Uniform padding applied only at Lg breakpoint (120-159 cols).
+    pub fn lg_p(self, value: u32) -> Self {
+        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
+        if is_lg {
+            self.p(value)
+        } else {
+            self
+        }
+    }
+
+    /// Uniform padding applied only at Xl breakpoint (>= 160 cols).
+    pub fn xl_p(self, value: u32) -> Self {
+        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
+        if is_xl {
+            self.p(value)
+        } else {
+            self
+        }
     }
 
     // ── alignment ───────────────────────────────────────────────────
@@ -1001,6 +1418,11 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    fn group_name(mut self, name: String) -> Self {
+        self.group_name = Some(name);
+        self
+    }
+
     /// Finalize the builder as a vertical (column) container.
     ///
     /// The closure receives a `&mut Context` for rendering children.
@@ -1030,12 +1452,59 @@ impl<'a> ContainerBuilder<'a> {
         let interaction_id = self.ctx.interaction_count;
         self.ctx.interaction_count += 1;
 
+        let in_hovered_group = self
+            .group_name
+            .as_ref()
+            .map(|name| self.ctx.is_group_hovered(name))
+            .unwrap_or(false)
+            || self
+                .ctx
+                .group_stack
+                .last()
+                .map(|name| self.ctx.is_group_hovered(name))
+                .unwrap_or(false);
+        let in_focused_group = self
+            .group_name
+            .as_ref()
+            .map(|name| self.ctx.is_group_focused(name))
+            .unwrap_or(false)
+            || self
+                .ctx
+                .group_stack
+                .last()
+                .map(|name| self.ctx.is_group_focused(name))
+                .unwrap_or(false);
+
+        let resolved_bg = if self.ctx.dark_mode {
+            self.dark_bg_color.or(self.bg_color)
+        } else {
+            self.bg_color
+        };
+        let resolved_border_style = if self.ctx.dark_mode {
+            self.dark_border_style.unwrap_or(self.border_style)
+        } else {
+            self.border_style
+        };
+        let bg_color = if in_hovered_group || in_focused_group {
+            self.group_hover_bg.or(resolved_bg)
+        } else {
+            resolved_bg
+        };
+        let border_style = if in_hovered_group || in_focused_group {
+            self.group_hover_border_style
+                .unwrap_or(resolved_border_style)
+        } else {
+            resolved_border_style
+        };
+        let group_name = self.group_name.clone();
+        let is_group_container = group_name.is_some();
+
         if let Some(scroll_offset) = self.scroll_offset {
             self.ctx.commands.push(Command::BeginScrollable {
                 grow: self.grow,
                 border: self.border,
                 border_sides: self.border_sides,
-                border_style: self.border_style,
+                border_style,
                 padding: self.padding,
                 margin: self.margin,
                 constraints: self.constraints,
@@ -1050,18 +1519,24 @@ impl<'a> ContainerBuilder<'a> {
                 justify: self.justify,
                 border: self.border,
                 border_sides: self.border_sides,
-                border_style: self.border_style,
-                bg_color: self.bg_color,
+                border_style,
+                bg_color,
                 padding: self.padding,
                 margin: self.margin,
                 constraints: self.constraints,
                 title: self.title,
                 grow: self.grow,
+                group_name,
             });
         }
         f(self.ctx);
         self.ctx.commands.push(Command::EndContainer);
         self.ctx.last_text_idx = None;
+
+        if is_group_container {
+            self.ctx.group_stack.pop();
+            self.ctx.group_count = self.ctx.group_count.saturating_sub(1);
+        }
 
         self.ctx.response_for(interaction_id)
     }
@@ -1079,7 +1554,10 @@ impl Context {
         prev_scroll_infos: Vec<(u32, u32)>,
         prev_scroll_rects: Vec<Rect>,
         prev_hit_map: Vec<Rect>,
+        prev_group_rects: Vec<(String, Rect)>,
         prev_focus_rects: Vec<(usize, Rect)>,
+        prev_focus_groups: Vec<Option<String>>,
+        prev_hook_states: Vec<Box<dyn std::any::Any>>,
         debug: bool,
         theme: Theme,
         last_mouse_pos: Option<(u32, u32)>,
@@ -1123,12 +1601,18 @@ impl Context {
             tick,
             focus_index,
             focus_count: 0,
+            hook_states: prev_hook_states,
+            hook_cursor: 0,
             prev_focus_count,
             scroll_count: 0,
             prev_scroll_infos,
             prev_scroll_rects,
             interaction_count: 0,
             prev_hit_map,
+            group_stack: Vec::new(),
+            prev_group_rects,
+            group_count: 0,
+            prev_focus_groups,
             _prev_focus_rects: prev_focus_rects,
             mouse_pos,
             click_pos,
@@ -1139,6 +1623,7 @@ impl Context {
             clipboard_text: None,
             debug,
             theme,
+            dark_mode: true,
         }
     }
 
@@ -1278,6 +1763,77 @@ impl Context {
             return true;
         }
         self.focus_index % self.prev_focus_count == id
+    }
+
+    /// Create persistent state that survives across frames.
+    ///
+    /// Returns a `State<T>` handle. Access with `state.get(ui)` / `state.get_mut(ui)`.
+    ///
+    /// # Rules
+    /// - Must be called in the same order every frame (like React hooks)
+    /// - Do NOT call inside if/else that changes between frames
+    ///
+    /// # Example
+    /// ```ignore
+    /// let count = ui.use_state(|| 0i32);
+    /// let val = count.get(ui);
+    /// ui.text(format!("Count: {val}"));
+    /// if ui.button("+1") {
+    ///     *count.get_mut(ui) += 1;
+    /// }
+    /// ```
+    pub fn use_state<T: 'static>(&mut self, init: impl FnOnce() -> T) -> State<T> {
+        let idx = self.hook_cursor;
+        self.hook_cursor += 1;
+
+        if idx >= self.hook_states.len() {
+            self.hook_states.push(Box::new(init()));
+        }
+
+        State {
+            idx,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Memoize a computed value. Recomputes only when `deps` changes.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let doubled = ui.use_memo(&count, |c| c * 2);
+    /// ui.text(format!("Doubled: {doubled}"));
+    /// ```
+    pub fn use_memo<T: 'static, D: PartialEq + Clone + 'static>(
+        &mut self,
+        deps: &D,
+        compute: impl FnOnce(&D) -> T,
+    ) -> &T {
+        let idx = self.hook_cursor;
+        self.hook_cursor += 1;
+
+        let should_recompute = if idx >= self.hook_states.len() {
+            true
+        } else {
+            let (stored_deps, _) = self.hook_states[idx]
+                .downcast_ref::<(D, T)>()
+                .expect("use_memo type mismatch");
+            stored_deps != deps
+        };
+
+        if should_recompute {
+            let value = compute(deps);
+            let slot = Box::new((deps.clone(), value));
+            if idx < self.hook_states.len() {
+                self.hook_states[idx] = slot;
+            } else {
+                self.hook_states.push(slot);
+            }
+        }
+
+        let (_, value) = self.hook_states[idx]
+            .downcast_ref::<(D, T)>()
+            .expect("use_memo type mismatch");
+        value
     }
 
     // ── text ──────────────────────────────────────────────────────────
@@ -1439,6 +1995,30 @@ impl Context {
     /// Set the background color of the last rendered text element.
     pub fn bg(&mut self, color: Color) -> &mut Self {
         self.modify_last_style(|s| s.bg = Some(color));
+        self
+    }
+
+    pub fn group_hover_fg(&mut self, color: Color) -> &mut Self {
+        let apply_group_style = self
+            .group_stack
+            .last()
+            .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
+            .unwrap_or(false);
+        if apply_group_style {
+            self.modify_last_style(|s| s.fg = Some(color));
+        }
+        self
+    }
+
+    pub fn group_hover_bg(&mut self, color: Color) -> &mut Self {
+        let apply_group_style = self
+            .group_stack
+            .last()
+            .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
+            .unwrap_or(false);
+        if apply_group_style {
+            self.modify_last_style(|s| s.bg = Some(color));
+        }
         self
     }
 
@@ -1747,6 +2327,7 @@ impl Context {
         self
     }
 
+    /// Render content in a modal overlay with dimmed background.
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) {
         self.commands.push(Command::BeginOverlay { modal: true });
         self.overlay_depth += 1;
@@ -1757,6 +2338,7 @@ impl Context {
         self.last_text_idx = None;
     }
 
+    /// Render floating content without dimming the background.
     pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) {
         self.commands.push(Command::BeginOverlay { modal: false });
         self.overlay_depth += 1;
@@ -1764,6 +2346,13 @@ impl Context {
         self.overlay_depth = self.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.last_text_idx = None;
+    }
+
+    /// Create a named group container for shared hover/focus styling.
+    pub fn group(&mut self, name: &str) -> ContainerBuilder<'_> {
+        self.group_count = self.group_count.saturating_add(1);
+        self.group_stack.push(name.to_string());
+        self.container().group_name(name.to_string())
     }
 
     /// Create a container with a fluent builder.
@@ -1797,6 +2386,11 @@ impl Context {
             border_sides: BorderSides::all(),
             border_style: Style::new().fg(border),
             bg_color: None,
+            dark_bg_color: None,
+            dark_border_style: None,
+            group_hover_bg: None,
+            group_hover_border_style: None,
+            group_name: None,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -1856,7 +2450,7 @@ impl Context {
         self.container().scroll_offset(state.offset as u32)
     }
 
-    /// Render a vertical scrollbar reflecting the given scroll state.
+    /// Render a scrollbar track for a [`ScrollState`].
     ///
     /// Displays a track (`│`) with a proportional thumb (`█`). The thumb size
     /// and position are calculated from the scroll state's content height,
@@ -1992,6 +2586,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         f(self);
         self.commands.push(Command::EndContainer);
@@ -2021,6 +2616,32 @@ impl Context {
         } else {
             Response::default()
         }
+    }
+
+    pub fn is_group_hovered(&self, name: &str) -> bool {
+        if let Some(pos) = self.mouse_pos {
+            self.prev_group_rects.iter().any(|(n, rect)| {
+                n == name
+                    && pos.0 >= rect.x
+                    && pos.0 < rect.x + rect.width
+                    && pos.1 >= rect.y
+                    && pos.1 < rect.y + rect.height
+            })
+        } else {
+            false
+        }
+    }
+
+    pub fn is_group_focused(&self, name: &str) -> bool {
+        if self.prev_focus_count == 0 {
+            return false;
+        }
+        let focused_index = self.focus_index % self.prev_focus_count;
+        self.prev_focus_groups
+            .get(focused_index)
+            .and_then(|group| group.as_deref())
+            .map(|group| group == name)
+            .unwrap_or(false)
     }
 
     /// Set the flex-grow factor of the last rendered text element.
@@ -2281,6 +2902,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         for message in state.messages.iter().rev() {
             let color = match message.level {
@@ -2526,6 +3148,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         let show_cursor = focused && (self.tick / 30) % 2 == 0;
@@ -2649,6 +3272,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         for (label, value) in data {
@@ -2673,6 +3297,7 @@ impl Context {
                 constraints: Constraints::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             });
             self.styled(
                 format!("{label}{label_padding}"),
@@ -2747,6 +3372,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 0,
+                    group_name: None,
                 });
 
                 for bar in bars {
@@ -2772,6 +3398,7 @@ impl Context {
                         constraints: Constraints::default(),
                         title: None,
                         grow: 0,
+                        group_name: None,
                     });
                     self.styled(
                         format!("{}{label_padding}", bar.label),
@@ -2831,6 +3458,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 0,
+                    group_name: None,
                 });
 
                 self.interaction_count += 1;
@@ -2848,6 +3476,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 0,
+                    group_name: None,
                 });
                 for value in &value_labels {
                     self.styled(
@@ -2874,6 +3503,7 @@ impl Context {
                         constraints: Constraints::default(),
                         title: None,
                         grow: 0,
+                        group_name: None,
                     });
 
                     let row_base = row * 8;
@@ -2914,6 +3544,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 0,
+                    group_name: None,
                 });
                 for bar in bars {
                     self.styled(
@@ -2984,6 +3615,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         for group in groups {
@@ -3011,6 +3643,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 0,
+                    group_name: None,
                 });
                 self.styled(
                     format!("  {}{label_padding}", bar.label),
@@ -3167,6 +3800,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         let mut seg = String::new();
@@ -3340,6 +3974,7 @@ impl Context {
                 constraints: Constraints::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             });
             for (text, color) in segments {
                 let c = if color == Color::Reset {
@@ -3390,10 +4025,160 @@ impl Context {
                 constraints: Constraints::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             });
             for (text, style) in row.segments {
                 self.styled(text, style);
             }
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        self
+    }
+
+    /// Renders a scatter plot.
+    ///
+    /// Each point is a (x, y) tuple. Uses braille markers.
+    pub fn scatter(&mut self, data: &[(f64, f64)], width: u32, height: u32) -> &mut Self {
+        self.chart(
+            |c| {
+                c.scatter(data);
+                c.grid(true);
+            },
+            width,
+            height,
+        )
+    }
+
+    /// Renders a pie chart using block characters.
+    ///
+    /// `data` is a slice of `(label, value)`. `radius` is the height in rows.
+    pub fn pie_chart(&mut self, data: &[(&str, f64)], radius: u32) -> &mut Self {
+        if radius == 0 {
+            return self;
+        }
+
+        let slices: Vec<(&str, f64)> = data
+            .iter()
+            .copied()
+            .filter(|(_, value)| value.is_finite() && *value > 0.0)
+            .collect();
+
+        if slices.is_empty() {
+            return self;
+        }
+
+        let total: f64 = slices.iter().map(|(_, value)| *value).sum();
+        if total <= 0.0 {
+            return self;
+        }
+
+        let palette = [
+            self.theme.primary,
+            self.theme.secondary,
+            self.theme.accent,
+            self.theme.success,
+            self.theme.warning,
+            self.theme.error,
+        ];
+
+        let mut ranges: Vec<(f64, f64, Color, &str, f64)> = Vec::with_capacity(slices.len());
+        let mut cursor = 0.0;
+        for (index, (label, value)) in slices.iter().enumerate() {
+            let ratio = *value / total;
+            let span = ratio * TAU;
+            let start = cursor;
+            let end = (cursor + span).min(TAU);
+            let color = palette[index % palette.len()];
+            ranges.push((start, end, color, *label, ratio * 100.0));
+            cursor = end;
+        }
+        if let Some(last) = ranges.last_mut() {
+            last.1 = TAU;
+        }
+
+        let r = radius as i32;
+        let x_radius = (radius as f64 * 2.0).max(1.0);
+        for y in -r..=r {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            let mut current_style = Style::new();
+            let mut buffer = String::new();
+
+            for x in (-2 * r)..=(2 * r) {
+                let nx = x as f64 / x_radius;
+                let ny = y as f64 / radius as f64;
+                let inside = nx * nx + ny * ny <= 1.0;
+
+                let (ch, style) = if inside {
+                    let mut angle = (-ny).atan2(nx);
+                    if angle < 0.0 {
+                        angle += TAU;
+                    }
+
+                    let segment = ranges
+                        .iter()
+                        .position(|(start, end, _, _, _)| angle >= *start && angle < *end)
+                        .unwrap_or_else(|| ranges.len().saturating_sub(1));
+                    ('█', Style::new().fg(ranges[segment].2))
+                } else {
+                    (' ', Style::new())
+                };
+
+                if buffer.is_empty() {
+                    current_style = style;
+                } else if style != current_style {
+                    self.styled(std::mem::take(&mut buffer), current_style);
+                    current_style = style;
+                }
+
+                buffer.push(ch);
+            }
+
+            if !buffer.is_empty() {
+                self.styled(buffer, current_style);
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        for (_, _, color, label, percent) in ranges {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+            self.styled(format!("■ {label} ({percent:.1}%)"), Style::new().fg(color));
             self.commands.push(Command::EndContainer);
             self.last_text_idx = None;
         }
@@ -3440,6 +4225,7 @@ impl Context {
                 constraints: Constraints::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             });
             for (text, style) in row.segments {
                 self.styled(text, style);
@@ -3487,6 +4273,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         let children_start = self.commands.len();
@@ -3540,6 +4327,7 @@ impl Context {
                 constraints: Constraints::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             });
 
             for element in row {
@@ -3558,6 +4346,7 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 1,
+                    group_name: None,
                 });
                 self.commands.extend(element.iter().cloned());
                 self.commands.push(Command::EndContainer);
@@ -3654,6 +4443,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         for (idx, item) in state.items.iter().enumerate() {
@@ -3850,6 +4640,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         let header_cells = state
@@ -4002,6 +4793,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         for (idx, label) in state.labels.iter().enumerate() {
             let style = if idx == state.selected {
@@ -4080,6 +4872,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         self.styled(format!("[ {} ]", label.into()), style);
         self.commands.push(Command::EndContainer);
@@ -4197,6 +4990,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         self.styled(text, style);
         self.commands.push(Command::EndContainer);
@@ -4258,6 +5052,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         let marker_style = if *checked {
             Style::new().fg(self.theme.success)
@@ -4333,6 +5128,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         let label_text = label.into();
         let switch = if *on { "●━━ ON" } else { "━━● OFF" };
@@ -4454,6 +5250,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         self.commands.push(Command::BeginContainer {
@@ -4475,6 +5272,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         self.interaction_count += 1;
         self.styled(&display_text, Style::new().fg(self.theme.text));
@@ -4585,6 +5383,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         for (idx, item) in state.items.iter().enumerate() {
@@ -4698,6 +5497,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         for (idx, item) in state.items.iter().enumerate() {
@@ -4786,6 +5586,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         let entries = state.flatten();
@@ -4901,6 +5702,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
 
         if start > 0 {
@@ -5081,6 +5883,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         self.interaction_count += 1;
 
@@ -5296,6 +6099,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            group_name: None,
         });
         for (idx, (key, action)) in bindings.iter().enumerate() {
             if idx > 0 {
@@ -5469,6 +6273,16 @@ impl Context {
     /// All widgets rendered after this call will use the new theme's colors.
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
+    }
+
+    /// Check if dark mode is active.
+    pub fn is_dark_mode(&self) -> bool {
+        self.dark_mode
+    }
+
+    /// Set dark mode. When true, dark_* style variants are applied.
+    pub fn set_dark_mode(&mut self, dark: bool) {
+        self.dark_mode = dark;
     }
 
     // ── info ─────────────────────────────────────────────────────────

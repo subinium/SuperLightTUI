@@ -43,6 +43,7 @@ pub(crate) enum Command {
         constraints: Constraints,
         title: Option<(String, Style)>,
         grow: u16,
+        group_name: Option<String>,
     },
     BeginScrollable {
         grow: u16,
@@ -122,6 +123,7 @@ pub(crate) struct LayoutNode {
     cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
     pub(crate) focus_id: Option<usize>,
     link_url: Option<String>,
+    group_name: Option<String>,
     overlays: Vec<OverlayLayer>,
 }
 
@@ -180,6 +182,7 @@ impl LayoutNode {
             cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
+            group_name: None,
             overlays: Vec::new(),
         }
     }
@@ -223,6 +226,7 @@ impl LayoutNode {
             cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
+            group_name: None,
             overlays: Vec::new(),
         }
     }
@@ -256,6 +260,7 @@ impl LayoutNode {
             cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
+            group_name: None,
             overlays: Vec::new(),
         }
     }
@@ -289,6 +294,7 @@ impl LayoutNode {
             cached_wrapped_segments: None,
             focus_id: None,
             link_url: None,
+            group_name: None,
             overlays: Vec::new(),
         }
     }
@@ -746,6 +752,7 @@ fn build_children(
                 constraints,
                 title,
                 grow,
+                group_name,
             } => {
                 let mut node = LayoutNode::container(
                     *direction,
@@ -765,6 +772,7 @@ fn build_children(
                     },
                 );
                 node.focus_id = pending_focus_id.take();
+                node.group_name = group_name.clone();
                 *pos += 1;
                 build_children(&mut node, commands, pos, overlays, false);
                 parent.children.push(node);
@@ -1764,6 +1772,17 @@ pub(crate) fn collect_hit_areas(node: &LayoutNode) -> Vec<Rect> {
     areas
 }
 
+pub(crate) fn collect_group_rects(node: &LayoutNode) -> Vec<(String, Rect)> {
+    let mut rects = Vec::new();
+    for child in &node.children {
+        collect_group_rects_inner(child, &mut rects, 0);
+    }
+    for overlay in &node.overlays {
+        collect_group_rects_inner(&overlay.node, &mut rects, 0);
+    }
+    rects
+}
+
 fn collect_scroll_infos_inner(node: &LayoutNode, infos: &mut Vec<(u32, u32)>) {
     if node.is_scrollable {
         let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
@@ -1794,6 +1813,30 @@ fn collect_hit_areas_inner(node: &LayoutNode, areas: &mut Vec<Rect>, y_offset: u
     };
     for child in &node.children {
         collect_hit_areas_inner(child, areas, child_offset);
+    }
+}
+
+fn collect_group_rects_inner(node: &LayoutNode, rects: &mut Vec<(String, Rect)>, y_offset: u32) {
+    if let Some(name) = &node.group_name {
+        if node.pos.1 + node.size.1 > y_offset {
+            rects.push((
+                name.clone(),
+                Rect::new(
+                    node.pos.0,
+                    node.pos.1.saturating_sub(y_offset),
+                    node.size.0,
+                    node.size.1,
+                ),
+            ));
+        }
+    }
+    let child_offset = if node.is_scrollable {
+        y_offset.saturating_add(node.scroll_offset)
+    } else {
+        y_offset
+    };
+    for child in &node.children {
+        collect_group_rects_inner(child, rects, child_offset);
     }
 }
 
@@ -1838,6 +1881,17 @@ pub(crate) fn collect_focus_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
     rects
 }
 
+pub(crate) fn collect_focus_groups(node: &LayoutNode) -> Vec<Option<String>> {
+    let mut groups = Vec::new();
+    for child in &node.children {
+        collect_focus_groups_inner(child, &mut groups, None);
+    }
+    for overlay in &node.overlays {
+        collect_focus_groups_inner(&overlay.node, &mut groups, None);
+    }
+    groups
+}
+
 fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, y_offset: u32) {
     if let Some(id) = node.focus_id {
         if node.pos.1 + node.size.1 > y_offset {
@@ -1859,6 +1913,23 @@ fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, 
     };
     for child in &node.children {
         collect_focus_rects_inner(child, rects, child_offset);
+    }
+}
+
+fn collect_focus_groups_inner(
+    node: &LayoutNode,
+    groups: &mut Vec<Option<String>>,
+    active_group: Option<&str>,
+) {
+    let current_group = node.group_name.as_deref().or(active_group);
+    if let Some(id) = node.focus_id {
+        if id >= groups.len() {
+            groups.resize(id + 1, None);
+        }
+        groups[id] = current_group.map(ToString::to_string);
+    }
+    for child in &node.children {
+        collect_focus_groups_inner(child, groups, current_group);
     }
 }
 
@@ -2176,6 +2247,7 @@ mod tests {
                 constraints: Default::default(),
                 title: None,
                 grow: 0,
+                group_name: None,
             },
             Command::Text {
                 content: "inside".into(),
