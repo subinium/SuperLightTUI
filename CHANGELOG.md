@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.2] — 2026-03-14
+
+### Changed
+- **Multi-token command palette filter**: `CommandPaletteState` search now uses the same multi-token AND logic as `TableState` — e.g. `"save buffer"` matches commands where label contains "save" and description contains "buffer"
+
+### Fixed
+- Register `demo_fire` and `demo_game` examples in `Cargo.toml`
+
+### Added
+- VHS tape file for DOOM fire demo recording (`demo_fire.tape`)
+
 ## [0.7.1] — 2026-03-14
 
 ### Changed
