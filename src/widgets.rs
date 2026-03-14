@@ -567,16 +567,21 @@ impl TableState {
     fn rebuild_view(&mut self) {
         let mut indices: Vec<usize> = (0..self.rows.len()).collect();
 
-        if !self.filter.is_empty() {
-            let needle = self.filter.to_lowercase();
+        let tokens: Vec<String> = self
+            .filter
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect();
+        if !tokens.is_empty() {
             indices.retain(|&idx| {
-                self.rows
-                    .get(idx)
-                    .map(|row| {
-                        row.iter()
-                            .any(|cell| cell.to_lowercase().contains(needle.as_str()))
-                    })
-                    .unwrap_or(false)
+                let row = match self.rows.get(idx) {
+                    Some(r) => r,
+                    None => return false,
+                };
+                tokens.iter().all(|token| {
+                    row.iter()
+                        .any(|cell| cell.to_lowercase().contains(token.as_str()))
+                })
             });
         }
 
