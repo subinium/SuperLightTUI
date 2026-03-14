@@ -2816,30 +2816,34 @@ impl Context {
             }
         }
 
-        let show_cursor = focused && (self.tick / 30) % 2 == 0;
-
         let input_text = if state.value.is_empty() {
             if state.placeholder.len() > 100 {
                 slt_warn(
                     "text_input placeholder is very long (>100 chars) — consider shortening it",
                 );
             }
-            state.placeholder.clone()
+            let mut ph = state.placeholder.clone();
+            if focused {
+                ph.insert(0, '▎');
+            }
+            ph
         } else {
             let mut rendered = String::new();
             for (idx, ch) in state.value.chars().enumerate() {
-                if show_cursor && idx == state.cursor {
+                if focused && idx == state.cursor {
                     rendered.push('▎');
                 }
                 rendered.push(if state.masked { '•' } else { ch });
             }
-            if show_cursor && state.cursor >= state.value.chars().count() {
+            if focused && state.cursor >= state.value.chars().count() {
                 rendered.push('▎');
             }
             rendered
         };
-        let input_style = if state.value.is_empty() {
+        let input_style = if state.value.is_empty() && !focused {
             Style::new().dim().fg(self.theme.text_dim)
+        } else if state.value.is_empty() {
+            Style::new().fg(self.theme.text)
         } else {
             Style::new().fg(self.theme.text)
         };
@@ -3154,7 +3158,6 @@ impl Context {
             group_name: None,
         });
 
-        let show_cursor = focused && (self.tick / 30) % 2 == 0;
         for vi in 0..visible_rows as usize {
             let actual_vi = state.scroll_offset + vi;
             let (seg_text, is_cursor_line) = if let Some(vl) = vlines.get(actual_vi) {
@@ -3179,12 +3182,12 @@ impl Context {
             if is_cursor_line {
                 rendered.clear();
                 for (idx, ch) in seg_text.chars().enumerate() {
-                    if show_cursor && idx == cursor_vcol {
+                    if focused && idx == cursor_vcol {
                         rendered.push('▎');
                     }
                     rendered.push(ch);
                 }
-                if show_cursor && cursor_vcol >= seg_text.chars().count() {
+                if focused && cursor_vcol >= seg_text.chars().count() {
                     rendered.push('▎');
                 }
                 style = Style::new().fg(self.theme.text);
