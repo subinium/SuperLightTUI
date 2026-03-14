@@ -43,17 +43,6 @@ fn main() -> std::io::Result<()> {
 
 5 lines. No `App` struct. No `Model`/`Update`/`View`. No event loop. Ctrl+C just works.
 
-## New in v0.8.0
-
-- Dark-mode style prefixes for containers: `ui.container().bg(Color::White).dark_bg(Color::Black).dark_border_style(Style::new().fg(Color::Cyan))`.
-- Responsive size variants from `xs` to `xl`: `ui.container().xs_w(18).sm_w(24).md_w(32).lg_w(40).xl_w(56).col(|ui| { ... })`.
-- Hook-style state and memoization in closures: `let count = ui.use_state(|| 0); let doubled = ui.use_memo(|| *count.get(ui) * 2, *count.get(ui));`.
-- Group hover/focus styling across related containers: `ui.group("nav").group_hover_bg(Color::Indexed(236)).group_hover_border_style(Style::new().bold()).col(|ui| { ... })`.
-- Fluent theme composition with `Theme::builder()`: `let theme = Theme::builder().primary(Color::Cyan).surface(Color::Indexed(236)).build();`.
-- List filtering with multi-token AND matching: `list.set_filter("error auth"); // keeps rows matching both tokens`.
-- Animation completion callbacks: `let mut tween = Tween::new(0.0, 1.0, 30).on_complete(|| { /* done */ });`.
-- New chart primitives for infoviz: `ui.scatter(&points, 50, 14); ui.pie_chart(&slices, 10); ui.chart(|c| { c.area(&series); }, 50, 14);`.
-
 ## A Real App
 
 ```rust
@@ -136,6 +125,7 @@ ui.command_palette(&mut palette);            // searchable command palette
 ui.markdown("# Hello **world**");            // markdown rendering
 ui.form_field(&mut field);                   // labeled input with validation
 ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // line/scatter/bar chart
+ui.scatter(&points, 50, 16);                 // standalone scatter plot
 ui.histogram(&values, 40, 12);               // auto-binned histogram
 ui.bar_chart(&data, 24);                     // horizontal bars
 ui.sparkline(&values, 16);                   // trend line ▁▂▃▅▇
@@ -221,12 +211,80 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 <summary><b>Theming</b></summary>
 
 ```rust
-slt::run_with(RunConfig { theme: Theme::light(), ..Default::default() }, |ui| {
+// 7 built-in presets
+slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
     ui.set_theme(Theme::dark()); // switch at runtime
 });
+
+// Build custom themes — unfilled fields default to Theme::dark()
+let theme = Theme::builder()
+    .primary(Color::Rgb(255, 107, 107))
+    .accent(Color::Cyan)
+    .build();
 ```
 
-Dark and light presets. Custom themes with 13 color slots. All widgets inherit automatically.
+7 presets (dark, light, dracula, catppuccin, nord, solarized, tokyo_night). Custom themes with 15 color slots. All widgets inherit automatically.
+
+</details>
+
+<details>
+<summary><b>Dark Mode</b></summary>
+
+```rust
+ui.container()
+    .bg(Color::White)
+    .dark_bg(Color::Rgb(30, 30, 46))  // applied when dark mode active
+    .col(|ui| { ... });
+
+ui.set_dark_mode(false); // toggle
+```
+
+Container-level style overrides that activate based on dark/light mode.
+
+</details>
+
+<details>
+<summary><b>Responsive Layout</b></summary>
+
+```rust
+ui.container()
+    .w(20).md_w(40).lg_w(60)  // width changes at breakpoints
+    .p(1).lg_p(2)
+    .col(|ui| { ... });
+```
+
+35 breakpoint-conditional methods (`xs_`, `sm_`, `md_`, `lg_`, `xl_` × `w`, `h`, `min_w`, `max_w`, `gap`, `p`, `grow`). Breakpoints: Xs (<40), Sm (40–79), Md (80–119), Lg (120–159), Xl (≥160).
+
+</details>
+
+<details>
+<summary><b>Group Hover</b></summary>
+
+```rust
+ui.group("card")
+    .border(Border::Rounded)
+    .group_hover_bg(Color::Indexed(238))
+    .col(|ui| {
+        ui.text("Hover anywhere on card to highlight");
+    });
+```
+
+Parent container hover/focus state propagates to children. Like Tailwind's `group-hover:`.
+
+</details>
+
+<details>
+<summary><b>Hooks</b></summary>
+
+```rust
+let count = ui.use_state(|| 0i32);
+ui.text(format!("{}", count.get(ui)));
+if ui.button("+1") { *count.get_mut(ui) += 1; }
+
+let doubled = *ui.use_memo(&count_val, |c| c * 2);
+```
+
+React-style persistent state in immediate mode. `State<T>` handle pattern. Call in same order every frame.
 
 </details>
 
@@ -266,7 +324,7 @@ let mut stagger = Stagger::new(0.0, 1.0, 40).delay(8);
 let val = stagger.value(tick, item_index);
 ```
 
-Tween with 9 easing functions. Spring physics. Keyframe timelines with loop modes. Sequence chains. Stagger for list animations.
+Tween with 9 easing functions. Spring physics. Keyframe timelines with loop modes. Sequence chains. Stagger for list animations. All support `.on_complete()` callbacks (`.on_settle()` for Spring).
 
 </details>
 
@@ -433,6 +491,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_website | `cargo run --example demo_website` | Website in terminal |
 | demo_game | `cargo run --example demo_game` | Tetris + Snake + Minesweeper |
 | demo_fire | `cargo run --release --example demo_fire` | DOOM fire effect (half-block) |
+| demo_ime | `cargo run --example demo_ime` | Korean/CJK IME input |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
 | demo_v050 | `cargo run --example demo_v050` | v0.5.0 features |
