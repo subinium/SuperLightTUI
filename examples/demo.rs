@@ -1,6 +1,8 @@
 use slt::{
-    Align, Border, Color, Context, FormField, FormState, Justify, ListState, ScrollState,
+    Align, Border, BorderSides, Color, CommandPaletteState, Context, FormField, FormState, Justify,
+    ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
     SpinnerState, TableState, TabsState, TextInputState, TextareaState, Theme, ToastState,
+    TreeNode, TreeState,
 };
 
 fn main() -> std::io::Result<()> {
@@ -10,6 +12,7 @@ fn main() -> std::io::Result<()> {
         "Layout",
         "Forms",
         "Feedback",
+        "Advanced",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -58,6 +61,39 @@ fn main() -> std::io::Result<()> {
         "Tokyo Night",
     ];
     let mut theme_idx: usize = 0;
+    let mut select = SelectState::new(vec!["Rounded", "Single", "Double", "Thick"]);
+    let mut radio = RadioState::new(vec!["Dark", "Light", "System"]);
+    let mut multi = MultiSelectState::new(vec![
+        "Vim motions",
+        "Mouse support",
+        "Clipboard",
+        "Unicode",
+        "Async",
+    ]);
+    let mut tree = TreeState::new(vec![
+        TreeNode::new("src").expanded().children(vec![
+            TreeNode::new("lib.rs"),
+            TreeNode::new("context.rs"),
+            TreeNode::new("layout.rs"),
+            TreeNode::new("style.rs"),
+            TreeNode::new("widgets.rs"),
+        ]),
+        TreeNode::new("examples")
+            .children(vec![TreeNode::new("demo.rs"), TreeNode::new("counter.rs")]),
+        TreeNode::new("tests").children(vec![
+            TreeNode::new("widgets.rs"),
+            TreeNode::new("snapshots.rs"),
+        ]),
+    ]);
+    let mut vlist = ListState::new((0..100).map(|i| format!("Item {i}")).collect());
+    let mut password = TextInputState::with_placeholder("Password");
+    password.masked = true;
+    let mut palette = CommandPaletteState::new(vec![
+        PaletteCommand::new("Switch Theme", "Cycle to next theme"),
+        PaletteCommand::new("Toggle Modal", "Show/hide modal dialog"),
+        PaletteCommand::new("Toggle Overlay", "Show/hide overlay"),
+        PaletteCommand::new("Quit", "Exit the application"),
+    ]);
 
     slt::run_with(
         slt::RunConfig {
@@ -85,6 +121,12 @@ fn main() -> std::io::Result<()> {
             }
             if ui.key('o') {
                 show_overlay = !show_overlay;
+            }
+            if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
+                palette.open = !palette.open;
+            }
+            if ui.key_seq("gg") {
+                scroll.offset = 0;
             }
 
             ui.set_theme(themes[theme_idx]());
@@ -124,8 +166,16 @@ fn main() -> std::io::Result<()> {
                             ),
                             1 => render_dataviz(ui),
                             2 => render_layout(ui, &mut list, &mut table, &mut show_overlay),
-                            3 => render_forms(ui, &mut form),
+                            3 => render_forms(ui, &mut form, &mut password),
                             4 => render_feedback(ui, &spinner, progress),
+                            5 => render_advanced(
+                                ui,
+                                &mut select,
+                                &mut radio,
+                                &mut multi,
+                                &mut tree,
+                                &mut vlist,
+                            ),
                             _ => {}
                         });
 
@@ -136,6 +186,8 @@ fn main() -> std::io::Result<()> {
                         ("m", "toggle modal"),
                         ("o", "toggle overlay"),
                         ("h/l", "progress -/+"),
+                        ("Ctrl+P", "palette"),
+                        ("gg", "top"),
                         ("Tab", "focus"),
                         ("F12", "debug"),
                     ]);
@@ -161,6 +213,19 @@ fn main() -> std::io::Result<()> {
             }
 
             ui.toast(&mut toasts);
+
+            if let Some(idx) = ui.command_palette(&mut palette) {
+                match idx {
+                    0 => {
+                        theme_idx = (theme_idx + 1) % themes.len();
+                        toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
+                    }
+                    1 => show_modal = !show_modal,
+                    2 => show_overlay = !show_overlay,
+                    3 => ui.quit(),
+                    _ => {}
+                }
+            }
         },
     )
 }
@@ -428,35 +493,160 @@ fn render_layout(
     }
 }
 
-fn render_forms(ui: &mut Context, form: &mut FormState) {
+fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInputState) {
     let theme = *ui.theme();
     section(ui, "FORMS");
 
-    card(ui, |ui| {
-        ui.text("Sign In Form").bold().fg(theme.primary);
-        ui.text("Modal/form showcase retained")
-            .fg(theme.surface_text);
-        for field in form.fields.iter_mut() {
-            ui.form_field(field);
-        }
-        if ui.form_submit("Sign In") {
-            let _valid = form.validate(&[
-                |v| {
-                    if v.contains('@') {
-                        Ok(())
-                    } else {
-                        Err("invalid email".into())
-                    }
-                },
-                |v| {
-                    if v.len() >= 6 {
-                        Ok(())
-                    } else {
-                        Err("min 6 chars".into())
-                    }
-                },
-            ]);
-        }
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Sign In Form").bold().fg(theme.primary);
+            ui.text("Modal/form showcase retained")
+                .fg(theme.surface_text);
+            for field in form.fields.iter_mut() {
+                ui.form_field(field);
+            }
+            if ui.form_submit("Sign In") {
+                let _valid = form.validate(&[
+                    |v| {
+                        if v.contains('@') {
+                            Ok(())
+                        } else {
+                            Err("invalid email".into())
+                        }
+                    },
+                    |v| {
+                        if v.len() >= 6 {
+                            Ok(())
+                        } else {
+                            Err("min 6 chars".into())
+                        }
+                    },
+                ]);
+            }
+        });
+
+        card(ui, |ui| {
+            ui.text("Password Input").bold().fg(theme.secondary);
+            ui.text("Masked text input widget").fg(theme.surface_text);
+            ui.text_input(password);
+            ui.row(|ui| {
+                ui.text("Length:").fg(theme.surface_text);
+                ui.text(format!("{}", password.value.len()))
+                    .fg(theme.primary);
+            });
+        });
+    });
+}
+
+fn render_advanced(
+    ui: &mut Context,
+    select: &mut SelectState,
+    radio: &mut RadioState,
+    multi: &mut MultiSelectState,
+    tree: &mut TreeState,
+    vlist: &mut ListState,
+) {
+    let theme = *ui.theme();
+    section(ui, "ADVANCED");
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Select").bold().fg(theme.primary);
+            ui.text("Dropdown style preset").fg(theme.surface_text);
+            let _changed = ui.select(select);
+            ui.row(|ui| {
+                ui.text("Current:").fg(theme.surface_text);
+                ui.text(&select.items[select.selected]).fg(theme.primary);
+            });
+        });
+
+        card(ui, |ui| {
+            ui.text("Radio").bold().fg(theme.secondary);
+            ui.text("Theme preference").fg(theme.surface_text);
+            let _changed = ui.radio(radio);
+            ui.row(|ui| {
+                ui.text("Mode:").fg(theme.surface_text);
+                ui.text(&radio.items[radio.selected]).fg(theme.secondary);
+            });
+        });
+
+        card(ui, |ui| {
+            ui.text("Multi Select").bold().fg(theme.accent);
+            ui.text("Feature toggles").fg(theme.surface_text);
+            ui.multi_select(multi);
+            ui.row(|ui| {
+                ui.text("Enabled:").fg(theme.surface_text);
+                ui.text(format!("{}", multi.selected.len()))
+                    .fg(theme.accent);
+            });
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Tree").bold().fg(theme.primary);
+            ui.text("Project structure").fg(theme.surface_text);
+            ui.tree(tree);
+        });
+
+        card(ui, |ui| {
+            ui.text("Virtual List").bold().fg(theme.secondary);
+            ui.text("100 items, 8 visible").fg(theme.surface_text);
+            ui.virtual_list(vlist, 8, |ui, idx| {
+                ui.text(format!("Item {idx}")).fg(theme.surface_text);
+            });
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Markdown").bold().fg(theme.primary);
+            ui.markdown(
+                "# v0.6.0\n\n**New widgets**: select, radio, multi-select, tree, virtual list.\n\n- Command palette (`Ctrl+P`)\n- Key sequence demo (`gg`)\n\n---\n\n`Theme-aware` and production-ready.",
+            );
+        });
+
+        card(ui, |ui| {
+            ui.text("Borders + Percent Sizing").bold().fg(theme.accent);
+            ui.text("Per-side borders and 30/70 layout").fg(theme.surface_text);
+
+            ui.container()
+                .bg(theme.surface_hover)
+                .border(Border::Single)
+                .border_sides(BorderSides::horizontal())
+                .pad(1)
+                .col(|ui| {
+                    ui.text("Horizontal borders").fg(theme.surface_text);
+                });
+
+            ui.container()
+                .bg(theme.surface_hover)
+                .border(Border::Single)
+                .border_sides(BorderSides::vertical())
+                .pad(1)
+                .col(|ui| {
+                    ui.text("Vertical borders").fg(theme.surface_text);
+                });
+
+            ui.row(|ui| {
+                ui.container()
+                    .bg(theme.surface_hover)
+                    .border(Border::Rounded)
+                    .w_pct(30)
+                    .pad(1)
+                    .col(|ui| {
+                        ui.text("30%").fg(theme.primary);
+                    });
+                ui.container()
+                    .bg(theme.surface_hover)
+                    .border(Border::Rounded)
+                    .w_pct(70)
+                    .pad(1)
+                    .col(|ui| {
+                        ui.text("70%").fg(theme.secondary);
+                    });
+            });
+        });
     });
 }
 

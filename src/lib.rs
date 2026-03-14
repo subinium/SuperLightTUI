@@ -18,7 +18,7 @@
 //! ## Features
 //!
 //! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
-//! - **20+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, separator, help bar, scrollable, chart, bar chart, sparkline, histogram, canvas, grid
+//! - **30+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, separator, help bar, scrollable, chart, bar chart, sparkline, histogram, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown
 //! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
 //! - **Mouse** — click, hover, drag-to-scroll
 //! - **Focus** — automatic Tab/Shift+Tab cycling
@@ -64,11 +64,13 @@ pub use chart::{
 pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, Widget};
 pub use event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use style::{
-    Align, Border, Color, Constraints, Justify, Margin, Modifiers, Padding, Style, Theme,
+    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Modifiers, Padding, Style,
+    Theme,
 };
 pub use widgets::{
-    ButtonVariant, FormField, FormState, ListState, ScrollState, SpinnerState, TableState,
-    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
+    ButtonVariant, CommandPaletteState, FormField, FormState, ListState, MultiSelectState,
+    PaletteCommand, RadioState, ScrollState, SelectState, SpinnerState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, TreeNode, TreeState,
 };
 
 static PANIC_HOOK_ONCE: Once = Once::new();

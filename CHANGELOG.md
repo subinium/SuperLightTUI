@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0] — 2026-03-14
+
+### Features
+- **Select/Dropdown widget**: `select()` with `SelectState` — collapsible dropdown with keyboard and mouse support
+- **Radio buttons**: `radio()` with `RadioState` — mutually exclusive option group with ●/○ markers
+- **Multi-select**: `multi_select()` with `MultiSelectState` — checkbox-style [x]/[ ] selection with Space toggle
+- **Tree view**: `tree()` with `TreeNode`/`TreeState` — hierarchical expandable tree with ▾/▸ icons
+- **Virtual list**: `virtual_list()` — renders only visible items for large datasets with ↑/↓ indicators
+- **Command palette**: `command_palette()` with `CommandPaletteState` — modal search overlay with fuzzy filtering
+- **Markdown rendering**: `markdown()` — renders headings (#/##/###), bold, italic, lists, code, and horizontal rules
+- **Key sequences**: `key_seq("gg")` — matches multi-character key sequences within a single frame
+- **Password masking**: `TextInputState.masked` — displays input as `•` characters
+- **Percentage-based sizing**: `w_pct()` / `h_pct()` — set container width/height as percentage of parent
+- **Per-side borders**: `border_top()`, `border_right()`, `border_bottom()`, `border_left()`, `border_sides()` — show/hide individual border sides with `BorderSides` type
+
+### Improvements
+- 30+ widgets total (up from 20+)
+- New state types exported: `SelectState`, `RadioState`, `MultiSelectState`, `TreeNode`, `TreeState`, `CommandPaletteState`, `PaletteCommand`
+
 ## [0.5.1] — 2026-03-14
 
 ### Documentation

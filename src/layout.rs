@@ -3,7 +3,9 @@
 
 use crate::buffer::Buffer;
 use crate::rect::Rect;
-use crate::style::{Align, Border, Color, Constraints, Justify, Margin, Padding, Style};
+use crate::style::{
+    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Padding, Style,
+};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
@@ -33,6 +35,7 @@ pub(crate) enum Command {
         align: Align,
         justify: Justify,
         border: Option<Border>,
+        border_sides: BorderSides,
         border_style: Style,
         bg_color: Option<Color>,
         padding: Padding,
@@ -44,6 +47,7 @@ pub(crate) enum Command {
     BeginScrollable {
         grow: u16,
         border: Option<Border>,
+        border_sides: BorderSides,
         border_style: Style,
         padding: Padding,
         margin: Margin,
@@ -93,6 +97,7 @@ pub(crate) struct LayoutNode {
     wrap: bool,
     gap: u32,
     border: Option<Border>,
+    border_sides: BorderSides,
     border_style: Style,
     bg_color: Option<Color>,
     padding: Padding,
@@ -117,6 +122,7 @@ struct ContainerConfig {
     align: Align,
     justify: Justify,
     border: Option<Border>,
+    border_sides: BorderSides,
     border_style: Style,
     bg_color: Option<Color>,
     padding: Padding,
@@ -147,6 +153,7 @@ impl LayoutNode {
             wrap,
             gap: 0,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new(),
             bg_color: None,
             padding: Padding::default(),
@@ -177,6 +184,7 @@ impl LayoutNode {
             wrap: false,
             gap: config.gap,
             border: config.border,
+            border_sides: config.border_sides,
             border_style: config.border_style,
             bg_color: config.bg_color,
             padding: config.padding,
@@ -207,6 +215,7 @@ impl LayoutNode {
             wrap: false,
             gap: 0,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new(),
             bg_color: None,
             padding: Padding::default(),
@@ -234,12 +243,44 @@ impl LayoutNode {
         }
     }
 
+    fn border_left_inset(&self) -> u32 {
+        if self.border.is_some() && self.border_sides.left {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn border_right_inset(&self) -> u32 {
+        if self.border.is_some() && self.border_sides.right {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn border_top_inset(&self) -> u32 {
+        if self.border.is_some() && self.border_sides.top {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn border_bottom_inset(&self) -> u32 {
+        if self.border.is_some() && self.border_sides.bottom {
+            1
+        } else {
+            0
+        }
+    }
+
     fn frame_horizontal(&self) -> u32 {
-        self.padding.horizontal() + self.border_inset() * 2
+        self.padding.horizontal() + self.border_left_inset() + self.border_right_inset()
     }
 
     fn frame_vertical(&self) -> u32 {
-        self.padding.vertical() + self.border_inset() * 2
+        self.padding.vertical() + self.border_top_inset() + self.border_bottom_inset()
     }
 
     fn min_width(&self) -> u32 {
@@ -464,6 +505,7 @@ fn default_container_config() -> ContainerConfig {
         align: Align::Start,
         justify: Justify::Start,
         border: None,
+        border_sides: BorderSides::all(),
         border_style: Style::new(),
         bg_color: None,
         padding: Padding::default(),
@@ -537,6 +579,7 @@ fn build_children(
                 align,
                 justify,
                 border,
+                border_sides,
                 border_style,
                 bg_color,
                 padding,
@@ -552,6 +595,7 @@ fn build_children(
                         align: *align,
                         justify: *justify,
                         border: *border,
+                        border_sides: *border_sides,
                         border_style: *border_style,
                         bg_color: *bg_color,
                         padding: *padding,
@@ -569,6 +613,7 @@ fn build_children(
             Command::BeginScrollable {
                 grow,
                 border,
+                border_sides,
                 border_style,
                 padding,
                 margin,
@@ -583,6 +628,7 @@ fn build_children(
                         align: Align::Start,
                         justify: Justify::Start,
                         border: *border,
+                        border_sides: *border_sides,
                         border_style: *border_style,
                         bg_color: None,
                         padding: *padding,
@@ -628,6 +674,19 @@ fn build_children(
 }
 
 pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
+    if let Some(pct) = node.constraints.width_pct {
+        let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
+        node.constraints.min_width = Some(resolved);
+        node.constraints.max_width = Some(resolved);
+        node.constraints.width_pct = None;
+    }
+    if let Some(pct) = node.constraints.height_pct {
+        let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
+        node.constraints.min_height = Some(resolved);
+        node.constraints.max_height = Some(resolved);
+        node.constraints.height_pct = None;
+    }
+
     node.pos = (area.x, area.y);
     node.size = (
         area.width.clamp(
@@ -761,16 +820,15 @@ fn justify_offsets(justify: Justify, remaining: u32, n: u32, gap: u32) -> (u32, 
 }
 
 fn inner_area(node: &LayoutNode, area: Rect) -> Rect {
-    let inset = node.border_inset();
-    let x = area.x + inset + node.padding.left;
-    let y = area.y + inset + node.padding.top;
+    let x = area.x + node.border_left_inset() + node.padding.left;
+    let y = area.y + node.border_top_inset() + node.padding.top;
     let width = area
         .width
-        .saturating_sub(inset * 2)
+        .saturating_sub(node.border_left_inset() + node.border_right_inset())
         .saturating_sub(node.padding.horizontal());
     let height = area
         .height
-        .saturating_sub(inset * 2)
+        .saturating_sub(node.border_top_inset() + node.border_bottom_inset())
         .saturating_sub(node.padding.vertical());
 
     Rect::new(x, y, width, height)
@@ -779,6 +837,21 @@ fn inner_area(node: &LayoutNode, area: Rect) -> Rect {
 fn layout_row(node: &mut LayoutNode, area: Rect) {
     if node.children.is_empty() {
         return;
+    }
+
+    for child in &mut node.children {
+        if let Some(pct) = child.constraints.width_pct {
+            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
+            child.constraints.min_width = Some(resolved);
+            child.constraints.max_width = Some(resolved);
+            child.constraints.width_pct = None;
+        }
+        if let Some(pct) = child.constraints.height_pct {
+            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
+            child.constraints.min_height = Some(resolved);
+            child.constraints.max_height = Some(resolved);
+            child.constraints.height_pct = None;
+        }
     }
 
     let n = node.children.len() as u32;
@@ -850,6 +923,21 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
 fn layout_column(node: &mut LayoutNode, area: Rect) {
     if node.children.is_empty() {
         return;
+    }
+
+    for child in &mut node.children {
+        if let Some(pct) = child.constraints.width_pct {
+            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
+            child.constraints.min_width = Some(resolved);
+            child.constraints.max_width = Some(resolved);
+            child.constraints.width_pct = None;
+        }
+        if let Some(pct) = child.constraints.height_pct {
+            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
+            child.constraints.min_height = Some(resolved);
+            child.constraints.max_height = Some(resolved);
+            child.constraints.height_pct = None;
+        }
     }
 
     let n = node.children.len() as u32;
@@ -1239,9 +1327,13 @@ fn render_container_border(
     y_offset: u32,
     inherit_bg: Option<Color>,
 ) {
+    if node.border_inset() == 0 {
+        return;
+    }
     let Some(border) = node.border else {
         return;
     };
+    let sides = node.border_sides;
     let chars = border.chars();
     let x = node.pos.0;
     let w = node.size.0;
@@ -1262,49 +1354,78 @@ fn render_container_border(
     }
     let right = x + w - 1;
 
-    if w == 1 && h == 1 {
-        if top_i >= 0 {
-            buf.set_char(x, top_i as u32, chars.tl, style);
+    if sides.top && top_i >= 0 {
+        let y = top_i as u32;
+        for xx in x..=right {
+            buf.set_char(xx, y, chars.h, style);
         }
-    } else if h == 1 {
-        if top_i >= 0 {
-            let y = top_i as u32;
-            for xx in x..=right {
-                buf.set_char(xx, y, chars.h, style);
-            }
+    }
+    if sides.bottom {
+        let y = bottom_i as u32;
+        for xx in x..=right {
+            buf.set_char(xx, y, chars.h, style);
         }
-    } else if w == 1 {
-        let vert_start = (top_i.max(0)) as u32;
+    }
+    if sides.left {
+        let vert_start = top_i.max(0) as u32;
         let vert_end = bottom_i as u32;
         for yy in vert_start..=vert_end {
             buf.set_char(x, yy, chars.v, style);
         }
-    } else {
-        if top_i >= 0 {
-            let y = top_i as u32;
-            buf.set_char(x, y, chars.tl, style);
-            buf.set_char(right, y, chars.tr, style);
-            for xx in (x + 1)..right {
-                buf.set_char(xx, y, chars.h, style);
-            }
-        }
-
-        let bot = bottom_i as u32;
-        buf.set_char(x, bot, chars.bl, style);
-        buf.set_char(right, bot, chars.br, style);
-        for xx in (x + 1)..right {
-            buf.set_char(xx, bot, chars.h, style);
-        }
-
-        let vert_start = ((top_i + 1).max(0)) as u32;
+    }
+    if sides.right {
+        let vert_start = top_i.max(0) as u32;
         let vert_end = bottom_i as u32;
-        for yy in vert_start..vert_end {
-            buf.set_char(x, yy, chars.v, style);
+        for yy in vert_start..=vert_end {
             buf.set_char(right, yy, chars.v, style);
         }
     }
 
     if top_i >= 0 {
+        let y = top_i as u32;
+        let tl = match (sides.top, sides.left) {
+            (true, true) => Some(chars.tl),
+            (true, false) => Some(chars.h),
+            (false, true) => Some(chars.v),
+            (false, false) => None,
+        };
+        if let Some(ch) = tl {
+            buf.set_char(x, y, ch, style);
+        }
+
+        let tr = match (sides.top, sides.right) {
+            (true, true) => Some(chars.tr),
+            (true, false) => Some(chars.h),
+            (false, true) => Some(chars.v),
+            (false, false) => None,
+        };
+        if let Some(ch) = tr {
+            buf.set_char(right, y, ch, style);
+        }
+    }
+
+    let y = bottom_i as u32;
+    let bl = match (sides.bottom, sides.left) {
+        (true, true) => Some(chars.bl),
+        (true, false) => Some(chars.h),
+        (false, true) => Some(chars.v),
+        (false, false) => None,
+    };
+    if let Some(ch) = bl {
+        buf.set_char(x, y, ch, style);
+    }
+
+    let br = match (sides.bottom, sides.right) {
+        (true, true) => Some(chars.br),
+        (true, false) => Some(chars.h),
+        (false, true) => Some(chars.v),
+        (false, false) => None,
+    };
+    if let Some(ch) = br {
+        buf.set_char(right, y, ch, style);
+    }
+
+    if sides.top && top_i >= 0 {
         if let Some((title, title_style)) = &node.title {
             let mut ts = *title_style;
             if ts.bg.is_none() {
@@ -1398,8 +1519,8 @@ pub(crate) fn collect_content_areas(node: &LayoutNode) -> Vec<(Rect, Rect)> {
 fn collect_content_areas_inner(node: &LayoutNode, areas: &mut Vec<(Rect, Rect)>) {
     if matches!(node.kind, NodeKind::Container(_)) {
         let full = Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1);
-        let inset_x = node.padding.left + node.border_inset();
-        let inset_y = node.padding.top + node.border_inset();
+        let inset_x = node.padding.left + node.border_left_inset();
+        let inset_y = node.padding.top + node.border_top_inset();
         let inner_w = node.size.0.saturating_sub(node.frame_horizontal());
         let inner_h = node.size.1.saturating_sub(node.frame_vertical());
         let content = Rect::new(node.pos.0 + inset_x, node.pos.1 + inset_y, inner_w, inner_h);
@@ -1433,7 +1554,7 @@ fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>) 
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_lines;
+    use super::*;
 
     #[test]
     fn wrap_empty() {
@@ -1493,6 +1614,7 @@ mod tests {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new(),
                 bg_color: None,
                 padding: Padding::default(),
@@ -1511,6 +1633,7 @@ mod tests {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: Some(Border::Rounded),
+                border_sides: BorderSides::all(),
                 border_style: Style::new(),
                 bg_color: None,
                 padding: Padding::all(1),
@@ -1551,6 +1674,7 @@ mod tests {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new(),
                 bg_color: None,
                 padding: Padding::default(),
@@ -1734,6 +1858,7 @@ mod tests {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: Some(Border::Single),
+                border_sides: BorderSides::all(),
                 border_style: Style::new(),
                 bg_color: None,
                 padding: Padding::default(),

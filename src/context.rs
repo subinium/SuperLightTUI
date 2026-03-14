@@ -3,11 +3,13 @@ use crate::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseKind};
 use crate::layout::{Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
-    Align, Border, Color, Constraints, Justify, Margin, Modifiers, Padding, Style, Theme,
+    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Modifiers, Padding, Style,
+    Theme,
 };
 use crate::widgets::{
-    ButtonVariant, FormField, FormState, ListState, ScrollState, SpinnerState, TableState,
-    TabsState, TextInputState, TextareaState, ToastLevel, ToastState,
+    ButtonVariant, CommandPaletteState, FormField, FormState, ListState, MultiSelectState,
+    RadioState, ScrollState, SelectState, SpinnerState, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastState, TreeState,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -239,6 +241,7 @@ pub struct ContainerBuilder<'a> {
     align: Align,
     justify: Justify,
     border: Option<Border>,
+    border_sides: BorderSides,
     border_style: Style,
     bg_color: Option<Color>,
     padding: Padding,
@@ -688,6 +691,36 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Show or hide the top border.
+    pub fn border_top(mut self, show: bool) -> Self {
+        self.border_sides.top = show;
+        self
+    }
+
+    /// Show or hide the right border.
+    pub fn border_right(mut self, show: bool) -> Self {
+        self.border_sides.right = show;
+        self
+    }
+
+    /// Show or hide the bottom border.
+    pub fn border_bottom(mut self, show: bool) -> Self {
+        self.border_sides.bottom = show;
+        self
+    }
+
+    /// Show or hide the left border.
+    pub fn border_left(mut self, show: bool) -> Self {
+        self.border_sides.left = show;
+        self
+    }
+
+    /// Set which border sides are visible.
+    pub fn border_sides(mut self, sides: BorderSides) -> Self {
+        self.border_sides = sides;
+        self
+    }
+
     /// Set rounded border style. Shorthand for `.border(Border::Rounded)`.
     pub fn rounded(self) -> Self {
         self.border(Border::Rounded)
@@ -877,6 +910,18 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set width as a percentage (1-100) of the parent container.
+    pub fn w_pct(mut self, pct: u8) -> Self {
+        self.constraints.width_pct = Some(pct.min(100));
+        self
+    }
+
+    /// Set height as a percentage (1-100) of the parent container.
+    pub fn h_pct(mut self, pct: u8) -> Self {
+        self.constraints.height_pct = Some(pct.min(100));
+        self
+    }
+
     /// Set all size constraints at once using a [`Constraints`] value.
     pub fn constraints(mut self, constraints: Constraints) -> Self {
         self.constraints = constraints;
@@ -976,6 +1021,7 @@ impl<'a> ContainerBuilder<'a> {
             self.ctx.commands.push(Command::BeginScrollable {
                 grow: self.grow,
                 border: self.border,
+                border_sides: self.border_sides,
                 border_style: self.border_style,
                 padding: self.padding,
                 margin: self.margin,
@@ -990,6 +1036,7 @@ impl<'a> ContainerBuilder<'a> {
                 align: self.align,
                 justify: self.justify,
                 border: self.border,
+                border_sides: self.border_sides,
                 border_style: self.border_style,
                 bg_color: self.bg_color,
                 padding: self.padding,
@@ -1512,6 +1559,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(border),
             bg_color: None,
             padding: Padding::default(),
@@ -1600,7 +1648,9 @@ impl Context {
     ///
     /// Returns a [`ContainerBuilder`] pre-configured with the given border style.
     pub fn bordered(&mut self, border: Border) -> ContainerBuilder<'_> {
-        self.container().border(border)
+        self.container()
+            .border(border)
+            .border_sides(BorderSides::all())
     }
 
     fn push_container(
@@ -1619,6 +1669,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(border),
             bg_color: None,
             padding: Padding::default(),
@@ -1838,7 +1889,7 @@ impl Context {
                 if show_cursor && idx == state.cursor {
                     rendered.push('▎');
                 }
-                rendered.push(ch);
+                rendered.push(if state.masked { '•' } else { ch });
             }
             if show_cursor && state.cursor >= state.value.chars().count() {
                 rendered.push('▎');
@@ -1904,6 +1955,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -2145,6 +2197,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -2267,6 +2320,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -2290,6 +2344,7 @@ impl Context {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new().fg(self.theme.border),
                 bg_color: None,
                 padding: Padding::default(),
@@ -2363,6 +2418,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(self.theme.border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -2387,6 +2443,7 @@ impl Context {
                         align: Align::Start,
                         justify: Justify::Start,
                         border: None,
+                        border_sides: BorderSides::all(),
                         border_style: Style::new().fg(self.theme.border),
                         bg_color: None,
                         padding: Padding::default(),
@@ -2445,6 +2502,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(self.theme.border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -2461,6 +2519,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(self.theme.border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -2486,6 +2545,7 @@ impl Context {
                         align: Align::Start,
                         justify: Justify::Start,
                         border: None,
+                        border_sides: BorderSides::all(),
                         border_style: Style::new().fg(self.theme.border),
                         bg_color: None,
                         padding: Padding::default(),
@@ -2525,6 +2585,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(self.theme.border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -2594,6 +2655,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -2620,6 +2682,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(self.theme.border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -2775,6 +2838,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -2947,6 +3011,7 @@ impl Context {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new(),
                 bg_color: None,
                 padding: Padding::default(),
@@ -2996,6 +3061,7 @@ impl Context {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new().fg(self.theme.border),
                 bg_color: None,
                 padding: Padding::default(),
@@ -3045,6 +3111,7 @@ impl Context {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new().fg(self.theme.border),
                 bg_color: None,
                 padding: Padding::default(),
@@ -3091,6 +3158,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(border),
             bg_color: None,
             padding: Padding::default(),
@@ -3143,6 +3211,7 @@ impl Context {
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
+                border_sides: BorderSides::all(),
                 border_style: Style::new().fg(border),
                 bg_color: None,
                 padding: Padding::default(),
@@ -3160,6 +3229,7 @@ impl Context {
                     align: Align::Start,
                     justify: Justify::Start,
                     border: None,
+                    border_sides: BorderSides::all(),
                     border_style: Style::new().fg(border),
                     bg_color: None,
                     padding: Padding::default(),
@@ -3252,6 +3322,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -3356,6 +3427,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -3477,6 +3549,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),
@@ -3551,6 +3624,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: hover_bg,
             padding: Padding::default(),
@@ -3664,6 +3738,7 @@ impl Context {
             } else {
                 None
             },
+            border_sides: BorderSides::all(),
             border_style: btn_border_style,
             bg_color,
             padding: Padding::default(),
@@ -3721,6 +3796,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: hover_bg,
             padding: Padding::default(),
@@ -3792,6 +3868,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: hover_bg,
             padding: Padding::default(),
@@ -3821,6 +3898,832 @@ impl Context {
         self.last_text_idx = None;
 
         self
+    }
+
+    // ── select / dropdown ─────────────────────────────────────────────
+
+    /// Render a dropdown select. Shows the selected item; expands on activation.
+    ///
+    /// Returns `true` when the selection changed this frame.
+    pub fn select(&mut self, state: &mut SelectState) -> bool {
+        if state.items.is_empty() {
+            return false;
+        }
+        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+
+        let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let response = self.response_for(interaction_id);
+        let old_selected = state.selected;
+
+        if response.clicked {
+            state.open = !state.open;
+            if state.open {
+                state.set_cursor(state.selected);
+            }
+        }
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    if state.open {
+                        match key.code {
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                let c = state.cursor();
+                                state.set_cursor(c.saturating_sub(1));
+                                consumed_indices.push(i);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let c = state.cursor();
+                                state.set_cursor((c + 1).min(state.items.len().saturating_sub(1)));
+                                consumed_indices.push(i);
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                state.selected = state.cursor();
+                                state.open = false;
+                                consumed_indices.push(i);
+                            }
+                            KeyCode::Esc => {
+                                state.open = false;
+                                consumed_indices.push(i);
+                            }
+                            _ => {}
+                        }
+                    } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                        state.open = true;
+                        state.set_cursor(state.selected);
+                        consumed_indices.push(i);
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        let changed = state.selected != old_selected;
+
+        let border_color = if focused {
+            self.theme.primary
+        } else {
+            self.theme.border
+        };
+        let display_text = state
+            .items
+            .get(state.selected)
+            .cloned()
+            .unwrap_or_else(|| state.placeholder.clone());
+        let arrow = if state.open { "▲" } else { "▼" };
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 1,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: Some(Border::Rounded),
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(border_color),
+            bg_color: None,
+            padding: Padding {
+                left: 1,
+                right: 1,
+                top: 0,
+                bottom: 0,
+            },
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+        self.interaction_count += 1;
+        self.styled(&display_text, Style::new().fg(self.theme.text));
+        self.styled(arrow, Style::new().fg(self.theme.text_dim));
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        if state.open {
+            for (idx, item) in state.items.iter().enumerate() {
+                let is_cursor = idx == state.cursor();
+                let style = if is_cursor {
+                    Style::new().bold().fg(self.theme.primary)
+                } else {
+                    Style::new().fg(self.theme.text)
+                };
+                let prefix = if is_cursor { "▸ " } else { "  " };
+                self.styled(format!("{prefix}{item}"), style);
+            }
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        changed
+    }
+
+    // ── radio ────────────────────────────────────────────────────────
+
+    /// Render a radio button group. Returns `true` when selection changed.
+    pub fn radio(&mut self, state: &mut RadioState) -> bool {
+        if state.items.is_empty() {
+            return false;
+        }
+        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        let focused = self.register_focusable();
+        let old_selected = state.selected;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.selected = state.selected.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            state.selected =
+                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+                    let clicked_idx = (mouse.y - rect.y) as usize;
+                    if clicked_idx < state.items.len() {
+                        state.selected = clicked_idx;
+                        self.consumed[i] = true;
+                    }
+                }
+            }
+        }
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        for (idx, item) in state.items.iter().enumerate() {
+            let is_selected = idx == state.selected;
+            let marker = if is_selected { "●" } else { "○" };
+            let style = if is_selected {
+                if focused {
+                    Style::new().bold().fg(self.theme.primary)
+                } else {
+                    Style::new().fg(self.theme.primary)
+                }
+            } else {
+                Style::new().fg(self.theme.text)
+            };
+            let prefix = if focused && idx == state.selected {
+                "▸ "
+            } else {
+                "  "
+            };
+            self.styled(format!("{prefix}{marker} {item}"), style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        state.selected != old_selected
+    }
+
+    // ── multi-select ─────────────────────────────────────────────────
+
+    /// Render a multi-select list. Space toggles, Up/Down navigates.
+    pub fn multi_select(&mut self, state: &mut MultiSelectState) -> &mut Self {
+        if state.items.is_empty() {
+            return self;
+        }
+        state.cursor = state.cursor.min(state.items.len().saturating_sub(1));
+        let focused = self.register_focusable();
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.cursor = state.cursor.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            state.cursor =
+                                (state.cursor + 1).min(state.items.len().saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            state.toggle(state.cursor);
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+                    let clicked_idx = (mouse.y - rect.y) as usize;
+                    if clicked_idx < state.items.len() {
+                        state.toggle(clicked_idx);
+                        state.cursor = clicked_idx;
+                        self.consumed[i] = true;
+                    }
+                }
+            }
+        }
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        for (idx, item) in state.items.iter().enumerate() {
+            let checked = state.selected.contains(&idx);
+            let marker = if checked { "[x]" } else { "[ ]" };
+            let is_cursor = idx == state.cursor;
+            let style = if is_cursor && focused {
+                Style::new().bold().fg(self.theme.primary)
+            } else if checked {
+                Style::new().fg(self.theme.success)
+            } else {
+                Style::new().fg(self.theme.text)
+            };
+            let prefix = if is_cursor && focused { "▸ " } else { "  " };
+            self.styled(format!("{prefix}{marker} {item}"), style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        self
+    }
+
+    // ── tree ─────────────────────────────────────────────────────────
+
+    /// Render a tree view. Left/Right to collapse/expand, Up/Down to navigate.
+    pub fn tree(&mut self, state: &mut TreeState) -> &mut Self {
+        let entries = state.flatten();
+        if entries.is_empty() {
+            return self;
+        }
+        state.selected = state.selected.min(entries.len().saturating_sub(1));
+        let focused = self.register_focusable();
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.selected = state.selected.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let max = state.flatten().len().saturating_sub(1);
+                            state.selected = (state.selected + 1).min(max);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                            state.toggle_at(state.selected);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Left => {
+                            let entry = &entries[state.selected.min(entries.len() - 1)];
+                            if entry.expanded {
+                                state.toggle_at(state.selected);
+                            }
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        let entries = state.flatten();
+        for (idx, entry) in entries.iter().enumerate() {
+            let indent = "  ".repeat(entry.depth);
+            let icon = if entry.is_leaf {
+                "  "
+            } else if entry.expanded {
+                "▾ "
+            } else {
+                "▸ "
+            };
+            let is_selected = idx == state.selected;
+            let style = if is_selected && focused {
+                Style::new().bold().fg(self.theme.primary)
+            } else if is_selected {
+                Style::new().fg(self.theme.primary)
+            } else {
+                Style::new().fg(self.theme.text)
+            };
+            let cursor = if is_selected && focused { "▸" } else { " " };
+            self.styled(format!("{cursor}{indent}{icon}{}", entry.label), style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        self
+    }
+
+    // ── virtual list ─────────────────────────────────────────────────
+
+    /// Render a virtual list that only renders visible items.
+    ///
+    /// `total` is the number of items. `visible_height` limits how many rows
+    /// are rendered. The closure `f` is called only for visible indices.
+    pub fn virtual_list(
+        &mut self,
+        state: &mut ListState,
+        visible_height: usize,
+        f: impl Fn(&mut Context, usize),
+    ) -> &mut Self {
+        if state.items.is_empty() {
+            return self;
+        }
+        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        let focused = self.register_focusable();
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.selected = state.selected.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            state.selected =
+                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageUp => {
+                            state.selected = state.selected.saturating_sub(visible_height);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageDown => {
+                            state.selected = (state.selected + visible_height)
+                                .min(state.items.len().saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Home => {
+                            state.selected = 0;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::End => {
+                            state.selected = state.items.len().saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        let start = if state.selected >= visible_height {
+            state.selected - visible_height + 1
+        } else {
+            0
+        };
+        let end = (start + visible_height).min(state.items.len());
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+
+        if start > 0 {
+            self.styled(
+                format!("  ↑ {} more", start),
+                Style::new().fg(self.theme.text_dim).dim(),
+            );
+        }
+
+        for idx in start..end {
+            f(self, idx);
+        }
+
+        let remaining = state.items.len().saturating_sub(end);
+        if remaining > 0 {
+            self.styled(
+                format!("  ↓ {} more", remaining),
+                Style::new().fg(self.theme.text_dim).dim(),
+            );
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        self
+    }
+
+    // ── command palette ──────────────────────────────────────────────
+
+    /// Render a command palette overlay. Returns `Some(index)` when a command is selected.
+    pub fn command_palette(&mut self, state: &mut CommandPaletteState) -> Option<usize> {
+        if !state.open {
+            return None;
+        }
+
+        let filtered = state.filtered_indices();
+        let sel = state.selected().min(filtered.len().saturating_sub(1));
+        state.set_selected(sel);
+
+        let mut consumed_indices = Vec::new();
+        let mut result: Option<usize> = None;
+
+        for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
+            if let Event::Key(key) = event {
+                match key.code {
+                    KeyCode::Esc => {
+                        state.open = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Up => {
+                        let s = state.selected();
+                        state.set_selected(s.saturating_sub(1));
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Down => {
+                        let s = state.selected();
+                        state.set_selected((s + 1).min(filtered.len().saturating_sub(1)));
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(&cmd_idx) = filtered.get(state.selected()) {
+                            result = Some(cmd_idx);
+                            state.open = false;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        if state.cursor > 0 {
+                            let byte_idx = byte_index_for_char(&state.input, state.cursor - 1);
+                            let end_idx = byte_index_for_char(&state.input, state.cursor);
+                            state.input.replace_range(byte_idx..end_idx, "");
+                            state.cursor -= 1;
+                            state.set_selected(0);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(ch) => {
+                        let byte_idx = byte_index_for_char(&state.input, state.cursor);
+                        state.input.insert(byte_idx, ch);
+                        state.cursor += 1;
+                        state.set_selected(0);
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for idx in consumed_indices {
+            self.consumed[idx] = true;
+        }
+
+        let filtered = state.filtered_indices();
+
+        self.modal(|ui| {
+            let primary = ui.theme.primary;
+            ui.container()
+                .border(Border::Rounded)
+                .border_style(Style::new().fg(primary))
+                .pad(1)
+                .max_w(60)
+                .col(|ui| {
+                    let border_color = ui.theme.primary;
+                    ui.bordered(Border::Rounded)
+                        .border_style(Style::new().fg(border_color))
+                        .px(1)
+                        .col(|ui| {
+                            let display = if state.input.is_empty() {
+                                "Type to search...".to_string()
+                            } else {
+                                state.input.clone()
+                            };
+                            let style = if state.input.is_empty() {
+                                Style::new().dim().fg(ui.theme.text_dim)
+                            } else {
+                                Style::new().fg(ui.theme.text)
+                            };
+                            ui.styled(display, style);
+                        });
+
+                    for (list_idx, &cmd_idx) in filtered.iter().enumerate() {
+                        let cmd = &state.commands[cmd_idx];
+                        let is_selected = list_idx == state.selected();
+                        let style = if is_selected {
+                            Style::new().bold().fg(ui.theme.primary)
+                        } else {
+                            Style::new().fg(ui.theme.text)
+                        };
+                        let prefix = if is_selected { "▸ " } else { "  " };
+                        let shortcut_text = cmd
+                            .shortcut
+                            .as_deref()
+                            .map(|s| format!("  ({s})"))
+                            .unwrap_or_default();
+                        ui.styled(format!("{prefix}{}{shortcut_text}", cmd.label), style);
+                        if is_selected && !cmd.description.is_empty() {
+                            ui.styled(
+                                format!("    {}", cmd.description),
+                                Style::new().dim().fg(ui.theme.text_dim),
+                            );
+                        }
+                    }
+
+                    if filtered.is_empty() {
+                        ui.styled(
+                            "  No matching commands",
+                            Style::new().dim().fg(ui.theme.text_dim),
+                        );
+                    }
+                });
+        });
+
+        result
+    }
+
+    // ── markdown ─────────────────────────────────────────────────────
+
+    /// Render a markdown string with basic formatting.
+    ///
+    /// Supports headers (`#`), bold (`**`), italic (`*`), inline code (`` ` ``),
+    /// unordered lists (`-`/`*`), ordered lists (`1.`), and horizontal rules (`---`).
+    pub fn markdown(&mut self, text: &str) -> &mut Self {
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+        });
+        self.interaction_count += 1;
+
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                self.text(" ");
+                continue;
+            }
+            if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+                self.styled("─".repeat(40), Style::new().fg(self.theme.border).dim());
+                continue;
+            }
+            if let Some(heading) = trimmed.strip_prefix("### ") {
+                self.styled(heading, Style::new().bold().fg(self.theme.accent));
+            } else if let Some(heading) = trimmed.strip_prefix("## ") {
+                self.styled(heading, Style::new().bold().fg(self.theme.secondary));
+            } else if let Some(heading) = trimmed.strip_prefix("# ") {
+                self.styled(heading, Style::new().bold().fg(self.theme.primary));
+            } else if let Some(item) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            {
+                self.styled(
+                    format!("  • {}", Self::render_inline_md(item)),
+                    Style::new().fg(self.theme.text),
+                );
+            } else if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(". ") {
+                let parts: Vec<&str> = trimmed.splitn(2, ". ").collect();
+                if parts.len() == 2 {
+                    self.styled(
+                        format!("  {}. {}", parts[0], Self::render_inline_md(parts[1])),
+                        Style::new().fg(self.theme.text),
+                    );
+                } else {
+                    self.text(trimmed);
+                }
+            } else if let Some(code) = trimmed.strip_prefix("```") {
+                let _ = code;
+                self.styled("  ┌─code─", Style::new().fg(self.theme.border).dim());
+            } else {
+                self.styled(
+                    Self::render_inline_md(trimmed).to_string(),
+                    Style::new().fg(self.theme.text),
+                );
+            }
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        self
+    }
+
+    fn render_inline_md(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
+                if let Some(end) = text[i + 2..].find("**") {
+                    let inner = &text[i + 2..i + 2 + end];
+                    result.push_str(inner);
+                    i += 4 + end;
+                    continue;
+                }
+            }
+            if chars[i] == '`' {
+                if let Some(end) = text[i + 1..].find('`') {
+                    let inner = &text[i + 1..i + 1 + end];
+                    result.push('`');
+                    result.push_str(inner);
+                    result.push('`');
+                    i += 2 + end;
+                    continue;
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        }
+        result
+    }
+
+    // ── key sequence ─────────────────────────────────────────────────
+
+    /// Check if a sequence of character keys was pressed across recent frames.
+    ///
+    /// Matches when each character in `seq` appears in consecutive unconsumed
+    /// key events within this frame. For single-frame sequences only (e.g., "gg").
+    pub fn key_seq(&self, seq: &str) -> bool {
+        if seq.is_empty() {
+            return false;
+        }
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        let target: Vec<char> = seq.chars().collect();
+        let mut matched = 0;
+        for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
+            if let Event::Key(key) = event {
+                if let KeyCode::Char(c) = key.code {
+                    if c == target[matched] {
+                        matched += 1;
+                        if matched == target.len() {
+                            return true;
+                        }
+                    } else {
+                        matched = 0;
+                        if c == target[0] {
+                            matched = 1;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Render a horizontal divider line.
@@ -3858,6 +4761,7 @@ impl Context {
             align: Align::Start,
             justify: Justify::Start,
             border: None,
+            border_sides: BorderSides::all(),
             border_style: Style::new().fg(self.theme.border),
             bg_color: None,
             padding: Padding::default(),

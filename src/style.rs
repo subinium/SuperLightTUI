@@ -418,6 +418,68 @@ pub struct BorderChars {
     pub v: char,
 }
 
+/// Controls which sides of a border are visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BorderSides {
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+    pub left: bool,
+}
+
+impl BorderSides {
+    pub const fn all() -> Self {
+        Self {
+            top: true,
+            right: true,
+            bottom: true,
+            left: true,
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            top: false,
+            right: false,
+            bottom: false,
+            left: false,
+        }
+    }
+
+    pub const fn horizontal() -> Self {
+        Self {
+            top: true,
+            right: false,
+            bottom: true,
+            left: false,
+        }
+    }
+
+    pub const fn vertical() -> Self {
+        Self {
+            top: false,
+            right: true,
+            bottom: false,
+            left: true,
+        }
+    }
+
+    pub fn has_horizontal(&self) -> bool {
+        self.top || self.bottom
+    }
+
+    pub fn has_vertical(&self) -> bool {
+        self.left || self.right
+    }
+}
+
+impl Default for BorderSides {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
 impl Border {
     /// Return the [`BorderChars`] for this border style.
     pub const fn chars(self) -> BorderChars {
@@ -580,6 +642,10 @@ pub struct Constraints {
     pub min_height: Option<u32>,
     /// Maximum height in terminal rows, if any.
     pub max_height: Option<u32>,
+    /// Width as a percentage (1-100) of the parent container.
+    pub width_pct: Option<u8>,
+    /// Height as a percentage (1-100) of the parent container.
+    pub height_pct: Option<u8>,
 }
 
 impl Constraints {
@@ -604,6 +670,18 @@ impl Constraints {
     /// Set the maximum height constraint.
     pub const fn max_h(mut self, max_height: u32) -> Self {
         self.max_height = Some(max_height);
+        self
+    }
+
+    /// Set width as a percentage (1-100) of the parent container.
+    pub const fn w_pct(mut self, pct: u8) -> Self {
+        self.width_pct = Some(pct);
+        self
+    }
+
+    /// Set height as a percentage (1-100) of the parent container.
+    pub const fn h_pct(mut self, pct: u8) -> Self {
+        self.height_pct = Some(pct);
         self
     }
 }
