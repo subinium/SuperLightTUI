@@ -11,27 +11,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci:
-    name: CI Gate
+  ci-stable:
+    name: CI Gate (stable)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable, "1.74"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+      - run: cargo test --all-features
+      - run: cargo clippy --all-features -- -D warnings
+      - run: cargo fmt -- --check
+
+  ci-msrv:
+    name: CI Gate (MSRV 1.74)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
-          components: clippy, rustfmt
+          toolchain: "1.74"
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
-      - run: cargo check --all-features
-      - run: cargo test --all-features
-        if: matrix.rust == 'stable'
-      - run: cargo clippy --all-features -- -D warnings
-        if: matrix.rust == 'stable'
-      - run: cargo fmt -- --check
-        if: matrix.rust == 'stable'
+      - run: cargo check --features async,serde
 
   verify-version:
     name: Verify Version
@@ -50,7 +54,7 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    needs: [ci, verify-version]
+    needs: [ci-stable, ci-msrv, verify-version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +66,7 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: [ci, verify-version]
+    needs: [ci-stable, ci-msrv, verify-version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
