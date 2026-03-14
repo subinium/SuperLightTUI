@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.2] — 2026-03-15
+
+### Features
+- **IME cursor always visible**: text_input/textarea cursor no longer blinks — always shown when focused, enabling OS IME popup to anchor correctly for Korean/CJK input
+- **text_input horizontal scroll**: long text scrolls within container bounds instead of overflowing — CJK double-width aware via unicode-width
+
+### Added
+- `demo_ime.rs` example for Korean/CJK input testing
+
 ## [0.8.1] — 2026-03-15
 
 ### Bug Fixes
