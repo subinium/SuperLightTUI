@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.3] — 2026-03-15
+
+### Features
+- **ContainerStyle**: reusable composable style recipes — `const CARD: ContainerStyle = ContainerStyle::new().border(Border::Rounded).p(1)` + `ui.container().apply(&CARD)`
+- **Rustdoc examples**: added `/// # Example` sections to `modal`, `group`, `use_state`, `use_memo`, `apply`
+
+### Bug Fixes
+- **Markdown Korean panic**: `parse_inline_segments` used byte indices on char-indexed positions — panicked on multi-byte CJK text (`**bold**` with Korean). Now uses char-based string operations
+- **Example warnings**: removed unused variables and dead code in demo, demo_cli
+
 ## [0.8.2] — 2026-03-15
 
 ### Features

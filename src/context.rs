@@ -2397,6 +2397,13 @@ impl Context {
     }
 
     /// Render content in a modal overlay with dimmed background.
+    ///
+    /// ```ignore
+    /// ui.modal(|ui| {
+    ///     ui.text("Are you sure?");
+    ///     if ui.button("OK") { show = false; }
+    /// });
+    /// ```
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) {
         self.commands.push(Command::BeginOverlay { modal: true });
         self.overlay_depth += 1;
@@ -2418,6 +2425,12 @@ impl Context {
     }
 
     /// Create a named group container for shared hover/focus styling.
+    ///
+    /// ```ignore
+    /// ui.group("card").border(Border::Rounded)
+    ///     .group_hover_bg(Color::Indexed(238))
+    ///     .col(|ui| { ui.text("Hover anywhere"); });
+    /// ```
     pub fn group(&mut self, name: &str) -> ContainerBuilder<'_> {
         self.group_count = self.group_count.saturating_add(1);
         self.group_stack.push(name.to_string());
@@ -5944,12 +5957,15 @@ impl Context {
         let mut i = 0;
         while i < chars.len() {
             if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
-                if let Some(end) = text[i + 2..].find("**") {
+                let rest: String = chars[i + 2..].iter().collect();
+                if let Some(end) = rest.find("**") {
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    segments.push((text[i + 2..i + 2 + end].to_string(), bold));
-                    i += 4 + end;
+                    let inner: String = rest[..end].to_string();
+                    let char_count = inner.chars().count();
+                    segments.push((inner, bold));
+                    i += 2 + char_count + 2;
                     continue;
                 }
             }
@@ -5957,22 +5973,28 @@ impl Context {
                 && (i + 1 >= chars.len() || chars[i + 1] != '*')
                 && (i == 0 || chars[i - 1] != '*')
             {
-                if let Some(end) = text[i + 1..].find('*') {
+                let rest: String = chars[i + 1..].iter().collect();
+                if let Some(end) = rest.find('*') {
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    segments.push((text[i + 1..i + 1 + end].to_string(), base.italic()));
-                    i += 2 + end;
+                    let inner: String = rest[..end].to_string();
+                    let char_count = inner.chars().count();
+                    segments.push((inner, base.italic()));
+                    i += 1 + char_count + 1;
                     continue;
                 }
             }
             if chars[i] == '`' {
-                if let Some(end) = text[i + 1..].find('`') {
+                let rest: String = chars[i + 1..].iter().collect();
+                if let Some(end) = rest.find('`') {
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    segments.push((text[i + 1..i + 1 + end].to_string(), code));
-                    i += 2 + end;
+                    let inner: String = rest[..end].to_string();
+                    let char_count = inner.chars().count();
+                    segments.push((inner, code));
+                    i += 1 + char_count + 1;
                     continue;
                 }
             }

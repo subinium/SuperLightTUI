@@ -1004,7 +1004,7 @@ fn render_v080(
     v8_anim_done: &mut bool,
     tick: u64,
 ) {
-    let theme = *ui.theme();
+    let _theme = *ui.theme();
     section(ui, "v0.8.0 FEATURES");
 
     section(ui, "DARK MODE");
@@ -1099,7 +1099,7 @@ fn render_v080(
         ];
         let idx_state = ui.use_state(|| 0usize);
         let idx = *idx_state.get(ui);
-        let (name, ref custom) = presets[idx % presets.len()];
+        let (_name, ref custom) = presets[idx % presets.len()];
 
         ui.row_gap(1, |ui| {
             for (i, (label, _)) in presets.iter().enumerate() {
