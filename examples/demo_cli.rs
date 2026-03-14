@@ -347,7 +347,3 @@ fn main() -> std::io::Result<()> {
         },
     )
 }
-
-fn search_focused(search: &TextInputState) -> bool {
-    !search.value.is_empty()
-}
