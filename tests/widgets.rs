@@ -2879,3 +2879,37 @@ fn code_block_numbered_has_line_numbers() {
     assert!(output.contains("3"));
     assert!(output.contains("line1"));
 }
+
+#[test]
+fn theme_light_has_is_dark_false() {
+    use slt::Theme;
+    let light_theme = Theme::light();
+    assert!(
+        !light_theme.is_dark,
+        "Theme::light() should have is_dark=false"
+    );
+}
+
+#[test]
+fn theme_dark_has_is_dark_true() {
+    use slt::Theme;
+    let dark_theme = Theme::dark();
+    assert!(dark_theme.is_dark, "Theme::dark() should have is_dark=true");
+}
+
+#[test]
+fn theme_builder_defaults_to_dark() {
+    use slt::Theme;
+    let theme = Theme::builder().build();
+    assert!(theme.is_dark, "ThemeBuilder should default to is_dark=true");
+}
+
+#[test]
+fn theme_builder_can_set_is_dark_false() {
+    use slt::Theme;
+    let theme = Theme::builder().is_dark(false).build();
+    assert!(
+        !theme.is_dark,
+        "ThemeBuilder.is_dark(false) should set is_dark=false"
+    );
+}

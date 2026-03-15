@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+assertion_line: 43
+expression: tb
+---
+[ Click me ]

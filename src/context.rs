@@ -1827,7 +1827,7 @@ impl Context {
             clipboard_text: None,
             debug: state.debug_mode,
             theme,
-            dark_mode: true,
+            dark_mode: theme.is_dark,
             is_real_terminal: false,
             deferred_draws: Vec::new(),
         }
