@@ -2913,3 +2913,12 @@ fn theme_builder_can_set_is_dark_false() {
         "ThemeBuilder.is_dark(false) should set is_dark=false"
     );
 }
+
+#[test]
+fn dev_warning_framework_works() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.text("hello");
+    });
+    assert!(tb.dev_warnings().is_empty());
+}

@@ -587,6 +587,9 @@ fn run_frame<T: TerminalBackend>(
 
     f(&mut ctx);
 
+    #[cfg(debug_assertions)]
+    ctx.dev_warnings_check();
+
     if ctx.should_quit {
         return Ok(false);
     }

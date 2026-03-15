@@ -152,6 +152,8 @@ pub struct TestBackend {
     width: u32,
     height: u32,
     hook_states: Vec<Box<dyn std::any::Any>>,
+    #[cfg(debug_assertions)]
+    last_dev_warnings: Vec<String>,
 }
 
 impl TestBackend {
@@ -163,6 +165,8 @@ impl TestBackend {
             width,
             height,
             hook_states: Vec::new(),
+            #[cfg(debug_assertions)]
+            last_dev_warnings: Vec::new(),
         }
     }
 
@@ -181,8 +185,14 @@ impl TestBackend {
         );
         ctx.is_real_terminal = false;
         f(&mut ctx);
+        #[cfg(debug_assertions)]
+        ctx.dev_warnings_check();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
+        #[cfg(debug_assertions)]
+        {
+            self.last_dev_warnings = ctx.dev_warning_log;
+        }
         let mut deferred = ctx.deferred_draws;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
@@ -221,8 +231,14 @@ impl TestBackend {
         ctx.is_real_terminal = false;
         ctx.process_focus_keys();
         f(&mut ctx);
+        #[cfg(debug_assertions)]
+        ctx.dev_warnings_check();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
+        #[cfg(debug_assertions)]
+        {
+            self.last_dev_warnings = ctx.dev_warning_log;
+        }
         let mut deferred = ctx.deferred_draws;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
@@ -296,6 +312,17 @@ impl TestBackend {
     /// Terminal height used for this backend.
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    pub fn dev_warnings(&self) -> &[String] {
+        #[cfg(debug_assertions)]
+        {
+            &self.last_dev_warnings
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            &[]
+        }
     }
 
     /// Return the full rendered buffer as a multi-line string.

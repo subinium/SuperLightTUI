@@ -29,10 +29,6 @@ fn slt_warn(msg: &str) {
     eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
 }
 
-#[cfg(not(debug_assertions))]
-#[allow(dead_code)]
-fn slt_warn(_msg: &str) {}
-
 /// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct State<T> {
@@ -262,6 +258,8 @@ pub struct Context {
     pub(crate) dark_mode: bool,
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
+    #[cfg(debug_assertions)]
+    pub(crate) dev_warning_log: Vec<String>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -1830,8 +1828,24 @@ impl Context {
             dark_mode: theme.is_dark,
             is_real_terminal: false,
             deferred_draws: Vec::new(),
+            #[cfg(debug_assertions)]
+            dev_warning_log: Vec::new(),
         }
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn emit_dev_warning(&mut self, msg: &str) {
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
+            self.dev_warning_log.push(msg.to_string());
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = msg;
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn dev_warnings_check(&mut self) {}
 
     pub(crate) fn process_focus_keys(&mut self) {
         for (i, event) in self.events.iter().enumerate() {
