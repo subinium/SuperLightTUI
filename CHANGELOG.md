@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.2] — 2026-03-15
+
+### Features
+- **`gap_at(bp, value)`**: unified breakpoint API — `ui.container().gap_at(Md, 2)` replaces `ui.container().md_gap(2)`. Added 7 `_at` methods: `gap_at`, `w_at`, `h_at`, `min_w_at`, `max_w_at`, `grow_at`, `p_at`. Existing methods kept for backward compatibility
+
+### Performance
+- **String clone elimination**: `ContainerBuilder::finish()` changed to `mut self`, replacing `group_name.clone()` with `group_name.take()` — eliminates one heap allocation per container per frame
+
+### Refactoring
+- **context.rs split** (6527 → 2163 lines): widget methods extracted to `context/widgets_display.rs` (896), `context/widgets_input.rs` (540), `context/widgets_viz.rs` (3012)
+- **layout.rs split** (2294 → 1411 lines): flexbox algorithm extracted to `layout/flexbox.rs` (343), rendering to `layout/render.rs` (548)
+- **terminal.rs split** (1044 → 880 lines): selection logic extracted to `terminal/selection.rs` (175)
+
 ## [0.9.1] — 2026-03-15
 
 ### Bug Fixes
