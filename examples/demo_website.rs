@@ -45,10 +45,10 @@ fn main() -> std::io::Result<()> {
         |ui: &mut Context| {
             let tick = ui.tick();
 
-            if ui.key('q') {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();
             }
-            if ui.key('t') {
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
                 theme_idx = (theme_idx + 1) % themes.len();
                 toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
             }

@@ -7,7 +7,7 @@ async fn main() -> std::io::Result<()> {
     let mut total_updates: u64 = 0;
 
     let tx = slt::run_async(move |ui: &mut Context, messages: &mut Vec<String>| {
-        if ui.key('q') {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }
 

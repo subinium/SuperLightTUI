@@ -37,7 +37,7 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         |ui: &mut Context| {
-            if ui.key('q') {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
                 ui.quit();
             }
             ui.set_theme(if dark_mode {

@@ -4,7 +4,7 @@ fn main() -> std::io::Result<()> {
     let mut count: i32 = 0;
 
     slt::run_inline(4, |ui: &mut Context| {
-        if ui.key('q') {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }
         if ui.key('j') || ui.key_code(KeyCode::Down) {

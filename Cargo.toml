@@ -79,16 +79,8 @@ name = "demo_website"
 path = "examples/demo_website.rs"
 
 [[example]]
-name = "demo_tetris"
-path = "examples/demo_tetris.rs"
-
-[[example]]
 name = "demo_infoviz"
 path = "examples/demo_infoviz.rs"
-
-[[example]]
-name = "demo_v050"
-path = "examples/demo_v050.rs"
 
 [[example]]
 name = "demo_fire"

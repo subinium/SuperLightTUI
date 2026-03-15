@@ -2,7 +2,7 @@ use slt::{Border, Color, Context};
 
 fn main() -> std::io::Result<()> {
     slt::run(|ui: &mut Context| {
-        if ui.key('q') {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }
 

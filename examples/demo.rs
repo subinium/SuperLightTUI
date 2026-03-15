@@ -1007,6 +1007,56 @@ fn render_v080(
     let _theme = *ui.theme();
     section(ui, "v0.8.0 FEATURES");
 
+    section(ui, "STYLE RECIPES");
+    {
+        const CARD: slt::ContainerStyle = slt::ContainerStyle::new().border(Border::Rounded).p(1);
+        const ACCENT: slt::ContainerStyle =
+            slt::ContainerStyle::new().bg(Color::Rgb(255, 107, 107));
+
+        ui.row_gap(1, |ui| {
+            ui.container().apply(&CARD).grow(1).col(|ui| {
+                ui.text("Base card").bold();
+                ui.text("ContainerStyle::new().border(..).p(1)").dim();
+            });
+            ui.container()
+                .apply(&CARD)
+                .apply(&ACCENT)
+                .grow(1)
+                .col(|ui| {
+                    ui.text("Card + Accent").bold();
+                    ui.text(".apply(&CARD).apply(&ACCENT)").dim();
+                });
+        });
+    }
+
+    section(ui, "ERROR BOUNDARY");
+    ui.row_gap(1, |ui| {
+        ui.container()
+            .grow(1)
+            .border(Border::Rounded)
+            .p(1)
+            .col(|ui| {
+                ui.error_boundary(|ui| {
+                    ui.text("Safe content").fg(Color::Green);
+                });
+            });
+        ui.container()
+            .grow(1)
+            .border(Border::Rounded)
+            .p(1)
+            .col(|ui| {
+                ui.error_boundary_with(
+                    |ui| {
+                        ui.text("Protected zone");
+                    },
+                    |ui, _msg| {
+                        ui.text("Caught a panic!").fg(Color::Red);
+                    },
+                );
+                ui.text("error_boundary_with catches panics").dim();
+            });
+    });
+
     section(ui, "DARK MODE");
     card(ui, |ui| {
         ui.row_gap(2, |ui| {
