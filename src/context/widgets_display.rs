@@ -17,7 +17,7 @@ impl Context {
         let content = s.into();
         self.commands.push(Command::Text {
             content,
-            style: Style::new(),
+            style: Style::new().fg(self.theme.text),
             grow: 0,
             align: Align::Start,
             wrap: false,
@@ -93,7 +93,7 @@ impl Context {
         let content = s.into();
         self.commands.push(Command::Text {
             content,
-            style: Style::new(),
+            style: Style::new().fg(self.theme.text),
             grow: 0,
             align: Align::Start,
             wrap: true,

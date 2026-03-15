@@ -118,7 +118,7 @@ ui.scrollable(&mut scroll).col(|ui| { });    // scroll container
 ui.toast(&mut toasts);                       // notifications
 ui.separator();                              // horizontal line
 ui.help(&[("q", "quit"), ("Tab", "focus")]); // key hints
-ui.link("Docs", "https://docs.rs/slt");      // clickable hyperlink (OSC 8)
+ui.link("Docs", "https://docs.rs/superlighttui");      // clickable hyperlink (OSC 8)
 ui.modal(|ui| { ui.text("overlay"); });      // modal with dim backdrop
 ui.overlay(|ui| { ui.text("floating"); });   // overlay without backdrop
 ui.command_palette(&mut palette);            // searchable command palette
@@ -215,7 +215,7 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 ```
 
-16 named colors · 256-color palette · 24-bit RGB · 6 modifiers · 4 border styles
+16 named colors · 256-color palette · 24-bit RGB · 6 modifiers · 6 border styles
 
 </details>
 
@@ -564,7 +564,6 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | demo_ime | `cargo run --example demo_ime` | Korean/CJK IME input |
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
-| demo_v050 | `cargo run --example demo_v050` | v0.5.0 features |
 | demo_infoviz | `cargo run --example demo_infoviz` | Data visualization |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
 
