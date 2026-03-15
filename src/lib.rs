@@ -72,10 +72,10 @@ pub use style::{
     Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder,
 };
 pub use widgets::{
-    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
-    ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
+    AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField,
+    FormState, ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
     SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };
 
 static PANIC_HOOK_ONCE: Once = Once::new();

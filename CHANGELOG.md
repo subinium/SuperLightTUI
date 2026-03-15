@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.4] — 2026-03-15
+
+### Features — 10 New Widgets
+
+**Tier 1 (not composable from primitives):**
+- **`divider_text(label)`**: horizontal rule with centered text label — `──── Settings ────`
+- **`alert(message, AlertLevel)`**: persistent inline notification with icon + dismiss — returns `true` when dismissed
+- **`breadcrumb(&["Home", "Settings"])`**: clickable path navigation — returns `Some(idx)` on segment click
+- **`accordion(title, &mut open, |ui| { ... })`**: collapsible content section with ▾/▸ toggle
+
+**Tier 2 (convenience widgets):**
+- **`badge(label)` / `badge_colored(label, color)`**: inline colored tag with auto-contrast foreground
+- **`key_hint(key)`**: inline keyboard shortcut display — `[Ctrl+S]` reversed style
+- **`stat(label, value)` / `stat_colored` / `stat_trend`**: dashboard metric with optional trend arrow ↑↓
+- **`definition_list(&[("key", "value")])`**: auto-aligned key-value pairs
+- **`empty_state(title, desc)` / `empty_state_action`**: centered placeholder for empty lists
+- **`code_block(code)` / `code_block_numbered`**: bordered code display with optional line numbers
+
+### New Types
+- `AlertLevel` enum: `Info`, `Success`, `Warning`, `Error`
+- `Trend` enum: `Up`, `Down`
+
 ## [0.9.3] — 2026-03-15
 
 ### Refactoring

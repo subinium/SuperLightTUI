@@ -1,5 +1,5 @@
 use slt::{
-    Border, Color, Context, ScrollState, SpinnerState, Style, TableState, Theme, ToastState,
+    Border, Color, Context, ScrollState, SpinnerState, Style, TableState, Theme, ToastState, Trend,
 };
 
 struct Metrics {
@@ -101,9 +101,7 @@ fn main() -> std::io::Result<()> {
                         ))
                         .dim();
                     });
-                    ui.separator();
-
-                    // metric cards
+                    ui.divider_text("System Metrics");
                     ui.row(|ui| {
                         metric_card(ui, "CPU", metrics.cpu, "%", Color::Cyan);
                         metric_card(ui, "Memory", metrics.mem, "%", Color::Yellow);
@@ -122,25 +120,28 @@ fn main() -> std::io::Result<()> {
                         metric_card(ui, "Net Out", metrics.net_out, "MB/s", Color::Magenta);
                     });
 
+                    ui.divider_text("Key Metrics");
                     ui.row(|ui| {
-                        stat_pill(
-                            ui,
-                            "Requests",
-                            &format!("{}", metrics.requests),
-                            Color::Cyan,
-                        );
-                        stat_pill(
-                            ui,
-                            "Errors",
-                            &format!("{}", metrics.errors),
-                            if metrics.errors > 5 {
-                                Color::Red
-                            } else {
-                                Color::Green
-                            },
-                        );
-                        stat_pill(ui, "P99", "45ms", Color::Yellow);
-                        stat_pill(ui, "Threads", "24", Color::Blue);
+                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
+                        });
+                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            ui.stat_colored(
+                                "Errors",
+                                &format!("{}", metrics.errors),
+                                if metrics.errors > 5 {
+                                    Color::Red
+                                } else {
+                                    Color::Green
+                                },
+                            );
+                        });
+                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            ui.stat_colored("P99", "45ms", Color::Yellow);
+                        });
+                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            ui.stat_colored("Threads", "24", Color::Blue);
+                        });
                     });
 
                     ui.container().grow(1).row(|ui| {
@@ -196,7 +197,7 @@ fn main() -> std::io::Result<()> {
 
                     ui.toast(&mut toasts);
 
-                    ui.separator();
+                    ui.divider_text("Controls");
                     ui.help(&[
                         ("q", "quit"),
                         ("t", "theme"),
@@ -217,17 +218,10 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Col
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_w - filled);
         ui.text(bar).fg(color);
         if value > 80.0 {
-            ui.text("⚠ HIGH").bold().fg(Color::Red);
+            ui.badge_colored("HIGH", Color::Red);
         }
     });
     let _ = resp;
-}
-
-fn stat_pill(ui: &mut Context, label: &str, value: &str, color: Color) {
-    ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
-        ui.text(label).dim();
-        ui.text(value).bold().fg(color);
-    });
 }
 
 fn sim_metrics(tick: u64) -> Metrics {

@@ -1,9 +1,9 @@
 use slt::{
-    Align, ApprovalAction, Border, BorderSides, Breakpoint, Color, CommandPaletteState, Context,
-    ContextItem, FormField, FormState, HalfBlockImage, Justify, KeyCode, ListState,
+    AlertLevel, Align, ApprovalAction, Border, BorderSides, Breakpoint, Color, CommandPaletteState,
+    Context, ContextItem, FormField, FormState, HalfBlockImage, Justify, KeyCode, ListState,
     MultiSelectState, PaletteCommand, RadioState, RunConfig, ScrollState, SelectState,
     SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme,
-    ToastState, ToolApprovalState, TreeNode, TreeState,
+    ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };
 
 fn main() -> std::io::Result<()> {
@@ -16,6 +16,7 @@ fn main() -> std::io::Result<()> {
         "Advanced",
         "v0.7.0",
         "v0.8.0",
+        "v0.9.4",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -36,6 +37,9 @@ fn main() -> std::io::Result<()> {
     table.page_size = 3;
     let mut table_filter = TextInputState::with_placeholder("Filter table...");
     let spinner = SpinnerState::dots();
+    let mut accordion_general = true;
+    let mut accordion_advanced = false;
+    let mut alert_visible = true;
     let mut progress = 0.64_f64;
     let mut dark_mode = true;
     let mut notifications = true;
@@ -229,6 +233,12 @@ fn main() -> std::io::Result<()> {
                                 &mut v8_tween,
                                 &mut v8_anim_done,
                                 tick,
+                            ),
+                            8 => render_v094(
+                                ui,
+                                &mut accordion_general,
+                                &mut accordion_advanced,
+                                &mut alert_visible,
                             ),
                             _ => {}
                         });
@@ -1255,4 +1265,82 @@ fn card(ui: &mut Context, f: impl FnOnce(&mut Context)) {
 fn section(ui: &mut Context, title: &str) {
     let theme = *ui.theme();
     ui.text(title).bold().fg(theme.text_dim);
+}
+
+fn render_v094(
+    ui: &mut Context,
+    accordion_general: &mut bool,
+    accordion_advanced: &mut bool,
+    alert_visible: &mut bool,
+) {
+    section(ui, "v0.9.4 WIDGETS");
+    ui.text("");
+
+    if *alert_visible {
+        if ui.alert(
+            "Deployment successful — all checks passed",
+            AlertLevel::Success,
+        ) {
+            *alert_visible = false;
+        }
+    }
+
+    ui.divider_text("Navigation");
+    ui.breadcrumb(&["Home", "Settings", "Profile"]);
+
+    ui.divider_text("Dashboard");
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.stat_trend("Revenue", "$12,400", Trend::Up);
+        });
+        card(ui, |ui| {
+            ui.stat_trend("Errors", "3", Trend::Down);
+        });
+        card(ui, |ui| {
+            ui.stat_colored("CPU", "72%", Color::Yellow);
+        });
+        card(ui, |ui| {
+            ui.stat("Uptime", "14d 3h");
+        });
+    });
+
+    ui.divider_text("Inline Elements");
+    ui.line(|ui| {
+        ui.badge("v0.9.4");
+        ui.text(" ");
+        ui.badge_colored("Stable", Color::Green);
+        ui.text(" ");
+        ui.badge_colored("Rust", Color::Rgb(222, 165, 91));
+        ui.text("   ");
+        ui.key_hint("Ctrl+S");
+        ui.text(" save  ");
+        ui.key_hint("q");
+        ui.text(" quit");
+    });
+
+    ui.divider_text("Accordions");
+    ui.accordion("General Settings", accordion_general, |ui| {
+        ui.definition_list(&[
+            ("Theme", "Dark"),
+            ("Language", "en-US"),
+            ("Font Size", "14px"),
+        ]);
+    });
+    ui.accordion("Advanced Settings", accordion_advanced, |ui| {
+        ui.definition_list(&[
+            ("Log Level", "debug"),
+            ("Max Conn", "100"),
+            ("Timeout", "30s"),
+        ]);
+    });
+
+    ui.divider_text("Code Block");
+    ui.code_block_numbered(
+        "fn main() {\n    slt::run(|ui| {\n        ui.text(\"hello\");\n    });\n}",
+    );
+
+    ui.divider_text("Empty State");
+    ui.container().h(3).col(|ui| {
+        ui.empty_state("No items yet", "Items will appear here when added");
+    });
 }
