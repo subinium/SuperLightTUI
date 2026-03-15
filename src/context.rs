@@ -227,6 +227,7 @@ pub trait Widget {
 /// });
 /// ```
 pub struct Context {
+    // NOTE: If you add a mutable per-frame field, also add it to ContextSnapshot in error_boundary_with
     pub(crate) commands: Vec<Command>,
     pub(crate) events: Vec<Event>,
     pub(crate) consumed: Vec<bool>,
@@ -259,10 +260,63 @@ pub struct Context {
     debug: bool,
     theme: Theme,
     pub(crate) dark_mode: bool,
+    pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
+
+struct ContextSnapshot {
+    cmd_count: usize,
+    last_text_idx: Option<usize>,
+    focus_count: usize,
+    interaction_count: usize,
+    scroll_count: usize,
+    group_count: usize,
+    group_stack_len: usize,
+    overlay_depth: usize,
+    modal_active: bool,
+    hook_cursor: usize,
+    hook_states_len: usize,
+    dark_mode: bool,
+    deferred_draws_len: usize,
+}
+
+impl ContextSnapshot {
+    fn capture(ctx: &Context) -> Self {
+        Self {
+            cmd_count: ctx.commands.len(),
+            last_text_idx: ctx.last_text_idx,
+            focus_count: ctx.focus_count,
+            interaction_count: ctx.interaction_count,
+            scroll_count: ctx.scroll_count,
+            group_count: ctx.group_count,
+            group_stack_len: ctx.group_stack.len(),
+            overlay_depth: ctx.overlay_depth,
+            modal_active: ctx.modal_active,
+            hook_cursor: ctx.hook_cursor,
+            hook_states_len: ctx.hook_states.len(),
+            dark_mode: ctx.dark_mode,
+            deferred_draws_len: ctx.deferred_draws.len(),
+        }
+    }
+
+    fn restore(&self, ctx: &mut Context) {
+        ctx.commands.truncate(self.cmd_count);
+        ctx.last_text_idx = self.last_text_idx;
+        ctx.focus_count = self.focus_count;
+        ctx.interaction_count = self.interaction_count;
+        ctx.scroll_count = self.scroll_count;
+        ctx.group_count = self.group_count;
+        ctx.group_stack.truncate(self.group_stack_len);
+        ctx.overlay_depth = self.overlay_depth;
+        ctx.modal_active = self.modal_active;
+        ctx.hook_cursor = self.hook_cursor;
+        ctx.hook_states.truncate(self.hook_states_len);
+        ctx.dark_mode = self.dark_mode;
+        ctx.deferred_draws.truncate(self.deferred_draws_len);
+    }
+}
 
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
@@ -284,7 +338,7 @@ type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
 ///     });
 /// # });
 /// ```
-#[must_use = "configure and finalize with .col() or .row()"]
+#[must_use = "ContainerBuilder does nothing until .col(), .row(), .line(), or .draw() is called"]
 pub struct ContainerBuilder<'a> {
     ctx: &'a mut Context,
     gap: u32,
@@ -1773,7 +1827,8 @@ impl Context {
             clipboard_text: None,
             debug: state.debug_mode,
             theme,
-            dark_mode: true,
+            dark_mode: theme.is_dark,
+            is_real_terminal: false,
             deferred_draws: Vec::new(),
         }
     }
@@ -1859,8 +1914,7 @@ impl Context {
         f: impl FnOnce(&mut Context),
         fallback: impl FnOnce(&mut Context, String),
     ) {
-        let cmd_count = self.commands.len();
-        let last_text_idx = self.last_text_idx;
+        let snapshot = ContextSnapshot::capture(self);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             f(self);
@@ -1869,8 +1923,15 @@ impl Context {
         match result {
             Ok(()) => {}
             Err(panic_info) => {
-                self.commands.truncate(cmd_count);
-                self.last_text_idx = last_text_idx;
+                if self.is_real_terminal {
+                    let _ = crossterm::terminal::enable_raw_mode();
+                    let _ = crossterm::execute!(
+                        std::io::stdout(),
+                        crossterm::terminal::EnterAlternateScreen
+                    );
+                }
+
+                snapshot.restore(self);
 
                 let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
                     (*s).to_string()

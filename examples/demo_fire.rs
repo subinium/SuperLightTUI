@@ -85,7 +85,7 @@ impl Fire {
                 let rand_val = self.next_rand();
                 let decay = (rand_val & 3) as usize;
                 let wind = ((rand_val >> 2) & 1) as usize;
-                let dst_x = if x >= wind { x - wind } else { 0 };
+                let dst_x = x.saturating_sub(wind);
                 let dst = (y - 1) * self.w + dst_x;
                 self.pixels[dst] = self.pixels[src].saturating_sub(decay);
             }

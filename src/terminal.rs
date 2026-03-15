@@ -679,10 +679,12 @@ mod tests {
     #[test]
     fn selection_state_drag_activates() {
         let hit_map = vec![pair(Rect::new(0, 0, 80, 24))];
-        let mut sel = SelectionState::default();
-        sel.anchor = Some((10, 5));
-        sel.current = Some((10, 5));
-        sel.widget_rect = Some(Rect::new(0, 0, 80, 24));
+        let mut sel = SelectionState {
+            anchor: Some((10, 5)),
+            current: Some((10, 5)),
+            widget_rect: Some(Rect::new(0, 0, 80, 24)),
+            ..Default::default()
+        };
         sel.mouse_drag(10, 5, &hit_map);
         assert!(!sel.active, "no movement = not active");
         sel.mouse_drag(11, 5, &hit_map);
@@ -694,10 +696,12 @@ mod tests {
     #[test]
     fn selection_state_drag_vertical_activates() {
         let hit_map = vec![pair(Rect::new(0, 0, 80, 24))];
-        let mut sel = SelectionState::default();
-        sel.anchor = Some((10, 5));
-        sel.current = Some((10, 5));
-        sel.widget_rect = Some(Rect::new(0, 0, 80, 24));
+        let mut sel = SelectionState {
+            anchor: Some((10, 5)),
+            current: Some((10, 5)),
+            widget_rect: Some(Rect::new(0, 0, 80, 24)),
+            ..Default::default()
+        };
         sel.mouse_drag(10, 6, &hit_map);
         assert!(sel.active, "any vertical movement = active");
     }
@@ -709,10 +713,12 @@ mod tests {
             pair(Rect::new(5, 2, 30, 10)),
             pair(Rect::new(5, 2, 30, 3)),
         ];
-        let mut sel = SelectionState::default();
-        sel.anchor = Some((10, 3));
-        sel.current = Some((10, 3));
-        sel.widget_rect = Some(Rect::new(5, 2, 30, 3));
+        let mut sel = SelectionState {
+            anchor: Some((10, 3)),
+            current: Some((10, 3)),
+            widget_rect: Some(Rect::new(5, 2, 30, 3)),
+            ..Default::default()
+        };
         sel.mouse_drag(10, 6, &hit_map);
         assert_eq!(sel.widget_rect, Some(Rect::new(5, 2, 30, 10)));
     }

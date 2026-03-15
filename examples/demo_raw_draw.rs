@@ -2,8 +2,6 @@ use slt::{Border, Buffer, Color, Context, KeyCode, Rect, RunConfig, Style};
 use std::time::Duration;
 
 fn main() {
-    let mut tick_offset: u64 = 0;
-
     let _ = slt::run_with(
         RunConfig {
             tick_rate: Duration::from_millis(16),
@@ -16,7 +14,7 @@ fn main() {
                 return;
             }
 
-            tick_offset = ui.tick();
+            let tick_offset = ui.tick();
 
             ui.bordered(Border::Rounded)
                 .title("draw_raw demo")

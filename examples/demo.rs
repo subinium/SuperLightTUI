@@ -688,13 +688,13 @@ fn render_advanced(
 
             ui.line(|ui| {
                 ui.text("Status: ");
-                ui.text("Online").bold().fg(Color::Green);
+                ui.text("Online").bold().fg(theme.success);
                 ui.text(" · ");
                 ui.text("3 tasks").fg(theme.accent);
             });
 
             ui.line(|ui| {
-                ui.text("Error: ").fg(Color::Red);
+                ui.text("Error: ").fg(theme.error);
                 ui.text("file ").fg(theme.surface_text);
                 ui.text("config.toml").bold().fg(theme.primary);
                 ui.text(" not found").fg(theme.surface_text);
@@ -710,7 +710,7 @@ fn render_advanced(
                         ui.text("This ");
                         ui.text("wraps ").bold();
                         ui.text("across lines while keeping ");
-                        ui.text("styles").fg(Color::Cyan).bold();
+                        ui.text("styles").fg(theme.primary).bold();
                         ui.text(" on each segment.");
                     });
                 });
@@ -1014,7 +1014,7 @@ fn render_v080(
     v8_anim_done: &mut bool,
     tick: u64,
 ) {
-    let _theme = *ui.theme();
+    let theme = *ui.theme();
     section(ui, "v0.8.0 FEATURES");
 
     section(ui, "STYLE RECIPES");
@@ -1047,7 +1047,7 @@ fn render_v080(
             .p(1)
             .col(|ui| {
                 ui.error_boundary(|ui| {
-                    ui.text("Safe content").fg(Color::Green);
+                    ui.text("Safe content").fg(theme.success);
                 });
             });
         ui.container()
@@ -1060,7 +1060,7 @@ fn render_v080(
                         ui.text("Protected zone");
                     },
                     |ui, _msg| {
-                        ui.text("Caught a panic!").fg(Color::Red);
+                        ui.text("Caught a panic!").fg(theme.error);
                     },
                 );
                 ui.text("error_boundary_with catches panics").dim();
@@ -1200,7 +1200,7 @@ fn render_v080(
         ui.row_gap(1, |ui| {
             ui.text(format!("Value: {:.0}", val));
             if *v8_anim_done {
-                ui.text("✓ on_complete fired!").fg(Color::Green).bold();
+                ui.text("✓ on_complete fired!").fg(theme.success).bold();
             }
             if ui.button("Restart") {
                 v8_tween.reset(tick);
@@ -1236,8 +1236,8 @@ fn render_v080(
         let tripled = *ui.use_memo(&count_val, |c| c * 3);
         ui.row_gap(1, |ui| {
             ui.text(format!("Count: {count_val}"));
-            ui.text(format!("×2 = {doubled}")).fg(Color::Cyan);
-            ui.text(format!("×3 = {tripled}")).fg(Color::Green);
+            ui.text(format!("×2 = {doubled}")).fg(theme.primary);
+            ui.text(format!("×3 = {tripled}")).fg(theme.success);
             if ui.button("+1") {
                 *counter.get_mut(ui) += 1;
             }
@@ -1276,13 +1276,13 @@ fn render_v094(
     section(ui, "v0.9.4 WIDGETS");
     ui.text("");
 
-    if *alert_visible {
-        if ui.alert(
+    if *alert_visible
+        && ui.alert(
             "Deployment successful — all checks passed",
             AlertLevel::Success,
-        ) {
-            *alert_visible = false;
-        }
+        )
+    {
+        *alert_visible = false;
     }
 
     ui.divider_text("Navigation");
@@ -1297,7 +1297,7 @@ fn render_v094(
             ui.stat_trend("Errors", "3", Trend::Down);
         });
         card(ui, |ui| {
-            ui.stat_colored("CPU", "72%", Color::Yellow);
+            ui.stat_colored("CPU", "72%", ui.theme().warning);
         });
         card(ui, |ui| {
             ui.stat("Uptime", "14d 3h");
@@ -1308,9 +1308,9 @@ fn render_v094(
     ui.line(|ui| {
         ui.badge("v0.9.4");
         ui.text(" ");
-        ui.badge_colored("Stable", Color::Green);
+        ui.badge_colored("Stable", ui.theme().success);
         ui.text(" ");
-        ui.badge_colored("Rust", Color::Rgb(222, 165, 91));
+        ui.badge_colored("Rust", ui.theme().accent);
         ui.text("   ");
         ui.key_hint("Ctrl+S");
         ui.text(" save  ");

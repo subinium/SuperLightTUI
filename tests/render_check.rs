@@ -6,8 +6,6 @@ fn render_demo_basic_layout() {
     let mut tb = TestBackend::new(80, 24);
     let mut input = TextInputState::with_placeholder("Type here...");
     let spinner = SpinnerState::dots();
-    let mut dark = true;
-    let mut notif = true;
 
     tb.render(|ui| {
         ui.bordered(Border::Rounded)

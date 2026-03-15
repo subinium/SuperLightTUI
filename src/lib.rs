@@ -128,7 +128,7 @@ fn install_panic_hook() {
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`] or [`run_inline_with`] to customize behavior.
-/// Use [`Default::default()`] for sensible defaults (100ms tick, no mouse, dark theme).
+/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, no mouse, dark theme).
 ///
 /// # Example
 ///
@@ -150,7 +150,7 @@ pub struct RunConfig {
     /// How long to wait for input before triggering a tick with no events.
     ///
     /// Lower values give smoother animations at the cost of more CPU usage.
-    /// Defaults to 100ms.
+    /// Defaults to 16ms (60fps).
     pub tick_rate: Duration,
     /// Whether to enable mouse event reporting.
     ///
@@ -582,6 +582,7 @@ fn run_frame<T: TerminalBackend>(
     let frame_start = Instant::now();
     let (w, h) = term.size();
     let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
+    ctx.is_real_terminal = true;
     ctx.process_focus_keys();
 
     f(&mut ctx);
@@ -628,6 +629,20 @@ fn run_frame<T: TerminalBackend>(
     state.prev_content_map = fd.content_areas;
     state.prev_focus_rects = fd.focus_rects;
     state.prev_focus_groups = fd.focus_groups;
+    {
+        let buf = term.buffer_mut();
+        let bg = config.theme.bg;
+        if bg != Color::Reset {
+            for y in 0..buf.area.height {
+                for x in 0..buf.area.width {
+                    let cell = buf.get_mut(x, y);
+                    if cell.style.bg.is_none() {
+                        cell.style.bg = Some(bg);
+                    }
+                }
+            }
+        }
+    }
     layout::render(&tree, term.buffer_mut());
     let raw_rects = layout::collect_raw_draw_rects(&tree);
     for (draw_id, rect) in raw_rects {

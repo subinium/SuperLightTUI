@@ -1947,6 +1947,57 @@ impl Context {
         })
     }
 
+    /// Check for a character key press and consume the event, preventing other
+    /// handlers from seeing it.
+    ///
+    /// Returns `true` if the key was found unconsumed and is now consumed.
+    /// Unlike [`key()`](Self::key) which peeks without consuming, this claims
+    /// exclusive ownership of the event.
+    ///
+    /// Call **after** widgets if you want widgets to have priority over your
+    /// handler, or **before** widgets to intercept first.
+    pub fn consume_key(&mut self, c: char) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
+            if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c))
+            {
+                self.consumed[i] = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check for a special key press and consume the event, preventing other
+    /// handlers from seeing it.
+    ///
+    /// Returns `true` if the key was found unconsumed and is now consumed.
+    /// Unlike [`key_code()`](Self::key_code) which peeks without consuming,
+    /// this claims exclusive ownership of the event.
+    ///
+    /// Call **after** widgets if you want widgets to have priority over your
+    /// handler, or **before** widgets to intercept first.
+    pub fn consume_key_code(&mut self, code: KeyCode) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
+            if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == code) {
+                self.consumed[i] = true;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if a character key with specific modifiers was pressed this frame.
     ///
     /// Returns `true` if the key event has not been consumed by another widget.

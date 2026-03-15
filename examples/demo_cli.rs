@@ -308,14 +308,14 @@ fn main() -> std::io::Result<()> {
                                                     ),
                                                 ));
                                             }
-                                            if pkg.status == "installed" || pkg.status == "outdated"
+                                            if (pkg.status == "installed"
+                                                || pkg.status == "outdated")
+                                                && ui.button("Remove")
                                             {
-                                                if ui.button("Remove") {
-                                                    output_lines.push((
-                                                        Color::Red,
-                                                        format!("Removed {}", pkg.name),
-                                                    ));
-                                                }
+                                                output_lines.push((
+                                                    Color::Red,
+                                                    format!("Removed {}", pkg.name),
+                                                ));
                                             }
                                         });
                                     }

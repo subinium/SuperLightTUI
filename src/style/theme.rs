@@ -45,6 +45,8 @@ pub struct Theme {
     /// containers. `text_dim` is tuned for the main `bg`; on `surface` it
     /// may lack contrast.
     pub surface_text: Color,
+    /// Whether this theme is a dark theme. Used to initialize dark mode in Context.
+    pub is_dark: bool,
 }
 
 impl Theme {
@@ -66,27 +68,29 @@ impl Theme {
             surface: Color::Indexed(236),
             surface_hover: Color::Indexed(238),
             surface_text: Color::Indexed(250),
+            is_dark: true,
         }
     }
 
-    /// Create a light theme with blue primary and black text.
+    /// Create a light theme with high-contrast dark text on light backgrounds.
     pub fn light() -> Self {
         Self {
-            primary: Color::Blue,
-            secondary: Color::Cyan,
-            accent: Color::Magenta,
-            text: Color::Black,
-            text_dim: Color::Indexed(240),
-            border: Color::Indexed(245),
-            bg: Color::Reset,
-            success: Color::Green,
-            warning: Color::Yellow,
-            error: Color::Red,
-            selected_bg: Color::Blue,
+            primary: Color::Rgb(37, 99, 235),
+            secondary: Color::Rgb(14, 116, 144),
+            accent: Color::Rgb(147, 51, 234),
+            text: Color::Rgb(15, 23, 42),
+            text_dim: Color::Rgb(100, 116, 139),
+            border: Color::Rgb(203, 213, 225),
+            bg: Color::Rgb(248, 250, 252),
+            success: Color::Rgb(22, 163, 74),
+            warning: Color::Rgb(202, 138, 4),
+            error: Color::Rgb(220, 38, 38),
+            selected_bg: Color::Rgb(37, 99, 235),
             selected_fg: Color::White,
-            surface: Color::Indexed(254),
-            surface_hover: Color::Indexed(252),
-            surface_text: Color::Indexed(238),
+            surface: Color::Rgb(241, 245, 249),
+            surface_hover: Color::Rgb(226, 232, 240),
+            surface_text: Color::Rgb(51, 65, 85),
+            is_dark: false,
         }
     }
 
@@ -119,6 +123,7 @@ impl Theme {
             surface: None,
             surface_hover: None,
             surface_text: None,
+            is_dark: None,
         }
     }
 
@@ -140,6 +145,7 @@ impl Theme {
             surface: Color::Rgb(68, 71, 90),
             surface_hover: Color::Rgb(98, 100, 120),
             surface_text: Color::Rgb(191, 194, 210),
+            is_dark: true,
         }
     }
 
@@ -161,6 +167,7 @@ impl Theme {
             surface: Color::Rgb(49, 50, 68),
             surface_hover: Color::Rgb(69, 71, 90),
             surface_text: Color::Rgb(166, 173, 200),
+            is_dark: true,
         }
     }
 
@@ -182,6 +189,7 @@ impl Theme {
             surface: Color::Rgb(59, 66, 82),
             surface_hover: Color::Rgb(67, 76, 94),
             surface_text: Color::Rgb(216, 222, 233),
+            is_dark: true,
         }
     }
 
@@ -203,6 +211,7 @@ impl Theme {
             surface: Color::Rgb(7, 54, 66),
             surface_hover: Color::Rgb(23, 72, 85),
             surface_text: Color::Rgb(147, 161, 161),
+            is_dark: true,
         }
     }
 
@@ -224,6 +233,7 @@ impl Theme {
             surface: Color::Rgb(36, 40, 59),
             surface_hover: Color::Rgb(41, 46, 66),
             surface_text: Color::Rgb(192, 202, 245),
+            is_dark: true,
         }
     }
 }
@@ -245,6 +255,7 @@ pub struct ThemeBuilder {
     surface: Option<Color>,
     surface_hover: Option<Color>,
     surface_text: Option<Color>,
+    is_dark: Option<bool>,
 }
 
 impl ThemeBuilder {
@@ -323,6 +334,11 @@ impl ThemeBuilder {
         self
     }
 
+    pub fn is_dark(mut self, is_dark: bool) -> Self {
+        self.is_dark = Some(is_dark);
+        self
+    }
+
     pub fn build(self) -> Theme {
         let defaults = Theme::dark();
         Theme {
@@ -341,6 +357,7 @@ impl ThemeBuilder {
             surface: self.surface.unwrap_or(defaults.surface),
             surface_hover: self.surface_hover.unwrap_or(defaults.surface_hover),
             surface_text: self.surface_text.unwrap_or(defaults.surface_text),
+            is_dark: self.is_dark.unwrap_or(defaults.is_dark),
         }
     }
 }
