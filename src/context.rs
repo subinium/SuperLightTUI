@@ -44,14 +44,26 @@ impl<T: 'static> State<T> {
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
         ui.hook_states[self.idx]
             .downcast_ref::<T>()
-            .expect("use_state type mismatch")
+            .unwrap_or_else(|| {
+                panic!(
+                    "use_state type mismatch at hook index {} — expected {}",
+                    self.idx,
+                    std::any::type_name::<T>()
+                )
+            })
     }
 
     /// Mutably access the current value.
     pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
         ui.hook_states[self.idx]
             .downcast_mut::<T>()
-            .expect("use_state type mismatch")
+            .unwrap_or_else(|| {
+                panic!(
+                    "use_state type mismatch at hook index {} — expected {}",
+                    self.idx,
+                    std::any::type_name::<T>()
+                )
+            })
     }
 }
 
@@ -1526,6 +1538,15 @@ impl<'a> ContainerBuilder<'a> {
     /// The closure receives `(&mut Buffer, Rect)` after layout is computed.
     /// Use `buf.set_char()`, `buf.set_string()`, `buf.get_mut()` to write
     /// directly into the terminal buffer. Writes outside `rect` are clipped.
+    ///
+    /// The closure must be `'static` because it is deferred until after layout.
+    /// To capture local data, clone or move it into the closure:
+    /// ```ignore
+    /// let data = my_vec.clone();
+    /// ui.container().w(40).h(20).draw(move |buf, rect| {
+    ///     // use `data` here
+    /// });
+    /// ```
     pub fn draw(self, f: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static) {
         let draw_id = self.ctx.deferred_draws.len();
         self.ctx.deferred_draws.push(Some(Box::new(f)));
