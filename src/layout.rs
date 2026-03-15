@@ -839,7 +839,7 @@ fn build_children(
                 grow,
                 margin,
             } => {
-                let mut node = LayoutNode {
+                let node = LayoutNode {
                     kind: NodeKind::RawDraw(*draw_id),
                     content: None,
                     style: Style::new(),
@@ -873,7 +873,6 @@ fn build_children(
                     group_name: None,
                     overlays: Vec::new(),
                 };
-                node.focus_id = pending_focus_id.take();
                 parent.children.push(node);
                 *pos += 1;
             }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.1] — 2026-03-15
+
+### Bug Fixes
+- **draw_raw focus_id**: `pending_focus_id.take()` was called twice in `RawDraw` node creation — second call clobbered the first with `None`, breaking `FocusMarker` on draw_raw regions
+
+### Improvements
+- **Hook panic messages**: `use_state` type mismatch now reports hook index and expected type name (`use_state type mismatch at hook index 3 — expected i32`) instead of bare `"use_state type mismatch"`
+- **draw_raw docs**: added `'static` bound explanation with workaround code example to `ContainerBuilder::draw()` rustdoc
+
+### Tests
+- 7 new draw_raw tests: `draw_raw_with_grow_fills_available_width`, `draw_raw_alongside_normal_widgets`, `draw_raw_with_fixed_size`, `draw_raw_styled_content`, `draw_raw_multiple_regions`, `collect_all_focus_rects_match_tab_navigation`, `collect_all_scroll_works_after_merge`
+
 ## [0.9.0] — 2026-03-15
 
 ### Features

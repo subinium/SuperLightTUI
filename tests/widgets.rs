@@ -2463,3 +2463,110 @@ fn draw_raw_clips_outside_rect() {
     assert!(output.contains("ABC"));
     assert!(!output.contains("ABCDEFGH"));
 }
+
+#[test]
+fn draw_raw_with_grow_fills_available_width() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.col(|ui| {
+            ui.container().grow(1).h(3).draw(|buf, rect| {
+                assert!(rect.width > 0);
+                assert_eq!(rect.height, 3);
+                buf.set_char(rect.x, rect.y, 'G', slt::Style::new());
+            });
+        });
+    });
+    tb.assert_contains("G");
+}
+
+#[test]
+fn draw_raw_alongside_normal_widgets() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.col(|ui| {
+            ui.text("above");
+            ui.container().w(10).h(1).draw(|buf, rect| {
+                buf.set_string(rect.x, rect.y, "drawn", slt::Style::new());
+            });
+            ui.text("below");
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("above"));
+    assert!(output.contains("drawn"));
+    assert!(output.contains("below"));
+}
+
+#[test]
+fn draw_raw_with_fixed_size() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.container().w(12).h(5).draw(|buf, rect| {
+            assert_eq!(rect.width, 12);
+            assert_eq!(rect.height, 5);
+            buf.set_char(rect.x, rect.y, 'I', slt::Style::new());
+        });
+    });
+    tb.assert_contains("I");
+}
+
+#[test]
+fn draw_raw_styled_content() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.container().w(5).h(1).draw(|buf, rect| {
+            let style = slt::Style::new().fg(slt::Color::Red).bold();
+            buf.set_char(rect.x, rect.y, 'R', style);
+        });
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert_eq!(cell.symbol, "R");
+    assert_eq!(cell.style.fg, Some(slt::Color::Red));
+    assert!(cell.style.modifiers.contains(slt::Modifiers::BOLD));
+}
+
+#[test]
+fn draw_raw_multiple_regions() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.row(|ui| {
+            ui.container().w(5).h(1).draw(|buf, rect| {
+                buf.set_string(rect.x, rect.y, "AAA", slt::Style::new());
+            });
+            ui.container().w(5).h(1).draw(|buf, rect| {
+                buf.set_string(rect.x, rect.y, "BBB", slt::Style::new());
+            });
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("AAA"));
+    assert!(output.contains("BBB"));
+}
+
+#[test]
+fn collect_all_focus_rects_match_tab_navigation() {
+    let mut tb = TestBackend::new(40, 10);
+    let events = slt::EventBuilder::new().key_code(slt::KeyCode::Tab).build();
+    tb.run_with_events(events, |ui| {
+        ui.col(|ui| {
+            let mut input1 = slt::TextInputState::new();
+            ui.text_input(&mut input1);
+            let mut input2 = slt::TextInputState::new();
+            ui.text_input(&mut input2);
+        });
+    });
+}
+
+#[test]
+fn collect_all_scroll_works_after_merge() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = slt::ScrollState::new();
+    tb.render(|ui| {
+        ui.scrollable(&mut scroll).h(5).col(|ui| {
+            for i in 0..20 {
+                ui.text(format!("Line {i}"));
+            }
+        });
+    });
+    tb.assert_contains("Line 0");
+}
