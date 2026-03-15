@@ -128,7 +128,7 @@ fn install_panic_hook() {
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`] or [`run_inline_with`] to customize behavior.
-/// Use [`Default::default()`] for sensible defaults (100ms tick, no mouse, dark theme).
+/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, no mouse, dark theme).
 ///
 /// # Example
 ///
@@ -150,7 +150,7 @@ pub struct RunConfig {
     /// How long to wait for input before triggering a tick with no events.
     ///
     /// Lower values give smoother animations at the cost of more CPU usage.
-    /// Defaults to 100ms.
+    /// Defaults to 16ms (60fps).
     pub tick_rate: Duration,
     /// Whether to enable mouse event reporting.
     ///
