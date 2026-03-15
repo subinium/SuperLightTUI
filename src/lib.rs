@@ -281,6 +281,9 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    if config.theme.bg != Color::Reset {
+        term.theme_bg = Some(config.theme.bg);
+    }
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
@@ -410,6 +413,9 @@ fn run_async_loop<M: Send + 'static>(
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    if config.theme.bg != Color::Reset {
+        term.theme_bg = Some(config.theme.bg);
+    }
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
@@ -629,20 +635,6 @@ fn run_frame<T: TerminalBackend>(
     state.prev_content_map = fd.content_areas;
     state.prev_focus_rects = fd.focus_rects;
     state.prev_focus_groups = fd.focus_groups;
-    {
-        let buf = term.buffer_mut();
-        let bg = config.theme.bg;
-        if bg != Color::Reset {
-            for y in 0..buf.area.height {
-                for x in 0..buf.area.width {
-                    let cell = buf.get_mut(x, y);
-                    if cell.style.bg.is_none() {
-                        cell.style.bg = Some(bg);
-                    }
-                }
-            }
-        }
-    }
     layout::render(&tree, term.buffer_mut());
     let raw_rects = layout::collect_raw_draw_rects(&tree);
     for (draw_id, rect) in raw_rects {

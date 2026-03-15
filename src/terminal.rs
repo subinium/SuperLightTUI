@@ -25,6 +25,7 @@ pub(crate) struct Terminal {
     cursor_visible: bool,
     kitty_keyboard: bool,
     color_depth: ColorDepth,
+    pub(crate) theme_bg: Option<Color>,
 }
 
 pub(crate) struct InlineTerminal {
@@ -81,6 +82,7 @@ impl Terminal {
             cursor_visible: false,
             kitty_keyboard,
             color_depth,
+            theme_bg: None,
         })
     }
 
@@ -93,42 +95,48 @@ impl Terminal {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
-        let updates = self.current.diff(&self.previous);
         queue!(self.stdout, BeginSynchronizedUpdate)?;
 
-        if !updates.is_empty() {
-            let mut last_style = Style::new();
-            let mut first_style = true;
-            let mut last_pos: Option<(u32, u32)> = None;
-            let mut active_link: Option<&str> = None;
+        let mut last_style = Style::new();
+        let mut first_style = true;
+        let mut last_pos: Option<(u32, u32)> = None;
+        let mut active_link: Option<&str> = None;
+        let mut has_updates = false;
 
-            for &(x, y, cell) in &updates {
-                if cell.symbol.is_empty() {
+        for y in self.current.area.y..self.current.area.bottom() {
+            for x in self.current.area.x..self.current.area.right() {
+                let cur = self.current.get(x, y);
+                let prev = self.previous.get(x, y);
+                if cur == prev {
                     continue;
                 }
+                if cur.symbol.is_empty() {
+                    continue;
+                }
+                has_updates = true;
 
                 let need_move = last_pos.map_or(true, |(lx, ly)| ly != y || lx != x);
                 if need_move {
                     queue!(self.stdout, cursor::MoveTo(x as u16, y as u16))?;
                 }
 
-                if cell.style != last_style {
+                if cur.style != last_style {
                     if first_style {
                         queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                        apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
+                        apply_style(&mut self.stdout, &cur.style, self.color_depth)?;
                         first_style = false;
                     } else {
                         apply_style_delta(
                             &mut self.stdout,
                             &last_style,
-                            &cell.style,
+                            &cur.style,
                             self.color_depth,
                         )?;
                     }
-                    last_style = cell.style;
+                    last_style = cur.style;
                 }
 
-                let cell_link = cell.hyperlink.as_deref();
+                let cell_link = cur.hyperlink.as_deref();
                 if cell_link != active_link {
                     if let Some(url) = cell_link {
                         queue!(self.stdout, Print(format!("\x1b]8;;{url}\x07")))?;
@@ -138,11 +146,13 @@ impl Terminal {
                     active_link = cell_link;
                 }
 
-                queue!(self.stdout, Print(&cell.symbol))?;
-                let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
+                queue!(self.stdout, Print(&*cur.symbol))?;
+                let char_width = UnicodeWidthStr::width(cur.symbol.as_str()).max(1) as u32;
                 last_pos = Some((x + char_width, y));
             }
+        }
 
+        if has_updates {
             if active_link.is_some() {
                 queue!(self.stdout, Print("\x1b]8;;\x07"))?;
             }
@@ -171,7 +181,11 @@ impl Terminal {
         self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);
-        self.current.reset();
+        if let Some(bg) = self.theme_bg {
+            self.current.reset_with_bg(bg);
+        } else {
+            self.current.reset();
+        }
         Ok(())
     }
 

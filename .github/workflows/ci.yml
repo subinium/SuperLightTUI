@@ -20,13 +20,13 @@ jobs:
       - run: cargo check --all-features
 
   check-msrv:
-    name: Check (MSRV 1.74)
+    name: Check (MSRV 1.81)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.74"
+          toolchain: "1.81"
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
       - run: cargo check --features async,serde
