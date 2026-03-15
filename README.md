@@ -6,6 +6,9 @@
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
+[![CI Badge]][CI]
+[![MSRV Badge]][Crate]
+[![Downloads Badge]][Crate]
 [![License Badge]][License]
 
 [Crate] · [Docs] · [Examples] · [Contributing]
@@ -92,11 +95,11 @@ ui.container()
     });
 ```
 
-**Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization.
+**Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization, `image` for image loading. Zero `unsafe` code.
 
 ## Widgets
 
-30+ built-in widgets, zero boilerplate:
+50+ built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -142,6 +145,18 @@ ui.stat("Users", "1,234", Trend::Up(12.0)); // metric with trend indicator
 ui.definition_list(&[("CPU", "4 cores"), ("RAM", "16 GB")]); // term/value pairs
 ui.empty_state("No results", "Try a different search"); // empty placeholder
 ui.code_block("fn main() {}", "rust");       // syntax-highlighted code
+ui.code_block_numbered("let x = 1;");        // code with line numbers
+ui.streaming_text(&mut stream);              // AI streaming text with cursor
+ui.tool_approval(&mut tool);                 // approve/reject tool call
+ui.context_bar(&items);                      // context window token bar
+ui.image(&img);                              // half-block image rendering
+ui.stat_colored("CPU", "72%", color);        // colored metric card
+ui.stat_trend("Revenue", "$12k", Trend::Up); // metric with trend arrow
+ui.badge_colored("Stable", Color::Green);    // colored status badge
+ui.empty_state_action("Empty", "desc", "Add"); // empty state with button
+// v0.10 additions
+ui.consume_key('x');                         // explicit event consumption
+ui.consume_key_code(KeyCode::Enter);         // consume special keys
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -235,7 +250,7 @@ let theme = Theme::builder()
     .build();
 ```
 
-7 presets (dark, light, dracula, catppuccin, nord, solarized, tokyo_night). Custom themes with 15 color slots. All widgets inherit automatically.
+7 presets (dark, light, dracula, catppuccin, nord, solarized_dark, tokyo_night). Custom themes with 15 color slots + `is_dark` flag. All widgets inherit automatically. `Theme::light()` uses high-contrast Tailwind slate-based palette.
 
 </details>
 
@@ -496,6 +511,42 @@ Serialize/deserialize `Style`, `Color`, `Theme`, `Border`, `Padding`, `Margin`, 
 </details>
 
 <details>
+<summary><b>Image Rendering</b></summary>
+
+```sh
+cargo add superlighttui --features image
+```
+
+```rust
+use slt::HalfBlockImage;
+
+let photo = image::open("photo.png").unwrap();
+let img = HalfBlockImage::from_dynamic(&photo, 60, 30);
+ui.image(&img);
+```
+
+Half-block (▀▄) image rendering. Also works without the `image` feature via `HalfBlockImage::from_rgb()`.
+
+</details>
+
+<details>
+<summary><b>Feature Flags</b></summary>
+
+| Flag | Description |
+|------|-------------|
+| `async` | `run_async()` with tokio channel-based message passing |
+| `serde` | Serialize/Deserialize for Style, Color, Theme, layout types |
+| `image` | `HalfBlockImage::from_dynamic()` with the `image` crate |
+| `full` | All of the above |
+
+```toml
+[dependencies]
+superlighttui = { version = "0.10", features = ["full"] }
+```
+
+</details>
+
+<details>
 <summary><b>Testing</b></summary>
 
 ```rust
@@ -588,9 +639,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 <!-- Badge definitions -->
 [Crate Badge]: https://img.shields.io/crates/v/superlighttui?style=flat-square&logo=rust&color=E05D44
 [Docs Badge]: https://img.shields.io/docsrs/superlighttui?style=flat-square&logo=docs.rs
+[CI Badge]: https://img.shields.io/github/actions/workflow/status/subinium/SuperLightTUI/ci.yml?branch=main&style=flat-square&label=CI
+[MSRV Badge]: https://img.shields.io/crates/msrv/superlighttui?style=flat-square&label=MSRV
+[Downloads Badge]: https://img.shields.io/crates/d/superlighttui?style=flat-square
 [License Badge]: https://img.shields.io/crates/l/superlighttui?style=flat-square&color=1370D3
 
 <!-- Link definitions -->
+[CI]: https://github.com/subinium/SuperLightTUI/actions/workflows/ci.yml
 [Crate]: https://crates.io/crates/superlighttui
 [Docs]: https://docs.rs/superlighttui
 [Examples]: https://github.com/subinium/SuperLightTUI/tree/main/examples
