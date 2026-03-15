@@ -1,3 +1,5 @@
 /target
 .ddudu/
 SESSION-SUMMARY.md
+Cargo.lock
+.DS_Store
