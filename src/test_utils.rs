@@ -12,6 +12,7 @@ use crate::event::{
 use crate::layout;
 use crate::rect::Rect;
 use crate::style::Theme;
+use crate::FrameState;
 
 /// Builder for constructing a sequence of input [`Event`]s.
 ///
@@ -167,24 +168,16 @@ impl TestBackend {
 
     /// Run a UI closure for one frame and render to the internal buffer.
     pub fn render(&mut self, f: impl FnOnce(&mut Context)) {
+        let mut frame_state = FrameState {
+            hook_states: std::mem::take(&mut self.hook_states),
+            ..FrameState::default()
+        };
         let mut ctx = Context::new(
             Vec::new(),
             self.width,
             self.height,
-            0,
-            0,
-            0,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            std::mem::take(&mut self.hook_states),
-            false,
+            &mut frame_state,
             Theme::dark(),
-            None,
-            false,
         );
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
@@ -211,24 +204,18 @@ impl TestBackend {
         prev_focus_count: usize,
         f: impl FnOnce(&mut Context),
     ) {
+        let mut frame_state = FrameState {
+            hook_states: std::mem::take(&mut self.hook_states),
+            focus_index,
+            prev_focus_count,
+            ..FrameState::default()
+        };
         let mut ctx = Context::new(
             events,
             self.width,
             self.height,
-            0,
-            focus_index,
-            prev_focus_count,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            std::mem::take(&mut self.hook_states),
-            false,
+            &mut frame_state,
             Theme::dark(),
-            None,
-            false,
         );
         ctx.process_focus_keys();
         f(&mut ctx);

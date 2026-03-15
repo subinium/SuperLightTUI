@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.3] — 2026-03-15
+
+### Refactoring
+- **Run loop deduplication**: extracted `run_frame()` generic over `TerminalBackend` trait — 3 near-identical ~300-line loops replaced with 1 shared frame function + 3 thin wrappers. `lib.rs` reduced from 940 to 732 lines
+- **FrameState struct**: bundled 15+ per-frame local variables into `FrameState`, eliminating `Context::new()` 17-parameter constructor and removing `#[allow(clippy::too_many_arguments)]`
+- **TerminalBackend trait**: `Terminal` and `InlineTerminal` now implement a shared trait with `size()`, `buffer_mut()`, `flush()`, `handle_resize()`
+- **style.rs split**: extracted `style/color.rs` (Color enum + ColorDepth, 316 lines) and `style/theme.rs` (Theme + ThemeBuilder, 353 lines). `style.rs` reduced from 1429 to 765 lines
+- **ContainerBuilder field unification**: renamed `bg_color` → `bg`, `dark_bg_color` → `dark_bg` to match `ContainerStyle` field names
+
 ## [0.9.2] — 2026-03-15
 
 ### Features
