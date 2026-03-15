@@ -1,5 +1,6 @@
 /target
 .ddudu/
+.sisyphus/
 SESSION-SUMMARY.md
 .DS_Store
 *.tape
