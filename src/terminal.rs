@@ -91,6 +91,7 @@ impl Terminal {
 
         if !updates.is_empty() {
             let mut last_style = Style::new();
+            let mut first_style = true;
             let mut last_pos: Option<(u32, u32)> = None;
             let mut active_link: Option<&str> = None;
 
@@ -105,8 +106,18 @@ impl Terminal {
                 }
 
                 if cell.style != last_style {
-                    queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                    apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
+                    if first_style {
+                        queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                        apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
+                        first_style = false;
+                    } else {
+                        apply_style_delta(
+                            &mut self.stdout,
+                            &last_style,
+                            &cell.style,
+                            self.color_depth,
+                        )?;
+                    }
                     last_style = cell.style;
                 }
 
@@ -225,6 +236,7 @@ impl InlineTerminal {
         let updates = self.current.diff(&self.previous);
         if !updates.is_empty() {
             let mut last_style = Style::new();
+            let mut first_style = true;
             let mut last_pos: Option<(u32, u32)> = None;
             let mut active_link: Option<&str> = None;
 
@@ -240,8 +252,18 @@ impl InlineTerminal {
                 }
 
                 if cell.style != last_style {
-                    queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                    apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
+                    if first_style {
+                        queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                        apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
+                        first_style = false;
+                    } else {
+                        apply_style_delta(
+                            &mut self.stdout,
+                            &last_style,
+                            &cell.style,
+                            self.color_depth,
+                        )?;
+                    }
                     last_style = cell.style;
                 }
 
@@ -570,6 +592,69 @@ fn find_cursor_marker(buffer: &Buffer) -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+fn apply_style_delta(
+    w: &mut impl Write,
+    old: &Style,
+    new: &Style,
+    depth: ColorDepth,
+) -> io::Result<()> {
+    if old.fg != new.fg {
+        match new.fg {
+            Some(fg) => queue!(w, SetForegroundColor(to_crossterm_color(fg, depth)))?,
+            None => queue!(w, SetForegroundColor(CtColor::Reset))?,
+        }
+    }
+    if old.bg != new.bg {
+        match new.bg {
+            Some(bg) => queue!(w, SetBackgroundColor(to_crossterm_color(bg, depth)))?,
+            None => queue!(w, SetBackgroundColor(CtColor::Reset))?,
+        }
+    }
+    let removed = Modifiers(old.modifiers.0 & !new.modifiers.0);
+    let added = Modifiers(new.modifiers.0 & !old.modifiers.0);
+    if removed.contains(Modifiers::BOLD) || removed.contains(Modifiers::DIM) {
+        queue!(w, SetAttribute(Attribute::NormalIntensity))?;
+        if new.modifiers.contains(Modifiers::BOLD) {
+            queue!(w, SetAttribute(Attribute::Bold))?;
+        }
+        if new.modifiers.contains(Modifiers::DIM) {
+            queue!(w, SetAttribute(Attribute::Dim))?;
+        }
+    } else {
+        if added.contains(Modifiers::BOLD) {
+            queue!(w, SetAttribute(Attribute::Bold))?;
+        }
+        if added.contains(Modifiers::DIM) {
+            queue!(w, SetAttribute(Attribute::Dim))?;
+        }
+    }
+    if removed.contains(Modifiers::ITALIC) {
+        queue!(w, SetAttribute(Attribute::NoItalic))?;
+    }
+    if added.contains(Modifiers::ITALIC) {
+        queue!(w, SetAttribute(Attribute::Italic))?;
+    }
+    if removed.contains(Modifiers::UNDERLINE) {
+        queue!(w, SetAttribute(Attribute::NoUnderline))?;
+    }
+    if added.contains(Modifiers::UNDERLINE) {
+        queue!(w, SetAttribute(Attribute::Underlined))?;
+    }
+    if removed.contains(Modifiers::REVERSED) {
+        queue!(w, SetAttribute(Attribute::NoReverse))?;
+    }
+    if added.contains(Modifiers::REVERSED) {
+        queue!(w, SetAttribute(Attribute::Reverse))?;
+    }
+    if removed.contains(Modifiers::STRIKETHROUGH) {
+        queue!(w, SetAttribute(Attribute::NotCrossedOut))?;
+    }
+    if added.contains(Modifiers::STRIKETHROUGH) {
+        queue!(w, SetAttribute(Attribute::CrossedOut))?;
+    }
+    Ok(())
 }
 
 fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {

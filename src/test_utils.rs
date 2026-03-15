@@ -189,10 +189,18 @@ impl TestBackend {
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
+        let mut deferred = ctx.deferred_draws;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
         self.buffer.reset();
         layout::render(&tree, &mut self.buffer);
+        for (draw_id, rect) in layout::collect_raw_draw_rects(&tree) {
+            if let Some(cb) = deferred.get_mut(draw_id).and_then(|c| c.take()) {
+                self.buffer.push_clip(rect);
+                cb(&mut self.buffer, rect);
+                self.buffer.pop_clip();
+            }
+        }
     }
 
     /// Render with injected events and focus state for interaction testing.
@@ -226,10 +234,18 @@ impl TestBackend {
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
+        let mut deferred = ctx.deferred_draws;
         let area = Rect::new(0, 0, self.width, self.height);
         layout::compute(&mut tree, area);
         self.buffer.reset();
         layout::render(&tree, &mut self.buffer);
+        for (draw_id, rect) in layout::collect_raw_draw_rects(&tree) {
+            if let Some(cb) = deferred.get_mut(draw_id).and_then(|c| c.take()) {
+                self.buffer.push_clip(rect);
+                cb(&mut self.buffer, rect);
+                self.buffer.pop_clip();
+            }
+        }
     }
 
     /// Convenience wrapper: render with events using default focus state.

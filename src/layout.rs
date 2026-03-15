@@ -79,6 +79,12 @@ pub(crate) enum Command {
         grow: u16,
     },
     FocusMarker(usize),
+    RawDraw {
+        draw_id: usize,
+        constraints: Constraints,
+        grow: u16,
+        margin: Margin,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +98,7 @@ enum NodeKind {
     Text,
     Container(Direction),
     Spacer,
+    RawDraw(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -350,7 +357,7 @@ impl LayoutNode {
     fn min_width(&self) -> u32 {
         let width = match self.kind {
             NodeKind::Text => self.size.0,
-            NodeKind::Spacer => 0,
+            NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
             NodeKind::Container(Direction::Row) => {
                 let gaps = if self.children.is_empty() {
                     0
@@ -381,7 +388,7 @@ impl LayoutNode {
     fn min_height(&self) -> u32 {
         let height = match self.kind {
             NodeKind::Text => 1,
-            NodeKind::Spacer => 0,
+            NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
             NodeKind::Container(Direction::Row) => {
                 self.children
                     .iter()
@@ -826,6 +833,50 @@ fn build_children(
                 parent.children.push(LayoutNode::spacer(*grow));
                 *pos += 1;
             }
+            Command::RawDraw {
+                draw_id,
+                constraints,
+                grow,
+                margin,
+            } => {
+                let mut node = LayoutNode {
+                    kind: NodeKind::RawDraw(*draw_id),
+                    content: None,
+                    style: Style::new(),
+                    grow: *grow,
+                    align: Align::Start,
+                    justify: Justify::Start,
+                    wrap: false,
+                    gap: 0,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new(),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: *margin,
+                    constraints: *constraints,
+                    title: None,
+                    children: Vec::new(),
+                    pos: (0, 0),
+                    size: (
+                        constraints.min_width.unwrap_or(0),
+                        constraints.min_height.unwrap_or(0),
+                    ),
+                    is_scrollable: false,
+                    scroll_offset: 0,
+                    content_height: 0,
+                    cached_wrapped: None,
+                    segments: None,
+                    cached_wrapped_segments: None,
+                    focus_id: pending_focus_id.take(),
+                    link_url: None,
+                    group_name: None,
+                    overlays: Vec::new(),
+                };
+                node.focus_id = pending_focus_id.take();
+                parent.children.push(node);
+                *pos += 1;
+            }
             Command::EndContainer => {
                 *pos += 1;
                 return;
@@ -884,7 +935,7 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     }
 
     match node.kind {
-        NodeKind::Text | NodeKind::Spacer => {}
+        NodeKind::Text | NodeKind::Spacer | NodeKind::RawDraw(_) => {}
         NodeKind::Container(Direction::Row) => {
             layout_row(
                 node,
@@ -1535,7 +1586,7 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
                 }
             }
         }
-        NodeKind::Spacer => {}
+        NodeKind::Spacer | NodeKind::RawDraw(_) => {}
         NodeKind::Container(_) => {
             if let Some(color) = node.bg_color {
                 if let Some(area) = visible_area(node, y_offset) {
@@ -1728,98 +1779,95 @@ fn render_scroll_indicators(
     }
 }
 
-pub(crate) fn collect_scroll_infos(node: &LayoutNode) -> Vec<(u32, u32)> {
-    let mut infos = Vec::new();
-    collect_scroll_infos_inner(node, &mut infos);
-    for overlay in &node.overlays {
-        collect_scroll_infos_inner(&overlay.node, &mut infos);
-    }
-    infos
+/// All per-frame data collected from a laid-out tree in a single traversal.
+#[derive(Default)]
+pub(crate) struct FrameData {
+    pub scroll_infos: Vec<(u32, u32)>,
+    pub scroll_rects: Vec<Rect>,
+    pub hit_areas: Vec<Rect>,
+    pub group_rects: Vec<(String, Rect)>,
+    pub content_areas: Vec<(Rect, Rect)>,
+    pub focus_rects: Vec<(usize, Rect)>,
+    pub focus_groups: Vec<Option<String>>,
 }
 
-pub(crate) fn collect_scroll_rects(node: &LayoutNode) -> Vec<Rect> {
-    let mut rects = Vec::new();
-    collect_scroll_rects_inner(node, &mut rects, 0);
-    for overlay in &node.overlays {
-        collect_scroll_rects_inner(&overlay.node, &mut rects, 0);
-    }
-    rects
-}
+/// Collect all per-frame data from a laid-out tree in a single DFS pass.
+///
+/// Replaces the 7 individual `collect_*` functions that each traversed the
+/// tree independently, reducing per-frame traversals from 7× to 1×.
+pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
+    let mut data = FrameData::default();
 
-fn collect_scroll_rects_inner(node: &LayoutNode, rects: &mut Vec<Rect>, y_offset: u32) {
-    if node.is_scrollable {
-        let adj_y = node.pos.1.saturating_sub(y_offset);
-        rects.push(Rect::new(node.pos.0, adj_y, node.size.0, node.size.1));
-    }
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
-    } else {
-        y_offset
-    };
-    for child in &node.children {
-        collect_scroll_rects_inner(child, rects, child_offset);
-    }
-}
-
-pub(crate) fn collect_hit_areas(node: &LayoutNode) -> Vec<Rect> {
-    let mut areas = Vec::new();
-    for child in &node.children {
-        collect_hit_areas_inner(child, &mut areas, 0);
-    }
-    for overlay in &node.overlays {
-        collect_hit_areas_inner(&overlay.node, &mut areas, 0);
-    }
-    areas
-}
-
-pub(crate) fn collect_group_rects(node: &LayoutNode) -> Vec<(String, Rect)> {
-    let mut rects = Vec::new();
-    for child in &node.children {
-        collect_group_rects_inner(child, &mut rects, 0);
-    }
-    for overlay in &node.overlays {
-        collect_group_rects_inner(&overlay.node, &mut rects, 0);
-    }
-    rects
-}
-
-fn collect_scroll_infos_inner(node: &LayoutNode, infos: &mut Vec<(u32, u32)>) {
+    // scroll_infos, scroll_rects, focus_rects process the root node itself.
+    // hit_areas, group_rects, content_areas, focus_groups skip the root.
     if node.is_scrollable {
         let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
-        infos.push((node.content_height, viewport_h));
+        data.scroll_infos.push((node.content_height, viewport_h));
+        data.scroll_rects
+            .push(Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1));
     }
+    if let Some(id) = node.focus_id {
+        if node.pos.1 + node.size.1 > 0 {
+            data.focus_rects.push((
+                id,
+                Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
+            ));
+        }
+    }
+
+    let child_offset = if node.is_scrollable {
+        node.scroll_offset
+    } else {
+        0
+    };
     for child in &node.children {
-        collect_scroll_infos_inner(child, infos);
+        collect_all_inner(child, &mut data, child_offset, None);
     }
+
+    for overlay in &node.overlays {
+        collect_all_inner(&overlay.node, &mut data, 0, None);
+    }
+
+    data
 }
 
-fn collect_hit_areas_inner(node: &LayoutNode, areas: &mut Vec<Rect>, y_offset: u32) {
+fn collect_all_inner(
+    node: &LayoutNode,
+    data: &mut FrameData,
+    y_offset: u32,
+    active_group: Option<&str>,
+) {
+    // --- scroll_infos (no y_offset dependency) ---
+    if node.is_scrollable {
+        let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
+        data.scroll_infos.push((node.content_height, viewport_h));
+    }
+
+    // --- scroll_rects (uses y_offset) ---
+    if node.is_scrollable {
+        let adj_y = node.pos.1.saturating_sub(y_offset);
+        data.scroll_rects
+            .push(Rect::new(node.pos.0, adj_y, node.size.0, node.size.1));
+    }
+
+    // --- hit_areas (container or link) ---
     if matches!(node.kind, NodeKind::Container(_)) || node.link_url.is_some() {
         if node.pos.1 + node.size.1 > y_offset {
-            areas.push(Rect::new(
+            data.hit_areas.push(Rect::new(
                 node.pos.0,
                 node.pos.1.saturating_sub(y_offset),
                 node.size.0,
                 node.size.1,
             ));
         } else {
-            areas.push(Rect::new(0, 0, 0, 0));
+            data.hit_areas.push(Rect::new(0, 0, 0, 0));
         }
     }
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
-    } else {
-        y_offset
-    };
-    for child in &node.children {
-        collect_hit_areas_inner(child, areas, child_offset);
-    }
-}
 
-fn collect_group_rects_inner(node: &LayoutNode, rects: &mut Vec<(String, Rect)>, y_offset: u32) {
+    // --- group_rects ---
     if let Some(name) = &node.group_name {
         if node.pos.1 + node.size.1 > y_offset {
-            rects.push((
+            data.group_rects.push((
                 name.clone(),
                 Rect::new(
                     node.pos.0,
@@ -1830,28 +1878,8 @@ fn collect_group_rects_inner(node: &LayoutNode, rects: &mut Vec<(String, Rect)>,
             ));
         }
     }
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
-    } else {
-        y_offset
-    };
-    for child in &node.children {
-        collect_group_rects_inner(child, rects, child_offset);
-    }
-}
 
-pub(crate) fn collect_content_areas(node: &LayoutNode) -> Vec<(Rect, Rect)> {
-    let mut areas = Vec::new();
-    for child in &node.children {
-        collect_content_areas_inner(child, &mut areas, 0);
-    }
-    for overlay in &node.overlays {
-        collect_content_areas_inner(&overlay.node, &mut areas, 0);
-    }
-    areas
-}
-
-fn collect_content_areas_inner(node: &LayoutNode, areas: &mut Vec<(Rect, Rect)>, y_offset: u32) {
+    // --- content_areas ---
     if matches!(node.kind, NodeKind::Container(_)) {
         let adj_y = node.pos.1.saturating_sub(y_offset);
         let full = Rect::new(node.pos.0, adj_y, node.size.0, node.size.1);
@@ -1860,42 +1888,13 @@ fn collect_content_areas_inner(node: &LayoutNode, areas: &mut Vec<(Rect, Rect)>,
         let inner_w = node.size.0.saturating_sub(node.frame_horizontal());
         let inner_h = node.size.1.saturating_sub(node.frame_vertical());
         let content = Rect::new(node.pos.0 + inset_x, adj_y + inset_y, inner_w, inner_h);
-        areas.push((full, content));
+        data.content_areas.push((full, content));
     }
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
-    } else {
-        y_offset
-    };
-    for child in &node.children {
-        collect_content_areas_inner(child, areas, child_offset);
-    }
-}
 
-pub(crate) fn collect_focus_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
-    let mut rects = Vec::new();
-    collect_focus_rects_inner(node, &mut rects, 0);
-    for overlay in &node.overlays {
-        collect_focus_rects_inner(&overlay.node, &mut rects, 0);
-    }
-    rects
-}
-
-pub(crate) fn collect_focus_groups(node: &LayoutNode) -> Vec<Option<String>> {
-    let mut groups = Vec::new();
-    for child in &node.children {
-        collect_focus_groups_inner(child, &mut groups, None);
-    }
-    for overlay in &node.overlays {
-        collect_focus_groups_inner(&overlay.node, &mut groups, None);
-    }
-    groups
-}
-
-fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, y_offset: u32) {
+    // --- focus_rects ---
     if let Some(id) = node.focus_id {
         if node.pos.1 + node.size.1 > y_offset {
-            rects.push((
+            data.focus_rects.push((
                 id,
                 Rect::new(
                     node.pos.0,
@@ -1906,30 +1905,51 @@ fn collect_focus_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, 
             ));
         }
     }
+
+    // --- focus_groups ---
+    let current_group = node.group_name.as_deref().or(active_group);
+    if let Some(id) = node.focus_id {
+        if id >= data.focus_groups.len() {
+            data.focus_groups.resize(id + 1, None);
+        }
+        data.focus_groups[id] = current_group.map(ToString::to_string);
+    }
+
+    // --- Recurse into children ---
     let child_offset = if node.is_scrollable {
         y_offset.saturating_add(node.scroll_offset)
     } else {
         y_offset
     };
     for child in &node.children {
-        collect_focus_rects_inner(child, rects, child_offset);
+        collect_all_inner(child, data, child_offset, current_group);
     }
 }
 
-fn collect_focus_groups_inner(
-    node: &LayoutNode,
-    groups: &mut Vec<Option<String>>,
-    active_group: Option<&str>,
-) {
-    let current_group = node.group_name.as_deref().or(active_group);
-    if let Some(id) = node.focus_id {
-        if id >= groups.len() {
-            groups.resize(id + 1, None);
-        }
-        groups[id] = current_group.map(ToString::to_string);
+pub(crate) fn collect_raw_draw_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
+    let mut rects = Vec::new();
+    collect_raw_draw_rects_inner(node, &mut rects, 0);
+    for overlay in &node.overlays {
+        collect_raw_draw_rects_inner(&overlay.node, &mut rects, 0);
     }
+    rects
+}
+
+fn collect_raw_draw_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, y_offset: u32) {
+    if let NodeKind::RawDraw(draw_id) = node.kind {
+        let adj_y = node.pos.1.saturating_sub(y_offset);
+        rects.push((
+            draw_id,
+            Rect::new(node.pos.0, adj_y, node.size.0, node.size.1),
+        ));
+    }
+    let child_offset = if node.is_scrollable {
+        y_offset.saturating_add(node.scroll_offset)
+    } else {
+        y_offset
+    };
     for child in &node.children {
-        collect_focus_groups_inner(child, groups, current_group);
+        collect_raw_draw_rects_inner(child, rects, child_offset);
     }
 }
 
@@ -2217,13 +2237,13 @@ mod tests {
         let area = crate::rect::Rect::new(0, 0, 40, 10);
         compute(&mut tree, area);
 
-        let rects = collect_focus_rects(&tree);
-        assert_eq!(rects.len(), 2);
-        assert_eq!(rects[0].0, 0);
-        assert_eq!(rects[1].0, 1);
-        assert!(rects[0].1.width > 0);
-        assert!(rects[1].1.width > 0);
-        assert_ne!(rects[0].1.y, rects[1].1.y);
+        let fd = collect_all(&tree);
+        assert_eq!(fd.focus_rects.len(), 2);
+        assert_eq!(fd.focus_rects[0].0, 0);
+        assert_eq!(fd.focus_rects[1].0, 1);
+        assert!(fd.focus_rects[0].1.width > 0);
+        assert!(fd.focus_rects[1].1.width > 0);
+        assert_ne!(fd.focus_rects[0].1.y, fd.focus_rects[1].1.y);
     }
 
     #[test]
@@ -2265,10 +2285,10 @@ mod tests {
         let area = crate::rect::Rect::new(0, 0, 40, 10);
         compute(&mut tree, area);
 
-        let rects = collect_focus_rects(&tree);
-        assert_eq!(rects.len(), 1);
-        assert_eq!(rects[0].0, 0);
-        assert!(rects[0].1.width >= 8);
-        assert!(rects[0].1.height >= 3);
+        let fd = collect_all(&tree);
+        assert_eq!(fd.focus_rects.len(), 1);
+        assert_eq!(fd.focus_rects[0].0, 0);
+        assert!(fd.focus_rects[0].1.width >= 8);
+        assert!(fd.focus_rects[0].1.height >= 3);
     }
 }
