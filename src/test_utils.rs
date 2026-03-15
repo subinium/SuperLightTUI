@@ -154,6 +154,8 @@ pub struct TestBackend {
     hook_states: Vec<Box<dyn std::any::Any>>,
     #[cfg(debug_assertions)]
     last_dev_warnings: Vec<String>,
+    #[cfg(debug_assertions)]
+    prev_hook_count: usize,
 }
 
 impl TestBackend {
@@ -167,6 +169,8 @@ impl TestBackend {
             hook_states: Vec::new(),
             #[cfg(debug_assertions)]
             last_dev_warnings: Vec::new(),
+            #[cfg(debug_assertions)]
+            prev_hook_count: 0,
         }
     }
 
@@ -174,6 +178,8 @@ impl TestBackend {
     pub fn render(&mut self, f: impl FnOnce(&mut Context)) {
         let mut frame_state = FrameState {
             hook_states: std::mem::take(&mut self.hook_states),
+            #[cfg(debug_assertions)]
+            prev_hook_count: self.prev_hook_count,
             ..FrameState::default()
         };
         let mut ctx = Context::new(
@@ -191,6 +197,7 @@ impl TestBackend {
         self.hook_states = ctx.hook_states;
         #[cfg(debug_assertions)]
         {
+            self.prev_hook_count = ctx.hook_cursor;
             self.last_dev_warnings = ctx.dev_warning_log;
         }
         let mut deferred = ctx.deferred_draws;
@@ -219,6 +226,8 @@ impl TestBackend {
             hook_states: std::mem::take(&mut self.hook_states),
             focus_index,
             prev_focus_count,
+            #[cfg(debug_assertions)]
+            prev_hook_count: self.prev_hook_count,
             ..FrameState::default()
         };
         let mut ctx = Context::new(
@@ -237,6 +246,7 @@ impl TestBackend {
         self.hook_states = ctx.hook_states;
         #[cfg(debug_assertions)]
         {
+            self.prev_hook_count = ctx.hook_cursor;
             self.last_dev_warnings = ctx.dev_warning_log;
         }
         let mut deferred = ctx.deferred_draws;

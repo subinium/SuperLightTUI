@@ -211,6 +211,8 @@ pub(crate) struct FrameState {
     pub debug_mode: bool,
     pub fps_ema: f32,
     pub selection: terminal::SelectionState,
+    #[cfg(debug_assertions)]
+    pub prev_hook_count: usize,
 }
 
 impl Default for FrameState {
@@ -232,6 +234,8 @@ impl Default for FrameState {
             debug_mode: false,
             fps_ema: 0.0,
             selection: terminal::SelectionState::default(),
+            #[cfg(debug_assertions)]
+            prev_hook_count: 0,
         }
     }
 }
@@ -620,6 +624,10 @@ fn run_frame<T: TerminalBackend>(
 
     state.focus_index = ctx.focus_index;
     state.prev_focus_count = ctx.focus_count;
+    #[cfg(debug_assertions)]
+    {
+        state.prev_hook_count = ctx.hook_cursor;
+    }
 
     let mut tree = layout::build_tree(&ctx.commands);
     let area = crate::rect::Rect::new(0, 0, w, h);

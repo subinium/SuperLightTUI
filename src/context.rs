@@ -260,6 +260,8 @@ pub struct Context {
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     #[cfg(debug_assertions)]
     pub(crate) dev_warning_log: Vec<String>,
+    #[cfg(debug_assertions)]
+    prev_hook_count: usize,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -1830,6 +1832,8 @@ impl Context {
             deferred_draws: Vec::new(),
             #[cfg(debug_assertions)]
             dev_warning_log: Vec::new(),
+            #[cfg(debug_assertions)]
+            prev_hook_count: state.prev_hook_count,
         }
     }
 
@@ -1845,7 +1849,16 @@ impl Context {
     }
 
     #[cfg(debug_assertions)]
-    pub(crate) fn dev_warnings_check(&mut self) {}
+    pub(crate) fn dev_warnings_check(&mut self) {
+        if self.prev_hook_count != 0 && self.hook_cursor != self.prev_hook_count {
+            self.emit_dev_warning(&format!(
+                "Hook call count changed: expected {} hook(s), got {}. \
+                 This usually means use_state/use_memo is inside an if/match block. \
+                 Hooks must be called in the same order every frame.",
+                self.prev_hook_count, self.hook_cursor
+            ));
+        }
+    }
 
     pub(crate) fn process_focus_keys(&mut self) {
         for (i, event) in self.events.iter().enumerate() {

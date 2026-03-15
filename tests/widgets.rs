@@ -2922,3 +2922,69 @@ fn dev_warning_framework_works() {
     });
     assert!(tb.dev_warnings().is_empty());
 }
+
+#[test]
+fn dev_warning_hook_count_change() {
+    let mut tb = TestBackend::new(40, 5);
+    let show_second = true;
+    tb.render(|ui| {
+        let _ = ui.use_state(|| 0i32);
+        let _ = ui.use_state(|| 0i32);
+        ui.text("frame 1");
+    });
+    assert!(tb.dev_warnings().is_empty(), "no warning on first frame");
+
+    tb.render(|ui| {
+        let _ = ui.use_state(|| 0i32);
+        if show_second && false {
+            let _ = ui.use_state(|| 0i32);
+        }
+        ui.text("frame 2");
+    });
+    let warnings = tb.dev_warnings();
+    assert!(
+        !warnings.is_empty(),
+        "expected hook count change warning on frame 2"
+    );
+    assert!(
+        warnings[0].contains("Hook call count changed"),
+        "warning message should mention hook count change, got: {}",
+        warnings[0]
+    );
+}
+
+#[test]
+fn dev_warning_hook_count_stable_no_warning() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        let _ = ui.use_state(|| 0i32);
+        let _ = ui.use_state(|| 0i32);
+        ui.text("frame 1");
+    });
+    assert!(tb.dev_warnings().is_empty(), "no warning on first frame");
+
+    tb.render(|ui| {
+        let _ = ui.use_state(|| 0i32);
+        let _ = ui.use_state(|| 0i32);
+        ui.text("frame 2");
+    });
+    assert!(
+        tb.dev_warnings().is_empty(),
+        "no warning when hook count is stable"
+    );
+}
+
+#[test]
+fn dev_warning_first_frame_no_warning() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        let _ = ui.use_state(|| 0i32);
+        let _ = ui.use_state(|| 0i32);
+        let _ = ui.use_state(|| 0i32);
+        ui.text("first frame with hooks");
+    });
+    assert!(
+        tb.dev_warnings().is_empty(),
+        "no warning on first frame even with hooks"
+    );
+}
