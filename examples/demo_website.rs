@@ -413,9 +413,7 @@ fn render_home(
             ui.row(|ui| {
                 ui.text_input(email);
                 email.validate(|v| {
-                    if v.is_empty() {
-                        Ok(())
-                    } else if v.contains('@') && v.contains('.') {
+                    if v.is_empty() || (v.contains('@') && v.contains('.')) {
                         Ok(())
                     } else {
                         Err("Enter a valid email".into())
@@ -1736,6 +1734,7 @@ fn feature_card(ui: &mut Context, theme: &Theme, title: &str, desc: &str) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn price_card(
     ui: &mut Context,
     tier: &str,

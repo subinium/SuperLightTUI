@@ -1064,7 +1064,7 @@ fn histogram_renders() {
         ui.histogram(&data, 40, 10);
     });
     let line0 = tb.line(0);
-    assert!(line0.contains("█") || line0.contains("▁") || line0.len() > 0);
+    assert!(line0.contains("█") || line0.contains("▁") || !line0.is_empty());
 }
 
 #[test]

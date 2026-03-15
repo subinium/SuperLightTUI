@@ -129,13 +129,13 @@ cargo check --examples --all-features
 6. `#[cfg_attr(feature = "serde", ...)]` on `is_dark` if serde feature exists
 
 **Acceptance Criteria**:
-- [ ] `Theme::light()` → `dark_mode == false` in Context
-- [ ] `Theme::dark()` → `dark_mode == true` in Context
-- [ ] All 7 theme presets have correct `is_dark` value
-- [ ] `ThemeBuilder::build()` without setting `is_dark` defaults to `true`
-- [ ] Custom `Theme { is_dark: false, .. }` works correctly
-- [ ] `ui.set_dark_mode()` still overrides at runtime
-- [ ] Existing apps that don't touch dark_mode behave identically (dark_mode defaults true, Theme::dark() is default)
+- [x] `Theme::light()` → `dark_mode == false` in Context
+- [x] `Theme::dark()` → `dark_mode == true` in Context
+- [x] All 7 theme presets have correct `is_dark` value
+- [x] `ThemeBuilder::build()` without setting `is_dark` defaults to `true`
+- [x] Custom `Theme { is_dark: false, .. }` works correctly
+- [x] `ui.set_dark_mode()` still overrides at runtime
+- [x] Existing apps that don't touch dark_mode behave identically (dark_mode defaults true, Theme::dark() is default)
 
 **QA**: `cargo test` — TestBackend with Theme::light() verifies dark_mode is false.
 

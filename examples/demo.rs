@@ -1276,13 +1276,13 @@ fn render_v094(
     section(ui, "v0.9.4 WIDGETS");
     ui.text("");
 
-    if *alert_visible {
-        if ui.alert(
+    if *alert_visible
+        && ui.alert(
             "Deployment successful — all checks passed",
             AlertLevel::Success,
-        ) {
-            *alert_visible = false;
-        }
+        )
+    {
+        *alert_visible = false;
     }
 
     ui.divider_text("Navigation");
