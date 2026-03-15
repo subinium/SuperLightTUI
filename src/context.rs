@@ -338,7 +338,7 @@ impl ContextSnapshot {
 ///     });
 /// # });
 /// ```
-#[must_use = "configure and finalize with .col() or .row()"]
+#[must_use = "ContainerBuilder does nothing until .col(), .row(), .line(), or .draw() is called"]
 pub struct ContainerBuilder<'a> {
     ctx: &'a mut Context,
     gap: u32,
@@ -1998,6 +1998,7 @@ impl Context {
     ///
     /// Call this in custom widgets that need keyboard focus. Each call increments
     /// the internal focus counter, so the call order must be stable across frames.
+    #[must_use = "check this value to determine if the widget is focused"]
     pub fn register_focusable(&mut self) -> bool {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
             return false;
