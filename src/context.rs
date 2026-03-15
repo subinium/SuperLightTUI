@@ -246,7 +246,10 @@ pub struct Context {
     debug: bool,
     theme: Theme,
     pub(crate) dark_mode: bool,
+    pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
 }
+
+type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
 
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
@@ -1518,6 +1521,23 @@ impl<'a> ContainerBuilder<'a> {
         self.finish(Direction::Row, f)
     }
 
+    /// Finalize the builder as a raw-draw region with direct buffer access.
+    ///
+    /// The closure receives `(&mut Buffer, Rect)` after layout is computed.
+    /// Use `buf.set_char()`, `buf.set_string()`, `buf.get_mut()` to write
+    /// directly into the terminal buffer. Writes outside `rect` are clipped.
+    pub fn draw(self, f: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static) {
+        let draw_id = self.ctx.deferred_draws.len();
+        self.ctx.deferred_draws.push(Some(Box::new(f)));
+        self.ctx.interaction_count += 1;
+        self.ctx.commands.push(Command::RawDraw {
+            draw_id,
+            constraints: self.constraints,
+            grow: self.grow,
+            margin: self.margin,
+        });
+    }
+
     fn finish(self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.interaction_count;
         self.ctx.interaction_count += 1;
@@ -1694,6 +1714,7 @@ impl Context {
             debug,
             theme,
             dark_mode: true,
+            deferred_draws: Vec::new(),
         }
     }
 

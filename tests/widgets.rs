@@ -2423,3 +2423,43 @@ fn theme_builder_overrides() {
     assert_eq!(theme.accent, dark.accent);
     assert_eq!(theme.surface_text, dark.surface_text);
 }
+
+#[test]
+fn draw_raw_renders_to_buffer() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.container().w(10).h(3).draw(|buf, rect| {
+            buf.set_char(rect.x, rect.y, 'X', slt::Style::new());
+            buf.set_string(rect.x + 1, rect.y, "raw", slt::Style::new());
+        });
+    });
+    tb.assert_contains("Xraw");
+}
+
+#[test]
+fn draw_raw_respects_constraints() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.container().w(5).h(2).draw(|buf, rect| {
+            assert_eq!(rect.width, 5);
+            assert_eq!(rect.height, 2);
+            for x in rect.x..rect.right() {
+                buf.set_char(x, rect.y, '#', slt::Style::new());
+            }
+        });
+    });
+    tb.assert_contains("#####");
+}
+
+#[test]
+fn draw_raw_clips_outside_rect() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.container().w(3).h(1).draw(|buf, rect| {
+            buf.set_string(rect.x, rect.y, "ABCDEFGH", slt::Style::new());
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("ABC"));
+    assert!(!output.contains("ABCDEFGH"));
+}

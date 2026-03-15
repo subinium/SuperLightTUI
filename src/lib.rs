@@ -58,6 +58,7 @@ use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
 pub use anim::{Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
+pub use buffer::Buffer;
 pub use chart::{
     Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
     HistogramBuilder, LegendPosition, Marker,
@@ -65,6 +66,7 @@ pub use chart::{
 pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, State, Widget};
 pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use halfblock::HalfBlockImage;
+pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
     Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder,
@@ -315,14 +317,24 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         let mut tree = layout::build_tree(&ctx.commands);
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
-        prev_scroll_infos = layout::collect_scroll_infos(&tree);
-        prev_scroll_rects = layout::collect_scroll_rects(&tree);
-        prev_hit_map = layout::collect_hit_areas(&tree);
-        prev_group_rects = layout::collect_group_rects(&tree);
-        prev_content_map = layout::collect_content_areas(&tree);
-        prev_focus_rects = layout::collect_focus_rects(&tree);
-        prev_focus_groups = layout::collect_focus_groups(&tree);
+        let fd = layout::collect_all(&tree);
+        prev_scroll_infos = fd.scroll_infos;
+        prev_scroll_rects = fd.scroll_rects;
+        prev_hit_map = fd.hit_areas;
+        prev_group_rects = fd.group_rects;
+        prev_content_map = fd.content_areas;
+        prev_focus_rects = fd.focus_rects;
+        prev_focus_groups = fd.focus_groups;
         layout::render(&tree, term.buffer_mut());
+        let raw_rects = layout::collect_raw_draw_rects(&tree);
+        for (draw_id, rect) in raw_rects {
+            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
+                let buf = term.buffer_mut();
+                buf.push_clip(rect);
+                cb(buf, rect);
+                buf.pop_clip();
+            }
+        }
         hook_states = ctx.hook_states;
         let frame_time = frame_start.elapsed();
         let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
@@ -571,14 +583,24 @@ fn run_async_loop<M: Send + 'static>(
         let mut tree = layout::build_tree(&ctx.commands);
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
-        prev_scroll_infos = layout::collect_scroll_infos(&tree);
-        prev_scroll_rects = layout::collect_scroll_rects(&tree);
-        prev_hit_map = layout::collect_hit_areas(&tree);
-        prev_group_rects = layout::collect_group_rects(&tree);
-        prev_content_map = layout::collect_content_areas(&tree);
-        prev_focus_rects = layout::collect_focus_rects(&tree);
-        prev_focus_groups = layout::collect_focus_groups(&tree);
+        let fd = layout::collect_all(&tree);
+        prev_scroll_infos = fd.scroll_infos;
+        prev_scroll_rects = fd.scroll_rects;
+        prev_hit_map = fd.hit_areas;
+        prev_group_rects = fd.group_rects;
+        prev_content_map = fd.content_areas;
+        prev_focus_rects = fd.focus_rects;
+        prev_focus_groups = fd.focus_groups;
         layout::render(&tree, term.buffer_mut());
+        let raw_rects = layout::collect_raw_draw_rects(&tree);
+        for (draw_id, rect) in raw_rects {
+            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
+                let buf = term.buffer_mut();
+                buf.push_clip(rect);
+                cb(buf, rect);
+                buf.pop_clip();
+            }
+        }
         hook_states = ctx.hook_states;
 
         if selection.active {
@@ -773,14 +795,24 @@ pub fn run_inline_with(
         let mut tree = layout::build_tree(&ctx.commands);
         let area = crate::rect::Rect::new(0, 0, w, h);
         layout::compute(&mut tree, area);
-        prev_scroll_infos = layout::collect_scroll_infos(&tree);
-        prev_scroll_rects = layout::collect_scroll_rects(&tree);
-        prev_hit_map = layout::collect_hit_areas(&tree);
-        prev_group_rects = layout::collect_group_rects(&tree);
-        prev_content_map = layout::collect_content_areas(&tree);
-        prev_focus_rects = layout::collect_focus_rects(&tree);
-        prev_focus_groups = layout::collect_focus_groups(&tree);
+        let fd = layout::collect_all(&tree);
+        prev_scroll_infos = fd.scroll_infos;
+        prev_scroll_rects = fd.scroll_rects;
+        prev_hit_map = fd.hit_areas;
+        prev_group_rects = fd.group_rects;
+        prev_content_map = fd.content_areas;
+        prev_focus_rects = fd.focus_rects;
+        prev_focus_groups = fd.focus_groups;
         layout::render(&tree, term.buffer_mut());
+        let raw_rects = layout::collect_raw_draw_rects(&tree);
+        for (draw_id, rect) in raw_rects {
+            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
+                let buf = term.buffer_mut();
+                buf.push_clip(rect);
+                cb(buf, rect);
+                buf.pop_clip();
+            }
+        }
         hook_states = ctx.hook_states;
         let frame_time = frame_start.elapsed();
         let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;

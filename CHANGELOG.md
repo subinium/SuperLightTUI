@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.0] — 2026-03-15
+
+### Features
+- **`draw_raw()`**: direct buffer access via `ContainerBuilder::draw()` — write to `&mut Buffer` with computed `Rect` after layout. Clip protection prevents writes outside allocated area. Enables custom renderers, game-like effects, and protocol visualizers without the Command pipeline overhead
+- **`Buffer` and `Rect` re-exported**: `slt::Buffer` and `slt::Rect` now available at crate root for `draw_raw()` users
+
+### Performance
+- **7× fewer tree traversals per frame**: merged 7 independent `collect_*` functions into a single `collect_all()` DFS pass returning a `FrameData` struct — 1000-node trees go from 7000 to 1000 node visits per frame
+- **Keyframes: zero allocations per frame**: `Keyframes::value()` no longer clones+sorts the stop list every frame — stops are sorted once at construction time via `stop()` builder
+- **Delta-based style flushing**: `terminal::flush()` now emits only changed attributes (fg/bg/modifiers) instead of full `ResetColor + SetAttribute(Reset) + apply_style()` on every style transition — reduces escape sequences by ~50% for typical UIs
+
+### Internal
+- Removed 204 lines of dead `collect_*` code after merge
+- Added `FrameData` struct and `collect_all()` to layout.rs
+- Added `RawDrawCallback` type alias for deferred draw closures
+- 3 new tests: `draw_raw_renders_to_buffer`, `draw_raw_respects_constraints`, `draw_raw_clips_outside_rect`
+- New example: `demo_raw_draw` showcasing gradient, plasma, and box drawing effects
+
 ## [0.8.4] — 2026-03-15
 
 ### Bug Fixes

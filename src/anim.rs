@@ -289,6 +289,7 @@ impl Keyframes {
         if self.stops.len() >= 2 {
             self.segment_easing.push(self.default_easing);
         }
+        self.stops.sort_by(|a, b| a.position.total_cmp(&b.position));
         self
     }
 
@@ -347,8 +348,7 @@ impl Keyframes {
             return self.stops[0].value;
         }
 
-        let mut stops = self.stops.clone();
-        stops.sort_by(|a, b| a.position.total_cmp(&b.position));
+        let stops = &self.stops;
 
         let end_value = stops.last().map_or(0.0, |s| s.value);
         let loop_tick = match map_loop_tick(
