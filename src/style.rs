@@ -1220,7 +1220,7 @@ impl Style {
 /// ui.container().apply(&CARD).col(|ui| { ... });
 /// ui.container().apply(&CARD).apply(&DANGER).col(|ui| { ... });
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ContainerStyle {
     pub border: Option<Border>,
     pub border_sides: Option<BorderSides>,
@@ -1400,6 +1400,30 @@ impl ContainerStyle {
     /// Set main-axis justification.
     pub const fn justify(mut self, value: Justify) -> Self {
         self.justify = Some(value);
+        self
+    }
+
+    /// Set minimum height.
+    pub const fn min_h(mut self, value: u32) -> Self {
+        self.min_h = Some(value);
+        self
+    }
+
+    /// Set maximum height.
+    pub const fn max_h(mut self, value: u32) -> Self {
+        self.max_h = Some(value);
+        self
+    }
+
+    /// Set width as percentage of parent (1-100).
+    pub const fn w_pct(mut self, value: u8) -> Self {
+        self.w_pct = Some(value);
+        self
+    }
+
+    /// Set height as percentage of parent (1-100).
+    pub const fn h_pct(mut self, value: u8) -> Self {
+        self.h_pct = Some(value);
         self
     }
 }

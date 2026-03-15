@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.4] — 2026-03-15
+
+### Bug Fixes
+- **Tabs empty labels crash**: guard modulo-by-zero when `TabsState::new(vec![])` — no longer panics
+- **Sparkline div-by-zero**: already guarded (verified, no change needed)
+
+### Improvements
+- **`State<T>`**: now `Copy + Clone + Debug + PartialEq + Eq` — pass by value, no `&` needed
+- **`ContainerStyle`**: now `Copy` — eliminates unnecessary `.clone()` calls
+- **`ContainerStyle`**: added `min_h()`, `max_h()`, `w_pct()`, `h_pct()` builder methods
+- **`full` feature flag**: `features = ["full"]` enables async + serde + image
+- **docs.rs metadata**: `all-features = true` — async/serde/image APIs now visible on docs.rs
+
 ## [0.8.3] — 2026-03-15
 
 ### Features
