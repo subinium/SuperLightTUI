@@ -159,7 +159,7 @@ impl Buffer {
             return;
         }
         let clip = self.effective_clip().copied();
-        let link = Some(url.to_string());
+        let link = Some(compact_str::CompactString::new(url));
         for ch in s.chars() {
             if x >= self.area.right() {
                 break;
@@ -246,6 +246,15 @@ impl Buffer {
     pub fn reset(&mut self) {
         for cell in &mut self.content {
             cell.reset();
+        }
+        self.clip_stack.clear();
+    }
+
+    /// Reset every cell and apply a background color to all cells.
+    pub fn reset_with_bg(&mut self, bg: crate::style::Color) {
+        for cell in &mut self.content {
+            cell.reset();
+            cell.style.bg = Some(bg);
         }
         self.clip_stack.clear();
     }

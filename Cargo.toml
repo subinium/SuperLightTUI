@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/superlighttui"
 readme = "README.md"
 keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
 categories = ["command-line-interface"]
-rust-version = "1.74"
+rust-version = "1.81"
 exclude = ["examples/", ".github/"]
 
 [lib]
@@ -22,6 +22,7 @@ unicode-width = "0.2"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
+compact_str = { version = "0.9.0", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

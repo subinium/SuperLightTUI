@@ -1,28 +1,30 @@
 //! Single terminal cell — the smallest unit of the render buffer.
 
+use compact_str::CompactString;
+
 use crate::style::Style;
 
 /// A single terminal cell containing a character and style.
 ///
-/// Each cell holds one grapheme cluster (stored as a `String` to support
-/// multi-byte Unicode) and the [`Style`] to render it with. Wide characters
-/// (e.g., CJK) occupy two adjacent cells; the second cell's `symbol` is left
-/// empty by the buffer layer.
+/// Each cell holds one grapheme cluster (stored as a [`CompactString`] for
+/// inline storage of short strings — no heap allocation for ≤24 bytes).
+/// Wide characters (e.g., CJK) occupy two adjacent cells; the second cell's
+/// `symbol` is left empty by the buffer layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     /// The grapheme cluster displayed in this cell. Defaults to a single space.
-    pub symbol: String,
+    pub symbol: CompactString,
     /// The visual style (colors and modifiers) for this cell.
     pub style: Style,
     /// Optional OSC 8 hyperlink URL. When set, the terminal renders this cell
     /// as a clickable link.
-    pub hyperlink: Option<String>,
+    pub hyperlink: Option<CompactString>,
 }
 
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            symbol: " ".into(),
+            symbol: CompactString::const_new(" "),
             style: Style::new(),
             hyperlink: None,
         }

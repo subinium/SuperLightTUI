@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.1] — 2026-03-16
+
+### Performance
+- **Cell.symbol**: `String` → `CompactString` — eliminates heap allocation for ≤24-byte symbols (99%+ of terminal cells). Same approach as ratatui.
+- **Cell.hyperlink**: `Option<String>` → `Option<CompactString>` — reduces per-cell overhead for hyperlinks.
+- **diff+flush inline**: Removed intermediate `Vec<(u32, u32, &Cell)>` allocation in `Terminal::flush()`. Now diffs and writes to stdout in a single pass.
+- **reset_with_bg()**: Theme background applied during buffer reset instead of a separate O(w×h) loop per frame.
+
+### Changes
+- **MSRV**: 1.74 → 1.81 (required by `compact_str` 0.9)
+- **New dependency**: `compact_str` 0.9 (no-default-features) — adds 4 small transitive deps (castaway, ryu, static_assertions, rustversion)
+
 ## [0.10.0] — 2026-03-15
 
 ### Bug Fixes
