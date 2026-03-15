@@ -838,6 +838,144 @@ fn error_boundary_with_custom_fallback() {
 }
 
 #[test]
+fn error_boundary_restores_focus_count() {
+    let mut tb = TestBackend::new(40, 6);
+
+    tb.render(|ui| {
+        ui.error_boundary_with(
+            |ui| {
+                let _ = ui.register_focusable();
+                panic!("focus panic");
+            },
+            |ui, _| {
+                ui.text("Recovered");
+            },
+        );
+    });
+
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Tab)
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    let mut first_clicked = false;
+    let mut second_clicked = false;
+
+    tb.render_with_events(events, 0, 2, |ui| {
+        if ui.button("First") {
+            first_clicked = true;
+        }
+        if ui.button("Second") {
+            second_clicked = true;
+        }
+    });
+
+    assert!(
+        !first_clicked,
+        "Tab should move focus away from the first button"
+    );
+    assert!(
+        second_clicked,
+        "Second button should receive focus and activate after Tab"
+    );
+}
+
+#[test]
+fn error_boundary_restores_hook_cursor() {
+    let mut tb = TestBackend::new(40, 6);
+
+    tb.render(|ui| {
+        ui.error_boundary_with(
+            |ui| {
+                let state = ui.use_state(|| 7i32);
+                assert_eq!(*state.get(ui), 7);
+                panic!("hook panic");
+            },
+            |ui, _| {
+                ui.text("Recovered");
+            },
+        );
+    });
+
+    tb.render(|ui| {
+        let state = ui.use_state(|| String::from("hook-ok"));
+        assert_eq!(state.get(ui).as_str(), "hook-ok");
+        ui.text(state.get(ui).clone());
+    });
+
+    tb.assert_contains("hook-ok");
+}
+
+#[test]
+fn error_boundary_restores_modal_active() {
+    let mut tb = TestBackend::new(40, 6);
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    let mut clicked_after_recovery = false;
+
+    tb.render_with_events(events, 0, 0, |ui| {
+        ui.error_boundary_with(
+            |ui| {
+                ui.modal(|ui| {
+                    ui.text("Modal");
+                    panic!("modal panic");
+                });
+            },
+            |ui, _| {
+                ui.text("Recovered");
+            },
+        );
+
+        if ui.button("After panic") {
+            clicked_after_recovery = true;
+        }
+    });
+
+    assert!(
+        clicked_after_recovery,
+        "Modal state should be reset so later widgets can receive focus"
+    );
+
+    tb.render(|ui| {
+        ui.text("no dim");
+    });
+    let cell = tb.buffer().get(0, 0);
+    assert!(
+        !cell.style.modifiers.contains(slt::Modifiers::DIM),
+        "Second frame should not be dimmed after modal panic"
+    );
+}
+
+#[test]
+fn error_boundary_restores_group_stack() {
+    let mut tb = TestBackend::new(40, 8);
+
+    tb.render(|ui| {
+        ui.error_boundary_with(
+            |ui| {
+                ui.group("broken").col(|_| {
+                    panic!("group panic");
+                });
+            },
+            |ui, _| {
+                ui.text("Recovered");
+            },
+        );
+        ui.group("safe").col(|ui| {
+            ui.text("safe group");
+        });
+    });
+    tb.assert_contains("safe group");
+
+    tb.render(|ui| {
+        ui.group("next").col(|ui| {
+            ui.text("next group");
+        });
+    });
+    tb.assert_contains("next group");
+}
+
+#[test]
 fn toast_renders_message() {
     let mut tb = TestBackend::new(40, 5);
     let mut toasts = ToastState::new();
