@@ -54,7 +54,7 @@ use std::io::IsTerminal;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use terminal::{InlineTerminal, Terminal};
+use terminal::{InlineTerminal, Terminal, TerminalBackend};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
 pub use anim::{Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
@@ -194,6 +194,48 @@ impl Default for RunConfig {
     }
 }
 
+pub(crate) struct FrameState {
+    pub hook_states: Vec<Box<dyn std::any::Any>>,
+    pub focus_index: usize,
+    pub prev_focus_count: usize,
+    pub tick: u64,
+    pub prev_scroll_infos: Vec<(u32, u32)>,
+    pub prev_scroll_rects: Vec<rect::Rect>,
+    pub prev_hit_map: Vec<rect::Rect>,
+    pub prev_group_rects: Vec<(String, rect::Rect)>,
+    pub prev_content_map: Vec<(rect::Rect, rect::Rect)>,
+    pub prev_focus_rects: Vec<(usize, rect::Rect)>,
+    pub prev_focus_groups: Vec<Option<String>>,
+    pub last_mouse_pos: Option<(u32, u32)>,
+    pub prev_modal_active: bool,
+    pub debug_mode: bool,
+    pub fps_ema: f32,
+    pub selection: terminal::SelectionState,
+}
+
+impl Default for FrameState {
+    fn default() -> Self {
+        Self {
+            hook_states: Vec::new(),
+            focus_index: 0,
+            prev_focus_count: 0,
+            tick: 0,
+            prev_scroll_infos: Vec::new(),
+            prev_scroll_rects: Vec::new(),
+            prev_hit_map: Vec::new(),
+            prev_group_rects: Vec::new(),
+            prev_content_map: Vec::new(),
+            prev_focus_rects: Vec::new(),
+            prev_focus_groups: Vec::new(),
+            last_mouse_pos: None,
+            prev_modal_active: false,
+            debug_mode: false,
+            fps_ema: 0.0,
+            selection: terminal::SelectionState::default(),
+        }
+    }
+}
+
 /// Run the TUI loop with default configuration.
 ///
 /// Enters alternate screen mode, runs `f` each frame, and exits cleanly on
@@ -240,22 +282,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
-    let mut debug_mode: bool = false;
-    let mut tick: u64 = 0;
-    let mut focus_index: usize = 0;
-    let mut prev_focus_count: usize = 0;
-    let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
-    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
-    let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
-    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
-    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
-    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
-    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
-    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
-    let mut last_mouse_pos: Option<(u32, u32)> = None;
-    let mut prev_modal_active = false;
-    let mut selection = terminal::SelectionState::default();
-    let mut fps_ema: f32 = 0.0;
+    let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -264,112 +291,10 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
-        let mut ctx = Context::new(
-            std::mem::take(&mut events),
-            w,
-            h,
-            tick,
-            focus_index,
-            prev_focus_count,
-            std::mem::take(&mut prev_scroll_infos),
-            std::mem::take(&mut prev_scroll_rects),
-            std::mem::take(&mut prev_hit_map),
-            std::mem::take(&mut prev_group_rects),
-            std::mem::take(&mut prev_focus_rects),
-            std::mem::take(&mut prev_focus_groups),
-            std::mem::take(&mut hook_states),
-            debug_mode,
-            config.theme,
-            last_mouse_pos,
-            prev_modal_active,
-        );
-        ctx.process_focus_keys();
 
-        f(&mut ctx);
-
-        if ctx.should_quit {
+        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
             break;
         }
-        prev_modal_active = ctx.modal_active;
-        let clipboard_text = ctx.clipboard_text.take();
-
-        let mut should_copy_selection = false;
-        for ev in ctx.events.iter() {
-            if let Event::Mouse(mouse) = ev {
-                match mouse.kind {
-                    event::MouseKind::Down(event::MouseButton::Left) => {
-                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Drag(event::MouseButton::Left) => {
-                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Up(event::MouseButton::Left) => {
-                        should_copy_selection = selection.active;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        focus_index = ctx.focus_index;
-        prev_focus_count = ctx.focus_count;
-
-        let mut tree = layout::build_tree(&ctx.commands);
-        let area = crate::rect::Rect::new(0, 0, w, h);
-        layout::compute(&mut tree, area);
-        let fd = layout::collect_all(&tree);
-        prev_scroll_infos = fd.scroll_infos;
-        prev_scroll_rects = fd.scroll_rects;
-        prev_hit_map = fd.hit_areas;
-        prev_group_rects = fd.group_rects;
-        prev_content_map = fd.content_areas;
-        prev_focus_rects = fd.focus_rects;
-        prev_focus_groups = fd.focus_groups;
-        layout::render(&tree, term.buffer_mut());
-        let raw_rects = layout::collect_raw_draw_rects(&tree);
-        for (draw_id, rect) in raw_rects {
-            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
-                let buf = term.buffer_mut();
-                buf.push_clip(rect);
-                cb(buf, rect);
-                buf.pop_clip();
-            }
-        }
-        hook_states = ctx.hook_states;
-        let frame_time = frame_start.elapsed();
-        let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
-        let frame_secs = frame_time.as_secs_f32();
-        let inst_fps = if frame_secs > 0.0 {
-            1.0 / frame_secs
-        } else {
-            0.0
-        };
-        fps_ema = if fps_ema == 0.0 {
-            inst_fps
-        } else {
-            (fps_ema * 0.9) + (inst_fps * 0.1)
-        };
-        if debug_mode {
-            layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, fps_ema);
-        }
-
-        if selection.active {
-            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
-        }
-        if should_copy_selection {
-            let text =
-                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
-            if !text.is_empty() {
-                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
-            }
-            selection.clear();
-        }
-
-        term.flush()?;
-        if let Some(text) = clipboard_text {
-            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
-        }
-        tick = tick.wrapping_add(1);
 
         events.clear();
         if crossterm::event::poll(config.tick_rate)? {
@@ -379,7 +304,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
+                    TerminalBackend::handle_resize(&mut term)?;
                 }
                 events.push(ev);
             }
@@ -391,7 +316,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
+                        TerminalBackend::handle_resize(&mut term)?;
                     }
                     events.push(ev);
                 }
@@ -406,32 +331,15 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                         ..
                     })
                 ) {
-                    debug_mode = !debug_mode;
+                    state.debug_mode = !state.debug_mode;
                 }
             }
         }
 
-        for ev in &events {
-            match ev {
-                Event::Mouse(mouse) => {
-                    last_mouse_pos = Some((mouse.x, mouse.y));
-                }
-                Event::FocusLost => {
-                    last_mouse_pos = None;
-                }
-                _ => {}
-            }
-        }
+        update_last_mouse_pos(&mut state, &events);
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
-            prev_hit_map.clear();
-            prev_group_rects.clear();
-            prev_content_map.clear();
-            prev_focus_rects.clear();
-            prev_focus_groups.clear();
-            prev_scroll_infos.clear();
-            prev_scroll_rects.clear();
-            last_mouse_pos = None;
+            clear_frame_layout_cache(&mut state);
         }
 
         sleep_for_fps_cap(config.max_fps, frame_start);
@@ -503,20 +411,7 @@ fn run_async_loop<M: Send + 'static>(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
-    let mut tick: u64 = 0;
-    let mut focus_index: usize = 0;
-    let mut prev_focus_count: usize = 0;
-    let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
-    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
-    let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
-    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
-    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
-    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
-    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
-    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
-    let mut last_mouse_pos: Option<(u32, u32)> = None;
-    let mut prev_modal_active = false;
-    let mut selection = terminal::SelectionState::default();
+    let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -530,96 +425,13 @@ fn run_async_loop<M: Send + 'static>(
             sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
-        let mut ctx = Context::new(
-            std::mem::take(&mut events),
-            w,
-            h,
-            tick,
-            focus_index,
-            prev_focus_count,
-            std::mem::take(&mut prev_scroll_infos),
-            std::mem::take(&mut prev_scroll_rects),
-            std::mem::take(&mut prev_hit_map),
-            std::mem::take(&mut prev_group_rects),
-            std::mem::take(&mut prev_focus_rects),
-            std::mem::take(&mut prev_focus_groups),
-            std::mem::take(&mut hook_states),
-            false,
-            config.theme,
-            last_mouse_pos,
-            prev_modal_active,
-        );
-        ctx.process_focus_keys();
 
-        f(&mut ctx, &mut messages);
-
-        if ctx.should_quit {
+        let mut render = |ctx: &mut Context| {
+            f(ctx, &mut messages);
+        };
+        if !run_frame(&mut term, &mut state, &config, &events, &mut render)? {
             break;
         }
-        prev_modal_active = ctx.modal_active;
-        let clipboard_text = ctx.clipboard_text.take();
-
-        let mut should_copy_selection = false;
-        for ev in ctx.events.iter() {
-            if let Event::Mouse(mouse) = ev {
-                match mouse.kind {
-                    event::MouseKind::Down(event::MouseButton::Left) => {
-                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Drag(event::MouseButton::Left) => {
-                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Up(event::MouseButton::Left) => {
-                        should_copy_selection = selection.active;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        focus_index = ctx.focus_index;
-        prev_focus_count = ctx.focus_count;
-
-        let mut tree = layout::build_tree(&ctx.commands);
-        let area = crate::rect::Rect::new(0, 0, w, h);
-        layout::compute(&mut tree, area);
-        let fd = layout::collect_all(&tree);
-        prev_scroll_infos = fd.scroll_infos;
-        prev_scroll_rects = fd.scroll_rects;
-        prev_hit_map = fd.hit_areas;
-        prev_group_rects = fd.group_rects;
-        prev_content_map = fd.content_areas;
-        prev_focus_rects = fd.focus_rects;
-        prev_focus_groups = fd.focus_groups;
-        layout::render(&tree, term.buffer_mut());
-        let raw_rects = layout::collect_raw_draw_rects(&tree);
-        for (draw_id, rect) in raw_rects {
-            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
-                let buf = term.buffer_mut();
-                buf.push_clip(rect);
-                cb(buf, rect);
-                buf.pop_clip();
-            }
-        }
-        hook_states = ctx.hook_states;
-
-        if selection.active {
-            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
-        }
-        if should_copy_selection {
-            let text =
-                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
-            if !text.is_empty() {
-                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
-            }
-            selection.clear();
-        }
-
-        term.flush()?;
-        if let Some(text) = clipboard_text {
-            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
-        }
-        tick = tick.wrapping_add(1);
 
         events.clear();
         if crossterm::event::poll(config.tick_rate)? {
@@ -629,15 +441,8 @@ fn run_async_loop<M: Send + 'static>(
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
-                    prev_hit_map.clear();
-                    prev_group_rects.clear();
-                    prev_content_map.clear();
-                    prev_focus_rects.clear();
-                    prev_focus_groups.clear();
-                    prev_scroll_infos.clear();
-                    prev_scroll_rects.clear();
-                    last_mouse_pos = None;
+                    TerminalBackend::handle_resize(&mut term)?;
+                    clear_frame_layout_cache(&mut state);
                 }
                 events.push(ev);
             }
@@ -649,32 +454,15 @@ fn run_async_loop<M: Send + 'static>(
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
-                        prev_hit_map.clear();
-                        prev_group_rects.clear();
-                        prev_content_map.clear();
-                        prev_focus_rects.clear();
-                        prev_focus_groups.clear();
-                        prev_scroll_infos.clear();
-                        prev_scroll_rects.clear();
-                        last_mouse_pos = None;
+                        TerminalBackend::handle_resize(&mut term)?;
+                        clear_frame_layout_cache(&mut state);
                     }
                     events.push(ev);
                 }
             }
         }
 
-        for ev in &events {
-            match ev {
-                Event::Mouse(mouse) => {
-                    last_mouse_pos = Some((mouse.x, mouse.y));
-                }
-                Event::FocusLost => {
-                    last_mouse_pos = None;
-                }
-                _ => {}
-            }
-        }
+        update_last_mouse_pos(&mut state, &events);
 
         sleep_for_fps_cap(config.max_fps, frame_start);
     }
@@ -718,22 +506,7 @@ pub fn run_inline_with(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(height, config.mouse, color_depth)?;
     let mut events: Vec<Event> = Vec::new();
-    let mut debug_mode: bool = false;
-    let mut tick: u64 = 0;
-    let mut focus_index: usize = 0;
-    let mut prev_focus_count: usize = 0;
-    let mut prev_scroll_infos: Vec<(u32, u32)> = Vec::new();
-    let mut prev_scroll_rects: Vec<rect::Rect> = Vec::new();
-    let mut prev_hit_map: Vec<rect::Rect> = Vec::new();
-    let mut prev_group_rects: Vec<(String, rect::Rect)> = Vec::new();
-    let mut prev_content_map: Vec<(rect::Rect, rect::Rect)> = Vec::new();
-    let mut prev_focus_rects: Vec<(usize, rect::Rect)> = Vec::new();
-    let mut prev_focus_groups: Vec<Option<String>> = Vec::new();
-    let mut hook_states: Vec<Box<dyn std::any::Any>> = Vec::new();
-    let mut last_mouse_pos: Option<(u32, u32)> = None;
-    let mut prev_modal_active = false;
-    let mut selection = terminal::SelectionState::default();
-    let mut fps_ema: f32 = 0.0;
+    let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
@@ -742,112 +515,10 @@ pub fn run_inline_with(
             sleep_for_fps_cap(config.max_fps, frame_start);
             continue;
         }
-        let mut ctx = Context::new(
-            std::mem::take(&mut events),
-            w,
-            h,
-            tick,
-            focus_index,
-            prev_focus_count,
-            std::mem::take(&mut prev_scroll_infos),
-            std::mem::take(&mut prev_scroll_rects),
-            std::mem::take(&mut prev_hit_map),
-            std::mem::take(&mut prev_group_rects),
-            std::mem::take(&mut prev_focus_rects),
-            std::mem::take(&mut prev_focus_groups),
-            std::mem::take(&mut hook_states),
-            debug_mode,
-            config.theme,
-            last_mouse_pos,
-            prev_modal_active,
-        );
-        ctx.process_focus_keys();
 
-        f(&mut ctx);
-
-        if ctx.should_quit {
+        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
             break;
         }
-        prev_modal_active = ctx.modal_active;
-        let clipboard_text = ctx.clipboard_text.take();
-
-        let mut should_copy_selection = false;
-        for ev in ctx.events.iter() {
-            if let Event::Mouse(mouse) = ev {
-                match mouse.kind {
-                    event::MouseKind::Down(event::MouseButton::Left) => {
-                        selection.mouse_down(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Drag(event::MouseButton::Left) => {
-                        selection.mouse_drag(mouse.x, mouse.y, &prev_content_map);
-                    }
-                    event::MouseKind::Up(event::MouseButton::Left) => {
-                        should_copy_selection = selection.active;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        focus_index = ctx.focus_index;
-        prev_focus_count = ctx.focus_count;
-
-        let mut tree = layout::build_tree(&ctx.commands);
-        let area = crate::rect::Rect::new(0, 0, w, h);
-        layout::compute(&mut tree, area);
-        let fd = layout::collect_all(&tree);
-        prev_scroll_infos = fd.scroll_infos;
-        prev_scroll_rects = fd.scroll_rects;
-        prev_hit_map = fd.hit_areas;
-        prev_group_rects = fd.group_rects;
-        prev_content_map = fd.content_areas;
-        prev_focus_rects = fd.focus_rects;
-        prev_focus_groups = fd.focus_groups;
-        layout::render(&tree, term.buffer_mut());
-        let raw_rects = layout::collect_raw_draw_rects(&tree);
-        for (draw_id, rect) in raw_rects {
-            if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
-                let buf = term.buffer_mut();
-                buf.push_clip(rect);
-                cb(buf, rect);
-                buf.pop_clip();
-            }
-        }
-        hook_states = ctx.hook_states;
-        let frame_time = frame_start.elapsed();
-        let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
-        let frame_secs = frame_time.as_secs_f32();
-        let inst_fps = if frame_secs > 0.0 {
-            1.0 / frame_secs
-        } else {
-            0.0
-        };
-        fps_ema = if fps_ema == 0.0 {
-            inst_fps
-        } else {
-            (fps_ema * 0.9) + (inst_fps * 0.1)
-        };
-        if debug_mode {
-            layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, fps_ema);
-        }
-
-        if selection.active {
-            terminal::apply_selection_overlay(term.buffer_mut(), &selection, &prev_content_map);
-        }
-        if should_copy_selection {
-            let text =
-                terminal::extract_selection_text(term.buffer_mut(), &selection, &prev_content_map);
-            if !text.is_empty() {
-                terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
-            }
-            selection.clear();
-        }
-
-        term.flush()?;
-        if let Some(text) = clipboard_text {
-            let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
-        }
-        tick = tick.wrapping_add(1);
 
         events.clear();
         if crossterm::event::poll(config.tick_rate)? {
@@ -857,7 +528,7 @@ pub fn run_inline_with(
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
+                    TerminalBackend::handle_resize(&mut term)?;
                 }
                 events.push(ev);
             }
@@ -869,7 +540,7 @@ pub fn run_inline_with(
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
+                        TerminalBackend::handle_resize(&mut term)?;
                     }
                     events.push(ev);
                 }
@@ -884,38 +555,159 @@ pub fn run_inline_with(
                         ..
                     })
                 ) {
-                    debug_mode = !debug_mode;
+                    state.debug_mode = !state.debug_mode;
                 }
             }
         }
 
-        for ev in &events {
-            match ev {
-                Event::Mouse(mouse) => {
-                    last_mouse_pos = Some((mouse.x, mouse.y));
-                }
-                Event::FocusLost => {
-                    last_mouse_pos = None;
-                }
-                _ => {}
-            }
-        }
+        update_last_mouse_pos(&mut state, &events);
 
         if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
-            prev_hit_map.clear();
-            prev_group_rects.clear();
-            prev_content_map.clear();
-            prev_focus_rects.clear();
-            prev_focus_groups.clear();
-            prev_scroll_infos.clear();
-            prev_scroll_rects.clear();
-            last_mouse_pos = None;
+            clear_frame_layout_cache(&mut state);
         }
 
         sleep_for_fps_cap(config.max_fps, frame_start);
     }
 
     Ok(())
+}
+
+fn run_frame<T: TerminalBackend>(
+    term: &mut T,
+    state: &mut FrameState,
+    config: &RunConfig,
+    events: &[event::Event],
+    f: &mut dyn FnMut(&mut context::Context),
+) -> io::Result<bool> {
+    let frame_start = Instant::now();
+    let (w, h) = term.size();
+    let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
+    ctx.process_focus_keys();
+
+    f(&mut ctx);
+
+    if ctx.should_quit {
+        return Ok(false);
+    }
+    state.prev_modal_active = ctx.modal_active;
+    let clipboard_text = ctx.clipboard_text.take();
+
+    let mut should_copy_selection = false;
+    for ev in &ctx.events {
+        if let Event::Mouse(mouse) = ev {
+            match mouse.kind {
+                event::MouseKind::Down(event::MouseButton::Left) => {
+                    state
+                        .selection
+                        .mouse_down(mouse.x, mouse.y, &state.prev_content_map);
+                }
+                event::MouseKind::Drag(event::MouseButton::Left) => {
+                    state
+                        .selection
+                        .mouse_drag(mouse.x, mouse.y, &state.prev_content_map);
+                }
+                event::MouseKind::Up(event::MouseButton::Left) => {
+                    should_copy_selection = state.selection.active;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    state.focus_index = ctx.focus_index;
+    state.prev_focus_count = ctx.focus_count;
+
+    let mut tree = layout::build_tree(&ctx.commands);
+    let area = crate::rect::Rect::new(0, 0, w, h);
+    layout::compute(&mut tree, area);
+    let fd = layout::collect_all(&tree);
+    state.prev_scroll_infos = fd.scroll_infos;
+    state.prev_scroll_rects = fd.scroll_rects;
+    state.prev_hit_map = fd.hit_areas;
+    state.prev_group_rects = fd.group_rects;
+    state.prev_content_map = fd.content_areas;
+    state.prev_focus_rects = fd.focus_rects;
+    state.prev_focus_groups = fd.focus_groups;
+    layout::render(&tree, term.buffer_mut());
+    let raw_rects = layout::collect_raw_draw_rects(&tree);
+    for (draw_id, rect) in raw_rects {
+        if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
+            let buf = term.buffer_mut();
+            buf.push_clip(rect);
+            cb(buf, rect);
+            buf.pop_clip();
+        }
+    }
+    state.hook_states = ctx.hook_states;
+
+    let frame_time = frame_start.elapsed();
+    let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
+    let frame_secs = frame_time.as_secs_f32();
+    let inst_fps = if frame_secs > 0.0 {
+        1.0 / frame_secs
+    } else {
+        0.0
+    };
+    state.fps_ema = if state.fps_ema == 0.0 {
+        inst_fps
+    } else {
+        (state.fps_ema * 0.9) + (inst_fps * 0.1)
+    };
+    if state.debug_mode {
+        layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, state.fps_ema);
+    }
+
+    if state.selection.active {
+        terminal::apply_selection_overlay(
+            term.buffer_mut(),
+            &state.selection,
+            &state.prev_content_map,
+        );
+    }
+    if should_copy_selection {
+        let text = terminal::extract_selection_text(
+            term.buffer_mut(),
+            &state.selection,
+            &state.prev_content_map,
+        );
+        if !text.is_empty() {
+            terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+        }
+        state.selection.clear();
+    }
+
+    term.flush()?;
+    if let Some(text) = clipboard_text {
+        let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
+    }
+    state.tick = state.tick.wrapping_add(1);
+
+    Ok(true)
+}
+
+fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
+    for ev in events {
+        match ev {
+            Event::Mouse(mouse) => {
+                state.last_mouse_pos = Some((mouse.x, mouse.y));
+            }
+            Event::FocusLost => {
+                state.last_mouse_pos = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn clear_frame_layout_cache(state: &mut FrameState) {
+    state.prev_hit_map.clear();
+    state.prev_group_rects.clear();
+    state.prev_content_map.clear();
+    state.prev_focus_rects.clear();
+    state.prev_focus_groups.clear();
+    state.prev_scroll_infos.clear();
+    state.prev_scroll_rects.clear();
+    state.last_mouse_pos = None;
 }
 
 fn is_ctrl_c(ev: &Event) -> bool {

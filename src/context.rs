@@ -13,6 +13,7 @@ use crate::widgets::{
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
     ToastState, ToolApprovalState, TreeState,
 };
+use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]
@@ -292,8 +293,8 @@ pub struct ContainerBuilder<'a> {
     border: Option<Border>,
     border_sides: BorderSides,
     border_style: Style,
-    bg_color: Option<Color>,
-    dark_bg_color: Option<Color>,
+    bg: Option<Color>,
+    dark_bg: Option<Color>,
     dark_border_style: Option<Style>,
     group_hover_bg: Option<Color>,
     group_hover_border_style: Option<Style>,
@@ -752,10 +753,10 @@ impl<'a> ContainerBuilder<'a> {
             self.border_style = v;
         }
         if let Some(v) = style.bg {
-            self.bg_color = Some(v);
+            self.bg = Some(v);
         }
         if let Some(v) = style.dark_bg {
-            self.dark_bg_color = Some(v);
+            self.dark_bg = Some(v);
         }
         if let Some(v) = style.dark_border_style {
             self.dark_border_style = Some(v);
@@ -861,13 +862,13 @@ impl<'a> ContainerBuilder<'a> {
     }
 
     pub fn bg(mut self, color: Color) -> Self {
-        self.bg_color = Some(color);
+        self.bg = Some(color);
         self
     }
 
     /// Background color used when dark mode is active.
     pub fn dark_bg(mut self, color: Color) -> Self {
-        self.dark_bg_color = Some(color);
+        self.dark_bg = Some(color);
         self
     }
 
@@ -1637,9 +1638,9 @@ impl<'a> ContainerBuilder<'a> {
                 .unwrap_or(false);
 
         let resolved_bg = if self.ctx.dark_mode {
-            self.dark_bg_color.or(self.bg_color)
+            self.dark_bg.or(self.bg)
         } else {
-            self.bg_color
+            self.bg
         };
         let resolved_border_style = if self.ctx.dark_mode {
             self.dark_border_style.unwrap_or(self.border_style)
@@ -1704,29 +1705,16 @@ impl<'a> ContainerBuilder<'a> {
 }
 
 impl Context {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         events: Vec<Event>,
         width: u32,
         height: u32,
-        tick: u64,
-        mut focus_index: usize,
-        prev_focus_count: usize,
-        prev_scroll_infos: Vec<(u32, u32)>,
-        prev_scroll_rects: Vec<Rect>,
-        prev_hit_map: Vec<Rect>,
-        prev_group_rects: Vec<(String, Rect)>,
-        prev_focus_rects: Vec<(usize, Rect)>,
-        prev_focus_groups: Vec<Option<String>>,
-        prev_hook_states: Vec<Box<dyn std::any::Any>>,
-        debug: bool,
+        state: &mut FrameState,
         theme: Theme,
-        last_mouse_pos: Option<(u32, u32)>,
-        prev_modal_active: bool,
     ) -> Self {
         let consumed = vec![false; events.len()];
 
-        let mut mouse_pos = last_mouse_pos;
+        let mut mouse_pos = state.last_mouse_pos;
         let mut click_pos = None;
         for event in &events {
             if let Event::Mouse(mouse) = event {
@@ -1737,9 +1725,10 @@ impl Context {
             }
         }
 
+        let mut focus_index = state.focus_index;
         if let Some((mx, my)) = click_pos {
             let mut best: Option<(usize, u64)> = None;
-            for &(fid, rect) in &prev_focus_rects {
+            for &(fid, rect) in &state.prev_focus_rects {
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
                     let area = rect.width as u64 * rect.height as u64;
                     if best.map_or(true, |(_, ba)| area < ba) {
@@ -1759,30 +1748,30 @@ impl Context {
             should_quit: false,
             area_width: width,
             area_height: height,
-            tick,
+            tick: state.tick,
             focus_index,
             focus_count: 0,
-            hook_states: prev_hook_states,
+            hook_states: std::mem::take(&mut state.hook_states),
             hook_cursor: 0,
-            prev_focus_count,
+            prev_focus_count: state.prev_focus_count,
             scroll_count: 0,
-            prev_scroll_infos,
-            prev_scroll_rects,
+            prev_scroll_infos: std::mem::take(&mut state.prev_scroll_infos),
+            prev_scroll_rects: std::mem::take(&mut state.prev_scroll_rects),
             interaction_count: 0,
-            prev_hit_map,
+            prev_hit_map: std::mem::take(&mut state.prev_hit_map),
             group_stack: Vec::new(),
-            prev_group_rects,
+            prev_group_rects: std::mem::take(&mut state.prev_group_rects),
             group_count: 0,
-            prev_focus_groups,
-            _prev_focus_rects: prev_focus_rects,
+            prev_focus_groups: std::mem::take(&mut state.prev_focus_groups),
+            _prev_focus_rects: std::mem::take(&mut state.prev_focus_rects),
             mouse_pos,
             click_pos,
             last_text_idx: None,
             overlay_depth: 0,
             modal_active: false,
-            prev_modal_active,
+            prev_modal_active: state.prev_modal_active,
             clipboard_text: None,
-            debug,
+            debug: state.debug_mode,
             theme,
             dark_mode: true,
             deferred_draws: Vec::new(),
