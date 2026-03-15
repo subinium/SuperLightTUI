@@ -2988,3 +2988,43 @@ fn dev_warning_first_frame_no_warning() {
         "no warning on first frame even with hooks"
     );
 }
+
+#[test]
+fn dev_warning_group_stack_imbalance() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        let _builder = ui.group("leaked-group");
+        ui.text("content");
+    });
+    let warnings = tb.dev_warnings();
+    assert!(
+        !warnings.is_empty(),
+        "expected group_stack imbalance warning"
+    );
+    assert!(
+        warnings[0].contains("group_stack not empty"),
+        "warning should mention group_stack, got: {}",
+        warnings[0]
+    );
+    assert!(
+        warnings[0].contains("1 unclosed group"),
+        "warning should report 1 unclosed group, got: {}",
+        warnings[0]
+    );
+}
+
+#[test]
+fn dev_warning_group_stack_balanced_no_warning() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.group("balanced-group")
+            .border(slt::Border::Single)
+            .col(|ui| {
+                ui.text("inside group");
+            });
+    });
+    assert!(
+        tb.dev_warnings().is_empty(),
+        "no warning when group() is properly closed"
+    );
+}

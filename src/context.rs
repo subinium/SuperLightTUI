@@ -1858,6 +1858,13 @@ impl Context {
                 self.prev_hook_count, self.hook_cursor
             ));
         }
+        if !self.group_stack.is_empty() {
+            self.emit_dev_warning(&format!(
+                "group_stack not empty at end of frame ({} unclosed group(s)). \
+                 This usually means a group() closure panicked or returned early.",
+                self.group_stack.len()
+            ));
+        }
     }
 
     pub(crate) fn process_focus_keys(&mut self) {
