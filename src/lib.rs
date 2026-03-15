@@ -582,6 +582,7 @@ fn run_frame<T: TerminalBackend>(
     let frame_start = Instant::now();
     let (w, h) = term.size();
     let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
+    ctx.is_real_terminal = true;
     ctx.process_focus_keys();
 
     f(&mut ctx);

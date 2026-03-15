@@ -259,6 +259,7 @@ pub struct Context {
     debug: bool,
     theme: Theme,
     pub(crate) dark_mode: bool,
+    pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
 }
 
@@ -1774,6 +1775,7 @@ impl Context {
             debug: state.debug_mode,
             theme,
             dark_mode: true,
+            is_real_terminal: false,
             deferred_draws: Vec::new(),
         }
     }
@@ -1869,6 +1871,14 @@ impl Context {
         match result {
             Ok(()) => {}
             Err(panic_info) => {
+                if self.is_real_terminal {
+                    let _ = crossterm::terminal::enable_raw_mode();
+                    let _ = crossterm::execute!(
+                        std::io::stdout(),
+                        crossterm::terminal::EnterAlternateScreen
+                    );
+                }
+
                 self.commands.truncate(cmd_count);
                 self.last_text_idx = last_text_idx;
 

@@ -179,6 +179,7 @@ impl TestBackend {
             &mut frame_state,
             Theme::dark(),
         );
+        ctx.is_real_terminal = false;
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
@@ -217,6 +218,7 @@ impl TestBackend {
             &mut frame_state,
             Theme::dark(),
         );
+        ctx.is_real_terminal = false;
         ctx.process_focus_keys();
         f(&mut ctx);
         let mut tree = layout::build_tree(&ctx.commands);
