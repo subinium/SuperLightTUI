@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.8.3"
+version = "0.8.4"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -31,6 +31,11 @@ insta = "1"
 async = ["dep:tokio"]
 serde = ["dep:serde"]
 image = ["dep:image"]
+full = ["async", "serde", "image"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name = "hello"

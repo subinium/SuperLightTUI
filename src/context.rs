@@ -33,6 +33,7 @@ fn slt_warn(msg: &str) {
 fn slt_warn(_msg: &str) {}
 
 /// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct State<T> {
     idx: usize,
     _marker: std::marker::PhantomData<T>,
@@ -4716,7 +4717,9 @@ impl Context {
                             consumed_indices.push(i);
                         }
                         KeyCode::Right => {
-                            state.selected = (state.selected + 1) % state.labels.len();
+                            if !state.labels.is_empty() {
+                                state.selected = (state.selected + 1) % state.labels.len();
+                            }
                             consumed_indices.push(i);
                         }
                         _ => {}
