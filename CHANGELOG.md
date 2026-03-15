@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.0] — 2026-03-15
+
+### Bug Fixes
+- **error_boundary terminal recovery**: panic hook fires before `catch_unwind`, destroying terminal state. Now re-enters raw mode + alternate screen after catching the panic.
+- **error_boundary rollback scope**: previously only restored 2 fields (`commands`, `last_text_idx`). Now captures and restores all 13 mutable per-frame fields via `ContextSnapshot` — prevents focus/hook/modal/group state corruption after caught panics.
+- **`Theme::light()` dark_mode**: `dark_mode` was hardcoded to `true` regardless of theme. Now reads `theme.is_dark`.
+
+### New API
+- **`consume_key(c)` / `consume_key_code(code)`**: explicitly consume a key event, preventing widgets from handling it. Unlike `key()`/`key_code()` which peek without consuming.
+
+### Theme
+- **`Theme.is_dark`**: new `pub is_dark: bool` field on `Theme`. All 7 built-in presets set it correctly. `ThemeBuilder` supports `.is_dark(bool)`.
+- **`Theme::light()` redesign**: Tailwind slate-based high-contrast palette — `Rgb(15,23,42)` text on `Rgb(248,250,252)` background, blue-600 primary, proper contrast for success/warning/error.
+- **Default text color**: `ui.text()` now defaults fg to `theme.text` instead of terminal default. Ensures readability in light mode.
+- **Root background fill**: screen background filled with `theme.bg` when not `Color::Reset`.
+
+### DX
+- **`#[must_use]` message**: `ContainerBuilder` warning now says "does nothing until .col(), .row(), .line(), or .draw() is called"
+- **Documentation fixes**: RunConfig docs corrected from 100ms to 16ms (60fps), README `docs.rs/slt` → `docs.rs/superlighttui`, border style count 4 → 6, removed dead `demo_v050` reference.
+- **Clippy clean**: `cargo clippy --all-targets --all-features -- -D warnings` now passes (fixed `collapsible_if`, `field_reassign_with_default`, `saturating_sub`, `if_same_then_else`, `too_many_arguments`, `len_zero`).
+
+### Demo
+- Theme-aware colors: hardcoded `Color::Green`/`Color::Red`/`Color::Cyan` replaced with `theme.success`/`theme.error`/`theme.primary` for proper light/dark mode rendering.
+
 ## [0.9.5] — 2026-03-15
 
 ### Tests
