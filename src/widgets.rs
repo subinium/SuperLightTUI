@@ -199,6 +199,14 @@ pub enum ToastLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
 impl ToastState {
     /// Create an empty toast state with no messages.
     pub fn new() -> Self {
@@ -792,6 +800,12 @@ pub enum ButtonVariant {
     Danger,
     /// Bordered button without background fill.
     Outline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trend {
+    Up,
+    Down,
 }
 
 // ── Select / Dropdown ─────────────────────────────────────────────────

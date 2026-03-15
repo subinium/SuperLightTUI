@@ -359,6 +359,219 @@ impl Context {
         });
     }
 
+    pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> bool {
+        use crate::widgets::AlertLevel;
+
+        let theme = self.theme;
+        let (icon, color) = match level {
+            AlertLevel::Info => ("ℹ", theme.accent),
+            AlertLevel::Success => ("✓", theme.success),
+            AlertLevel::Warning => ("⚠", theme.warning),
+            AlertLevel::Error => ("✕", theme.error),
+        };
+
+        let focused = self.register_focusable();
+        let key_dismiss = focused && (self.key_code(KeyCode::Enter) || self.key('x'));
+
+        let resp = self.container().col(|ui| {
+            ui.line(|ui| {
+                ui.text(format!(" {icon} ")).fg(color).bold();
+                ui.text(message).grow(1);
+                ui.text(" [×] ").dim();
+            });
+        });
+
+        key_dismiss || resp.clicked
+    }
+
+    pub fn breadcrumb(&mut self, segments: &[&str]) -> Option<usize> {
+        self.breadcrumb_with(segments, " › ")
+    }
+
+    pub fn breadcrumb_with(&mut self, segments: &[&str], separator: &str) -> Option<usize> {
+        let theme = self.theme;
+        let last_idx = segments.len().saturating_sub(1);
+        let mut clicked_idx: Option<usize> = None;
+
+        self.line(|ui| {
+            for (i, segment) in segments.iter().enumerate() {
+                let is_last = i == last_idx;
+                if is_last {
+                    ui.text(*segment).bold().fg(theme.text);
+                } else {
+                    if ui.button_with(*segment, ButtonVariant::Default) {
+                        clicked_idx = Some(i);
+                    }
+                    ui.text(separator).dim();
+                }
+            }
+        });
+
+        clicked_idx
+    }
+
+    pub fn accordion(&mut self, title: &str, open: &mut bool, f: impl FnOnce(&mut Context)) {
+        let theme = self.theme;
+        let focused = self.register_focusable();
+
+        if focused && self.key_code(KeyCode::Enter) {
+            *open = !*open;
+        }
+
+        let icon = if *open { "▾" } else { "▸" };
+        let title_color = if focused { theme.primary } else { theme.text };
+
+        let resp = self.container().col(|ui| {
+            ui.line(|ui| {
+                ui.text(icon).fg(title_color);
+                ui.text(format!(" {title}")).bold().fg(title_color);
+            });
+        });
+
+        if resp.clicked {
+            *open = !*open;
+        }
+
+        if *open {
+            self.container().pl(2).col(f);
+        }
+    }
+
+    pub fn definition_list(&mut self, items: &[(&str, &str)]) {
+        let max_key_width = items
+            .iter()
+            .map(|(k, _)| unicode_width::UnicodeWidthStr::width(*k))
+            .max()
+            .unwrap_or(0);
+
+        self.col(|ui| {
+            for (key, value) in items {
+                ui.line(|ui| {
+                    let padded = format!("{:>width$}", key, width = max_key_width);
+                    ui.text(padded).dim();
+                    ui.text("  ");
+                    ui.text(*value);
+                });
+            }
+        });
+    }
+
+    pub fn divider_text(&mut self, label: &str) {
+        let w = self.width();
+        let label_len = unicode_width::UnicodeWidthStr::width(label) as u32;
+        let pad = 1u32;
+        let left_len = 4u32;
+        let right_len = w.saturating_sub(left_len + pad + label_len + pad);
+        let left: String = "─".repeat(left_len as usize);
+        let right: String = "─".repeat(right_len as usize);
+        let theme = self.theme;
+        self.line(|ui| {
+            ui.text(&left).fg(theme.border);
+            ui.text(format!(" {} ", label)).fg(theme.text);
+            ui.text(&right).fg(theme.border);
+        });
+    }
+
+    pub fn badge(&mut self, label: &str) {
+        let theme = self.theme;
+        self.badge_colored(label, theme.primary);
+    }
+
+    pub fn badge_colored(&mut self, label: &str, color: Color) {
+        let fg = Color::contrast_fg(color);
+        self.text(format!(" {} ", label)).fg(fg).bg(color);
+    }
+
+    pub fn key_hint(&mut self, key: &str) {
+        let theme = self.theme;
+        self.text(format!(" {} ", key))
+            .reversed()
+            .fg(theme.text_dim);
+    }
+
+    pub fn stat(&mut self, label: &str, value: &str) {
+        self.col(|ui| {
+            ui.text(label).dim();
+            ui.text(value).bold();
+        });
+    }
+
+    pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) {
+        self.col(|ui| {
+            ui.text(label).dim();
+            ui.text(value).bold().fg(color);
+        });
+    }
+
+    pub fn stat_trend(&mut self, label: &str, value: &str, trend: crate::widgets::Trend) {
+        let theme = self.theme;
+        let (arrow, color) = match trend {
+            crate::widgets::Trend::Up => ("↑", theme.success),
+            crate::widgets::Trend::Down => ("↓", theme.error),
+        };
+        self.col(|ui| {
+            ui.text(label).dim();
+            ui.line(|ui| {
+                ui.text(value).bold();
+                ui.text(format!(" {arrow}")).fg(color);
+            });
+        });
+    }
+
+    pub fn empty_state(&mut self, title: &str, description: &str) {
+        self.container().center().col(|ui| {
+            ui.text(title).align(Align::Center);
+            ui.text(description).dim().align(Align::Center);
+        });
+    }
+
+    pub fn empty_state_action(
+        &mut self,
+        title: &str,
+        description: &str,
+        action_label: &str,
+    ) -> bool {
+        let mut clicked = false;
+        self.container().center().col(|ui| {
+            ui.text(title).align(Align::Center);
+            ui.text(description).dim().align(Align::Center);
+            if ui.button(action_label) {
+                clicked = true;
+            }
+        });
+        clicked
+    }
+
+    pub fn code_block(&mut self, code: &str) {
+        let theme = self.theme;
+        self.bordered(Border::Rounded)
+            .bg(theme.surface)
+            .pad(1)
+            .col(|ui| {
+                for line in code.lines() {
+                    render_highlighted_line(ui, line);
+                }
+            });
+    }
+
+    pub fn code_block_numbered(&mut self, code: &str) {
+        let lines: Vec<&str> = code.lines().collect();
+        let gutter_w = format!("{}", lines.len()).len();
+        let theme = self.theme;
+        self.bordered(Border::Rounded)
+            .bg(theme.surface)
+            .pad(1)
+            .col(|ui| {
+                for (i, line) in lines.iter().enumerate() {
+                    ui.line(|ui| {
+                        ui.text(format!("{:>gutter_w$} │ ", i + 1))
+                            .fg(theme.text_dim);
+                        render_highlighted_line(ui, line);
+                    });
+                }
+            });
+    }
+
     /// Enable word-boundary wrapping on the last rendered text element.
     pub fn wrap(&mut self) -> &mut Self {
         if let Some(idx) = self.last_text_idx {
@@ -892,5 +1105,89 @@ impl Context {
     /// Returns `true` when the button is clicked or activated.
     pub fn form_submit(&mut self, label: impl Into<String>) -> bool {
         self.button(label)
+    }
+}
+
+const RUST_KEYWORDS: &[&str] = &[
+    "fn", "let", "mut", "pub", "use", "impl", "struct", "enum", "trait", "type", "const", "static",
+    "if", "else", "match", "for", "while", "loop", "return", "break", "continue", "where", "self",
+    "super", "crate", "mod", "async", "await", "move", "ref", "in", "as", "true", "false", "Some",
+    "None", "Ok", "Err", "Self",
+];
+
+fn render_highlighted_line(ui: &mut Context, line: &str) {
+    let theme = ui.theme;
+    let keyword_color = Color::Rgb(198, 120, 221);
+    let string_color = Color::Rgb(152, 195, 121);
+    let comment_color = theme.text_dim;
+    let number_color = Color::Rgb(209, 154, 102);
+    let fn_color = Color::Rgb(97, 175, 239);
+    let macro_color = Color::Rgb(86, 182, 194);
+
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+    if !indent.is_empty() {
+        ui.text(indent);
+    }
+
+    if trimmed.starts_with("//") {
+        ui.text(trimmed).fg(comment_color).italic();
+        return;
+    }
+
+    let mut pos = 0;
+
+    while pos < trimmed.len() {
+        let ch = trimmed.as_bytes()[pos];
+
+        if ch == b'"' {
+            if let Some(end) = trimmed[pos + 1..].find('"') {
+                let s = &trimmed[pos..pos + end + 2];
+                ui.text(s).fg(string_color);
+                pos += end + 2;
+                continue;
+            }
+        }
+
+        if ch.is_ascii_digit() && (pos == 0 || !trimmed.as_bytes()[pos - 1].is_ascii_alphanumeric())
+        {
+            let end = trimmed[pos..]
+                .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '_')
+                .map_or(trimmed.len(), |e| pos + e);
+            ui.text(&trimmed[pos..end]).fg(number_color);
+            pos = end;
+            continue;
+        }
+
+        if ch.is_ascii_alphabetic() || ch == b'_' {
+            let end = trimmed[pos..]
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .map_or(trimmed.len(), |e| pos + e);
+            let word = &trimmed[pos..end];
+
+            if end < trimmed.len() && trimmed.as_bytes()[end] == b'!' {
+                ui.text(&trimmed[pos..end + 1]).fg(macro_color);
+                pos = end + 1;
+            } else if end < trimmed.len()
+                && trimmed.as_bytes()[end] == b'('
+                && !RUST_KEYWORDS.contains(&word)
+            {
+                ui.text(word).fg(fn_color);
+                pos = end;
+            } else if RUST_KEYWORDS.contains(&word) {
+                ui.text(word).fg(keyword_color);
+                pos = end;
+            } else {
+                ui.text(word);
+                pos = end;
+            }
+            continue;
+        }
+
+        let end = trimmed[pos..]
+            .find(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '"')
+            .map_or(trimmed.len(), |e| pos + e);
+        ui.text(&trimmed[pos..end]);
+        pos = end;
     }
 }
