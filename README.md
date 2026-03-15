@@ -131,6 +131,17 @@ ui.bar_chart(&data, 24);                     // horizontal bars
 ui.sparkline(&values, 16);                   // trend line ▁▂▃▅▇
 ui.canvas(40, 10, |cv| { cv.circle(20, 20, 15); }); // braille canvas
 ui.grid(3, |ui| { /* 3-column grid */ });    // grid layout
+// v0.9 additions
+ui.divider_text("Section Title");            // labeled horizontal divider
+ui.alert("Saved!", AlertLevel::Success);     // inline alert banner
+ui.breadcrumb(&["Home", "Settings", "Profile"]); // navigation breadcrumb
+ui.accordion(&mut acc, "Details", |ui| { }); // collapsible section
+ui.badge("New", Color::Green);               // inline status badge
+ui.key_hint('q', "quit");                    // single key hint chip
+ui.stat("Users", "1,234", Trend::Up(12.0)); // metric with trend indicator
+ui.definition_list(&[("CPU", "4 cores"), ("RAM", "16 GB")]); // term/value pairs
+ui.empty_state("No results", "Try a different search"); // empty placeholder
+ui.code_block("fn main() {}", "rust");       // syntax-highlighted code
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -193,6 +204,7 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 | Text wrapping | `ui.text_wrap("long text...")` |
 | Borders with titles | `.border(Border::Rounded).title("Panel")` |
 | Per-side borders | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
+| Responsive gap | `.gap_at(Breakpoint::Md, 2)` |
 
 </details>
 
@@ -326,6 +338,9 @@ React-style persistent state in immediate mode. `State<T>` handle pattern. Call 
 - **FPS cap** — `RunConfig { max_fps: Some(60), .. }` for CPU control
 - **Non-TTY safety** — graceful exit when stdout is not a terminal
 - **Resize handling** — automatic reflow on terminal resize
+- **`collect_all()`** — single DFS pass replaces 7 separate tree traversals (v0.9)
+- **Delta flush** — `apply_style_delta()` emits only changed attributes per cell (v0.9)
+- **Keyframes pre-sort** — stops sorted at build time, not per-frame (v0.9)
 
 </details>
 
@@ -495,6 +510,34 @@ assert!(backend.to_string().contains("test content"));
 ```
 
 Headless rendering with `TestBackend` and event simulation with `EventBuilder` for automated testing.
+
+</details>
+
+<details>
+<summary><b>Direct Buffer Access</b></summary>
+
+```rust
+ui.container().w(40).h(20).draw(|buf, rect| {
+    for y in rect.y..rect.bottom() {
+        for x in rect.x..rect.right() {
+            buf.set_char(x, y, '█', Style::new().fg(Color::Rgb(x as u8, 0, y as u8)));
+        }
+    }
+});
+```
+
+`ContainerBuilder::draw()` gives you raw access to the cell buffer for pixel-level rendering. Useful for custom effects, games, and image rendering. The closure receives `(&mut Buffer, Rect)` and runs after layout is resolved.
+
+</details>
+
+<details>
+<summary><b>Syntax-Highlighted Code</b></summary>
+
+```rust
+ui.code_block("fn greet(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}", "rust");
+```
+
+Renders code with One Dark palette syntax highlighting. Supports Rust keywords, string literals, comments, and numeric literals. Falls back to plain monospace for unknown languages.
 
 </details>
 

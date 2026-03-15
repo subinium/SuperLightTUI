@@ -1990,6 +1990,7 @@ impl Context {
 
 mod widgets_display;
 mod widgets_input;
+mod widgets_interactive;
 mod widgets_viz;
 
 #[inline]

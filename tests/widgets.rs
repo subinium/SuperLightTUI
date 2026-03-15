@@ -2570,3 +2570,174 @@ fn collect_all_scroll_works_after_merge() {
     });
     tb.assert_contains("Line 0");
 }
+
+#[test]
+fn divider_text_renders_label() {
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        ui.divider_text("Settings");
+    });
+    tb.assert_contains("Settings");
+    tb.assert_contains("─");
+}
+
+#[test]
+fn alert_renders_with_icon() {
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.alert("Test message", slt::AlertLevel::Success);
+    });
+    tb.assert_contains("✓");
+    tb.assert_contains("Test message");
+    tb.assert_contains("[×]");
+}
+
+#[test]
+fn alert_dismiss_on_key() {
+    let mut tb = TestBackend::new(60, 5);
+    let mut dismissed = false;
+    let events = slt::EventBuilder::new().key('x').build();
+    tb.run_with_events(events, |ui| {
+        if ui.alert("msg", slt::AlertLevel::Info) {
+            dismissed = true;
+        }
+    });
+    assert!(dismissed);
+}
+
+#[test]
+fn breadcrumb_renders_segments() {
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    });
+    let output = tb.to_string();
+    assert!(output.contains("Home"));
+    assert!(output.contains("Profile"));
+}
+
+#[test]
+fn accordion_closed_hides_content() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut open = false;
+    tb.render(|ui| {
+        ui.accordion("Title", &mut open, |ui| {
+            ui.text("hidden content");
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("▸"));
+    assert!(output.contains("Title"));
+    assert!(!output.contains("hidden content"));
+}
+
+#[test]
+fn accordion_open_shows_content() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut open = true;
+    tb.render(|ui| {
+        ui.accordion("Title", &mut open, |ui| {
+            ui.text("visible content");
+        });
+    });
+    let output = tb.to_string();
+    assert!(output.contains("▾"));
+    assert!(output.contains("visible content"));
+}
+
+#[test]
+fn badge_renders_label() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.badge("v0.9");
+    });
+    tb.assert_contains("v0.9");
+}
+
+#[test]
+fn badge_colored_has_bg() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.badge_colored("OK", slt::Color::Green);
+    });
+    let cell = tb.buffer().get(1, 0);
+    assert_eq!(cell.style.bg, Some(slt::Color::Green));
+}
+
+#[test]
+fn key_hint_renders_reversed() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.key_hint("Ctrl+S");
+    });
+    tb.assert_contains("Ctrl+S");
+    let cell = tb.buffer().get(1, 0);
+    assert!(cell.style.modifiers.contains(slt::Modifiers::REVERSED));
+}
+
+#[test]
+fn stat_renders_label_and_value() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.stat("CPU", "72%");
+    });
+    let output = tb.to_string();
+    assert!(output.contains("CPU"));
+    assert!(output.contains("72%"));
+}
+
+#[test]
+fn stat_trend_shows_arrow() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.stat_trend("Rev", "$100", slt::Trend::Up);
+    });
+    tb.assert_contains("↑");
+}
+
+#[test]
+fn definition_list_aligns_keys() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.definition_list(&[("Host", "localhost"), ("Port", "8080")]);
+    });
+    let output = tb.to_string();
+    assert!(output.contains("Host"));
+    assert!(output.contains("localhost"));
+    assert!(output.contains("Port"));
+    assert!(output.contains("8080"));
+}
+
+#[test]
+fn empty_state_renders_centered() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.empty_state("No data", "Add items to begin");
+    });
+    let output = tb.to_string();
+    assert!(output.contains("No data"));
+    assert!(output.contains("Add items"));
+}
+
+#[test]
+fn code_block_renders_code() {
+    let mut tb = TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.code_block("let x = 1;");
+    });
+    tb.assert_contains("let");
+    tb.assert_contains("1");
+}
+
+#[test]
+fn code_block_numbered_has_line_numbers() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.code_block_numbered("line1\nline2\nline3");
+    });
+    let output = tb.to_string();
+    assert!(output.contains("1"));
+    assert!(output.contains("2"));
+    assert!(output.contains("3"));
+    assert!(output.contains("line1"));
+}

@@ -393,13 +393,22 @@ impl Context {
         let last_idx = segments.len().saturating_sub(1);
         let mut clicked_idx: Option<usize> = None;
 
-        self.line(|ui| {
+        self.row(|ui| {
             for (i, segment) in segments.iter().enumerate() {
                 let is_last = i == last_idx;
                 if is_last {
-                    ui.text(*segment).bold().fg(theme.text);
+                    ui.text(*segment).bold();
                 } else {
-                    if ui.button_with(*segment, ButtonVariant::Default) {
+                    let focused = ui.register_focusable();
+                    let pressed = focused && (ui.key_code(KeyCode::Enter) || ui.key(' '));
+                    let resp = ui.interaction();
+                    let color = if resp.hovered || focused {
+                        theme.accent
+                    } else {
+                        theme.primary
+                    };
+                    ui.text(*segment).fg(color).underline();
+                    if resp.clicked || pressed {
                         clicked_idx = Some(i);
                     }
                     ui.text(separator).dim();
@@ -1108,21 +1117,129 @@ impl Context {
     }
 }
 
-const RUST_KEYWORDS: &[&str] = &[
-    "fn", "let", "mut", "pub", "use", "impl", "struct", "enum", "trait", "type", "const", "static",
-    "if", "else", "match", "for", "while", "loop", "return", "break", "continue", "where", "self",
-    "super", "crate", "mod", "async", "await", "move", "ref", "in", "as", "true", "false", "Some",
-    "None", "Ok", "Err", "Self",
+const KEYWORDS: &[&str] = &[
+    "fn",
+    "let",
+    "mut",
+    "pub",
+    "use",
+    "impl",
+    "struct",
+    "enum",
+    "trait",
+    "type",
+    "const",
+    "static",
+    "if",
+    "else",
+    "match",
+    "for",
+    "while",
+    "loop",
+    "return",
+    "break",
+    "continue",
+    "where",
+    "self",
+    "super",
+    "crate",
+    "mod",
+    "async",
+    "await",
+    "move",
+    "ref",
+    "in",
+    "as",
+    "true",
+    "false",
+    "Some",
+    "None",
+    "Ok",
+    "Err",
+    "Self",
+    "def",
+    "class",
+    "import",
+    "from",
+    "pass",
+    "lambda",
+    "yield",
+    "with",
+    "try",
+    "except",
+    "raise",
+    "finally",
+    "elif",
+    "del",
+    "global",
+    "nonlocal",
+    "assert",
+    "is",
+    "not",
+    "and",
+    "or",
+    "function",
+    "var",
+    "const",
+    "export",
+    "default",
+    "switch",
+    "case",
+    "throw",
+    "catch",
+    "typeof",
+    "instanceof",
+    "new",
+    "delete",
+    "void",
+    "this",
+    "null",
+    "undefined",
+    "func",
+    "package",
+    "defer",
+    "go",
+    "chan",
+    "select",
+    "range",
+    "map",
+    "interface",
+    "fallthrough",
+    "nil",
 ];
 
 fn render_highlighted_line(ui: &mut Context, line: &str) {
     let theme = ui.theme;
-    let keyword_color = Color::Rgb(198, 120, 221);
-    let string_color = Color::Rgb(152, 195, 121);
+    let is_light = matches!(
+        theme.bg,
+        Color::Reset | Color::White | Color::Rgb(255, 255, 255)
+    );
+    let keyword_color = if is_light {
+        Color::Rgb(166, 38, 164)
+    } else {
+        Color::Rgb(198, 120, 221)
+    };
+    let string_color = if is_light {
+        Color::Rgb(80, 161, 79)
+    } else {
+        Color::Rgb(152, 195, 121)
+    };
     let comment_color = theme.text_dim;
-    let number_color = Color::Rgb(209, 154, 102);
-    let fn_color = Color::Rgb(97, 175, 239);
-    let macro_color = Color::Rgb(86, 182, 194);
+    let number_color = if is_light {
+        Color::Rgb(152, 104, 1)
+    } else {
+        Color::Rgb(209, 154, 102)
+    };
+    let fn_color = if is_light {
+        Color::Rgb(64, 120, 242)
+    } else {
+        Color::Rgb(97, 175, 239)
+    };
+    let macro_color = if is_light {
+        Color::Rgb(1, 132, 188)
+    } else {
+        Color::Rgb(86, 182, 194)
+    };
 
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
@@ -1170,11 +1287,11 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
                 pos = end + 1;
             } else if end < trimmed.len()
                 && trimmed.as_bytes()[end] == b'('
-                && !RUST_KEYWORDS.contains(&word)
+                && !KEYWORDS.contains(&word)
             {
                 ui.text(word).fg(fn_color);
                 pos = end;
-            } else if RUST_KEYWORDS.contains(&word) {
+            } else if KEYWORDS.contains(&word) {
                 ui.text(word).fg(keyword_color);
                 pos = end;
             } else {

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.5] — 2026-03-15
+
+### Tests
+- 15 new widget tests: divider_text, alert (render + dismiss), breadcrumb, accordion (open/closed), badge (render + colored bg), key_hint (reversed), stat (render + trend arrow), definition_list, empty_state, code_block (render + numbered)
+
+### Improvements
+- **code_block theme auto-switch**: syntax highlighting adapts to dark/light theme — dark uses One Dark palette, light uses One Light
+- **Syntax highlighting multi-language**: keywords for Python, JavaScript, Go added alongside Rust
+- **breadcrumb Outline style**: segments use `ButtonVariant::Outline` for cleaner navigation look
+- **widgets_viz.rs split**: 3012 → 884 lines. Interactive widgets (list, table, tabs, button, etc.) extracted to `widgets_interactive.rs` (2132 lines)
+- **demo_dashboard upgraded**: uses `divider_text`, `stat_trend`, `stat_colored`, `badge_colored`
+
+### Documentation
+- README.md updated with v0.9.0-v0.9.4 features
+- SLT skill updated with new widget API docs
+
 ## [0.9.4] — 2026-03-15
 
 ### Features — 10 New Widgets
