@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.2] — 2026-03-16
+
+### Refactor
+- **chart.rs split into 6 modules**: `chart.rs` (533 lines) + `chart/render.rs` (485), `chart/grid.rs` (228), `chart/braille.rs` (184), `chart/bar.rs` (181), `chart/axis.rs` (161). No API or logic changes — pure file reorganization following Rust 2018 module pattern.
+
 ## [0.12.1] — 2026-03-16
 
 ### Chart System Overhaul — matplotlib-level customization
