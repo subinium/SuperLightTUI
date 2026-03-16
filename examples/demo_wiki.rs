@@ -1,4 +1,4 @@
-use slt::{Border, Color, Context, KeyCode, RunConfig, ScrollState, Style, TabsState, Theme};
+use slt::{Border, Color, Context, KeyCode, RunConfig, Style, TabsState, Theme};
 
 struct MemberProfile {
     tab: &'static str,
@@ -7,6 +7,8 @@ struct MemberProfile {
     position: &'static str,
     nationality: &'static str,
     note: &'static str,
+    image_path: &'static str,
+    placeholder_color: [u8; 3],
 }
 
 const MEMBERS: [MemberProfile; 4] = [
@@ -17,6 +19,8 @@ const MEMBERS: [MemberProfile; 4] = [
         position: "Lead Vocal",
         nationality: "South Korea",
         note: "Eldest member, actress in Snowdrop",
+        image_path: "assets/blackpink/jisoo.jpg",
+        placeholder_color: [255, 105, 180],
     },
     MemberProfile {
         tab: "Jennie",
@@ -25,6 +29,8 @@ const MEMBERS: [MemberProfile; 4] = [
         position: "Main Rapper & Lead Vocal",
         nationality: "South Korea",
         note: "Solo debut 2018, 6 years trainee",
+        image_path: "assets/blackpink/jennie.jpg",
+        placeholder_color: [220, 20, 60],
     },
     MemberProfile {
         tab: "Rosé",
@@ -33,6 +39,8 @@ const MEMBERS: [MemberProfile; 4] = [
         position: "Main Vocal & Lead Dancer",
         nationality: "South Korea/New Zealand",
         note: "Born in NZ, raised in Australia",
+        image_path: "assets/blackpink/rose.jpg",
+        placeholder_color: [255, 127, 80],
     },
     MemberProfile {
         tab: "Lisa",
@@ -41,6 +49,8 @@ const MEMBERS: [MemberProfile; 4] = [
         position: "Main Dancer & Lead Rapper",
         nationality: "Thailand",
         note: "Most followed K-pop idol on Instagram",
+        image_path: "assets/blackpink/lisa.jpg",
+        placeholder_color: [148, 103, 189],
     },
 ];
 
@@ -53,14 +63,7 @@ fn main() -> std::io::Result<()> {
         "Group",
         "Discography",
     ]);
-    let mut scroll = ScrollState::new();
-
-    let member_images: Vec<Vec<u8>> = vec![
-        gen_member_image(200, 300, [255, 105, 180], "JISOO"),
-        gen_member_image(200, 300, [220, 20, 60], "JENNIE"),
-        gen_member_image(200, 300, [255, 127, 80], "ROSE"),
-        gen_member_image(200, 300, [148, 103, 189], "LISA"),
-    ];
+    let member_images: Vec<Vec<u8>> = MEMBERS.iter().map(load_member_image).collect();
 
     slt::run_with(
         RunConfig {
@@ -69,48 +72,43 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         move |ui: &mut Context| {
-            let quit_q = ui.key('q');
-            let quit_esc = ui.key_code(KeyCode::Esc);
-            if quit_q || quit_esc {
+            if ui.key('q') || ui.key_code(KeyCode::Esc) {
                 ui.quit();
             }
 
-            ui.bordered(Border::Single).col(|ui| {
-                ui.container().bg(Color::Rgb(28, 30, 34)).p(1).row(|ui| {
-                    ui.text("BLACKPINK").bold().fg(Color::Rgb(255, 105, 180));
-                    ui.text("  블랙핑크").fg(Color::White);
-                    ui.spacer();
-                    ui.text("나무위키 스타일").fg(Color::Rgb(126, 211, 33));
-                });
-
-                let tab_resp = ui.tabs(&mut tabs);
-                if tab_resp.changed {
-                    scroll.offset = 0;
-                }
-
-                ui.scrollable(&mut scroll)
-                    .grow(1)
-                    .col(|ui| match tabs.selected {
-                        0..=3 => render_member(ui, tabs.selected, &member_images),
-                        4 => render_group(ui),
-                        _ => render_discography(ui),
-                    });
-
-                ui.help(&[("← →", "tab"), ("q", "quit"), ("↑ ↓", "scroll")]);
+            ui.container().bg(Color::Rgb(28, 30, 34)).p(1).row(|ui| {
+                ui.text("BLACKPINK").bold().fg(Color::Rgb(255, 105, 180));
+                ui.text("  블랙핑크").fg(Color::White);
+                ui.spacer();
+                ui.text("나무위키 스타일").fg(Color::Rgb(126, 211, 33));
             });
+
+            ui.tabs(&mut tabs);
+
+            let selected = tabs.selected;
+            let imgs = &member_images;
+            match selected {
+                0..=3 => render_member(ui, selected, imgs),
+                4 => render_group(ui),
+                _ => render_discography(ui),
+            }
+
+            ui.help(&[("← →", "tab"), ("q", "quit")]);
         },
     )
 }
 
 fn render_member(ui: &mut Context, idx: usize, member_images: &[Vec<u8>]) {
     let p = &MEMBERS[idx];
+    let img = &member_images[idx];
+
     ui.bordered(Border::Single).p(1).row(|ui| {
         ui.bordered(Border::Single)
             .title(format!("{} Photo", p.tab))
             .w(34)
             .p(1)
             .col(|ui| {
-                ui.kitty_image(&member_images[idx], 200, 300, 30, 18);
+                ui.kitty_image(img, 200, 300, 30, 18);
             });
 
         ui.bordered(Border::Single)
@@ -132,7 +130,12 @@ fn render_group(ui: &mut Context) {
         info_row(ui, "Debut", "2016-08-08");
         info_row(ui, "Agency", "YG Entertainment");
         info_row(ui, "Fandom", "BLINK");
-        info_row(ui, "Note", "First K-pop girl group at Coachella");
+        info_row(ui, "Members", "Jisoo, Jennie, Rosé, Lisa");
+        ui.separator();
+        ui.text("Achievements").bold().fg(Color::Rgb(255, 105, 180));
+        ui.text("• First K-pop girl group at Coachella (2019)");
+        ui.text("• Highest-charting female K-pop group on Billboard Hot 100");
+        ui.text("• Most-subscribed music group on YouTube");
     });
 }
 
@@ -141,11 +144,20 @@ fn render_discography(ui: &mut Context) {
         .title("Discography")
         .p(1)
         .col(|ui| {
-            ui.text("SQUARE ONE (2016)");
-            ui.text("SQUARE UP (2018)");
-            ui.text("THE ALBUM (2020)");
-            ui.text("BORN PINK (2022)");
+            album_row(ui, "SQUARE ONE", "2016", "Digital Single");
+            album_row(ui, "SQUARE UP", "2018", "Mini Album");
+            album_row(ui, "THE ALBUM", "2020", "Studio Album");
+            album_row(ui, "BORN PINK", "2022", "Studio Album");
+            album_row(ui, "DEADLINE", "2026", "Mini Album");
         });
+}
+
+fn album_row(ui: &mut Context, title: &str, year: &str, kind: &str) {
+    ui.line(|ui| {
+        ui.text(format!("{year}  ")).fg(Color::Indexed(245));
+        ui.text(title).bold().fg(Color::Rgb(255, 105, 180));
+        ui.text(format!("  ({kind})")).fg(Color::Indexed(245));
+    });
 }
 
 fn info_row(ui: &mut Context, key: &str, value: &str) {
@@ -158,114 +170,105 @@ fn info_row(ui: &mut Context, key: &str, value: &str) {
     });
 }
 
-fn gen_member_image(w: u32, h: u32, base: [u8; 3], label: &str) -> Vec<u8> {
-    let mut rgba = gen_gradient(w, h, base);
-    draw_label_band(&mut rgba, w, h);
-    draw_text_5x7(&mut rgba, w, h, label, Color::Rgb(245, 245, 245), 3);
-    rgba
+fn load_member_image(member: &MemberProfile) -> Vec<u8> {
+    if let Some(rgba) = try_load_image_file(member.image_path) {
+        return rgba;
+    }
+    gen_gradient(200, 300, member.placeholder_color)
+}
+
+fn try_load_image_file(path: &str) -> Option<Vec<u8>> {
+    let path = std::path::Path::new(path);
+    if !path.exists() {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    decode_jpeg_to_rgba(&data)
+}
+
+fn decode_jpeg_to_rgba(data: &[u8]) -> Option<Vec<u8>> {
+    let decoder = jpeg_decoder(data)?;
+    let (w, h, pixels) = decoder;
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for chunk in pixels.chunks(3) {
+        rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+    }
+    Some(rgba)
+}
+
+fn jpeg_decoder(data: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
+    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+        return None;
+    }
+    // Minimal approach: use image crate if available, otherwise use stb-style decode
+    // For now, shell out to convert via sips (macOS) or ffmpeg
+    let tmp_in = "/tmp/slt_wiki_input.jpg";
+    let tmp_out = "/tmp/slt_wiki_output.ppm";
+    std::fs::write(tmp_in, data).ok()?;
+
+    // Try sips (macOS)
+    let status = std::process::Command::new("sips")
+        .args(["-s", "format", "jpeg", "-s", "formatOptions", "100"])
+        .args(["--resampleWidth", "200", "--resampleHeight", "300"])
+        .args(["-s", "format", "bmp", tmp_in, "--out", tmp_out])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+
+    if !status.success() {
+        return None;
+    }
+
+    read_bmp_rgb(tmp_out)
+}
+
+fn read_bmp_rgb(path: &str) -> Option<(usize, usize, Vec<u8>)> {
+    let data = std::fs::read(path).ok()?;
+    if data.len() < 54 || data[0] != b'B' || data[1] != b'M' {
+        return None;
+    }
+    let offset = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
+    let w = i32::from_le_bytes([data[18], data[19], data[20], data[21]]) as usize;
+    let h_raw = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+    let h = h_raw.unsigned_abs() as usize;
+    let bpp = u16::from_le_bytes([data[28], data[29]]) as usize;
+
+    if bpp != 24 && bpp != 32 {
+        return None;
+    }
+
+    let bytes_per_pixel = bpp / 8;
+    let row_size = (w * bytes_per_pixel).div_ceil(4) * 4;
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    let bottom_up = h_raw > 0;
+
+    for row in 0..h {
+        let src_row = if bottom_up { h - 1 - row } else { row };
+        let row_start = offset + src_row * row_size;
+        for col in 0..w {
+            let px = row_start + col * bytes_per_pixel;
+            if px + 2 >= data.len() {
+                rgb.extend_from_slice(&[0, 0, 0]);
+                continue;
+            }
+            rgb.extend_from_slice(&[data[px + 2], data[px + 1], data[px]]);
+        }
+    }
+
+    Some((w, h, rgb))
 }
 
 fn gen_gradient(w: u32, h: u32, base: [u8; 3]) -> Vec<u8> {
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
-        for x in 0..w {
-            let tx = x as f32 / w as f32;
-            let ty = y as f32 / h as f32;
-            let glow = (0.08 * tx).min(0.08);
-            let r = (base[0] as f32 * (1.0 - ty * 0.52) + 255.0 * glow).clamp(0.0, 255.0) as u8;
-            let g = (base[1] as f32 * (1.0 - ty * 0.30) + 220.0 * glow).clamp(0.0, 255.0) as u8;
-            let b = (base[2] as f32 * (1.0 - ty * 0.50) + 255.0 * glow).clamp(0.0, 255.0) as u8;
+        for _x in 0..w {
+            let t = y as f32 / h as f32;
+            let r = (base[0] as f32 * (1.0 - t * 0.5)).clamp(0.0, 255.0) as u8;
+            let g = (base[1] as f32 * (1.0 - t * 0.3)).clamp(0.0, 255.0) as u8;
+            let b = (base[2] as f32 * (1.0 - t * 0.5)).clamp(0.0, 255.0) as u8;
             rgba.extend_from_slice(&[r, g, b, 255]);
         }
     }
     rgba
-}
-
-fn draw_label_band(rgba: &mut [u8], w: u32, h: u32) {
-    let y_start = h.saturating_sub(86);
-    for y in y_start..h {
-        for x in 0..w {
-            let idx = ((y * w + x) * 4) as usize;
-            rgba[idx] = ((rgba[idx] as u16 * 38) / 100) as u8;
-            rgba[idx + 1] = ((rgba[idx + 1] as u16 * 38) / 100) as u8;
-            rgba[idx + 2] = ((rgba[idx + 2] as u16 * 38) / 100) as u8;
-        }
-    }
-}
-
-fn draw_text_5x7(rgba: &mut [u8], w: u32, h: u32, text: &str, color: Color, scale: u32) {
-    let color = match color {
-        Color::Rgb(r, g, b) => [r, g, b],
-        _ => [245, 245, 245],
-    };
-
-    let glyph_w = 5 * scale;
-    let spacing = scale;
-    let count = text.chars().count() as u32;
-    let total_w = count
-        .saturating_mul(glyph_w + spacing)
-        .saturating_sub(spacing);
-    let start_x = w.saturating_sub(total_w) / 2;
-    let start_y = h.saturating_sub(68);
-
-    for (i, ch) in text.chars().enumerate() {
-        let Some(rows) = glyph_rows(ch) else {
-            continue;
-        };
-        let ox = start_x + (i as u32) * (glyph_w + spacing);
-        for (row, bits) in rows.iter().enumerate() {
-            for col in 0..5 {
-                if (bits >> (4 - col)) & 1 == 0 {
-                    continue;
-                }
-                for sy in 0..scale {
-                    for sx in 0..scale {
-                        let x = ox + col as u32 * scale + sx;
-                        let y = start_y + row as u32 * scale + sy;
-                        if x >= w || y >= h {
-                            continue;
-                        }
-                        let idx = ((y * w + x) * 4) as usize;
-                        rgba[idx] = color[0];
-                        rgba[idx + 1] = color[1];
-                        rgba[idx + 2] = color[2];
-                        rgba[idx + 3] = 255;
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn glyph_rows(ch: char) -> Option<[u8; 7]> {
-    match ch {
-        'A' => Some([
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ]),
-        'E' => Some([
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ]),
-        'I' => Some([
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
-        ]),
-        'J' => Some([
-            0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
-        ]),
-        'L' => Some([
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ]),
-        'N' => Some([
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ]),
-        'O' => Some([
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ]),
-        'R' => Some([
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ]),
-        'S' => Some([
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ]),
-        _ => None,
-    }
 }

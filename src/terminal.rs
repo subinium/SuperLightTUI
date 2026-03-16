@@ -153,6 +153,10 @@ impl Terminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
+        if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
+            queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
+        }
+
         for (x, y, seq) in &self.current.raw_sequences {
             queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
             queue!(self.stdout, Print(seq))?;
@@ -321,6 +325,10 @@ impl InlineTerminal {
                 queue!(self.stdout, Print("\x1b]8;;\x07"))?;
             }
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+        }
+
+        if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
+            queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
         }
 
         for (x, y, seq) in &self.current.raw_sequences {
