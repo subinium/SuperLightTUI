@@ -104,7 +104,7 @@ ui.container()
 ```rust
 ui.text_input(&mut name);                    // single-line input
 ui.textarea(&mut notes, 5);                  // multi-line editor
-if ui.button("Submit") { /* clicked */ }     // button returns bool
+if ui.button("Submit").clicked { /* … */ }    // returns Response
 ui.checkbox("Dark mode", &mut dark);         // toggle checkbox
 ui.toggle("Notifications", &mut on);         // on/off switch
 ui.tabs(&mut tabs);                          // tab navigation
@@ -138,10 +138,11 @@ ui.grid(3, |ui| { /* 3-column grid */ });    // grid layout
 ui.divider_text("Section Title");            // labeled horizontal divider
 ui.alert("Saved!", AlertLevel::Success);     // inline alert banner
 ui.breadcrumb(&["Home", "Settings", "Profile"]); // navigation breadcrumb
-ui.accordion(&mut acc, "Details", |ui| { }); // collapsible section
+ui.accordion("Details", &mut open, |ui| { }); // collapsible section
 ui.badge("New", Color::Green);               // inline status badge
-ui.key_hint('q', "quit");                    // single key hint chip
-ui.stat("Users", "1,234", Trend::Up(12.0)); // metric with trend indicator
+ui.key_hint("q");                             // single key hint chip
+ui.stat("Users", "1,234");                   // metric card
+ui.stat_trend("Users", "1,234", Trend::Up);  // metric with trend indicator
 ui.definition_list(&[("CPU", "4 cores"), ("RAM", "16 GB")]); // term/value pairs
 ui.empty_state("No results", "Try a different search"); // empty placeholder
 ui.code_block("fn main() {}", "rust");       // syntax-highlighted code
@@ -151,7 +152,7 @@ ui.tool_approval(&mut tool);                 // approve/reject tool call
 ui.context_bar(&items);                      // context window token bar
 ui.image(&img);                              // half-block image rendering
 ui.stat_colored("CPU", "72%", color);        // colored metric card
-ui.stat_trend("Revenue", "$12k", Trend::Up); // metric with trend arrow
+ui.candlestick(&candles, up_color, down_color); // OHLC candlestick chart
 ui.badge_colored("Stable", Color::Green);    // colored status badge
 ui.empty_state_action("Empty", "desc", "Add"); // empty state with button
 // v0.10 additions
@@ -487,7 +488,7 @@ Renders clickable OSC 8 hyperlinks. Ctrl/Cmd+click opens in browser on supportin
 use slt::TestBackend;
 
 let mut backend = TestBackend::new(40, 10);
-backend.run(|ui| {
+backend.render(|ui| {
     ui.bordered(Border::Rounded).pad(1).col(|ui| {
         ui.text("Hello");
     });
@@ -541,7 +542,7 @@ Half-block (▀▄) image rendering. Also works without the `image` feature via 
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.10", features = ["full"] }
+superlighttui = { version = "0.12", features = ["full"] }
 ```
 
 </details>
@@ -616,6 +617,7 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | inline | `cargo run --example inline` | Inline mode |
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
 | demo_infoviz | `cargo run --example demo_infoviz` | Data visualization |
+| demo_trading | `cargo run --example demo_trading` | Exchange-style trading terminal |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
 
 ## Architecture
