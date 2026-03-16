@@ -1,4 +1,4 @@
-use slt::{Bar, BarDirection, BarGroup, Border, Color, Context, LegendPosition, Marker};
+use slt::{Bar, BarDirection, BarGroup, Border, Candle, Color, Context, LegendPosition, Marker};
 
 fn main() -> std::io::Result<()> {
     let cpu_data: Vec<(f64, f64)> = vec![
@@ -61,6 +61,74 @@ fn main() -> std::io::Result<()> {
                 Bar::new("Profit", 60.0).color(Color::Green),
             ],
         ),
+    ];
+    let area_data: Vec<f64> = vec![
+        10.0, 15.0, 12.0, 22.0, 18.0, 28.0, 25.0, 35.0, 30.0, 40.0, 38.0, 45.0, 42.0, 50.0, 48.0,
+        55.0, 52.0, 58.0, 55.0, 60.0,
+    ];
+    let candles = vec![
+        Candle {
+            open: 100.0,
+            high: 108.0,
+            low: 98.0,
+            close: 105.0,
+        },
+        Candle {
+            open: 105.0,
+            high: 112.0,
+            low: 103.0,
+            close: 110.0,
+        },
+        Candle {
+            open: 110.0,
+            high: 115.0,
+            low: 106.0,
+            close: 107.0,
+        },
+        Candle {
+            open: 107.0,
+            high: 111.0,
+            low: 101.0,
+            close: 103.0,
+        },
+        Candle {
+            open: 103.0,
+            high: 109.0,
+            low: 100.0,
+            close: 108.0,
+        },
+        Candle {
+            open: 108.0,
+            high: 118.0,
+            low: 107.0,
+            close: 116.0,
+        },
+        Candle {
+            open: 116.0,
+            high: 120.0,
+            low: 112.0,
+            close: 113.0,
+        },
+        Candle {
+            open: 113.0,
+            high: 117.0,
+            low: 110.0,
+            close: 115.0,
+        },
+    ];
+    let direction_data: Vec<(f64, f64)> = vec![
+        (0.0, 20.0),
+        (1.0, 35.0),
+        (2.0, 28.0),
+        (3.0, 45.0),
+        (4.0, 40.0),
+        (5.0, 55.0),
+        (6.0, 48.0),
+        (7.0, 62.0),
+        (8.0, 58.0),
+        (9.0, 70.0),
+        (10.0, 65.0),
+        (11.0, 75.0),
     ];
     let spark_data = [
         12.0, 18.0, 16.0, 21.0, 19.0, 25.0, 28.0, 26.0, 31.0, 34.0, 30.0, 37.0,
@@ -167,6 +235,47 @@ fn main() -> std::io::Result<()> {
 
                 ui.container().grow(1).row(|ui| {
                     ui.bordered(Border::Single)
+                        .title("Area Chart (filled)")
+                        .grow(1)
+                        .col(|ui| {
+                            ui.area_chart_colored(&area_data, 30, 8, Color::Cyan);
+                        });
+
+                    ui.bordered(Border::Single)
+                        .title("Candlestick (OHLC)")
+                        .grow(1)
+                        .col(|ui| {
+                            ui.candlestick(
+                                &candles,
+                                30,
+                                8,
+                                Color::Rgb(38, 166, 91),
+                                Color::Rgb(234, 57, 67),
+                            );
+                        });
+
+                    ui.bordered(Border::Single)
+                        .title("Direction Colors")
+                        .grow(1)
+                        .col(|ui| {
+                            ui.chart(
+                                |c| {
+                                    c.line(&direction_data).label("Price").color_by_direction(
+                                        Color::Rgb(38, 166, 91),
+                                        Color::Rgb(234, 57, 67),
+                                    );
+                                    c.frame(false);
+                                    c.grid(false);
+                                    c.legend(LegendPosition::None);
+                                },
+                                30,
+                                8,
+                            );
+                        });
+                });
+
+                ui.container().grow(1).row(|ui| {
+                    ui.bordered(Border::Single)
                         .title("Grouped Bars")
                         .grow(1)
                         .col(|ui| {
@@ -195,6 +304,64 @@ fn main() -> std::io::Result<()> {
                                 cv.set_color(Color::White);
                                 cv.print(2, 2, "SLT");
                             });
+                        });
+
+                    ui.bordered(Border::Single)
+                        .title("Frameless Chart")
+                        .grow(1)
+                        .col(|ui| {
+                            ui.chart(
+                                |c| {
+                                    c.area(&cpu_data).label("CPU").color(Color::Cyan);
+                                    c.frame(false);
+                                    c.x_axis_visible(false);
+                                    c.y_axis_visible(false);
+                                    c.grid(false);
+                                    c.legend(LegendPosition::None);
+                                },
+                                30,
+                                6,
+                            );
+                        });
+                });
+
+                ui.container().grow(1).row(|ui| {
+                    ui.bordered(Border::Single)
+                        .title("Heatmap")
+                        .grow(1)
+                        .col(|ui| {
+                            let heat_data: Vec<Vec<f64>> = (0..8)
+                                .map(|r| (0..12).map(|c| ((r * 3 + c * 7) % 20) as f64).collect())
+                                .collect();
+                            ui.heatmap(
+                                &heat_data,
+                                24,
+                                8,
+                                Color::Rgb(20, 20, 60),
+                                Color::Rgb(255, 100, 50),
+                            );
+                        });
+
+                    ui.bordered(Border::Single)
+                        .title("Custom Ticks + hline")
+                        .grow(1)
+                        .col(|ui| {
+                            ui.chart(
+                                |c| {
+                                    c.area(&cpu_data).label("CPU").color(Color::Cyan);
+                                    c.xtick_labels(
+                                        &[0.0, 3.0, 6.0, 9.0, 11.0],
+                                        &["Jan", "Apr", "Jul", "Oct", "Dec"],
+                                    );
+                                    c.yticks(&[0.0, 25.0, 50.0, 75.0, 100.0]);
+                                    c.axhline(50.0, slt::Style::new().fg(Color::Yellow).dim());
+                                    c.grid_style(slt::Style::new().fg(Color::Indexed(237)));
+                                    c.title_style(slt::Style::new().bold().fg(Color::Cyan));
+                                    c.legend(LegendPosition::None);
+                                },
+                                30,
+                                8,
+                            );
                         });
                 });
 

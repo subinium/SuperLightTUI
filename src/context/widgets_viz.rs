@@ -646,6 +646,44 @@ impl Context {
     /// # });
     /// ```
     pub fn line_chart(&mut self, data: &[f64], width: u32, height: u32) -> Response {
+        self.line_chart_colored(data, width, height, self.theme.primary)
+    }
+
+    /// Render a multi-row line chart using a custom color.
+    pub fn line_chart_colored(
+        &mut self,
+        data: &[f64],
+        width: u32,
+        height: u32,
+        color: Color,
+    ) -> Response {
+        self.render_line_chart_internal(data, width, height, color, false)
+    }
+
+    /// Render a multi-row area chart using the primary theme color.
+    pub fn area_chart(&mut self, data: &[f64], width: u32, height: u32) -> Response {
+        self.area_chart_colored(data, width, height, self.theme.primary)
+    }
+
+    /// Render a multi-row area chart using a custom color.
+    pub fn area_chart_colored(
+        &mut self,
+        data: &[f64],
+        width: u32,
+        height: u32,
+        color: Color,
+    ) -> Response {
+        self.render_line_chart_internal(data, width, height, color, true)
+    }
+
+    fn render_line_chart_internal(
+        &mut self,
+        data: &[f64],
+        width: u32,
+        height: u32,
+        color: Color,
+        fill: bool,
+    ) -> Response {
         if data.is_empty() || width == 0 || height == 0 {
             return Response::none();
         }
@@ -724,15 +762,315 @@ impl Context {
                     }
                 }
             }
+
+            if fill {
+                for y in py..px_h {
+                    let cell_row = y / 4;
+                    let sub_y = y % 4;
+                    if char_col < cols && cell_row < rows {
+                        grid[cell_row][char_col] |= if sub_col == 0 {
+                            LEFT_BITS[sub_y]
+                        } else {
+                            RIGHT_BITS[sub_y]
+                        };
+                    }
+                }
+            }
         }
 
-        let style = Style::new().fg(self.theme.primary);
+        let style = Style::new().fg(color);
         for row in grid {
             let line: String = row
                 .iter()
                 .map(|&bits| char::from_u32(0x2800 + bits).unwrap_or(' '))
                 .collect();
             self.styled(line, style);
+        }
+
+        Response::none()
+    }
+
+    /// Render an OHLC candlestick chart.
+    pub fn candlestick(
+        &mut self,
+        candles: &[Candle],
+        width: u32,
+        height: u32,
+        up_color: Color,
+        down_color: Color,
+    ) -> Response {
+        if candles.is_empty() || width == 0 || height == 0 {
+            return Response::none();
+        }
+
+        let cols = width as usize;
+        let rows = height as usize;
+
+        let mut min_price = f64::INFINITY;
+        let mut max_price = f64::NEG_INFINITY;
+        for candle in candles {
+            if candle.low.is_finite() {
+                min_price = min_price.min(candle.low);
+            }
+            if candle.high.is_finite() {
+                max_price = max_price.max(candle.high);
+            }
+        }
+
+        if !min_price.is_finite() || !max_price.is_finite() {
+            return Response::none();
+        }
+
+        let range = if (max_price - min_price).abs() < f64::EPSILON {
+            1.0
+        } else {
+            max_price - min_price
+        };
+        let map_row = |value: f64| -> usize {
+            let t = ((value - min_price) / range).clamp(0.0, 1.0);
+            ((1.0 - t) * (rows.saturating_sub(1)) as f64).round() as usize
+        };
+
+        let mut chars = vec![vec![' '; cols]; rows];
+        let mut colors = vec![vec![None::<Color>; cols]; rows];
+
+        for (index, candle) in candles.iter().enumerate() {
+            if !candle.open.is_finite()
+                || !candle.high.is_finite()
+                || !candle.low.is_finite()
+                || !candle.close.is_finite()
+            {
+                continue;
+            }
+
+            let x_start = index * cols / candles.len();
+            let mut x_end = ((index + 1) * cols / candles.len()).saturating_sub(1);
+            if x_end < x_start {
+                x_end = x_start;
+            }
+            if x_start >= cols {
+                continue;
+            }
+            x_end = x_end.min(cols.saturating_sub(1));
+            let wick_x = (x_start + x_end) / 2;
+
+            let high_row = map_row(candle.high);
+            let low_row = map_row(candle.low);
+            let open_row = map_row(candle.open);
+            let close_row = map_row(candle.close);
+
+            let (wick_top, wick_bottom) = if high_row <= low_row {
+                (high_row, low_row)
+            } else {
+                (low_row, high_row)
+            };
+            let color = if candle.close >= candle.open {
+                up_color
+            } else {
+                down_color
+            };
+
+            for row in wick_top..=wick_bottom.min(rows.saturating_sub(1)) {
+                chars[row][wick_x] = '│';
+                colors[row][wick_x] = Some(color);
+            }
+
+            let (body_top, body_bottom) = if open_row <= close_row {
+                (open_row, close_row)
+            } else {
+                (close_row, open_row)
+            };
+            for row in body_top..=body_bottom.min(rows.saturating_sub(1)) {
+                for col in x_start..=x_end {
+                    chars[row][col] = '█';
+                    colors[row][col] = Some(color);
+                }
+            }
+        }
+
+        for row in 0..rows {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            let mut seg = String::new();
+            let mut seg_color = colors[row][0];
+            for col in 0..cols {
+                if colors[row][col] != seg_color {
+                    let style = if let Some(c) = seg_color {
+                        Style::new().fg(c)
+                    } else {
+                        Style::new()
+                    };
+                    self.styled(seg, style);
+                    seg = String::new();
+                    seg_color = colors[row][col];
+                }
+                seg.push(chars[row][col]);
+            }
+            if !seg.is_empty() {
+                let style = if let Some(c) = seg_color {
+                    Style::new().fg(c)
+                } else {
+                    Style::new()
+                };
+                self.styled(seg, style);
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        Response::none()
+    }
+
+    /// Render a heatmap from a 2D data grid.
+    ///
+    /// Each cell maps to a block character with color intensity:
+    /// low values -> dim/dark, high values -> bright/saturated.
+    ///
+    /// # Arguments
+    /// * `data` - Row-major 2D grid (outer = rows, inner = columns)
+    /// * `width` - Widget width in terminal cells
+    /// * `height` - Widget height in terminal cells
+    /// * `low_color` - Color for minimum values
+    /// * `high_color` - Color for maximum values
+    pub fn heatmap(
+        &mut self,
+        data: &[Vec<f64>],
+        width: u32,
+        height: u32,
+        low_color: Color,
+        high_color: Color,
+    ) -> Response {
+        fn blend_color(a: Color, b: Color, t: f64) -> Color {
+            let t = t.clamp(0.0, 1.0);
+            match (a, b) {
+                (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
+                    (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
+                    (g1 as f64 * (1.0 - t) + g2 as f64 * t).round() as u8,
+                    (b1 as f64 * (1.0 - t) + b2 as f64 * t).round() as u8,
+                ),
+                _ => {
+                    if t > 0.5 {
+                        b
+                    } else {
+                        a
+                    }
+                }
+            }
+        }
+
+        if data.is_empty() || width == 0 || height == 0 {
+            return Response::none();
+        }
+
+        let data_rows = data.len();
+        let max_data_cols = data.iter().map(Vec::len).max().unwrap_or(0);
+        if max_data_cols == 0 {
+            return Response::none();
+        }
+
+        let mut min_value = f64::INFINITY;
+        let mut max_value = f64::NEG_INFINITY;
+        for row in data {
+            for value in row {
+                if value.is_finite() {
+                    min_value = min_value.min(*value);
+                    max_value = max_value.max(*value);
+                }
+            }
+        }
+
+        if !min_value.is_finite() || !max_value.is_finite() {
+            return Response::none();
+        }
+
+        let range = max_value - min_value;
+        let zero_range = range.abs() < f64::EPSILON;
+        let cols = width as usize;
+        let rows = height as usize;
+
+        for row_idx in 0..rows {
+            let data_row_idx = (row_idx * data_rows / rows).min(data_rows.saturating_sub(1));
+            let source_row = &data[data_row_idx];
+            let source_cols = source_row.len();
+
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            let mut segment = String::new();
+            let mut segment_color: Option<Color> = None;
+
+            for col_idx in 0..cols {
+                let normalized = if source_cols == 0 {
+                    0.0
+                } else {
+                    let data_col_idx = (col_idx * source_cols / cols).min(source_cols - 1);
+                    let value = source_row[data_col_idx];
+
+                    if !value.is_finite() {
+                        0.0
+                    } else if zero_range {
+                        0.5
+                    } else {
+                        ((value - min_value) / range).clamp(0.0, 1.0)
+                    }
+                };
+
+                let color = blend_color(low_color, high_color, normalized);
+
+                match segment_color {
+                    Some(current) if current == color => {
+                        segment.push('█');
+                    }
+                    Some(current) => {
+                        self.styled(std::mem::take(&mut segment), Style::new().fg(current));
+                        segment.push('█');
+                        segment_color = Some(color);
+                    }
+                    None => {
+                        segment.push('█');
+                        segment_color = Some(color);
+                    }
+                }
+            }
+
+            if let Some(color) = segment_color {
+                self.styled(segment, Style::new().fg(color));
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
         }
 
         Response::none()
@@ -801,6 +1139,10 @@ impl Context {
     }
 
     /// Render a multi-series chart with axes, legend, and auto-scaling.
+    ///
+    /// `width` and `height` must be non-zero. For dynamic sizing, read terminal
+    /// dimensions first (for example via `ui.width()` / `ui.height()`) and pass
+    /// the computed values to this method.
     pub fn chart(
         &mut self,
         configure: impl FnOnce(&mut ChartBuilder),

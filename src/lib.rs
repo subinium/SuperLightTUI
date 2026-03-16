@@ -67,7 +67,7 @@ pub use anim::{
 pub use buffer::Buffer;
 pub use cell::Cell;
 pub use chart::{
-    Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
+    Axis, Candle, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
     HistogramBuilder, LegendPosition, Marker,
 };
 pub use context::{

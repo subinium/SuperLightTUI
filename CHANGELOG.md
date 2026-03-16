@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.1] — 2026-03-16
+
+### Chart System Overhaul — matplotlib-level customization
+
+#### New Chart Types
+- **`GraphType::Area`**: Area fill rendering — fills below the line to baseline with braille dots. Use via `c.area(&data)` or `area_chart()` / `area_chart_colored()`.
+- **`candlestick(candles, w, h, up_color, down_color)`**: OHLC candlestick chart using `│` (wick) and `█` (body) block characters with automatic Y-axis scaling.
+- **`heatmap(data, w, h, low_color, high_color)`**: 2D data grid rendered as colored `█` blocks with RGB color blending.
+
+#### New Chart Customization
+- **Manual ticks**: `c.xticks(&[0.0, 5.0, 10.0])`, `c.yticks(&[...])` — override auto-computed tick positions.
+- **Tick labels**: `c.xtick_labels(&[0.0, 6.0, 11.0], &["Jan", "Jul", "Dec"])` — custom text labels at tick positions.
+- **Reference lines**: `c.axhline(50.0, style)`, `c.axvline(5.0, style)` — horizontal/vertical reference lines with custom styling.
+- **Direction coloring**: `c.line(&data).color_by_direction(green, red)` — per-segment up/down coloring for price charts.
+- **Style overrides**: `c.title_style(style)`, `c.grid_style(style)`, `c.x_axis_style(style)`, `c.y_axis_style(style)`.
+- **Visibility toggles**: `c.frame(false)`, `c.x_axis_visible(false)`, `c.y_axis_visible(false)` — hide frame, axes independently.
+
+#### New Convenience Methods
+- **`line_chart_colored(data, w, h, color)`**: Line chart with custom color (vs theme.primary).
+- **`area_chart(data, w, h)`**: Filled area chart with theme color.
+- **`area_chart_colored(data, w, h, color)`**: Filled area chart with custom color.
+
+### New Types
+- **`Candle`**: `{ open, high, low, close }` for candlestick data.
+
 ## [0.12.0] — 2026-03-16
 
 ### Features
