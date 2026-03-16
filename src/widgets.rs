@@ -1351,6 +1351,72 @@ impl Default for StreamingTextState {
     }
 }
 
+/// State for a streaming markdown display.
+///
+/// Accumulates markdown chunks as they arrive from an LLM stream.
+/// Pass to [`Context::streaming_markdown`](crate::Context::streaming_markdown) each frame.
+pub struct StreamingMarkdownState {
+    /// The accumulated markdown content.
+    pub content: String,
+    /// Whether the stream is still receiving data.
+    pub streaming: bool,
+    /// Cursor blink state (for the typing indicator).
+    pub cursor_visible: bool,
+    pub cursor_tick: u64,
+    pub in_code_block: bool,
+    pub code_block_lang: String,
+}
+
+impl StreamingMarkdownState {
+    /// Create a new empty streaming markdown state.
+    pub fn new() -> Self {
+        Self {
+            content: String::new(),
+            streaming: false,
+            cursor_visible: true,
+            cursor_tick: 0,
+            in_code_block: false,
+            code_block_lang: String::new(),
+        }
+    }
+
+    /// Append a markdown chunk (e.g., from an LLM stream delta).
+    pub fn push(&mut self, chunk: &str) {
+        self.content.push_str(chunk);
+    }
+
+    /// Start a new streaming session, clearing previous content.
+    pub fn start(&mut self) {
+        self.content.clear();
+        self.streaming = true;
+        self.cursor_visible = true;
+        self.cursor_tick = 0;
+        self.in_code_block = false;
+        self.code_block_lang.clear();
+    }
+
+    /// Mark the stream as complete (hides the typing cursor).
+    pub fn finish(&mut self) {
+        self.streaming = false;
+    }
+
+    /// Clear all content and reset state.
+    pub fn clear(&mut self) {
+        self.content.clear();
+        self.streaming = false;
+        self.cursor_visible = true;
+        self.cursor_tick = 0;
+        self.in_code_block = false;
+        self.code_block_lang.clear();
+    }
+}
+
+impl Default for StreamingMarkdownState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Approval state for a tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalAction {

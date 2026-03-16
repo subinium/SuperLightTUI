@@ -41,13 +41,6 @@ pub(crate) struct InlineTerminal {
     pub(crate) theme_bg: Option<Color>,
 }
 
-pub(crate) trait TerminalBackend {
-    fn size(&self) -> (u32, u32);
-    fn buffer_mut(&mut self) -> &mut Buffer;
-    fn flush(&mut self) -> io::Result<()>;
-    fn handle_resize(&mut self) -> io::Result<()>;
-}
-
 impl Terminal {
     pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
@@ -204,7 +197,7 @@ impl Terminal {
     }
 }
 
-impl TerminalBackend for Terminal {
+impl crate::Backend for Terminal {
     fn size(&self) -> (u32, u32) {
         Terminal::size(self)
     }
@@ -215,10 +208,6 @@ impl TerminalBackend for Terminal {
 
     fn flush(&mut self) -> io::Result<()> {
         Terminal::flush(self)
-    }
-
-    fn handle_resize(&mut self) -> io::Result<()> {
-        Terminal::handle_resize(self)
     }
 }
 
@@ -372,7 +361,7 @@ impl InlineTerminal {
     }
 }
 
-impl TerminalBackend for InlineTerminal {
+impl crate::Backend for InlineTerminal {
     fn size(&self) -> (u32, u32) {
         InlineTerminal::size(self)
     }
@@ -383,10 +372,6 @@ impl TerminalBackend for InlineTerminal {
 
     fn flush(&mut self) -> io::Result<()> {
         InlineTerminal::flush(self)
-    }
-
-    fn handle_resize(&mut self) -> io::Result<()> {
-        InlineTerminal::handle_resize(self)
     }
 }
 

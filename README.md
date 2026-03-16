@@ -628,6 +628,56 @@ Each frame: your closure runs, SLT collects what you described, computes flexbox
 
 Pure Rust. No macros, no code generation, no build scripts.
 
+### Custom Backends
+
+SLT's rendering is abstracted behind the `Backend` trait, enabling custom rendering targets beyond the terminal:
+
+```rust
+use slt::{Backend, AppState, Buffer, Rect, RunConfig, Context, Event};
+
+struct MyBackend { buffer: Buffer }
+
+impl Backend for MyBackend {
+    fn size(&self) -> (u32, u32) {
+        (self.buffer.area.width, self.buffer.area.height)
+    }
+    fn buffer_mut(&mut self) -> &mut Buffer { &mut self.buffer }
+    fn flush(&mut self) -> std::io::Result<()> {
+        // Render self.buffer to your target (canvas, GPU, network, etc.)
+        Ok(())
+    }
+}
+
+fn main() -> std::io::Result<()> {
+    let mut backend = MyBackend { buffer: Buffer::empty(Rect::new(0, 0, 80, 24)) };
+    let mut state = AppState::new();
+    let config = RunConfig::default();
+
+    loop {
+        let events: Vec<Event> = vec![];
+        if !slt::frame(&mut backend, &mut state, &config, &events, &mut |ui| {
+            ui.text("Hello from custom backend!");
+        })? { break; }
+    }
+    Ok(())
+}
+```
+
+The `Backend` trait has 3 methods: `size()`, `buffer_mut()`, `flush()`. The built-in terminal backend handles ANSI escape codes, double-buffer diffing, and synchronized output internally. Custom backends receive the fully-rendered `Buffer` of `Cell`s and can present them however they choose — WebGL, egui embed, SSH tunnel, test harness, etc.
+
+### AI-Native Widgets
+
+SLT includes purpose-built widgets for AI/LLM workflows:
+
+| Widget | Description |
+|--------|-------------|
+| `streaming_text()` | Token-by-token text display with blinking cursor |
+| `streaming_markdown()` | Streaming markdown with headings, code blocks, inline formatting |
+| `tool_approval()` | Human-in-the-loop approve/reject for tool calls |
+| `context_bar()` | Token counter bar showing active context sources |
+| `markdown()` | Static markdown rendering |
+| `code_block()` | Syntax-highlighted code display |
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

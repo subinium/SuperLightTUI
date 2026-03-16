@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0] — 2026-03-16
+
+### Features
+- **Custom Backend API**: `pub trait Backend { size, buffer_mut, flush }` — implement custom rendering targets (WebGL, egui, SSH, test harnesses). Pair with `AppState` and `slt::frame()` to drive the render loop from external event loops.
+- **`streaming_markdown()`**: New widget combining streaming text with markdown rendering — headings, bold, italic, inline code, bullet lists, code blocks with blinking cursor during streaming.
+
+### Bug Fixes
+- **`confirm()` hook panic on tab switch**: Removed internal `use_state()` from `confirm()` widget — was the only widget using internal hooks, causing panic when conditionally rendered across tab switches. Now uses the `result: &mut bool` parameter directly for selection state.
+
+### Improvements
+- **`parse_inline_segments()` visibility**: Changed from private to `pub(crate)` — enables inline markdown formatting reuse across widget modules.
+- **README architecture section**: Added Custom Backends guide with code example and AI-Native Widgets table.
+
 ## [0.11.0] — 2026-03-16
 
 ### BREAKING: Response Pattern

@@ -295,6 +295,216 @@ impl Context {
         Response::none()
     }
 
+    /// Render streaming markdown with a typing cursor indicator.
+    ///
+    /// Parses accumulated markdown content line-by-line while streaming.
+    /// Supports headings, lists, inline formatting, horizontal rules, and
+    /// fenced code blocks with open/close tracking across stream chunks.
+    ///
+    /// ```no_run
+    /// # use slt::widgets::StreamingMarkdownState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut stream = StreamingMarkdownState::new();
+    /// stream.start();
+    /// stream.push("# Hello\n");
+    /// stream.push("- **streaming** markdown\n");
+    /// stream.push("```rust\nlet x = 1;\n");
+    /// ui.streaming_markdown(&mut stream);
+    /// # });
+    /// ```
+    pub fn streaming_markdown(
+        &mut self,
+        state: &mut crate::widgets::StreamingMarkdownState,
+    ) -> Response {
+        if state.streaming {
+            state.cursor_tick = state.cursor_tick.wrapping_add(1);
+            state.cursor_visible = (state.cursor_tick / 8) % 2 == 0;
+        }
+
+        if state.content.is_empty() && state.streaming {
+            let cursor = if state.cursor_visible { "▌" } else { " " };
+            let primary = self.theme.primary;
+            self.text(cursor).fg(primary);
+            return Response::none();
+        }
+
+        let show_cursor = state.streaming && state.cursor_visible;
+        let trailing_newline = state.content.ends_with('\n');
+        let lines: Vec<&str> = state.content.lines().collect();
+        let last_line_index = lines.len().saturating_sub(1);
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        self.interaction_count += 1;
+
+        let text_style = Style::new().fg(self.theme.text);
+        let bold_style = Style::new().fg(self.theme.text).bold();
+        let code_style = Style::new().fg(self.theme.accent);
+        let border_style = Style::new().fg(self.theme.border).dim();
+
+        let mut in_code_block = false;
+        let mut code_block_lang = String::new();
+
+        for (idx, line) in lines.iter().enumerate() {
+            let line = *line;
+            let trimmed = line.trim();
+            let append_cursor = show_cursor && !trailing_newline && idx == last_line_index;
+            let cursor = if append_cursor { "▌" } else { "" };
+
+            if in_code_block {
+                if trimmed.starts_with("```") {
+                    in_code_block = false;
+                    code_block_lang.clear();
+                    self.styled(format!("  └────{cursor}"), border_style);
+                } else {
+                    self.styled(format!("  {line}{cursor}"), code_style);
+                }
+                continue;
+            }
+
+            if trimmed.is_empty() {
+                if append_cursor {
+                    self.styled("▌", Style::new().fg(self.theme.primary));
+                } else {
+                    self.text(" ");
+                }
+                continue;
+            }
+
+            if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+                self.styled(format!("{}{}", "─".repeat(40), cursor), border_style);
+                continue;
+            }
+
+            if let Some(heading) = trimmed.strip_prefix("### ") {
+                self.styled(
+                    format!("{heading}{cursor}"),
+                    Style::new().bold().fg(self.theme.accent),
+                );
+                continue;
+            }
+
+            if let Some(heading) = trimmed.strip_prefix("## ") {
+                self.styled(
+                    format!("{heading}{cursor}"),
+                    Style::new().bold().fg(self.theme.secondary),
+                );
+                continue;
+            }
+
+            if let Some(heading) = trimmed.strip_prefix("# ") {
+                self.styled(
+                    format!("{heading}{cursor}"),
+                    Style::new().bold().fg(self.theme.primary),
+                );
+                continue;
+            }
+
+            if let Some(code) = trimmed.strip_prefix("```") {
+                in_code_block = true;
+                code_block_lang = code.trim().to_string();
+                let label = if code_block_lang.is_empty() {
+                    "code".to_string()
+                } else {
+                    format!("code:{}", code_block_lang)
+                };
+                self.styled(format!("  ┌─{label}─{cursor}"), border_style);
+                continue;
+            }
+
+            if let Some(item) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            {
+                let segs = Self::parse_inline_segments(item, text_style, bold_style, code_style);
+                if segs.len() <= 1 {
+                    self.styled(format!("  • {item}{cursor}"), text_style);
+                } else {
+                    self.line(|ui| {
+                        ui.styled("  • ", text_style);
+                        for (s, st) in segs {
+                            ui.styled(s, st);
+                        }
+                        if append_cursor {
+                            ui.styled("▌", Style::new().fg(ui.theme.primary));
+                        }
+                    });
+                }
+                continue;
+            }
+
+            if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(". ") {
+                let parts: Vec<&str> = trimmed.splitn(2, ". ").collect();
+                if parts.len() == 2 {
+                    let segs =
+                        Self::parse_inline_segments(parts[1], text_style, bold_style, code_style);
+                    if segs.len() <= 1 {
+                        self.styled(
+                            format!("  {}. {}{}", parts[0], parts[1], cursor),
+                            text_style,
+                        );
+                    } else {
+                        self.line(|ui| {
+                            ui.styled(format!("  {}. ", parts[0]), text_style);
+                            for (s, st) in segs {
+                                ui.styled(s, st);
+                            }
+                            if append_cursor {
+                                ui.styled("▌", Style::new().fg(ui.theme.primary));
+                            }
+                        });
+                    }
+                } else {
+                    self.styled(format!("{trimmed}{cursor}"), text_style);
+                }
+                continue;
+            }
+
+            let segs = Self::parse_inline_segments(trimmed, text_style, bold_style, code_style);
+            if segs.len() <= 1 {
+                self.styled(format!("{trimmed}{cursor}"), text_style);
+            } else {
+                self.line(|ui| {
+                    for (s, st) in segs {
+                        ui.styled(s, st);
+                    }
+                    if append_cursor {
+                        ui.styled("▌", Style::new().fg(ui.theme.primary));
+                    }
+                });
+            }
+        }
+
+        if show_cursor && trailing_newline {
+            if in_code_block {
+                self.styled("  ▌", code_style);
+            } else {
+                self.styled("▌", Style::new().fg(self.theme.primary));
+            }
+        }
+
+        state.in_code_block = in_code_block;
+        state.code_block_lang = code_block_lang;
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        Response::none()
+    }
+
     /// Render a tool approval widget with approve/reject buttons.
     ///
     /// Shows the tool name, description, and two action buttons.
@@ -425,8 +635,7 @@ impl Context {
     /// ```
     pub fn confirm(&mut self, question: &str, result: &mut bool) -> Response {
         let focused = self.register_focusable();
-        let selected_yes = self.use_state(|| true);
-        let mut is_yes = *selected_yes.get(self);
+        let mut is_yes = *result;
         let mut clicked = false;
 
         if focused {
@@ -452,6 +661,7 @@ impl Context {
                         }
                         KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
                             is_yes = !is_yes;
+                            *result = is_yes;
                             consumed_indices.push(i);
                         }
                         KeyCode::Enter => {
@@ -468,8 +678,6 @@ impl Context {
                 self.consumed[idx] = true;
             }
         }
-
-        *selected_yes.get_mut(self) = is_yes;
 
         let yes_style = if is_yes {
             if focused {

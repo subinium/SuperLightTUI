@@ -56,7 +56,7 @@ use std::io::IsTerminal;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use terminal::{InlineTerminal, Terminal, TerminalBackend};
+use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
 pub use anim::{
@@ -86,10 +86,160 @@ pub use style::{
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FileEntry,
     FilePickerState, FormField, FormState, ListState, MultiSelectState, PaletteCommand, RadioState,
-    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
-    TreeNode, TreeState, Trend,
+    ScrollState, SelectState, SpinnerState, StreamingMarkdownState, StreamingTextState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
+    ToolApprovalState, TreeNode, TreeState, Trend,
 };
+
+/// Rendering backend for SLT.
+///
+/// Implement this trait to render SLT UIs to custom targets — alternative
+/// terminals, GUI embeds, test harnesses, WASM canvas, etc.
+///
+/// The built-in terminal backend ([`run()`], [`run_with()`]) handles setup,
+/// teardown, and event polling automatically. For custom backends, pair this
+/// trait with [`AppState`] and [`frame()`] to drive the render loop yourself.
+///
+/// # Example
+///
+/// ```ignore
+/// use slt::{Backend, AppState, Buffer, Rect, RunConfig, Context, Event};
+///
+/// struct MyBackend {
+///     buffer: Buffer,
+/// }
+///
+/// impl Backend for MyBackend {
+///     fn size(&self) -> (u32, u32) {
+///         (self.buffer.area.width, self.buffer.area.height)
+///     }
+///     fn buffer_mut(&mut self) -> &mut Buffer {
+///         &mut self.buffer
+///     }
+///     fn flush(&mut self) -> std::io::Result<()> {
+///         // Render self.buffer to your target
+///         Ok(())
+///     }
+/// }
+///
+/// fn main() -> std::io::Result<()> {
+///     let mut backend = MyBackend {
+///         buffer: Buffer::empty(Rect::new(0, 0, 80, 24)),
+///     };
+///     let mut state = AppState::new();
+///     let config = RunConfig::default();
+///
+///     loop {
+///         let events: Vec<Event> = vec![]; // Collect your own events
+///         if !slt::frame(&mut backend, &mut state, &config, &events, &mut |ui| {
+///             ui.text("Hello from custom backend!");
+///         })? {
+///             break;
+///         }
+///     }
+///     Ok(())
+/// }
+/// ```
+pub trait Backend {
+    /// Returns the current display size as `(width, height)` in cells.
+    fn size(&self) -> (u32, u32);
+
+    /// Returns a mutable reference to the display buffer.
+    ///
+    /// SLT writes the UI into this buffer each frame. After [`frame()`]
+    /// returns, call [`flush()`](Backend::flush) to present the result.
+    fn buffer_mut(&mut self) -> &mut Buffer;
+
+    /// Flush the buffer contents to the display.
+    ///
+    /// Called automatically at the end of each [`frame()`] call. Implementations
+    /// should present the current buffer to the user — by writing ANSI escapes,
+    /// drawing to a canvas, updating a texture, etc.
+    fn flush(&mut self) -> io::Result<()>;
+}
+
+/// Opaque per-session state that persists between frames.
+///
+/// Tracks focus, scroll positions, hook state, and other frame-to-frame data.
+/// Create with [`AppState::new()`] and pass to [`frame()`] each iteration.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut state = slt::AppState::new();
+/// // state is passed to slt::frame() in your render loop
+/// ```
+pub struct AppState {
+    pub(crate) inner: FrameState,
+}
+
+impl AppState {
+    /// Create a new empty application state.
+    pub fn new() -> Self {
+        Self {
+            inner: FrameState::default(),
+        }
+    }
+
+    /// Returns the current frame tick count (increments each frame).
+    pub fn tick(&self) -> u64 {
+        self.inner.tick
+    }
+
+    /// Returns the smoothed FPS estimate (exponential moving average).
+    pub fn fps(&self) -> f32 {
+        self.inner.fps_ema
+    }
+
+    /// Toggle the debug overlay (same as pressing F12).
+    pub fn set_debug(&mut self, enabled: bool) {
+        self.inner.debug_mode = enabled;
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Process a single UI frame with a custom [`Backend`].
+///
+/// This is the low-level entry point for custom backends. For standard terminal
+/// usage, prefer [`run()`] or [`run_with()`] which handle the event loop,
+/// terminal setup, and teardown automatically.
+///
+/// Returns `Ok(true)` to continue, `Ok(false)` when [`Context::quit()`] was
+/// called.
+///
+/// # Arguments
+///
+/// * `backend` — Your [`Backend`] implementation
+/// * `state` — Persistent [`AppState`] (reuse across frames)
+/// * `config` — [`RunConfig`] (theme, tick rate, etc.)
+/// * `events` — Input events for this frame (keyboard, mouse, resize)
+/// * `f` — Your UI closure, called once per frame
+///
+/// # Example
+///
+/// ```ignore
+/// let keep_going = slt::frame(
+///     &mut my_backend,
+///     &mut state,
+///     &config,
+///     &events,
+///     &mut |ui| { ui.text("hello"); },
+/// )?;
+/// ```
+pub fn frame(
+    backend: &mut impl Backend,
+    state: &mut AppState,
+    config: &RunConfig,
+    events: &[Event],
+    f: &mut impl FnMut(&mut Context),
+) -> io::Result<bool> {
+    run_frame(backend, &mut state.inner, config, events, f)
+}
 
 static PANIC_HOOK_ONCE: Once = Once::new();
 
@@ -322,7 +472,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    TerminalBackend::handle_resize(&mut term)?;
+                    term.handle_resize()?;
                 }
                 events.push(ev);
             }
@@ -334,7 +484,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        TerminalBackend::handle_resize(&mut term)?;
+                        term.handle_resize()?;
                     }
                     events.push(ev);
                 }
@@ -462,7 +612,7 @@ fn run_async_loop<M: Send + 'static>(
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    TerminalBackend::handle_resize(&mut term)?;
+                    term.handle_resize()?;
                     clear_frame_layout_cache(&mut state);
                 }
                 events.push(ev);
@@ -475,7 +625,7 @@ fn run_async_loop<M: Send + 'static>(
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        TerminalBackend::handle_resize(&mut term)?;
+                        term.handle_resize()?;
                         clear_frame_layout_cache(&mut state);
                     }
                     events.push(ev);
@@ -552,7 +702,7 @@ pub fn run_inline_with(
                     break;
                 }
                 if let Event::Resize(_, _) = &ev {
-                    TerminalBackend::handle_resize(&mut term)?;
+                    term.handle_resize()?;
                 }
                 events.push(ev);
             }
@@ -564,7 +714,7 @@ pub fn run_inline_with(
                         return Ok(());
                     }
                     if let Event::Resize(_, _) = &ev {
-                        TerminalBackend::handle_resize(&mut term)?;
+                        term.handle_resize()?;
                     }
                     events.push(ev);
                 }
@@ -596,12 +746,12 @@ pub fn run_inline_with(
     Ok(())
 }
 
-fn run_frame<T: TerminalBackend>(
-    term: &mut T,
+fn run_frame(
+    term: &mut impl Backend,
     state: &mut FrameState,
     config: &RunConfig,
     events: &[event::Event],
-    f: &mut dyn FnMut(&mut context::Context),
+    f: &mut impl FnMut(&mut context::Context),
 ) -> io::Result<bool> {
     let frame_start = Instant::now();
     let (w, h) = term.size();
