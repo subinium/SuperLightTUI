@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.5] — 2026-03-17
+
+### Bug Fixes
+
+- **`candlestick()` container sizing fix**: Switched rendering to `ContainerBuilder::draw()` with layout-provided `Rect`, so chart width/height now match the allocated container area instead of caller-provided dimensions.
+- **`candlestick()` API update**: Removed explicit `width`/`height` parameters. New signature is `candlestick(candles, up_color, down_color)`.
+- **`button_colored()` layout stability**: Unified label format to `[ label ]` and removed custom-bg-dependent text width/style branching that caused focus/hover layout shifts.
+- **`demo_trading` stability**: Migrated to the new `candlestick()` API, added `Esc` quit handling, fixed right column/bottom panel heights, and set `page_size = 5` on all synced tables.
+
 ## [0.12.4] — 2026-03-16
 
 ### Features

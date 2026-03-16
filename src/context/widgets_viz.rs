@@ -1013,146 +1013,88 @@ impl Context {
     pub fn candlestick(
         &mut self,
         candles: &[Candle],
-        width: u32,
-        height: u32,
         up_color: Color,
         down_color: Color,
     ) -> Response {
-        if candles.is_empty() || width == 0 || height == 0 {
+        if candles.is_empty() {
             return Response::none();
         }
 
-        let cols = width as usize;
-        let rows = height as usize;
-
-        let mut min_price = f64::INFINITY;
-        let mut max_price = f64::NEG_INFINITY;
-        for candle in candles {
-            if candle.low.is_finite() {
-                min_price = min_price.min(candle.low);
-            }
-            if candle.high.is_finite() {
-                max_price = max_price.max(candle.high);
-            }
-        }
-
-        if !min_price.is_finite() || !max_price.is_finite() {
-            return Response::none();
-        }
-
-        let range = if (max_price - min_price).abs() < f64::EPSILON {
-            1.0
-        } else {
-            max_price - min_price
-        };
-        let map_row = |value: f64| -> usize {
-            let t = ((value - min_price) / range).clamp(0.0, 1.0);
-            ((1.0 - t) * (rows.saturating_sub(1)) as f64).round() as usize
-        };
-
-        let mut chars = vec![vec![' '; cols]; rows];
-        let mut colors = vec![vec![None::<Color>; cols]; rows];
-
-        for (index, candle) in candles.iter().enumerate() {
-            if !candle.open.is_finite()
-                || !candle.high.is_finite()
-                || !candle.low.is_finite()
-                || !candle.close.is_finite()
-            {
-                continue;
+        let candles = candles.to_vec();
+        self.container().grow(1).draw(move |buf, rect| {
+            let w = rect.width as usize;
+            let h = rect.height as usize;
+            if w < 2 || h < 2 {
+                return;
             }
 
-            let x_start = index * cols / candles.len();
-            let mut x_end = ((index + 1) * cols / candles.len()).saturating_sub(1);
-            if x_end < x_start {
-                x_end = x_start;
-            }
-            if x_start >= cols {
-                continue;
-            }
-            x_end = x_end.min(cols.saturating_sub(1));
-            let wick_x = (x_start + x_end) / 2;
-
-            let high_row = map_row(candle.high);
-            let low_row = map_row(candle.low);
-            let open_row = map_row(candle.open);
-            let close_row = map_row(candle.close);
-
-            let (wick_top, wick_bottom) = if high_row <= low_row {
-                (high_row, low_row)
-            } else {
-                (low_row, high_row)
-            };
-            let color = if candle.close >= candle.open {
-                up_color
-            } else {
-                down_color
-            };
-
-            for row in wick_top..=wick_bottom.min(rows.saturating_sub(1)) {
-                chars[row][wick_x] = '│';
-                colors[row][wick_x] = Some(color);
-            }
-
-            let (body_top, body_bottom) = if open_row <= close_row {
-                (open_row, close_row)
-            } else {
-                (close_row, open_row)
-            };
-            for row in body_top..=body_bottom.min(rows.saturating_sub(1)) {
-                for col in x_start..=x_end {
-                    chars[row][col] = '█';
-                    colors[row][col] = Some(color);
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            for c in &candles {
+                if c.low.is_finite() {
+                    lo = lo.min(c.low);
+                }
+                if c.high.is_finite() {
+                    hi = hi.max(c.high);
                 }
             }
-        }
 
-        for row in 0..rows {
-            self.interaction_count += 1;
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
-
-            let mut seg = String::new();
-            let mut seg_color = colors[row][0];
-            for col in 0..cols {
-                if colors[row][col] != seg_color {
-                    let style = if let Some(c) = seg_color {
-                        Style::new().fg(c)
-                    } else {
-                        Style::new()
-                    };
-                    self.styled(seg, style);
-                    seg = String::new();
-                    seg_color = colors[row][col];
-                }
-                seg.push(chars[row][col]);
+            if !lo.is_finite() || !hi.is_finite() {
+                return;
             }
-            if !seg.is_empty() {
-                let style = if let Some(c) = seg_color {
-                    Style::new().fg(c)
+
+            let range = if (hi - lo).abs() < 0.01 { 1.0 } else { hi - lo };
+            let map_y = |v: f64| -> usize {
+                let t = ((v - lo) / range).clamp(0.0, 1.0);
+                ((1.0 - t) * (h.saturating_sub(1)) as f64).round() as usize
+            };
+
+            for (i, c) in candles.iter().enumerate() {
+                if !c.open.is_finite()
+                    || !c.high.is_finite()
+                    || !c.low.is_finite()
+                    || !c.close.is_finite()
+                {
+                    continue;
+                }
+
+                let x0 = i * w / candles.len();
+                let x1 = ((i + 1) * w / candles.len()).saturating_sub(1).max(x0);
+                if x0 >= w {
+                    continue;
+                }
+                let xm = (x0 + x1) / 2;
+                let color = if c.close >= c.open {
+                    up_color
                 } else {
-                    Style::new()
+                    down_color
                 };
-                self.styled(seg, style);
-            }
 
-            self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
-        }
+                let wt = map_y(c.high);
+                let wb = map_y(c.low);
+                for row in wt..=wb.min(h - 1) {
+                    buf.set_char(
+                        rect.x + xm as u32,
+                        rect.y + row as u32,
+                        '│',
+                        Style::new().fg(color),
+                    );
+                }
+
+                let bt = map_y(c.open.max(c.close));
+                let bb = map_y(c.open.min(c.close));
+                for row in bt..=bb.min(h - 1) {
+                    for col in x0..=x1.min(w - 1) {
+                        buf.set_char(
+                            rect.x + col as u32,
+                            rect.y + row as u32,
+                            '█',
+                            Style::new().fg(color),
+                        );
+                    }
+                }
+            }
+        });
 
         Response::none()
     }
