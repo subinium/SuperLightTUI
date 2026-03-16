@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.8] — 2026-03-17
+
+### Features
+
+- **`kitty_image_fit(rgba, w, h, cols)`**: Aspect-ratio-preserving image display. Height auto-calculated from image ratio. Terminal handles scaling via Kitty protocol `c`/`r` params — no software resize.
+- **`normalize_rgba()`**: RGBA data resilience. Short data is zero-padded, long data truncated. Images never fail silently.
+- **`kitty_image()` / `kitty_image_fit()`**: Now return `Response` (was `()`) for API consistency.
+
+### Bug Fixes
+
+- **Jennie image not rendering**: `jpeg_decoder` hardcoded 237px height — now preserves original dimensions per image.
+- **Kitty image ghost on tab switch**: Delete all previous images before rendering new frame.
+
 ## [0.12.7] — 2026-03-17
 
 ### Features

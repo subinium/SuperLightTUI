@@ -278,8 +278,9 @@ impl Context {
         pixel_height: u32,
         cols: u32,
         rows: u32,
-    ) {
-        let encoded = base64_encode(rgba);
+    ) -> Response {
+        let rgba = normalize_rgba(rgba, pixel_width, pixel_height);
+        let encoded = base64_encode(&rgba);
         let pw = pixel_width;
         let ph = pixel_height;
         let c = cols;
@@ -303,33 +304,42 @@ impl Context {
 
             buf.raw_sequence(rect.x, rect.y, all_sequences);
         });
+        Response::none()
     }
 
-    /// Render a pixel-perfect image with automatic fit-to-container.
+    /// Render a pixel-perfect image that preserves aspect ratio.
     ///
-    /// Loads raw RGBA data and scales/crops to fit the container size.
-    /// The image is resized using nearest-neighbor to fill the container
-    /// while maintaining aspect ratio, then center-cropped to exact size.
+    /// Sends the original RGBA data to the terminal and lets the Kitty
+    /// protocol handle scaling. The container width is `cols` cells;
+    /// height is calculated automatically from the image aspect ratio
+    /// (assuming 8px wide, 16px tall per cell).
     ///
-    /// # Arguments
-    /// * `rgba` - Raw RGBA pixel data (4 bytes per pixel)
-    /// * `src_width` - Source image width in pixels
-    /// * `src_height` - Source image height in pixels
-    pub fn kitty_image_fit(&mut self, rgba: &[u8], src_width: u32, src_height: u32) {
-        let rgba = rgba.to_vec();
+    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm).
+    pub fn kitty_image_fit(
+        &mut self,
+        rgba: &[u8],
+        src_width: u32,
+        src_height: u32,
+        cols: u32,
+    ) -> Response {
+        let rows = if src_width == 0 {
+            1
+        } else {
+            ((cols as f64 * src_height as f64 * 8.0) / (src_width as f64 * 16.0))
+                .ceil()
+                .max(1.0) as u32
+        };
+        let rgba = normalize_rgba(rgba, src_width, src_height);
         let sw = src_width;
         let sh = src_height;
+        let c = cols;
+        let r = rows;
 
-        self.container().grow(1).draw(move |buf, rect| {
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
-
-            let target_pw = rect.width * 8;
-            let target_ph = rect.height * 16;
-
-            let resized = resize_cover_crop(&rgba, sw, sh, target_pw, target_ph);
-            let encoded = base64_encode(&resized);
+            let encoded = base64_encode(&rgba);
             let chunks = split_base64(&encoded, 4096);
             let mut seq = String::new();
             for (i, chunk) in chunks.iter().enumerate() {
@@ -337,7 +347,7 @@ impl Context {
                 if i == 0 {
                     seq.push_str(&format!(
                         "\x1b_Ga=T,f=32,s={},v={},c={},r={},C=1,q=2,m={};{}\x1b\\",
-                        target_pw, target_ph, rect.width, rect.height, more, chunk
+                        sw, sh, c, r, more, chunk
                     ));
                 } else {
                     seq.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk));
@@ -345,6 +355,7 @@ impl Context {
             }
             buf.raw_sequence(rect.x, rect.y, seq);
         });
+        Response::none()
     }
 
     /// Render streaming text with a typing cursor indicator.
@@ -1892,57 +1903,15 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
     }
 }
 
-fn resize_cover_crop(rgba: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
-    if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
-        return vec![0u8; (dst_w * dst_h * 4) as usize];
+fn normalize_rgba(data: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let expected = (width as usize) * (height as usize) * 4;
+    if data.len() >= expected {
+        return data[..expected].to_vec();
     }
-
-    let scale_x = dst_w as f64 / src_w as f64;
-    let scale_y = dst_h as f64 / src_h as f64;
-    let scale = scale_x.max(scale_y);
-
-    let scaled_w = (src_w as f64 * scale).round() as u32;
-    let scaled_h = (src_h as f64 * scale).round() as u32;
-
-    let mut scaled = Vec::with_capacity((scaled_w * scaled_h * 4) as usize);
-    for y in 0..scaled_h {
-        for x in 0..scaled_w {
-            let sx = ((x as f64 / scale).floor() as u32).min(src_w - 1);
-            let sy = ((y as f64 / scale).floor() as u32).min(src_h - 1);
-            let idx = ((sy * src_w + sx) * 4) as usize;
-            if idx + 3 < rgba.len() {
-                scaled.extend_from_slice(&rgba[idx..idx + 4]);
-            } else {
-                scaled.extend_from_slice(&[0, 0, 0, 255]);
-            }
-        }
-    }
-
-    let crop_x = scaled_w.saturating_sub(dst_w) / 2;
-    let crop_y = scaled_h.saturating_sub(dst_h) / 2;
-
-    let mut result = Vec::with_capacity((dst_w * dst_h * 4) as usize);
-    for y in 0..dst_h {
-        let src_y = crop_y + y;
-        if src_y >= scaled_h {
-            break;
-        }
-        for x in 0..dst_w {
-            let src_x = crop_x + x;
-            if src_x >= scaled_w {
-                result.extend_from_slice(&[0, 0, 0, 255]);
-                continue;
-            }
-            let idx = ((src_y * scaled_w + src_x) * 4) as usize;
-            if idx + 3 < scaled.len() {
-                result.extend_from_slice(&scaled[idx..idx + 4]);
-            } else {
-                result.extend_from_slice(&[0, 0, 0, 255]);
-            }
-        }
-    }
-
-    result
+    let mut buf = Vec::with_capacity(expected);
+    buf.extend_from_slice(data);
+    buf.resize(expected, 0);
+    buf
 }
 
 fn base64_encode(data: &[u8]) -> String {
