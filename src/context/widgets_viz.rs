@@ -59,8 +59,7 @@ impl Context {
             let label_width = UnicodeWidthStr::width(*label);
             let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
             let normalized = (*value / denom).clamp(0.0, 1.0);
-            let bar_len = (normalized * max_width as f64).round() as usize;
-            let bar = "█".repeat(bar_len);
+            let bar = Self::horizontal_bar_text(normalized, max_width);
 
             self.interaction_count += 1;
             self.commands.push(Command::BeginContainer {
@@ -119,25 +118,58 @@ impl Context {
         max_width: u32,
         direction: BarDirection,
     ) -> Response {
+        self.bar_chart_with(
+            bars,
+            |config| {
+                config.direction(direction);
+            },
+            max_width,
+        )
+    }
+
+    pub fn bar_chart_with(
+        &mut self,
+        bars: &[Bar],
+        configure: impl FnOnce(&mut BarChartConfig),
+        max_size: u32,
+    ) -> Response {
         if bars.is_empty() {
             return Response::none();
         }
 
-        let max_value = bars
+        let mut config = BarChartConfig::default();
+        configure(&mut config);
+
+        let auto_max = bars
             .iter()
             .map(|bar| bar.value)
             .fold(f64::NEG_INFINITY, f64::max);
+        let max_value = config.max_value.unwrap_or(auto_max);
         let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
-        match direction {
-            BarDirection::Horizontal => self.render_horizontal_styled_bars(bars, max_width, denom),
-            BarDirection::Vertical => self.render_vertical_styled_bars(bars, max_width, denom),
+        match config.direction {
+            BarDirection::Horizontal => {
+                self.render_horizontal_styled_bars(bars, max_size, denom, config.bar_gap)
+            }
+            BarDirection::Vertical => self.render_vertical_styled_bars(
+                bars,
+                max_size,
+                denom,
+                config.bar_width,
+                config.bar_gap,
+            ),
         }
 
         Response::none()
     }
 
-    fn render_horizontal_styled_bars(&mut self, bars: &[Bar], max_width: u32, denom: f64) {
+    fn render_horizontal_styled_bars(
+        &mut self,
+        bars: &[Bar],
+        max_width: u32,
+        denom: f64,
+        bar_gap: u16,
+    ) {
         let max_label_width = bars
             .iter()
             .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
@@ -147,7 +179,7 @@ impl Context {
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
-            gap: 0,
+            gap: bar_gap as u32,
             align: Align::Start,
             justify: Justify::Start,
             border: None,
@@ -180,8 +212,7 @@ impl Context {
         let label_width = UnicodeWidthStr::width(bar.label.as_str());
         let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
         let normalized = (bar.value / denom).clamp(0.0, 1.0);
-        let bar_len = (normalized * max_width as f64).round() as usize;
-        let bar_text = "█".repeat(bar_len);
+        let bar_text = Self::horizontal_bar_text(normalized, max_width);
         let color = bar.color.unwrap_or(self.theme.primary);
 
         self.interaction_count += 1;
@@ -207,29 +238,36 @@ impl Context {
         );
         self.styled(bar_text, Style::new().fg(color));
         self.styled(
-            format_compact_number(bar.value),
-            Style::new().fg(self.theme.text_dim),
+            Self::bar_display_value(bar),
+            bar.value_style
+                .unwrap_or(Style::new().fg(self.theme.text_dim)),
         );
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
     }
 
-    fn render_vertical_styled_bars(&mut self, bars: &[Bar], max_width: u32, denom: f64) {
-        let chart_height = max_width.max(1) as usize;
-        let value_labels: Vec<String> = bars
+    fn render_vertical_styled_bars(
+        &mut self,
+        bars: &[Bar],
+        max_height: u32,
+        denom: f64,
+        bar_width: u16,
+        bar_gap: u16,
+    ) {
+        let chart_height = max_height.max(1) as usize;
+        let bar_width = bar_width.max(1) as usize;
+        let value_labels: Vec<String> = bars.iter().map(Self::bar_display_value).collect();
+        let label_width = bars
             .iter()
-            .map(|bar| format_compact_number(bar.value))
-            .collect();
-        let col_width = bars
-            .iter()
-            .zip(value_labels.iter())
-            .map(|(bar, value)| {
-                UnicodeWidthStr::width(bar.label.as_str())
-                    .max(UnicodeWidthStr::width(value.as_str()))
-                    .max(1)
-            })
+            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
             .max()
             .unwrap_or(1);
+        let value_width = value_labels
+            .iter()
+            .map(|value| UnicodeWidthStr::width(value.as_str()))
+            .max()
+            .unwrap_or(1);
+        let col_width = bar_width.max(label_width.max(value_width).max(1));
         let bar_units: Vec<usize> = bars
             .iter()
             .map(|bar| {
@@ -255,56 +293,51 @@ impl Context {
             group_name: None,
         });
 
-        self.render_vertical_bar_values(&value_labels, col_width);
-        self.render_vertical_bar_body(bars, &bar_units, chart_height, col_width);
-        self.render_vertical_bar_labels(bars, col_width);
+        self.render_vertical_bar_body(
+            bars,
+            &bar_units,
+            chart_height,
+            col_width,
+            bar_width,
+            bar_gap,
+            &value_labels,
+        );
+        self.render_vertical_bar_labels(bars, col_width, bar_gap);
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
     }
 
-    fn render_vertical_bar_values(&mut self, value_labels: &[String], col_width: usize) {
-        self.interaction_count += 1;
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
-        for value in value_labels {
-            self.styled(
-                center_text(value, col_width),
-                Style::new().fg(self.theme.text_dim),
-            );
-        }
-        self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
-    }
-
+    #[allow(clippy::too_many_arguments)]
     fn render_vertical_bar_body(
         &mut self,
         bars: &[Bar],
         bar_units: &[usize],
         chart_height: usize,
         col_width: usize,
+        bar_width: usize,
+        bar_gap: u16,
+        value_labels: &[String],
     ) {
         const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+
+        // Pre-compute the topmost filled row for each bar (for value label placement).
+        let top_rows: Vec<usize> = bar_units
+            .iter()
+            .map(|units| {
+                if *units == 0 {
+                    usize::MAX
+                } else {
+                    (*units - 1) / 8
+                }
+            })
+            .collect();
 
         for row in (0..chart_height).rev() {
             self.interaction_count += 1;
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
-                gap: 1,
+                gap: bar_gap as u32,
                 align: Align::Start,
                 justify: Justify::Start,
                 border: None,
@@ -320,21 +353,44 @@ impl Context {
             });
 
             let row_base = row * 8;
-            for (bar, units) in bars.iter().zip(bar_units.iter()) {
-                let fill = if *units <= row_base {
-                    ' '
-                } else {
-                    let delta = *units - row_base;
-                    if delta >= 8 {
-                        '█'
+            for (i, (bar, units)) in bars.iter().zip(bar_units.iter()).enumerate() {
+                let color = bar.color.unwrap_or(self.theme.primary);
+
+                if *units <= row_base {
+                    // Value label one row above the bar top (plain text, no bg).
+                    if top_rows[i] != usize::MAX && row == top_rows[i] + 1 {
+                        let label = &value_labels[i];
+                        let centered = Self::center_and_truncate_text(label, col_width);
+                        self.styled(
+                            centered,
+                            bar.value_style.unwrap_or(Style::new().fg(color).bold()),
+                        );
                     } else {
-                        FRACTION_BLOCKS[delta]
+                        let empty = " ".repeat(col_width);
+                        self.styled(empty, Style::new());
                     }
+                    continue;
+                }
+
+                if row == top_rows[i] && top_rows[i] + 1 >= chart_height {
+                    let label = &value_labels[i];
+                    let centered = Self::center_and_truncate_text(label, col_width);
+                    self.styled(
+                        centered,
+                        bar.value_style.unwrap_or(Style::new().fg(color).bold()),
+                    );
+                    continue;
+                }
+
+                let delta = *units - row_base;
+                let fill = if delta >= 8 {
+                    '█'
+                } else {
+                    FRACTION_BLOCKS[delta]
                 };
-                self.styled(
-                    center_text(&fill.to_string(), col_width),
-                    Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
-                );
+                let fill_text = fill.to_string().repeat(bar_width);
+                let centered_fill = center_text(&fill_text, col_width);
+                self.styled(centered_fill, Style::new().fg(color));
             }
 
             self.commands.push(Command::EndContainer);
@@ -342,11 +398,11 @@ impl Context {
         }
     }
 
-    fn render_vertical_bar_labels(&mut self, bars: &[Bar], col_width: usize) {
+    fn render_vertical_bar_labels(&mut self, bars: &[Bar], col_width: usize, bar_gap: u16) {
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
-            gap: 1,
+            gap: bar_gap as u32,
             align: Align::Start,
             justify: Justify::Start,
             border: None,
@@ -362,7 +418,7 @@ impl Context {
         });
         for bar in bars {
             self.styled(
-                center_text(&bar.label, col_width),
+                Self::center_and_truncate_text(&bar.label, col_width),
                 Style::new().fg(self.theme.text),
             );
         }
@@ -387,6 +443,15 @@ impl Context {
     /// # });
     /// ```
     pub fn bar_chart_grouped(&mut self, groups: &[BarGroup], max_width: u32) -> Response {
+        self.bar_chart_grouped_with(groups, |_| {}, max_width)
+    }
+
+    pub fn bar_chart_grouped_with(
+        &mut self,
+        groups: &[BarGroup],
+        configure: impl FnOnce(&mut BarChartConfig),
+        max_size: u32,
+    ) -> Response {
         if groups.is_empty() {
             return Response::none();
         }
@@ -396,21 +461,46 @@ impl Context {
             return Response::none();
         }
 
+        let mut config = BarChartConfig::default();
+        configure(&mut config);
+
+        let auto_max = all_bars
+            .iter()
+            .map(|bar| bar.value)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let max_value = config.max_value.unwrap_or(auto_max);
+        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+
+        match config.direction {
+            BarDirection::Horizontal => {
+                self.render_grouped_horizontal_bars(groups, max_size, denom, &config)
+            }
+            BarDirection::Vertical => {
+                self.render_grouped_vertical_bars(groups, max_size, denom, &config)
+            }
+        }
+
+        Response::none()
+    }
+
+    fn render_grouped_horizontal_bars(
+        &mut self,
+        groups: &[BarGroup],
+        max_width: u32,
+        denom: f64,
+        config: &BarChartConfig,
+    ) {
+        let all_bars: Vec<&Bar> = groups.iter().flat_map(|group| group.bars.iter()).collect();
         let max_label_width = all_bars
             .iter()
             .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
             .max()
             .unwrap_or(0);
-        let max_value = all_bars
-            .iter()
-            .map(|bar| bar.value)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
-            gap: 1,
+            gap: config.group_gap as u32,
             align: Align::Start,
             justify: Justify::Start,
             border: None,
@@ -426,14 +516,31 @@ impl Context {
         });
 
         for group in groups {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Column,
+                gap: config.bar_gap as u32,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
             self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
 
             for bar in &group.bars {
                 let label_width = UnicodeWidthStr::width(bar.label.as_str());
                 let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
                 let normalized = (bar.value / denom).clamp(0.0, 1.0);
-                let bar_len = (normalized * max_width as f64).round() as usize;
-                let bar_text = "█".repeat(bar_len);
+                let bar_text = Self::horizontal_bar_text(normalized, max_width);
 
                 self.interaction_count += 1;
                 self.commands.push(Command::BeginContainer {
@@ -461,18 +568,91 @@ impl Context {
                     Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
                 );
                 self.styled(
-                    format_compact_number(bar.value),
-                    Style::new().fg(self.theme.text_dim),
+                    Self::bar_display_value(bar),
+                    bar.value_style
+                        .unwrap_or(Style::new().fg(self.theme.text_dim)),
                 );
                 self.commands.push(Command::EndContainer);
                 self.last_text_idx = None;
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+    }
+
+    fn render_grouped_vertical_bars(
+        &mut self,
+        groups: &[BarGroup],
+        max_height: u32,
+        denom: f64,
+        config: &BarChartConfig,
+    ) {
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: config.group_gap as u32,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        for group in groups {
+            self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
+            if !group.bars.is_empty() {
+                self.render_vertical_styled_bars(
+                    &group.bars,
+                    max_height,
+                    denom,
+                    config.bar_width,
+                    config.bar_gap,
+                );
             }
         }
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
+    }
 
-        Response::none()
+    fn horizontal_bar_text(normalized: f64, max_width: u32) -> String {
+        let filled = (normalized.clamp(0.0, 1.0) * max_width as f64).round() as usize;
+        "█".repeat(filled)
+    }
+
+    fn bar_display_value(bar: &Bar) -> String {
+        bar.text_value
+            .clone()
+            .unwrap_or_else(|| format_compact_number(bar.value))
+    }
+
+    fn center_and_truncate_text(text: &str, width: usize) -> String {
+        if width == 0 {
+            return String::new();
+        }
+
+        let mut out = String::new();
+        let mut used = 0usize;
+        for ch in text.chars() {
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + cw > width {
+                break;
+            }
+            out.push(ch);
+            used += cw;
+        }
+        center_text(&out, width)
     }
 
     /// Render a single-line sparkline from numeric data.
@@ -494,21 +674,34 @@ impl Context {
         const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
         let w = width as usize;
-        let window = if data.len() > w {
-            &data[data.len() - w..]
-        } else {
-            data
-        };
-
-        if window.is_empty() {
+        if data.is_empty() || w == 0 {
             return Response::none();
         }
 
-        let min = window.iter().copied().fold(f64::INFINITY, f64::min);
-        let max = window.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let points: Vec<f64> = if data.len() >= w {
+            data[data.len() - w..].to_vec()
+        } else if data.len() == 1 {
+            vec![data[0]; w]
+        } else {
+            (0..w)
+                .map(|i| {
+                    let t = i as f64 * (data.len() - 1) as f64 / (w - 1) as f64;
+                    let idx = t.floor() as usize;
+                    let frac = t - idx as f64;
+                    if idx + 1 < data.len() {
+                        data[idx] * (1.0 - frac) + data[idx + 1] * frac
+                    } else {
+                        data[idx.min(data.len() - 1)]
+                    }
+                })
+                .collect()
+        };
+
+        let min = points.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let range = max - min;
 
-        let line: String = window
+        let line: String = points
             .iter()
             .map(|&value| {
                 let normalized = if range == 0.0 {
@@ -548,15 +741,41 @@ impl Context {
         const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
         let w = width as usize;
-        let window = if data.len() > w {
-            &data[data.len() - w..]
-        } else {
-            data
-        };
-
-        if window.is_empty() {
+        if data.is_empty() || w == 0 {
             return Response::none();
         }
+
+        let window: Vec<(f64, Option<Color>)> = if data.len() >= w {
+            data[data.len() - w..].to_vec()
+        } else if data.len() == 1 {
+            vec![data[0]; w]
+        } else {
+            (0..w)
+                .map(|i| {
+                    let t = i as f64 * (data.len() - 1) as f64 / (w - 1) as f64;
+                    let idx = t.floor() as usize;
+                    let frac = t - idx as f64;
+                    let nearest = if frac < 0.5 {
+                        idx
+                    } else {
+                        (idx + 1).min(data.len() - 1)
+                    };
+                    let color = data[nearest].1;
+                    let (v1, _) = data[idx];
+                    let (v2, _) = data[(idx + 1).min(data.len() - 1)];
+                    let value = if v1.is_nan() || v2.is_nan() {
+                        if frac < 0.5 {
+                            v1
+                        } else {
+                            v2
+                        }
+                    } else {
+                        v1 * (1.0 - frac) + v2 * frac
+                    };
+                    (value, color)
+                })
+                .collect()
+        };
 
         let mut finite_values = window
             .iter()
@@ -579,7 +798,7 @@ impl Context {
         let range = max - min;
 
         let mut cells: Vec<(char, Color)> = Vec::with_capacity(window.len());
-        for (value, color) in window {
+        for (value, color) in &window {
             if value.is_nan() {
                 cells.push((' ', self.theme.text_dim));
                 continue;

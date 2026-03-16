@@ -10,7 +10,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     }
 
     let frame_style = config.x_axis.style;
-    let dim_style = Style::new().dim();
+    let dim_style = Style::new().fg(Color::Indexed(238));
     let axis_style = config.y_axis.style;
     let title_style = Style::new()
         .bold()
@@ -22,7 +22,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     let x_title_rows = usize::from(has_x_title);
     let frame_rows = if config.frame_visible { 2 } else { 0 };
     let x_axis_rows = if config.x_axis_visible {
-        2 + x_title_rows
+        1 + x_title_rows
     } else {
         0
     };
@@ -57,7 +57,14 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             .y_axis
             .title
             .as_deref()
-            .map(|t| t.chars().collect())
+            .and_then(|t| {
+                let chars: Vec<char> = t.chars().collect();
+                if chars.len() <= plot_height {
+                    Some(chars)
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -351,36 +358,12 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     }
 
     if config.x_axis_visible {
-        let mut axis_line = vec!['─'; plot_width];
-        for (col, _) in &x_tick_cols {
-            if *col < plot_width {
-                axis_line[*col] = '┬';
-            }
-        }
         let footer_legend_pad = " ".repeat(legend_width);
         let footer_ylabel_pad = if config.y_axis_visible {
             " ".repeat(y_label_col_width)
         } else {
             String::new()
         };
-
-        let mut axis_segments: Vec<(String, Style)> = Vec::new();
-        if config.frame_visible {
-            axis_segments.push(("│".to_string(), frame_style));
-        }
-        if config.y_axis_visible {
-            axis_segments.push((footer_ylabel_pad.clone(), Style::new()));
-            axis_segments.push((" ".repeat(y_tick_width), axis_style));
-            axis_segments.push(("┴─".to_string(), axis_style));
-        }
-        axis_segments.push((axis_line.into_iter().collect(), axis_style));
-        axis_segments.push((footer_legend_pad.clone(), Style::new()));
-        if config.frame_visible {
-            axis_segments.push(("│".to_string(), frame_style));
-        }
-        rows.push(ChartRow {
-            segments: axis_segments,
-        });
 
         let mut x_label_line: Vec<char> = vec![' '; plot_width];
         let mut occupied_until: usize = 0;
