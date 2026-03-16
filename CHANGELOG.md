@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.3] — 2026-03-16
+
+### Improvements
+- **demo_infoviz overhaul**: Reorganized from 5 rows to 4 rows, all panels visible without overflow. Added P&L with `axhline(0.0)`, area chart, custom ticks showcase. Reduced chart sizes to fit standard terminals.
+
 ## [0.12.2] — 2026-03-16
 
 ### Refactor
