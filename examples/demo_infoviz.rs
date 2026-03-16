@@ -199,7 +199,7 @@ fn main() -> std::io::Result<()> {
                 });
 
                 ui.separator();
-                ui.help(&[("q", "quit")]);
+                ui.help(&[("Ctrl+Q", "quit")]);
             });
     })
 }

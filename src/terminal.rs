@@ -38,6 +38,7 @@ pub(crate) struct InlineTerminal {
     start_row: u16,
     reserved: bool,
     color_depth: ColorDepth,
+    pub(crate) theme_bg: Option<Color>,
 }
 
 pub(crate) trait TerminalBackend {
@@ -244,6 +245,7 @@ impl InlineTerminal {
             start_row: cursor_row,
             reserved: false,
             color_depth,
+            theme_bg: None,
         })
     }
 
@@ -352,7 +354,7 @@ impl InlineTerminal {
         self.stdout.flush()?;
 
         std::mem::swap(&mut self.current, &mut self.previous);
-        self.current.reset();
+        reset_current_buffer(&mut self.current, self.theme_bg);
         Ok(())
     }
 
@@ -596,9 +598,28 @@ fn to_crossterm_color(color: Color, depth: ColorDepth) -> CtColor {
     }
 }
 
+fn reset_current_buffer(buffer: &mut Buffer, theme_bg: Option<Color>) {
+    if let Some(bg) = theme_bg {
+        buffer.reset_with_bg(bg);
+    } else {
+        buffer.reset();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_current_buffer_applies_theme_background() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 2, 1));
+
+        reset_current_buffer(&mut buffer, Some(Color::Rgb(10, 20, 30)));
+        assert_eq!(buffer.get(0, 0).style.bg, Some(Color::Rgb(10, 20, 30)));
+
+        reset_current_buffer(&mut buffer, None);
+        assert_eq!(buffer.get(0, 0).style.bg, None);
+    }
 
     #[test]
     fn base64_encode_empty() {

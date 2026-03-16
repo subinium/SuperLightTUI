@@ -5,9 +5,12 @@
 //! a `&mut` reference each frame.
 
 use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
 
 type FormValidator = fn(&str) -> Result<(), String>;
+type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
 
 /// State for a single-line text input widget.
 ///
@@ -37,6 +40,13 @@ pub struct TextInputState {
     pub validation_error: Option<String>,
     /// When `true`, input is displayed as `•` characters (for passwords).
     pub masked: bool,
+    pub suggestions: Vec<String>,
+    pub suggestion_index: usize,
+    pub show_suggestions: bool,
+    /// Multiple validators that produce their own error messages.
+    validators: Vec<TextInputValidator>,
+    /// All current validation errors from all validators.
+    validation_errors: Vec<String>,
 }
 
 impl TextInputState {
@@ -49,6 +59,11 @@ impl TextInputState {
             max_length: None,
             validation_error: None,
             masked: false,
+            suggestions: Vec::new(),
+            suggestion_index: 0,
+            show_suggestions: false,
+            validators: Vec::new(),
+            validation_errors: Vec::new(),
         }
     }
 
@@ -70,8 +85,56 @@ impl TextInputState {
     ///
     /// Sets [`TextInputState::validation_error`] to `None` when validation
     /// succeeds, or to `Some(error)` when validation fails.
+    ///
+    /// This is a backward-compatible shorthand that runs a single validator.
+    /// For multiple validators, use [`add_validator`](Self::add_validator) and [`run_validators`](Self::run_validators).
     pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
         self.validation_error = validator(&self.value).err();
+    }
+
+    /// Add a validator function that produces its own error message.
+    ///
+    /// Multiple validators can be added. Call [`run_validators`](Self::run_validators)
+    /// to execute all validators and collect their errors.
+    pub fn add_validator(&mut self, f: impl Fn(&str) -> Result<(), String> + 'static) {
+        self.validators.push(Box::new(f));
+    }
+
+    /// Run all registered validators and collect their error messages.
+    ///
+    /// Updates [`validation_errors`](Self::validation_errors) with all errors from all validators.
+    /// Also updates [`validation_error`](Self::validation_error) to the first error for backward compatibility.
+    pub fn run_validators(&mut self) {
+        self.validation_errors.clear();
+        for validator in &self.validators {
+            if let Err(err) = validator(&self.value) {
+                self.validation_errors.push(err);
+            }
+        }
+        self.validation_error = self.validation_errors.first().cloned();
+    }
+
+    /// Get all current validation errors from all validators.
+    pub fn errors(&self) -> &[String] {
+        &self.validation_errors
+    }
+
+    pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
+        self.suggestions = suggestions;
+        self.suggestion_index = 0;
+        self.show_suggestions = !self.suggestions.is_empty();
+    }
+
+    pub fn matched_suggestions(&self) -> Vec<&str> {
+        if self.value.is_empty() {
+            return Vec::new();
+        }
+        let lower = self.value.to_lowercase();
+        self.suggestions
+            .iter()
+            .filter(|s| s.to_lowercase().starts_with(&lower))
+            .map(|s| s.as_str())
+            .collect()
     }
 }
 
@@ -406,6 +469,16 @@ impl ListState {
         }
     }
 
+    /// Replace the list items and rebuild the view index.
+    ///
+    /// Use this instead of assigning `items` directly to ensure the internal
+    /// filter/view state stays consistent.
+    pub fn set_items(&mut self, items: Vec<impl Into<String>>) {
+        self.items = items.into_iter().map(Into::into).collect();
+        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.rebuild_view();
+    }
+
     /// Set the filter string. Multiple space-separated tokens are AND'd
     /// together — all tokens must match across any cell in the same row.
     /// Empty string disables filtering.
@@ -445,6 +518,132 @@ impl ListState {
         if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
             self.selected = self.view_indices.len() - 1;
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerState {
+    pub current_dir: PathBuf,
+    pub entries: Vec<FileEntry>,
+    pub selected: usize,
+    pub selected_file: Option<PathBuf>,
+    pub show_hidden: bool,
+    pub extensions: Vec<String>,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+impl FilePickerState {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self {
+            current_dir: dir.into(),
+            entries: Vec::new(),
+            selected: 0,
+            selected_file: None,
+            show_hidden: false,
+            extensions: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    pub fn show_hidden(mut self, show: bool) -> Self {
+        self.show_hidden = show;
+        self.dirty = true;
+        self
+    }
+
+    pub fn extensions(mut self, exts: &[&str]) -> Self {
+        self.extensions = exts
+            .iter()
+            .map(|ext| ext.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|ext| !ext.is_empty())
+            .collect();
+        self.dirty = true;
+        self
+    }
+
+    pub fn selected(&self) -> Option<&PathBuf> {
+        self.selected_file.as_ref()
+    }
+
+    pub fn refresh(&mut self) {
+        let mut entries = Vec::new();
+
+        if let Ok(read_dir) = fs::read_dir(&self.current_dir) {
+            for dir_entry in read_dir.flatten() {
+                let name = dir_entry.file_name().to_string_lossy().to_string();
+                if !self.show_hidden && name.starts_with('.') {
+                    continue;
+                }
+
+                let Ok(file_type) = dir_entry.file_type() else {
+                    continue;
+                };
+                if file_type.is_symlink() {
+                    continue;
+                }
+
+                let path = dir_entry.path();
+                let is_dir = file_type.is_dir();
+
+                if !is_dir && !self.extensions.is_empty() {
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_ascii_lowercase());
+                    let Some(ext) = ext else {
+                        continue;
+                    };
+                    if !self.extensions.iter().any(|allowed| allowed == &ext) {
+                        continue;
+                    }
+                }
+
+                let size = if is_dir {
+                    0
+                } else {
+                    fs::symlink_metadata(&path).map(|m| m.len()).unwrap_or(0)
+                };
+
+                entries.push(FileEntry {
+                    name,
+                    path,
+                    is_dir,
+                    size,
+                });
+            }
+        }
+
+        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a
+                .name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+                .then_with(|| a.name.cmp(&b.name)),
+        });
+
+        self.entries = entries;
+        if self.entries.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+        }
+        self.dirty = false;
+    }
+}
+
+impl Default for FilePickerState {
+    fn default() -> Self {
+        Self::new(".")
     }
 }
 

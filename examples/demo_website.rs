@@ -141,8 +141,8 @@ fn main() -> std::io::Result<()> {
                 ui.toast(&mut toasts);
 
                 ui.help(&[
-                    ("q", "quit"),
-                    ("t", "theme"),
+                    ("Ctrl+Q", "quit"),
+                    ("Ctrl+T", "theme"),
                     ("1-5", "tabs"),
                     ("Esc", "back"),
                     ("Tab", "focus"),
@@ -288,7 +288,10 @@ fn render_home(
         });
         ui.text("");
         ui.row(|ui| {
-            if ui.button_with("Get Started", ButtonVariant::Primary) {
+            if ui
+                .button_with("Get Started", ButtonVariant::Primary)
+                .clicked
+            {
                 *nav_target = Some(1);
             }
             ui.text(" ");
@@ -419,7 +422,7 @@ fn render_home(
                         Err("Enter a valid email".into())
                     }
                 });
-                if ui.button_with("Subscribe", ButtonVariant::Primary) {
+                if ui.button_with("Subscribe", ButtonVariant::Primary).clicked {
                     if !email.value.is_empty() {
                         *subscribed = true;
                         toasts.success("Subscribed!", tick);
@@ -601,7 +604,7 @@ fn render_docs(ui: &mut Context) {
             ui,
             &theme,
             "rust",
-            "if ui.button(\"Submit\") {\n\
+            "if ui.button(\"Submit\").clicked {\n\
              \x20   // clicked!\n\
              }",
         );
@@ -831,7 +834,10 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
             // ── Single post view ──
             if let Some(post) = BLOG_POSTS.get(idx) {
                 ui.row(|ui| {
-                    if ui.button_with("<< Back to Blog", ButtonVariant::Outline) {
+                    if ui
+                        .button_with("<< Back to Blog", ButtonVariant::Outline)
+                        .clicked
+                    {
                         *blog_view = None;
                     }
                     ui.spacer();
@@ -1052,7 +1058,7 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
          slt::run(|ui| {\n\
          \x20   // UI is always a pure function of state\n\
          \x20   ui.list(&mut list);\n\
-         \x20   if ui.button(\"Add\") {\n\
+         \x20   if ui.button(\"Add\").clicked {\n\
          \x20       items.push(\"new\");\n\
          \x20       list = ListState::new(items.clone());\n\
          \x20   }\n\
@@ -1388,7 +1394,7 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
          \x20   });\n\
          \n\
          \x20   // Footer\n\
-         \x20   ui.help(&[(\"q\", \"quit\")]);\n\
+         \x20   ui.help(&[(\"Ctrl+Q\", \"quit\")]);\n\
          });",
     );
 
@@ -1527,11 +1533,17 @@ fn render_pricing(
                 .fg(theme.surface_text);
                 ui.text("");
                 ui.row(|ui| {
-                    if ui.button_with("Choose Sponsor", ButtonVariant::Primary) {
+                    if ui
+                        .button_with("Choose Sponsor", ButtonVariant::Primary)
+                        .clicked
+                    {
                         *show_modal = true;
                         *selected_plan = "Sponsor".to_string();
                     }
-                    if ui.button_with("Talk to Enterprise", ButtonVariant::Outline) {
+                    if ui
+                        .button_with("Talk to Enterprise", ButtonVariant::Outline)
+                        .clicked
+                    {
                         *show_modal = true;
                         *selected_plan = "Enterprise".to_string();
                     }
@@ -1559,7 +1571,10 @@ fn render_pricing(
                         ui.text("Thank you for supporting SLT!").fg(theme.surface_text);
                         ui.text("");
                         ui.row(|ui| {
-                            if ui.button_with("  Subscribe  ", ButtonVariant::Primary) {
+                            if ui
+                                .button_with("  Subscribe  ", ButtonVariant::Primary)
+                                .clicked
+                            {
                                 toasts.success(
                                     format!("Subscribed to {} plan!", selected_plan),
                                     tick,
@@ -1567,7 +1582,10 @@ fn render_pricing(
                                 *show_modal = false;
                             }
                             ui.text("  ");
-                            if ui.button_with("  Cancel  ", ButtonVariant::Outline) {
+                            if ui
+                                .button_with("  Cancel  ", ButtonVariant::Outline)
+                                .clicked
+                            {
                                 *show_modal = false;
                             }
                         });
@@ -1643,10 +1661,13 @@ fn render_contact(
         md_link(ui, "Discord Server", "https://discord.gg/slt");
         ui.text("");
         ui.row(|ui| {
-            if ui.button_with("View Docs", ButtonVariant::Primary) {
+            if ui.button_with("View Docs", ButtonVariant::Primary).clicked {
                 *nav_target = Some(1);
             }
-            if ui.button_with("View Pricing", ButtonVariant::Outline) {
+            if ui
+                .button_with("View Pricing", ButtonVariant::Outline)
+                .clicked
+            {
                 *nav_target = Some(3);
             }
         });
@@ -1658,7 +1679,7 @@ fn render_contact(
                 ui.form_field(field);
             }
         });
-        if ui.form_submit("Send") {
+        if ui.form_submit("Send").clicked {
             if contact_form.validate(&[validate_name, validate_email, validate_message]) {
                 toasts.success("Thanks for reaching out! We'll reply soon.", tick);
                 contact_form.submitted = true;
@@ -1775,7 +1796,7 @@ fn price_card(
             });
         }
         ui.text("");
-        if ui.button_with(cta_label, cta_variant) {
+        if ui.button_with(cta_label, cta_variant).clicked {
             *show_modal = true;
             *selected_plan = tier.to_string();
         }

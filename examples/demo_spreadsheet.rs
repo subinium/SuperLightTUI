@@ -451,8 +451,8 @@ fn main() -> std::io::Result<()> {
                         }
                     });
                     ui.help(&[
-                        ("q", "quit"),
-                        ("t", "theme"),
+                        ("Ctrl+Q", "quit"),
+                        ("Ctrl+T", "theme"),
                         ("Arrows", "navigate"),
                         ("e/Enter", "edit"),
                         ("Esc", "cancel"),

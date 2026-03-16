@@ -8,8 +8,8 @@ use crate::style::{
     Modifiers, Padding, Style, Theme,
 };
 use crate::widgets::{
-    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField, FormState,
-    ListState, MultiSelectState, RadioState, ScrollState, SelectState, SpinnerState,
+    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FilePickerState, FormField,
+    FormState, ListState, MultiSelectState, RadioState, ScrollState, SelectState, SpinnerState,
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
     ToastState, ToolApprovalState, TreeState,
 };
@@ -68,17 +68,43 @@ impl<T: 'static> State<T> {
     }
 }
 
-/// Result of a container mouse interaction.
+/// Interaction response returned by all widgets.
 ///
-/// Returned by [`Context::col`], [`Context::row`], and [`ContainerBuilder::col`] /
-/// [`ContainerBuilder::row`] so you can react to clicks and hover without a separate
-/// event loop.
-#[derive(Debug, Clone, Copy, Default)]
+/// Container methods return a [`Response`]. Check `.clicked`, `.changed`, etc.
+/// to react to user interactions.
+///
+/// # Examples
+///
+/// ```
+/// # use slt::*;
+/// # TestBackend::new(80, 24).render(|ui| {
+/// let r = ui.row(|ui| {
+///     ui.text("Save");
+/// });
+/// if r.clicked {
+///     // handle save
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Default)]
 pub struct Response {
-    /// Whether the container was clicked this frame.
+    /// Whether the widget was clicked this frame.
     pub clicked: bool,
-    /// Whether the mouse is over the container.
+    /// Whether the mouse is hovering over the widget.
     pub hovered: bool,
+    /// Whether the widget's value changed this frame.
+    pub changed: bool,
+    /// Whether the widget currently has keyboard focus.
+    pub focused: bool,
+    /// The rectangle the widget occupies after layout.
+    pub rect: Rect,
+}
+
+impl Response {
+    /// Create a Response with all fields false/default.
+    pub fn none() -> Self {
+        Self::default()
+    }
 }
 
 /// Direction for bar chart rendering.
@@ -262,6 +288,7 @@ pub struct Context {
     pub(crate) dark_mode: bool,
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
+    pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -280,6 +307,7 @@ struct ContextSnapshot {
     hook_states_len: usize,
     dark_mode: bool,
     deferred_draws_len: usize,
+    notification_queue_len: usize,
 }
 
 impl ContextSnapshot {
@@ -298,6 +326,7 @@ impl ContextSnapshot {
             hook_states_len: ctx.hook_states.len(),
             dark_mode: ctx.dark_mode,
             deferred_draws_len: ctx.deferred_draws.len(),
+            notification_queue_len: ctx.notification_queue.len(),
         }
     }
 
@@ -315,6 +344,7 @@ impl ContextSnapshot {
         ctx.hook_states.truncate(self.hook_states_len);
         ctx.dark_mode = self.dark_mode;
         ctx.deferred_draws.truncate(self.deferred_draws_len);
+        ctx.notification_queue.truncate(self.notification_queue_len);
     }
 }
 
@@ -1830,6 +1860,7 @@ impl Context {
             dark_mode: theme.is_dark,
             is_real_terminal: false,
             deferred_draws: Vec::new(),
+            notification_queue: std::mem::take(&mut state.notification_queue),
         }
     }
 
@@ -1953,7 +1984,7 @@ impl Context {
     /// hit-test map, so the call order must be stable across frames.
     pub fn interaction(&mut self) -> Response {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
-            return Response::default();
+            return Response::none();
         }
         let id = self.interaction_count;
         self.interaction_count += 1;
@@ -1990,7 +2021,7 @@ impl Context {
     /// let count = ui.use_state(|| 0i32);
     /// let val = count.get(ui);
     /// ui.text(format!("Count: {val}"));
-    /// if ui.button("+1") {
+    /// if ui.button("+1").clicked {
     ///     *count.get_mut(ui) += 1;
     /// }
     /// ```
@@ -2028,7 +2059,13 @@ impl Context {
         } else {
             let (stored_deps, _) = self.hook_states[idx]
                 .downcast_ref::<(D, T)>()
-                .expect("use_memo type mismatch");
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_memo type mismatch at hook index {} — expected {}",
+                        idx,
+                        std::any::type_name::<D>()
+                    )
+                });
             stored_deps != deps
         };
 
@@ -2044,8 +2081,72 @@ impl Context {
 
         let (_, value) = self.hook_states[idx]
             .downcast_ref::<(D, T)>()
-            .expect("use_memo type mismatch");
+            .unwrap_or_else(|| {
+                panic!(
+                    "use_memo type mismatch at hook index {} — expected {}",
+                    idx,
+                    std::any::type_name::<D>()
+                )
+            });
         value
+    }
+
+    /// Returns `light` color if current theme is light mode, `dark` color if dark mode.
+    pub fn light_dark(&self, light: Color, dark: Color) -> Color {
+        if self.theme.is_dark {
+            dark
+        } else {
+            light
+        }
+    }
+
+    /// Show a toast notification without managing ToastState.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// ui.notify("File saved!", ToastLevel::Success);
+    /// # });
+    /// ```
+    pub fn notify(&mut self, message: &str, level: ToastLevel) {
+        let tick = self.tick;
+        self.notification_queue
+            .push((message.to_string(), level, tick));
+    }
+
+    pub(crate) fn render_notifications(&mut self) {
+        self.notification_queue
+            .retain(|(_, _, created)| self.tick.saturating_sub(*created) < 180);
+        if self.notification_queue.is_empty() {
+            return;
+        }
+
+        let items: Vec<(String, Color)> = self
+            .notification_queue
+            .iter()
+            .rev()
+            .map(|(message, level, _)| {
+                let color = match level {
+                    ToastLevel::Info => self.theme.primary,
+                    ToastLevel::Success => self.theme.success,
+                    ToastLevel::Warning => self.theme.warning,
+                    ToastLevel::Error => self.theme.error,
+                };
+                (message.clone(), color)
+            })
+            .collect();
+
+        self.overlay(|ui| {
+            ui.row(|ui| {
+                ui.spacer();
+                ui.col(|ui| {
+                    for (message, color) in &items {
+                        ui.styled(format!("● {message}"), Style::new().fg(*color));
+                    }
+                });
+            });
+        });
     }
 }
 
@@ -2084,6 +2185,45 @@ fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String
         parts.push(format!("{cell}{}", " ".repeat(padding)));
     }
     parts.join(separator)
+}
+
+fn table_visible_len(state: &TableState) -> usize {
+    if state.page_size == 0 {
+        return state.visible_indices().len();
+    }
+
+    let start = state
+        .page
+        .saturating_mul(state.page_size)
+        .min(state.visible_indices().len());
+    let end = (start + state.page_size).min(state.visible_indices().len());
+    end.saturating_sub(start)
+}
+
+pub(crate) fn handle_vertical_nav(
+    selected: &mut usize,
+    max_index: usize,
+    key_code: KeyCode,
+) -> bool {
+    match key_code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            if *selected > 0 {
+                *selected -= 1;
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if *selected < max_index {
+                *selected += 1;
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
 }
 
 fn format_compact_number(value: f64) -> String {
@@ -2211,4 +2351,62 @@ fn open_url(url: &str) -> std::io::Result<()> {
             .spawn()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestBackend;
+
+    #[test]
+    fn use_memo_type_mismatch_includes_hook_index_and_expected_type() {
+        let mut state = FrameState::default();
+        let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+        ctx.hook_states.push(Box::new(42u32));
+        ctx.hook_cursor = 0;
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let deps = 1u8;
+            let _ = ctx.use_memo(&deps, |_| 7u8);
+        }))
+        .expect_err("use_memo should panic on type mismatch");
+
+        let message = panic_message(panic);
+        assert!(
+            message.contains("use_memo type mismatch at hook index 0"),
+            "panic message should include hook index, got: {message}"
+        );
+        assert!(
+            message.contains(std::any::type_name::<u8>()),
+            "panic message should include expected type, got: {message}"
+        );
+    }
+
+    #[test]
+    fn light_dark_uses_current_theme_mode() {
+        let mut dark_backend = TestBackend::new(10, 2);
+        dark_backend.render(|ui| {
+            let color = ui.light_dark(Color::Red, Color::Blue);
+            ui.text("X").fg(color);
+        });
+        assert_eq!(dark_backend.buffer().get(0, 0).style.fg, Some(Color::Blue));
+
+        let mut light_backend = TestBackend::new(10, 2);
+        light_backend.render(|ui| {
+            ui.set_theme(Theme::light());
+            let color = ui.light_dark(Color::Red, Color::Blue);
+            ui.text("X").fg(color);
+        });
+        assert_eq!(light_backend.buffer().get(0, 0).style.fg, Some(Color::Red));
+    }
+
+    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+        if let Some(s) = panic.downcast_ref::<String>() {
+            s.clone()
+        } else if let Some(s) = panic.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else {
+            "<non-string panic payload>".to_string()
+        }
+    }
 }

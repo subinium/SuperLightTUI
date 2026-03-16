@@ -154,7 +154,7 @@ fn main() -> std::io::Result<()> {
                                 ui.table(&mut proc_table);
                                 ui.separator();
                                 ui.row(|ui| {
-                                    if ui.button("Kill") {
+                                    if ui.button("Kill").clicked {
                                         let row = proc_table.selected;
                                         if let Some(name) =
                                             proc_table.rows.get(row).and_then(|r| r.get(1))
@@ -162,7 +162,7 @@ fn main() -> std::io::Result<()> {
                                             toasts.warning(format!("Killed: {name}"), tick);
                                         }
                                     }
-                                    if ui.button("Restart") {
+                                    if ui.button("Restart").clicked {
                                         let row = proc_table.selected;
                                         if let Some(name) =
                                             proc_table.rows.get(row).and_then(|r| r.get(1))
@@ -199,8 +199,8 @@ fn main() -> std::io::Result<()> {
 
                     ui.divider_text("Controls");
                     ui.help(&[
-                        ("q", "quit"),
-                        ("t", "theme"),
+                        ("Ctrl+Q", "quit"),
+                        ("Ctrl+T", "theme"),
                         ("Tab", "focus"),
                         ("j/k", "select"),
                     ]);

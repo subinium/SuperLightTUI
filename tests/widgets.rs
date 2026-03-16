@@ -1,5 +1,18 @@
 use slt::widgets::*;
-use slt::TestBackend;
+use slt::{KeyCode, KeyMap, KeyModifiers, TestBackend};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn make_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("slt_{prefix}_{}_{}", std::process::id(), nanos));
+    fs::create_dir_all(&dir).expect("failed to create temp dir");
+    dir
+}
 
 #[test]
 fn text_renders() {
@@ -348,6 +361,122 @@ fn list_filter_empty_shows_all() {
 }
 
 #[test]
+fn file_picker_lists_directories_before_files() {
+    let root = make_temp_dir("file_picker_list");
+    fs::create_dir_all(root.join("alpha")).expect("failed to create subdir");
+    fs::write(root.join("zeta.txt"), b"data").expect("failed to create file");
+
+    let mut state = FilePickerState::new(root.clone());
+    state.refresh();
+
+    assert!(state.entries.iter().any(|e| e.name == "alpha" && e.is_dir));
+    assert!(state
+        .entries
+        .iter()
+        .any(|e| e.name == "zeta.txt" && !e.is_dir));
+
+    let first_file = state.entries.iter().position(|e| !e.is_dir);
+    if let Some(first_file_idx) = first_file {
+        assert!(state.entries[..first_file_idx].iter().all(|e| e.is_dir));
+    }
+
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[test]
+fn file_picker_navigation_enter_dir_and_backspace_parent() {
+    let root = make_temp_dir("file_picker_nav");
+    let child = root.join("child");
+    fs::create_dir_all(&child).expect("failed to create child dir");
+
+    let mut state = FilePickerState::new(root.clone());
+    let mut tb = TestBackend::new(80, 24);
+
+    tb.render(|ui| {
+        let _ = ui.file_picker(&mut state);
+    });
+
+    let enter = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(enter, 0, 1, |ui| {
+        let _ = ui.file_picker(&mut state);
+    });
+    assert_eq!(state.current_dir, child);
+
+    let back = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Backspace)
+        .build();
+    tb.render_with_events(back, 0, 1, |ui| {
+        let _ = ui.file_picker(&mut state);
+    });
+    assert_eq!(state.current_dir, root);
+
+    fs::remove_dir_all(state.current_dir.clone()).expect("failed to clean temp dir");
+}
+
+#[test]
+fn file_picker_extension_filter() {
+    let root = make_temp_dir("file_picker_ext");
+    fs::create_dir_all(root.join("dir_a")).expect("failed to create dir");
+    fs::write(root.join("main.rs"), b"fn main() {}\n").expect("failed to create rs file");
+    fs::write(root.join("notes.txt"), b"text\n").expect("failed to create txt file");
+
+    let mut state = FilePickerState::new(root.clone()).extensions(&["rs"]);
+    state.refresh();
+
+    assert!(state.entries.iter().any(|e| e.name == "dir_a" && e.is_dir));
+    assert!(state
+        .entries
+        .iter()
+        .any(|e| e.name == "main.rs" && !e.is_dir));
+    assert!(!state.entries.iter().any(|e| e.name == "notes.txt"));
+
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[test]
+fn file_picker_hidden_file_toggle() {
+    let root = make_temp_dir("file_picker_hidden");
+    fs::write(root.join(".secret"), b"hidden\n").expect("failed to create hidden file");
+    fs::write(root.join("visible.txt"), b"visible\n").expect("failed to create visible file");
+
+    let mut state = FilePickerState::new(root.clone());
+    state.refresh();
+    assert!(!state.entries.iter().any(|e| e.name == ".secret"));
+
+    state.show_hidden = true;
+    state.dirty = true;
+    state.refresh();
+    assert!(state.entries.iter().any(|e| e.name == ".secret"));
+
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[test]
+fn file_picker_response_changed_on_file_select() {
+    let root = make_temp_dir("file_picker_select");
+    let file = root.join("picked.txt");
+    fs::write(&file, b"pick me\n").expect("failed to create file");
+
+    let mut state = FilePickerState::new(root.clone());
+    let mut tb = TestBackend::new(80, 24);
+    let mut changed = false;
+
+    let enter = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(enter, 0, 1, |ui| {
+        changed = ui.file_picker(&mut state).changed;
+    });
+
+    assert!(changed);
+    assert_eq!(state.selected_file, Some(file));
+
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[test]
 fn table_renders_headers() {
     let mut tb = TestBackend::new(60, 10);
     let mut table = TableState::new(
@@ -667,6 +796,55 @@ fn help_renders_keys() {
 }
 
 #[test]
+fn keymap_builder_builds_bindings() {
+    let keymap = KeyMap::new()
+        .bind('q', "Quit")
+        .bind_code(KeyCode::Up, "Move up")
+        .bind_mod('s', KeyModifiers::CONTROL, "Save");
+
+    assert_eq!(keymap.bindings.len(), 3);
+    assert_eq!(keymap.bindings[0].key, KeyCode::Char('q'));
+    assert_eq!(keymap.bindings[0].display, "q");
+    assert_eq!(keymap.bindings[1].key, KeyCode::Up);
+    assert_eq!(keymap.bindings[1].display, "↑");
+    assert_eq!(keymap.bindings[2].key, KeyCode::Char('s'));
+    assert_eq!(keymap.bindings[2].modifiers, Some(KeyModifiers::CONTROL));
+    assert_eq!(keymap.bindings[2].display, "Ctrl+S");
+}
+
+#[test]
+fn keymap_visible_bindings_filters_hidden() {
+    let keymap = KeyMap::new()
+        .bind('q', "Quit")
+        .bind_hidden('?', "Toggle help")
+        .bind_code(KeyCode::Tab, "Next");
+
+    let visible: Vec<_> = keymap.visible_bindings().collect();
+    assert_eq!(visible.len(), 2);
+    assert_eq!(visible[0].description, "Quit");
+    assert_eq!(visible[1].description, "Next");
+}
+
+#[test]
+fn help_from_keymap_renders_visible_bindings() {
+    let keymap = KeyMap::new()
+        .bind('q', "quit")
+        .bind_mod('s', KeyModifiers::CONTROL, "save")
+        .bind_hidden('?', "toggle help");
+
+    let mut tb = TestBackend::new(60, 5);
+    tb.render(|ui| {
+        ui.help_from_keymap(&keymap);
+    });
+
+    tb.assert_contains("q");
+    tb.assert_contains("quit");
+    tb.assert_contains("Ctrl+S");
+    tb.assert_contains("save");
+    assert!(!tb.to_string().contains("toggle help"));
+}
+
+#[test]
 fn textarea_renders() {
     let mut tb = TestBackend::new(40, 10);
     let mut ta = TextareaState::new();
@@ -855,6 +1033,79 @@ fn toast_empty_no_render() {
     tb.render(|ui| {
         ui.toast(&mut toasts);
     });
+}
+
+#[test]
+fn slider_right_key_increases_value() {
+    let mut tb = TestBackend::new(80, 5);
+    let mut value = 50.0_f64;
+    let mut changed = false;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        changed = ui.slider("Volume", &mut value, 0.0..=100.0).changed;
+    });
+
+    assert!(changed);
+    assert!(value > 50.0);
+}
+
+#[test]
+fn slider_left_key_decreases_value() {
+    let mut tb = TestBackend::new(80, 5);
+    let mut value = 50.0_f64;
+    let mut changed = false;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        changed = ui.slider("Volume", &mut value, 0.0..=100.0).changed;
+    });
+
+    assert!(changed);
+    assert!(value < 50.0);
+}
+
+#[test]
+fn confirm_y_key_sets_true_and_clicks() {
+    let mut tb = TestBackend::new(80, 5);
+    let mut answer = false;
+    let mut clicked = false;
+    let events = slt::EventBuilder::new().key('y').build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        clicked = ui.confirm("Delete this file?", &mut answer).clicked;
+    });
+
+    assert!(clicked);
+    assert!(answer);
+}
+
+#[test]
+fn confirm_n_key_sets_false_and_clicks() {
+    let mut tb = TestBackend::new(80, 5);
+    let mut answer = true;
+    let mut clicked = false;
+    let events = slt::EventBuilder::new().key('n').build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        clicked = ui.confirm("Delete this file?", &mut answer).clicked;
+    });
+
+    assert!(clicked);
+    assert!(!answer);
+}
+
+#[test]
+fn notify_renders_without_toast_state() {
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.notify("File saved!", slt::ToastLevel::Success);
+    });
+    tb.assert_contains("File saved!");
 }
 
 #[test]
@@ -1286,7 +1537,7 @@ fn modal_renders_centered_on_large_screen() {
         ui.modal(|ui| {
             ui.bordered(slt::Border::Rounded).pad(1).col(|ui| {
                 ui.text("Hello Modal");
-                if ui.button("OK") {}
+                if ui.button("OK").clicked {}
             });
         });
     });
@@ -1302,7 +1553,7 @@ fn modal_button_activates_with_enter() {
     let mut tb = TestBackend::new(40, 10);
     tb.render_with_events(events, 0, 1, |ui| {
         ui.modal(|ui| {
-            if ui.button("Confirm") {
+            if ui.button("Confirm").clicked {
                 activated = true;
             }
         });
@@ -2598,7 +2849,7 @@ fn alert_dismiss_on_key() {
     let mut dismissed = false;
     let events = slt::EventBuilder::new().key('x').build();
     tb.run_with_events(events, |ui| {
-        if ui.alert("msg", slt::AlertLevel::Info) {
+        if ui.alert("msg", slt::AlertLevel::Info).clicked {
             dismissed = true;
         }
     });
@@ -2740,4 +2991,50 @@ fn code_block_numbered_has_line_numbers() {
     assert!(output.contains("2"));
     assert!(output.contains("3"));
     assert!(output.contains("line1"));
+}
+
+#[test]
+fn demo_v094_content_does_not_panic() {
+    use slt::*;
+    let mut tb = TestBackend::new(120, 40);
+    let mut acc_gen = true;
+    let mut acc_adv = false;
+    let mut alert = true;
+    tb.render(|ui| {
+        if alert {
+            ui.alert("Test alert", AlertLevel::Success);
+        }
+        ui.divider_text("Nav");
+        ui.breadcrumb(&["Home", "Settings"]);
+        ui.stat("Uptime", "14d");
+        ui.stat_trend("Revenue", "$12,400", Trend::Up);
+        ui.stat_colored("CPU", "72%", Color::Yellow);
+        ui.badge("v0.9.4");
+        ui.badge_colored("Stable", Color::Green);
+        ui.key_hint("Ctrl+S");
+        ui.accordion("General", &mut acc_gen, |ui| {
+            ui.definition_list(&[("Theme", "Dark")]);
+        });
+        ui.accordion("Advanced", &mut acc_adv, |ui| {
+            ui.definition_list(&[("Log", "debug")]);
+        });
+        ui.code_block_numbered("fn main() {}");
+        ui.empty_state("No items", "Add some");
+    });
+    tb.assert_contains("v0.9.4");
+}
+
+#[test]
+fn demo_list_set_items_no_panic() {
+    use slt::*;
+    let mut tb = TestBackend::new(80, 24);
+    let mut list = ListState::new(vec!["A", "B", "C", "D", "E"]);
+    list.selected = 4;
+    // Shrink items - old selected (4) should be clamped
+    list.set_items(vec!["X".to_string(), "Y".to_string(), "Z".to_string()]);
+    assert_eq!(list.selected, 2);
+    tb.render(|ui| {
+        ui.list(&mut list);
+    });
+    tb.assert_contains("X");
 }

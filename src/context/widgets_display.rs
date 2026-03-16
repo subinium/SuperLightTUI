@@ -1,4 +1,5 @@
 use super::*;
+use crate::KeyMap;
 
 impl Context {
     // ── text ──────────────────────────────────────────────────────────
@@ -102,6 +103,15 @@ impl Context {
         });
         self.last_text_idx = Some(self.commands.len() - 1);
         self
+    }
+
+    /// Render help bar from a KeyMap. Shows visible bindings as key-description pairs.
+    pub fn help_from_keymap(&mut self, keymap: &KeyMap) -> Response {
+        let pairs: Vec<(&str, &str)> = keymap
+            .visible_bindings()
+            .map(|binding| (binding.display.as_str(), binding.description.as_str()))
+            .collect();
+        self.help(&pairs)
     }
 
     // ── style chain (applies to last text) ───────────────────────────
@@ -226,7 +236,7 @@ impl Context {
     /// ui.image(&half);
     /// # });
     /// ```
-    pub fn image(&mut self, img: &HalfBlockImage) {
+    pub fn image(&mut self, img: &HalfBlockImage) -> Response {
         let width = img.width;
         let height = img.height;
 
@@ -242,6 +252,8 @@ impl Context {
                 });
             }
         });
+
+        Response::none()
     }
 
     /// Render streaming text with a typing cursor indicator.
@@ -259,7 +271,7 @@ impl Context {
     /// ui.streaming_text(&mut stream);
     /// # });
     /// ```
-    pub fn streaming_text(&mut self, state: &mut StreamingTextState) {
+    pub fn streaming_text(&mut self, state: &mut StreamingTextState) -> Response {
         if state.streaming {
             state.cursor_tick = state.cursor_tick.wrapping_add(1);
             state.cursor_visible = (state.cursor_tick / 8) % 2 == 0;
@@ -269,7 +281,7 @@ impl Context {
             let cursor = if state.cursor_visible { "▌" } else { " " };
             let primary = self.theme.primary;
             self.text(cursor).fg(primary);
-            return;
+            return Response::none();
         }
 
         if !state.content.is_empty() {
@@ -279,6 +291,8 @@ impl Context {
                 self.text_wrap(&state.content);
             }
         }
+
+        Response::none()
     }
 
     /// Render a tool approval widget with approve/reject buttons.
@@ -295,7 +309,8 @@ impl Context {
     /// }
     /// # });
     /// ```
-    pub fn tool_approval(&mut self, state: &mut ToolApprovalState) {
+    pub fn tool_approval(&mut self, state: &mut ToolApprovalState) -> Response {
+        let old_action = state.action;
         let theme = self.theme;
         self.bordered(Border::Rounded).col(|ui| {
             ui.row(|ui| {
@@ -306,10 +321,10 @@ impl Context {
 
             if state.action == ApprovalAction::Pending {
                 ui.row(|ui| {
-                    if ui.button("✓ Approve") {
+                    if ui.button("✓ Approve").clicked {
                         state.action = ApprovalAction::Approved;
                     }
-                    if ui.button("✗ Reject") {
+                    if ui.button("✗ Reject").clicked {
                         state.action = ApprovalAction::Rejected;
                     }
                 });
@@ -322,6 +337,11 @@ impl Context {
                 ui.text(label).fg(color).bold();
             }
         });
+
+        Response {
+            changed: state.action != old_action,
+            ..Response::none()
+        }
     }
 
     /// Render a context bar showing active context items with token counts.
@@ -336,9 +356,9 @@ impl Context {
     /// ui.context_bar(&items);
     /// # });
     /// ```
-    pub fn context_bar(&mut self, items: &[ContextItem]) {
+    pub fn context_bar(&mut self, items: &[ContextItem]) -> Response {
         if items.is_empty() {
-            return;
+            return Response::none();
         }
 
         let theme = self.theme;
@@ -357,9 +377,11 @@ impl Context {
             ui.spacer();
             ui.text(format!("Σ {}", format_token_count(total))).dim();
         });
+
+        Response::none()
     }
 
-    pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> bool {
+    pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
         use crate::widgets::AlertLevel;
 
         let theme = self.theme;
@@ -373,15 +395,112 @@ impl Context {
         let focused = self.register_focusable();
         let key_dismiss = focused && (self.key_code(KeyCode::Enter) || self.key('x'));
 
-        let resp = self.container().col(|ui| {
+        let mut response = self.container().col(|ui| {
             ui.line(|ui| {
                 ui.text(format!(" {icon} ")).fg(color).bold();
                 ui.text(message).grow(1);
                 ui.text(" [×] ").dim();
             });
         });
+        response.focused = focused;
+        if key_dismiss {
+            response.clicked = true;
+        }
 
-        key_dismiss || resp.clicked
+        response
+    }
+
+    /// Yes/No confirmation dialog. Returns Response with .clicked=true when answered.
+    ///
+    /// `result` is set to true for Yes, false for No.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut answer = false;
+    /// let r = ui.confirm("Delete this file?", &mut answer);
+    /// if r.clicked && answer { /* user confirmed */ }
+    /// # });
+    /// ```
+    pub fn confirm(&mut self, question: &str, result: &mut bool) -> Response {
+        let focused = self.register_focusable();
+        let selected_yes = self.use_state(|| true);
+        let mut is_yes = *selected_yes.get(self);
+        let mut clicked = false;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    match key.code {
+                        KeyCode::Char('y') => {
+                            is_yes = true;
+                            *result = true;
+                            clicked = true;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Char('n') => {
+                            is_yes = false;
+                            *result = false;
+                            clicked = true;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                            is_yes = !is_yes;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Enter => {
+                            *result = is_yes;
+                            clicked = true;
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        *selected_yes.get_mut(self) = is_yes;
+
+        let yes_style = if is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.success).bold()
+            } else {
+                Style::new().fg(self.theme.success).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+        let no_style = if !is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.error).bold()
+            } else {
+                Style::new().fg(self.theme.error).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+
+        let mut response = self.row(|ui| {
+            ui.text(question);
+            ui.text(" ");
+            ui.styled("[Yes]", yes_style);
+            ui.text(" ");
+            ui.styled("[No]", no_style);
+        });
+        response.focused = focused;
+        response.clicked = clicked;
+        response.changed = clicked;
+        response
     }
 
     pub fn breadcrumb(&mut self, segments: &[&str]) -> Option<usize> {
@@ -419,9 +538,15 @@ impl Context {
         clicked_idx
     }
 
-    pub fn accordion(&mut self, title: &str, open: &mut bool, f: impl FnOnce(&mut Context)) {
+    pub fn accordion(
+        &mut self,
+        title: &str,
+        open: &mut bool,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
         let theme = self.theme;
         let focused = self.register_focusable();
+        let old_open = *open;
 
         if focused && self.key_code(KeyCode::Enter) {
             *open = !*open;
@@ -430,23 +555,27 @@ impl Context {
         let icon = if *open { "▾" } else { "▸" };
         let title_color = if focused { theme.primary } else { theme.text };
 
-        let resp = self.container().col(|ui| {
+        let mut response = self.container().col(|ui| {
             ui.line(|ui| {
                 ui.text(icon).fg(title_color);
                 ui.text(format!(" {title}")).bold().fg(title_color);
             });
         });
 
-        if resp.clicked {
+        if response.clicked {
             *open = !*open;
         }
 
         if *open {
             self.container().pl(2).col(f);
         }
+
+        response.focused = focused;
+        response.changed = *open != old_open;
+        response
     }
 
-    pub fn definition_list(&mut self, items: &[(&str, &str)]) {
+    pub fn definition_list(&mut self, items: &[(&str, &str)]) -> Response {
         let max_key_width = items
             .iter()
             .map(|(k, _)| unicode_width::UnicodeWidthStr::width(*k))
@@ -463,9 +592,11 @@ impl Context {
                 });
             }
         });
+
+        Response::none()
     }
 
-    pub fn divider_text(&mut self, label: &str) {
+    pub fn divider_text(&mut self, label: &str) -> Response {
         let w = self.width();
         let label_len = unicode_width::UnicodeWidthStr::width(label) as u32;
         let pad = 1u32;
@@ -479,40 +610,55 @@ impl Context {
             ui.text(format!(" {} ", label)).fg(theme.text);
             ui.text(&right).fg(theme.border);
         });
+
+        Response::none()
     }
 
-    pub fn badge(&mut self, label: &str) {
+    pub fn badge(&mut self, label: &str) -> Response {
         let theme = self.theme;
-        self.badge_colored(label, theme.primary);
+        self.badge_colored(label, theme.primary)
     }
 
-    pub fn badge_colored(&mut self, label: &str, color: Color) {
+    pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
         let fg = Color::contrast_fg(color);
         self.text(format!(" {} ", label)).fg(fg).bg(color);
+
+        Response::none()
     }
 
-    pub fn key_hint(&mut self, key: &str) {
+    pub fn key_hint(&mut self, key: &str) -> Response {
         let theme = self.theme;
         self.text(format!(" {} ", key))
             .reversed()
             .fg(theme.text_dim);
+
+        Response::none()
     }
 
-    pub fn stat(&mut self, label: &str, value: &str) {
+    pub fn stat(&mut self, label: &str, value: &str) -> Response {
         self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold();
         });
+
+        Response::none()
     }
 
-    pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) {
+    pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
         self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold().fg(color);
         });
+
+        Response::none()
     }
 
-    pub fn stat_trend(&mut self, label: &str, value: &str, trend: crate::widgets::Trend) {
+    pub fn stat_trend(
+        &mut self,
+        label: &str,
+        value: &str,
+        trend: crate::widgets::Trend,
+    ) -> Response {
         let theme = self.theme;
         let (arrow, color) = match trend {
             crate::widgets::Trend::Up => ("↑", theme.success),
@@ -525,13 +671,17 @@ impl Context {
                 ui.text(format!(" {arrow}")).fg(color);
             });
         });
+
+        Response::none()
     }
 
-    pub fn empty_state(&mut self, title: &str, description: &str) {
+    pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
         self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
         });
+
+        Response::none()
     }
 
     pub fn empty_state_action(
@@ -539,19 +689,24 @@ impl Context {
         title: &str,
         description: &str,
         action_label: &str,
-    ) -> bool {
+    ) -> Response {
         let mut clicked = false;
         self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
-            if ui.button(action_label) {
+            if ui.button(action_label).clicked {
                 clicked = true;
             }
         });
-        clicked
+
+        Response {
+            clicked,
+            changed: clicked,
+            ..Response::none()
+        }
     }
 
-    pub fn code_block(&mut self, code: &str) {
+    pub fn code_block(&mut self, code: &str) -> Response {
         let theme = self.theme;
         self.bordered(Border::Rounded)
             .bg(theme.surface)
@@ -561,9 +716,11 @@ impl Context {
                     render_highlighted_line(ui, line);
                 }
             });
+
+        Response::none()
     }
 
-    pub fn code_block_numbered(&mut self, code: &str) {
+    pub fn code_block_numbered(&mut self, code: &str) -> Response {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = format!("{}", lines.len()).len();
         let theme = self.theme;
@@ -579,6 +736,8 @@ impl Context {
                     });
                 }
             });
+
+        Response::none()
     }
 
     /// Enable word-boundary wrapping on the last rendered text element.
@@ -997,7 +1156,7 @@ impl Context {
 
     pub(super) fn response_for(&self, interaction_id: usize) -> Response {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
-            return Response::default();
+            return Response::none();
         }
         if let Some(rect) = self.prev_hit_map.get(interaction_id) {
             let clicked = self
@@ -1012,9 +1171,15 @@ impl Context {
                     mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
                 })
                 .unwrap_or(false);
-            Response { clicked, hovered }
+            Response {
+                clicked,
+                hovered,
+                changed: false,
+                focused: false,
+                rect: *rect,
+            }
         } else {
-            Response::default()
+            Response::none()
         }
     }
 
@@ -1112,7 +1277,7 @@ impl Context {
     /// Render a submit button.
     ///
     /// Returns `true` when the button is clicked or activated.
-    pub fn form_submit(&mut self, label: impl Into<String>) -> bool {
+    pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
         self.button(label)
     }
 }

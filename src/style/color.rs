@@ -118,9 +118,9 @@ impl Color {
         let alpha = alpha.clamp(0.0, 1.0);
         let (r1, g1, b1) = self.to_rgb();
         let (r2, g2, b2) = other.to_rgb();
-        let r = (r1 as f32 * alpha + r2 as f32 * (1.0 - alpha)) as u8;
-        let g = (g1 as f32 * alpha + g2 as f32 * (1.0 - alpha)) as u8;
-        let b = (b1 as f32 * alpha + b2 as f32 * (1.0 - alpha)) as u8;
+        let r = (r1 as f32 * alpha + r2 as f32 * (1.0 - alpha)).round() as u8;
+        let g = (g1 as f32 * alpha + g2 as f32 * (1.0 - alpha)).round() as u8;
+        let b = (b1 as f32 * alpha + b2 as f32 * (1.0 - alpha)).round() as u8;
         Color::Rgb(r, g, b)
     }
 
@@ -309,5 +309,18 @@ fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
             let v = 8 + 10 * (idx - 232);
             (v, v, v)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blend_halfway_rounds_to_128() {
+        assert_eq!(
+            Color::Rgb(255, 255, 255).blend(Color::Rgb(0, 0, 0), 0.5),
+            Color::Rgb(128, 128, 128)
+        );
     }
 }

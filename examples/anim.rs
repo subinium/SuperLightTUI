@@ -173,7 +173,7 @@ fn main() -> std::io::Result<()> {
                         if cb_fired {
                             ui.text("on_complete fired!").fg(Color::Green);
                         }
-                        if ui.button("Restart") {
+                        if ui.button("Restart").clicked {
                             cb_tween.reset(ui.tick());
                             cb_fired = false;
                         }
