@@ -1923,7 +1923,7 @@ impl Context {
         Response::none()
     }
 
-    fn parse_inline_segments(
+    pub(crate) fn parse_inline_segments(
         text: &str,
         base: Style,
         bold: Style,
