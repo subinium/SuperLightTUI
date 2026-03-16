@@ -72,7 +72,9 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         move |ui: &mut Context| {
-            if ui.key('q') || ui.key_code(KeyCode::Esc) {
+            let quit_key = ui.key('q');
+            let esc_key = ui.key_code(KeyCode::Esc);
+            if quit_key || esc_key {
                 ui.quit();
             }
 
@@ -108,7 +110,7 @@ fn render_member(ui: &mut Context, idx: usize, member_images: &[Vec<u8>]) {
             .w(34)
             .p(1)
             .col(|ui| {
-                ui.kitty_image(img, 200, 300, 30, 18);
+                ui.kitty_image_fit(img, 200, 237);
             });
 
         ui.bordered(Border::Single)
@@ -174,7 +176,7 @@ fn load_member_image(member: &MemberProfile) -> Vec<u8> {
     if let Some(rgba) = try_load_image_file(member.image_path) {
         return rgba;
     }
-    gen_gradient(200, 300, member.placeholder_color)
+    gen_gradient(200, 237, member.placeholder_color)
 }
 
 fn try_load_image_file(path: &str) -> Option<Vec<u8>> {
@@ -209,7 +211,7 @@ fn jpeg_decoder(data: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
     // Try sips (macOS)
     let status = std::process::Command::new("sips")
         .args(["-s", "format", "jpeg", "-s", "formatOptions", "100"])
-        .args(["--resampleWidth", "200", "--resampleHeight", "300"])
+        .args(["--resampleWidth", "200", "--resampleHeight", "237"])
         .args(["-s", "format", "bmp", tmp_in, "--out", tmp_out])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

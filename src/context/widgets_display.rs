@@ -305,6 +305,48 @@ impl Context {
         });
     }
 
+    /// Render a pixel-perfect image with automatic fit-to-container.
+    ///
+    /// Loads raw RGBA data and scales/crops to fit the container size.
+    /// The image is resized using nearest-neighbor to fill the container
+    /// while maintaining aspect ratio, then center-cropped to exact size.
+    ///
+    /// # Arguments
+    /// * `rgba` - Raw RGBA pixel data (4 bytes per pixel)
+    /// * `src_width` - Source image width in pixels
+    /// * `src_height` - Source image height in pixels
+    pub fn kitty_image_fit(&mut self, rgba: &[u8], src_width: u32, src_height: u32) {
+        let rgba = rgba.to_vec();
+        let sw = src_width;
+        let sh = src_height;
+
+        self.container().grow(1).draw(move |buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+
+            let target_pw = rect.width * 8;
+            let target_ph = rect.height * 16;
+
+            let resized = resize_cover_crop(&rgba, sw, sh, target_pw, target_ph);
+            let encoded = base64_encode(&resized);
+            let chunks = split_base64(&encoded, 4096);
+            let mut seq = String::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                let more = if i < chunks.len() - 1 { 1 } else { 0 };
+                if i == 0 {
+                    seq.push_str(&format!(
+                        "\x1b_Ga=T,f=32,s={},v={},c={},r={},C=1,q=2,m={};{}\x1b\\",
+                        target_pw, target_ph, rect.width, rect.height, more, chunk
+                    ));
+                } else {
+                    seq.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk));
+                }
+            }
+            buf.raw_sequence(rect.x, rect.y, seq);
+        });
+    }
+
     /// Render streaming text with a typing cursor indicator.
     ///
     /// Displays the accumulated text content. While `streaming` is true,
@@ -1848,6 +1890,59 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
         ui.text(&trimmed[pos..end]);
         pos = end;
     }
+}
+
+fn resize_cover_crop(rgba: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
+        return vec![0u8; (dst_w * dst_h * 4) as usize];
+    }
+
+    let scale_x = dst_w as f64 / src_w as f64;
+    let scale_y = dst_h as f64 / src_h as f64;
+    let scale = scale_x.max(scale_y);
+
+    let scaled_w = (src_w as f64 * scale).round() as u32;
+    let scaled_h = (src_h as f64 * scale).round() as u32;
+
+    let mut scaled = Vec::with_capacity((scaled_w * scaled_h * 4) as usize);
+    for y in 0..scaled_h {
+        for x in 0..scaled_w {
+            let sx = ((x as f64 / scale).floor() as u32).min(src_w - 1);
+            let sy = ((y as f64 / scale).floor() as u32).min(src_h - 1);
+            let idx = ((sy * src_w + sx) * 4) as usize;
+            if idx + 3 < rgba.len() {
+                scaled.extend_from_slice(&rgba[idx..idx + 4]);
+            } else {
+                scaled.extend_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+    }
+
+    let crop_x = scaled_w.saturating_sub(dst_w) / 2;
+    let crop_y = scaled_h.saturating_sub(dst_h) / 2;
+
+    let mut result = Vec::with_capacity((dst_w * dst_h * 4) as usize);
+    for y in 0..dst_h {
+        let src_y = crop_y + y;
+        if src_y >= scaled_h {
+            break;
+        }
+        for x in 0..dst_w {
+            let src_x = crop_x + x;
+            if src_x >= scaled_w {
+                result.extend_from_slice(&[0, 0, 0, 255]);
+                continue;
+            }
+            let idx = ((src_y * scaled_w + src_x) * 4) as usize;
+            if idx + 3 < scaled.len() {
+                result.extend_from_slice(&scaled[idx..idx + 4]);
+            } else {
+                result.extend_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+    }
+
+    result
 }
 
 fn base64_encode(data: &[u8]) -> String {

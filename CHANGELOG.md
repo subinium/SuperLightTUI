@@ -5,7 +5,9 @@
 ### Features
 
 - **Kitty graphics protocol**: `kitty_image()` renders pixel-perfect images via Kitty protocol (Ghostty, Kitty, WezTerm)
-- **demo_wiki**: BLACKPINK wiki-style demo with Kitty images and tabbed member profiles
+- **`kitty_image_fit()`**: Auto-resize + center-crop images to fill container. Nearest-neighbor scaling, no external dependencies.
+- **Kitty image cleanup**: Previous-frame images are deleted before rendering new ones (fixes tab-switch ghost images)
+- **demo_wiki**: BLACKPINK wiki-style demo with real namu wiki photos via Kitty protocol
 
 ## [0.12.5] — 2026-03-17
 
