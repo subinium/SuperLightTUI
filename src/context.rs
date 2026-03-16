@@ -1,4 +1,4 @@
-use crate::chart::{build_histogram_config, render_chart, ChartBuilder, HistogramBuilder};
+use crate::chart::{build_histogram_config, render_chart, Candle, ChartBuilder, HistogramBuilder};
 use crate::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseKind};
 use crate::halfblock::HalfBlockImage;
 use crate::layout::{Command, Direction};

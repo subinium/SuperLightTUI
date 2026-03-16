@@ -50,6 +50,8 @@ pub enum Marker {
 pub enum GraphType {
     /// Connected points.
     Line,
+    /// Connected points with filled area to baseline.
+    Area,
     /// Unconnected points.
     Scatter,
     /// Vertical bars from the x-axis baseline.
@@ -80,6 +82,10 @@ pub struct Axis {
     pub bounds: Option<(f64, f64)>,
     /// Optional manual tick labels.
     pub labels: Option<Vec<String>>,
+    /// Optional manual tick positions.
+    pub ticks: Option<Vec<f64>>,
+    /// Optional axis title style override.
+    pub title_style: Option<Style>,
     /// Axis text and tick style.
     pub style: Style,
 }
@@ -90,6 +96,8 @@ impl Default for Axis {
             title: None,
             bounds: None,
             labels: None,
+            ticks: None,
+            title_style: None,
             style: Style::new(),
         }
     }
@@ -108,6 +116,23 @@ pub struct Dataset {
     pub marker: Marker,
     /// Rendering mode for this dataset.
     pub graph_type: GraphType,
+    /// Upward segment color override.
+    pub up_color: Option<Color>,
+    /// Downward (or flat) segment color override.
+    pub down_color: Option<Color>,
+}
+
+/// OHLC candle datum.
+#[derive(Debug, Clone, Copy)]
+pub struct Candle {
+    /// Open price.
+    pub open: f64,
+    /// High price.
+    pub high: f64,
+    /// Low price.
+    pub low: f64,
+    /// Close price.
+    pub close: f64,
 }
 
 /// Chart configuration.
@@ -115,6 +140,8 @@ pub struct Dataset {
 pub struct ChartConfig {
     /// Optional chart title.
     pub title: Option<String>,
+    /// Optional chart title style override.
+    pub title_style: Option<Style>,
     /// X axis configuration.
     pub x_axis: Axis,
     /// Y axis configuration.
@@ -125,6 +152,18 @@ pub struct ChartConfig {
     pub legend: LegendPosition,
     /// Whether to render grid lines.
     pub grid: bool,
+    /// Optional grid line style override.
+    pub grid_style: Option<Style>,
+    /// Horizontal reference lines as `(y, style)`.
+    pub hlines: Vec<(f64, Style)>,
+    /// Vertical reference lines as `(x, style)`.
+    pub vlines: Vec<(f64, Style)>,
+    /// Whether to render the outer frame.
+    pub frame_visible: bool,
+    /// Whether to render x-axis line/labels/title rows.
+    pub x_axis_visible: bool,
+    /// Whether to render y-axis labels/divider column.
+    pub y_axis_visible: bool,
     /// Total chart width in terminal cells.
     pub width: u32,
     /// Total chart height in terminal cells.
@@ -215,6 +254,13 @@ impl DatasetEntry {
         self.dataset.marker = marker;
         self
     }
+
+    /// Color line/area segments by direction.
+    pub fn color_by_direction(&mut self, up: Color, down: Color) -> &mut Self {
+        self.dataset.up_color = Some(up);
+        self.dataset.down_color = Some(down);
+        self
+    }
 }
 
 /// Immediate-mode builder for charts.
@@ -231,6 +277,7 @@ impl ChartBuilder {
         Self {
             config: ChartConfig {
                 title: None,
+                title_style: None,
                 x_axis: Axis {
                     style: x_style,
                     ..Axis::default()
@@ -242,6 +289,12 @@ impl ChartBuilder {
                 datasets: Vec::new(),
                 legend: LegendPosition::TopRight,
                 grid: true,
+                grid_style: None,
+                hlines: Vec::new(),
+                vlines: Vec::new(),
+                frame_visible: true,
+                x_axis_visible: true,
+                y_axis_visible: true,
                 width,
                 height,
             },
@@ -279,9 +332,89 @@ impl ChartBuilder {
         self
     }
 
+    /// Set manual x-axis tick positions.
+    pub fn xticks(&mut self, values: &[f64]) -> &mut Self {
+        self.config.x_axis.ticks = Some(values.to_vec());
+        self
+    }
+
+    /// Set manual y-axis tick positions.
+    pub fn yticks(&mut self, values: &[f64]) -> &mut Self {
+        self.config.y_axis.ticks = Some(values.to_vec());
+        self
+    }
+
+    /// Set manual x-axis ticks and labels.
+    pub fn xtick_labels(&mut self, values: &[f64], labels: &[&str]) -> &mut Self {
+        self.config.x_axis.ticks = Some(values.to_vec());
+        self.config.x_axis.labels = Some(labels.iter().map(|label| (*label).to_string()).collect());
+        self
+    }
+
+    /// Set manual y-axis ticks and labels.
+    pub fn ytick_labels(&mut self, values: &[f64], labels: &[&str]) -> &mut Self {
+        self.config.y_axis.ticks = Some(values.to_vec());
+        self.config.y_axis.labels = Some(labels.iter().map(|label| (*label).to_string()).collect());
+        self
+    }
+
+    /// Set chart title style.
+    pub fn title_style(&mut self, style: Style) -> &mut Self {
+        self.config.title_style = Some(style);
+        self
+    }
+
+    /// Set grid line style.
+    pub fn grid_style(&mut self, style: Style) -> &mut Self {
+        self.config.grid_style = Some(style);
+        self
+    }
+
+    /// Set x-axis style.
+    pub fn x_axis_style(&mut self, style: Style) -> &mut Self {
+        self.config.x_axis.style = style;
+        self
+    }
+
+    /// Set y-axis style.
+    pub fn y_axis_style(&mut self, style: Style) -> &mut Self {
+        self.config.y_axis.style = style;
+        self
+    }
+
+    /// Add a horizontal reference line.
+    pub fn axhline(&mut self, y: f64, style: Style) -> &mut Self {
+        self.config.hlines.push((y, style));
+        self
+    }
+
+    /// Add a vertical reference line.
+    pub fn axvline(&mut self, x: f64, style: Style) -> &mut Self {
+        self.config.vlines.push((x, style));
+        self
+    }
+
     /// Enable or disable grid lines.
     pub fn grid(&mut self, on: bool) -> &mut Self {
         self.config.grid = on;
+        self
+    }
+
+    /// Enable or disable chart frame.
+    pub fn frame(&mut self, on: bool) -> &mut Self {
+        self.config.frame_visible = on;
+        self
+    }
+
+    /// Enable or disable x-axis line/labels/title rows.
+    pub fn x_axis_visible(&mut self, on: bool) -> &mut Self {
+        self.config.x_axis_visible = on;
+        self
+    }
+
+    /// Enable or disable y-axis labels and divider.
+    pub fn y_axis_visible(&mut self, on: bool) -> &mut Self {
+        self.config.y_axis_visible = on;
         self
     }
 
@@ -294,6 +427,11 @@ impl ChartBuilder {
     /// Add a line dataset.
     pub fn line(&mut self, data: &[(f64, f64)]) -> &mut DatasetEntry {
         self.push_dataset(data, GraphType::Line, Marker::Braille)
+    }
+
+    /// Add an area dataset.
+    pub fn area(&mut self, data: &[(f64, f64)]) -> &mut DatasetEntry {
+        self.push_dataset(data, GraphType::Area, Marker::Braille)
     }
 
     /// Add a scatter dataset.
@@ -331,6 +469,8 @@ impl ChartBuilder {
                 color: Color::Reset,
                 marker,
                 graph_type,
+                up_color: None,
+                down_color: None,
             },
             color_overridden: false,
         });
@@ -389,21 +529,32 @@ pub(crate) fn build_histogram_config(
     if sorted.is_empty() {
         return ChartConfig {
             title: Some("Histogram".to_string()),
+            title_style: None,
             x_axis: Axis {
                 title: options.x_title.clone(),
                 bounds: Some((0.0, 1.0)),
                 labels: None,
+                ticks: None,
+                title_style: None,
                 style: axis_style,
             },
             y_axis: Axis {
                 title: options.y_title.clone(),
                 bounds: Some((0.0, 1.0)),
                 labels: None,
+                ticks: None,
+                title_style: None,
                 style: axis_style,
             },
             datasets: Vec::new(),
             legend: LegendPosition::None,
             grid: true,
+            grid_style: None,
+            hlines: Vec::new(),
+            vlines: Vec::new(),
+            frame_visible: true,
+            x_axis_visible: true,
+            y_axis_visible: true,
             width,
             height,
         };
@@ -449,16 +600,21 @@ pub(crate) fn build_histogram_config(
 
     ChartConfig {
         title: Some("Histogram".to_string()),
+        title_style: None,
         x_axis: Axis {
             title: options.x_title.clone(),
             bounds: Some((min, max.max(min + bin_width))),
             labels: Some(labels),
+            ticks: None,
+            title_style: None,
             style: axis_style,
         },
         y_axis: Axis {
             title: options.y_title.clone(),
             bounds: Some((0.0, counts.iter().copied().max().unwrap_or(1) as f64)),
             labels: None,
+            ticks: None,
+            title_style: None,
             style: axis_style,
         },
         datasets: vec![Dataset {
@@ -467,9 +623,17 @@ pub(crate) fn build_histogram_config(
             color: options.color,
             marker: Marker::Block,
             graph_type: GraphType::Bar,
+            up_color: None,
+            down_color: None,
         }],
         legend: LegendPosition::None,
         grid: true,
+        grid_style: None,
+        hlines: Vec::new(),
+        vlines: Vec::new(),
+        frame_visible: true,
+        x_axis_visible: true,
+        y_axis_visible: true,
         width,
         height,
     }
@@ -489,20 +653,27 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     let title_style = Style::new()
         .bold()
         .fg(config.x_axis.style.fg.unwrap_or(Color::White));
+    let title_style = config.title_style.unwrap_or(title_style);
 
     let title_rows = usize::from(config.title.is_some());
-    let has_x_title = config.x_axis.title.is_some();
+    let has_x_title = config.x_axis_visible && config.x_axis.title.is_some();
     let x_title_rows = usize::from(has_x_title);
+    let frame_rows = if config.frame_visible { 2 } else { 0 };
+    let x_axis_rows = if config.x_axis_visible {
+        2 + x_title_rows
+    } else {
+        0
+    };
 
     // Row budget: title + top_frame + plot + axis_line + x_labels + [x_title] + bottom_frame
     //           = title_rows + 1 + plot_height + 1 + 1 + x_title_rows + 1
     //           = title_rows + plot_height + 3 + x_title_rows
     // Solve for plot_height:
-    let overhead = title_rows + 3 + x_title_rows;
-    if height <= overhead + 1 || width < 6 {
+    let overhead = title_rows + frame_rows + x_axis_rows;
+    if height <= overhead || width < 3 {
         return minimal_chart(config, width, frame_style, title_style);
     }
-    let plot_height = height.saturating_sub(overhead + 1).max(1);
+    let plot_height = height.saturating_sub(overhead).max(1);
 
     let (x_min, x_max) = resolve_bounds(
         config
@@ -519,12 +690,16 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         config.y_axis.bounds,
     );
 
-    let y_label_chars: Vec<char> = config
-        .y_axis
-        .title
-        .as_deref()
-        .map(|t| t.chars().collect())
-        .unwrap_or_default();
+    let y_label_chars: Vec<char> = if config.y_axis_visible {
+        config
+            .y_axis
+            .title
+            .as_deref()
+            .map(|t| t.chars().collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let y_label_col_width = if y_label_chars.is_empty() { 0 } else { 2 };
 
     let legend_items = build_legend_items(&config.datasets);
@@ -542,23 +717,55 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         0
     };
 
-    let y_ticks = build_tui_ticks(y_min, y_max, plot_height);
+    let y_ticks = if let Some(ref manual) = config.y_axis.ticks {
+        TickSpec {
+            values: manual.clone(),
+            step: if manual.len() > 1 {
+                manual[1] - manual[0]
+            } else {
+                1.0
+            },
+        }
+    } else {
+        build_tui_ticks(y_min, y_max, plot_height)
+    };
     let y_min = y_ticks.values.first().copied().unwrap_or(y_min).min(y_min);
     let y_max = y_ticks.values.last().copied().unwrap_or(y_max).max(y_max);
 
-    let y_tick_labels: Vec<String> = y_ticks
-        .values
-        .iter()
-        .map(|v| format_number(*v, y_ticks.step))
-        .collect();
+    let use_manual_y_labels = config.y_axis.ticks.is_some() && config.y_axis.labels.is_some();
+    let y_tick_labels: Vec<String> = if use_manual_y_labels {
+        config
+            .y_axis
+            .labels
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .take(y_ticks.values.len())
+            .cloned()
+            .collect()
+    } else {
+        y_ticks
+            .values
+            .iter()
+            .map(|v| format_number(*v, y_ticks.step))
+            .collect()
+    };
     let y_tick_width = y_tick_labels
         .iter()
         .map(|s| UnicodeWidthStr::width(s.as_str()))
         .max()
         .unwrap_or(1);
-    let y_axis_width = y_tick_width + 2;
+    let y_axis_width = if config.y_axis_visible {
+        y_tick_width + 2
+    } else {
+        0
+    };
 
-    let inner_width = width.saturating_sub(2);
+    let inner_width = if config.frame_visible {
+        width.saturating_sub(2)
+    } else {
+        width
+    };
     let plot_width = inner_width
         .saturating_sub(y_label_col_width)
         .saturating_sub(y_axis_width)
@@ -566,7 +773,18 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         .max(1);
     let content_width = y_label_col_width + y_axis_width + plot_width + legend_width;
 
-    let x_ticks = build_tui_ticks(x_min, x_max, plot_width);
+    let x_ticks = if let Some(ref manual) = config.x_axis.ticks {
+        TickSpec {
+            values: manual.clone(),
+            step: if manual.len() > 1 {
+                manual[1] - manual[0]
+            } else {
+                1.0
+            },
+        }
+    } else {
+        build_tui_ticks(x_min, x_max, plot_width)
+    };
     let x_min = x_ticks.values.first().copied().unwrap_or(x_min).min(x_min);
     let x_max = x_ticks.values.last().copied().unwrap_or(x_max).max(x_max);
 
@@ -585,12 +803,33 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         },
         &mut plot_chars,
         &mut plot_styles,
-        dim_style,
+        config.grid_style.unwrap_or(dim_style),
     );
+
+    for &(y_val, ref style) in &config.hlines {
+        let row = map_value_to_cell(y_val, y_min, y_max, plot_height, true);
+        if row < plot_height {
+            for col in 0..plot_width {
+                plot_chars[row][col] = '─';
+                plot_styles[row][col] = *style;
+            }
+        }
+    }
+    for &(x_val, ref style) in &config.vlines {
+        let col = map_value_to_cell(x_val, x_min, x_max, plot_width, false);
+        if col < plot_width {
+            for row in 0..plot_height {
+                if plot_chars[row][col] == ' ' || plot_chars[row][col] == '·' {
+                    plot_chars[row][col] = '│';
+                    plot_styles[row][col] = *style;
+                }
+            }
+        }
+    }
 
     for dataset in &config.datasets {
         match dataset.graph_type {
-            GraphType::Line | GraphType::Scatter => {
+            GraphType::Line | GraphType::Area | GraphType::Scatter => {
                 draw_braille_dataset(
                     dataset,
                     x_min,
@@ -630,10 +869,21 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         );
     }
 
-    let y_tick_rows = build_y_tick_row_map(&y_ticks.values, y_min, y_max, plot_height);
+    let y_tick_rows = build_y_tick_row_map(
+        &y_ticks.values,
+        if use_manual_y_labels {
+            config.y_axis.labels.as_deref()
+        } else {
+            None
+        },
+        y_min,
+        y_max,
+        plot_height,
+    );
     let x_tick_cols = build_x_tick_col_map(
         &x_ticks.values,
         config.x_axis.labels.as_deref(),
+        config.x_axis.ticks.is_some() && config.x_axis.labels.is_some(),
         x_min,
         x_max,
         plot_width,
@@ -648,44 +898,50 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         });
     }
 
-    // --- Top frame ---
-    rows.push(ChartRow {
-        segments: vec![(format!("┌{}┐", "─".repeat(content_width)), frame_style)],
-    });
+    if config.frame_visible {
+        rows.push(ChartRow {
+            segments: vec![(format!("┌{}┐", "─".repeat(content_width)), frame_style)],
+        });
+    }
 
     let y_label_start = if y_label_chars.is_empty() {
         0
     } else {
         plot_height.saturating_sub(y_label_chars.len()) / 2
     };
+    let y_title_style = config.y_axis.title_style.unwrap_or(axis_style);
 
     let zero_label = format_number(0.0, y_ticks.step);
     for row in 0..plot_height {
         let mut segments: Vec<(String, Style)> = Vec::new();
-        segments.push(("│".to_string(), frame_style));
-
-        if y_label_col_width > 0 {
-            let label_idx = row.wrapping_sub(y_label_start);
-            if label_idx < y_label_chars.len() {
-                segments.push((format!("{} ", y_label_chars[label_idx]), axis_style));
-            } else {
-                segments.push(("  ".to_string(), Style::new()));
-            }
+        if config.frame_visible {
+            segments.push(("│".to_string(), frame_style));
         }
 
-        let (label, divider) = if let Some(index) = y_tick_rows.iter().position(|(r, _)| *r == row)
-        {
-            let is_zero = y_tick_rows[index].1 == zero_label;
-            (
-                y_tick_rows[index].1.clone(),
-                if is_zero { '┼' } else { '┤' },
-            )
-        } else {
-            (String::new(), '│')
-        };
-        let padded = format!("{:>w$}", label, w = y_tick_width);
-        segments.push((padded, axis_style));
-        segments.push((format!("{divider} "), axis_style));
+        if config.y_axis_visible {
+            if y_label_col_width > 0 {
+                let label_idx = row.wrapping_sub(y_label_start);
+                if label_idx < y_label_chars.len() {
+                    segments.push((format!("{} ", y_label_chars[label_idx]), y_title_style));
+                } else {
+                    segments.push(("  ".to_string(), Style::new()));
+                }
+            }
+
+            let (label, divider) =
+                if let Some(index) = y_tick_rows.iter().position(|(r, _)| *r == row) {
+                    let is_zero = y_tick_rows[index].1 == zero_label;
+                    (
+                        y_tick_rows[index].1.clone(),
+                        if is_zero { '┼' } else { '┤' },
+                    )
+                } else {
+                    (String::new(), '│')
+                };
+            let padded = format!("{:>w$}", label, w = y_tick_width);
+            segments.push((padded, axis_style));
+            segments.push((format!("{divider} "), axis_style));
+        }
 
         let mut current_style = Style::new();
         let mut buffer = String::new();
@@ -726,82 +982,111 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             }
         }
 
-        segments.push(("│".to_string(), frame_style));
+        if config.frame_visible {
+            segments.push(("│".to_string(), frame_style));
+        }
         rows.push(ChartRow { segments });
     }
 
-    // --- X-axis line ---
-    let mut axis_line = vec!['─'; plot_width];
-    for (col, _) in &x_tick_cols {
-        if *col < plot_width {
-            axis_line[*col] = '┬';
-        }
-    }
-    let footer_legend_pad = " ".repeat(legend_width);
-    let footer_ylabel_pad = " ".repeat(y_label_col_width);
-    rows.push(ChartRow {
-        segments: vec![
-            ("│".to_string(), frame_style),
-            (footer_ylabel_pad.clone(), Style::new()),
-            (" ".repeat(y_tick_width), axis_style),
-            ("┴─".to_string(), axis_style),
-            (axis_line.into_iter().collect(), axis_style),
-            (footer_legend_pad.clone(), Style::new()),
-            ("│".to_string(), frame_style),
-        ],
-    });
-
-    let mut x_label_line: Vec<char> = vec![' '; plot_width];
-    let mut occupied_until: usize = 0;
-    for (col, label) in &x_tick_cols {
-        if label.is_empty() {
-            continue;
-        }
-        let label_width = UnicodeWidthStr::width(label.as_str());
-        let start = col
-            .saturating_sub(label_width / 2)
-            .min(plot_width.saturating_sub(label_width));
-        if start < occupied_until {
-            continue;
-        }
-        for (offset, ch) in label.chars().enumerate() {
-            let idx = start + offset;
-            if idx < plot_width {
-                x_label_line[idx] = ch;
+    if config.x_axis_visible {
+        let mut axis_line = vec!['─'; plot_width];
+        for (col, _) in &x_tick_cols {
+            if *col < plot_width {
+                axis_line[*col] = '┬';
             }
         }
-        occupied_until = start + label_width + 1;
-    }
-    rows.push(ChartRow {
-        segments: vec![
-            ("│".to_string(), frame_style),
-            (footer_ylabel_pad.clone(), Style::new()),
-            (" ".repeat(y_axis_width), Style::new()),
-            (x_label_line.into_iter().collect(), axis_style),
-            (footer_legend_pad.clone(), Style::new()),
-            ("│".to_string(), frame_style),
-        ],
-    });
+        let footer_legend_pad = " ".repeat(legend_width);
+        let footer_ylabel_pad = if config.y_axis_visible {
+            " ".repeat(y_label_col_width)
+        } else {
+            String::new()
+        };
 
-    if has_x_title {
-        let x_title_text = config.x_axis.title.as_deref().unwrap_or_default();
-        let x_title = center_text(x_title_text, plot_width);
+        let mut axis_segments: Vec<(String, Style)> = Vec::new();
+        if config.frame_visible {
+            axis_segments.push(("│".to_string(), frame_style));
+        }
+        if config.y_axis_visible {
+            axis_segments.push((footer_ylabel_pad.clone(), Style::new()));
+            axis_segments.push((" ".repeat(y_tick_width), axis_style));
+            axis_segments.push(("┴─".to_string(), axis_style));
+        }
+        axis_segments.push((axis_line.into_iter().collect(), axis_style));
+        axis_segments.push((footer_legend_pad.clone(), Style::new()));
+        if config.frame_visible {
+            axis_segments.push(("│".to_string(), frame_style));
+        }
         rows.push(ChartRow {
-            segments: vec![
-                ("│".to_string(), frame_style),
-                (footer_ylabel_pad, Style::new()),
-                (" ".repeat(y_axis_width), Style::new()),
-                (x_title, axis_style),
-                (footer_legend_pad, Style::new()),
-                ("│".to_string(), frame_style),
-            ],
+            segments: axis_segments,
+        });
+
+        let mut x_label_line: Vec<char> = vec![' '; plot_width];
+        let mut occupied_until: usize = 0;
+        for (col, label) in &x_tick_cols {
+            if label.is_empty() {
+                continue;
+            }
+            let label_width = UnicodeWidthStr::width(label.as_str());
+            let start = col
+                .saturating_sub(label_width / 2)
+                .min(plot_width.saturating_sub(label_width));
+            if start < occupied_until {
+                continue;
+            }
+            for (offset, ch) in label.chars().enumerate() {
+                let idx = start + offset;
+                if idx < plot_width {
+                    x_label_line[idx] = ch;
+                }
+            }
+            occupied_until = start + label_width + 1;
+        }
+
+        let mut x_label_segments: Vec<(String, Style)> = Vec::new();
+        if config.frame_visible {
+            x_label_segments.push(("│".to_string(), frame_style));
+        }
+        if config.y_axis_visible {
+            x_label_segments.push((footer_ylabel_pad.clone(), Style::new()));
+            x_label_segments.push((" ".repeat(y_axis_width), Style::new()));
+        }
+        x_label_segments.push((x_label_line.into_iter().collect(), axis_style));
+        x_label_segments.push((footer_legend_pad.clone(), Style::new()));
+        if config.frame_visible {
+            x_label_segments.push(("│".to_string(), frame_style));
+        }
+        rows.push(ChartRow {
+            segments: x_label_segments,
+        });
+
+        if has_x_title {
+            let x_title_text = config.x_axis.title.as_deref().unwrap_or_default();
+            let x_title = center_text(x_title_text, plot_width);
+            let x_title_style = config.x_axis.title_style.unwrap_or(axis_style);
+            let mut x_title_segments: Vec<(String, Style)> = Vec::new();
+            if config.frame_visible {
+                x_title_segments.push(("│".to_string(), frame_style));
+            }
+            if config.y_axis_visible {
+                x_title_segments.push((footer_ylabel_pad, Style::new()));
+                x_title_segments.push((" ".repeat(y_axis_width), Style::new()));
+            }
+            x_title_segments.push((x_title, x_title_style));
+            x_title_segments.push((footer_legend_pad, Style::new()));
+            if config.frame_visible {
+                x_title_segments.push(("│".to_string(), frame_style));
+            }
+            rows.push(ChartRow {
+                segments: x_title_segments,
+            });
+        }
+    }
+
+    if config.frame_visible {
+        rows.push(ChartRow {
+            segments: vec![(format!("└{}┘", "─".repeat(content_width)), frame_style)],
         });
     }
-
-    // --- Bottom frame ---
-    rows.push(ChartRow {
-        segments: vec![(format!("└{}┘", "─".repeat(content_width)), frame_style)],
-    });
 
     rows
 }
@@ -818,16 +1103,22 @@ fn minimal_chart(
             segments: vec![(center_text(title, width), title_style)],
         });
     }
-    let inner = width.saturating_sub(2);
-    rows.push(ChartRow {
-        segments: vec![(format!("┌{}┐", "─".repeat(inner)), frame_style)],
-    });
-    rows.push(ChartRow {
-        segments: vec![(format!("│{}│", " ".repeat(inner)), frame_style)],
-    });
-    rows.push(ChartRow {
-        segments: vec![(format!("└{}┘", "─".repeat(inner)), frame_style)],
-    });
+    if config.frame_visible {
+        let inner = width.saturating_sub(2);
+        rows.push(ChartRow {
+            segments: vec![(format!("┌{}┐", "─".repeat(inner)), frame_style)],
+        });
+        rows.push(ChartRow {
+            segments: vec![(format!("│{}│", " ".repeat(inner)), frame_style)],
+        });
+        rows.push(ChartRow {
+            segments: vec![(format!("└{}┘", "─".repeat(inner)), frame_style)],
+        });
+    } else {
+        rows.push(ChartRow {
+            segments: vec![(" ".repeat(width), Style::new())],
+        });
+    }
     rows
 }
 
@@ -997,6 +1288,7 @@ fn build_legend_items(datasets: &[Dataset]) -> Vec<(char, String, Color)> {
         .map(|d| {
             let symbol = match d.graph_type {
                 GraphType::Line => '─',
+                GraphType::Area => '█',
                 GraphType::Scatter => marker_char(d.marker),
                 GraphType::Bar => '█',
             };
@@ -1030,7 +1322,7 @@ fn apply_grid(
     grid: GridSpec<'_>,
     plot_chars: &mut [Vec<char>],
     plot_styles: &mut [Vec<Style>],
-    axis_style: Style,
+    grid_style: Style,
 ) {
     if !config.grid || plot_chars.is_empty() || plot_chars[0].is_empty() {
         return;
@@ -1044,7 +1336,7 @@ fn apply_grid(
             for col in 0..w {
                 if plot_chars[row][col] == ' ' {
                     plot_chars[row][col] = '·';
-                    plot_styles[row][col] = axis_style;
+                    plot_styles[row][col] = grid_style;
                 }
             }
         }
@@ -1056,7 +1348,7 @@ fn apply_grid(
             for row in 0..h {
                 if plot_chars[row][col] == ' ' {
                     plot_chars[row][col] = '·';
-                    plot_styles[row][col] = axis_style;
+                    plot_styles[row][col] = grid_style;
                 }
             }
         }
@@ -1081,6 +1373,16 @@ fn draw_braille_dataset(
     let px_w = cols * 2;
     let px_h = rows * 4;
     let mut bits = vec![vec![0u32; cols]; rows];
+    let mut color_map = vec![vec![None::<Color>; cols]; rows];
+
+    let mut set_dot_colored = |px: usize, py: usize, color: Color| {
+        set_braille_dot(px, py, &mut bits, cols, rows);
+        let char_col = px / 2;
+        let char_row = py / 4;
+        if char_col < cols && char_row < rows {
+            color_map[char_row][char_col] = Some(color);
+        }
+    };
 
     let points = dataset
         .data
@@ -1090,6 +1392,7 @@ fn draw_braille_dataset(
             (
                 map_value_to_cell(*x, x_min, x_max, px_w, false),
                 map_value_to_cell(*y, y_min, y_max, px_h, true),
+                *y,
             )
         })
         .collect::<Vec<_>>();
@@ -1098,23 +1401,67 @@ fn draw_braille_dataset(
         return;
     }
 
-    if matches!(dataset.graph_type, GraphType::Line) {
-        for pair in points.windows(2) {
-            if let [a, b] = pair {
-                plot_bresenham(
-                    a.0 as isize,
-                    a.1 as isize,
-                    b.0 as isize,
-                    b.1 as isize,
-                    |x, y| {
-                        set_braille_dot(x as usize, y as usize, &mut bits, cols, rows);
-                    },
-                );
+    if matches!(dataset.graph_type, GraphType::Line | GraphType::Area) {
+        let mut line_y_by_x = if matches!(dataset.graph_type, GraphType::Area) {
+            vec![None::<usize>; px_w]
+        } else {
+            Vec::new()
+        };
+        let mut line_color_by_x = if matches!(dataset.graph_type, GraphType::Area) {
+            vec![None::<Color>; px_w]
+        } else {
+            Vec::new()
+        };
+
+        for idx in 0..points.len().saturating_sub(1) {
+            let a = points[idx];
+            let b = points[idx + 1];
+            let seg_color = if let (Some(up), Some(down)) = (dataset.up_color, dataset.down_color) {
+                if b.2 > a.2 {
+                    up
+                } else {
+                    down
+                }
+            } else {
+                dataset.color
+            };
+
+            plot_bresenham(
+                a.0 as isize,
+                a.1 as isize,
+                b.0 as isize,
+                b.1 as isize,
+                |x, y| {
+                    if x < 0 || y < 0 {
+                        return;
+                    }
+                    let px = x as usize;
+                    let py = y as usize;
+                    set_dot_colored(px, py, seg_color);
+                    if matches!(dataset.graph_type, GraphType::Area) && px < px_w && py < px_h {
+                        line_y_by_x[px] = Some(match line_y_by_x[px] {
+                            Some(existing) => existing.min(py),
+                            None => py,
+                        });
+                        line_color_by_x[px] = Some(seg_color);
+                    }
+                },
+            );
+        }
+
+        if matches!(dataset.graph_type, GraphType::Area) {
+            for px in 0..px_w {
+                if let Some(line_y) = line_y_by_x[px] {
+                    let fill_color = line_color_by_x[px].unwrap_or(dataset.color);
+                    for py in line_y..px_h {
+                        set_dot_colored(px, py, fill_color);
+                    }
+                }
             }
         }
     } else {
-        for (x, y) in &points {
-            set_braille_dot(*x, *y, &mut bits, cols, rows);
+        for (x, y, _) in &points {
+            set_dot_colored(*x, *y, dataset.color);
         }
     }
 
@@ -1123,7 +1470,8 @@ fn draw_braille_dataset(
             if bits[row][col] != 0 {
                 let ch = char::from_u32(BRAILLE_BASE + bits[row][col]).unwrap_or(' ');
                 plot_chars[row][col] = ch;
-                plot_styles[row][col] = Style::new().fg(dataset.color);
+                let color = color_map[row][col].unwrap_or(dataset.color);
+                plot_styles[row][col] = Style::new().fg(color);
             }
         }
     }
@@ -1241,6 +1589,7 @@ fn overlay_legend_on_plot(
 
 fn build_y_tick_row_map(
     ticks: &[f64],
+    labels: Option<&[String]>,
     y_min: f64,
     y_max: f64,
     plot_height: usize,
@@ -1252,10 +1601,14 @@ fn build_y_tick_row_map(
     };
     ticks
         .iter()
-        .map(|v| {
+        .enumerate()
+        .map(|(idx, v)| {
+            let label = labels
+                .and_then(|manual| manual.get(idx).cloned())
+                .unwrap_or_else(|| format_number(*v, step));
             (
                 map_value_to_cell(*v, y_min, y_max, plot_height, true),
-                format_number(*v, step),
+                label,
             )
         })
         .collect()
@@ -1264,6 +1617,7 @@ fn build_y_tick_row_map(
 fn build_x_tick_col_map(
     ticks: &[f64],
     labels: Option<&[String]>,
+    labels_match_manual_ticks: bool,
     x_min: f64,
     x_max: f64,
     plot_width: usize,
@@ -1271,6 +1625,18 @@ fn build_x_tick_col_map(
     if let Some(labels) = labels {
         if labels.is_empty() {
             return Vec::new();
+        }
+        if labels_match_manual_ticks {
+            return ticks
+                .iter()
+                .zip(labels.iter())
+                .map(|(tick, label)| {
+                    (
+                        map_value_to_cell(*tick, x_min, x_max, plot_width, false),
+                        label.clone(),
+                    )
+                })
+                .collect();
         }
         let denom = labels.len().saturating_sub(1).max(1);
         return labels
