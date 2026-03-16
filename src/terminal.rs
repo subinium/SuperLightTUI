@@ -153,6 +153,11 @@ impl Terminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
+        for (x, y, seq) in &self.current.raw_sequences {
+            queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
+            queue!(self.stdout, Print(seq))?;
+        }
+
         queue!(self.stdout, EndSynchronizedUpdate)?;
 
         let cursor_pos = find_cursor_marker(&self.current);
@@ -316,6 +321,12 @@ impl InlineTerminal {
                 queue!(self.stdout, Print("\x1b]8;;\x07"))?;
             }
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+        }
+
+        for (x, y, seq) in &self.current.raw_sequences {
+            let abs_y = self.start_row as u32 + *y;
+            queue!(self.stdout, cursor::MoveTo(*x as u16, abs_y as u16))?;
+            queue!(self.stdout, Print(seq))?;
         }
 
         queue!(self.stdout, EndSynchronizedUpdate)?;

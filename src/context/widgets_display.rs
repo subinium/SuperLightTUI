@@ -256,6 +256,55 @@ impl Context {
         Response::none()
     }
 
+    /// Render a pixel-perfect image using the Kitty graphics protocol.
+    ///
+    /// The image data must be raw RGBA bytes (4 bytes per pixel).
+    /// The widget allocates `cols` x `rows` cells and renders the image
+    /// at full pixel resolution within that space.
+    ///
+    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm).
+    /// On unsupported terminals, the area will be blank.
+    ///
+    /// # Arguments
+    /// * `rgba` - Raw RGBA pixel data
+    /// * `pixel_width` - Image width in pixels
+    /// * `pixel_height` - Image height in pixels
+    /// * `cols` - Terminal cell columns to occupy
+    /// * `rows` - Terminal cell rows to occupy
+    pub fn kitty_image(
+        &mut self,
+        rgba: &[u8],
+        pixel_width: u32,
+        pixel_height: u32,
+        cols: u32,
+        rows: u32,
+    ) {
+        let encoded = base64_encode(rgba);
+        let pw = pixel_width;
+        let ph = pixel_height;
+        let c = cols;
+        let r = rows;
+
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
+            let chunks = split_base64(&encoded, 4096);
+            let mut all_sequences = String::new();
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                let more = if i < chunks.len() - 1 { 1 } else { 0 };
+                if i == 0 {
+                    all_sequences.push_str(&format!(
+                        "\x1b_Ga=T,f=32,s={},v={},c={},r={},C=1,q=2,m={};{}\x1b\\",
+                        pw, ph, c, r, more, chunk
+                    ));
+                } else {
+                    all_sequences.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk));
+                }
+            }
+
+            buf.raw_sequence(rect.x, rect.y, all_sequences);
+        });
+    }
+
     /// Render streaming text with a typing cursor indicator.
     ///
     /// Displays the accumulated text content. While `streaming` is true,
@@ -1799,4 +1848,43 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
         ui.text(&trimmed[pos..end]);
         pos = end;
     }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
+fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let bytes = encoded.as_bytes();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let end = (offset + chunk_size).min(bytes.len());
+        chunks.push(&encoded[offset..end]);
+        offset = end;
+    }
+    if chunks.is_empty() {
+        chunks.push("");
+    }
+    chunks
 }

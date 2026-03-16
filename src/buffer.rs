@@ -23,6 +23,7 @@ pub struct Buffer {
     /// Flat row-major storage of all cells. Length equals `area.width * area.height`.
     pub content: Vec<Cell>,
     pub(crate) clip_stack: Vec<Rect>,
+    pub(crate) raw_sequences: Vec<(u32, u32, String)>,
 }
 
 impl Buffer {
@@ -33,7 +34,15 @@ impl Buffer {
             area,
             content: vec![Cell::default(); size],
             clip_stack: Vec::new(),
+            raw_sequences: Vec::new(),
         }
+    }
+
+    /// Store a raw escape sequence to be written at position `(x, y)` during flush.
+    ///
+    /// Used for Kitty graphics protocol and other passthrough sequences.
+    pub fn raw_sequence(&mut self, x: u32, y: u32, seq: String) {
+        self.raw_sequences.push((x, y, seq));
     }
 
     /// Push a clipping rectangle onto the clip stack.
@@ -248,6 +257,7 @@ impl Buffer {
             cell.reset();
         }
         self.clip_stack.clear();
+        self.raw_sequences.clear();
     }
 
     /// Reset every cell and apply a background color to all cells.
@@ -257,6 +267,7 @@ impl Buffer {
             cell.style.bg = Some(bg);
         }
         self.clip_stack.clear();
+        self.raw_sequences.clear();
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
