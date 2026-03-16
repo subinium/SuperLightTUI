@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.12.5"
+version = "0.12.6"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -82,6 +82,10 @@ path = "examples/demo_website.rs"
 [[example]]
 name = "demo_infoviz"
 path = "examples/demo_infoviz.rs"
+
+[[example]]
+name = "demo_wiki"
+path = "examples/demo_wiki.rs"
 
 [[example]]
 name = "demo_fire"

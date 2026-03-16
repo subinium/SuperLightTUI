@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.6] — 2026-03-17
+
+### Features
+
+- **Kitty graphics protocol**: `kitty_image()` renders pixel-perfect images via Kitty protocol (Ghostty, Kitty, WezTerm)
+- **demo_wiki**: BLACKPINK wiki-style demo with Kitty images and tabbed member profiles
+
 ## [0.12.5] — 2026-03-17
 
 ### Bug Fixes
