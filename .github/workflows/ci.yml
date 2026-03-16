@@ -60,3 +60,10 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt -- --check
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/audit@v1
