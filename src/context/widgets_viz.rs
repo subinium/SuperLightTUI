@@ -21,9 +21,9 @@ impl Context {
     /// For styled bars with per-bar colors, see [`bar_chart_styled`].
     /// # });
     /// ```
-    pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> &mut Self {
+    pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> Response {
         if data.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let max_label_width = data
@@ -95,7 +95,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        Response::none()
     }
 
     /// Render a styled bar chart with per-bar colors, grouping, and direction control.
@@ -118,9 +118,9 @@ impl Context {
         bars: &[Bar],
         max_width: u32,
         direction: BarDirection,
-    ) -> &mut Self {
+    ) -> Response {
         if bars.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let max_value = bars
@@ -130,217 +130,244 @@ impl Context {
         let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
         match direction {
-            BarDirection::Horizontal => {
-                let max_label_width = bars
-                    .iter()
-                    .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
-                    .max()
-                    .unwrap_or(0);
-
-                self.interaction_count += 1;
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Column,
-                    gap: 0,
-                    align: Align::Start,
-                    justify: Justify::Start,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new().fg(self.theme.border),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin: Margin::default(),
-                    constraints: Constraints::default(),
-                    title: None,
-                    grow: 0,
-                    group_name: None,
-                });
-
-                for bar in bars {
-                    let label_width = UnicodeWidthStr::width(bar.label.as_str());
-                    let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-                    let normalized = (bar.value / denom).clamp(0.0, 1.0);
-                    let bar_len = (normalized * max_width as f64).round() as usize;
-                    let bar_text = "█".repeat(bar_len);
-                    let color = bar.color.unwrap_or(self.theme.primary);
-
-                    self.interaction_count += 1;
-                    self.commands.push(Command::BeginContainer {
-                        direction: Direction::Row,
-                        gap: 1,
-                        align: Align::Start,
-                        justify: Justify::Start,
-                        border: None,
-                        border_sides: BorderSides::all(),
-                        border_style: Style::new().fg(self.theme.border),
-                        bg_color: None,
-                        padding: Padding::default(),
-                        margin: Margin::default(),
-                        constraints: Constraints::default(),
-                        title: None,
-                        grow: 0,
-                        group_name: None,
-                    });
-                    self.styled(
-                        format!("{}{label_padding}", bar.label),
-                        Style::new().fg(self.theme.text),
-                    );
-                    self.styled(bar_text, Style::new().fg(color));
-                    self.styled(
-                        format_compact_number(bar.value),
-                        Style::new().fg(self.theme.text_dim),
-                    );
-                    self.commands.push(Command::EndContainer);
-                    self.last_text_idx = None;
-                }
-
-                self.commands.push(Command::EndContainer);
-                self.last_text_idx = None;
-            }
-            BarDirection::Vertical => {
-                const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
-
-                let chart_height = max_width.max(1) as usize;
-                let value_labels: Vec<String> = bars
-                    .iter()
-                    .map(|bar| format_compact_number(bar.value))
-                    .collect();
-                let col_width = bars
-                    .iter()
-                    .zip(value_labels.iter())
-                    .map(|(bar, value)| {
-                        UnicodeWidthStr::width(bar.label.as_str())
-                            .max(UnicodeWidthStr::width(value.as_str()))
-                            .max(1)
-                    })
-                    .max()
-                    .unwrap_or(1);
-
-                let bar_units: Vec<usize> = bars
-                    .iter()
-                    .map(|bar| {
-                        let normalized = (bar.value / denom).clamp(0.0, 1.0);
-                        (normalized * chart_height as f64 * 8.0).round() as usize
-                    })
-                    .collect();
-
-                self.interaction_count += 1;
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Column,
-                    gap: 0,
-                    align: Align::Start,
-                    justify: Justify::Start,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new().fg(self.theme.border),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin: Margin::default(),
-                    constraints: Constraints::default(),
-                    title: None,
-                    grow: 0,
-                    group_name: None,
-                });
-
-                self.interaction_count += 1;
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Row,
-                    gap: 1,
-                    align: Align::Start,
-                    justify: Justify::Start,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new().fg(self.theme.border),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin: Margin::default(),
-                    constraints: Constraints::default(),
-                    title: None,
-                    grow: 0,
-                    group_name: None,
-                });
-                for value in &value_labels {
-                    self.styled(
-                        center_text(value, col_width),
-                        Style::new().fg(self.theme.text_dim),
-                    );
-                }
-                self.commands.push(Command::EndContainer);
-                self.last_text_idx = None;
-
-                for row in (0..chart_height).rev() {
-                    self.interaction_count += 1;
-                    self.commands.push(Command::BeginContainer {
-                        direction: Direction::Row,
-                        gap: 1,
-                        align: Align::Start,
-                        justify: Justify::Start,
-                        border: None,
-                        border_sides: BorderSides::all(),
-                        border_style: Style::new().fg(self.theme.border),
-                        bg_color: None,
-                        padding: Padding::default(),
-                        margin: Margin::default(),
-                        constraints: Constraints::default(),
-                        title: None,
-                        grow: 0,
-                        group_name: None,
-                    });
-
-                    let row_base = row * 8;
-                    for (bar, units) in bars.iter().zip(bar_units.iter()) {
-                        let fill = if *units <= row_base {
-                            ' '
-                        } else {
-                            let delta = *units - row_base;
-                            if delta >= 8 {
-                                '█'
-                            } else {
-                                FRACTION_BLOCKS[delta]
-                            }
-                        };
-
-                        self.styled(
-                            center_text(&fill.to_string(), col_width),
-                            Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
-                        );
-                    }
-
-                    self.commands.push(Command::EndContainer);
-                    self.last_text_idx = None;
-                }
-
-                self.interaction_count += 1;
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Row,
-                    gap: 1,
-                    align: Align::Start,
-                    justify: Justify::Start,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new().fg(self.theme.border),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin: Margin::default(),
-                    constraints: Constraints::default(),
-                    title: None,
-                    grow: 0,
-                    group_name: None,
-                });
-                for bar in bars {
-                    self.styled(
-                        center_text(&bar.label, col_width),
-                        Style::new().fg(self.theme.text),
-                    );
-                }
-                self.commands.push(Command::EndContainer);
-                self.last_text_idx = None;
-
-                self.commands.push(Command::EndContainer);
-                self.last_text_idx = None;
-            }
+            BarDirection::Horizontal => self.render_horizontal_styled_bars(bars, max_width, denom),
+            BarDirection::Vertical => self.render_vertical_styled_bars(bars, max_width, denom),
         }
 
-        self
+        Response::none()
+    }
+
+    fn render_horizontal_styled_bars(&mut self, bars: &[Bar], max_width: u32, denom: f64) {
+        let max_label_width = bars
+            .iter()
+            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .max()
+            .unwrap_or(0);
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        for bar in bars {
+            self.render_horizontal_styled_bar_row(bar, max_label_width, max_width, denom);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+    }
+
+    fn render_horizontal_styled_bar_row(
+        &mut self,
+        bar: &Bar,
+        max_label_width: usize,
+        max_width: u32,
+        denom: f64,
+    ) {
+        let label_width = UnicodeWidthStr::width(bar.label.as_str());
+        let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+        let normalized = (bar.value / denom).clamp(0.0, 1.0);
+        let bar_len = (normalized * max_width as f64).round() as usize;
+        let bar_text = "█".repeat(bar_len);
+        let color = bar.color.unwrap_or(self.theme.primary);
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 1,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        self.styled(
+            format!("{}{label_padding}", bar.label),
+            Style::new().fg(self.theme.text),
+        );
+        self.styled(bar_text, Style::new().fg(color));
+        self.styled(
+            format_compact_number(bar.value),
+            Style::new().fg(self.theme.text_dim),
+        );
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+    }
+
+    fn render_vertical_styled_bars(&mut self, bars: &[Bar], max_width: u32, denom: f64) {
+        let chart_height = max_width.max(1) as usize;
+        let value_labels: Vec<String> = bars
+            .iter()
+            .map(|bar| format_compact_number(bar.value))
+            .collect();
+        let col_width = bars
+            .iter()
+            .zip(value_labels.iter())
+            .map(|(bar, value)| {
+                UnicodeWidthStr::width(bar.label.as_str())
+                    .max(UnicodeWidthStr::width(value.as_str()))
+                    .max(1)
+            })
+            .max()
+            .unwrap_or(1);
+        let bar_units: Vec<usize> = bars
+            .iter()
+            .map(|bar| {
+                ((bar.value / denom).clamp(0.0, 1.0) * chart_height as f64 * 8.0).round() as usize
+            })
+            .collect();
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        self.render_vertical_bar_values(&value_labels, col_width);
+        self.render_vertical_bar_body(bars, &bar_units, chart_height, col_width);
+        self.render_vertical_bar_labels(bars, col_width);
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+    }
+
+    fn render_vertical_bar_values(&mut self, value_labels: &[String], col_width: usize) {
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 1,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        for value in value_labels {
+            self.styled(
+                center_text(value, col_width),
+                Style::new().fg(self.theme.text_dim),
+            );
+        }
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+    }
+
+    fn render_vertical_bar_body(
+        &mut self,
+        bars: &[Bar],
+        bar_units: &[usize],
+        chart_height: usize,
+        col_width: usize,
+    ) {
+        const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+
+        for row in (0..chart_height).rev() {
+            self.interaction_count += 1;
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            let row_base = row * 8;
+            for (bar, units) in bars.iter().zip(bar_units.iter()) {
+                let fill = if *units <= row_base {
+                    ' '
+                } else {
+                    let delta = *units - row_base;
+                    if delta >= 8 {
+                        '█'
+                    } else {
+                        FRACTION_BLOCKS[delta]
+                    }
+                };
+                self.styled(
+                    center_text(&fill.to_string(), col_width),
+                    Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
+                );
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+        }
+    }
+
+    fn render_vertical_bar_labels(&mut self, bars: &[Bar], col_width: usize) {
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 1,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        for bar in bars {
+            self.styled(
+                center_text(&bar.label, col_width),
+                Style::new().fg(self.theme.text),
+            );
+        }
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
     }
 
     /// Render a grouped bar chart.
@@ -359,14 +386,14 @@ impl Context {
     /// ui.bar_chart_grouped(&groups, 40);
     /// # });
     /// ```
-    pub fn bar_chart_grouped(&mut self, groups: &[BarGroup], max_width: u32) -> &mut Self {
+    pub fn bar_chart_grouped(&mut self, groups: &[BarGroup], max_width: u32) -> Response {
         if groups.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let all_bars: Vec<&Bar> = groups.iter().flat_map(|group| group.bars.iter()).collect();
         if all_bars.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let max_label_width = all_bars
@@ -445,7 +472,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        Response::none()
     }
 
     /// Render a single-line sparkline from numeric data.
@@ -463,7 +490,7 @@ impl Context {
     /// For per-point colors and missing values, see [`sparkline_styled`].
     /// # });
     /// ```
-    pub fn sparkline(&mut self, data: &[f64], width: u32) -> &mut Self {
+    pub fn sparkline(&mut self, data: &[f64], width: u32) -> Response {
         const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
         let w = width as usize;
@@ -474,7 +501,7 @@ impl Context {
         };
 
         if window.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let min = window.iter().copied().fold(f64::INFINITY, f64::min);
@@ -494,7 +521,8 @@ impl Context {
             })
             .collect();
 
-        self.styled(line, Style::new().fg(self.theme.primary))
+        self.styled(line, Style::new().fg(self.theme.primary));
+        Response::none()
     }
 
     /// Render a sparkline with per-point colors.
@@ -516,7 +544,7 @@ impl Context {
     /// ui.sparkline_styled(&data, 16);
     /// # });
     /// ```
-    pub fn sparkline_styled(&mut self, data: &[(f64, Option<Color>)], width: u32) -> &mut Self {
+    pub fn sparkline_styled(&mut self, data: &[(f64, Option<Color>)], width: u32) -> Response {
         const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
         let w = width as usize;
@@ -527,7 +555,7 @@ impl Context {
         };
 
         if window.is_empty() {
-            return self;
+            return Response::none();
         }
 
         let mut finite_values = window
@@ -535,10 +563,11 @@ impl Context {
             .map(|(value, _)| *value)
             .filter(|value| !value.is_nan());
         let Some(first) = finite_values.next() else {
-            return self.styled(
+            self.styled(
                 " ".repeat(window.len()),
                 Style::new().fg(self.theme.text_dim),
             );
+            return Response::none();
         };
 
         let mut min = first;
@@ -600,7 +629,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        Response::none()
     }
 
     /// Render a multi-row line chart using braille characters.
@@ -616,9 +645,9 @@ impl Context {
     /// ui.line_chart(&data, 40, 8);
     /// # });
     /// ```
-    pub fn line_chart(&mut self, data: &[f64], width: u32, height: u32) -> &mut Self {
+    pub fn line_chart(&mut self, data: &[f64], width: u32, height: u32) -> Response {
         if data.is_empty() || width == 0 || height == 0 {
-            return self;
+            return Response::none();
         }
 
         let cols = width as usize;
@@ -706,7 +735,7 @@ impl Context {
             self.styled(line, style);
         }
 
-        self
+        Response::none()
     }
 
     /// Render a braille drawing canvas.
@@ -730,9 +759,9 @@ impl Context {
         width: u32,
         height: u32,
         draw: impl FnOnce(&mut CanvasContext),
-    ) -> &mut Self {
+    ) -> Response {
         if width == 0 || height == 0 {
-            return self;
+            return Response::none();
         }
 
         let mut canvas = CanvasContext::new(width as usize, height as usize);
@@ -768,7 +797,7 @@ impl Context {
             self.last_text_idx = None;
         }
 
-        self
+        Response::none()
     }
 
     /// Render a multi-series chart with axes, legend, and auto-scaling.
@@ -777,9 +806,9 @@ impl Context {
         configure: impl FnOnce(&mut ChartBuilder),
         width: u32,
         height: u32,
-    ) -> &mut Self {
+    ) -> Response {
         if width == 0 || height == 0 {
-            return self;
+            return Response::none();
         }
 
         let axis_style = Style::new().fg(self.theme.text_dim);
@@ -814,13 +843,13 @@ impl Context {
             self.last_text_idx = None;
         }
 
-        self
+        Response::none()
     }
 
     /// Renders a scatter plot.
     ///
     /// Each point is a (x, y) tuple. Uses braille markers.
-    pub fn scatter(&mut self, data: &[(f64, f64)], width: u32, height: u32) -> &mut Self {
+    pub fn scatter(&mut self, data: &[(f64, f64)], width: u32, height: u32) -> Response {
         self.chart(
             |c| {
                 c.scatter(data);
@@ -832,7 +861,7 @@ impl Context {
     }
 
     /// Render a histogram from raw data with auto-binning.
-    pub fn histogram(&mut self, data: &[f64], width: u32, height: u32) -> &mut Self {
+    pub fn histogram(&mut self, data: &[f64], width: u32, height: u32) -> Response {
         self.histogram_with(data, |_| {}, width, height)
     }
 
@@ -843,9 +872,9 @@ impl Context {
         configure: impl FnOnce(&mut HistogramBuilder),
         width: u32,
         height: u32,
-    ) -> &mut Self {
+    ) -> Response {
         if width == 0 || height == 0 {
-            return self;
+            return Response::none();
         }
 
         let mut options = HistogramBuilder::default();
@@ -879,6 +908,6 @@ impl Context {
             self.last_text_idx = None;
         }
 
-        self
+        Response::none()
     }
 }

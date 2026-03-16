@@ -42,7 +42,9 @@ pub mod chart;
 pub mod context;
 pub mod event;
 pub mod halfblock;
+pub mod keymap;
 pub mod layout;
+pub mod palette;
 pub mod rect;
 pub mod style;
 mod terminal;
@@ -57,25 +59,36 @@ use std::time::{Duration, Instant};
 use terminal::{InlineTerminal, Terminal, TerminalBackend};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
-pub use anim::{Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
+pub use anim::{
+    ease_in_cubic, ease_in_out_cubic, ease_in_out_quad, ease_in_quad, ease_linear, ease_out_bounce,
+    ease_out_cubic, ease_out_elastic, ease_out_quad, lerp, Keyframes, LoopMode, Sequence, Spring,
+    Stagger, Tween,
+};
 pub use buffer::Buffer;
+pub use cell::Cell;
 pub use chart::{
     Axis, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
     HistogramBuilder, LegendPosition, Marker,
 };
-pub use context::{Bar, BarDirection, BarGroup, CanvasContext, Context, Response, State, Widget};
+pub use context::{
+    Bar, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context, Response, State, Widget,
+};
 pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use halfblock::HalfBlockImage;
+pub use keymap::{Binding, KeyMap};
+pub use layout::Direction;
+pub use palette::Palette;
 pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
     Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder,
 };
 pub use widgets::{
-    AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FormField,
-    FormState, ListState, MultiSelectState, PaletteCommand, RadioState, ScrollState, SelectState,
-    SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FileEntry,
+    FilePickerState, FormField, FormState, ListState, MultiSelectState, PaletteCommand, RadioState,
+    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
+    TreeNode, TreeState, Trend,
 };
 
 static PANIC_HOOK_ONCE: Once = Once::new();
@@ -208,6 +221,7 @@ pub(crate) struct FrameState {
     pub prev_focus_groups: Vec<Option<String>>,
     pub last_mouse_pos: Option<(u32, u32)>,
     pub prev_modal_active: bool,
+    pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
     pub fps_ema: f32,
     pub selection: terminal::SelectionState,
@@ -229,6 +243,7 @@ impl Default for FrameState {
             prev_focus_groups: Vec::new(),
             last_mouse_pos: None,
             prev_modal_active: false,
+            notification_queue: Vec::new(),
             debug_mode: false,
             fps_ema: 0.0,
             selection: terminal::SelectionState::default(),
@@ -511,6 +526,9 @@ pub fn run_inline_with(
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(height, config.mouse, color_depth)?;
+    if config.theme.bg != Color::Reset {
+        term.theme_bg = Some(config.theme.bg);
+    }
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
@@ -592,6 +610,7 @@ fn run_frame<T: TerminalBackend>(
     ctx.process_focus_keys();
 
     f(&mut ctx);
+    ctx.render_notifications();
 
     if ctx.should_quit {
         return Ok(false);
@@ -646,6 +665,7 @@ fn run_frame<T: TerminalBackend>(
         }
     }
     state.hook_states = ctx.hook_states;
+    state.notification_queue = ctx.notification_queue;
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;

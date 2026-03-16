@@ -180,6 +180,7 @@ impl TestBackend {
             Theme::dark(),
         );
         f(&mut ctx);
+        ctx.render_notifications();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
         let mut deferred = ctx.deferred_draws;
@@ -219,6 +220,7 @@ impl TestBackend {
         );
         ctx.process_focus_keys();
         f(&mut ctx);
+        ctx.render_notifications();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
         let mut deferred = ctx.deferred_draws;

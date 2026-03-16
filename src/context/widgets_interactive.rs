@@ -129,20 +129,23 @@ impl Context {
     ///
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
-    pub fn list(&mut self, state: &mut ListState) -> &mut Self {
+    pub fn list(&mut self, state: &mut ListState) -> Response {
         let visible = state.visible_indices().to_vec();
         if visible.is_empty() && state.items.is_empty() {
             state.selected = 0;
-            return self;
+            return Response::none();
         }
 
         if !visible.is_empty() {
             state.selected = state.selected.min(visible.len().saturating_sub(1));
         }
 
+        let old_selected = state.selected;
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -152,13 +155,12 @@ impl Context {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.selected = state.selected.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.selected =
-                                (state.selected + 1).min(visible.len().saturating_sub(1));
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let _ = handle_vertical_nav(
+                                &mut state.selected,
+                                visible.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
                             consumed_indices.push(i);
                         }
                         _ => {}
@@ -232,86 +234,170 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        response.changed = state.selected != old_selected;
+        response
     }
 
-    /// Render a data table with column headers. Handles Up/Down selection when focused.
-    ///
-    /// Column widths are computed automatically from header and cell content.
-    /// The selected row is highlighted with the theme's selection colors.
-    pub fn table(&mut self, state: &mut TableState) -> &mut Self {
-        if state.is_dirty() {
-            state.recompute_widths();
+    pub fn file_picker(&mut self, state: &mut FilePickerState) -> Response {
+        if state.dirty {
+            state.refresh();
+        }
+        if !state.entries.is_empty() {
+            state.selected = state.selected.min(state.entries.len().saturating_sub(1));
         }
 
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+        let mut file_selected = false;
 
-        if focused && !state.visible_indices().is_empty() {
+        if focused {
             let mut consumed_indices = Vec::new();
             for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
                 if let Event::Key(key) = event {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            let visible_len = if state.page_size > 0 {
-                                let start = state
-                                    .page
-                                    .saturating_mul(state.page_size)
-                                    .min(state.visible_indices().len());
-                                let end =
-                                    (start + state.page_size).min(state.visible_indices().len());
-                                end.saturating_sub(start)
-                            } else {
-                                state.visible_indices().len()
-                            };
-                            state.selected = state.selected.min(visible_len.saturating_sub(1));
-                            state.selected = state.selected.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            let visible_len = if state.page_size > 0 {
-                                let start = state
-                                    .page
-                                    .saturating_mul(state.page_size)
-                                    .min(state.visible_indices().len());
-                                let end =
-                                    (start + state.page_size).min(state.visible_indices().len());
-                                end.saturating_sub(start)
-                            } else {
-                                state.visible_indices().len()
-                            };
-                            state.selected =
-                                (state.selected + 1).min(visible_len.saturating_sub(1));
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::PageUp => {
-                            let old_page = state.page;
-                            state.prev_page();
-                            if state.page != old_page {
-                                state.selected = 0;
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            if !state.entries.is_empty() {
+                                let _ = handle_vertical_nav(
+                                    &mut state.selected,
+                                    state.entries.len().saturating_sub(1),
+                                    key.code.clone(),
+                                );
                             }
                             consumed_indices.push(i);
                         }
-                        KeyCode::PageDown => {
-                            let old_page = state.page;
-                            state.next_page();
-                            if state.page != old_page {
-                                state.selected = 0;
+                        KeyCode::Enter => {
+                            if let Some(entry) = state.entries.get(state.selected).cloned() {
+                                if entry.is_dir {
+                                    state.current_dir = entry.path;
+                                    state.selected = 0;
+                                    state.selected_file = None;
+                                    state.dirty = true;
+                                } else {
+                                    state.selected_file = Some(entry.path);
+                                    file_selected = true;
+                                }
                             }
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(parent) =
+                                state.current_dir.parent().map(|p| p.to_path_buf())
+                            {
+                                state.current_dir = parent;
+                                state.selected = 0;
+                                state.selected_file = None;
+                                state.dirty = true;
+                            }
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Char('h') => {
+                            state.show_hidden = !state.show_hidden;
+                            state.selected = 0;
+                            state.dirty = true;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Esc => {
+                            state.selected_file = None;
                             consumed_indices.push(i);
                         }
                         _ => {}
                     }
                 }
             }
+
             for index in consumed_indices {
                 self.consumed[index] = true;
             }
         }
+
+        if state.dirty {
+            state.refresh();
+        }
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        self.styled(
+            format!("Dir: {}", state.current_dir.display()),
+            Style::new().fg(self.theme.text_dim).dim(),
+        );
+
+        if state.entries.is_empty() {
+            self.styled("(empty)", Style::new().fg(self.theme.text_dim).dim());
+        } else {
+            for (idx, entry) in state.entries.iter().enumerate() {
+                let icon = if entry.is_dir { "▸ " } else { "  " };
+                let row = if entry.is_dir {
+                    format!("{icon}{}", entry.name)
+                } else {
+                    format!("{icon}{}  {} B", entry.name, entry.size)
+                };
+
+                let style = if idx == state.selected {
+                    if focused {
+                        Style::new().bold().fg(self.theme.primary)
+                    } else {
+                        Style::new().fg(self.theme.primary)
+                    }
+                } else {
+                    Style::new().fg(self.theme.text)
+                };
+                self.styled(row, style);
+            }
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        response.changed = file_selected;
+        response
+    }
+
+    /// Render a data table with column headers. Handles Up/Down selection when focused.
+    ///
+    /// Column widths are computed automatically from header and cell content.
+    /// The selected row is highlighted with the theme's selection colors.
+    pub fn table(&mut self, state: &mut TableState) -> Response {
+        if state.is_dirty() {
+            state.recompute_widths();
+        }
+
+        let old_selected = state.selected;
+        let old_sort_column = state.sort_column;
+        let old_sort_ascending = state.sort_ascending;
+        let old_page = state.page;
+        let old_filter = state.filter.clone();
+
+        let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+
+        self.handle_table_keys(state, focused);
 
         if !state.visible_indices().is_empty() || !state.headers.is_empty() {
             if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
@@ -411,6 +497,75 @@ impl Context {
             group_name: None,
         });
 
+        self.render_table_header(state);
+        self.render_table_rows(state, focused, page_start, visible_len);
+
+        if state.page_size > 0 && state.total_pages() > 1 {
+            self.styled(
+                format!("Page {}/{}", state.page + 1, state.total_pages()),
+                Style::new().dim().fg(self.theme.text_dim),
+            );
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        response.changed = state.selected != old_selected
+            || state.sort_column != old_sort_column
+            || state.sort_ascending != old_sort_ascending
+            || state.page != old_page
+            || state.filter != old_filter;
+        response
+    }
+
+    fn handle_table_keys(&mut self, state: &mut TableState, focused: bool) {
+        if !focused || state.visible_indices().is_empty() {
+            return;
+        }
+
+        let mut consumed_indices = Vec::new();
+        for (i, event) in self.events.iter().enumerate() {
+            if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let visible_len = table_visible_len(state);
+                        state.selected = state.selected.min(visible_len.saturating_sub(1));
+                        let _ = handle_vertical_nav(
+                            &mut state.selected,
+                            visible_len.saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::PageUp => {
+                        let old_page = state.page;
+                        state.prev_page();
+                        if state.page != old_page {
+                            state.selected = 0;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::PageDown => {
+                        let old_page = state.page;
+                        state.next_page();
+                        if state.page != old_page {
+                            state.selected = 0;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for index in consumed_indices {
+            self.consumed[index] = true;
+        }
+    }
+
+    fn render_table_header(&mut self, state: &TableState) {
         let header_cells = state
             .headers
             .iter()
@@ -437,7 +592,15 @@ impl Context {
             .collect::<Vec<_>>()
             .join("─┼─");
         self.text(separator);
+    }
 
+    fn render_table_rows(
+        &mut self,
+        state: &TableState,
+        focused: bool,
+        page_start: usize,
+        visible_len: usize,
+    ) {
         for idx in 0..visible_len {
             let data_idx = state.visible_indices()[page_start + idx];
             let Some(row) = state.rows.get(data_idx) else {
@@ -456,33 +619,24 @@ impl Context {
                 self.styled(line, Style::new().fg(self.theme.text));
             }
         }
-
-        if state.page_size > 0 && state.total_pages() > 1 {
-            self.styled(
-                format!("Page {}/{}", state.page + 1, state.total_pages()),
-                Style::new().dim().fg(self.theme.text_dim),
-            );
-        }
-
-        self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
-
-        self
     }
 
     /// Render a tab bar. Handles Left/Right navigation when focused.
     ///
     /// The active tab is rendered in the theme's primary color. If the labels
     /// list is empty, nothing is rendered.
-    pub fn tabs(&mut self, state: &mut TabsState) -> &mut Self {
+    pub fn tabs(&mut self, state: &mut TabsState) -> Response {
         if state.labels.is_empty() {
             state.selected = 0;
-            return self;
+            return Response::none();
         }
 
         state.selected = state.selected.min(state.labels.len().saturating_sub(1));
+        let old_selected = state.selected;
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -581,18 +735,20 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        response.changed = state.selected != old_selected;
+        response
     }
 
     /// Render a clickable button. Returns `true` when activated via Enter, Space, or mouse click.
     ///
     /// The button is styled with the theme's primary color when focused and the
     /// accent color when hovered.
-    pub fn button(&mut self, label: impl Into<String>) -> bool {
+    pub fn button(&mut self, label: impl Into<String>) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
-        let response = self.response_for(interaction_id);
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         let mut activated = response.clicked;
         if focused {
@@ -648,18 +804,20 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        activated
+        response.clicked = activated;
+        response
     }
 
     /// Render a styled button variant. Returns `true` when activated.
     ///
     /// Use [`ButtonVariant::Primary`] for call-to-action, [`ButtonVariant::Danger`]
     /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
-    pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> bool {
+    pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
-        let response = self.response_for(interaction_id);
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         let mut activated = response.clicked;
         if focused {
@@ -766,19 +924,22 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        activated
+        response.clicked = activated;
+        response
     }
 
     /// Render a checkbox. Toggles the bool on Enter, Space, or click.
     ///
     /// The checked state is shown with the theme's success color. When focused,
     /// a `▸` prefix is added.
-    pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> &mut Self {
+    pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
-        let response = self.response_for(interaction_id);
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
         let mut should_toggle = response.clicked;
+        let old_checked = *checked;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -841,7 +1002,8 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        response.changed = *checked != old_checked;
+        response
     }
 
     /// Render an on/off toggle switch.
@@ -849,12 +1011,14 @@ impl Context {
     /// Toggles `on` when activated via Enter, Space, or click. The switch
     /// renders as `●━━ ON` or `━━● OFF` colored with the theme's success or
     /// dim color respectively.
-    pub fn toggle(&mut self, label: impl Into<String>, on: &mut bool) -> &mut Self {
+    pub fn toggle(&mut self, label: impl Into<String>, on: &mut bool) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
-        let response = self.response_for(interaction_id);
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
         let mut should_toggle = response.clicked;
+        let old_on = *on;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -920,7 +1084,8 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        response.changed = *on != old_on;
+        response
     }
 
     // ── select / dropdown ─────────────────────────────────────────────
@@ -928,16 +1093,17 @@ impl Context {
     /// Render a dropdown select. Shows the selected item; expands on activation.
     ///
     /// Returns `true` when the selection changed this frame.
-    pub fn select(&mut self, state: &mut SelectState) -> bool {
+    pub fn select(&mut self, state: &mut SelectState) -> Response {
         if state.items.is_empty() {
-            return false;
+            return Response::none();
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
-        let response = self.response_for(interaction_id);
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
         let old_selected = state.selected;
 
         if response.clicked {
@@ -959,14 +1125,17 @@ impl Context {
                     }
                     if state.open {
                         match key.code {
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                let c = state.cursor();
-                                state.set_cursor(c.saturating_sub(1));
-                                consumed_indices.push(i);
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                let c = state.cursor();
-                                state.set_cursor((c + 1).min(state.items.len().saturating_sub(1)));
+                            KeyCode::Up
+                            | KeyCode::Char('k')
+                            | KeyCode::Down
+                            | KeyCode::Char('j') => {
+                                let mut cursor = state.cursor();
+                                let _ = handle_vertical_nav(
+                                    &mut cursor,
+                                    state.items.len().saturating_sub(1),
+                                    key.code.clone(),
+                                );
+                                state.set_cursor(cursor);
                                 consumed_indices.push(i);
                             }
                             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -1023,6 +1192,19 @@ impl Context {
             group_name: None,
         });
 
+        self.render_select_trigger(&display_text, arrow, border_color);
+
+        if state.open {
+            self.render_select_dropdown(state);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        response.changed = changed;
+        response
+    }
+
+    fn render_select_trigger(&mut self, display_text: &str, arrow: &str, border_color: Color) {
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,
@@ -1045,35 +1227,31 @@ impl Context {
             group_name: None,
         });
         self.interaction_count += 1;
-        self.styled(&display_text, Style::new().fg(self.theme.text));
+        self.styled(display_text, Style::new().fg(self.theme.text));
         self.styled(arrow, Style::new().fg(self.theme.text_dim));
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
+    }
 
-        if state.open {
-            for (idx, item) in state.items.iter().enumerate() {
-                let is_cursor = idx == state.cursor();
-                let style = if is_cursor {
-                    Style::new().bold().fg(self.theme.primary)
-                } else {
-                    Style::new().fg(self.theme.text)
-                };
-                let prefix = if is_cursor { "▸ " } else { "  " };
-                self.styled(format!("{prefix}{item}"), style);
-            }
+    fn render_select_dropdown(&mut self, state: &SelectState) {
+        for (idx, item) in state.items.iter().enumerate() {
+            let is_cursor = idx == state.cursor();
+            let style = if is_cursor {
+                Style::new().bold().fg(self.theme.primary)
+            } else {
+                Style::new().fg(self.theme.text)
+            };
+            let prefix = if is_cursor { "▸ " } else { "  " };
+            self.styled(format!("{prefix}{item}"), style);
         }
-
-        self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
-        changed
     }
 
     // ── radio ────────────────────────────────────────────────────────
 
     /// Render a radio button group. Returns `true` when selection changed.
-    pub fn radio(&mut self, state: &mut RadioState) -> bool {
+    pub fn radio(&mut self, state: &mut RadioState) -> Response {
         if state.items.is_empty() {
-            return false;
+            return Response::none();
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
         let focused = self.register_focusable();
@@ -1090,13 +1268,12 @@ impl Context {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.selected = state.selected.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.selected =
-                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let _ = handle_vertical_nav(
+                                &mut state.selected,
+                                state.items.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
                             consumed_indices.push(i);
                         }
                         KeyCode::Enter | KeyCode::Char(' ') => {
@@ -1113,6 +1290,8 @@ impl Context {
 
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
             for (i, event) in self.events.iter().enumerate() {
@@ -1178,18 +1357,20 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-        state.selected != old_selected
+        response.changed = state.selected != old_selected;
+        response
     }
 
     // ── multi-select ─────────────────────────────────────────────────
 
     /// Render a multi-select list. Space toggles, Up/Down navigates.
-    pub fn multi_select(&mut self, state: &mut MultiSelectState) -> &mut Self {
+    pub fn multi_select(&mut self, state: &mut MultiSelectState) -> Response {
         if state.items.is_empty() {
-            return self;
+            return Response::none();
         }
         state.cursor = state.cursor.min(state.items.len().saturating_sub(1));
         let focused = self.register_focusable();
+        let old_selected = state.selected.clone();
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -1202,13 +1383,12 @@ impl Context {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.cursor = state.cursor.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.cursor =
-                                (state.cursor + 1).min(state.items.len().saturating_sub(1));
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let _ = handle_vertical_nav(
+                                &mut state.cursor,
+                                state.items.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
                             consumed_indices.push(i);
                         }
                         KeyCode::Char(' ') | KeyCode::Enter => {
@@ -1226,6 +1406,8 @@ impl Context {
 
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
 
         if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
             for (i, event) in self.events.iter().enumerate() {
@@ -1287,19 +1469,26 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-        self
+        response.changed = state.selected != old_selected;
+        response
     }
 
     // ── tree ─────────────────────────────────────────────────────────
 
     /// Render a tree view. Left/Right to collapse/expand, Up/Down to navigate.
-    pub fn tree(&mut self, state: &mut TreeState) -> &mut Self {
+    pub fn tree(&mut self, state: &mut TreeState) -> Response {
         let entries = state.flatten();
         if entries.is_empty() {
-            return self;
+            return Response::none();
         }
         state.selected = state.selected.min(entries.len().saturating_sub(1));
+        let old_selected = state.selected;
         let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+        let mut changed = false;
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -1312,23 +1501,26 @@ impl Context {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.selected = state.selected.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            let max = state.flatten().len().saturating_sub(1);
-                            state.selected = (state.selected + 1).min(max);
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let max_index = state.flatten().len().saturating_sub(1);
+                            let _ = handle_vertical_nav(
+                                &mut state.selected,
+                                max_index,
+                                key.code.clone(),
+                            );
+                            changed = changed || state.selected != old_selected;
                             consumed_indices.push(i);
                         }
                         KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
                             state.toggle_at(state.selected);
+                            changed = true;
                             consumed_indices.push(i);
                         }
                         KeyCode::Left => {
                             let entry = &entries[state.selected.min(entries.len() - 1)];
                             if entry.expanded {
                                 state.toggle_at(state.selected);
+                                changed = true;
                             }
                             consumed_indices.push(i);
                         }
@@ -1341,7 +1533,6 @@ impl Context {
             }
         }
 
-        self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -1383,7 +1574,8 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-        self
+        response.changed = changed || state.selected != old_selected;
+        response
     }
 
     // ── virtual list ─────────────────────────────────────────────────
@@ -1415,13 +1607,12 @@ impl Context {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.selected = state.selected.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.selected =
-                                (state.selected + 1).min(state.items.len().saturating_sub(1));
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let _ = handle_vertical_nav(
+                                &mut state.selected,
+                                state.items.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
                             consumed_indices.push(i);
                         }
                         KeyCode::PageUp => {
@@ -1638,7 +1829,7 @@ impl Context {
     ///
     /// Supports headers (`#`), bold (`**`), italic (`*`), inline code (`` ` ``),
     /// unordered lists (`-`/`*`), ordered lists (`1.`), and horizontal rules (`---`).
-    pub fn markdown(&mut self, text: &str) -> &mut Self {
+    pub fn markdown(&mut self, text: &str) -> Response {
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -1729,7 +1920,7 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-        self
+        Response::none()
     }
 
     fn parse_inline_segments(
@@ -1839,7 +2030,7 @@ impl Context {
     ///
     /// The line is drawn with the theme's border color and expands to fill the
     /// container width.
-    pub fn separator(&mut self) -> &mut Self {
+    pub fn separator(&mut self) -> Response {
         self.commands.push(Command::Text {
             content: "─".repeat(200),
             style: Style::new().fg(self.theme.border).dim(),
@@ -1850,7 +2041,7 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.last_text_idx = Some(self.commands.len() - 1);
-        self
+        Response::none()
     }
 
     /// Render a help bar showing keybinding hints.
@@ -1858,9 +2049,9 @@ impl Context {
     /// `bindings` is a slice of `(key, action)` pairs. Keys are rendered in the
     /// theme's primary color; actions in the dim text color. Pairs are separated
     /// by a `·` character.
-    pub fn help(&mut self, bindings: &[(&str, &str)]) -> &mut Self {
+    pub fn help(&mut self, bindings: &[(&str, &str)]) -> Response {
         if bindings.is_empty() {
-            return self;
+            return Response::none();
         }
 
         self.interaction_count += 1;
@@ -1890,7 +2081,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        Response::none()
     }
 
     // ── events ───────────────────────────────────────────────────────

@@ -18,6 +18,6 @@ fn main() -> std::io::Result<()> {
             .bold()
             .fg(Color::Cyan);
         ui.text("k/Up = +1  j/Down = -1");
-        ui.text("q = quit").dim();
+        ui.text("Ctrl+Q = quit").dim();
     })
 }

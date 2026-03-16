@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.11.0] — 2026-03-16
+
+### BREAKING: Response Pattern
+- **All widgets return `Response`**: `button()`, `checkbox()`, `toggle()`, `list()`, `table()`, `tabs()`, `select()`, `radio()`, `multi_select()`, `text_input()`, `textarea()`, `accordion()`, `alert()`, `tool_approval()`, and all display/viz widgets now return `Response { clicked, hovered, changed, focused, rect }` instead of `bool`, `&mut Self`, or `()`.
+- **Migration**: `if ui.button("x") {` → `if ui.button("x").clicked {`; `ui.checkbox("x", &mut v);` → check `.changed` field.
+- `text()`, `styled()`, `link()` are unchanged — they still return the text builder for `.bold().fg()` chaining.
+- `command_palette()` is unchanged — still returns `Option<usize>`.
+
+### New Widgets
+- **`slider("label", &mut value, range)`**: Horizontal slider for numeric input. Left/Right/h/l to adjust, returns `Response` with `.changed`.
+- **`confirm("question?", &mut bool)`**: Yes/No button pair. y/n shortcuts, Tab to switch focus. Returns `Response` with `.clicked` when answered.
+- **`file_picker(&mut FilePickerState)`**: Directory browser with Enter to navigate, Backspace to go up, extension filter, hidden file toggle.
+- **`notify("message", ToastLevel)`**: App-level toast notification — no external `ToastState` needed. Auto-dismisses after ~3 seconds.
+- **`help_from_keymap(&KeyMap)`**: Renders help bar automatically from a `KeyMap` struct.
+
+### New Types
+- **`KeyMap`** + **`Binding`**: Declarative key binding management with builder pattern. `.bind('q', "quit")`, `.bind_code(KeyCode::Up, "up")`, `.bind_mod('s', KeyModifiers::CONTROL, "save")`, `.bind_hidden(...)`.
+- **`FilePickerState`** + **`FileEntry`**: State for the file picker widget.
+- **`Palette`**: Color palette struct with 11 shades (c50–c950).
+- **`palette::tailwind`**: 22 Tailwind CSS color palettes (slate through rose) as `const` values. Usage: `slt::palette::tailwind::BLUE.c500`.
+
+### New Features
+- **`TextInputState::set_suggestions()`**: Autocomplete dropdown with prefix matching. Tab accepts, Up/Down navigates, Esc closes.
+- **`TextInputState::add_validator()`**: Multiple validators with multi-error collection. `.errors()` returns all validation errors.
+- **`Context::light_dark(light, dark)`**: Returns the appropriate color based on current theme's dark/light mode.
+- **`ListState::set_items()`**: Safe item replacement with automatic view index rebuild.
+- **`Rect` helpers**: `.centered(w,h)`, `.union()`, `.intersection()`, `.contains(x,y)`, `.rows()`, `.positions()`.
+
+### Bug Fixes
+- **`use_memo` panic messages**: Now include hook index and expected type name (matching `use_state` quality).
+- **InlineTerminal background**: `flush()` now respects `theme_bg` via `reset_with_bg()`.
+- **`Color::blend()` rounding**: Changed truncation (`as u8`) to rounding (`.round() as u8`). `blend(White, Black, 0.5)` now correctly returns `(128,128,128)`.
+- **README signature fixes**: `stat()`, `key_hint()`, `code_block()`, `accordion()` examples corrected.
+- **ListState direct mutation crash**: `pkg_list.items = items` without rebuild caused stale view indices. Fixed with `set_items()`.
+
+### Improvements
+- **Re-exports**: Easing functions (`ease_in_quad`, `ease_out_bounce`, etc.), `ContainerBuilder`, `Cell`, `Direction`, `Palette` now exported from crate root.
+- **Default impls**: `ListState`, `TabsState`, `TableState`, `SelectState`, `RadioState`, `MultiSelectState`, `TreeState`, `CommandPaletteState`, `ToolApprovalState` all implement `Default`.
+- **Refactoring**: `table()` (229→3 helpers), `select()` (138→2 helpers), `bar_chart_styled()` (228→2 helpers) split into smaller functions. Vertical nav pattern extracted into shared `handle_vertical_nav()` from 7 widgets.
+
+### Demo
+- Consolidated 19 → 14 examples. Removed debug tools (`test_mouse`, `debug_selection`). Absorbed `demo_table` and `demo_ime` into main demo.
+- New "v0.11.0" tab in `demo.rs` showcasing all new features.
+- All help bars now correctly show `Ctrl+Q` / `Ctrl+T` modifiers.
+
 ## [0.10.1] — 2026-03-16
 
 ### Performance

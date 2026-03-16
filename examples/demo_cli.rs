@@ -164,19 +164,6 @@ fn main() -> std::io::Result<()> {
                 Theme::light()
             });
 
-            if installing {
-                install_progress = (install_progress + 0.02).min(1.0);
-                if install_progress >= 1.0 {
-                    installing = false;
-                    let pkg = &PACKAGES[pkg_list.selected];
-                    output_lines.push((
-                        Color::Green,
-                        format!("Installed {} v{}", pkg.name, pkg.version),
-                    ));
-                    install_progress = 0.0;
-                }
-            }
-
             let filtered: Vec<usize> = PACKAGES
                 .iter()
                 .enumerate()
@@ -185,6 +172,27 @@ fn main() -> std::io::Result<()> {
                 })
                 .map(|(i, _)| i)
                 .collect();
+
+            if filtered.is_empty() {
+                pkg_list.selected = 0;
+            } else {
+                pkg_list.selected = pkg_list.selected.min(filtered.len().saturating_sub(1));
+            }
+
+            if installing {
+                install_progress = (install_progress + 0.02).min(1.0);
+                if install_progress >= 1.0 {
+                    installing = false;
+                    if let Some(&pkg_idx) = filtered.get(pkg_list.selected) {
+                        let pkg = &PACKAGES[pkg_idx];
+                        output_lines.push((
+                            Color::Green,
+                            format!("Installed {} v{}", pkg.name, pkg.version),
+                        ));
+                    }
+                    install_progress = 0.0;
+                }
+            }
 
             ui.bordered(Border::Rounded)
                 .title("cargo-slt")
@@ -231,21 +239,14 @@ fn main() -> std::io::Result<()> {
                                             )
                                         })
                                         .collect();
-                                    pkg_list.items = items;
-                                    pkg_list.selected = pkg_list
-                                        .selected
-                                        .min(pkg_list.items.len().saturating_sub(1));
+                                    pkg_list.set_items(items);
                                     ui.list(&mut pkg_list);
                                 }
                             });
 
                         // right: detail + output
                         ui.container().grow(1).col(|ui| {
-                            let sel = if filtered.is_empty() {
-                                0
-                            } else {
-                                filtered[pkg_list.selected.min(filtered.len() - 1)]
-                            };
+                            let sel = filtered.get(pkg_list.selected).copied().unwrap_or(0);
                             let pkg = &PACKAGES[sel];
 
                             ui.bordered(Border::Rounded)
@@ -297,7 +298,7 @@ fn main() -> std::io::Result<()> {
                                                 "outdated" => "Update",
                                                 _ => "Install",
                                             };
-                                            if ui.button(action) {
+                                            if ui.button(action).clicked {
                                                 installing = true;
                                                 install_progress = 0.0;
                                                 output_lines.push((
@@ -310,7 +311,7 @@ fn main() -> std::io::Result<()> {
                                             }
                                             if (pkg.status == "installed"
                                                 || pkg.status == "outdated")
-                                                && ui.button("Remove")
+                                                && ui.button("Remove").clicked
                                             {
                                                 output_lines.push((
                                                     Color::Red,
@@ -337,8 +338,8 @@ fn main() -> std::io::Result<()> {
 
                     ui.separator();
                     ui.help(&[
-                        ("q", "quit"),
-                        ("t", "theme"),
+                        ("Ctrl+Q", "quit"),
+                        ("Ctrl+T", "theme"),
                         ("Tab", "focus"),
                         ("Enter", "action"),
                         ("Esc", "cancel"),

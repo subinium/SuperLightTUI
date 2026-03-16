@@ -16,12 +16,13 @@ impl Context {
     /// // input.value holds the current text
     /// # });
     /// ```
-    pub fn text_input(&mut self, state: &mut TextInputState) -> &mut Self {
+    pub fn text_input(&mut self, state: &mut TextInputState) -> Response {
         slt_assert(
             !state.value.contains('\n'),
             "text_input got a newline — use textarea instead",
         );
         let focused = self.register_focusable();
+        let old_value = state.value.clone();
         state.cursor = state.cursor.min(state.value.chars().count());
 
         if focused {
@@ -31,7 +32,48 @@ impl Context {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
+                    let matched_suggestions = if state.show_suggestions {
+                        state
+                            .matched_suggestions()
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect::<Vec<String>>()
+                    } else {
+                        Vec::new()
+                    };
+                    let suggestions_visible = !matched_suggestions.is_empty();
+                    if suggestions_visible {
+                        state.suggestion_index = state
+                            .suggestion_index
+                            .min(matched_suggestions.len().saturating_sub(1));
+                    }
                     match key.code {
+                        KeyCode::Up if suggestions_visible => {
+                            state.suggestion_index = state.suggestion_index.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down if suggestions_visible => {
+                            state.suggestion_index = (state.suggestion_index + 1)
+                                .min(matched_suggestions.len().saturating_sub(1));
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Esc if state.show_suggestions => {
+                            state.show_suggestions = false;
+                            state.suggestion_index = 0;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Tab if suggestions_visible => {
+                            if let Some(selected) = matched_suggestions
+                                .get(state.suggestion_index)
+                                .or_else(|| matched_suggestions.first())
+                            {
+                                state.value = selected.clone();
+                                state.cursor = state.value.chars().count();
+                                state.show_suggestions = false;
+                                state.suggestion_index = 0;
+                            }
+                            consumed_indices.push(i);
+                        }
                         KeyCode::Char(ch) => {
                             if let Some(max) = state.max_length {
                                 if state.value.chars().count() >= max {
@@ -41,6 +83,10 @@ impl Context {
                             let index = byte_index_for_char(&state.value, state.cursor);
                             state.value.insert(index, ch);
                             state.cursor += 1;
+                            if !state.suggestions.is_empty() {
+                                state.show_suggestions = true;
+                                state.suggestion_index = 0;
+                            }
                             consumed_indices.push(i);
                         }
                         KeyCode::Backspace => {
@@ -49,6 +95,10 @@ impl Context {
                                 let end = byte_index_for_char(&state.value, state.cursor);
                                 state.value.replace_range(start..end, "");
                                 state.cursor -= 1;
+                            }
+                            if !state.suggestions.is_empty() {
+                                state.show_suggestions = true;
+                                state.suggestion_index = 0;
                             }
                             consumed_indices.push(i);
                         }
@@ -71,6 +121,10 @@ impl Context {
                                 let end = byte_index_for_char(&state.value, state.cursor + 1);
                                 state.value.replace_range(start..end, "");
                             }
+                            if !state.suggestions.is_empty() {
+                                state.show_suggestions = true;
+                                state.suggestion_index = 0;
+                            }
                             consumed_indices.push(i);
                         }
                         KeyCode::End => {
@@ -91,6 +145,10 @@ impl Context {
                         state.value.insert(index, ch);
                         state.cursor += 1;
                     }
+                    if !state.suggestions.is_empty() {
+                        state.show_suggestions = true;
+                        state.suggestion_index = 0;
+                    }
                     consumed_indices.push(i);
                 }
             }
@@ -98,6 +156,26 @@ impl Context {
             for index in consumed_indices {
                 self.consumed[index] = true;
             }
+        }
+
+        if state.value.is_empty() {
+            state.show_suggestions = false;
+            state.suggestion_index = 0;
+        }
+
+        let matched_suggestions = if state.show_suggestions {
+            state
+                .matched_suggestions()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<String>>()
+        } else {
+            Vec::new()
+        };
+        if !matched_suggestions.is_empty() {
+            state.suggestion_index = state
+                .suggestion_index
+                .min(matched_suggestions.len().saturating_sub(1));
         }
 
         let visible_width = self.area_width.saturating_sub(4) as usize;
@@ -167,20 +245,55 @@ impl Context {
             self.theme.border
         };
 
-        self.bordered(Border::Rounded)
+        let mut response = self
+            .bordered(Border::Rounded)
             .border_style(Style::new().fg(border_color))
             .px(1)
             .col(|ui| {
                 ui.styled(input_text, input_style);
             });
+        response.focused = focused;
+        response.changed = state.value != old_value;
 
-        if let Some(error) = state.validation_error.clone() {
+        let errors = state.errors();
+        if !errors.is_empty() {
+            for error in errors {
+                self.styled(
+                    format!("⚠ {error}"),
+                    Style::new().dim().fg(self.theme.error),
+                );
+            }
+        } else if let Some(error) = state.validation_error.clone() {
             self.styled(
                 format!("⚠ {error}"),
                 Style::new().dim().fg(self.theme.error),
             );
         }
-        self
+
+        if state.show_suggestions && !matched_suggestions.is_empty() {
+            let start = state.suggestion_index.saturating_sub(4);
+            let end = (start + 5).min(matched_suggestions.len());
+            let suggestion_border = self.theme.border;
+            self.bordered(Border::Rounded)
+                .border_style(Style::new().fg(suggestion_border))
+                .px(1)
+                .col(|ui| {
+                    for (idx, suggestion) in matched_suggestions[start..end].iter().enumerate() {
+                        let actual_idx = start + idx;
+                        if actual_idx == state.suggestion_index {
+                            ui.styled(
+                                suggestion.clone(),
+                                Style::new()
+                                    .bg(ui.theme().selected_bg)
+                                    .fg(ui.theme().selected_fg),
+                            );
+                        } else {
+                            ui.styled(suggestion.clone(), Style::new().fg(ui.theme().text));
+                        }
+                    }
+                });
+        }
+        response
     }
 
     /// Render an animated spinner.
@@ -237,6 +350,122 @@ impl Context {
         self
     }
 
+    /// Horizontal slider for numeric values.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut volume = 75.0_f64;
+    /// let r = ui.slider("Volume", &mut volume, 0.0..=100.0);
+    /// if r.changed { /* volume was adjusted */ }
+    /// # });
+    /// ```
+    pub fn slider(
+        &mut self,
+        label: &str,
+        value: &mut f64,
+        range: std::ops::RangeInclusive<f64>,
+    ) -> Response {
+        let focused = self.register_focusable();
+        let mut changed = false;
+
+        let start = *range.start();
+        let end = *range.end();
+        let span = (end - start).max(0.0);
+        let step = if span > 0.0 { span / 20.0 } else { 0.0 };
+
+        *value = (*value).clamp(start, end);
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    match key.code {
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            if step > 0.0 {
+                                let next = (*value - step).max(start);
+                                if (next - *value).abs() > f64::EPSILON {
+                                    *value = next;
+                                    changed = true;
+                                }
+                            }
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            if step > 0.0 {
+                                let next = (*value + step).min(end);
+                                if (next - *value).abs() > f64::EPSILON {
+                                    *value = next;
+                                    changed = true;
+                                }
+                            }
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        let ratio = if span <= f64::EPSILON {
+            0.0
+        } else {
+            ((*value - start) / span).clamp(0.0, 1.0)
+        };
+
+        let value_text = format_compact_number(*value);
+        let label_width = UnicodeWidthStr::width(label) as u32;
+        let value_width = UnicodeWidthStr::width(value_text.as_str()) as u32;
+        let track_width = self
+            .area_width
+            .saturating_sub(label_width + value_width + 8)
+            .max(10) as usize;
+        let thumb_idx = if track_width <= 1 {
+            0
+        } else {
+            (ratio * (track_width as f64 - 1.0)).round() as usize
+        };
+
+        let mut track = String::with_capacity(track_width);
+        for i in 0..track_width {
+            if i == thumb_idx {
+                track.push('○');
+            } else if i < thumb_idx {
+                track.push('█');
+            } else {
+                track.push('━');
+            }
+        }
+
+        let text_color = self.theme.text;
+        let border_color = self.theme.border;
+        let primary_color = self.theme.primary;
+        let dim_color = self.theme.text_dim;
+        let mut response = self.container().row(|ui| {
+            ui.text(label).fg(text_color);
+            ui.text("[").fg(border_color);
+            ui.text(track).grow(1).fg(primary_color);
+            ui.text("]").fg(border_color);
+            if focused {
+                ui.text(value_text.as_str()).bold().fg(primary_color);
+            } else {
+                ui.text(value_text.as_str()).fg(dim_color);
+            }
+        });
+        response.focused = focused;
+        response.changed = changed;
+        response
+    }
+
     /// Render a multi-line text area with the given number of visible rows.
     ///
     /// When focused, handles character input, Enter (new line), Backspace,
@@ -244,10 +473,11 @@ impl Context {
     ///
     /// Set [`TextareaState::word_wrap`] to enable soft-wrapping at a given
     /// display-column width. Up/Down then navigate visual lines.
-    pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> &mut Self {
+    pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
         if state.lines.is_empty() {
             state.lines.push(String::new());
         }
+        let old_lines = state.lines.clone();
         state.cursor_row = state.cursor_row.min(state.lines.len().saturating_sub(1));
         state.cursor_col = state
             .cursor_col
@@ -451,7 +681,10 @@ impl Context {
             state.scroll_offset = cursor_vrow + 1 - visible_rows as usize;
         }
 
+        let interaction_id = self.interaction_count;
         self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -509,7 +742,8 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
-        self
+        response.changed = state.lines != old_lines;
+        response
     }
 
     /// Render a progress bar (20 chars wide). `ratio` is clamped to `0.0..=1.0`.
@@ -536,5 +770,66 @@ impl Context {
             bar.push('░');
         }
         self.text(bar)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EventBuilder, KeyCode, TestBackend};
+
+    #[test]
+    fn text_input_shows_matched_suggestions_for_prefix() {
+        let mut backend = TestBackend::new(40, 10);
+        let mut input = TextInputState::new();
+        input.set_suggestions(vec!["hello".into(), "help".into(), "world".into()]);
+
+        let events = EventBuilder::new().key('h').key('e').key('l').build();
+        backend.run_with_events(events, |ui| {
+            ui.text_input(&mut input);
+        });
+
+        backend.assert_contains("hello");
+        backend.assert_contains("help");
+        assert!(!backend.to_string_trimmed().contains("world"));
+        assert_eq!(input.matched_suggestions().len(), 2);
+    }
+
+    #[test]
+    fn text_input_tab_accepts_top_suggestion() {
+        let mut backend = TestBackend::new(40, 10);
+        let mut input = TextInputState::new();
+        input.set_suggestions(vec!["hello".into(), "help".into(), "world".into()]);
+
+        let events = EventBuilder::new()
+            .key('h')
+            .key('e')
+            .key('l')
+            .key_code(KeyCode::Tab)
+            .build();
+        backend.run_with_events(events, |ui| {
+            ui.text_input(&mut input);
+        });
+
+        assert_eq!(input.value, "hello");
+        assert!(!input.show_suggestions);
+    }
+
+    #[test]
+    fn text_input_empty_value_shows_no_suggestions() {
+        let mut backend = TestBackend::new(40, 10);
+        let mut input = TextInputState::new();
+        input.set_suggestions(vec!["hello".into(), "help".into(), "world".into()]);
+
+        backend.render(|ui| {
+            ui.text_input(&mut input);
+        });
+
+        let rendered = backend.to_string_trimmed();
+        assert!(!rendered.contains("hello"));
+        assert!(!rendered.contains("help"));
+        assert!(!rendered.contains("world"));
+        assert!(input.matched_suggestions().is_empty());
+        assert!(!input.show_suggestions);
     }
 }

@@ -1,9 +1,10 @@
 use slt::{
     AlertLevel, Align, ApprovalAction, Border, BorderSides, Breakpoint, Color, CommandPaletteState,
-    Context, ContextItem, FormField, FormState, HalfBlockImage, Justify, KeyCode, ListState,
-    MultiSelectState, PaletteCommand, RadioState, RunConfig, ScrollState, SelectState,
-    SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme,
-    ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    Context, ContextItem, FilePickerState, FormField, FormState, HalfBlockImage, Justify, KeyCode,
+    KeyMap, KeyModifiers, ListState, MultiSelectState, PaletteCommand, RadioState, RunConfig,
+    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, Theme, ToastLevel, ToastState, ToolApprovalState, TreeNode,
+    TreeState, Trend,
 };
 
 fn main() -> std::io::Result<()> {
@@ -12,11 +13,13 @@ fn main() -> std::io::Result<()> {
         "Data Viz",
         "Layout",
         "Forms",
+        "IME/CJK",
         "Feedback",
         "Advanced",
         "v0.7.0",
         "v0.8.0",
         "v0.9.4",
+        "v0.11.0",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -123,6 +126,62 @@ fn main() -> std::io::Result<()> {
     let mut v8_dark_mode = false;
     let mut v8_tween = slt::anim::Tween::new(0.0, 100.0, 120);
     let mut v8_anim_done = false;
+    let mut ime_name = TextInputState::with_placeholder("Type Korean/Japanese/Chinese...");
+    let mut ime_search = TextInputState::with_placeholder("Search CJK terms...");
+    let mut ime_message = TextareaState::new();
+    let ime_items: Vec<String> = vec![
+        "한글 입력 테스트",
+        "日本語テスト",
+        "中文测试",
+        "English test",
+        "Mixed 한글+English",
+        "서울특별시",
+        "부산광역시",
+        "대구광역시",
+        "인천광역시",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let mut v11_button_clicks: u32 = 0;
+    let mut v11_volume = 35.0_f64;
+    let mut v11_brightness = 72.0_f64;
+    let mut v11_confirm_delete = false;
+    let mut v11_autocomplete = TextInputState::with_placeholder("Try: hel / dev / rust");
+    v11_autocomplete.set_suggestions(vec![
+        "hello".to_string(),
+        "help".to_string(),
+        "helm".to_string(),
+        "developer".to_string(),
+        "device".to_string(),
+        "rust".to_string(),
+        "runner".to_string(),
+    ]);
+    let mut v11_validated = TextInputState::with_placeholder("username (>=3 chars, alnum)");
+    v11_validated.add_validator(|v| {
+        if v.len() >= 3 {
+            Ok(())
+        } else {
+            Err("Must be at least 3 characters".to_string())
+        }
+    });
+    v11_validated.add_validator(|v| {
+        if v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            Ok(())
+        } else {
+            Err("Only [a-zA-Z0-9_] allowed".to_string())
+        }
+    });
+    let mut v11_file_picker = FilePickerState::new(
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    );
+    let v11_keymap = KeyMap::new()
+        .bind_mod('q', KeyModifiers::CONTROL, "quit")
+        .bind_code(KeyCode::Tab, "focus next")
+        .bind_code(KeyCode::Left, "slider -")
+        .bind_code(KeyCode::Right, "slider +")
+        .bind('y', "confirm yes")
+        .bind('n', "confirm no");
 
     slt::run_with(
         RunConfig {
@@ -158,7 +217,7 @@ fn main() -> std::io::Result<()> {
             if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
                 scroll.offset = 0;
             }
-            for i in 1..=8u8 {
+            for i in 1..=9u8 {
                 if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
                     page_tabs.selected = (i - 1) as usize;
                 }
@@ -209,8 +268,15 @@ fn main() -> std::io::Result<()> {
                                 &mut show_overlay,
                             ),
                             3 => render_forms(ui, &mut form, &mut password),
-                            4 => render_feedback(ui, &spinner, progress),
-                            5 => render_advanced(
+                            4 => render_ime(
+                                ui,
+                                &mut ime_name,
+                                &mut ime_search,
+                                &mut ime_message,
+                                &ime_items,
+                            ),
+                            5 => render_feedback(ui, &spinner, progress),
+                            6 => render_advanced(
                                 ui,
                                 &mut select,
                                 &mut radio,
@@ -218,14 +284,14 @@ fn main() -> std::io::Result<()> {
                                 &mut tree,
                                 &mut vlist,
                             ),
-                            6 => render_v070(
+                            7 => render_v070(
                                 ui,
                                 &mut v7_scroll,
                                 &mut v7_stream,
                                 &mut v7_tool,
                                 &mut v7_stream_tick,
                             ),
-                            7 => render_v080(
+                            8 => render_v080(
                                 ui,
                                 &mut list_with_filter,
                                 &mut list_filter_input,
@@ -234,11 +300,22 @@ fn main() -> std::io::Result<()> {
                                 &mut v8_anim_done,
                                 tick,
                             ),
-                            8 => render_v094(
+                            9 => render_v094(
                                 ui,
                                 &mut accordion_general,
                                 &mut accordion_advanced,
                                 &mut alert_visible,
+                            ),
+                            10 => render_v011(
+                                ui,
+                                &mut v11_button_clicks,
+                                &mut v11_volume,
+                                &mut v11_brightness,
+                                &mut v11_confirm_delete,
+                                &mut v11_autocomplete,
+                                &mut v11_validated,
+                                &mut v11_file_picker,
+                                &v11_keymap,
                             ),
                             _ => {}
                         });
@@ -251,7 +328,7 @@ fn main() -> std::io::Result<()> {
                         ("^O", "overlay"),
                         ("^H/^L", "progress"),
                         ("^P", "palette"),
-                        ("^1-8", "tab"),
+                        ("^1-9", "tab"),
                         ("^G", "top"),
                         ("Tab", "focus"),
                         ("F12", "debug"),
@@ -270,7 +347,7 @@ fn main() -> std::io::Result<()> {
                             ui.text("This modal stays in the demo.")
                                 .fg(theme.surface_text);
                             ui.text("Press m or click close.").fg(theme.surface_text);
-                            if ui.button("Close") {
+                            if ui.button("Close").clicked {
                                 show_modal = false;
                             }
                         });
@@ -353,10 +430,10 @@ fn render_core(
             ui.text("Buttons").bold().fg(theme.accent);
             ui.text("Primary actions").fg(theme.surface_text);
             ui.row(|ui| {
-                if ui.button("Save") {
+                if ui.button("Save").clicked {
                     *saves += 1;
                 }
-                if ui.button("Reset") {
+                if ui.button("Reset").clicked {
                     *saves = 0;
                 }
             });
@@ -491,7 +568,23 @@ fn render_layout(
                     ui.text("Selected:").fg(theme.surface_text);
                     ui.text(row.join(", ")).fg(theme.primary);
                 });
+            } else {
+                ui.text("No matching rows").dim();
             }
+            ui.row(|ui| {
+                ui.text(format!(
+                    "{} / {} rows",
+                    table.visible_indices().len(),
+                    table.rows.len(),
+                ))
+                .dim();
+                ui.spacer();
+                if let Some(col) = table.sort_column {
+                    let dir = if table.sort_ascending { "ASC" } else { "DESC" };
+                    ui.text(format!("{} {dir}", table.headers[col]))
+                        .fg(theme.text_dim);
+                }
+            });
         });
     });
 
@@ -581,7 +674,7 @@ fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInput
             for field in form.fields.iter_mut() {
                 ui.form_field(field);
             }
-            if ui.form_submit("Sign In") {
+            if ui.form_submit("Sign In").clicked {
                 let _valid = form.validate(&[
                     |v| {
                         if v.contains('@') {
@@ -614,6 +707,196 @@ fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInput
     });
 }
 
+fn render_ime(
+    ui: &mut Context,
+    ime_name: &mut TextInputState,
+    ime_search: &mut TextInputState,
+    ime_message: &mut TextareaState,
+    ime_items: &[String],
+) {
+    let theme = *ui.theme();
+    section(ui, "IME / CJK INPUT");
+
+    card(ui, |ui| {
+        ui.text("Compose Korean/Japanese/Chinese text")
+            .fg(theme.surface_text);
+        ui.row(|ui| {
+            ui.container().grow(1).col(|ui| {
+                ui.text("Name").bold().fg(theme.primary);
+                ui.text_input(ime_name);
+                if !ime_name.value.is_empty() {
+                    ui.line(|ui| {
+                        ui.text("chars: ").fg(theme.surface_text);
+                        ui.text(format!("{}", ime_name.value.chars().count()))
+                            .fg(theme.accent);
+                    });
+                }
+            });
+
+            ui.container().grow(1).col(|ui| {
+                ui.text("Search").bold().fg(theme.secondary);
+                ui.text_input(ime_search);
+                let query = ime_search.value.to_lowercase();
+                let tokens: Vec<&str> = query.split_whitespace().collect();
+                let matched = ime_items
+                    .iter()
+                    .filter(|item| {
+                        let lower = item.to_lowercase();
+                        tokens.is_empty() || tokens.iter().all(|t| lower.contains(t))
+                    })
+                    .count();
+                ui.text(format!("{matched}/{} matches", ime_items.len()))
+                    .fg(theme.surface_text);
+            });
+        });
+
+        ui.separator();
+        ui.text("Message").bold().fg(theme.primary);
+        let rows = ui.height().saturating_sub(24).max(5);
+        ui.textarea(ime_message, rows);
+        let total_chars: usize = ime_message
+            .lines
+            .iter()
+            .map(|line| line.chars().count())
+            .sum();
+        ui.text(format!(
+            "{} lines, {} chars",
+            ime_message.lines.len(),
+            total_chars,
+        ))
+        .dim();
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_v011(
+    ui: &mut Context,
+    button_clicks: &mut u32,
+    volume: &mut f64,
+    brightness: &mut f64,
+    confirm_delete: &mut bool,
+    autocomplete: &mut TextInputState,
+    validated: &mut TextInputState,
+    file_picker: &mut FilePickerState,
+    keymap: &KeyMap,
+) {
+    let theme = *ui.theme();
+    section(ui, "v0.11.0 FEATURES");
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Response Pattern").bold().fg(theme.primary);
+            let response = ui.button("Inspect Response");
+            if response.clicked {
+                *button_clicks = (*button_clicks).saturating_add(1);
+            }
+            ui.text(format!(
+                "clicked={} hovered={} focused={} total_clicks={}",
+                response.clicked, response.hovered, response.focused, *button_clicks,
+            ))
+            .fg(theme.surface_text);
+        });
+
+        card(ui, |ui| {
+            ui.text("Slider").bold().fg(theme.secondary);
+            if ui.slider("Volume", volume, 0.0..=100.0).changed {
+                ui.notify("Volume updated", ToastLevel::Info);
+            }
+            if ui.slider("Brightness", brightness, 0.0..=100.0).changed {
+                ui.notify("Brightness updated", ToastLevel::Success);
+            }
+            ui.text(format!(
+                "Volume {:.0} / Brightness {:.0}",
+                *volume, *brightness
+            ))
+            .fg(theme.surface_text);
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Confirm + Notify").bold().fg(theme.accent);
+            let confirmed = ui.confirm("Delete selected file?", confirm_delete);
+            if confirmed.clicked {
+                if *confirm_delete {
+                    ui.notify("Delete confirmed", ToastLevel::Warning);
+                } else {
+                    ui.notify("Delete canceled", ToastLevel::Info);
+                }
+            }
+            if ui.button("Trigger success toast").clicked {
+                ui.notify("Saved successfully", ToastLevel::Success);
+            }
+            ui.text(if *confirm_delete {
+                "Last answer: Yes"
+            } else {
+                "Last answer: No"
+            })
+            .fg(theme.surface_text);
+        });
+
+        card(ui, |ui| {
+            ui.text("LightDark + Tailwind Palette")
+                .bold()
+                .fg(theme.primary);
+            let adaptive = ui.light_dark(
+                slt::palette::tailwind::SLATE.c900,
+                slt::palette::tailwind::SLATE.c100,
+            );
+            ui.text("Adaptive foreground sample").fg(adaptive);
+            ui.line(|ui| {
+                ui.text("██ RED500 ").fg(slt::palette::tailwind::RED.c500);
+                ui.text("██ BLUE500 ").fg(slt::palette::tailwind::BLUE.c500);
+                ui.text("██ GREEN500")
+                    .fg(slt::palette::tailwind::GREEN.c500);
+            });
+            ui.text("Using slt::palette::tailwind::* constants").dim();
+        });
+    });
+
+    ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("Autocomplete + Validators")
+                .bold()
+                .fg(theme.secondary);
+            ui.text("Autocomplete").fg(theme.surface_text);
+            ui.text_input(autocomplete);
+            let matches = autocomplete.matched_suggestions();
+            ui.text(format!("matches: {}", matches.join(", "))).dim();
+
+            ui.separator();
+            ui.text("Validators").fg(theme.surface_text);
+            ui.text_input(validated);
+            validated.run_validators();
+            if validated.errors().is_empty() {
+                ui.text("All validators passed").fg(theme.success);
+            } else {
+                for err in validated.errors() {
+                    ui.text(format!("• {err}")).fg(theme.error);
+                }
+            }
+        });
+
+        card(ui, |ui| {
+            ui.text("File Picker + KeyMap").bold().fg(theme.accent);
+            if ui.file_picker(file_picker).changed {
+                if let Some(path) = file_picker.selected() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("selected file");
+                    ui.notify(&format!("Picked: {name}"), ToastLevel::Success);
+                }
+            }
+            ui.text(format!("Dir: {}", file_picker.current_dir.display()))
+                .fg(theme.surface_text)
+                .wrap();
+            ui.separator();
+            ui.help_from_keymap(keymap);
+        });
+    });
+}
+
 fn render_advanced(
     ui: &mut Context,
     select: &mut SelectState,
@@ -629,7 +912,7 @@ fn render_advanced(
         card(ui, |ui| {
             ui.text("Select").bold().fg(theme.primary);
             ui.text("Dropdown style preset").fg(theme.surface_text);
-            let _changed = ui.select(select);
+            let _changed = ui.select(select).changed;
             ui.row(|ui| {
                 ui.text("Current:").fg(theme.surface_text);
                 ui.text(&select.items[select.selected]).fg(theme.primary);
@@ -639,7 +922,7 @@ fn render_advanced(
         card(ui, |ui| {
             ui.text("Radio").bold().fg(theme.secondary);
             ui.text("Theme preference").fg(theme.surface_text);
-            let _changed = ui.radio(radio);
+            let _changed = ui.radio(radio).changed;
             ui.row(|ui| {
                 ui.text("Mode:").fg(theme.surface_text);
                 ui.text(&radio.items[radio.selected]).fg(theme.secondary);
@@ -915,7 +1198,7 @@ fn render_v070(
             }
             ui.streaming_text(stream);
 
-            if !stream.streaming && !stream.content.is_empty() && ui.button("↻ Replay") {
+            if !stream.streaming && !stream.content.is_empty() && ui.button("↻ Replay").clicked {
                 stream.content.clear();
             }
         });
@@ -924,7 +1207,7 @@ fn render_v070(
             ui.text("ToolApproval").bold().fg(theme.secondary);
             ui.text("Human-in-the-loop gate").fg(theme.surface_text);
             ui.tool_approval(tool);
-            if tool.action != ApprovalAction::Pending && ui.button("Reset") {
+            if tool.action != ApprovalAction::Pending && ui.button("Reset").clicked {
                 tool.reset();
             }
         });
@@ -995,7 +1278,7 @@ fn render_v070(
                 ui.separator();
                 ui.text("OSC 52 Clipboard").bold().fg(theme.accent);
                 ui.text("copy_to_clipboard()").fg(theme.surface_text);
-                if ui.button("Copy 'SLT v0.7.0'") {
+                if ui.button("Copy 'SLT v0.7.0'").clicked {
                     ui.copy_to_clipboard("SLT v0.7.0");
                 }
                 ui.separator();
@@ -1077,7 +1360,7 @@ fn render_v080(
                 .col(|ui| {
                     ui.text("This background changes with dark/light mode");
                 });
-            if ui.button("Toggle Dark") {
+            if ui.button("Toggle Dark").clicked {
                 *v8_dark_mode = !*v8_dark_mode;
             }
             ui.text(if *v8_dark_mode {
@@ -1165,7 +1448,7 @@ fn render_v080(
             for (i, (label, _)) in presets.iter().enumerate() {
                 if i == idx {
                     ui.text(format!("● {label}")).bold().fg(custom.primary);
-                } else if ui.button(*label) {
+                } else if ui.button(*label).clicked {
                     *idx_state.get_mut(ui) = i;
                 }
             }
@@ -1202,7 +1485,7 @@ fn render_v080(
             if *v8_anim_done {
                 ui.text("✓ on_complete fired!").fg(theme.success).bold();
             }
-            if ui.button("Restart") {
+            if ui.button("Restart").clicked {
                 v8_tween.reset(tick);
                 *v8_anim_done = false;
             }
@@ -1238,13 +1521,13 @@ fn render_v080(
             ui.text(format!("Count: {count_val}"));
             ui.text(format!("×2 = {doubled}")).fg(theme.primary);
             ui.text(format!("×3 = {tripled}")).fg(theme.success);
-            if ui.button("+1") {
+            if ui.button("+1").clicked {
                 *counter.get_mut(ui) += 1;
             }
-            if ui.button("-1") {
+            if ui.button("-1").clicked {
                 *counter.get_mut(ui) -= 1;
             }
-            if ui.button("Reset") {
+            if ui.button("Reset").clicked {
                 *counter.get_mut(ui) = 0;
             }
         });
@@ -1277,10 +1560,12 @@ fn render_v094(
     ui.text("");
 
     if *alert_visible
-        && ui.alert(
-            "Deployment successful — all checks passed",
-            AlertLevel::Success,
-        )
+        && ui
+            .alert(
+                "Deployment successful — all checks passed",
+                AlertLevel::Success,
+            )
+            .clicked
     {
         *alert_visible = false;
     }
@@ -1314,7 +1599,7 @@ fn render_v094(
         ui.text("   ");
         ui.key_hint("Ctrl+S");
         ui.text(" save  ");
-        ui.key_hint("q");
+        ui.key_hint("Ctrl+Q");
         ui.text(" quit");
     });
 
