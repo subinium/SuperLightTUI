@@ -799,6 +799,7 @@ impl Context {
         let hovered = response.hovered;
         let base_fg = colors.fg.unwrap_or(self.theme.text);
         let accent = colors.accent.unwrap_or(self.theme.accent);
+        let base_bg = colors.bg.unwrap_or(self.theme.surface_hover);
         let style = if focused {
             Style::new().fg(accent).bold()
         } else if hovered {
@@ -806,8 +807,8 @@ impl Context {
         } else {
             Style::new().fg(base_fg)
         };
-        let base_bg = colors.bg.unwrap_or(self.theme.surface_hover);
-        let hover_bg = if hovered || focused {
+        let has_custom_bg = colors.bg.is_some();
+        let bg_color = if has_custom_bg || hovered || focused {
             Some(base_bg)
         } else {
             None
@@ -821,7 +822,7 @@ impl Context {
             border: None,
             border_sides: BorderSides::all(),
             border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: hover_bg,
+            bg_color,
             padding: Padding::default(),
             margin: Margin::default(),
             constraints: Constraints::default(),
@@ -829,7 +830,8 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.styled(format!("[ {} ]", label.into()), style);
+        let label_text = format!("[ {} ]", label.into());
+        self.styled(label_text, style);
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 

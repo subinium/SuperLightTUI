@@ -310,8 +310,6 @@ fn main() -> std::io::Result<()> {
                                 .col(|ui| {
                                     ui.candlestick(
                                         &candles,
-                                        cols4,
-                                        ch23,
                                         Color::Rgb(38, 166, 91),
                                         Color::Rgb(234, 57, 67),
                                     );
@@ -559,8 +557,6 @@ fn main() -> std::io::Result<()> {
                                 .col(|ui| {
                                     ui.candlestick(
                                         &candles,
-                                        cols2,
-                                        ch_tall,
                                         Color::Rgb(38, 166, 91),
                                         Color::Rgb(234, 57, 67),
                                     );
