@@ -5,7 +5,7 @@ use crate::layout::{Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
     Align, Border, BorderSides, Breakpoint, Color, Constraints, ContainerStyle, Justify, Margin,
-    Modifiers, Padding, Style, Theme,
+    Modifiers, Padding, Style, Theme, WidgetColors,
 };
 use crate::widgets::{
     ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FilePickerState, FormField,

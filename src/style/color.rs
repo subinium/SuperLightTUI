@@ -24,6 +24,22 @@ pub enum Color {
     Cyan,
     /// Standard white (color index 7).
     White,
+    /// Bright black / dark gray (color index 8).
+    DarkGray,
+    /// Bright red (color index 9).
+    LightRed,
+    /// Bright green (color index 10).
+    LightGreen,
+    /// Bright yellow (color index 11).
+    LightYellow,
+    /// Bright blue (color index 12).
+    LightBlue,
+    /// Bright magenta (color index 13).
+    LightMagenta,
+    /// Bright cyan (color index 14).
+    LightCyan,
+    /// Bright white (color index 15).
+    LightWhite,
     /// 24-bit true color.
     Rgb(u8, u8, u8),
     /// 256-color palette index.
@@ -46,6 +62,14 @@ impl Color {
             Color::Magenta => (188, 63, 188),
             Color::Cyan => (17, 168, 205),
             Color::White => (229, 229, 229),
+            Color::DarkGray => (128, 128, 128),
+            Color::LightRed => (255, 0, 0),
+            Color::LightGreen => (0, 255, 0),
+            Color::LightYellow => (255, 255, 0),
+            Color::LightBlue => (0, 0, 255),
+            Color::LightMagenta => (255, 0, 255),
+            Color::LightCyan => (0, 255, 255),
+            Color::LightWhite => (255, 255, 255),
             Color::Reset => (0, 0, 0),
             Color::Indexed(idx) => xterm256_to_rgb(idx),
         }

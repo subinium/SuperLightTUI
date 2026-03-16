@@ -967,6 +967,26 @@ impl Context {
         }
     }
 
+    fn modify_last_constraints(&mut self, f: impl FnOnce(&mut Constraints)) {
+        if let Some(idx) = self.last_text_idx {
+            match &mut self.commands[idx] {
+                Command::Text { constraints, .. } | Command::Link { constraints, .. } => {
+                    f(constraints)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn modify_last_margin(&mut self, f: impl FnOnce(&mut Margin)) {
+        if let Some(idx) = self.last_text_idx {
+            match &mut self.commands[idx] {
+                Command::Text { margin, .. } | Command::Link { margin, .. } => f(margin),
+                _ => {}
+            }
+        }
+    }
+
     // ── containers ───────────────────────────────────────────────────
 
     /// Create a vertical (column) container.
@@ -1442,6 +1462,105 @@ impl Context {
                 *text_align = align;
             }
         }
+        self
+    }
+
+    // ── size constraints on last text/link ──────────────────────────
+
+    /// Set a fixed width on the last rendered text or link element.
+    ///
+    /// Sets both `min_width` and `max_width` to `value`, making the element
+    /// occupy exactly that many columns (padded with spaces or truncated).
+    pub fn w(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| {
+            c.min_width = Some(value);
+            c.max_width = Some(value);
+        });
+        self
+    }
+
+    /// Set a fixed height on the last rendered text or link element.
+    ///
+    /// Sets both `min_height` and `max_height` to `value`.
+    pub fn h(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| {
+            c.min_height = Some(value);
+            c.max_height = Some(value);
+        });
+        self
+    }
+
+    /// Set the minimum width on the last rendered text or link element.
+    pub fn min_w(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| c.min_width = Some(value));
+        self
+    }
+
+    /// Set the maximum width on the last rendered text or link element.
+    pub fn max_w(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| c.max_width = Some(value));
+        self
+    }
+
+    /// Set the minimum height on the last rendered text or link element.
+    pub fn min_h(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| c.min_height = Some(value));
+        self
+    }
+
+    /// Set the maximum height on the last rendered text or link element.
+    pub fn max_h(&mut self, value: u32) -> &mut Self {
+        self.modify_last_constraints(|c| c.max_height = Some(value));
+        self
+    }
+
+    // ── margin on last text/link ────────────────────────────────────
+
+    /// Set uniform margin on all sides of the last rendered text or link element.
+    pub fn m(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| *m = Margin::all(value));
+        self
+    }
+
+    /// Set horizontal margin (left + right) on the last rendered text or link.
+    pub fn mx(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| {
+            m.left = value;
+            m.right = value;
+        });
+        self
+    }
+
+    /// Set vertical margin (top + bottom) on the last rendered text or link.
+    pub fn my(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| {
+            m.top = value;
+            m.bottom = value;
+        });
+        self
+    }
+
+    /// Set top margin on the last rendered text or link element.
+    pub fn mt(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| m.top = value);
+        self
+    }
+
+    /// Set right margin on the last rendered text or link element.
+    pub fn mr(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| m.right = value);
+        self
+    }
+
+    /// Set bottom margin on the last rendered text or link element.
+    pub fn mb(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| m.bottom = value);
+        self
+    }
+
+    /// Set left margin on the last rendered text or link element.
+    pub fn ml(&mut self, value: u32) -> &mut Self {
+        self.modify_last_margin(|m| m.left = value);
         self
     }
 

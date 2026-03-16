@@ -767,3 +767,43 @@ impl ContainerStyle {
         self
     }
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct WidgetColors {
+    pub fg: Option<Color>,
+    pub bg: Option<Color>,
+    pub border: Option<Color>,
+    pub accent: Option<Color>,
+}
+
+impl WidgetColors {
+    pub const fn new() -> Self {
+        Self {
+            fg: None,
+            bg: None,
+            border: None,
+            accent: None,
+        }
+    }
+
+    pub const fn fg(mut self, color: Color) -> Self {
+        self.fg = Some(color);
+        self
+    }
+
+    pub const fn bg(mut self, color: Color) -> Self {
+        self.bg = Some(color);
+        self
+    }
+
+    pub const fn border(mut self, color: Color) -> Self {
+        self.border = Some(color);
+        self
+    }
+
+    pub const fn accent(mut self, color: Color) -> Self {
+        self.accent = Some(color);
+        self
+    }
+}

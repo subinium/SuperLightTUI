@@ -130,6 +130,10 @@ impl Context {
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
     pub fn list(&mut self, state: &mut ListState) -> Response {
+        self.list_colored(state, &WidgetColors::new())
+    }
+
+    pub fn list_colored(&mut self, state: &mut ListState, colors: &WidgetColors) -> Response {
         let visible = state.visible_indices().to_vec();
         if visible.is_empty() && state.items.is_empty() {
             state.selected = 0;
@@ -205,7 +209,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -218,16 +222,18 @@ impl Context {
         for (view_idx, &item_idx) in visible.iter().enumerate() {
             let item = &state.items[item_idx];
             if view_idx == state.selected {
+                let mut selected_style = Style::new()
+                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+                    .fg(colors.fg.unwrap_or(self.theme.selected_fg));
                 if focused {
-                    self.styled(
-                        format!("▸ {item}"),
-                        Style::new().bold().fg(self.theme.primary),
-                    );
-                } else {
-                    self.styled(format!("▸ {item}"), Style::new().fg(self.theme.primary));
+                    selected_style = selected_style.bold();
                 }
+                self.styled(format!("▸ {item}"), selected_style);
             } else {
-                self.styled(format!("  {item}"), Style::new().fg(self.theme.text));
+                self.styled(
+                    format!("  {item}"),
+                    Style::new().fg(colors.fg.unwrap_or(self.theme.text)),
+                );
             }
         }
 
@@ -381,6 +387,10 @@ impl Context {
     /// Column widths are computed automatically from header and cell content.
     /// The selected row is highlighted with the theme's selection colors.
     pub fn table(&mut self, state: &mut TableState) -> Response {
+        self.table_colored(state, &WidgetColors::new())
+    }
+
+    pub fn table_colored(&mut self, state: &mut TableState, colors: &WidgetColors) -> Response {
         if state.is_dirty() {
             state.recompute_widths();
         }
@@ -487,7 +497,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -497,13 +507,15 @@ impl Context {
             group_name: None,
         });
 
-        self.render_table_header(state);
-        self.render_table_rows(state, focused, page_start, visible_len);
+        self.render_table_header(state, colors);
+        self.render_table_rows(state, focused, page_start, visible_len, colors);
 
         if state.page_size > 0 && state.total_pages() > 1 {
             self.styled(
                 format!("Page {}/{}", state.page + 1, state.total_pages()),
-                Style::new().dim().fg(self.theme.text_dim),
+                Style::new()
+                    .dim()
+                    .fg(colors.fg.unwrap_or(self.theme.text_dim)),
             );
         }
 
@@ -565,7 +577,7 @@ impl Context {
         }
     }
 
-    fn render_table_header(&mut self, state: &TableState) {
+    fn render_table_header(&mut self, state: &TableState, colors: &WidgetColors) {
         let header_cells = state
             .headers
             .iter()
@@ -583,7 +595,10 @@ impl Context {
             })
             .collect::<Vec<_>>();
         let header_line = format_table_row(&header_cells, state.column_widths(), " │ ");
-        self.styled(header_line, Style::new().bold().fg(self.theme.text));
+        self.styled(
+            header_line,
+            Style::new().bold().fg(colors.fg.unwrap_or(self.theme.text)),
+        );
 
         let separator = state
             .column_widths()
@@ -600,6 +615,7 @@ impl Context {
         focused: bool,
         page_start: usize,
         visible_len: usize,
+        colors: &WidgetColors,
     ) {
         for idx in 0..visible_len {
             let data_idx = state.visible_indices()[page_start + idx];
@@ -609,14 +625,14 @@ impl Context {
             let line = format_table_row(row, state.column_widths(), " │ ");
             if idx == state.selected {
                 let mut style = Style::new()
-                    .bg(self.theme.selected_bg)
-                    .fg(self.theme.selected_fg);
+                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+                    .fg(colors.fg.unwrap_or(self.theme.selected_fg));
                 if focused {
                     style = style.bold();
                 }
                 self.styled(line, style);
             } else {
-                self.styled(line, Style::new().fg(self.theme.text));
+                self.styled(line, Style::new().fg(colors.fg.unwrap_or(self.theme.text)));
             }
         }
     }
@@ -626,6 +642,10 @@ impl Context {
     /// The active tab is rendered in the theme's primary color. If the labels
     /// list is empty, nothing is rendered.
     pub fn tabs(&mut self, state: &mut TabsState) -> Response {
+        self.tabs_colored(state, &WidgetColors::new())
+    }
+
+    pub fn tabs_colored(&mut self, state: &mut TabsState, colors: &WidgetColors) -> Response {
         if state.labels.is_empty() {
             state.selected = 0;
             return Response::none();
@@ -710,7 +730,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -721,14 +741,16 @@ impl Context {
         });
         for (idx, label) in state.labels.iter().enumerate() {
             let style = if idx == state.selected {
-                let s = Style::new().fg(self.theme.primary).bold();
+                let s = Style::new()
+                    .fg(colors.accent.unwrap_or(self.theme.primary))
+                    .bold();
                 if focused {
                     s.underline()
                 } else {
                     s
                 }
             } else {
-                Style::new().fg(self.theme.text_dim)
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
             };
             self.styled(format!("[ {label} ]"), style);
         }
@@ -744,6 +766,10 @@ impl Context {
     /// The button is styled with the theme's primary color when focused and the
     /// accent color when hovered.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
+        self.button_colored(label, &WidgetColors::new())
+    }
+
+    pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
@@ -771,15 +797,18 @@ impl Context {
         }
 
         let hovered = response.hovered;
+        let base_fg = colors.fg.unwrap_or(self.theme.text);
+        let accent = colors.accent.unwrap_or(self.theme.accent);
         let style = if focused {
-            Style::new().fg(self.theme.primary).bold()
+            Style::new().fg(accent).bold()
         } else if hovered {
-            Style::new().fg(self.theme.accent)
+            Style::new().fg(accent)
         } else {
-            Style::new().fg(self.theme.text)
+            Style::new().fg(base_fg)
         };
+        let base_bg = colors.bg.unwrap_or(self.theme.surface_hover);
         let hover_bg = if hovered || focused {
-            Some(self.theme.surface_hover)
+            Some(base_bg)
         } else {
             None
         };
@@ -791,7 +820,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -933,6 +962,15 @@ impl Context {
     /// The checked state is shown with the theme's success color. When focused,
     /// a `▸` prefix is added.
     pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> Response {
+        self.checkbox_colored(label, checked, &WidgetColors::new())
+    }
+
+    pub fn checkbox_colored(
+        &mut self,
+        label: impl Into<String>,
+        checked: &mut bool,
+        colors: &WidgetColors,
+    ) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
@@ -976,7 +1014,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -986,18 +1024,24 @@ impl Context {
             group_name: None,
         });
         let marker_style = if *checked {
-            Style::new().fg(self.theme.success)
+            Style::new().fg(colors.accent.unwrap_or(self.theme.success))
         } else {
-            Style::new().fg(self.theme.text_dim)
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
         };
         let marker = if *checked { "[x]" } else { "[ ]" };
         let label_text = label.into();
         if focused {
             self.styled(format!("▸ {marker}"), marker_style.bold());
-            self.styled(label_text, Style::new().fg(self.theme.text).bold());
+            self.styled(
+                label_text,
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text)).bold(),
+            );
         } else {
             self.styled(marker, marker_style);
-            self.styled(label_text, Style::new().fg(self.theme.text));
+            self.styled(
+                label_text,
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text)),
+            );
         }
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
@@ -1012,6 +1056,15 @@ impl Context {
     /// renders as `●━━ ON` or `━━● OFF` colored with the theme's success or
     /// dim color respectively.
     pub fn toggle(&mut self, label: impl Into<String>, on: &mut bool) -> Response {
+        self.toggle_colored(label, on, &WidgetColors::new())
+    }
+
+    pub fn toggle_colored(
+        &mut self,
+        label: impl Into<String>,
+        on: &mut bool,
+        colors: &WidgetColors,
+    ) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
         self.interaction_count += 1;
@@ -1055,7 +1108,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: hover_bg,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -1067,18 +1120,21 @@ impl Context {
         let label_text = label.into();
         let switch = if *on { "●━━ ON" } else { "━━● OFF" };
         let switch_style = if *on {
-            Style::new().fg(self.theme.success)
+            Style::new().fg(colors.accent.unwrap_or(self.theme.success))
         } else {
-            Style::new().fg(self.theme.text_dim)
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
         };
         if focused {
             self.styled(
                 format!("▸ {label_text}"),
-                Style::new().fg(self.theme.text).bold(),
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text)).bold(),
             );
             self.styled(switch, switch_style.bold());
         } else {
-            self.styled(label_text, Style::new().fg(self.theme.text));
+            self.styled(
+                label_text,
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text)),
+            );
             self.styled(switch, switch_style);
         }
         self.commands.push(Command::EndContainer);
@@ -1094,6 +1150,10 @@ impl Context {
     ///
     /// Returns `true` when the selection changed this frame.
     pub fn select(&mut self, state: &mut SelectState) -> Response {
+        self.select_colored(state, &WidgetColors::new())
+    }
+
+    pub fn select_colored(&mut self, state: &mut SelectState, colors: &WidgetColors) -> Response {
         if state.items.is_empty() {
             return Response::none();
         }
@@ -1164,9 +1224,9 @@ impl Context {
         let changed = state.selected != old_selected;
 
         let border_color = if focused {
-            self.theme.primary
+            colors.accent.unwrap_or(self.theme.primary)
         } else {
-            self.theme.border
+            colors.border.unwrap_or(self.theme.border)
         };
         let display_text = state
             .items
@@ -1182,7 +1242,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -1192,10 +1252,10 @@ impl Context {
             group_name: None,
         });
 
-        self.render_select_trigger(&display_text, arrow, border_color);
+        self.render_select_trigger(&display_text, arrow, border_color, colors);
 
         if state.open {
-            self.render_select_dropdown(state);
+            self.render_select_dropdown(state, colors);
         }
 
         self.commands.push(Command::EndContainer);
@@ -1204,7 +1264,13 @@ impl Context {
         response
     }
 
-    fn render_select_trigger(&mut self, display_text: &str, arrow: &str, border_color: Color) {
+    fn render_select_trigger(
+        &mut self,
+        display_text: &str,
+        arrow: &str,
+        border_color: Color,
+        colors: &WidgetColors,
+    ) {
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,
@@ -1227,19 +1293,27 @@ impl Context {
             group_name: None,
         });
         self.interaction_count += 1;
-        self.styled(display_text, Style::new().fg(self.theme.text));
-        self.styled(arrow, Style::new().fg(self.theme.text_dim));
+        self.styled(
+            display_text,
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text)),
+        );
+        self.styled(
+            arrow,
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim)),
+        );
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
     }
 
-    fn render_select_dropdown(&mut self, state: &SelectState) {
+    fn render_select_dropdown(&mut self, state: &SelectState, colors: &WidgetColors) {
         for (idx, item) in state.items.iter().enumerate() {
             let is_cursor = idx == state.cursor();
             let style = if is_cursor {
-                Style::new().bold().fg(self.theme.primary)
+                Style::new()
+                    .bold()
+                    .fg(colors.accent.unwrap_or(self.theme.primary))
             } else {
-                Style::new().fg(self.theme.text)
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text))
             };
             let prefix = if is_cursor { "▸ " } else { "  " };
             self.styled(format!("{prefix}{item}"), style);
@@ -1250,6 +1324,10 @@ impl Context {
 
     /// Render a radio button group. Returns `true` when selection changed.
     pub fn radio(&mut self, state: &mut RadioState) -> Response {
+        self.radio_colored(state, &WidgetColors::new())
+    }
+
+    pub fn radio_colored(&mut self, state: &mut RadioState, colors: &WidgetColors) -> Response {
         if state.items.is_empty() {
             return Response::none();
         }
@@ -1325,7 +1403,7 @@ impl Context {
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
+            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
             bg_color: None,
             padding: Padding::default(),
             margin: Margin::default(),
@@ -1340,12 +1418,14 @@ impl Context {
             let marker = if is_selected { "●" } else { "○" };
             let style = if is_selected {
                 if focused {
-                    Style::new().bold().fg(self.theme.primary)
+                    Style::new()
+                        .bold()
+                        .fg(colors.accent.unwrap_or(self.theme.primary))
                 } else {
-                    Style::new().fg(self.theme.primary)
+                    Style::new().fg(colors.accent.unwrap_or(self.theme.primary))
                 }
             } else {
-                Style::new().fg(self.theme.text)
+                Style::new().fg(colors.fg.unwrap_or(self.theme.text))
             };
             let prefix = if focused && idx == state.selected {
                 "▸ "
