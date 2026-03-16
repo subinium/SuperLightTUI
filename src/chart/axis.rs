@@ -37,9 +37,21 @@ pub(super) fn build_ticks(min: f64, max: f64, target: usize) -> TickSpec {
 /// divides `cell_count - 1` as evenly as possible, with 3-8 intervals
 /// and at least 2 rows per interval for readable spacing.
 pub(super) fn build_tui_ticks(data_min: f64, data_max: f64, cell_count: usize) -> TickSpec {
+    // Very small plots: just show min/max boundaries
+    if cell_count < 4 {
+        let step = (data_max - data_min).abs().max(f64::EPSILON);
+        return TickSpec {
+            values: vec![data_min, data_max],
+            step,
+        };
+    }
+
     let last = cell_count.saturating_sub(1).max(1);
     let span = (data_max - data_min).abs().max(f64::EPSILON);
     let log = span.log10().floor();
+
+    // For small plots (< 15 rows), allow 1 row per interval instead of 2
+    let min_spacing = if last >= 14 { 2 } else { 1 };
 
     let mut candidates: Vec<(f64, f64, usize, usize)> = Vec::new();
 
@@ -53,7 +65,7 @@ pub(super) fn build_tui_ticks(data_min: f64, data_max: f64, cell_count: usize) -
             let lo = (data_min / step).floor() * step;
             let hi = (data_max / step).ceil() * step;
             let n = ((hi - lo) / step + 0.5) as usize;
-            if (3..=8).contains(&n) && last / n >= 2 {
+            if (3..=8).contains(&n) && last / n >= min_spacing {
                 let rem = last % n;
                 candidates.push((step, lo, n, rem));
             }

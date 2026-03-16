@@ -1126,8 +1126,8 @@ fn chart_renders_with_axes() {
         );
     });
     tb.assert_contains("Test");
-    tb.assert_contains("┌");
     tb.assert_contains("S1");
+    tb.assert_contains("X");
 }
 
 #[test]

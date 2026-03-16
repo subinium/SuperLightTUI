@@ -25,7 +25,7 @@ pub(super) fn draw_bar_dataset(
         }
 
         let start_f = index as f64 * slot_width;
-        let bar_width_f = (slot_width * 0.75).max(1.0);
+        let bar_width_f = slot_width.max(1.0);
         let full_w = bar_width_f.floor() as usize;
         let frac_w = ((bar_width_f - full_w as f64) * 8.0).round() as usize;
 
@@ -68,7 +68,7 @@ pub(crate) fn build_histogram_config(
 
     if sorted.is_empty() {
         return ChartConfig {
-            title: Some("Histogram".to_string()),
+            title: None,
             title_style: None,
             x_axis: Axis {
                 title: options.x_title.clone(),
@@ -92,7 +92,7 @@ pub(crate) fn build_histogram_config(
             grid_style: None,
             hlines: Vec::new(),
             vlines: Vec::new(),
-            frame_visible: true,
+            frame_visible: false,
             x_axis_visible: true,
             y_axis_visible: true,
             width,
@@ -139,7 +139,7 @@ pub(crate) fn build_histogram_config(
     }
 
     ChartConfig {
-        title: Some("Histogram".to_string()),
+        title: None,
         title_style: None,
         x_axis: Axis {
             title: options.x_title.clone(),
@@ -158,7 +158,7 @@ pub(crate) fn build_histogram_config(
             style: axis_style,
         },
         datasets: vec![Dataset {
-            name: "Histogram".to_string(),
+            name: String::new(),
             data: data_points,
             color: options.color,
             marker: Marker::Block,
@@ -171,7 +171,7 @@ pub(crate) fn build_histogram_config(
         grid_style: None,
         hlines: Vec::new(),
         vlines: Vec::new(),
-        frame_visible: true,
+        frame_visible: false,
         x_axis_visible: true,
         y_axis_visible: true,
         width,

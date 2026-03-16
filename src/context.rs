@@ -125,6 +125,8 @@ pub struct Bar {
     pub value: f64,
     /// Bar color. If None, uses theme.primary.
     pub color: Option<Color>,
+    pub text_value: Option<String>,
+    pub value_style: Option<Style>,
 }
 
 impl Bar {
@@ -134,12 +136,72 @@ impl Bar {
             label: label.into(),
             value,
             color: None,
+            text_value: None,
+            value_style: None,
         }
     }
 
     /// Set the bar color.
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    pub fn text_value(mut self, text: impl Into<String>) -> Self {
+        self.text_value = Some(text.into());
+        self
+    }
+
+    pub fn value_style(mut self, style: Style) -> Self {
+        self.value_style = Some(style);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BarChartConfig {
+    pub direction: BarDirection,
+    pub bar_width: u16,
+    pub bar_gap: u16,
+    pub group_gap: u16,
+    pub max_value: Option<f64>,
+}
+
+impl Default for BarChartConfig {
+    fn default() -> Self {
+        Self {
+            direction: BarDirection::Horizontal,
+            bar_width: 1,
+            bar_gap: 0,
+            group_gap: 2,
+            max_value: None,
+        }
+    }
+}
+
+impl BarChartConfig {
+    pub fn direction(&mut self, direction: BarDirection) -> &mut Self {
+        self.direction = direction;
+        self
+    }
+
+    pub fn bar_width(&mut self, bar_width: u16) -> &mut Self {
+        self.bar_width = bar_width.max(1);
+        self
+    }
+
+    pub fn bar_gap(&mut self, bar_gap: u16) -> &mut Self {
+        self.bar_gap = bar_gap;
+        self
+    }
+
+    pub fn group_gap(&mut self, group_gap: u16) -> &mut Self {
+        self.group_gap = group_gap;
+        self
+    }
+
+    pub fn max_value(&mut self, max_value: f64) -> &mut Self {
+        self.max_value = Some(max_value);
         self
     }
 }

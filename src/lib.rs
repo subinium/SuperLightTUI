@@ -71,7 +71,8 @@ pub use chart::{
     HistogramBuilder, LegendPosition, Marker,
 };
 pub use context::{
-    Bar, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context, Response, State, Widget,
+    Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
+    Response, State, Widget,
 };
 pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 pub use halfblock::HalfBlockImage;

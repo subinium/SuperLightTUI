@@ -635,6 +635,7 @@ impl Context {
         let old_selected = state.selected;
         let focused = self.register_focusable();
         let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -702,7 +703,6 @@ impl Context {
             }
         }
 
-        self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,

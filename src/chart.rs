@@ -213,7 +213,7 @@ impl Default for HistogramBuilder {
             bins: None,
             color: Color::Cyan,
             x_title: None,
-            y_title: Some("Count".to_string()),
+            y_title: None,
         }
     }
 }
@@ -308,7 +308,7 @@ impl ChartBuilder {
                 grid_style: None,
                 hlines: Vec::new(),
                 vlines: Vec::new(),
-                frame_visible: true,
+                frame_visible: false,
                 x_axis_visible: true,
                 y_axis_visible: true,
                 width,

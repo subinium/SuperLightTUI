@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.12.3] — 2026-03-16
+
+### Chart Rendering Engine Overhaul
+
+Design principle: **"Chart = content, Container = chrome"** — charts render plot area + data decorations; containers handle borders, padding, and titles. Eliminates the Tailwind-style API conflict where chart frames duplicated container borders.
+
+#### Breaking Default Changes
+- **`frame_visible` defaults to `false`**: Charts no longer draw their own `┌─┐`/`└─┘` border frame. Use container `.bordered()` for borders. Opt back in with `c.frame(true)`.
+- **Histogram title removed**: `histogram()` no longer renders a hardcoded "Histogram" title row. Use container `.title("Histogram")` instead.
+
+#### Rendering Quality
+- **X-axis integrated rendering**: Axis tick line and labels merged into a single row — saves 1 row of overhead per chart. ~33% more plot area for small charts.
+- **Smarter tick algorithm for small charts**: Plot heights < 4 rows gracefully degrade to min/max boundary ticks instead of producing broken or missing labels. Heights 4–14 allow denser tick spacing (1 row per interval vs 2).
+- **Subtler grid**: Default grid color changed from dim white to `Color::Indexed(238)` — grid dots no longer compete visually with data points.
+- **Y-label truncation fix**: Vertical y-axis labels (ylabel) hidden when plot area is too short to render them meaningfully, preventing garbled single-character display.
+
+#### Bar Chart Overhaul (ratatui-inspired)
+- **Horizontal sub-cell precision**: Bars now use `▏▎▍▌▋▊▉█` for 8x resolution instead of full `█` blocks. Applies to `bar_chart()`, `bar_chart_styled()`, and `bar_chart_grouped()`.
+- **`Bar::text_value()`**: Custom display text per bar (e.g., `Bar::new("Q1", 72.0).text_value("72%")`). Falls back to `format_compact_number()` when unset.
+- **`Bar::value_style()`**: Override value label styling per bar.
+- **`BarChartConfig` builder**: New `bar_chart_with()` and `bar_chart_grouped_with()` APIs with `bar_width`, `bar_gap`, `group_gap`, `max_value`, and `direction` controls.
+- **Wide vertical bars**: `bar_width > 1` renders multi-cell bars. `bar_width >= 3` embeds value text inside the bar with inverted colors (ratatui pattern).
+
+#### Bug Fixes
+- **Tab click off-by-one**: `tabs()` widget had `interaction_count` incremented 68 lines after capture (all other widgets increment immediately). Caused `prev_hit_map` to reference the wrong rect, making some tabs unclickable.
+
+#### Demo
+- **demo_infoviz tabbed layout**: 4-tab navigation (Overview / Lines / Bars / Advanced). Overview shows all chart types at a glance. Detail tabs give each chart full height (~16 rows plot area vs previous 2-3 rows). Bars tab showcases `bar_chart_with(bar_width=3)`, `bar_chart_grouped_with(group_gap=2)`, and `Bar::text_value()`.
+
 ## [0.12.2] — 2026-03-16
 
 ### Refactor
