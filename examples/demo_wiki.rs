@@ -11,6 +11,12 @@ struct MemberProfile {
     placeholder_color: [u8; 3],
 }
 
+struct MemberImage {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
 const MEMBERS: [MemberProfile; 4] = [
     MemberProfile {
         tab: "Jisoo",
@@ -63,7 +69,7 @@ fn main() -> std::io::Result<()> {
         "Group",
         "Discography",
     ]);
-    let member_images: Vec<Vec<u8>> = MEMBERS.iter().map(load_member_image).collect();
+    let member_images: Vec<MemberImage> = MEMBERS.iter().map(load_member_image).collect();
 
     slt::run_with(
         RunConfig {
@@ -100,17 +106,15 @@ fn main() -> std::io::Result<()> {
     )
 }
 
-fn render_member(ui: &mut Context, idx: usize, member_images: &[Vec<u8>]) {
+fn render_member(ui: &mut Context, idx: usize, member_images: &[MemberImage]) {
     let p = &MEMBERS[idx];
     let img = &member_images[idx];
 
     ui.bordered(Border::Single).p(1).row(|ui| {
         ui.bordered(Border::Single)
             .title(format!("{} Photo", p.tab))
-            .w(34)
-            .p(1)
             .col(|ui| {
-                ui.kitty_image_fit(img, 200, 237);
+                ui.kitty_image_fit(&img.rgba, img.width, img.height, 30);
             });
 
         ui.bordered(Border::Single)
@@ -172,30 +176,33 @@ fn info_row(ui: &mut Context, key: &str, value: &str) {
     });
 }
 
-fn load_member_image(member: &MemberProfile) -> Vec<u8> {
-    if let Some(rgba) = try_load_image_file(member.image_path) {
-        return rgba;
+fn load_member_image(member: &MemberProfile) -> MemberImage {
+    if let Some(img) = try_load_image_file(member.image_path) {
+        return img;
     }
-    gen_gradient(200, 237, member.placeholder_color)
+    MemberImage {
+        rgba: gen_gradient(200, 300, member.placeholder_color),
+        width: 200,
+        height: 300,
+    }
 }
 
-fn try_load_image_file(path: &str) -> Option<Vec<u8>> {
+fn try_load_image_file(path: &str) -> Option<MemberImage> {
     let path = std::path::Path::new(path);
     if !path.exists() {
         return None;
     }
     let data = std::fs::read(path).ok()?;
-    decode_jpeg_to_rgba(&data)
-}
-
-fn decode_jpeg_to_rgba(data: &[u8]) -> Option<Vec<u8>> {
-    let decoder = jpeg_decoder(data)?;
-    let (w, h, pixels) = decoder;
+    let (w, h, rgb) = jpeg_decoder(&data)?;
     let mut rgba = Vec::with_capacity(w * h * 4);
-    for chunk in pixels.chunks(3) {
+    for chunk in rgb.chunks(3) {
         rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
     }
-    Some(rgba)
+    Some(MemberImage {
+        rgba,
+        width: w as u32,
+        height: h as u32,
+    })
 }
 
 fn jpeg_decoder(data: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
@@ -205,13 +212,10 @@ fn jpeg_decoder(data: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
     // Minimal approach: use image crate if available, otherwise use stb-style decode
     // For now, shell out to convert via sips (macOS) or ffmpeg
     let tmp_in = "/tmp/slt_wiki_input.jpg";
-    let tmp_out = "/tmp/slt_wiki_output.ppm";
+    let tmp_out = "/tmp/slt_wiki_output.bmp";
     std::fs::write(tmp_in, data).ok()?;
 
-    // Try sips (macOS)
     let status = std::process::Command::new("sips")
-        .args(["-s", "format", "jpeg", "-s", "formatOptions", "100"])
-        .args(["--resampleWidth", "200", "--resampleHeight", "237"])
         .args(["-s", "format", "bmp", tmp_in, "--out", tmp_out])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
