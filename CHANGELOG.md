@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.4] — 2026-03-16
+
+### Features
+
+- **`WidgetColors`**: New per-widget color override system. Pass `&WidgetColors` to any `_colored()` variant to override theme colors on individual widgets. Theme remains the default fallback.
+  ```rust
+  let red = WidgetColors::new().fg(Color::White).bg(Color::Red).accent(Color::LightRed);
+  ui.button_colored("Delete", &red);
+  ```
+
+- **Per-widget `_colored()` methods**: 10 widgets now support individual color customization:
+  - `button_colored()`, `text_input_colored()`, `checkbox_colored()`, `toggle_colored()`
+  - `progress_bar_colored()`, `tabs_colored()`, `select_colored()`, `radio_colored()`
+  - `list_colored()`, `table_colored()`
+
+- **Text size/margin setters**: Text and link elements now support size constraints and margin via style chaining:
+  ```rust
+  ui.text("hello").w(20).m(1);
+  ui.text("padded").mx(2).min_w(10);
+  ```
+  New methods: `w()`, `h()`, `min_w()`, `max_w()`, `min_h()`, `max_h()`, `m()`, `mx()`, `my()`, `mt()`, `mr()`, `mb()`, `ml()`
+
+- **Color light variants**: 8 new ANSI bright color variants:
+  `DarkGray`, `LightRed`, `LightGreen`, `LightYellow`, `LightBlue`, `LightMagenta`, `LightCyan`, `LightWhite`
+
 ## [0.12.3] — 2026-03-16
 
 ### Chart Rendering Engine Overhaul

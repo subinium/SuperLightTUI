@@ -17,6 +17,14 @@ impl Context {
     /// # });
     /// ```
     pub fn text_input(&mut self, state: &mut TextInputState) -> Response {
+        self.text_input_colored(state, &WidgetColors::new())
+    }
+
+    pub fn text_input_colored(
+        &mut self,
+        state: &mut TextInputState,
+        colors: &WidgetColors,
+    ) -> Response {
         slt_assert(
             !state.value.contains('\n'),
             "text_input got a newline — use textarea instead",
@@ -232,17 +240,19 @@ impl Context {
             rendered
         };
         let input_style = if state.value.is_empty() && !focused {
-            Style::new().dim().fg(self.theme.text_dim)
+            Style::new()
+                .dim()
+                .fg(colors.fg.unwrap_or(self.theme.text_dim))
         } else {
-            Style::new().fg(self.theme.text)
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text))
         };
 
         let border_color = if focused {
-            self.theme.primary
+            colors.accent.unwrap_or(self.theme.primary)
         } else if state.validation_error.is_some() {
-            self.theme.error
+            colors.accent.unwrap_or(self.theme.error)
         } else {
-            self.theme.border
+            colors.border.unwrap_or(self.theme.border)
         };
 
         let mut response = self
@@ -260,20 +270,24 @@ impl Context {
             for error in errors {
                 self.styled(
                     format!("⚠ {error}"),
-                    Style::new().dim().fg(self.theme.error),
+                    Style::new()
+                        .dim()
+                        .fg(colors.accent.unwrap_or(self.theme.error)),
                 );
             }
         } else if let Some(error) = state.validation_error.clone() {
             self.styled(
                 format!("⚠ {error}"),
-                Style::new().dim().fg(self.theme.error),
+                Style::new()
+                    .dim()
+                    .fg(colors.accent.unwrap_or(self.theme.error)),
             );
         }
 
         if state.show_suggestions && !matched_suggestions.is_empty() {
             let start = state.suggestion_index.saturating_sub(4);
             let end = (start + 5).min(matched_suggestions.len());
-            let suggestion_border = self.theme.border;
+            let suggestion_border = colors.border.unwrap_or(self.theme.border);
             self.bordered(Border::Rounded)
                 .border_style(Style::new().fg(suggestion_border))
                 .px(1)
@@ -284,11 +298,14 @@ impl Context {
                             ui.styled(
                                 suggestion.clone(),
                                 Style::new()
-                                    .bg(ui.theme().selected_bg)
-                                    .fg(ui.theme().selected_fg),
+                                    .bg(colors.accent.unwrap_or(ui.theme().selected_bg))
+                                    .fg(colors.fg.unwrap_or(ui.theme().selected_fg)),
                             );
                         } else {
-                            ui.styled(suggestion.clone(), Style::new().fg(ui.theme().text));
+                            ui.styled(
+                                suggestion.clone(),
+                                Style::new().fg(colors.fg.unwrap_or(ui.theme().text)),
+                            );
                         }
                     }
                 });
@@ -759,6 +776,10 @@ impl Context {
     /// `ratio` is clamped to `0.0..=1.0`. `width` is the total number of
     /// characters rendered.
     pub fn progress_bar(&mut self, ratio: f64, width: u32) -> &mut Self {
+        self.progress_bar_colored(ratio, width, self.theme.primary)
+    }
+
+    pub fn progress_bar_colored(&mut self, ratio: f64, width: u32, color: Color) -> &mut Self {
         let clamped = ratio.clamp(0.0, 1.0);
         let filled = (clamped * width as f64).round() as u32;
         let empty = width.saturating_sub(filled);
@@ -769,7 +790,7 @@ impl Context {
         for _ in 0..empty {
             bar.push('░');
         }
-        self.text(bar)
+        self.styled(bar, Style::new().fg(color))
     }
 }
 

@@ -82,7 +82,7 @@ pub use palette::Palette;
 pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder,
+    Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder, WidgetColors,
 };
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FileEntry,
