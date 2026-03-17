@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.9] — 2026-03-17
+
+### Features
+
+- **`border_fg(Color)`**: ContainerBuilder shorthand for border foreground color
+- **`separator_colored(Color)`**: Separator with custom color
+- **`separator()` chaining**: Now returns `&mut Self` — `.fg()`, `.dim()` etc. chainable
+- **`help_colored(bindings, key_color, text_color)`**: Help bar with custom key/text colors
+
 ## [0.12.8] — 2026-03-17
 
 ### Features

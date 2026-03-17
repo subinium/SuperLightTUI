@@ -1001,6 +1001,12 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set the border foreground color.
+    pub fn border_fg(mut self, color: Color) -> Self {
+        self.border_style = self.border_style.fg(color);
+        self
+    }
+
     /// Border style used when dark mode is active.
     pub fn dark_border_style(mut self, style: Style) -> Self {
         self.dark_border_style = Some(style);
