@@ -97,7 +97,11 @@ ui.container()
 
 **Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization, `image` for image loading. Zero `unsafe` code.
 
-> **AI-Assisted Development** — Use the `rust-tui-development-with-slt` skill in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for full API reference, best patterns, and codegen templates. Or design visually with [tui.builders](https://tui.builders) and export idiomatic Rust.
+> **AI-Assisted Development** — Use the `rust-tui-development-with-slt` skill in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for full API reference, best patterns, and codegen templates. Or design visually with [tui.builders](https://tui.builders):
+
+[![tui.builders — Build terminal UIs like websites](assets/tui-builders.png)](https://tui.builders)
+
+> Drag widgets, set properties in the inspector, export idiomatic Rust. Free, no signup, open source.
 
 ## Widgets
 
