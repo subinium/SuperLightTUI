@@ -2112,7 +2112,7 @@ impl Context {
     ///
     /// The line is drawn with the theme's border color and expands to fill the
     /// container width.
-    pub fn separator(&mut self) -> Response {
+    pub fn separator(&mut self) -> &mut Self {
         self.commands.push(Command::Text {
             content: "─".repeat(200),
             style: Style::new().fg(self.theme.border).dim(),
@@ -2123,7 +2123,21 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.last_text_idx = Some(self.commands.len() - 1);
-        Response::none()
+        self
+    }
+
+    pub fn separator_colored(&mut self, color: Color) -> &mut Self {
+        self.commands.push(Command::Text {
+            content: "─".repeat(200),
+            style: Style::new().fg(color),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.last_text_idx = Some(self.commands.len() - 1);
+        self
     }
 
     /// Render a help bar showing keybinding hints.
@@ -2159,6 +2173,46 @@ impl Context {
             }
             self.styled(*key, Style::new().bold().fg(self.theme.primary));
             self.styled(*action, Style::new().fg(self.theme.text_dim));
+        }
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+
+        Response::none()
+    }
+
+    pub fn help_colored(
+        &mut self,
+        bindings: &[(&str, &str)],
+        key_color: Color,
+        text_color: Color,
+    ) -> Response {
+        if bindings.is_empty() {
+            return Response::none();
+        }
+
+        self.interaction_count += 1;
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 2,
+            align: Align::Start,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        for (idx, (key, action)) in bindings.iter().enumerate() {
+            if idx > 0 {
+                self.styled("·", Style::new().fg(text_color));
+            }
+            self.styled(*key, Style::new().bold().fg(key_color));
+            self.styled(*action, Style::new().fg(text_color));
         }
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
