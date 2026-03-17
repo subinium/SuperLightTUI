@@ -97,6 +97,8 @@ ui.container()
 
 **Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization, `image` for image loading. Zero `unsafe` code.
 
+> **AI-Assisted Development** — Use the `rust-tui-development-with-slt` skill in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for full API reference, best patterns, and codegen templates. Or design visually with [tui.builders](https://tui.builders) and export idiomatic Rust.
+
 ## Widgets
 
 50+ built-in widgets, zero boilerplate:
@@ -679,22 +681,6 @@ SLT includes purpose-built widgets for AI/LLM workflows:
 | `context_bar()` | Token counter bar showing active context sources |
 | `markdown()` | Static markdown rendering |
 | `code_block()` | Syntax-highlighted code display |
-
-## AI-Assisted Development
-
-### Claude Code Skill
-
-If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code), the `slt` skill provides full API reference, best patterns, and codegen templates:
-
-```
-/skill slt
-```
-
-Covers: 50+ widgets, layout system, theming, animation, Kitty images, and best practices for common patterns (dashboards, forms, trading terminals, galleries).
-
-### tui.builders (Visual Editor)
-
-Prefer a visual approach? [tui.builders](https://tui.builders) lets you design TUI layouts in a web editor and export clean SLT code. Drag widgets, set properties in an inspector, and get idiomatic Rust — no manual layout math needed.
 
 ## Contributing
 
