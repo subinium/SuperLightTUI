@@ -16,12 +16,19 @@ impl Context {
     /// ```
     pub fn text(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
+        let default_fg = self
+            .text_color_stack
+            .iter()
+            .rev()
+            .find_map(|c| *c)
+            .unwrap_or(self.theme.text);
         self.commands.push(Command::Text {
             content,
-            style: Style::new().fg(self.theme.text),
+            style: Style::new().fg(default_fg),
             grow: 0,
             align: Align::Start,
             wrap: false,
+            truncate: false,
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
@@ -92,12 +99,19 @@ impl Context {
     /// Style chaining works the same as [`Context::text`].
     pub fn text_wrap(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
+        let default_fg = self
+            .text_color_stack
+            .iter()
+            .rev()
+            .find_map(|c| *c)
+            .unwrap_or(self.theme.text);
         self.commands.push(Command::Text {
             content,
-            style: Style::new().fg(self.theme.text),
+            style: Style::new().fg(default_fg),
             grow: 0,
             align: Align::Start,
             wrap: true,
+            truncate: false,
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
@@ -208,6 +222,7 @@ impl Context {
             grow: 0,
             align: Align::Start,
             wrap: false,
+            truncate: false,
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
@@ -439,6 +454,7 @@ impl Context {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
+            align_self: None,
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
@@ -1060,6 +1076,17 @@ impl Context {
         self
     }
 
+    /// Truncate the last rendered text with `…` when it exceeds its allocated width.
+    /// Use with `.w()` to set a fixed width, or let the parent container constrain it.
+    pub fn truncate(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text_idx {
+            if let Command::Text { truncate, .. } = &mut self.commands[idx] {
+                *truncate = true;
+            }
+        }
+        self
+    }
+
     fn modify_last_style(&mut self, f: impl FnOnce(&mut Style)) {
         if let Some(idx) = self.last_text_idx {
             match &mut self.commands[idx] {
@@ -1269,12 +1296,16 @@ impl Context {
         ContainerBuilder {
             ctx: self,
             gap: 0,
+            row_gap: None,
+            col_gap: None,
             align: Align::Start,
+            align_self_value: None,
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
             border_style: Style::new().fg(border),
             bg: None,
+            text_color: None,
             dark_bg: None,
             dark_border_style: None,
             group_hover_bg: None,
@@ -1465,6 +1496,7 @@ impl Context {
             direction,
             gap,
             align: Align::Start,
+            align_self: None,
             justify: Justify::Start,
             border: None,
             border_sides: BorderSides::all(),
@@ -1477,7 +1509,9 @@ impl Context {
             grow: 0,
             group_name: None,
         });
+        self.text_color_stack.push(None);
         f(self);
+        self.text_color_stack.pop();
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
 
@@ -1565,6 +1599,19 @@ impl Context {
             }
         }
         self
+    }
+
+    /// Center-align the last rendered text element horizontally.
+    /// Shorthand for `.align(Align::Center)`. Requires the text to have
+    /// a width constraint (via `.w()` or parent container) to be visible.
+    pub fn text_center(&mut self) -> &mut Self {
+        self.align(Align::Center)
+    }
+
+    /// Right-align the last rendered text element horizontally.
+    /// Shorthand for `.align(Align::End)`.
+    pub fn text_right(&mut self) -> &mut Self {
+        self.align(Align::End)
     }
 
     // ── size constraints on last text/link ──────────────────────────

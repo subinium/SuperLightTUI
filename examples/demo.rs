@@ -20,6 +20,7 @@ fn main() -> std::io::Result<()> {
         "v0.8.0",
         "v0.9.4",
         "v0.11.0",
+        "v0.12.10",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -317,6 +318,7 @@ fn main() -> std::io::Result<()> {
                                 &mut v11_file_picker,
                                 &v11_keymap,
                             ),
+                            11 => render_v01210(ui),
                             _ => {}
                         });
 
@@ -1548,6 +1550,186 @@ fn card(ui: &mut Context, f: impl FnOnce(&mut Context)) {
 fn section(ui: &mut Context, title: &str) {
     let theme = *ui.theme();
     ui.text(title).bold().fg(theme.text_dim);
+}
+
+fn render_v01210(ui: &mut Context) {
+    let theme = *ui.theme();
+
+    section(ui, "v0.12.10 — TAILWIND-LEVEL ERGONOMICS");
+    ui.text("");
+
+    // ── 1. flex_center ────────────────────────────────────────────
+    ui.divider_text("flex_center()");
+    ui.container()
+        .border(Border::Rounded)
+        .h(5)
+        .flex_center()
+        .col(|ui| {
+            ui.text("Perfectly centered with .flex_center()").bold();
+        });
+
+    ui.text("");
+
+    // ── 2. border_x / border_y ────────────────────────────────────
+    ui.divider_text("border_x() / border_y()");
+    ui.row(|ui| {
+        ui.container()
+            .border(Border::Rounded)
+            .border_x()
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(".border_x()").bold().fg(theme.primary);
+                ui.text("left + right only");
+            });
+        ui.container()
+            .border(Border::Rounded)
+            .border_y()
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(".border_y()").bold().fg(theme.secondary);
+                ui.text("top + bottom only");
+            });
+        ui.container()
+            .border(Border::Rounded)
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(".border() (all)").bold().fg(theme.accent);
+                ui.text("all four sides");
+            });
+    });
+
+    ui.text("");
+
+    // ── 3. text_center / text_right ───────────────────────────────
+    ui.divider_text("text_center() / text_right()");
+    ui.container().border(Border::Single).p(1).col(|ui| {
+        ui.text("Left (default)").fg(theme.primary);
+        ui.text("Centered text").text_center().fg(theme.secondary);
+        ui.text("Right-aligned text").text_right().fg(theme.accent);
+    });
+
+    ui.text("");
+
+    // ── 4. text_color ─────────────────────────────────────────────
+    ui.divider_text("text_color() — style inheritance");
+    ui.row(|ui| {
+        ui.container()
+            .border(Border::Rounded)
+            .text_color(Color::Rgb(255, 180, 50))
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text("Orange by default");
+                ui.text("Still orange");
+                ui.text("Overridden!").fg(Color::Rgb(100, 255, 100));
+            });
+        ui.container()
+            .border(Border::Rounded)
+            .text_color(Color::Rgb(130, 180, 255))
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text("Blue by default");
+                ui.text("Nested containers inherit:");
+                ui.container().p(1).col(|ui| {
+                    ui.text("Still blue in child");
+                });
+            });
+    });
+
+    ui.text("");
+
+    // ── 5. row_gap / col_gap ──────────────────────────────────────
+    ui.divider_text("row_gap() / col_gap()");
+    ui.row(|ui| {
+        ui.container()
+            .border(Border::Rounded)
+            .row_gap(1)
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(".row_gap(1)").bold().fg(theme.primary);
+                ui.text("Row A");
+                ui.text("Row B");
+                ui.text("Row C");
+            });
+        ui.container()
+            .border(Border::Rounded)
+            .col_gap(4)
+            .p(1)
+            .grow(1)
+            .row(|ui| {
+                ui.text(".col_gap(4)").bold().fg(theme.secondary);
+                ui.text("A");
+                ui.text("B");
+                ui.text("C");
+            });
+        ui.container()
+            .border(Border::Rounded)
+            .gap(0)
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(".gap(0) — tight").bold().fg(theme.accent);
+                ui.text("Row A");
+                ui.text("Row B");
+                ui.text("Row C");
+            });
+    });
+
+    ui.text("");
+
+    // ── 6. align_self ─────────────────────────────────────────────
+    ui.divider_text("align_self() — per-child cross-axis override");
+    ui.container()
+        .border(Border::Rounded)
+        .h(7)
+        .gap(0)
+        .col(|ui| {
+            ui.container()
+                .align_self(Align::Start)
+                .border(Border::Single)
+                .px(1)
+                .row(|ui| {
+                    ui.text("align_self(Start)").fg(theme.primary);
+                });
+            ui.container()
+                .align_self(Align::Center)
+                .border(Border::Single)
+                .px(1)
+                .row(|ui| {
+                    ui.text("align_self(Center)").fg(theme.secondary);
+                });
+            ui.container()
+                .align_self(Align::End)
+                .border(Border::Single)
+                .px(1)
+                .row(|ui| {
+                    ui.text("align_self(End)").fg(theme.accent);
+                });
+        });
+
+    ui.text("");
+
+    // ── 7. truncate ───────────────────────────────────────────────
+    ui.divider_text("truncate() — text overflow with ellipsis");
+    ui.container()
+        .border(Border::Rounded)
+        .p(1)
+        .col(|ui| {
+            ui.text("No truncation — this text is rendered at full length without any clipping applied")
+                .fg(theme.text_dim);
+            ui.text("With .truncate() — this text is way too long and will be truncated with an ellipsis character at the end")
+                .truncate()
+                .fg(theme.primary);
+            ui.text("Truncate + bold — another long line that demonstrates truncation working with style chains together")
+                .truncate()
+                .bold()
+                .fg(theme.accent);
+        });
 }
 
 fn render_v094(

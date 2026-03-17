@@ -236,7 +236,8 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
     let mut x = area.x + start_offset;
     for (i, child) in node.children.iter_mut().enumerate() {
         let w = child_widths[i];
-        let child_outer_h = match node.align {
+        let child_cross_align = child.align_self.unwrap_or(node.align);
+        let child_outer_h = match child_cross_align {
             Align::Start => area.height,
             _ => child.min_height_for_width(w).min(area.height),
         };
@@ -246,7 +247,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
         let child_h = child_outer_h.saturating_sub(child.margin.vertical());
         compute(child, Rect::new(child_x, child_y, child_w, child_h));
         let child_total_h = child.size.1.saturating_add(child.margin.vertical());
-        let y_offset = match node.align {
+        let y_offset = match child_cross_align {
             Align::Start => 0,
             Align::Center => area.height.saturating_sub(child_total_h) / 2,
             Align::End => area.height.saturating_sub(child_total_h),
@@ -322,7 +323,8 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let mut y = area.y + start_offset;
     for (i, child) in node.children.iter_mut().enumerate() {
         let h = child_heights[i];
-        let child_outer_w = match node.align {
+        let child_cross_align = child.align_self.unwrap_or(node.align);
+        let child_outer_w = match child_cross_align {
             Align::Start => area.width,
             _ => child.min_width().min(area.width),
         };
@@ -332,7 +334,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
         let child_h = h.saturating_sub(child.margin.vertical());
         compute(child, Rect::new(child_x, child_y, child_w, child_h));
         let child_total_w = child.size.0.saturating_add(child.margin.horizontal());
-        let x_offset = match node.align {
+        let x_offset = match child_cross_align {
             Align::Start => 0,
             Align::Center => area.width.saturating_sub(child_total_w) / 2,
             Align::End => area.width.saturating_sub(child_total_w),

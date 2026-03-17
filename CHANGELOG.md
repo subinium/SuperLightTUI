@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.10] — 2026-03-17
+
+### Features
+
+- **`flex_center()`**: ContainerBuilder shorthand for `.justify(Center).align(Center)` — center children on both axes in one call
+- **`border_x()` / `border_y()`**: ContainerBuilder shorthands for showing only horizontal (left+right) or vertical (top+bottom) borders
+- **`text_center()` / `text_right()`**: Text chain shorthands for `.align(Align::Center)` / `.align(Align::End)` — horizontal text alignment
+- **`text_color(Color)`**: ContainerBuilder style inheritance — set a default text color that propagates to all child text elements. Individual `.fg()` calls override.
+- **`row_gap()` / `col_gap()`**: ContainerBuilder axis-specific gap control. `row_gap(v)` applies to `.col()` containers, `col_gap(v)` applies to `.row()` containers. `.gap()` still sets both.
+- **`align_self(Align)`**: ContainerBuilder per-child cross-axis alignment override, like CSS `align-self`. Each child can independently override the parent's `align()`.
+- **`truncate()`**: Text chain method for overflow with ellipsis (`…`). Truncates text to its allocated width when it exceeds the container or `.w()` constraint.
+- **`ContainerStyle`**: All 7 new properties available as const methods: `text_color()`, `row_gap()`, `col_gap()`, `align_self()` + composable via `.apply()`
+- **`demo.rs`**: New "v0.12.10" tab showcasing all 7 features with interactive examples
+
 ## [0.12.9] — 2026-03-17
 
 ### Features

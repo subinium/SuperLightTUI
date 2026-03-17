@@ -566,13 +566,17 @@ pub struct ContainerStyle {
     pub border_sides: Option<BorderSides>,
     pub border_style: Option<Style>,
     pub bg: Option<Color>,
+    pub text_color: Option<Color>,
     pub dark_bg: Option<Color>,
     pub dark_border_style: Option<Style>,
     pub padding: Option<Padding>,
     pub margin: Option<Margin>,
     pub gap: Option<u32>,
+    pub row_gap: Option<u32>,
+    pub col_gap: Option<u32>,
     pub grow: Option<u16>,
     pub align: Option<Align>,
+    pub align_self: Option<Align>,
     pub justify: Option<Justify>,
     pub w: Option<u32>,
     pub h: Option<u32>,
@@ -592,13 +596,17 @@ impl ContainerStyle {
             border_sides: None,
             border_style: None,
             bg: None,
+            text_color: None,
             dark_bg: None,
             dark_border_style: None,
             padding: None,
             margin: None,
             gap: None,
+            row_gap: None,
+            col_gap: None,
             grow: None,
             align: None,
+            align_self: None,
             justify: None,
             w: None,
             h: None,
@@ -626,6 +634,12 @@ impl ContainerStyle {
     /// Set the background color.
     pub const fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
+        self
+    }
+
+    /// Set default text color inherited by child text widgets.
+    pub const fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
         self
     }
 
@@ -701,6 +715,18 @@ impl ContainerStyle {
         self
     }
 
+    /// Set row gap for column layouts.
+    pub const fn row_gap(mut self, value: u32) -> Self {
+        self.row_gap = Some(value);
+        self
+    }
+
+    /// Set column gap for row layouts.
+    pub const fn col_gap(mut self, value: u32) -> Self {
+        self.col_gap = Some(value);
+        self
+    }
+
     /// Set the flex-grow factor.
     pub const fn grow(mut self, value: u16) -> Self {
         self.grow = Some(value);
@@ -734,6 +760,12 @@ impl ContainerStyle {
     /// Set cross-axis alignment.
     pub const fn align(mut self, value: Align) -> Self {
         self.align = Some(value);
+        self
+    }
+
+    /// Set per-child cross-axis alignment override.
+    pub const fn align_self(mut self, value: Align) -> Self {
+        self.align_self = Some(value);
         self
     }
 

@@ -336,20 +336,40 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
                         return;
                     }
                     let text_width = UnicodeWidthStr::width(text.as_str()) as u32;
-                    let x_offset = if text_width < node.size.0 {
-                        match node.align {
-                            Align::Start => 0,
-                            Align::Center => (node.size.0 - text_width) / 2,
-                            Align::End => node.size.0 - text_width,
+                    if node.truncate && text_width > node.size.0 && node.size.0 > 1 {
+                        let truncated = truncate_with_ellipsis(text, node.size.0 as usize);
+                        let trunc_width = UnicodeWidthStr::width(truncated.as_str()) as u32;
+                        let x_off = if trunc_width < node.size.0 {
+                            match node.align {
+                                Align::Start => 0,
+                                Align::Center => (node.size.0 - trunc_width) / 2,
+                                Align::End => node.size.0 - trunc_width,
+                            }
+                        } else {
+                            0
+                        };
+                        let draw_x = node.pos.0.saturating_add(x_off);
+                        if let Some(ref url) = node.link_url {
+                            buf.set_string_linked(draw_x, sy as u32, &truncated, style, url);
+                        } else {
+                            buf.set_string(draw_x, sy as u32, &truncated, style);
                         }
                     } else {
-                        0
-                    };
-                    let draw_x = node.pos.0.saturating_add(x_offset);
-                    if let Some(ref url) = node.link_url {
-                        buf.set_string_linked(draw_x, sy as u32, text, style, url);
-                    } else {
-                        buf.set_string(draw_x, sy as u32, text, style);
+                        let x_offset = if text_width < node.size.0 {
+                            match node.align {
+                                Align::Start => 0,
+                                Align::Center => (node.size.0 - text_width) / 2,
+                                Align::End => node.size.0 - text_width,
+                            }
+                        } else {
+                            0
+                        };
+                        let draw_x = node.pos.0.saturating_add(x_offset);
+                        if let Some(ref url) = node.link_url {
+                            buf.set_string_linked(draw_x, sy as u32, text, style, url);
+                        } else {
+                            buf.set_string(draw_x, sy as u32, text, style);
+                        }
                     }
                 }
             }
@@ -545,4 +565,28 @@ fn render_scroll_indicators(
     if node.scroll_offset.saturating_add(inner.height) < node.content_height {
         buf.set_char(indicator_x, inner.bottom() - 1, '▼', style);
     }
+}
+
+fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "\u{2026}".to_string();
+    }
+    let target = max_width - 1;
+    let mut result = String::new();
+    let mut width = 0;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > target {
+            break;
+        }
+        result.push(ch);
+        width += ch_width;
+    }
+    result.push('\u{2026}');
+    result
 }
