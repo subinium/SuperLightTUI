@@ -99,7 +99,7 @@ ui.container()
 
 > **AI-Assisted Development** — Use the `rust-tui-development-with-slt` skill in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for full API reference, best patterns, and codegen templates. Or design visually with [tui.builders](https://tui.builders):
 
-[![tui.builders — Build terminal UIs like websites](assets/tui-builders.png)](https://tui.builders)
+[![tui.builders demo](assets/tui-builders-demo.gif)](https://tui.builders)
 
 > Drag widgets, set properties in the inspector, export idiomatic Rust. Free, no signup, open source.
 
