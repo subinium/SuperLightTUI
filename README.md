@@ -680,6 +680,22 @@ SLT includes purpose-built widgets for AI/LLM workflows:
 | `markdown()` | Static markdown rendering |
 | `code_block()` | Syntax-highlighted code display |
 
+## AI-Assisted Development
+
+### Claude Code Skill
+
+If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code), the `slt` skill provides full API reference, best patterns, and codegen templates:
+
+```
+/skill slt
+```
+
+Covers: 50+ widgets, layout system, theming, animation, Kitty images, and best practices for common patterns (dashboards, forms, trading terminals, galleries).
+
+### tui.builders (Visual Editor)
+
+Prefer a visual approach? [tui.builders](https://tui.builders) lets you design TUI layouts in a web editor and export clean SLT code. Drag widgets, set properties in an inspector, and get idiomatic Rust — no manual layout math needed.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
