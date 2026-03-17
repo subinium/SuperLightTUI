@@ -351,6 +351,7 @@ pub struct Context {
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
+    pub(crate) text_color_stack: Vec<Option<Color>>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -370,6 +371,7 @@ struct ContextSnapshot {
     dark_mode: bool,
     deferred_draws_len: usize,
     notification_queue_len: usize,
+    text_color_stack_len: usize,
 }
 
 impl ContextSnapshot {
@@ -389,6 +391,7 @@ impl ContextSnapshot {
             dark_mode: ctx.dark_mode,
             deferred_draws_len: ctx.deferred_draws.len(),
             notification_queue_len: ctx.notification_queue.len(),
+            text_color_stack_len: ctx.text_color_stack.len(),
         }
     }
 
@@ -407,6 +410,7 @@ impl ContextSnapshot {
         ctx.dark_mode = self.dark_mode;
         ctx.deferred_draws.truncate(self.deferred_draws_len);
         ctx.notification_queue.truncate(self.notification_queue_len);
+        ctx.text_color_stack.truncate(self.text_color_stack_len);
     }
 }
 
@@ -434,12 +438,16 @@ impl ContextSnapshot {
 pub struct ContainerBuilder<'a> {
     ctx: &'a mut Context,
     gap: u32,
+    row_gap: Option<u32>,
+    col_gap: Option<u32>,
     align: Align,
+    align_self_value: Option<Align>,
     justify: Justify,
     border: Option<Border>,
     border_sides: BorderSides,
     border_style: Style,
     bg: Option<Color>,
+    text_color: Option<Color>,
     dark_bg: Option<Color>,
     dark_border_style: Option<Style>,
     group_hover_bg: Option<Color>,
@@ -916,14 +924,26 @@ impl<'a> ContainerBuilder<'a> {
         if let Some(v) = style.gap {
             self.gap = v;
         }
+        if let Some(v) = style.row_gap {
+            self.row_gap = Some(v);
+        }
+        if let Some(v) = style.col_gap {
+            self.col_gap = Some(v);
+        }
         if let Some(v) = style.grow {
             self.grow = v;
         }
         if let Some(v) = style.align {
             self.align = v;
         }
+        if let Some(v) = style.align_self {
+            self.align_self_value = Some(v);
+        }
         if let Some(v) = style.justify {
             self.justify = v;
+        }
+        if let Some(v) = style.text_color {
+            self.text_color = Some(v);
         }
         if let Some(w) = style.w {
             self.constraints.min_width = Some(w);
@@ -990,6 +1010,26 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Show only left and right borders. Shorthand for horizontal border sides.
+    pub fn border_x(self) -> Self {
+        self.border_sides(BorderSides {
+            top: false,
+            right: true,
+            bottom: false,
+            left: true,
+        })
+    }
+
+    /// Show only top and bottom borders. Shorthand for vertical border sides.
+    pub fn border_y(self) -> Self {
+        self.border_sides(BorderSides {
+            top: true,
+            right: false,
+            bottom: true,
+            left: false,
+        })
+    }
+
     /// Set rounded border style. Shorthand for `.border(Border::Rounded)`.
     pub fn rounded(self) -> Self {
         self.border(Border::Rounded)
@@ -1015,6 +1055,13 @@ impl<'a> ContainerBuilder<'a> {
 
     pub fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
+        self
+    }
+
+    /// Set the default text color for all child text elements in this container.
+    /// Individual `.fg()` calls on text elements will still override this.
+    pub fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
         self
     }
 
@@ -1468,6 +1515,20 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set the gap between children for column layouts (vertical spacing).
+    /// Overrides `.gap()` when finalized with `.col()`.
+    pub fn row_gap(mut self, value: u32) -> Self {
+        self.row_gap = Some(value);
+        self
+    }
+
+    /// Set the gap between children for row layouts (horizontal spacing).
+    /// Overrides `.gap()` when finalized with `.row()`.
+    pub fn col_gap(mut self, value: u32) -> Self {
+        self.col_gap = Some(value);
+        self
+    }
+
     /// Gap applied only at Xs breakpoint (< 40 cols).
     pub fn xs_gap(self, value: u32) -> Self {
         let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
@@ -1685,6 +1746,18 @@ impl<'a> ContainerBuilder<'a> {
         self.justify(Justify::SpaceEvenly)
     }
 
+    /// Center children on both axes. Shorthand for `.justify(Justify::Center).align(Align::Center)`.
+    pub fn flex_center(self) -> Self {
+        self.justify(Justify::Center).align(Align::Center)
+    }
+
+    /// Override the parent's cross-axis alignment for this container only.
+    /// Like CSS `align-self`.
+    pub fn align_self(mut self, align: Align) -> Self {
+        self.align_self_value = Some(align);
+        self
+    }
+
     // ── title ────────────────────────────────────────────────────────
 
     /// Set a plain-text title rendered in the top border.
@@ -1765,6 +1838,10 @@ impl<'a> ContainerBuilder<'a> {
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.interaction_count;
         self.ctx.interaction_count += 1;
+        let resolved_gap = match direction {
+            Direction::Column => self.row_gap.unwrap_or(self.gap),
+            Direction::Row => self.col_gap.unwrap_or(self.gap),
+        };
 
         let in_hovered_group = self
             .group_name
@@ -1828,8 +1905,9 @@ impl<'a> ContainerBuilder<'a> {
         } else {
             self.ctx.commands.push(Command::BeginContainer {
                 direction,
-                gap: self.gap,
+                gap: resolved_gap,
                 align: self.align,
+                align_self: self.align_self_value,
                 justify: self.justify,
                 border: self.border,
                 border_sides: self.border_sides,
@@ -1843,7 +1921,9 @@ impl<'a> ContainerBuilder<'a> {
                 group_name,
             });
         }
+        self.ctx.text_color_stack.push(self.text_color);
         f(self.ctx);
+        self.ctx.text_color_stack.pop();
         self.ctx.commands.push(Command::EndContainer);
         self.ctx.last_text_idx = None;
 
@@ -1929,6 +2009,7 @@ impl Context {
             is_real_terminal: false,
             deferred_draws: Vec::new(),
             notification_queue: std::mem::take(&mut state.notification_queue),
+            text_color_stack: Vec::new(),
         }
     }
 
