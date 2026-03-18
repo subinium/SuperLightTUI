@@ -89,6 +89,10 @@ impl Terminal {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
+        if self.current.area.width < self.previous.area.width {
+            execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
+        }
+
         queue!(self.stdout, BeginSynchronizedUpdate)?;
 
         let mut last_style = Style::new();
@@ -142,6 +146,9 @@ impl Terminal {
 
                 queue!(self.stdout, Print(&*cur.symbol))?;
                 let char_width = UnicodeWidthStr::width(cur.symbol.as_str()).max(1) as u32;
+                if char_width > 1 && cur.symbol.chars().any(|c| c == '\u{FE0F}') {
+                    queue!(self.stdout, Print(" "))?;
+                }
                 last_pos = Some((x + char_width, y));
             }
         }
@@ -256,6 +263,10 @@ impl InlineTerminal {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
+        if self.current.area.width < self.previous.area.width {
+            execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
+        }
+
         queue!(self.stdout, BeginSynchronizedUpdate)?;
 
         if !self.reserved {
@@ -318,6 +329,9 @@ impl InlineTerminal {
 
                 queue!(self.stdout, Print(&cell.symbol))?;
                 let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
+                if char_width > 1 && cell.symbol.chars().any(|c| c == '\u{FE0F}') {
+                    queue!(self.stdout, Print(" "))?;
+                }
                 last_pos = Some((x + char_width, abs_y));
             }
 

@@ -329,6 +329,10 @@ pub struct Context {
     pub(crate) hook_states: Vec<Box<dyn std::any::Any>>,
     pub(crate) hook_cursor: usize,
     prev_focus_count: usize,
+    pub(crate) modal_focus_start: usize,
+    pub(crate) modal_focus_count: usize,
+    prev_modal_focus_start: usize,
+    prev_modal_focus_count: usize,
     scroll_count: usize,
     prev_scroll_infos: Vec<(u32, u32)>,
     prev_scroll_rects: Vec<Rect>,
@@ -367,6 +371,8 @@ struct ContextSnapshot {
     group_stack_len: usize,
     overlay_depth: usize,
     modal_active: bool,
+    modal_focus_start: usize,
+    modal_focus_count: usize,
     hook_cursor: usize,
     hook_states_len: usize,
     dark_mode: bool,
@@ -387,6 +393,8 @@ impl ContextSnapshot {
             group_stack_len: ctx.group_stack.len(),
             overlay_depth: ctx.overlay_depth,
             modal_active: ctx.modal_active,
+            modal_focus_start: ctx.modal_focus_start,
+            modal_focus_count: ctx.modal_focus_count,
             hook_cursor: ctx.hook_cursor,
             hook_states_len: ctx.hook_states.len(),
             dark_mode: ctx.dark_mode,
@@ -406,6 +414,8 @@ impl ContextSnapshot {
         ctx.group_stack.truncate(self.group_stack_len);
         ctx.overlay_depth = self.overlay_depth;
         ctx.modal_active = self.modal_active;
+        ctx.modal_focus_start = self.modal_focus_start;
+        ctx.modal_focus_count = self.modal_focus_count;
         ctx.hook_cursor = self.hook_cursor;
         ctx.hook_states.truncate(self.hook_states_len);
         ctx.dark_mode = self.dark_mode;
@@ -1735,6 +1745,10 @@ impl Context {
             hook_states: std::mem::take(&mut state.hook_states),
             hook_cursor: 0,
             prev_focus_count: state.prev_focus_count,
+            modal_focus_start: 0,
+            modal_focus_count: 0,
+            prev_modal_focus_start: state.prev_modal_focus_start,
+            prev_modal_focus_count: state.prev_modal_focus_count,
             scroll_count: 0,
             prev_scroll_infos: std::mem::take(&mut state.prev_scroll_infos),
             prev_scroll_rects: std::mem::take(&mut state.prev_scroll_rects),
@@ -1769,14 +1783,30 @@ impl Context {
                     continue;
                 }
                 if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::SHIFT) {
-                    if self.prev_focus_count > 0 {
+                    if self.prev_modal_active && self.prev_modal_focus_count > 0 {
+                        let mut modal_local =
+                            self.focus_index.saturating_sub(self.prev_modal_focus_start);
+                        modal_local %= self.prev_modal_focus_count;
+                        let next = (modal_local + 1) % self.prev_modal_focus_count;
+                        self.focus_index = self.prev_modal_focus_start + next;
+                    } else if self.prev_focus_count > 0 {
                         self.focus_index = (self.focus_index + 1) % self.prev_focus_count;
                     }
                     self.consumed[i] = true;
                 } else if (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
                     || key.code == KeyCode::BackTab
                 {
-                    if self.prev_focus_count > 0 {
+                    if self.prev_modal_active && self.prev_modal_focus_count > 0 {
+                        let mut modal_local =
+                            self.focus_index.saturating_sub(self.prev_modal_focus_start);
+                        modal_local %= self.prev_modal_focus_count;
+                        let prev = if modal_local == 0 {
+                            self.prev_modal_focus_count - 1
+                        } else {
+                            modal_local - 1
+                        };
+                        self.focus_index = self.prev_modal_focus_start + prev;
+                    } else if self.prev_focus_count > 0 {
                         self.focus_index = if self.focus_index == 0 {
                             self.prev_focus_count - 1
                         } else {
@@ -1900,6 +1930,17 @@ impl Context {
         let id = self.focus_count;
         self.focus_count += 1;
         self.commands.push(Command::FocusMarker(id));
+        if self.prev_modal_active
+            && self.prev_modal_focus_count > 0
+            && self.modal_active
+            && self.overlay_depth > 0
+        {
+            let mut modal_local_id = id.saturating_sub(self.modal_focus_start);
+            modal_local_id %= self.prev_modal_focus_count;
+            let mut modal_focus_idx = self.focus_index.saturating_sub(self.prev_modal_focus_start);
+            modal_focus_idx %= self.prev_modal_focus_count;
+            return modal_local_id == modal_focus_idx;
+        }
         if self.prev_focus_count == 0 {
             return true;
         }
@@ -2270,6 +2311,7 @@ fn open_url(url: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::test_utils::TestBackend;
+    use crate::EventBuilder;
 
     #[test]
     fn use_memo_type_mismatch_includes_index_and_expected_type() {
@@ -2315,6 +2357,68 @@ mod tests {
             ui.text("X").fg(color);
         });
         assert_eq!(light_backend.buffer().get(0, 0).style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn modal_focus_trap_tabs_only_within_modal_scope() {
+        let events = EventBuilder::new().key_code(KeyCode::Tab).build();
+        let mut state = FrameState {
+            focus_index: 3,
+            prev_focus_count: 5,
+            prev_modal_active: true,
+            prev_modal_focus_start: 3,
+            prev_modal_focus_count: 2,
+            ..FrameState::default()
+        };
+        let mut ctx = Context::new(events, 40, 10, &mut state, Theme::dark());
+
+        ctx.process_focus_keys();
+        assert_eq!(ctx.focus_index, 4);
+
+        let outside = ctx.register_focusable();
+        let mut first_modal = false;
+        let mut second_modal = false;
+        let _ = ctx.modal(|ui| {
+            first_modal = ui.register_focusable();
+            second_modal = ui.register_focusable();
+        });
+
+        assert!(!outside, "focus should not be granted outside modal");
+        assert!(
+            !first_modal,
+            "first modal focusable should be unfocused at index 4"
+        );
+        assert!(
+            second_modal,
+            "second modal focusable should be focused at index 4"
+        );
+    }
+
+    #[test]
+    fn modal_focus_trap_shift_tab_wraps_within_modal_scope() {
+        let events = EventBuilder::new().key_code(KeyCode::BackTab).build();
+        let mut state = FrameState {
+            focus_index: 3,
+            prev_focus_count: 5,
+            prev_modal_active: true,
+            prev_modal_focus_start: 3,
+            prev_modal_focus_count: 2,
+            ..FrameState::default()
+        };
+        let mut ctx = Context::new(events, 40, 10, &mut state, Theme::dark());
+
+        ctx.process_focus_keys();
+        assert_eq!(ctx.focus_index, 4);
+
+        let mut first_modal = false;
+        let mut second_modal = false;
+        let _ = ctx.modal(|ui| {
+            first_modal = ui.register_focusable();
+            second_modal = ui.register_focusable();
+        });
+
+        assert!(!first_modal);
+        assert!(second_modal);
     }
 
     fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {

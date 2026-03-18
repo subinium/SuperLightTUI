@@ -1,8 +1,50 @@
-# Handoff — SuperLightTUI v0.12.12 (2026-03-18)
+# Handoff — SuperLightTUI v0.13.1 (2026-03-19)
 
 ## Current Status
 
 - Project: `superfastlighttui`
+- Latest: v0.13.1 (releasing now)
+- Previous: v0.13.0 (API consistency), v0.12.13 (docs.rs fix), v0.12.12 (code improvements), v0.12.11 (governance)
+
+## Next Version: v0.14.0 (Features)
+
+Prioritized feature additions with demos. All items researched and specced.
+
+### P1 — Should Have
+
+| ID | Feature | Description | Depends On |
+|----|---------|-------------|------------|
+| P1-1 | Tooltip | Mouse hover popup via overlay | Response.hovered ✅ |
+| P1-2 | Table colspan + zebra | Column spanning, striped rows, fixed headers | TableState ✅ |
+| P1-3 | Fuzzy matching | command_palette fuzzy search | CommandPaletteState ✅ |
+| P1-4 | Screens/routing | push_screen/pop_screen navigation stack | modal/overlay ✅ |
+
+### P2 — Nice to Have
+
+| ID | Feature | Description |
+|----|---------|-------------|
+| P2-1 | Calendar widget | Date picker via grid() |
+| P2-2 | Static output | Fixed top + dynamic bottom (CLI tool pattern) |
+| P2-3 | Benchmark suite | criterion benches, CI integration |
+| P2-4 | cargo-generate template | Starter project |
+| P2-5 | Sixel image | Non-Kitty terminal image support |
+| P2-6 | Snapshot testing | insta-based visual regression |
+
+### Demo Requirements
+Each new feature must have a demo section in examples/demo.rs.
+
+## Competitive Analysis Summary
+
+SLT strengths vs ratatui/Ink/Textual:
+- AI-native widgets (streaming_text, tool_approval, context_bar)
+- Built-in focus system, animation, Kitty image, OSC 52 clipboard
+- Zero-config entry (`slt::run(|ui| {})`)
+- Error boundaries, panic recovery
+
+Key gaps to close:
+- Tooltip, Table enhancements, Fuzzy search, Screen routing
+- Calendar, Static output, Sixel
+- Benchmarks, templates, snapshot testing
 - Target release: `v0.12.12`
 - State: Code changes are prepared and previously passed quality gates; release execution is pending.
 - Latest blocker reported by user: intermittent Cargo lock/doc check issue on local machine.
