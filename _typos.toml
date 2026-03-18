@@ -2,6 +2,8 @@
 "tui" = "tui"
 "bg" = "bg"
 "fg" = "fg"
+"ratatui" = "ratatui"
+"ba" = "ba"
 
 [files]
-extend-exclude = ["CHANGELOG.md", "Cargo.lock"]
+extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md"]
