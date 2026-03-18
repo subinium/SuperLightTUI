@@ -871,7 +871,10 @@ fn run_frame(
 
     term.flush()?;
     if let Some(text) = clipboard_text {
-        let _ = terminal::copy_to_clipboard(&mut io::stdout(), &text);
+        #[allow(clippy::print_stderr)]
+        if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
+            eprintln!("[slt] failed to copy to clipboard: {e}");
+        }
     }
     state.tick = state.tick.wrapping_add(1);
 

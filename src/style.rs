@@ -78,6 +78,7 @@ pub struct BorderSides {
 }
 
 impl BorderSides {
+    /// All four sides visible (default).
     pub const fn all() -> Self {
         Self {
             top: true,
@@ -87,6 +88,7 @@ impl BorderSides {
         }
     }
 
+    /// No sides visible.
     pub const fn none() -> Self {
         Self {
             top: false,
@@ -96,6 +98,7 @@ impl BorderSides {
         }
     }
 
+    /// Top and bottom sides only.
     pub const fn horizontal() -> Self {
         Self {
             top: true,
@@ -105,6 +108,7 @@ impl BorderSides {
         }
     }
 
+    /// Left and right sides only.
     pub const fn vertical() -> Self {
         Self {
             top: false,
@@ -114,10 +118,12 @@ impl BorderSides {
         }
     }
 
+    /// Returns true if top or bottom is visible.
     pub fn has_horizontal(&self) -> bool {
         self.top || self.bottom
     }
 
+    /// Returns true if left or right is visible.
     pub fn has_vertical(&self) -> bool {
         self.left || self.right
     }
@@ -826,6 +832,7 @@ impl ContainerStyle {
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Per-widget color overrides that fall back to the active theme.
 pub struct WidgetColors {
     /// Foreground color override.
     pub fg: Option<Color>,

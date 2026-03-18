@@ -40,13 +40,52 @@ pub struct TextInputState {
     pub validation_error: Option<String>,
     /// When `true`, input is displayed as `•` characters (for passwords).
     pub masked: bool,
+    /// Autocomplete candidates shown below the input.
     pub suggestions: Vec<String>,
+    /// Highlighted index within the currently shown suggestions.
     pub suggestion_index: usize,
+    /// Whether the suggestions popup should be rendered.
     pub show_suggestions: bool,
     /// Multiple validators that produce their own error messages.
     validators: Vec<TextInputValidator>,
     /// All current validation errors from all validators.
     validation_errors: Vec<String>,
+}
+
+impl std::fmt::Debug for TextInputState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextInputState")
+            .field("value", &self.value)
+            .field("cursor", &self.cursor)
+            .field("placeholder", &self.placeholder)
+            .field("max_length", &self.max_length)
+            .field("validation_error", &self.validation_error)
+            .field("masked", &self.masked)
+            .field("suggestions", &self.suggestions)
+            .field("suggestion_index", &self.suggestion_index)
+            .field("show_suggestions", &self.show_suggestions)
+            .field("validators_len", &self.validators.len())
+            .field("validation_errors", &self.validation_errors)
+            .finish()
+    }
+}
+
+impl Clone for TextInputState {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            cursor: self.cursor,
+            placeholder: self.placeholder.clone(),
+            max_length: self.max_length,
+            validation_error: self.validation_error.clone(),
+            masked: self.masked,
+            suggestions: self.suggestions.clone(),
+            suggestion_index: self.suggestion_index,
+            show_suggestions: self.show_suggestions,
+            validators: Vec::new(),
+            validation_errors: self.validation_errors.clone(),
+        }
+    }
 }
 
 impl TextInputState {
@@ -119,12 +158,14 @@ impl TextInputState {
         &self.validation_errors
     }
 
+    /// Set autocomplete suggestions and reset popup state.
     pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
         self.suggestions = suggestions;
         self.suggestion_index = 0;
         self.show_suggestions = !self.suggestions.is_empty();
     }
 
+    /// Return suggestions that start with the current input (case-insensitive).
     pub fn matched_suggestions(&self) -> Vec<&str> {
         if self.value.is_empty() {
             return Vec::new();
@@ -145,7 +186,7 @@ impl Default for TextInputState {
 }
 
 /// A single form field with label and validation.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FormField {
     /// Field label shown above the input.
     pub label: String,
@@ -173,6 +214,7 @@ impl FormField {
 }
 
 /// State for a form with multiple fields.
+#[derive(Debug)]
 pub struct FormState {
     /// Ordered list of form fields.
     pub fields: Vec<FormField>,
@@ -234,12 +276,14 @@ impl Default for FormState {
 /// Add messages with [`ToastState::info`], [`ToastState::success`],
 /// [`ToastState::warning`], or [`ToastState::error`], then pass the state to
 /// `Context::toast` each frame. Expired messages are removed automatically.
+#[derive(Debug, Clone)]
 pub struct ToastState {
     /// Active toast messages, ordered oldest-first.
     pub messages: Vec<ToastMessage>,
 }
 
 /// A single toast notification message.
+#[derive(Debug, Clone)]
 pub struct ToastMessage {
     /// The text content of the notification.
     pub text: String,
@@ -263,6 +307,7 @@ impl Default for ToastMessage {
 }
 
 /// Severity level for a [`ToastMessage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
     /// Informational message (primary color).
     Info,
@@ -276,9 +321,13 @@ pub enum ToastLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertLevel {
+    /// Informational alert.
     Info,
+    /// Success alert.
     Success,
+    /// Warning alert.
     Warning,
+    /// Error alert.
     Error,
 }
 
@@ -346,6 +395,7 @@ impl Default for ToastState {
 ///
 /// Pass a mutable reference to `Context::textarea` each frame along with the
 /// number of visible rows. The widget handles all keyboard events when focused.
+#[derive(Debug, Clone)]
 pub struct TextareaState {
     /// The lines of text, one entry per line.
     pub lines: Vec<String>,
@@ -417,6 +467,7 @@ impl Default for TextareaState {
 /// Create with [`SpinnerState::dots`] or [`SpinnerState::line`], then pass to
 /// `Context::spinner` each frame. The frame advances automatically with the
 /// tick counter.
+#[derive(Debug, Clone)]
 pub struct SpinnerState {
     chars: Vec<char>,
 }
@@ -459,7 +510,7 @@ impl Default for SpinnerState {
 ///
 /// Pass a mutable reference to `Context::list` each frame. Up/Down arrow
 /// keys (and `k`/`j`) move the selection when the widget is focused.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ListState {
     /// The list items as display strings.
     pub items: Vec<String>,
@@ -534,26 +585,42 @@ impl ListState {
     }
 }
 
+/// State for a file picker widget.
+///
+/// Tracks the current directory listing, filtering options, and selected file.
 #[derive(Debug, Clone)]
 pub struct FilePickerState {
+    /// Current directory being browsed.
     pub current_dir: PathBuf,
+    /// Visible entries in the current directory.
     pub entries: Vec<FileEntry>,
+    /// Selected entry index in `entries`.
     pub selected: usize,
+    /// Currently selected file path, if any.
     pub selected_file: Option<PathBuf>,
+    /// Whether dotfiles are included in the listing.
     pub show_hidden: bool,
+    /// Allowed file extensions (lowercase, no leading dot).
     pub extensions: Vec<String>,
+    /// Whether the directory listing needs refresh.
     pub dirty: bool,
 }
 
+/// A directory entry shown by [`FilePickerState`].
 #[derive(Debug, Clone, Default)]
 pub struct FileEntry {
+    /// File or directory name.
     pub name: String,
+    /// Full path to the entry.
     pub path: PathBuf,
+    /// Whether this entry is a directory.
     pub is_dir: bool,
+    /// File size in bytes (0 for directories).
     pub size: u64,
 }
 
 impl FilePickerState {
+    /// Create a file picker rooted at `dir`.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self {
             current_dir: dir.into(),
@@ -566,12 +633,14 @@ impl FilePickerState {
         }
     }
 
+    /// Configure whether hidden files should be shown.
     pub fn show_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
         self.dirty = true;
         self
     }
 
+    /// Restrict visible files to the provided extensions.
     pub fn extensions(mut self, exts: &[&str]) -> Self {
         self.extensions = exts
             .iter()
@@ -582,10 +651,12 @@ impl FilePickerState {
         self
     }
 
+    /// Return the currently selected file path.
     pub fn selected(&self) -> Option<&PathBuf> {
         self.selected_file.as_ref()
     }
 
+    /// Re-scan the current directory and rebuild entries.
     pub fn refresh(&mut self) {
         let mut entries = Vec::new();
 
@@ -664,7 +735,7 @@ impl Default for FilePickerState {
 ///
 /// Pass a mutable reference to `Context::tabs` each frame. Left/Right arrow
 /// keys cycle through tabs when the widget is focused.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TabsState {
     /// The tab labels displayed in the bar.
     pub labels: Vec<String>,
@@ -692,6 +763,7 @@ impl TabsState {
 /// Pass a mutable reference to `Context::table` each frame. Up/Down arrow
 /// keys move the row selection when the widget is focused. Column widths are
 /// computed automatically from header and cell content.
+#[derive(Debug, Clone)]
 pub struct TableState {
     /// Column header labels.
     pub headers: Vec<String>,
@@ -941,6 +1013,7 @@ impl TableState {
 /// Pass a mutable reference to `Context::scrollable` each frame. The context
 /// updates `offset` and the internal bounds automatically based on mouse wheel
 /// and drag events.
+#[derive(Debug, Clone)]
 pub struct ScrollState {
     /// Current vertical scroll offset in rows.
     pub offset: usize,
@@ -1035,7 +1108,9 @@ pub enum ButtonVariant {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trend {
+    /// Positive movement.
     Up,
+    /// Negative movement.
     Down,
 }
 
@@ -1045,16 +1120,21 @@ pub enum Trend {
 ///
 /// Renders as a single-line button showing the selected option. When activated,
 /// expands into a vertical list overlay for picking an option.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SelectState {
+    /// Selectable option labels.
     pub items: Vec<String>,
+    /// Selected option index.
     pub selected: usize,
+    /// Whether the dropdown list is currently open.
     pub open: bool,
+    /// Placeholder text shown when `items` is empty.
     pub placeholder: String,
     cursor: usize,
 }
 
 impl SelectState {
+    /// Create select state with the provided options.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         Self {
             items: items.into_iter().map(Into::into).collect(),
@@ -1065,11 +1145,13 @@ impl SelectState {
         }
     }
 
+    /// Set placeholder text shown when no item can be displayed.
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.placeholder = p.into();
         self
     }
 
+    /// Returns the currently selected item label, or `None` if empty.
     pub fn selected_item(&self) -> Option<&str> {
         self.items.get(self.selected).map(String::as_str)
     }
@@ -1088,13 +1170,16 @@ impl SelectState {
 /// State for a radio button group.
 ///
 /// Renders a vertical list of mutually-exclusive options with `●`/`○` markers.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RadioState {
+    /// Radio option labels.
     pub items: Vec<String>,
+    /// Selected option index.
     pub selected: usize,
 }
 
 impl RadioState {
+    /// Create radio state with the provided options.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         Self {
             items: items.into_iter().map(Into::into).collect(),
@@ -1102,6 +1187,7 @@ impl RadioState {
         }
     }
 
+    /// Returns the currently selected option label, or `None` if empty.
     pub fn selected_item(&self) -> Option<&str> {
         self.items.get(self.selected).map(String::as_str)
     }
@@ -1112,13 +1198,18 @@ impl RadioState {
 /// State for a multi-select list.
 ///
 /// Like [`ListState`] but allows toggling multiple items with Space.
+#[derive(Debug, Clone)]
 pub struct MultiSelectState {
+    /// Multi-select option labels.
     pub items: Vec<String>,
+    /// Focused option index used for keyboard navigation.
     pub cursor: usize,
+    /// Set of selected option indices.
     pub selected: HashSet<usize>,
 }
 
 impl MultiSelectState {
+    /// Create multi-select state with the provided options.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         Self {
             items: items.into_iter().map(Into::into).collect(),
@@ -1127,6 +1218,7 @@ impl MultiSelectState {
         }
     }
 
+    /// Return selected item labels in ascending index order.
     pub fn selected_items(&self) -> Vec<&str> {
         let mut indices: Vec<usize> = self.selected.iter().copied().collect();
         indices.sort();
@@ -1136,6 +1228,7 @@ impl MultiSelectState {
             .collect()
     }
 
+    /// Toggle selection state for `index`.
     pub fn toggle(&mut self, index: usize) {
         if self.selected.contains(&index) {
             self.selected.remove(&index);
@@ -1148,13 +1241,18 @@ impl MultiSelectState {
 // ── Tree ──────────────────────────────────────────────────────────────
 
 /// A node in a tree view.
+#[derive(Debug, Clone)]
 pub struct TreeNode {
+    /// Display label for this node.
     pub label: String,
+    /// Child nodes.
     pub children: Vec<TreeNode>,
+    /// Whether the node is expanded in the tree view.
     pub expanded: bool,
 }
 
 impl TreeNode {
+    /// Create a collapsed tree node with no children.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -1163,16 +1261,19 @@ impl TreeNode {
         }
     }
 
+    /// Mark this node as expanded.
     pub fn expanded(mut self) -> Self {
         self.expanded = true;
         self
     }
 
+    /// Set child nodes for this node.
     pub fn children(mut self, children: Vec<TreeNode>) -> Self {
         self.children = children;
         self
     }
 
+    /// Returns `true` when this node has no children.
     pub fn is_leaf(&self) -> bool {
         self.children.is_empty()
     }
@@ -1200,12 +1301,16 @@ pub(crate) struct FlatTreeEntry {
 }
 
 /// State for a hierarchical tree view widget.
+#[derive(Debug, Clone)]
 pub struct TreeState {
+    /// Root nodes of the tree.
     pub nodes: Vec<TreeNode>,
+    /// Selected row index in the flattened visible tree.
     pub selected: usize,
 }
 
 impl TreeState {
+    /// Create tree state from root nodes.
     pub fn new(nodes: Vec<TreeNode>) -> Self {
         Self { nodes, selected: 0 }
     }
@@ -1243,13 +1348,18 @@ impl TreeState {
 // ── Command Palette ───────────────────────────────────────────────────
 
 /// A single command entry in the palette.
+#[derive(Debug, Clone)]
 pub struct PaletteCommand {
+    /// Primary command label.
     pub label: String,
+    /// Supplemental command description.
     pub description: String,
+    /// Optional keyboard shortcut hint.
     pub shortcut: Option<String>,
 }
 
 impl PaletteCommand {
+    /// Create a new palette command.
     pub fn new(label: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -1258,6 +1368,7 @@ impl PaletteCommand {
         }
     }
 
+    /// Set a shortcut hint displayed alongside the command.
     pub fn shortcut(mut self, s: impl Into<String>) -> Self {
         self.shortcut = Some(s.into());
         self
@@ -1267,25 +1378,36 @@ impl PaletteCommand {
 /// State for a command palette overlay.
 ///
 /// Renders as a modal with a search input and filtered command list.
+#[derive(Debug, Clone)]
 pub struct CommandPaletteState {
+    /// Available commands.
     pub commands: Vec<PaletteCommand>,
+    /// Current search query.
     pub input: String,
+    /// Cursor index within `input`.
     pub cursor: usize,
+    /// Whether the palette modal is open.
     pub open: bool,
+    /// The last selected command index, set when the user confirms a selection.
+    /// Check this after `response.changed` is true.
+    pub last_selected: Option<usize>,
     selected: usize,
 }
 
 impl CommandPaletteState {
+    /// Create command palette state from a command list.
     pub fn new(commands: Vec<PaletteCommand>) -> Self {
         Self {
             commands,
             input: String::new(),
             cursor: 0,
             open: false,
+            last_selected: None,
             selected: 0,
         }
     }
 
+    /// Toggle open/closed state and reset input when opening.
     pub fn toggle(&mut self) {
         self.open = !self.open;
         if self.open {
@@ -1331,6 +1453,7 @@ impl CommandPaletteState {
 ///
 /// Accumulates text chunks as they arrive from an LLM stream.
 /// Pass to [`Context::streaming_text`](crate::Context::streaming_text) each frame.
+#[derive(Debug, Clone)]
 pub struct StreamingTextState {
     /// The accumulated text content.
     pub content: String,
@@ -1389,6 +1512,7 @@ impl Default for StreamingTextState {
 ///
 /// Accumulates markdown chunks as they arrive from an LLM stream.
 /// Pass to [`Context::streaming_markdown`](crate::Context::streaming_markdown) each frame.
+#[derive(Debug, Clone)]
 pub struct StreamingMarkdownState {
     /// The accumulated markdown content.
     pub content: String,
@@ -1396,8 +1520,11 @@ pub struct StreamingMarkdownState {
     pub streaming: bool,
     /// Cursor blink state (for the typing indicator).
     pub cursor_visible: bool,
+    /// Cursor animation tick counter.
     pub cursor_tick: u64,
+    /// Whether the parser is currently inside a fenced code block.
     pub in_code_block: bool,
+    /// Language label of the active fenced code block.
     pub code_block_lang: String,
 }
 
@@ -1467,6 +1594,7 @@ pub enum ApprovalAction {
 /// Displays a tool call with approve/reject buttons for human-in-the-loop
 /// AI workflows. Pass to [`Context::tool_approval`](crate::Context::tool_approval)
 /// each frame.
+#[derive(Debug, Clone)]
 pub struct ToolApprovalState {
     /// The name of the tool being invoked.
     pub tool_name: String,

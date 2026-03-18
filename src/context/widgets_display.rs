@@ -41,6 +41,7 @@ impl Context {
     /// The link is interactive: clicking it (or pressing Enter/Space when
     /// focused) opens the URL in the system browser. OSC 8 is also emitted
     /// for terminals that support native hyperlinks.
+    #[allow(clippy::print_stderr)]
     pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
         let url_str = url.into();
         let focused = self.register_focusable();
@@ -64,7 +65,9 @@ impl Context {
         }
 
         if activated {
-            let _ = open_url(&url_str);
+            if let Err(e) = open_url(&url_str) {
+                eprintln!("[slt] failed to open URL: {e}");
+            }
         }
 
         let style = if focused {
@@ -255,9 +258,9 @@ impl Context {
         let width = img.width;
         let height = img.height;
 
-        self.container().w(width).h(height).gap(0).col(|ui| {
+        let _ = self.container().w(width).h(height).gap(0).col(|ui| {
             for row in 0..height {
-                ui.container().gap(0).row(|ui| {
+                let _ = ui.container().gap(0).row(|ui| {
                     for col in 0..width {
                         let idx = (row * width + col) as usize;
                         if let Some(&(upper, lower)) = img.pixels.get(idx) {
@@ -487,9 +490,15 @@ impl Context {
                 if trimmed.starts_with("```") {
                     in_code_block = false;
                     code_block_lang.clear();
-                    self.styled(format!("  └────{cursor}"), border_style);
+                    let mut line = String::from("  └────");
+                    line.push_str(cursor);
+                    self.styled(line, border_style);
                 } else {
-                    self.styled(format!("  {line}{cursor}"), code_style);
+                    let mut line_text = String::with_capacity(2 + line.len() + cursor.len());
+                    line_text.push_str("  ");
+                    line_text.push_str(line);
+                    line_text.push_str(cursor);
+                    self.styled(line_text, code_style);
                 }
                 continue;
             }
@@ -504,31 +513,33 @@ impl Context {
             }
 
             if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-                self.styled(format!("{}{}", "─".repeat(40), cursor), border_style);
+                let mut line = "─".repeat(40);
+                line.push_str(cursor);
+                self.styled(line, border_style);
                 continue;
             }
 
             if let Some(heading) = trimmed.strip_prefix("### ") {
-                self.styled(
-                    format!("{heading}{cursor}"),
-                    Style::new().bold().fg(self.theme.accent),
-                );
+                let mut line = String::with_capacity(heading.len() + cursor.len());
+                line.push_str(heading);
+                line.push_str(cursor);
+                self.styled(line, Style::new().bold().fg(self.theme.accent));
                 continue;
             }
 
             if let Some(heading) = trimmed.strip_prefix("## ") {
-                self.styled(
-                    format!("{heading}{cursor}"),
-                    Style::new().bold().fg(self.theme.secondary),
-                );
+                let mut line = String::with_capacity(heading.len() + cursor.len());
+                line.push_str(heading);
+                line.push_str(cursor);
+                self.styled(line, Style::new().bold().fg(self.theme.secondary));
                 continue;
             }
 
             if let Some(heading) = trimmed.strip_prefix("# ") {
-                self.styled(
-                    format!("{heading}{cursor}"),
-                    Style::new().bold().fg(self.theme.primary),
-                );
+                let mut line = String::with_capacity(heading.len() + cursor.len());
+                line.push_str(heading);
+                line.push_str(cursor);
+                self.styled(line, Style::new().bold().fg(self.theme.primary));
                 continue;
             }
 
@@ -538,9 +549,16 @@ impl Context {
                 let label = if code_block_lang.is_empty() {
                     "code".to_string()
                 } else {
-                    format!("code:{}", code_block_lang)
+                    let mut label = String::from("code:");
+                    label.push_str(&code_block_lang);
+                    label
                 };
-                self.styled(format!("  ┌─{label}─{cursor}"), border_style);
+                let mut line = String::with_capacity(5 + label.len() + cursor.len());
+                line.push_str("  ┌─");
+                line.push_str(&label);
+                line.push('─');
+                line.push_str(cursor);
+                self.styled(line, border_style);
                 continue;
             }
 
@@ -550,7 +568,11 @@ impl Context {
             {
                 let segs = Self::parse_inline_segments(item, text_style, bold_style, code_style);
                 if segs.len() <= 1 {
-                    self.styled(format!("  • {item}{cursor}"), text_style);
+                    let mut line = String::with_capacity(4 + item.len() + cursor.len());
+                    line.push_str("  • ");
+                    line.push_str(item);
+                    line.push_str(cursor);
+                    self.styled(line, text_style);
                 } else {
                     self.line(|ui| {
                         ui.styled("  • ", text_style);
@@ -571,13 +593,22 @@ impl Context {
                     let segs =
                         Self::parse_inline_segments(parts[1], text_style, bold_style, code_style);
                     if segs.len() <= 1 {
-                        self.styled(
-                            format!("  {}. {}{}", parts[0], parts[1], cursor),
-                            text_style,
+                        let mut line = String::with_capacity(
+                            4 + parts[0].len() + parts[1].len() + cursor.len(),
                         );
+                        line.push_str("  ");
+                        line.push_str(parts[0]);
+                        line.push_str(". ");
+                        line.push_str(parts[1]);
+                        line.push_str(cursor);
+                        self.styled(line, text_style);
                     } else {
                         self.line(|ui| {
-                            ui.styled(format!("  {}. ", parts[0]), text_style);
+                            let mut prefix = String::with_capacity(4 + parts[0].len());
+                            prefix.push_str("  ");
+                            prefix.push_str(parts[0]);
+                            prefix.push_str(". ");
+                            ui.styled(prefix, text_style);
                             for (s, st) in segs {
                                 ui.styled(s, st);
                             }
@@ -587,14 +618,20 @@ impl Context {
                         });
                     }
                 } else {
-                    self.styled(format!("{trimmed}{cursor}"), text_style);
+                    let mut line = String::with_capacity(trimmed.len() + cursor.len());
+                    line.push_str(trimmed);
+                    line.push_str(cursor);
+                    self.styled(line, text_style);
                 }
                 continue;
             }
 
             let segs = Self::parse_inline_segments(trimmed, text_style, bold_style, code_style);
             if segs.len() <= 1 {
-                self.styled(format!("{trimmed}{cursor}"), text_style);
+                let mut line = String::with_capacity(trimmed.len() + cursor.len());
+                line.push_str(trimmed);
+                line.push_str(cursor);
+                self.styled(line, text_style);
             } else {
                 self.line(|ui| {
                     for (s, st) in segs {
@@ -640,15 +677,15 @@ impl Context {
     pub fn tool_approval(&mut self, state: &mut ToolApprovalState) -> Response {
         let old_action = state.action;
         let theme = self.theme;
-        self.bordered(Border::Rounded).col(|ui| {
-            ui.row(|ui| {
+        let _ = self.bordered(Border::Rounded).col(|ui| {
+            let _ = ui.row(|ui| {
                 ui.text("⚡").fg(theme.warning);
                 ui.text(&state.tool_name).bold().fg(theme.primary);
             });
             ui.text(&state.description).dim();
 
             if state.action == ApprovalAction::Pending {
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     if ui.button("✓ Approve").clicked {
                         state.action = ApprovalAction::Approved;
                     }
@@ -692,18 +729,23 @@ impl Context {
         let theme = self.theme;
         let total: usize = items.iter().map(|item| item.tokens).sum();
 
-        self.container().row(|ui| {
+        let _ = self.container().row(|ui| {
             ui.text("📎").dim();
             for item in items {
-                ui.text(format!(
-                    "{} ({})",
-                    item.label,
-                    format_token_count(item.tokens)
-                ))
-                .fg(theme.secondary);
+                let token_count = format_token_count(item.tokens);
+                let mut line = String::with_capacity(item.label.len() + token_count.len() + 3);
+                line.push_str(&item.label);
+                line.push_str(" (");
+                line.push_str(&token_count);
+                line.push(')');
+                ui.text(line).fg(theme.secondary);
             }
             ui.spacer();
-            ui.text(format!("Σ {}", format_token_count(total))).dim();
+            let total_text = format_token_count(total);
+            let mut line = String::with_capacity(2 + total_text.len());
+            line.push_str("Σ ");
+            line.push_str(&total_text);
+            ui.text(line).dim();
         });
 
         Response::none()
@@ -725,7 +767,11 @@ impl Context {
 
         let mut response = self.container().col(|ui| {
             ui.line(|ui| {
-                ui.text(format!(" {icon} ")).fg(color).bold();
+                let mut icon_text = String::with_capacity(icon.len() + 2);
+                icon_text.push(' ');
+                icon_text.push_str(icon);
+                icon_text.push(' ');
+                ui.text(icon_text).fg(color).bold();
                 ui.text(message).grow(1);
                 ui.text(" [×] ").dim();
             });
@@ -838,7 +884,7 @@ impl Context {
         let last_idx = segments.len().saturating_sub(1);
         let mut clicked_idx: Option<usize> = None;
 
-        self.row(|ui| {
+        let _ = self.row(|ui| {
             for (i, segment) in segments.iter().enumerate() {
                 let is_last = i == last_idx;
                 if is_last {
@@ -884,7 +930,10 @@ impl Context {
         let mut response = self.container().col(|ui| {
             ui.line(|ui| {
                 ui.text(icon).fg(title_color);
-                ui.text(format!(" {title}")).bold().fg(title_color);
+                let mut title_text = String::with_capacity(1 + title.len());
+                title_text.push(' ');
+                title_text.push_str(title);
+                ui.text(title_text).bold().fg(title_color);
             });
         });
 
@@ -893,7 +942,7 @@ impl Context {
         }
 
         if *open {
-            self.container().pl(2).col(f);
+            let _ = self.container().pl(2).col(f);
         }
 
         response.focused = focused;
@@ -908,7 +957,7 @@ impl Context {
             .max()
             .unwrap_or(0);
 
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             for (key, value) in items {
                 ui.line(|ui| {
                     let padded = format!("{:>width$}", key, width = max_key_width);
@@ -933,7 +982,11 @@ impl Context {
         let theme = self.theme;
         self.line(|ui| {
             ui.text(&left).fg(theme.border);
-            ui.text(format!(" {} ", label)).fg(theme.text);
+            let mut label_text = String::with_capacity(label.len() + 2);
+            label_text.push(' ');
+            label_text.push_str(label);
+            label_text.push(' ');
+            ui.text(label_text).fg(theme.text);
             ui.text(&right).fg(theme.border);
         });
 
@@ -947,22 +1000,28 @@ impl Context {
 
     pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
         let fg = Color::contrast_fg(color);
-        self.text(format!(" {} ", label)).fg(fg).bg(color);
+        let mut label_text = String::with_capacity(label.len() + 2);
+        label_text.push(' ');
+        label_text.push_str(label);
+        label_text.push(' ');
+        self.text(label_text).fg(fg).bg(color);
 
         Response::none()
     }
 
     pub fn key_hint(&mut self, key: &str) -> Response {
         let theme = self.theme;
-        self.text(format!(" {} ", key))
-            .reversed()
-            .fg(theme.text_dim);
+        let mut key_text = String::with_capacity(key.len() + 2);
+        key_text.push(' ');
+        key_text.push_str(key);
+        key_text.push(' ');
+        self.text(key_text).reversed().fg(theme.text_dim);
 
         Response::none()
     }
 
     pub fn stat(&mut self, label: &str, value: &str) -> Response {
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold();
         });
@@ -971,7 +1030,7 @@ impl Context {
     }
 
     pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold().fg(color);
         });
@@ -990,11 +1049,14 @@ impl Context {
             crate::widgets::Trend::Up => ("↑", theme.success),
             crate::widgets::Trend::Down => ("↓", theme.error),
         };
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             ui.text(label).dim();
             ui.line(|ui| {
                 ui.text(value).bold();
-                ui.text(format!(" {arrow}")).fg(color);
+                let mut arrow_text = String::with_capacity(1 + arrow.len());
+                arrow_text.push(' ');
+                arrow_text.push_str(arrow);
+                ui.text(arrow_text).fg(color);
             });
         });
 
@@ -1002,7 +1064,7 @@ impl Context {
     }
 
     pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
-        self.container().center().col(|ui| {
+        let _ = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
         });
@@ -1017,7 +1079,7 @@ impl Context {
         action_label: &str,
     ) -> Response {
         let mut clicked = false;
-        self.container().center().col(|ui| {
+        let _ = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
             if ui.button(action_label).clicked {
@@ -1034,7 +1096,8 @@ impl Context {
 
     pub fn code_block(&mut self, code: &str) -> Response {
         let theme = self.theme;
-        self.bordered(Border::Rounded)
+        let _ = self
+            .bordered(Border::Rounded)
             .bg(theme.surface)
             .pad(1)
             .col(|ui| {
@@ -1050,7 +1113,8 @@ impl Context {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = format!("{}", lines.len()).len();
         let theme = self.theme;
-        self.bordered(Border::Rounded)
+        let _ = self
+            .bordered(Border::Rounded)
             .bg(theme.surface)
             .pad(1)
             .col(|ui| {
@@ -1238,7 +1302,9 @@ impl Context {
     ///     if ui.button("OK") { show = false; }
     /// });
     /// ```
-    pub fn modal(&mut self, f: impl FnOnce(&mut Context)) {
+    pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
         self.commands.push(Command::BeginOverlay { modal: true });
         self.overlay_depth += 1;
         self.modal_active = true;
@@ -1246,16 +1312,20 @@ impl Context {
         self.overlay_depth = self.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.last_text_idx = None;
+        self.response_for(interaction_id)
     }
 
     /// Render floating content without dimming the background.
-    pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) {
+    pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) -> Response {
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
         self.commands.push(Command::BeginOverlay { modal: false });
         self.overlay_depth += 1;
         f(self);
         self.overlay_depth = self.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.last_text_idx = None;
+        self.response_for(interaction_id)
     }
 
     /// Create a named group container for shared hover/focus styling.
@@ -1410,7 +1480,7 @@ impl Context {
         let track_char = '│';
         let thumb_char = '█';
 
-        self.container().w(1).h(track_height).col(|ui| {
+        let _ = self.container().w(1).h(track_height).col(|ui| {
             for i in 0..track_height {
                 if i >= thumb_pos && i < thumb_pos + thumb_height {
                     ui.styled(thumb_char.to_string(), Style::new().fg(theme.primary));
@@ -1730,7 +1800,7 @@ impl Context {
         state: &mut FormState,
         f: impl FnOnce(&mut Context, &mut FormState),
     ) -> &mut Self {
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             f(ui, state);
         });
         self
@@ -1740,9 +1810,9 @@ impl Context {
     ///
     /// Shows a validation error below the input when present.
     pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
-        self.col(|ui| {
+        let _ = self.col(|ui| {
             ui.styled(field.label.clone(), Style::new().bold().fg(ui.theme.text));
-            ui.text_input(&mut field.input);
+            let _ = ui.text_input(&mut field.input);
             if let Some(error) = field.error.as_deref() {
                 ui.styled(error.to_string(), Style::new().dim().fg(ui.theme.error));
             }

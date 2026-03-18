@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.13.0] — 2026-03-18
+
+### Breaking Changes
+
+- **`modal()`** now returns `Response` instead of `()` — enables backdrop click detection
+- **`overlay()`** now returns `Response` instead of `()` — consistent with other containers
+- **`virtual_list()`** now returns `Response` instead of `&mut Self` — consistent with `list()`
+- **`command_palette()`** now returns `Response` instead of `Option<usize>` — use `state.last_selected` for the selected index
+- **`Response`** now has `#[must_use]` — unused Response values produce compiler warnings
+
+### Features
+
+- Add `Debug` and `Clone` derives to all widget state types (17 types)
+  - `FormState` gets `Debug` only (closures prevent `Clone`)
+  - `TextInputState` gets manual `Debug`/`Clone` impl (validator closures excluded from clone)
+- Add `Debug`/`Clone` to helper types: `ToastMessage`, `ToastLevel`, `TreeNode`, `PaletteCommand`, `FormField`
+- Add `CommandPaletteState::last_selected` field for retrieving selected command index
+
+### Performance
+
+- Reduce per-frame string allocations in hot render paths: `format!()` calls 78 → 19 across widget rendering code
+
+### Documentation
+
+- Add doc comments to 28 undocumented public APIs in `widgets.rs` (AlertLevel, FilePickerState, SelectState, etc.)
+- Add doc comments to 7 items in `style.rs` (WidgetColors, BorderSides methods)
+
+### Fixes
+
+- Add bounds checking to `Buffer::get()`/`get_mut()` via `debug_assert!` — prevents silent u32 underflow panics
+- Add empty cells guard in `streaming_text()` — prevents index-out-of-bounds panic on empty input
+- Log errors instead of silently ignoring them in `open_url()` and `copy_to_clipboard()`
+
+### CI/Governance
+
+- Add `typos` job for automatic spell checking
+- Add `cargo-hack` job for feature combination verification
+- Add `cargo-deny` for license and supply chain security (`deny.toml`)
+- Add `committed` for Conventional Commit enforcement on PRs
+
 ## [0.12.13] — 2026-03-18
 
 ### Fixes

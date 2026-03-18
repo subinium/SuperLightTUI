@@ -1,0 +1,12 @@
+[default.extend-words]
+"tui" = "tui"
+"bg" = "bg"
+"fg" = "fg"
+"ratatui" = "ratatui"
+"ba" = "ba"
+"hel" = "hel"
+"PnL" = "PnL"
+"Pn" = "Pn"
+
+[files]
+extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md"]

@@ -669,7 +669,7 @@ fn format_score(n: u64) -> String {
 fn render_tetris_board(ui: &mut Context, game: &TetrisGame, theme: Theme) {
     let ghost_y = game.ghost_y();
     for y in 0..BOARD_H {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             for x in 0..BOARD_W {
                 if let Some(kind) = game.board[y][x] {
                     ui.styled("██", Style::new().fg(piece_color(kind)));
@@ -688,7 +688,7 @@ fn render_tetris_board(ui: &mut Context, game: &TetrisGame, theme: Theme) {
 fn render_tetris_next(ui: &mut Context, kind: usize) {
     let color = piece_color(kind);
     for y in 0..4 {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             for x in 0..4 {
                 if next_preview_at(kind, x, y) {
                     ui.styled("██", Style::new().fg(color));
@@ -702,7 +702,7 @@ fn render_tetris_next(ui: &mut Context, kind: usize) {
 
 fn render_snake_board(ui: &mut Context, game: &SnakeGame, theme: Theme) {
     for y in 0..SNAKE_H {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             for x in 0..SNAKE_W {
                 if (x, y) == game.food {
                     ui.styled("● ", Style::new().fg(theme.accent));
@@ -738,7 +738,7 @@ fn mine_number_color(n: u8) -> Color {
 
 fn render_mine_board(ui: &mut Context, game: &MinesweeperGame, theme: Theme) {
     for y in 0..MINE_H {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             for x in 0..MINE_W {
                 let cell = game.board[y][x];
                 let mut style = Style::new();
@@ -780,7 +780,8 @@ fn render_mine_board(ui: &mut Context, game: &MinesweeperGame, theme: Theme) {
 }
 
 fn render_header(ui: &mut Context, active: ActiveGame, theme: Theme, theme_name: &str) {
-    ui.container()
+    let _ = ui
+        .container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .border_style(Style::new().fg(theme.border))
@@ -819,22 +820,25 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
     let game_w = 45_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    ui.bordered(Border::Rounded)
+    let _ = ui
+        .bordered(Border::Rounded)
         .title_styled(" T E T R I S ", Style::new().bold().fg(theme.primary))
         .border_style(Style::new().fg(theme.border))
         .bg(theme.surface)
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            ui.row_gap(1, |ui| {
-                ui.bordered(Border::Single)
+            let _ = ui.row_gap(1, |ui| {
+                let _ = ui
+                    .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_tetris_board(ui, game, theme);
                     });
 
-                ui.container().w(20).col(|ui| {
-                    ui.container()
+                let _ = ui.container().w(20).col(|ui| {
+                    let _ = ui
+                        .container()
                         .bg(theme.surface)
                         .border(Border::Rounded)
                         .title("NEXT")
@@ -845,7 +849,8 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                             render_tetris_next(ui, game.next_kind);
                         });
 
-                    ui.container()
+                    let _ = ui
+                        .container()
                         .bg(theme.surface)
                         .border(Border::Rounded)
                         .title("SCORE")
@@ -855,12 +860,12 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                             ui.text(format_score(game.score))
                                 .bold()
                                 .fg(theme.surface_text);
-                            ui.row(|ui| {
+                            let _ = ui.row(|ui| {
                                 ui.text("LEVEL").fg(theme.text_dim);
                                 ui.spacer();
                                 ui.text(format!("{}", game.level)).bold().fg(theme.primary);
                             });
-                            ui.row(|ui| {
+                            let _ = ui.row(|ui| {
                                 ui.text("LINES").fg(theme.text_dim);
                                 ui.spacer();
                                 ui.text(format!("{}", game.lines)).bold().fg(theme.accent);
@@ -892,7 +897,8 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
     let game_w = 58_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    ui.container()
+    let _ = ui
+        .container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .title_styled(" S N A K E ", Style::new().bold().fg(theme.primary))
@@ -900,14 +906,16 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            ui.row_gap(1, |ui| {
-                ui.bordered(Border::Single)
+            let _ = ui.row_gap(1, |ui| {
+                let _ = ui
+                    .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_snake_board(ui, game, theme);
                     });
 
-                ui.container()
+                let _ = ui
+                    .container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .border_style(Style::new().fg(theme.border))
@@ -938,7 +946,8 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
     let game_w = 56_u32;
     let left = ui.width().saturating_sub(game_w) / 2;
 
-    ui.container()
+    let _ = ui
+        .container()
         .bg(theme.surface)
         .border(Border::Rounded)
         .title_styled(
@@ -949,14 +958,16 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            ui.row_gap(1, |ui| {
-                ui.bordered(Border::Single)
+            let _ = ui.row_gap(1, |ui| {
+                let _ = ui
+                    .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
                     .col(|ui| {
                         render_mine_board(ui, game, theme);
                     });
 
-                ui.container()
+                let _ = ui
+                    .container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
                     .border_style(Style::new().fg(theme.border))
@@ -1143,7 +1154,7 @@ fn main() -> std::io::Result<()> {
 
             render_header(ui, active, theme, theme_names[theme_idx]);
 
-            ui.container().grow(1).col(|ui| {
+            let _ = ui.container().grow(1).col(|ui| {
                 ui.spacer();
                 match active {
                     ActiveGame::Tetris => render_tetris_screen(ui, &tetris, theme),

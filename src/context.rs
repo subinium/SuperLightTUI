@@ -87,6 +87,7 @@ impl<T: 'static> State<T> {
 /// # });
 /// ```
 #[derive(Debug, Clone, Default)]
+#[must_use = "Response contains interaction state — check .clicked, .hovered, or .changed"]
 pub struct Response {
     /// Whether the widget was clicked this frame.
     pub clicked: bool,
@@ -2034,12 +2035,15 @@ impl Context {
             })
             .collect();
 
-        self.overlay(|ui| {
-            ui.row(|ui| {
+        let _ = self.overlay(|ui| {
+            let _ = ui.row(|ui| {
                 ui.spacer();
-                ui.col(|ui| {
+                let _ = ui.col(|ui| {
                     for (message, color) in &items {
-                        ui.styled(format!("● {message}"), Style::new().fg(*color));
+                        let mut line = String::with_capacity(2 + message.len());
+                        line.push_str("● ");
+                        line.push_str(message);
+                        ui.styled(line, Style::new().fg(*color));
                     }
                 });
             });
@@ -2069,19 +2073,27 @@ fn format_token_count(count: usize) -> String {
     } else if count >= 1_000 {
         format!("{:.1}k", count as f64 / 1_000.0)
     } else {
-        format!("{count}")
+        count.to_string()
     }
 }
 
 fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    let sep_width = UnicodeWidthStr::width(separator);
+    let total_cells_width: usize = widths.iter().map(|w| *w as usize).sum();
+    let mut row = String::with_capacity(
+        total_cells_width + sep_width.saturating_mul(widths.len().saturating_sub(1)),
+    );
     for (i, width) in widths.iter().enumerate() {
+        if i > 0 {
+            row.push_str(separator);
+        }
         let cell = cells.get(i).map(String::as_str).unwrap_or("");
         let cell_width = UnicodeWidthStr::width(cell) as u32;
         let padding = (*width).saturating_sub(cell_width) as usize;
-        parts.push(format!("{cell}{}", " ".repeat(padding)));
+        row.push_str(cell);
+        row.extend(std::iter::repeat(' ').take(padding));
     }
-    parts.join(separator)
+    row
 }
 
 fn table_visible_len(state: &TableState) -> usize {
@@ -2147,7 +2159,11 @@ fn center_text(text: &str, width: usize) -> String {
     let total = width - text_width;
     let left = total / 2;
     let right = total - left;
-    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+    let mut centered = String::with_capacity(width);
+    centered.extend(std::iter::repeat(' ').take(left));
+    centered.push_str(text);
+    centered.extend(std::iter::repeat(' ').take(right));
+    centered
 }
 
 struct TextareaVLine {
