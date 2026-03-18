@@ -891,6 +891,73 @@ impl CanvasContext {
     }
 }
 
+macro_rules! define_breakpoint_methods {
+    (
+        base = $base:ident,
+        arg = $arg:ident : $arg_ty:ty,
+        xs = $xs_fn:ident => [$( $xs_doc:literal ),* $(,)?],
+        sm = $sm_fn:ident => [$( $sm_doc:literal ),* $(,)?],
+        md = $md_fn:ident => [$( $md_doc:literal ),* $(,)?],
+        lg = $lg_fn:ident => [$( $lg_doc:literal ),* $(,)?],
+        xl = $xl_fn:ident => [$( $xl_doc:literal ),* $(,)?],
+        at = $at_fn:ident => [$( $at_doc:literal ),* $(,)?]
+    ) => {
+        $(#[doc = $xs_doc])*
+        pub fn $xs_fn(self, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == Breakpoint::Xs {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+
+        $(#[doc = $sm_doc])*
+        pub fn $sm_fn(self, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == Breakpoint::Sm {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+
+        $(#[doc = $md_doc])*
+        pub fn $md_fn(self, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == Breakpoint::Md {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+
+        $(#[doc = $lg_doc])*
+        pub fn $lg_fn(self, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == Breakpoint::Lg {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+
+        $(#[doc = $xl_doc])*
+        pub fn $xl_fn(self, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == Breakpoint::Xl {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+
+        $(#[doc = $at_doc])*
+        pub fn $at_fn(self, bp: Breakpoint, $arg: $arg_ty) -> Self {
+            if self.ctx.breakpoint() == bp {
+                self.$base($arg)
+            } else {
+                self
+            }
+        }
+    };
+}
+
 impl<'a> ContainerBuilder<'a> {
     // ── border ───────────────────────────────────────────────────────
 
@@ -1201,67 +1268,23 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Width applied only at Xs breakpoint (< 40 cols).
-    ///
-    /// # Example
-    /// ```ignore
-    /// ui.container().w(20).md_w(40).lg_w(60).col(|ui| { ... });
-    /// ```
-    pub fn xs_w(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Width applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_w(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Width applied only at Md breakpoint (80-119 cols).
-    pub fn md_w(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Width applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_w(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Width applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_w(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.w(value)
-        } else {
-            self
-        }
-    }
-    pub fn w_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.w(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = w,
+        arg = value: u32,
+        xs = xs_w => [
+            "Width applied only at Xs breakpoint (< 40 cols).",
+            "",
+            "# Example",
+            "```ignore",
+            "ui.container().w(20).md_w(40).lg_w(60).col(|ui| { ... });",
+            "```"
+        ],
+        sm = sm_w => ["Width applied only at Sm breakpoint (40-79 cols)."],
+        md = md_w => ["Width applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_w => ["Width applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_w => ["Width applied only at Xl breakpoint (>= 160 cols)."],
+        at = w_at => []
+    );
 
     /// Set a fixed height (sets both min and max height).
     pub fn h(mut self, value: u32) -> Self {
@@ -1270,62 +1293,16 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Height applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_h(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.h(value)
-        } else {
-            self
-        }
-    }
-
-    /// Height applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_h(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.h(value)
-        } else {
-            self
-        }
-    }
-
-    /// Height applied only at Md breakpoint (80-119 cols).
-    pub fn md_h(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.h(value)
-        } else {
-            self
-        }
-    }
-
-    /// Height applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_h(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.h(value)
-        } else {
-            self
-        }
-    }
-
-    /// Height applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_h(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.h(value)
-        } else {
-            self
-        }
-    }
-    pub fn h_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.h(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = h,
+        arg = value: u32,
+        xs = xs_h => ["Height applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_h => ["Height applied only at Sm breakpoint (40-79 cols)."],
+        md = md_h => ["Height applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_h => ["Height applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_h => ["Height applied only at Xl breakpoint (>= 160 cols)."],
+        at = h_at => []
+    );
 
     /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
     pub fn min_w(mut self, value: u32) -> Self {
@@ -1333,62 +1310,16 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Minimum width applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_min_w(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Minimum width applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_min_w(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Minimum width applied only at Md breakpoint (80-119 cols).
-    pub fn md_min_w(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Minimum width applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_min_w(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Minimum width applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_min_w(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
-    pub fn min_w_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.min_w(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = min_w,
+        arg = value: u32,
+        xs = xs_min_w => ["Minimum width applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_min_w => ["Minimum width applied only at Sm breakpoint (40-79 cols)."],
+        md = md_min_w => ["Minimum width applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_min_w => ["Minimum width applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_min_w => ["Minimum width applied only at Xl breakpoint (>= 160 cols)."],
+        at = min_w_at => []
+    );
 
     /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
     pub fn max_w(mut self, value: u32) -> Self {
@@ -1396,62 +1327,16 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Maximum width applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_max_w(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Maximum width applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_max_w(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Maximum width applied only at Md breakpoint (80-119 cols).
-    pub fn md_max_w(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Maximum width applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_max_w(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
-
-    /// Maximum width applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_max_w(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
-    pub fn max_w_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.max_w(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = max_w,
+        arg = value: u32,
+        xs = xs_max_w => ["Maximum width applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_max_w => ["Maximum width applied only at Sm breakpoint (40-79 cols)."],
+        md = md_max_w => ["Maximum width applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_max_w => ["Maximum width applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_max_w => ["Maximum width applied only at Xl breakpoint (>= 160 cols)."],
+        at = max_w_at => []
+    );
 
     /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
     pub fn min_h(mut self, value: u32) -> Self {
@@ -1529,68 +1414,23 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Gap applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_gap(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
-
-    /// Gap applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_gap(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
-
-    /// Gap applied only at Md breakpoint (80-119 cols).
-    ///
-    /// # Example
-    /// ```ignore
-    /// ui.container().gap(0).md_gap(2).col(|ui| { ... });
-    /// ```
-    pub fn md_gap(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
-
-    /// Gap applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_gap(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
-
-    /// Gap applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_gap(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
-
-    pub fn gap_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.gap(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = gap,
+        arg = value: u32,
+        xs = xs_gap => ["Gap applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_gap => ["Gap applied only at Sm breakpoint (40-79 cols)."],
+        md = md_gap => [
+            "Gap applied only at Md breakpoint (80-119 cols).",
+            "",
+            "# Example",
+            "```ignore",
+            "ui.container().gap(0).md_gap(2).col(|ui| { ... });",
+            "```"
+        ],
+        lg = lg_gap => ["Gap applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_gap => ["Gap applied only at Xl breakpoint (>= 160 cols)."],
+        at = gap_at => []
+    );
 
     /// Set the flex-grow factor. `1` means the container expands to fill available space.
     pub fn grow(mut self, grow: u16) -> Self {
@@ -1598,119 +1438,27 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Grow factor applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_grow(self, value: u16) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = grow,
+        arg = value: u16,
+        xs = xs_grow => ["Grow factor applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_grow => ["Grow factor applied only at Sm breakpoint (40-79 cols)."],
+        md = md_grow => ["Grow factor applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_grow => ["Grow factor applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_grow => ["Grow factor applied only at Xl breakpoint (>= 160 cols)."],
+        at = grow_at => []
+    );
 
-    /// Grow factor applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_grow(self, value: u16) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
-
-    /// Grow factor applied only at Md breakpoint (80-119 cols).
-    pub fn md_grow(self, value: u16) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
-
-    /// Grow factor applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_grow(self, value: u16) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
-
-    /// Grow factor applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_grow(self, value: u16) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
-    pub fn grow_at(self, bp: Breakpoint, value: u16) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.grow(value)
-        } else {
-            self
-        }
-    }
-
-    /// Uniform padding applied only at Xs breakpoint (< 40 cols).
-    pub fn xs_p(self, value: u32) -> Self {
-        let is_xs = self.ctx.breakpoint() == Breakpoint::Xs;
-        if is_xs {
-            self.p(value)
-        } else {
-            self
-        }
-    }
-
-    /// Uniform padding applied only at Sm breakpoint (40-79 cols).
-    pub fn sm_p(self, value: u32) -> Self {
-        let is_sm = self.ctx.breakpoint() == Breakpoint::Sm;
-        if is_sm {
-            self.p(value)
-        } else {
-            self
-        }
-    }
-
-    /// Uniform padding applied only at Md breakpoint (80-119 cols).
-    pub fn md_p(self, value: u32) -> Self {
-        let is_md = self.ctx.breakpoint() == Breakpoint::Md;
-        if is_md {
-            self.p(value)
-        } else {
-            self
-        }
-    }
-
-    /// Uniform padding applied only at Lg breakpoint (120-159 cols).
-    pub fn lg_p(self, value: u32) -> Self {
-        let is_lg = self.ctx.breakpoint() == Breakpoint::Lg;
-        if is_lg {
-            self.p(value)
-        } else {
-            self
-        }
-    }
-
-    /// Uniform padding applied only at Xl breakpoint (>= 160 cols).
-    pub fn xl_p(self, value: u32) -> Self {
-        let is_xl = self.ctx.breakpoint() == Breakpoint::Xl;
-        if is_xl {
-            self.p(value)
-        } else {
-            self
-        }
-    }
-    pub fn p_at(self, bp: Breakpoint, value: u32) -> Self {
-        if self.ctx.breakpoint() == bp {
-            self.p(value)
-        } else {
-            self
-        }
-    }
+    define_breakpoint_methods!(
+        base = p,
+        arg = value: u32,
+        xs = xs_p => ["Uniform padding applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_p => ["Uniform padding applied only at Sm breakpoint (40-79 cols)."],
+        md = md_p => ["Uniform padding applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_p => ["Uniform padding applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_p => ["Uniform padding applied only at Xl breakpoint (>= 160 cols)."],
+        at = p_at => []
+    );
 
     // ── alignment ───────────────────────────────────────────────────
 
@@ -2210,9 +1958,9 @@ impl Context {
                 .downcast_ref::<(D, T)>()
                 .unwrap_or_else(|| {
                     panic!(
-                        "use_memo type mismatch at hook index {} — expected {}",
+                        "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
                         idx,
-                        std::any::type_name::<D>()
+                        std::any::type_name::<(D, T)>()
                     )
                 });
             stored_deps != deps
@@ -2232,9 +1980,9 @@ impl Context {
             .downcast_ref::<(D, T)>()
             .unwrap_or_else(|| {
                 panic!(
-                    "use_memo type mismatch at hook index {} — expected {}",
+                    "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
                     idx,
-                    std::any::type_name::<D>()
+                    std::any::type_name::<(D, T)>()
                 )
             });
         value
@@ -2508,7 +2256,7 @@ mod tests {
     use crate::test_utils::TestBackend;
 
     #[test]
-    fn use_memo_type_mismatch_includes_hook_index_and_expected_type() {
+    fn use_memo_type_mismatch_includes_index_and_expected_type() {
         let mut state = FrameState::default();
         let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
         ctx.hook_states.push(Box::new(42u32));
@@ -2522,12 +2270,16 @@ mod tests {
 
         let message = panic_message(panic);
         assert!(
-            message.contains("use_memo type mismatch at hook index 0"),
+            message.contains("Hook type mismatch at index 0"),
             "panic message should include hook index, got: {message}"
         );
         assert!(
-            message.contains(std::any::type_name::<u8>()),
+            message.contains(std::any::type_name::<(u8, u8)>()),
             "panic message should include expected type, got: {message}"
+        );
+        assert!(
+            message.contains("Hooks must be called in the same order every frame."),
+            "panic message should explain hook ordering requirement, got: {message}"
         );
     }
 

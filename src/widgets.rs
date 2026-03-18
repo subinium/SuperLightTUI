@@ -102,8 +102,8 @@ impl TextInputState {
 
     /// Run all registered validators and collect their error messages.
     ///
-    /// Updates [`validation_errors`](Self::validation_errors) with all errors from all validators.
-    /// Also updates [`validation_error`](Self::validation_error) to the first error for backward compatibility.
+    /// Updates `validation_errors` with all errors from all validators.
+    /// Also updates `validation_error` to the first error for backward compatibility.
     pub fn run_validators(&mut self) {
         self.validation_errors.clear();
         for validator in &self.validators {
@@ -145,6 +145,7 @@ impl Default for TextInputState {
 }
 
 /// A single form field with label and validation.
+#[derive(Default)]
 pub struct FormField {
     /// Field label shown above the input.
     pub label: String,
@@ -248,6 +249,17 @@ pub struct ToastMessage {
     pub created_tick: u64,
     /// How many ticks the message remains visible.
     pub duration_ticks: u64,
+}
+
+impl Default for ToastMessage {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            level: ToastLevel::Info,
+            created_tick: 0,
+            duration_ticks: 30,
+        }
+    }
 }
 
 /// Severity level for a [`ToastMessage`].
@@ -447,6 +459,7 @@ impl Default for SpinnerState {
 ///
 /// Pass a mutable reference to `Context::list` each frame. Up/Down arrow
 /// keys (and `k`/`j`) move the selection when the widget is focused.
+#[derive(Default)]
 pub struct ListState {
     /// The list items as display strings.
     pub items: Vec<String>,
@@ -532,7 +545,7 @@ pub struct FilePickerState {
     pub dirty: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FileEntry {
     pub name: String,
     pub path: PathBuf,
@@ -651,6 +664,7 @@ impl Default for FilePickerState {
 ///
 /// Pass a mutable reference to `Context::tabs` each frame. Left/Right arrow
 /// keys cycle through tabs when the widget is focused.
+#[derive(Default)]
 pub struct TabsState {
     /// The tab labels displayed in the bar.
     pub labels: Vec<String>,
@@ -698,6 +712,24 @@ pub struct TableState {
     /// Rows per page (`0` disables pagination).
     pub page_size: usize,
     view_indices: Vec<usize>,
+}
+
+impl Default for TableState {
+    fn default() -> Self {
+        Self {
+            headers: Vec::new(),
+            rows: Vec::new(),
+            selected: 0,
+            column_widths: Vec::new(),
+            dirty: true,
+            sort_column: None,
+            sort_ascending: true,
+            filter: String::new(),
+            page: 0,
+            page_size: 0,
+            view_indices: Vec::new(),
+        }
+    }
 }
 
 impl TableState {
@@ -1013,6 +1045,7 @@ pub enum Trend {
 ///
 /// Renders as a single-line button showing the selected option. When activated,
 /// expands into a vertical list overlay for picking an option.
+#[derive(Default)]
 pub struct SelectState {
     pub items: Vec<String>,
     pub selected: usize,
@@ -1055,6 +1088,7 @@ impl SelectState {
 /// State for a radio button group.
 ///
 /// Renders a vertical list of mutually-exclusive options with `●`/`○` markers.
+#[derive(Default)]
 pub struct RadioState {
     pub items: Vec<String>,
     pub selected: usize,
@@ -1474,5 +1508,142 @@ impl ContextItem {
             label: label.into(),
             tokens,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn form_field_default_values() {
+        let field = FormField::default();
+        assert_eq!(field.label, "");
+        assert_eq!(field.input.value, "");
+        assert_eq!(field.input.cursor, 0);
+        assert_eq!(field.error, None);
+    }
+
+    #[test]
+    fn toast_message_default_values() {
+        let msg = ToastMessage::default();
+        assert_eq!(msg.text, "");
+        assert!(matches!(msg.level, ToastLevel::Info));
+        assert_eq!(msg.created_tick, 0);
+        assert_eq!(msg.duration_ticks, 30);
+    }
+
+    #[test]
+    fn list_state_default_values() {
+        let state = ListState::default();
+        assert!(state.items.is_empty());
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.filter, "");
+        assert_eq!(state.visible_indices(), &[]);
+        assert_eq!(state.selected_item(), None);
+    }
+
+    #[test]
+    fn file_entry_default_values() {
+        let entry = FileEntry::default();
+        assert_eq!(entry.name, "");
+        assert_eq!(entry.path, PathBuf::new());
+        assert!(!entry.is_dir);
+        assert_eq!(entry.size, 0);
+    }
+
+    #[test]
+    fn tabs_state_default_values() {
+        let state = TabsState::default();
+        assert!(state.labels.is_empty());
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.selected_label(), None);
+    }
+
+    #[test]
+    fn table_state_default_values() {
+        let state = TableState::default();
+        assert!(state.headers.is_empty());
+        assert!(state.rows.is_empty());
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.sort_column, None);
+        assert!(state.sort_ascending);
+        assert_eq!(state.filter, "");
+        assert_eq!(state.page, 0);
+        assert_eq!(state.page_size, 0);
+        assert_eq!(state.visible_indices(), &[]);
+    }
+
+    #[test]
+    fn select_state_default_values() {
+        let state = SelectState::default();
+        assert!(state.items.is_empty());
+        assert_eq!(state.selected, 0);
+        assert!(!state.open);
+        assert_eq!(state.placeholder, "");
+        assert_eq!(state.selected_item(), None);
+        assert_eq!(state.cursor(), 0);
+    }
+
+    #[test]
+    fn radio_state_default_values() {
+        let state = RadioState::default();
+        assert!(state.items.is_empty());
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.selected_item(), None);
+    }
+
+    #[test]
+    fn text_input_state_default_uses_new() {
+        let state = TextInputState::default();
+        assert_eq!(state.value, "");
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.placeholder, "");
+        assert_eq!(state.max_length, None);
+        assert_eq!(state.validation_error, None);
+        assert!(!state.masked);
+    }
+
+    #[test]
+    fn tabs_state_new_sets_labels() {
+        let state = TabsState::new(vec!["a", "b"]);
+        assert_eq!(state.labels, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.selected_label(), Some("a"));
+    }
+
+    #[test]
+    fn list_state_new_selected_item_points_to_first_item() {
+        let state = ListState::new(vec!["alpha", "beta"]);
+        assert_eq!(state.items, vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.visible_indices(), &[0, 1]);
+        assert_eq!(state.selected_item(), Some("alpha"));
+    }
+
+    #[test]
+    fn select_state_placeholder_builder_sets_value() {
+        let state = SelectState::new(vec!["one", "two"]).placeholder("Pick one");
+        assert_eq!(state.items, vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(state.placeholder, "Pick one");
+        assert_eq!(state.selected_item(), Some("one"));
+    }
+
+    #[test]
+    fn radio_state_new_sets_items_and_selection() {
+        let state = RadioState::new(vec!["red", "green"]);
+        assert_eq!(state.items, vec!["red".to_string(), "green".to_string()]);
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.selected_item(), Some("red"));
+    }
+
+    #[test]
+    fn table_state_new_sets_sort_ascending_true() {
+        let state = TableState::new(vec!["Name"], vec![vec!["Alice"], vec!["Bob"]]);
+        assert_eq!(state.headers, vec!["Name".to_string()]);
+        assert_eq!(state.rows.len(), 2);
+        assert!(state.sort_ascending);
+        assert_eq!(state.sort_column, None);
+        assert_eq!(state.visible_indices(), &[0, 1]);
     }
 }

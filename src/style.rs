@@ -10,7 +10,7 @@ pub use theme::{Theme, ThemeBuilder};
 
 /// Terminal size breakpoint for responsive layouts.
 ///
-/// Based on the current terminal width. Use [`Context::breakpoint`] to
+/// Based on the current terminal width. Use [`crate::Context::breakpoint`] to
 /// get the active breakpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Breakpoint {
@@ -406,17 +406,17 @@ pub struct Modifiers(pub u8);
 impl Modifiers {
     /// No modifiers set.
     pub const NONE: Self = Self(0);
-    /// Bold text.
+    /// Enable bold text.
     pub const BOLD: Self = Self(1 << 0);
-    /// Dimmed/faint text.
+    /// Enable dimmed/faint text.
     pub const DIM: Self = Self(1 << 1);
-    /// Italic text.
+    /// Enable italic text.
     pub const ITALIC: Self = Self(1 << 2);
-    /// Underlined text.
+    /// Enable underlined text.
     pub const UNDERLINE: Self = Self(1 << 3);
-    /// Reversed foreground/background colors.
+    /// Enable reversed foreground/background colors.
     pub const REVERSED: Self = Self(1 << 4);
-    /// Strikethrough text.
+    /// Enable strikethrough text.
     pub const STRIKETHROUGH: Self = Self(1 << 5);
 
     /// Returns `true` if all bits in `other` are set in `self`.
@@ -539,7 +539,7 @@ impl Style {
 
 /// Reusable container style recipe.
 ///
-/// Define once, apply anywhere with [`ContainerBuilder::apply`]. All fields
+/// Define once, apply anywhere with [`crate::ContainerBuilder::apply`]. All fields
 /// are optional — only set fields override the builder's current values.
 /// Styles compose: apply multiple recipes in sequence, last write wins.
 ///
@@ -562,29 +562,53 @@ impl Style {
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ContainerStyle {
+    /// Border style for the container.
     pub border: Option<Border>,
+    /// Which sides of the border are visible.
     pub border_sides: Option<BorderSides>,
+    /// Style (color and modifiers) for the border.
     pub border_style: Option<Style>,
+    /// Background color.
     pub bg: Option<Color>,
+    /// Foreground (text) color.
     pub text_color: Option<Color>,
+    /// Background color in dark mode.
     pub dark_bg: Option<Color>,
+    /// Border style in dark mode.
     pub dark_border_style: Option<Style>,
+    /// Padding inside the container.
     pub padding: Option<Padding>,
+    /// Margin outside the container.
     pub margin: Option<Margin>,
+    /// Gap between children (both row and column).
     pub gap: Option<u32>,
+    /// Gap between rows.
     pub row_gap: Option<u32>,
+    /// Gap between columns.
     pub col_gap: Option<u32>,
+    /// Flex grow factor.
     pub grow: Option<u16>,
+    /// Cross-axis alignment.
     pub align: Option<Align>,
+    /// Self alignment (overrides parent align).
     pub align_self: Option<Align>,
+    /// Main-axis content distribution.
     pub justify: Option<Justify>,
+    /// Fixed width.
     pub w: Option<u32>,
+    /// Fixed height.
     pub h: Option<u32>,
+    /// Minimum width.
     pub min_w: Option<u32>,
+    /// Maximum width.
     pub max_w: Option<u32>,
+    /// Minimum height.
     pub min_h: Option<u32>,
+    /// Maximum height.
     pub max_h: Option<u32>,
+    /// Width as percentage of parent.
     pub w_pct: Option<u8>,
+    /// Height as percentage of parent.
     pub h_pct: Option<u8>,
 }
 
@@ -803,13 +827,18 @@ impl ContainerStyle {
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WidgetColors {
+    /// Foreground color override.
     pub fg: Option<Color>,
+    /// Background color override.
     pub bg: Option<Color>,
+    /// Border color override.
     pub border: Option<Color>,
+    /// Accent color override.
     pub accent: Option<Color>,
 }
 
 impl WidgetColors {
+    /// Create a new WidgetColors with all fields set to None (theme defaults).
     pub const fn new() -> Self {
         Self {
             fg: None,
@@ -819,23 +848,268 @@ impl WidgetColors {
         }
     }
 
+    /// Set the foreground color override.
     pub const fn fg(mut self, color: Color) -> Self {
         self.fg = Some(color);
         self
     }
 
+    /// Set the background color override.
     pub const fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
     }
 
+    /// Set the border color override.
     pub const fn border(mut self, color: Color) -> Self {
         self.border = Some(color);
         self
     }
 
+    /// Set the accent color override.
     pub const fn accent(mut self, color: Color) -> Self {
         self.accent = Some(color);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn style_new_is_default() {
+        let style = Style::new();
+        assert_eq!(style.fg, None);
+        assert_eq!(style.bg, None);
+        assert_eq!(style.modifiers, Modifiers::NONE);
+        assert_eq!(style, Style::default());
+    }
+
+    #[test]
+    fn style_bold_and_fg_set_expected_fields() {
+        let style = Style::new().bold().fg(Color::Red);
+        assert_eq!(style.fg, Some(Color::Red));
+        assert_eq!(style.bg, None);
+        assert!(style.modifiers.contains(Modifiers::BOLD));
+    }
+
+    #[test]
+    fn style_multiple_modifiers_accumulate() {
+        let style = Style::new().italic().underline().dim();
+        assert!(style.modifiers.contains(Modifiers::ITALIC));
+        assert!(style.modifiers.contains(Modifiers::UNDERLINE));
+        assert!(style.modifiers.contains(Modifiers::DIM));
+    }
+
+    #[test]
+    fn style_repeated_fg_overrides_previous_color() {
+        let style = Style::new().fg(Color::Blue).fg(Color::Green);
+        assert_eq!(style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn style_repeated_bg_overrides_previous_color() {
+        let style = Style::new().bg(Color::Blue).bg(Color::Green);
+        assert_eq!(style.bg, Some(Color::Green));
+    }
+
+    #[test]
+    fn style_override_preserves_existing_modifiers() {
+        let style = Style::new().bold().fg(Color::Red).fg(Color::Yellow);
+        assert_eq!(style.fg, Some(Color::Yellow));
+        assert!(style.modifiers.contains(Modifiers::BOLD));
+    }
+
+    #[test]
+    fn padding_all_sets_all_sides() {
+        let p = Padding::all(3);
+        assert_eq!(p.top, 3);
+        assert_eq!(p.right, 3);
+        assert_eq!(p.bottom, 3);
+        assert_eq!(p.left, 3);
+    }
+
+    #[test]
+    fn padding_xy_sets_axis_values() {
+        let p = Padding::xy(4, 2);
+        assert_eq!(p.top, 2);
+        assert_eq!(p.bottom, 2);
+        assert_eq!(p.left, 4);
+        assert_eq!(p.right, 4);
+    }
+
+    #[test]
+    fn padding_new_and_totals_are_correct() {
+        let p = Padding::new(1, 2, 3, 4);
+        assert_eq!(p.top, 1);
+        assert_eq!(p.right, 2);
+        assert_eq!(p.bottom, 3);
+        assert_eq!(p.left, 4);
+        assert_eq!(p.horizontal(), 6);
+        assert_eq!(p.vertical(), 4);
+    }
+
+    #[test]
+    fn margin_all_and_xy_are_correct() {
+        let all = Margin::all(5);
+        assert_eq!(all, Margin::new(5, 5, 5, 5));
+
+        let xy = Margin::xy(7, 1);
+        assert_eq!(xy.top, 1);
+        assert_eq!(xy.bottom, 1);
+        assert_eq!(xy.left, 7);
+        assert_eq!(xy.right, 7);
+    }
+
+    #[test]
+    fn margin_new_and_totals_are_correct() {
+        let m = Margin::new(2, 4, 6, 8);
+        assert_eq!(m.horizontal(), 12);
+        assert_eq!(m.vertical(), 8);
+    }
+
+    #[test]
+    fn constraints_min_max_builder_sets_values() {
+        let c = Constraints::default()
+            .min_w(10)
+            .max_w(40)
+            .min_h(5)
+            .max_h(20);
+        assert_eq!(c.min_width, Some(10));
+        assert_eq!(c.max_width, Some(40));
+        assert_eq!(c.min_height, Some(5));
+        assert_eq!(c.max_height, Some(20));
+    }
+
+    #[test]
+    fn constraints_percentage_builder_sets_values() {
+        let c = Constraints::default().w_pct(50).h_pct(80);
+        assert_eq!(c.width_pct, Some(50));
+        assert_eq!(c.height_pct, Some(80));
+    }
+
+    #[test]
+    fn border_sides_all_has_both_axes() {
+        let sides = BorderSides::all();
+        assert!(sides.top && sides.right && sides.bottom && sides.left);
+        assert!(sides.has_horizontal());
+        assert!(sides.has_vertical());
+    }
+
+    #[test]
+    fn border_sides_none_has_no_axes() {
+        let sides = BorderSides::none();
+        assert!(!sides.top && !sides.right && !sides.bottom && !sides.left);
+        assert!(!sides.has_horizontal());
+        assert!(!sides.has_vertical());
+    }
+
+    #[test]
+    fn border_sides_horizontal_only() {
+        let sides = BorderSides::horizontal();
+        assert!(sides.top);
+        assert!(sides.bottom);
+        assert!(!sides.left);
+        assert!(!sides.right);
+        assert!(sides.has_horizontal());
+        assert!(!sides.has_vertical());
+    }
+
+    #[test]
+    fn border_sides_vertical_only() {
+        let sides = BorderSides::vertical();
+        assert!(!sides.top);
+        assert!(!sides.bottom);
+        assert!(sides.left);
+        assert!(sides.right);
+        assert!(!sides.has_horizontal());
+        assert!(sides.has_vertical());
+    }
+
+    #[test]
+    fn container_style_new_is_empty() {
+        let s = ContainerStyle::new();
+        assert_eq!(s.border, None);
+        assert_eq!(s.bg, None);
+        assert_eq!(s.padding, None);
+        assert_eq!(s.margin, None);
+        assert_eq!(s.gap, None);
+        assert_eq!(s.align, None);
+        assert_eq!(s.justify, None);
+    }
+
+    #[test]
+    fn container_style_const_construction_and_fields() {
+        const CARD: ContainerStyle = ContainerStyle::new()
+            .border(Border::Rounded)
+            .border_sides(BorderSides::horizontal())
+            .p(2)
+            .m(1)
+            .gap(3)
+            .align(Align::Center)
+            .justify(Justify::SpaceBetween)
+            .w(60)
+            .h(20);
+
+        assert_eq!(CARD.border, Some(Border::Rounded));
+        assert_eq!(CARD.border_sides, Some(BorderSides::horizontal()));
+        assert_eq!(CARD.padding, Some(Padding::all(2)));
+        assert_eq!(CARD.margin, Some(Margin::all(1)));
+        assert_eq!(CARD.gap, Some(3));
+        assert_eq!(CARD.align, Some(Align::Center));
+        assert_eq!(CARD.justify, Some(Justify::SpaceBetween));
+        assert_eq!(CARD.w, Some(60));
+        assert_eq!(CARD.h, Some(20));
+    }
+
+    #[test]
+    fn widget_colors_new_is_empty() {
+        let colors = WidgetColors::new();
+        assert_eq!(colors.fg, None);
+        assert_eq!(colors.bg, None);
+        assert_eq!(colors.border, None);
+        assert_eq!(colors.accent, None);
+
+        let defaults = WidgetColors::default();
+        assert_eq!(defaults.fg, None);
+        assert_eq!(defaults.bg, None);
+        assert_eq!(defaults.border, None);
+        assert_eq!(defaults.accent, None);
+    }
+
+    #[test]
+    fn widget_colors_builder_sets_all_fields() {
+        let colors = WidgetColors::new()
+            .fg(Color::White)
+            .bg(Color::Black)
+            .border(Color::Cyan)
+            .accent(Color::Yellow);
+
+        assert_eq!(colors.fg, Some(Color::White));
+        assert_eq!(colors.bg, Some(Color::Black));
+        assert_eq!(colors.border, Some(Color::Cyan));
+        assert_eq!(colors.accent, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn align_default_is_start() {
+        assert_eq!(Align::default(), Align::Start);
+    }
+
+    #[test]
+    fn justify_default_is_start() {
+        assert_eq!(Justify::default(), Justify::Start);
+    }
+
+    #[test]
+    fn align_and_justify_variants_are_distinct() {
+        assert_ne!(Align::Start, Align::Center);
+        assert_ne!(Align::Center, Align::End);
+
+        assert_ne!(Justify::Start, Justify::Center);
+        assert_ne!(Justify::Center, Justify::End);
+        assert_ne!(Justify::SpaceBetween, Justify::SpaceAround);
+        assert_ne!(Justify::SpaceAround, Justify::SpaceEvenly);
     }
 }

@@ -412,72 +412,94 @@ impl Context {
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
-        self.handle_table_keys(state, focused);
-
-        if !state.visible_indices().is_empty() || !state.headers.is_empty() {
-            if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-                for (i, event) in self.events.iter().enumerate() {
-                    if self.consumed[i] {
-                        continue;
-                    }
-                    if let Event::Mouse(mouse) = event {
-                        if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                            continue;
-                        }
-                        let in_bounds = mouse.x >= rect.x
-                            && mouse.x < rect.right()
-                            && mouse.y >= rect.y
-                            && mouse.y < rect.bottom();
-                        if !in_bounds {
-                            continue;
-                        }
-
-                        if mouse.y == rect.y {
-                            let rel_x = mouse.x.saturating_sub(rect.x);
-                            let mut x_offset = 0u32;
-                            for (col_idx, width) in state.column_widths().iter().enumerate() {
-                                if rel_x >= x_offset && rel_x < x_offset + *width {
-                                    state.toggle_sort(col_idx);
-                                    state.selected = 0;
-                                    self.consumed[i] = true;
-                                    break;
-                                }
-                                x_offset += *width;
-                                if col_idx + 1 < state.column_widths().len() {
-                                    x_offset += 3;
-                                }
-                            }
-                            continue;
-                        }
-
-                        if mouse.y < rect.y + 2 {
-                            continue;
-                        }
-
-                        let visible_len = if state.page_size > 0 {
-                            let start = state
-                                .page
-                                .saturating_mul(state.page_size)
-                                .min(state.visible_indices().len());
-                            let end = (start + state.page_size).min(state.visible_indices().len());
-                            end.saturating_sub(start)
-                        } else {
-                            state.visible_indices().len()
-                        };
-                        let clicked_idx = (mouse.y - rect.y - 2) as usize;
-                        if clicked_idx < visible_len {
-                            state.selected = clicked_idx;
-                            self.consumed[i] = true;
-                        }
-                    }
-                }
-            }
-        }
+        self.table_handle_events(state, focused, interaction_id);
 
         if state.is_dirty() {
             state.recompute_widths();
         }
 
+        self.table_render(state, focused, colors);
+
+        response.changed = state.selected != old_selected
+            || state.sort_column != old_sort_column
+            || state.sort_ascending != old_sort_ascending
+            || state.page != old_page
+            || state.filter != old_filter;
+        response
+    }
+
+    fn table_handle_events(
+        &mut self,
+        state: &mut TableState,
+        focused: bool,
+        interaction_id: usize,
+    ) {
+        self.handle_table_keys(state, focused);
+
+        if state.visible_indices().is_empty() && state.headers.is_empty() {
+            return;
+        }
+
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+
+                    if mouse.y == rect.y {
+                        let rel_x = mouse.x.saturating_sub(rect.x);
+                        let mut x_offset = 0u32;
+                        for (col_idx, width) in state.column_widths().iter().enumerate() {
+                            if rel_x >= x_offset && rel_x < x_offset + *width {
+                                state.toggle_sort(col_idx);
+                                state.selected = 0;
+                                self.consumed[i] = true;
+                                break;
+                            }
+                            x_offset += *width;
+                            if col_idx + 1 < state.column_widths().len() {
+                                x_offset += 3;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if mouse.y < rect.y + 2 {
+                        continue;
+                    }
+
+                    let visible_len = if state.page_size > 0 {
+                        let start = state
+                            .page
+                            .saturating_mul(state.page_size)
+                            .min(state.visible_indices().len());
+                        let end = (start + state.page_size).min(state.visible_indices().len());
+                        end.saturating_sub(start)
+                    } else {
+                        state.visible_indices().len()
+                    };
+                    let clicked_idx = (mouse.y - rect.y - 2) as usize;
+                    if clicked_idx < visible_len {
+                        state.selected = clicked_idx;
+                        self.consumed[i] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn table_render(&mut self, state: &mut TableState, focused: bool, colors: &WidgetColors) {
         let total_visible = state.visible_indices().len();
         let page_start = if state.page_size > 0 {
             state
@@ -527,13 +549,6 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-
-        response.changed = state.selected != old_selected
-            || state.sort_column != old_sort_column
-            || state.sort_ascending != old_sort_ascending
-            || state.page != old_page
-            || state.filter != old_filter;
-        response
     }
 
     fn handle_table_keys(&mut self, state: &mut TableState, focused: bool) {
@@ -1179,63 +1194,69 @@ impl Context {
         response.focused = focused;
         let old_selected = state.selected;
 
-        if response.clicked {
+        self.select_handle_events(state, focused, response.clicked);
+        self.select_render(state, focused, colors);
+        response.changed = state.selected != old_selected;
+        response
+    }
+
+    fn select_handle_events(&mut self, state: &mut SelectState, focused: bool, clicked: bool) {
+        if clicked {
             state.open = !state.open;
             if state.open {
                 state.set_cursor(state.selected);
             }
         }
 
-        if focused {
-            let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if state.open {
-                        match key.code {
-                            KeyCode::Up
-                            | KeyCode::Char('k')
-                            | KeyCode::Down
-                            | KeyCode::Char('j') => {
-                                let mut cursor = state.cursor();
-                                let _ = handle_vertical_nav(
-                                    &mut cursor,
-                                    state.items.len().saturating_sub(1),
-                                    key.code.clone(),
-                                );
-                                state.set_cursor(cursor);
-                                consumed_indices.push(i);
-                            }
-                            KeyCode::Enter | KeyCode::Char(' ') => {
-                                state.selected = state.cursor();
-                                state.open = false;
-                                consumed_indices.push(i);
-                            }
-                            KeyCode::Esc => {
-                                state.open = false;
-                                consumed_indices.push(i);
-                            }
-                            _ => {}
-                        }
-                    } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        state.open = true;
-                        state.set_cursor(state.selected);
-                        consumed_indices.push(i);
-                    }
-                }
-            }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+        if !focused {
+            return;
         }
 
-        let changed = state.selected != old_selected;
+        let mut consumed_indices = Vec::new();
+        for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
+            if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if state.open {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let mut cursor = state.cursor();
+                            let _ = handle_vertical_nav(
+                                &mut cursor,
+                                state.items.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
+                            state.set_cursor(cursor);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            state.selected = state.cursor();
+                            state.open = false;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Esc => {
+                            state.open = false;
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                    state.open = true;
+                    state.set_cursor(state.selected);
+                    consumed_indices.push(i);
+                }
+            }
+        }
+        for idx in consumed_indices {
+            self.consumed[idx] = true;
+        }
+    }
 
+    fn select_render(&mut self, state: &SelectState, focused: bool, colors: &WidgetColors) {
         let border_color = if focused {
             colors.accent.unwrap_or(self.theme.primary)
         } else {
@@ -1274,8 +1295,6 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
-        response.changed = changed;
-        response
     }
 
     fn render_select_trigger(

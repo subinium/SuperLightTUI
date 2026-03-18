@@ -52,25 +52,31 @@ gh run list --commit $(git rev-parse HEAD) --limit 5
 ## Architecture
 ```
 src/
-├── lib.rs              # Entry points: run(), run_with(), RunConfig (940 lines)
-├── context.rs          # Context struct, ContainerBuilder, core methods (2163 lines)
+├── lib.rs                    # Entry points: run(), run_with(), RunConfig (925 lines)
+├── context.rs                # Context struct, ContainerBuilder, core methods (2561 lines)
 ├── context/
-│   ├── widgets_display.rs  # impl Context: text, styled, link, button, tabs, etc.
-│   ├── widgets_input.rs    # impl Context: text_input, textarea, select, etc.
-│   └── widgets_viz.rs      # impl Context: bar_chart, chart, canvas, etc.
-├── layout.rs           # Command enum, LayoutNode, build_tree, collect_all (1411 lines)
+│   ├── widgets_display.rs    # impl Context: text, styled, link, button, tabs, etc. (2001 lines)
+│   ├── widgets_interactive.rs # impl Context: list, table, select, radio, tree, etc. (2531 lines)
+│   ├── widgets_input.rs      # impl Context: text_input, textarea, form_field, etc.
+│   └── widgets_viz.rs        # impl Context: bar_chart, chart, canvas, etc. (1432 lines)
+├── layout.rs                 # Command enum, LayoutNode, build_tree, collect_all (1439 lines)
 ├── layout/
-│   ├── flexbox.rs          # compute(), layout_row(), layout_column()
-│   └── render.rs           # render(), render_inner(), render_border()
-├── terminal.rs         # Terminal, InlineTerminal, flush (880 lines)
+│   ├── flexbox.rs            # compute(), layout_row(), layout_column()
+│   └── render.rs             # render(), render_inner(), render_border()
+├── terminal.rs               # Terminal, InlineTerminal, flush (976 lines)
 ├── terminal/
-│   └── selection.rs        # SelectionState, selection overlay
-├── style.rs            # Style, Color, Theme, Border, Padding, Margin (1429 lines)
-├── widgets.rs          # State types: TextInputState, TableState, etc.
-├── anim.rs             # Tween, Spring, Keyframes, Sequence, Stagger
-├── chart.rs            # ChartBuilder, histogram
-├── buffer.rs           # Double-buffer with clip stack
-├── cell.rs, rect.rs, event.rs, halfblock.rs, test_utils.rs
+│   └── selection.rs          # SelectionState, selection overlay
+├── style.rs                  # Style, Color, Theme, Border, Padding, Margin
+├── style/
+│   ├── color.rs              # Color enum, ColorDepth, blending
+│   └── theme.rs              # Theme struct, 7 presets, ThemeBuilder
+├── widgets.rs                # State types: TextInputState, TableState, etc. (1558 lines)
+├── anim.rs                   # Tween, Spring, Keyframes, Sequence, Stagger (1103 lines)
+├── chart.rs                  # ChartBuilder, histogram
+├── chart/
+│   ├── render.rs, axis.rs, bar.rs, grid.rs, braille.rs
+├── buffer.rs                 # Double-buffer with clip stack
+├── cell.rs, rect.rs, event.rs, halfblock.rs, keymap.rs, palette.rs, test_utils.rs
 ```
 
 ## Commit Style

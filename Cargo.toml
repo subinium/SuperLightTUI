@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.12.11"
+version = "0.12.12"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
