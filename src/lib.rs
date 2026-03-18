@@ -377,6 +377,8 @@ pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
     pub focus_index: usize,
     pub prev_focus_count: usize,
+    pub prev_modal_focus_start: usize,
+    pub prev_modal_focus_count: usize,
     pub tick: u64,
     pub prev_scroll_infos: Vec<(u32, u32)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
@@ -399,6 +401,8 @@ impl Default for FrameState {
             hook_states: Vec::new(),
             focus_index: 0,
             prev_focus_count: 0,
+            prev_modal_focus_start: 0,
+            prev_modal_focus_count: 0,
             tick: 0,
             prev_scroll_infos: Vec::new(),
             prev_scroll_rects: Vec::new(),
@@ -782,6 +786,8 @@ fn run_frame(
         return Ok(false);
     }
     state.prev_modal_active = ctx.modal_active;
+    state.prev_modal_focus_start = ctx.modal_focus_start;
+    state.prev_modal_focus_count = ctx.modal_focus_count;
     let clipboard_text = ctx.clipboard_text.take();
 
     let mut should_copy_selection = false;

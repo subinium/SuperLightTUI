@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.1] — 2026-03-19
+
+### Fixes
+
+- Fix VS16 emoji rendering — explicitly clear trailing cell for characters containing U+FE0F variation selector
+- Fix horizontal resize artifacts — clear screen when terminal width shrinks between frames
+- Fix modal focus trap — Tab/Shift+Tab now cycles only within modal focusables, preventing focus escape
+
+### Testing
+
+- Add `proptest` property-based testing for layout engine (5 test cases, 500 iterations each)
+  - Arbitrary dimensions, extreme grow values, deep nesting, grid layouts, percentage sizing
+
 ## [0.13.0] — 2026-03-18
 
 ### Breaking Changes

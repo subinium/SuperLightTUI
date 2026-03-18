@@ -1308,7 +1308,9 @@ impl Context {
         self.commands.push(Command::BeginOverlay { modal: true });
         self.overlay_depth += 1;
         self.modal_active = true;
+        self.modal_focus_start = self.focus_count;
         f(self);
+        self.modal_focus_count = self.focus_count.saturating_sub(self.modal_focus_start);
         self.overlay_depth = self.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.last_text_idx = None;
