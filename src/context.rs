@@ -356,10 +356,16 @@ pub struct Context {
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
+    pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) text_color_stack: Vec<Option<Color>>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
+
+pub(crate) struct PendingTooltip {
+    pub anchor_rect: Rect,
+    pub lines: Vec<String>,
+}
 
 struct ContextSnapshot {
     cmd_count: usize,
@@ -378,6 +384,7 @@ struct ContextSnapshot {
     dark_mode: bool,
     deferred_draws_len: usize,
     notification_queue_len: usize,
+    pending_tooltips_len: usize,
     text_color_stack_len: usize,
 }
 
@@ -400,6 +407,7 @@ impl ContextSnapshot {
             dark_mode: ctx.dark_mode,
             deferred_draws_len: ctx.deferred_draws.len(),
             notification_queue_len: ctx.notification_queue.len(),
+            pending_tooltips_len: ctx.pending_tooltips.len(),
             text_color_stack_len: ctx.text_color_stack.len(),
         }
     }
@@ -421,6 +429,7 @@ impl ContextSnapshot {
         ctx.dark_mode = self.dark_mode;
         ctx.deferred_draws.truncate(self.deferred_draws_len);
         ctx.notification_queue.truncate(self.notification_queue_len);
+        ctx.pending_tooltips.truncate(self.pending_tooltips_len);
         ctx.text_color_stack.truncate(self.text_color_stack_len);
     }
 }
@@ -1772,6 +1781,7 @@ impl Context {
             is_real_terminal: false,
             deferred_draws: Vec::new(),
             notification_queue: std::mem::take(&mut state.notification_queue),
+            pending_tooltips: Vec::new(),
             text_color_stack: Vec::new(),
         }
     }

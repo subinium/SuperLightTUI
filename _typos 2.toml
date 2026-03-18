@@ -1,0 +1,7 @@
+[default.extend-words]
+"tui" = "tui"
+"bg" = "bg"
+"fg" = "fg"
+
+[files]
+extend-exclude = ["CHANGELOG.md", "Cargo.lock"]

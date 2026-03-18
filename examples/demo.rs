@@ -1771,8 +1771,16 @@ fn render_v0132(
     let _ = ui.row(|ui| {
         card(ui, |ui| {
             ui.text("2) Calendar Widget").bold().fg(theme.secondary);
-            ui.text("Navigate months with h/l, select with Enter")
+            ui.text("Arrow keys to move cursor, Enter to select, h/l for month (needs focus via Tab)")
                 .fg(theme.surface_text);
+            let _ = ui.row(|ui| {
+                if ui.button("◀ Prev Month").clicked {
+                    calendar.prev_month();
+                }
+                if ui.button("Next Month ▶").clicked {
+                    calendar.next_month();
+                }
+            });
             let _ = ui.calendar(calendar);
             if let Some((y, m, d)) = calendar.selected_date() {
                 ui.text(format!("Selected: {y}-{m:02}-{d:02}"))
@@ -1784,7 +1792,9 @@ fn render_v0132(
 
         card(ui, |ui| {
             ui.text("3) Fuzzy Command Search").bold().fg(theme.accent);
-            ui.text("Type 'sf' to match 'Save File', 'gc' for 'Git Commit'")
+            ui.text("Open palette, then type partial chars. 'sf' → Save File, 'gc' → Git Commit, 'rt' → Run Tests")
+                .fg(theme.surface_text);
+            ui.text("Fuzzy scoring: characters match in order but can skip")
                 .fg(theme.surface_text);
             if ui.button("Open Fuzzy Palette").clicked {
                 fuzzy_palette.open = true;
@@ -1873,29 +1883,22 @@ fn render_v0132(
             ui.text("6) Sixel Image Protocol").bold().fg(theme.accent);
             ui.text("Non-Kitty terminal image support")
                 .fg(theme.surface_text);
+            ui.text("Requires Sixel-capable terminal (xterm, foot, mlterm). Shows placeholder on unsupported terminals.")
+                .fg(theme.surface_text)
+                .wrap();
             ui.text("ui.sixel_image(&rgba, w, h, cols, rows)").dim();
-            ui.text("Supports xterm, mlterm, foot, and other Sixel terminals")
-                .fg(theme.surface_text);
-            let w: u32 = 18;
-            let h: u32 = 12;
-            let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-            for y in 0..h {
-                for x in 0..w {
-                    let r = (x as f32 / w as f32 * 255.0) as u8;
-                    let g = (y as f32 / h as f32 * 255.0) as u8;
-                    rgba.extend_from_slice(&[r, g, 180, 255]);
-                }
-            }
-            let _ = ui.sixel_image(&rgba, w, h, 18, 6);
+            let _ = ui.code_block_numbered("// Render only on verified Sixel terminals\nlet _ = ui.sixel_image(&rgba, w, h, cols, rows);");
         });
 
         card(ui, |ui| {
             ui.text("7) Static Output Mode").bold().fg(theme.primary);
             ui.text("Fixed logs above + dynamic TUI below")
                 .fg(theme.surface_text);
-            let _ = ui.code_block(
-                "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n    out.println(\"Building...\");\n    ui.progress(0.6);\n});",
-            );
+            let _ = ui.container().min_w(56).col(|ui| {
+                let _ = ui.code_block_numbered(
+                    "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n  out.println(\"Building...\");\n  ui.progress(0.6);\n});",
+                );
+            });
             ui.text("CLI tool pattern: scrolling output + live status")
                 .dim();
         });

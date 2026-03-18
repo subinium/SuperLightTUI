@@ -893,6 +893,7 @@ fn run_frame(
 
     f(&mut ctx);
     ctx.render_notifications();
+    ctx.emit_pending_tooltips();
 
     if ctx.should_quit {
         return Ok(false);
