@@ -733,6 +733,43 @@ fn table_backward_compat() {
 }
 
 #[test]
+fn table_zebra_applies_alternating_backgrounds() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"], vec!["Cara", "22"]],
+    );
+    table.zebra = true;
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    let odd_bg = tb.buffer().get(0, 3).style.bg;
+    let even_bg = tb.buffer().get(0, 4).style.bg;
+    assert_eq!(odd_bg, Some(slt::Theme::dark().surface_hover));
+    assert_eq!(even_bg, Some(slt::Theme::dark().surface));
+}
+
+#[test]
+fn table_zebra_uses_widget_color_override() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"], vec!["Cara", "22"]],
+    );
+    table.zebra = true;
+
+    tb.render(|ui| {
+        let colors = slt::WidgetColors::new().bg(slt::Color::Blue);
+        ui.table_colored(&mut table, &colors);
+    });
+
+    assert_eq!(tb.buffer().get(0, 3).style.bg, Some(slt::Color::Blue));
+    assert_eq!(tb.buffer().get(0, 4).style.bg, Some(slt::Color::Blue));
+}
+
+#[test]
 fn tabs_renders_labels() {
     let mut tb = TestBackend::new(40, 5);
     let mut tabs = TabsState::new(vec!["Tab1", "Tab2", "Tab3"]);
@@ -750,6 +787,16 @@ fn tabs_empty_no_panic() {
     tb.render(|ui| {
         ui.tabs(&mut tabs);
     });
+}
+
+#[test]
+fn calendar_renders_month_title() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut cal = CalendarState::from_ym(2024, 2);
+    tb.render(|ui| {
+        ui.calendar(&mut cal);
+    });
+    tb.assert_contains("2024 Feb");
 }
 
 #[test]
@@ -2046,6 +2093,60 @@ fn command_palette_filter_whitespace_shows_all() {
     });
     tb.assert_contains("Open File");
     tb.assert_contains("Save File");
+}
+
+#[test]
+fn command_palette_fuzzy_match_sf() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Save File", "Write the current buffer"),
+        PaletteCommand::new("Quit", "Exit the app"),
+    ]);
+    state.open = true;
+    state.input = "sf".into();
+
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+
+    tb.assert_contains("Save File");
+    assert!(!tb.to_string().contains("Quit"));
+}
+
+#[test]
+fn command_palette_fuzzy_match_cmd() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Command Palette", "Open actions"),
+        PaletteCommand::new("Save File", "Write the current buffer"),
+    ]);
+    state.open = true;
+    state.input = "cmd".into();
+
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+
+    tb.assert_contains("Command Palette");
+    assert!(!tb.to_string().contains("Save File"));
+}
+
+#[test]
+fn command_palette_exact_substring_still_works() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = CommandPaletteState::new(vec![
+        PaletteCommand::new("Save File", "Write the current buffer"),
+        PaletteCommand::new("Quit", "Exit the app"),
+    ]);
+    state.open = true;
+    state.input = "buffer".into();
+
+    tb.render(|ui| {
+        let _ = ui.command_palette(&mut state);
+    });
+
+    tb.assert_contains("Save File");
+    assert!(!tb.to_string().contains("Quit"));
 }
 
 #[test]

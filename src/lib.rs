@@ -60,6 +60,7 @@ pub mod keymap;
 pub mod layout;
 pub mod palette;
 pub mod rect;
+mod sixel;
 pub mod style;
 mod terminal;
 pub mod test_utils;
@@ -67,6 +68,7 @@ pub mod widgets;
 
 use std::io;
 use std::io::IsTerminal;
+use std::io::Write;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
@@ -99,11 +101,12 @@ pub use style::{
     Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder, WidgetColors,
 };
 pub use widgets::{
-    AlertLevel, ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FileEntry,
-    FilePickerState, FormField, FormState, ListState, MultiSelectState, PaletteCommand, RadioState,
-    ScrollState, SelectState, SpinnerState, StreamingMarkdownState, StreamingTextState, TableState,
-    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
-    ToolApprovalState, TreeNode, TreeState, Trend,
+    AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
+    FileEntry, FilePickerState, FormField, FormState, ListState, MultiSelectState, PaletteCommand,
+    RadioState, ScreenState, ScrollState, SelectState, SpinnerState, StaticOutput,
+    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    Trend,
 };
 
 /// Rendering backend for SLT.
@@ -764,6 +767,115 @@ pub fn run_inline_with(
     }
 
     Ok(())
+}
+
+/// Run the TUI in static-output mode.
+///
+/// Static lines written through [`StaticOutput`] are printed into terminal
+/// scrollback, while the interactive UI stays rendered in a fixed-height inline
+/// area at the bottom.
+pub fn run_static(
+    output: &mut StaticOutput,
+    dynamic_height: u32,
+    mut f: impl FnMut(&mut Context),
+) -> io::Result<()> {
+    let config = RunConfig::default();
+    if !io::stdout().is_terminal() {
+        return Ok(());
+    }
+
+    install_panic_hook();
+
+    let initial_lines = output.drain_new();
+    write_static_lines(&initial_lines)?;
+
+    let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
+    let mut term = InlineTerminal::new(dynamic_height, config.mouse, color_depth)?;
+    if config.theme.bg != Color::Reset {
+        term.theme_bg = Some(config.theme.bg);
+    }
+
+    let mut events: Vec<Event> = Vec::new();
+    let mut state = FrameState::default();
+
+    loop {
+        let frame_start = Instant::now();
+        let (w, h) = term.size();
+        if w == 0 || h == 0 {
+            sleep_for_fps_cap(config.max_fps, frame_start);
+            continue;
+        }
+
+        let new_lines = output.drain_new();
+        write_static_lines(&new_lines)?;
+
+        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
+            break;
+        }
+
+        events.clear();
+        if crossterm::event::poll(config.tick_rate)? {
+            let raw = crossterm::event::read()?;
+            if let Some(ev) = event::from_crossterm(raw) {
+                if is_ctrl_c(&ev) {
+                    break;
+                }
+                if let Event::Resize(_, _) = &ev {
+                    term.handle_resize()?;
+                }
+                events.push(ev);
+            }
+
+            while crossterm::event::poll(Duration::ZERO)? {
+                let raw = crossterm::event::read()?;
+                if let Some(ev) = event::from_crossterm(raw) {
+                    if is_ctrl_c(&ev) {
+                        return Ok(());
+                    }
+                    if let Event::Resize(_, _) = &ev {
+                        term.handle_resize()?;
+                    }
+                    events.push(ev);
+                }
+            }
+
+            for ev in &events {
+                if matches!(
+                    ev,
+                    Event::Key(event::KeyEvent {
+                        code: KeyCode::F(12),
+                        kind: event::KeyEventKind::Press,
+                        ..
+                    })
+                ) {
+                    state.debug_mode = !state.debug_mode;
+                }
+            }
+        }
+
+        update_last_mouse_pos(&mut state, &events);
+
+        if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
+            clear_frame_layout_cache(&mut state);
+        }
+
+        sleep_for_fps_cap(config.max_fps, frame_start);
+    }
+
+    Ok(())
+}
+
+fn write_static_lines(lines: &[String]) -> io::Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let mut stdout = io::stdout();
+    for line in lines {
+        stdout.write_all(line.as_bytes())?;
+        stdout.write_all(b"\r\n")?;
+    }
+    stdout.flush()
 }
 
 fn run_frame(

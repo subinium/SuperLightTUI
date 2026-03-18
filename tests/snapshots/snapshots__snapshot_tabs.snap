@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: tb.to_string_trimmed()
 ---
-[ Click Me ]
+[ Home ] [ Settings ] [ About ]

@@ -251,6 +251,251 @@ impl Context {
         response
     }
 
+    pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
+        let focused = self.register_focusable();
+        let interaction_id = self.interaction_count;
+        self.interaction_count += 1;
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+
+        let month_days = CalendarState::days_in_month(state.year, state.month);
+        state.cursor_day = state.cursor_day.clamp(1, month_days);
+        if let Some(day) = state.selected_day {
+            state.selected_day = Some(day.min(month_days));
+        }
+        let old_selected = state.selected_day;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Left => {
+                            calendar_move_cursor_by_days(state, -1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Right => {
+                            calendar_move_cursor_by_days(state, 1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Up => {
+                            calendar_move_cursor_by_days(state, -7);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down => {
+                            calendar_move_cursor_by_days(state, 7);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Char('h') => {
+                            state.prev_month();
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Char('l') => {
+                            state.next_month();
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            state.selected_day = Some(state.cursor_day);
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            for index in consumed_indices {
+                self.consumed[index] = true;
+            }
+        }
+
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                        continue;
+                    }
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+
+                    let rel_x = mouse.x.saturating_sub(rect.x);
+                    let rel_y = mouse.y.saturating_sub(rect.y);
+                    if rel_y == 0 {
+                        if rel_x <= 2 {
+                            state.prev_month();
+                            self.consumed[i] = true;
+                            continue;
+                        }
+                        if rel_x + 3 >= rect.width {
+                            state.next_month();
+                            self.consumed[i] = true;
+                            continue;
+                        }
+                    }
+
+                    if !(2..8).contains(&rel_y) {
+                        continue;
+                    }
+                    if rel_x >= 21 {
+                        continue;
+                    }
+
+                    let week = rel_y - 2;
+                    let col = rel_x / 3;
+                    let day_index = week * 7 + col;
+                    let first = CalendarState::first_weekday(state.year, state.month);
+                    let days = CalendarState::days_in_month(state.year, state.month);
+                    if day_index < first {
+                        continue;
+                    }
+                    let day = day_index - first + 1;
+                    if day == 0 || day > days {
+                        continue;
+                    }
+                    state.cursor_day = day;
+                    state.selected_day = Some(day);
+                    self.consumed[i] = true;
+                }
+            }
+        }
+
+        let title = {
+            let month_name = calendar_month_name(state.month);
+            let mut s = String::with_capacity(16);
+            s.push_str(&state.year.to_string());
+            s.push(' ');
+            s.push_str(month_name);
+            s
+        };
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 1,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        self.styled("◀", Style::new().fg(self.theme.text));
+        self.styled(title, Style::new().bold().fg(self.theme.text));
+        self.styled("▶", Style::new().fg(self.theme.text));
+        self.commands.push(Command::EndContainer);
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        for wd in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
+            self.styled(
+                format!("{wd:>2} "),
+                Style::new().fg(self.theme.text_dim).bold(),
+            );
+        }
+        self.commands.push(Command::EndContainer);
+
+        let first = CalendarState::first_weekday(state.year, state.month);
+        let days = CalendarState::days_in_month(state.year, state.month);
+        for week in 0..6_u32 {
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            for col in 0..7_u32 {
+                let idx = week * 7 + col;
+                if idx < first || idx >= first + days {
+                    self.styled("   ", Style::new().fg(self.theme.text_dim));
+                    continue;
+                }
+                let day = idx - first + 1;
+                let text = format!("{day:>2} ");
+                let style = if state.selected_day == Some(day) {
+                    Style::new()
+                        .bg(self.theme.selected_bg)
+                        .fg(self.theme.selected_fg)
+                } else if state.cursor_day == day {
+                    Style::new().fg(self.theme.primary).bold()
+                } else {
+                    Style::new().fg(self.theme.text)
+                };
+                self.styled(text, style);
+            }
+
+            self.commands.push(Command::EndContainer);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        response.changed = state.selected_day != old_selected;
+        response
+    }
+
     pub fn file_picker(&mut self, state: &mut FilePickerState) -> Response {
         if state.dirty {
             state.refresh();
@@ -684,7 +929,18 @@ impl Context {
                 }
                 self.styled(line, style);
             } else {
-                self.styled(line, Style::new().fg(colors.fg.unwrap_or(self.theme.text)));
+                let mut style = Style::new().fg(colors.fg.unwrap_or(self.theme.text));
+                if state.zebra {
+                    let zebra_bg = colors.bg.unwrap_or({
+                        if idx % 2 == 0 {
+                            self.theme.surface
+                        } else {
+                            self.theme.surface_hover
+                        }
+                    });
+                    style = style.bg(zebra_bg);
+                }
+                self.styled(line, style);
             }
         }
     }
@@ -2668,5 +2924,61 @@ impl Context {
     /// The debugger is toggled with F12 at runtime.
     pub fn debug_enabled(&self) -> bool {
         self.debug
+    }
+}
+
+fn calendar_month_name(month: u32) -> &'static str {
+    match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "???",
+    }
+}
+
+fn calendar_move_cursor_by_days(state: &mut CalendarState, delta: i32) {
+    let mut remaining = delta;
+    while remaining != 0 {
+        let days = CalendarState::days_in_month(state.year, state.month);
+        if remaining > 0 {
+            let forward = days.saturating_sub(state.cursor_day) as i32;
+            if remaining <= forward {
+                state.cursor_day += remaining as u32;
+                return;
+            }
+
+            remaining -= forward + 1;
+            if state.month == 12 {
+                state.month = 1;
+                state.year += 1;
+            } else {
+                state.month += 1;
+            }
+            state.cursor_day = 1;
+        } else {
+            let backward = state.cursor_day.saturating_sub(1) as i32;
+            if -remaining <= backward {
+                state.cursor_day -= (-remaining) as u32;
+                return;
+            }
+
+            remaining += backward + 1;
+            if state.month == 1 {
+                state.month = 12;
+                state.year -= 1;
+            } else {
+                state.month -= 1;
+            }
+            state.cursor_day = CalendarState::days_in_month(state.year, state.month);
+        }
     }
 }

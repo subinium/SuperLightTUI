@@ -8,10 +8,10 @@ use crate::style::{
     Modifiers, Padding, Style, Theme, WidgetColors,
 };
 use crate::widgets::{
-    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FilePickerState, FormField,
-    FormState, ListState, MultiSelectState, RadioState, ScrollState, SelectState, SpinnerState,
-    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
-    ToastState, ToolApprovalState, TreeState,
+    ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
+    FilePickerState, FormField, FormState, ListState, MultiSelectState, RadioState, ScreenState,
+    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -2419,6 +2419,25 @@ mod tests {
 
         assert!(!first_modal);
         assert!(second_modal);
+    }
+
+    #[test]
+    fn screen_helper_renders_only_current_screen() {
+        let mut backend = TestBackend::new(24, 3);
+        let screens = ScreenState::new("settings");
+
+        backend.render(|ui| {
+            ui.screen("home", &screens, |ui| {
+                ui.text("Home Screen");
+            });
+            ui.screen("settings", &screens, |ui| {
+                ui.text("Settings Screen");
+            });
+        });
+
+        let rendered = backend.to_string();
+        assert!(rendered.contains("Settings Screen"));
+        assert!(!rendered.contains("Home Screen"));
     }
 
     fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {

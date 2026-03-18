@@ -376,6 +376,46 @@ impl Context {
         Response::none()
     }
 
+    pub fn sixel_image(
+        &mut self,
+        rgba: &[u8],
+        pixel_w: u32,
+        pixel_h: u32,
+        cols: u32,
+        rows: u32,
+    ) -> Response {
+        let sixel_supported = self.is_real_terminal && terminal_supports_sixel();
+        if !sixel_supported {
+            self.container().w(cols).h(rows).draw(|buf, rect| {
+                if rect.width == 0 || rect.height == 0 {
+                    return;
+                }
+                buf.set_string(rect.x, rect.y, "[sixel unsupported]", Style::new());
+            });
+            return Response::none();
+        }
+
+        let rgba = normalize_rgba(rgba, pixel_w, pixel_h);
+        let encoded = crate::sixel::encode_sixel(&rgba, pixel_w, pixel_h, 256);
+        if encoded.is_empty() {
+            self.container().w(cols).h(rows).draw(|buf, rect| {
+                if rect.width == 0 || rect.height == 0 {
+                    return;
+                }
+                buf.set_string(rect.x, rect.y, "[sixel empty]", Style::new());
+            });
+            return Response::none();
+        }
+
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            buf.raw_sequence(rect.x, rect.y, encoded);
+        });
+        Response::none()
+    }
+
     /// Render streaming text with a typing cursor indicator.
     ///
     /// Displays the accumulated text content. While `streaming` is true,
@@ -1182,6 +1222,12 @@ impl Context {
 
     // ── containers ───────────────────────────────────────────────────
 
+    pub fn screen(&mut self, name: &str, screens: &ScreenState, f: impl FnOnce(&mut Context)) {
+        if screens.current() == name {
+            f(self);
+        }
+    }
+
     /// Create a vertical (column) container.
     ///
     /// Children are stacked top-to-bottom. Returns a [`Response`] with
@@ -1328,6 +1374,86 @@ impl Context {
         self.commands.push(Command::EndOverlay);
         self.last_text_idx = None;
         self.response_for(interaction_id)
+    }
+
+    /// Render a hover tooltip for the previously rendered interactive widget.
+    ///
+    /// Call this right after a widget or container response:
+    /// ```ignore
+    /// if ui.button("Save").clicked { save(); }
+    /// ui.tooltip("Save the current document to disk");
+    /// ```
+    pub fn tooltip(&mut self, text: impl Into<String>) {
+        let tooltip_text = text.into();
+        let Some(last_interaction_id) = self.interaction_count.checked_sub(1) else {
+            return;
+        };
+
+        let last_response = self.response_for(last_interaction_id);
+        let hovered = last_response.hovered
+            && last_response.rect.width > 0
+            && last_response.rect.height > 0
+            && !tooltip_text.is_empty();
+
+        let mut wrapped_lines = Vec::new();
+        let mut tooltip_x = 0;
+        let mut tooltip_y = 0;
+        let mut tooltip_box_w = 0;
+
+        if hovered {
+            wrapped_lines = wrap_tooltip_text(&tooltip_text, 40);
+            let content_w = wrapped_lines
+                .iter()
+                .map(|line| UnicodeWidthStr::width(line.as_str()) as u32)
+                .max()
+                .unwrap_or(0);
+
+            tooltip_box_w = content_w.saturating_add(4).min(self.area_width);
+            let tooltip_box_h = (wrapped_lines.len() as u32)
+                .saturating_add(4)
+                .min(self.area_height);
+
+            tooltip_x = last_response
+                .rect
+                .x
+                .min(self.area_width.saturating_sub(tooltip_box_w));
+
+            let below_y = last_response.rect.bottom();
+            tooltip_y = if below_y.saturating_add(tooltip_box_h) <= self.area_height {
+                below_y
+            } else {
+                last_response.rect.y.saturating_sub(tooltip_box_h)
+            };
+        }
+
+        let surface = self.theme.surface;
+        let border = self.theme.border;
+        let surface_text = self.theme.surface_text;
+        let area_w = self.area_width;
+        let area_h = self.area_height;
+
+        let _ = self.overlay(|ui| {
+            let _ = ui.container().w(area_w).h(area_h).col(|ui| {
+                if hovered {
+                    let _ = ui
+                        .container()
+                        .ml(tooltip_x)
+                        .mt(tooltip_y)
+                        .max_w(tooltip_box_w)
+                        .border(Border::Rounded)
+                        .border_fg(border)
+                        .bg(surface)
+                        .p(1)
+                        .col(|ui| {
+                            for line in &wrapped_lines {
+                                ui.text(line.as_str()).fg(surface_text);
+                            }
+                        });
+                } else {
+                    let _ = ui.container().w(0).h(0).p(0).col(|_| {});
+                }
+            });
+        });
     }
 
     /// Create a named group container for shared hover/focus styling.
@@ -1830,6 +1956,84 @@ impl Context {
     }
 }
 
+fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
+    let mut lines = Vec::new();
+
+    for paragraph in text.lines() {
+        if paragraph.trim().is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        let mut current_width = 0usize;
+
+        for word in paragraph.split_whitespace() {
+            for chunk in split_word_for_width(word, max_width) {
+                let chunk_width = UnicodeWidthStr::width(chunk.as_str());
+
+                if current.is_empty() {
+                    current = chunk;
+                    current_width = chunk_width;
+                    continue;
+                }
+
+                if current_width + 1 + chunk_width <= max_width {
+                    current.push(' ');
+                    current.push_str(&chunk);
+                    current_width += 1 + chunk_width;
+                } else {
+                    lines.push(std::mem::take(&mut current));
+                    current = chunk;
+                    current_width = chunk_width;
+                }
+            }
+        }
+
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn split_word_for_width(word: &str, max_width: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for ch in word.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if !current.is_empty() && current_width + ch_width > max_width {
+            chunks.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+
+        if current_width >= max_width {
+            chunks.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
+}
+
 const KEYWORDS: &[&str] = &[
     "fn",
     "let",
@@ -2070,4 +2274,29 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
         chunks.push("");
     }
     chunks
+}
+
+fn terminal_supports_sixel() -> bool {
+    let force = std::env::var("SLT_FORCE_SIXEL")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    if matches!(force.as_str(), "1" | "true" | "yes" | "on") {
+        return true;
+    }
+
+    let term = std::env::var("TERM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    let term_program = std::env::var("TERM_PROGRAM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    term.contains("sixel")
+        || term.contains("mlterm")
+        || term.contains("xterm")
+        || term.contains("foot")
+        || term_program.contains("foot")
 }

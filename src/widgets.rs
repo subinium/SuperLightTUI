@@ -7,10 +7,50 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthStr;
 
 type FormValidator = fn(&str) -> Result<(), String>;
 type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
+
+/// Accumulated static output lines for [`crate::run_static`].
+///
+/// Use [`println`](Self::println) to append lines above the dynamic inline TUI.
+#[derive(Debug, Clone, Default)]
+pub struct StaticOutput {
+    lines: Vec<String>,
+    new_lines: Vec<String>,
+}
+
+impl StaticOutput {
+    /// Create an empty static output buffer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append one line of static output.
+    pub fn println(&mut self, line: impl Into<String>) {
+        let line = line.into();
+        self.lines.push(line.clone());
+        self.new_lines.push(line);
+    }
+
+    /// Return all accumulated static lines.
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    /// Drain and return only lines added since the previous drain.
+    pub fn drain_new(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.new_lines)
+    }
+
+    /// Clear all accumulated lines.
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.new_lines.clear();
+    }
+}
 
 /// State for a single-line text input widget.
 ///
@@ -783,6 +823,8 @@ pub struct TableState {
     pub page: usize,
     /// Rows per page (`0` disables pagination).
     pub page_size: usize,
+    /// Whether alternating row backgrounds are enabled.
+    pub zebra: bool,
     view_indices: Vec<usize>,
 }
 
@@ -799,6 +841,7 @@ impl Default for TableState {
             filter: String::new(),
             page: 0,
             page_size: 0,
+            zebra: false,
             view_indices: Vec::new(),
         }
     }
@@ -823,6 +866,7 @@ impl TableState {
             filter: String::new(),
             page: 0,
             page_size: 0,
+            zebra: false,
             view_indices: Vec::new(),
         };
         state.rebuild_view();
@@ -1079,6 +1123,124 @@ impl ScrollState {
 }
 
 impl Default for ScrollState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CalendarState {
+    pub year: i32,
+    pub month: u32,
+    pub selected_day: Option<u32>,
+    pub(crate) cursor_day: u32,
+}
+
+impl CalendarState {
+    pub fn new() -> Self {
+        let (year, month) = Self::current_year_month();
+        Self::from_ym(year, month)
+    }
+
+    pub fn from_ym(year: i32, month: u32) -> Self {
+        let month = month.clamp(1, 12);
+        Self {
+            year,
+            month,
+            selected_day: None,
+            cursor_day: 1,
+        }
+    }
+
+    pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
+        self.selected_day.map(|day| (self.year, self.month, day))
+    }
+
+    pub fn prev_month(&mut self) {
+        if self.month == 1 {
+            self.month = 12;
+            self.year -= 1;
+        } else {
+            self.month -= 1;
+        }
+        self.clamp_days();
+    }
+
+    pub fn next_month(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
+        } else {
+            self.month += 1;
+        }
+        self.clamp_days();
+    }
+
+    pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if Self::is_leap_year(year) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        }
+    }
+
+    pub(crate) fn first_weekday(year: i32, month: u32) -> u32 {
+        let month = month.clamp(1, 12);
+        let offsets = [0_i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let mut y = year;
+        if month < 3 {
+            y -= 1;
+        }
+        let sunday_based = (y + y / 4 - y / 100 + y / 400 + offsets[(month - 1) as usize] + 1) % 7;
+        ((sunday_based + 6) % 7) as u32
+    }
+
+    fn clamp_days(&mut self) {
+        let max_day = Self::days_in_month(self.year, self.month);
+        self.cursor_day = self.cursor_day.clamp(1, max_day);
+        if let Some(day) = self.selected_day {
+            self.selected_day = Some(day.min(max_day));
+        }
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    }
+
+    fn current_year_month() -> (i32, u32) {
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return (1970, 1);
+        };
+        let days_since_epoch = (duration.as_secs() / 86_400) as i64;
+        let (year, month, _) = Self::civil_from_days(days_since_epoch);
+        (year, month)
+    }
+
+    fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+        let z = days_since_epoch + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let mut year = (yoe as i32) + (era as i32) * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let month = (mp + if mp < 10 { 3 } else { -9 }) as u32;
+        if month <= 2 {
+            year += 1;
+        }
+        (year, month, day)
+    }
+}
+
+impl Default for CalendarState {
     fn default() -> Self {
         Self::new()
     }
@@ -1417,27 +1579,89 @@ impl CommandPaletteState {
         }
     }
 
+    fn fuzzy_score(pattern: &str, text: &str) -> Option<i32> {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Some(0);
+        }
+
+        let text_chars: Vec<char> = text.chars().collect();
+        let mut score = 0;
+        let mut search_start = 0usize;
+        let mut prev_match: Option<usize> = None;
+
+        for p in pattern.chars() {
+            let mut found = None;
+            for (idx, ch) in text_chars.iter().enumerate().skip(search_start) {
+                if ch.eq_ignore_ascii_case(&p) {
+                    found = Some(idx);
+                    break;
+                }
+            }
+
+            let idx = found?;
+            if prev_match.is_some_and(|prev| idx == prev + 1) {
+                score += 3;
+            } else {
+                score += 1;
+            }
+
+            if idx == 0 {
+                score += 2;
+            } else {
+                let prev = text_chars[idx - 1];
+                let curr = text_chars[idx];
+                if matches!(prev, ' ' | '_' | '-') || prev.is_uppercase() || curr.is_uppercase() {
+                    score += 2;
+                }
+            }
+
+            prev_match = Some(idx);
+            search_start = idx + 1;
+        }
+
+        Some(score)
+    }
+
     pub(crate) fn filtered_indices(&self) -> Vec<usize> {
-        let tokens: Vec<String> = self
-            .input
-            .split_whitespace()
-            .map(|t| t.to_lowercase())
-            .collect();
-        if tokens.is_empty() {
+        let query = self.input.trim();
+        if query.is_empty() {
             return (0..self.commands.len()).collect();
         }
-        self.commands
+
+        let mut scored: Vec<(usize, i32)> = self
+            .commands
             .iter()
             .enumerate()
-            .filter(|(_, cmd)| {
-                let label = cmd.label.to_lowercase();
-                let desc = cmd.description.to_lowercase();
-                tokens
-                    .iter()
-                    .all(|token| label.contains(token.as_str()) || desc.contains(token.as_str()))
+            .filter_map(|(i, cmd)| {
+                let mut haystack =
+                    String::with_capacity(cmd.label.len() + cmd.description.len() + 1);
+                haystack.push_str(&cmd.label);
+                haystack.push(' ');
+                haystack.push_str(&cmd.description);
+                Self::fuzzy_score(query, &haystack).map(|score| (i, score))
             })
-            .map(|(i, _)| i)
-            .collect()
+            .collect();
+
+        if scored.is_empty() {
+            let tokens: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
+            return self
+                .commands
+                .iter()
+                .enumerate()
+                .filter(|(_, cmd)| {
+                    let label = cmd.label.to_lowercase();
+                    let desc = cmd.description.to_lowercase();
+                    tokens.iter().all(|token| {
+                        label.contains(token.as_str()) || desc.contains(token.as_str())
+                    })
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+
+        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        scored.into_iter().map(|(idx, _)| idx).collect()
     }
 
     pub(crate) fn selected(&self) -> usize {
@@ -1578,6 +1802,59 @@ impl Default for StreamingMarkdownState {
     }
 }
 
+/// Navigation stack state for multi-screen apps.
+///
+/// Tracks screen names in a push/pop stack while preserving the root screen.
+/// Pass this state through your render closure and branch on [`ScreenState::current`].
+#[derive(Debug, Clone)]
+pub struct ScreenState {
+    stack: Vec<String>,
+}
+
+impl ScreenState {
+    /// Create a screen stack with an initial root screen.
+    pub fn new(initial: impl Into<String>) -> Self {
+        Self {
+            stack: vec![initial.into()],
+        }
+    }
+
+    /// Return the current screen name (top of the stack).
+    pub fn current(&self) -> &str {
+        self.stack
+            .last()
+            .expect("ScreenState always contains at least one screen")
+            .as_str()
+    }
+
+    /// Push a new screen onto the stack.
+    pub fn push(&mut self, name: impl Into<String>) {
+        self.stack.push(name.into());
+    }
+
+    /// Pop the current screen, preserving the root screen.
+    pub fn pop(&mut self) {
+        if self.can_pop() {
+            self.stack.pop();
+        }
+    }
+
+    /// Return current stack depth.
+    pub fn depth(&self) -> usize {
+        self.stack.len()
+    }
+
+    /// Return `true` if popping is allowed.
+    pub fn can_pop(&self) -> bool {
+        self.stack.len() > 1
+    }
+
+    /// Reset to only the root screen.
+    pub fn reset(&mut self) {
+        self.stack.truncate(1);
+    }
+}
+
 /// Approval state for a tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalAction {
@@ -1644,6 +1921,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn static_output_accumulates_and_drains_new_lines() {
+        let mut output = StaticOutput::new();
+        output.println("Building crate...");
+        output.println("Compiling foo v0.1.0");
+
+        assert_eq!(
+            output.lines(),
+            &[
+                "Building crate...".to_string(),
+                "Compiling foo v0.1.0".to_string()
+            ]
+        );
+
+        let first = output.drain_new();
+        assert_eq!(
+            first,
+            vec![
+                "Building crate...".to_string(),
+                "Compiling foo v0.1.0".to_string()
+            ]
+        );
+        assert!(output.drain_new().is_empty());
+
+        output.println("Finished");
+        assert_eq!(output.drain_new(), vec!["Finished".to_string()]);
+    }
+
+    #[test]
+    fn static_output_clear_resets_all_buffers() {
+        let mut output = StaticOutput::new();
+        output.println("line");
+        output.clear();
+
+        assert!(output.lines().is_empty());
+        assert!(output.drain_new().is_empty());
+    }
+
+    #[test]
     fn form_field_default_values() {
         let field = FormField::default();
         assert_eq!(field.label, "");
@@ -1699,6 +2014,7 @@ mod tests {
         assert_eq!(state.filter, "");
         assert_eq!(state.page, 0);
         assert_eq!(state.page_size, 0);
+        assert!(!state.zebra);
         assert_eq!(state.visible_indices(), &[]);
     }
 
@@ -1772,6 +2088,105 @@ mod tests {
         assert_eq!(state.rows.len(), 2);
         assert!(state.sort_ascending);
         assert_eq!(state.sort_column, None);
+        assert!(!state.zebra);
         assert_eq!(state.visible_indices(), &[0, 1]);
+    }
+
+    #[test]
+    fn command_palette_fuzzy_score_matches_gapped_pattern() {
+        assert!(CommandPaletteState::fuzzy_score("sf", "Save File").is_some());
+        assert!(CommandPaletteState::fuzzy_score("cmd", "Command Palette").is_some());
+        assert_eq!(CommandPaletteState::fuzzy_score("xyz", "Save File"), None);
+    }
+
+    #[test]
+    fn command_palette_filtered_indices_uses_fuzzy_and_sorts() {
+        let mut state = CommandPaletteState::new(vec![
+            PaletteCommand::new("Save File", "Write buffer"),
+            PaletteCommand::new("Search Files", "Find in workspace"),
+            PaletteCommand::new("Quit", "Exit app"),
+        ]);
+
+        state.input = "sf".to_string();
+        let filtered = state.filtered_indices();
+        assert_eq!(filtered, vec![0, 1]);
+
+        state.input = "buffer".to_string();
+        let filtered = state.filtered_indices();
+        assert_eq!(filtered, vec![0]);
+    }
+
+    #[test]
+    fn screen_state_push_pop_tracks_current_screen() {
+        let mut screens = ScreenState::new("home");
+        assert_eq!(screens.current(), "home");
+        assert_eq!(screens.depth(), 1);
+        assert!(!screens.can_pop());
+
+        screens.push("settings");
+        assert_eq!(screens.current(), "settings");
+        assert_eq!(screens.depth(), 2);
+        assert!(screens.can_pop());
+
+        screens.push("profile");
+        assert_eq!(screens.current(), "profile");
+        assert_eq!(screens.depth(), 3);
+
+        screens.pop();
+        assert_eq!(screens.current(), "settings");
+        assert_eq!(screens.depth(), 2);
+    }
+
+    #[test]
+    fn screen_state_pop_never_removes_root() {
+        let mut screens = ScreenState::new("home");
+        screens.push("settings");
+        screens.pop();
+        screens.pop();
+
+        assert_eq!(screens.current(), "home");
+        assert_eq!(screens.depth(), 1);
+        assert!(!screens.can_pop());
+    }
+
+    #[test]
+    fn screen_state_reset_keeps_only_root() {
+        let mut screens = ScreenState::new("home");
+        screens.push("settings");
+        screens.push("profile");
+        assert_eq!(screens.current(), "profile");
+
+        screens.reset();
+        assert_eq!(screens.current(), "home");
+        assert_eq!(screens.depth(), 1);
+        assert!(!screens.can_pop());
+    }
+
+    #[test]
+    fn calendar_days_in_month_handles_leap_years() {
+        assert_eq!(CalendarState::days_in_month(2024, 2), 29);
+        assert_eq!(CalendarState::days_in_month(2023, 2), 28);
+        assert_eq!(CalendarState::days_in_month(2024, 1), 31);
+        assert_eq!(CalendarState::days_in_month(2024, 4), 30);
+    }
+
+    #[test]
+    fn calendar_first_weekday_known_dates() {
+        assert_eq!(CalendarState::first_weekday(2024, 1), 0);
+        assert_eq!(CalendarState::first_weekday(2023, 10), 6);
+    }
+
+    #[test]
+    fn calendar_prev_next_month_handles_year_boundary() {
+        let mut state = CalendarState::from_ym(2024, 12);
+        state.prev_month();
+        assert_eq!((state.year, state.month), (2024, 11));
+
+        let mut state = CalendarState::from_ym(2024, 1);
+        state.prev_month();
+        assert_eq!((state.year, state.month), (2023, 12));
+
+        state.next_month();
+        assert_eq!((state.year, state.month), (2024, 1));
     }
 }
