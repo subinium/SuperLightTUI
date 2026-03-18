@@ -20,6 +20,7 @@ pub mod tailwind {
     use super::Palette;
     use crate::Color;
 
+    /// Returns a gradient palette of slate shades.
     pub const SLATE: Palette = Palette {
         c50: Color::Rgb(248, 250, 252),
         c100: Color::Rgb(241, 245, 249),
@@ -34,6 +35,7 @@ pub mod tailwind {
         c950: Color::Rgb(2, 6, 23),
     };
 
+    /// Returns a gradient palette of gray shades.
     pub const GRAY: Palette = Palette {
         c50: Color::Rgb(249, 250, 251),
         c100: Color::Rgb(243, 244, 246),
@@ -48,6 +50,7 @@ pub mod tailwind {
         c950: Color::Rgb(3, 7, 18),
     };
 
+    /// Returns a gradient palette of zinc shades.
     pub const ZINC: Palette = Palette {
         c50: Color::Rgb(250, 250, 250),
         c100: Color::Rgb(244, 244, 245),
@@ -62,6 +65,7 @@ pub mod tailwind {
         c950: Color::Rgb(9, 9, 11),
     };
 
+    /// Returns a gradient palette of neutral shades.
     pub const NEUTRAL: Palette = Palette {
         c50: Color::Rgb(250, 250, 250),
         c100: Color::Rgb(245, 245, 245),
@@ -76,6 +80,7 @@ pub mod tailwind {
         c950: Color::Rgb(10, 10, 10),
     };
 
+    /// Returns a gradient palette of stone shades.
     pub const STONE: Palette = Palette {
         c50: Color::Rgb(250, 250, 249),
         c100: Color::Rgb(245, 245, 244),
@@ -90,6 +95,7 @@ pub mod tailwind {
         c950: Color::Rgb(12, 10, 9),
     };
 
+    /// Red palette (50–950 shades).
     pub const RED: Palette = Palette {
         c50: Color::Rgb(254, 242, 242),
         c100: Color::Rgb(254, 226, 226),
@@ -104,6 +110,7 @@ pub mod tailwind {
         c950: Color::Rgb(69, 10, 10),
     };
 
+    /// Orange palette (50–950 shades).
     pub const ORANGE: Palette = Palette {
         c50: Color::Rgb(255, 247, 237),
         c100: Color::Rgb(255, 237, 213),
@@ -118,6 +125,7 @@ pub mod tailwind {
         c950: Color::Rgb(67, 20, 7),
     };
 
+    /// Amber palette (50–950 shades).
     pub const AMBER: Palette = Palette {
         c50: Color::Rgb(255, 251, 235),
         c100: Color::Rgb(254, 243, 199),
@@ -132,6 +140,7 @@ pub mod tailwind {
         c950: Color::Rgb(69, 26, 3),
     };
 
+    /// Yellow palette (50–950 shades).
     pub const YELLOW: Palette = Palette {
         c50: Color::Rgb(254, 252, 232),
         c100: Color::Rgb(254, 249, 195),
@@ -146,6 +155,7 @@ pub mod tailwind {
         c950: Color::Rgb(66, 32, 6),
     };
 
+    /// Lime palette (50–950 shades).
     pub const LIME: Palette = Palette {
         c50: Color::Rgb(247, 254, 231),
         c100: Color::Rgb(236, 252, 203),
@@ -160,6 +170,7 @@ pub mod tailwind {
         c950: Color::Rgb(26, 46, 5),
     };
 
+    /// Green palette (50–950 shades).
     pub const GREEN: Palette = Palette {
         c50: Color::Rgb(240, 253, 244),
         c100: Color::Rgb(220, 252, 231),
@@ -174,6 +185,7 @@ pub mod tailwind {
         c950: Color::Rgb(5, 46, 22),
     };
 
+    /// Emerald palette (50–950 shades).
     pub const EMERALD: Palette = Palette {
         c50: Color::Rgb(236, 253, 245),
         c100: Color::Rgb(209, 250, 229),
@@ -188,6 +200,7 @@ pub mod tailwind {
         c950: Color::Rgb(2, 44, 34),
     };
 
+    /// Teal palette (50–950 shades).
     pub const TEAL: Palette = Palette {
         c50: Color::Rgb(240, 253, 250),
         c100: Color::Rgb(204, 251, 241),
@@ -202,6 +215,7 @@ pub mod tailwind {
         c950: Color::Rgb(4, 47, 46),
     };
 
+    /// Cyan palette (50–950 shades).
     pub const CYAN: Palette = Palette {
         c50: Color::Rgb(236, 254, 255),
         c100: Color::Rgb(207, 250, 254),
@@ -216,6 +230,7 @@ pub mod tailwind {
         c950: Color::Rgb(8, 51, 68),
     };
 
+    /// Sky palette (50–950 shades).
     pub const SKY: Palette = Palette {
         c50: Color::Rgb(240, 249, 255),
         c100: Color::Rgb(224, 242, 254),
@@ -230,6 +245,7 @@ pub mod tailwind {
         c950: Color::Rgb(8, 47, 73),
     };
 
+    /// Blue palette (50–950 shades).
     pub const BLUE: Palette = Palette {
         c50: Color::Rgb(239, 246, 255),
         c100: Color::Rgb(219, 234, 254),
@@ -244,6 +260,7 @@ pub mod tailwind {
         c950: Color::Rgb(23, 37, 84),
     };
 
+    /// Indigo palette (50–950 shades).
     pub const INDIGO: Palette = Palette {
         c50: Color::Rgb(238, 242, 255),
         c100: Color::Rgb(224, 231, 255),
@@ -258,6 +275,7 @@ pub mod tailwind {
         c950: Color::Rgb(30, 27, 75),
     };
 
+    /// Violet palette (50–950 shades).
     pub const VIOLET: Palette = Palette {
         c50: Color::Rgb(245, 243, 255),
         c100: Color::Rgb(237, 233, 254),
@@ -272,6 +290,7 @@ pub mod tailwind {
         c950: Color::Rgb(46, 16, 101),
     };
 
+    /// Purple palette (50–950 shades).
     pub const PURPLE: Palette = Palette {
         c50: Color::Rgb(250, 245, 255),
         c100: Color::Rgb(243, 232, 255),
@@ -286,6 +305,7 @@ pub mod tailwind {
         c950: Color::Rgb(59, 7, 100),
     };
 
+    /// Fuchsia palette (50–950 shades).
     pub const FUCHSIA: Palette = Palette {
         c50: Color::Rgb(253, 244, 255),
         c100: Color::Rgb(250, 232, 255),
@@ -300,6 +320,7 @@ pub mod tailwind {
         c950: Color::Rgb(74, 4, 78),
     };
 
+    /// Pink palette (50–950 shades).
     pub const PINK: Palette = Palette {
         c50: Color::Rgb(253, 242, 248),
         c100: Color::Rgb(252, 231, 243),
@@ -314,6 +335,7 @@ pub mod tailwind {
         c950: Color::Rgb(80, 7, 36),
     };
 
+    /// Rose palette (50–950 shades).
     pub const ROSE: Palette = Palette {
         c50: Color::Rgb(255, 241, 242),
         c100: Color::Rgb(255, 228, 230),

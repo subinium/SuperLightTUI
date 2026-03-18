@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.12.12] — 2026-03-18
+
+### Improvements
+
+- Add `Default` impl for 8 widget state types: `FormField`, `ToastMessage`, `ListState`, `FileEntry`, `TabsState`, `TableState`, `SelectState`, `RadioState`
+- Replace ~35 duplicated breakpoint methods on `ContainerBuilder` with `define_breakpoint_methods!` macro
+- Split long widget functions into focused helpers: `table()`, `select()`, `bar_chart_styled()`
+- Improve `use_memo` panic message with type information and guidance
+- Add `PartialEq` derive to `WidgetColors`
+
+### Documentation
+
+- Add doc comments to `ThemeBuilder` (17 methods), `Palette` (16 constants), `ContainerStyle` fields, `WidgetColors` methods, `Modifiers` constants
+- Reduce `missing_docs` warnings from 229 to 68
+- Update `CLAUDE.md` architecture section (add `widgets_interactive.rs`, update line counts)
+
+### Tests
+
+- Add 49 new unit tests for `style.rs` (24), `style/theme.rs` (11), `widgets.rs` (14)
+- Test suite: 52 → 393 total tests
+
 ## [0.12.11] — 2026-03-18
 
 ### Documentation

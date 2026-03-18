@@ -259,86 +259,103 @@ pub struct ThemeBuilder {
 }
 
 impl ThemeBuilder {
+    /// Set the primary color.
     pub fn primary(mut self, color: Color) -> Self {
         self.primary = Some(color);
         self
     }
 
+    /// Set the secondary color.
     pub fn secondary(mut self, color: Color) -> Self {
         self.secondary = Some(color);
         self
     }
 
+    /// Set the accent color.
     pub fn accent(mut self, color: Color) -> Self {
         self.accent = Some(color);
         self
     }
 
+    /// Set the main text color.
     pub fn text(mut self, color: Color) -> Self {
         self.text = Some(color);
         self
     }
 
+    /// Set the dimmed text color.
     pub fn text_dim(mut self, color: Color) -> Self {
         self.text_dim = Some(color);
         self
     }
 
+    /// Set the border color.
     pub fn border(mut self, color: Color) -> Self {
         self.border = Some(color);
         self
     }
 
+    /// Set the background color.
     pub fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
     }
 
+    /// Set the success indicator color.
     pub fn success(mut self, color: Color) -> Self {
         self.success = Some(color);
         self
     }
 
+    /// Set the warning indicator color.
     pub fn warning(mut self, color: Color) -> Self {
         self.warning = Some(color);
         self
     }
 
+    /// Set the error indicator color.
     pub fn error(mut self, color: Color) -> Self {
         self.error = Some(color);
         self
     }
 
+    /// Set the selected item background color.
     pub fn selected_bg(mut self, color: Color) -> Self {
         self.selected_bg = Some(color);
         self
     }
 
+    /// Set the selected item foreground color.
     pub fn selected_fg(mut self, color: Color) -> Self {
         self.selected_fg = Some(color);
         self
     }
 
+    /// Set the surface background color.
     pub fn surface(mut self, color: Color) -> Self {
         self.surface = Some(color);
         self
     }
 
+    /// Set the surface hover color.
     pub fn surface_hover(mut self, color: Color) -> Self {
         self.surface_hover = Some(color);
         self
     }
 
+    /// Set the surface text color.
     pub fn surface_text(mut self, color: Color) -> Self {
         self.surface_text = Some(color);
         self
     }
 
+    /// Set the dark mode flag.
     pub fn is_dark(mut self, is_dark: bool) -> Self {
         self.is_dark = Some(is_dark);
         self
     }
 
+    /// Build the theme. Unfilled fields use [`Theme::dark()`] defaults.
     pub fn build(self) -> Theme {
         let defaults = Theme::dark();
         Theme {
@@ -365,5 +382,99 @@ impl ThemeBuilder {
 impl Default for Theme {
     fn default() -> Self {
         Self::dark()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_dark_preset_builds() {
+        let t = Theme::dark();
+        assert_eq!(t.primary, Color::Cyan);
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_light_preset_builds() {
+        let t = Theme::light();
+        assert_eq!(t.selected_fg, Color::White);
+        assert!(!t.is_dark);
+    }
+
+    #[test]
+    fn theme_dracula_preset_builds() {
+        let t = Theme::dracula();
+        assert_eq!(t.bg, Color::Rgb(40, 42, 54));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_catppuccin_preset_builds() {
+        let t = Theme::catppuccin();
+        assert_eq!(t.bg, Color::Rgb(30, 30, 46));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_nord_preset_builds() {
+        let t = Theme::nord();
+        assert_eq!(t.bg, Color::Rgb(46, 52, 64));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_solarized_dark_preset_builds() {
+        let t = Theme::solarized_dark();
+        assert_eq!(t.bg, Color::Rgb(0, 43, 54));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_tokyo_night_preset_builds() {
+        let t = Theme::tokyo_night();
+        assert_eq!(t.bg, Color::Rgb(26, 27, 38));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_builder_sets_primary_and_accent() {
+        let theme = Theme::builder()
+            .primary(Color::Red)
+            .accent(Color::Yellow)
+            .build();
+
+        assert_eq!(theme.primary, Color::Red);
+        assert_eq!(theme.accent, Color::Yellow);
+    }
+
+    #[test]
+    fn theme_builder_defaults_to_dark_for_unset_fields() {
+        let defaults = Theme::dark();
+        let theme = Theme::builder().primary(Color::Green).build();
+
+        assert_eq!(theme.primary, Color::Green);
+        assert_eq!(theme.secondary, defaults.secondary);
+        assert_eq!(theme.text, defaults.text);
+        assert_eq!(theme.text_dim, defaults.text_dim);
+        assert_eq!(theme.border, defaults.border);
+        assert_eq!(theme.surface_hover, defaults.surface_hover);
+        assert_eq!(theme.is_dark, defaults.is_dark);
+    }
+
+    #[test]
+    fn theme_builder_can_override_is_dark() {
+        let theme = Theme::builder().is_dark(false).build();
+        assert!(!theme.is_dark);
+    }
+
+    #[test]
+    fn theme_default_matches_dark() {
+        let default_theme = Theme::default();
+        let dark = Theme::dark();
+        assert_eq!(default_theme.primary, dark.primary);
+        assert_eq!(default_theme.bg, dark.bg);
+        assert_eq!(default_theme.is_dark, dark.is_dark);
     }
 }

@@ -1,5 +1,13 @@
 use super::*;
 
+struct VerticalBarLayout {
+    chart_height: usize,
+    bar_width: usize,
+    value_labels: Vec<String>,
+    col_width: usize,
+    bar_units: Vec<usize>,
+}
+
 impl Context {
     /// Render a horizontal bar chart from `(label, value)` pairs.
     ///
@@ -8,7 +16,7 @@ impl Context {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// let data = [
     ///     ("Sales", 160.0),
@@ -17,10 +25,10 @@ impl Context {
     ///     ("Costs", 60.0),
     /// ];
     /// ui.bar_chart(&data, 24);
-    ///
-    /// For styled bars with per-bar colors, see [`bar_chart_styled`].
     /// # });
     /// ```
+    ///
+    /// For styled bars with per-bar colors, see [`bar_chart_styled`](Self::bar_chart_styled).
     pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> Response {
         if data.is_empty() {
             return Response::none();
@@ -139,6 +147,17 @@ impl Context {
             return Response::none();
         }
 
+        let (config, denom) = self.bar_chart_styled_layout(bars, configure);
+        self.bar_chart_styled_render(bars, max_size, denom, &config);
+
+        Response::none()
+    }
+
+    fn bar_chart_styled_layout(
+        &self,
+        bars: &[Bar],
+        configure: impl FnOnce(&mut BarChartConfig),
+    ) -> (BarChartConfig, f64) {
         let mut config = BarChartConfig::default();
         configure(&mut config);
 
@@ -149,6 +168,16 @@ impl Context {
         let max_value = config.max_value.unwrap_or(auto_max);
         let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
+        (config, denom)
+    }
+
+    fn bar_chart_styled_render(
+        &mut self,
+        bars: &[Bar],
+        max_size: u32,
+        denom: f64,
+        config: &BarChartConfig,
+    ) {
         match config.direction {
             BarDirection::Horizontal => {
                 self.render_horizontal_styled_bars(bars, max_size, denom, config.bar_gap)
@@ -161,8 +190,6 @@ impl Context {
                 config.bar_gap,
             ),
         }
-
-        Response::none()
     }
 
     fn render_horizontal_styled_bars(
@@ -258,26 +285,7 @@ impl Context {
         bar_width: u16,
         bar_gap: u16,
     ) {
-        let chart_height = max_height.max(1) as usize;
-        let bar_width = bar_width.max(1) as usize;
-        let value_labels: Vec<String> = bars.iter().map(Self::bar_display_value).collect();
-        let label_width = bars
-            .iter()
-            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
-            .max()
-            .unwrap_or(1);
-        let value_width = value_labels
-            .iter()
-            .map(|value| UnicodeWidthStr::width(value.as_str()))
-            .max()
-            .unwrap_or(1);
-        let col_width = bar_width.max(label_width.max(value_width).max(1));
-        let bar_units: Vec<usize> = bars
-            .iter()
-            .map(|bar| {
-                ((bar.value / denom).clamp(0.0, 1.0) * chart_height as f64 * 8.0).round() as usize
-            })
-            .collect();
+        let layout = self.compute_vertical_bar_layout(bars, max_height, denom, bar_width);
 
         self.interaction_count += 1;
         self.commands.push(Command::BeginContainer {
@@ -300,17 +308,54 @@ impl Context {
 
         self.render_vertical_bar_body(
             bars,
-            &bar_units,
-            chart_height,
-            col_width,
-            bar_width,
+            &layout.bar_units,
+            layout.chart_height,
+            layout.col_width,
+            layout.bar_width,
             bar_gap,
-            &value_labels,
+            &layout.value_labels,
         );
-        self.render_vertical_bar_labels(bars, col_width, bar_gap);
+        self.render_vertical_bar_labels(bars, layout.col_width, bar_gap);
 
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
+    }
+
+    fn compute_vertical_bar_layout(
+        &self,
+        bars: &[Bar],
+        max_height: u32,
+        denom: f64,
+        bar_width: u16,
+    ) -> VerticalBarLayout {
+        let chart_height = max_height.max(1) as usize;
+        let bar_width = bar_width.max(1) as usize;
+        let value_labels: Vec<String> = bars.iter().map(Self::bar_display_value).collect();
+        let label_width = bars
+            .iter()
+            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .max()
+            .unwrap_or(1);
+        let value_width = value_labels
+            .iter()
+            .map(|value| UnicodeWidthStr::width(value.as_str()))
+            .max()
+            .unwrap_or(1);
+        let col_width = bar_width.max(label_width.max(value_width).max(1));
+        let bar_units: Vec<usize> = bars
+            .iter()
+            .map(|bar| {
+                ((bar.value / denom).clamp(0.0, 1.0) * chart_height as f64 * 8.0).round() as usize
+            })
+            .collect();
+
+        VerticalBarLayout {
+            chart_height,
+            bar_width,
+            value_labels,
+            col_width,
+            bar_units,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -673,14 +718,14 @@ impl Context {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// let samples = [12.0, 9.0, 14.0, 18.0, 16.0, 21.0, 20.0, 24.0];
     /// ui.sparkline(&samples, 16);
-    ///
-    /// For per-point colors and missing values, see [`sparkline_styled`].
     /// # });
     /// ```
+    ///
+    /// For per-point colors and missing values, see [`sparkline_styled`](Self::sparkline_styled).
     pub fn sparkline(&mut self, data: &[f64], width: u32) -> Response {
         const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
