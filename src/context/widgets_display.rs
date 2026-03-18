@@ -901,6 +901,7 @@ impl Context {
             Style::new().fg(self.theme.text_dim)
         };
 
+        let q_width = UnicodeWidthStr::width(question) as u32;
         let mut response = self.row(|ui| {
             ui.text(question);
             ui.text(" ");
@@ -908,9 +909,28 @@ impl Context {
             ui.text(" ");
             ui.styled("[No]", no_style);
         });
+
+        if !clicked && response.clicked {
+            if let Some((mx, _)) = self.click_pos {
+                let yes_start = response.rect.x + q_width + 1;
+                let yes_end = yes_start + 5;
+                let no_start = yes_end + 1;
+                if mx >= yes_start && mx < yes_end {
+                    is_yes = true;
+                    *result = true;
+                    clicked = true;
+                } else if mx >= no_start {
+                    is_yes = false;
+                    *result = false;
+                    clicked = true;
+                }
+            }
+        }
+
         response.focused = focused;
         response.clicked = clicked;
         response.changed = clicked;
+        let _ = is_yes;
         response
     }
 
