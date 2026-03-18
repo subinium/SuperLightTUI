@@ -1,7 +1,7 @@
 // Safety
 #![forbid(unsafe_code)]
 // Documentation
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::private_intra_doc_links)]
 // Correctness
