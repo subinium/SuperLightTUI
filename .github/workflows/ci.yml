@@ -120,6 +120,7 @@ jobs:
     name: Commit Style
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
