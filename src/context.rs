@@ -24,7 +24,7 @@ fn slt_assert(condition: bool, msg: &str) {
 }
 
 #[cfg(debug_assertions)]
-#[allow(dead_code)]
+#[allow(dead_code, clippy::print_stderr)]
 fn slt_warn(msg: &str) {
     eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
 }

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.12.11] — 2026-03-18
+
+### Documentation
+
+- Add `DESIGN_PRINCIPLES.md` — core design philosophy, widget contract, error handling guide, API stability policy
+- Add `ARCHITECTURE.md` — module map, frame lifecycle, data flow, visibility rules
+- Add `SECURITY.md` — vulnerability reporting policy
+- Add PR template with quality checklist
+- Add issue templates (bug report, feature request)
+- Add `CODEOWNERS`
+- Enhance `CONTRIBUTING.md` with widget creation checklist and design principles reference
+
+### Internal
+
+- Add crate-level lints: `forbid(unsafe_code)`, `deny(clippy::unwrap_in_result)`, `warn(clippy::unwrap_used)`, `warn(clippy::dbg_macro)`, `warn(clippy::print_stdout)`, `warn(clippy::print_stderr)`, rustdoc link lints
+- Add doc coverage CI check (non-blocking) for `missing_docs` tracking
+- Add `doc_auto_cfg` — feature-gated items now display their required feature on docs.rs
+- Add `cargo-semver-checks` to CI (informational, non-blocking)
+- Reduce crates.io package size (exclude `AUDIT-REPORT.md`, `CLAUDE.md`)
+
 ## [0.12.10] — 2026-03-17
 
 ### Features

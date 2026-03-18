@@ -61,6 +61,24 @@ jobs:
           components: rustfmt
       - run: cargo fmt -- --check
 
+  docs:
+    name: Doc Coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: RUSTFLAGS="-Wmissing_docs" cargo check --all-features 2>&1 | grep -c "missing documentation" || echo "0 missing docs"
+
+  semver:
+    name: Semver Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+
   audit:
     name: Audit
     runs-on: ubuntu-latest
