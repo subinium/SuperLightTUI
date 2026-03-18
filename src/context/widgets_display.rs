@@ -45,8 +45,7 @@ impl Context {
     pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
         let url_str = url.into();
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let response = self.response_for(interaction_id);
 
         let mut activated = response.clicked;
@@ -1349,8 +1348,7 @@ impl Context {
     /// });
     /// ```
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         self.commands.push(Command::BeginOverlay { modal: true });
         self.overlay_depth += 1;
         self.modal_active = true;
@@ -1365,8 +1363,7 @@ impl Context {
 
     /// Render floating content without dimming the background.
     pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) -> Response {
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         self.commands.push(Command::BeginOverlay { modal: false });
         self.overlay_depth += 1;
         f(self);
@@ -1682,8 +1679,7 @@ impl Context {
         gap: u32,
         f: impl FnOnce(&mut Context),
     ) -> Response {
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
 
         self.commands.push(Command::BeginContainer {

@@ -19,8 +19,7 @@ impl Context {
     /// ```
     pub fn grid(&mut self, cols: u32, f: impl FnOnce(&mut Context)) -> Response {
         slt_assert(cols > 0, "grid() requires at least 1 column");
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
 
         self.commands.push(Command::BeginContainer {
@@ -149,8 +148,7 @@ impl Context {
 
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -253,8 +251,7 @@ impl Context {
 
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -505,8 +502,7 @@ impl Context {
         }
 
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         let mut file_selected = false;
@@ -670,8 +666,7 @@ impl Context {
         let old_filter = state.filter.clone();
 
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -962,8 +957,7 @@ impl Context {
         state.selected = state.selected.min(state.labels.len().saturating_sub(1));
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -1084,8 +1078,7 @@ impl Context {
 
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -1163,8 +1156,7 @@ impl Context {
     /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
     pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -1311,8 +1303,7 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         let mut should_toggle = response.clicked;
@@ -1409,8 +1400,7 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         let mut should_toggle = response.clicked;
@@ -1507,8 +1497,7 @@ impl Context {
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         let old_selected = state.selected;
@@ -1722,8 +1711,7 @@ impl Context {
             }
         }
 
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -1846,8 +1834,7 @@ impl Context {
             }
         }
 
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
 
@@ -1932,8 +1919,7 @@ impl Context {
         state.selected = state.selected.min(entries.len().saturating_sub(1));
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         let mut changed = false;
@@ -2049,8 +2035,7 @@ impl Context {
             return Response::none();
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let focused = self.register_focusable();
         let old_selected = state.selected;
 
@@ -2164,8 +2149,7 @@ impl Context {
         }
 
         state.last_selected = None;
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
 
         let filtered = state.filtered_indices();
         let sel = state.selected().min(filtered.len().saturating_sub(1));

@@ -1604,8 +1604,7 @@ impl<'a> ContainerBuilder<'a> {
     }
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
-        let interaction_id = self.ctx.interaction_count;
-        self.ctx.interaction_count += 1;
+        let interaction_id = self.ctx.next_interaction_id();
         let resolved_gap = match direction {
             Direction::Column => self.row_gap.unwrap_or(self.gap),
             Direction::Row => self.col_gap.unwrap_or(self.gap),
@@ -1913,6 +1912,14 @@ impl Context {
                 fallback(self, msg);
             }
         }
+    }
+
+    /// Reserve the next interaction ID and emit a marker command.
+    pub(crate) fn next_interaction_id(&mut self) -> usize {
+        let id = self.interaction_count;
+        self.interaction_count += 1;
+        self.commands.push(Command::InteractionMarker(id));
+        id
     }
 
     /// Allocate a click/hover interaction slot and return the [`Response`].
