@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.13] — 2026-03-18
+
+### Fixes
+
+- Fix docs.rs build failure: replace removed `doc_auto_cfg` feature with `doc_cfg` (removed in rustc 1.92.0, merged into `doc_cfg`)
+
 ## [0.12.12] — 2026-03-18
 
 ### Improvements
