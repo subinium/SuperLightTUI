@@ -87,6 +87,11 @@ impl Buffer {
     /// Panics if `(x, y)` is out of bounds.
     #[inline]
     pub fn get(&self, x: u32, y: u32) -> &Cell {
+        debug_assert!(
+            self.in_bounds(x, y),
+            "Buffer::get({x}, {y}) out of bounds for area {:?}",
+            self.area
+        );
         &self.content[self.index_of(x, y)]
     }
 
@@ -95,6 +100,11 @@ impl Buffer {
     /// Panics if `(x, y)` is out of bounds.
     #[inline]
     pub fn get_mut(&mut self, x: u32, y: u32) -> &mut Cell {
+        debug_assert!(
+            self.in_bounds(x, y),
+            "Buffer::get_mut({x}, {y}) out of bounds for area {:?}",
+            self.area
+        );
         let idx = self.index_of(x, y);
         &mut self.content[idx]
     }

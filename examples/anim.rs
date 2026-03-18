@@ -82,12 +82,14 @@ fn main() -> std::io::Result<()> {
             spring.tick();
             let progress = progress_tween.value(ui.tick());
 
-            ui.bordered(Border::Rounded)
+            let _ = ui
+                .bordered(Border::Rounded)
                 .title("Animation Primitives — SLT v0.5.0")
                 .pad(1)
                 .gap(1)
                 .col(|ui| {
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Tween")
                         .pad(1)
                         .gap(1)
@@ -102,7 +104,8 @@ fn main() -> std::io::Result<()> {
                             ));
                         });
 
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Spring")
                         .pad(1)
                         .gap(1)
@@ -116,7 +119,8 @@ fn main() -> std::io::Result<()> {
                             ));
                         });
 
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Keyframes")
                         .pad(1)
                         .gap(1)
@@ -131,7 +135,8 @@ fn main() -> std::io::Result<()> {
                             ui.text("4 stops: 0→100→20→80").dim();
                         });
 
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Sequence")
                         .pad(1)
                         .gap(1)
@@ -146,7 +151,8 @@ fn main() -> std::io::Result<()> {
                             ui.text("3 chained: 0→80→20→60").dim();
                         });
 
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Stagger")
                         .pad(1)
                         .gap(1)
@@ -154,7 +160,7 @@ fn main() -> std::io::Result<()> {
                             let labels = ["Item A", "Item B", "Item C", "Item D", "Item E"];
                             for (i, label) in labels.iter().enumerate() {
                                 let val = stagger.value(ui.tick(), i);
-                                ui.row(|ui| {
+                                let _ = ui.row(|ui| {
                                     ui.text(format!("{label}:"));
                                     ui.progress(val);
                                 });
@@ -169,7 +175,7 @@ fn main() -> std::io::Result<()> {
                     if cb_tween.is_done() && !cb_fired {
                         cb_fired = true;
                     }
-                    ui.row_gap(1, |ui| {
+                    let _ = ui.row_gap(1, |ui| {
                         if cb_fired {
                             ui.text("on_complete fired!").fg(Color::Green);
                         }

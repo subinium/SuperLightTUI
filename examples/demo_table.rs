@@ -47,31 +47,31 @@ fn main() -> std::io::Result<()> {
             });
             let theme = *ui.theme();
 
-            ui.container().pad(1).grow(1).col(|ui| {
-                ui.row(|ui| {
+            let _ = ui.container().pad(1).grow(1).col(|ui| {
+                let _ = ui.row(|ui| {
                     ui.text("Table Demo").bold().fg(theme.primary);
                     ui.spacer();
-                    ui.toggle("Dark", &mut dark_mode);
+                    let _ = ui.toggle("Dark", &mut dark_mode);
                 });
 
                 ui.separator();
 
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     ui.text("Filter").bold().fg(theme.text_dim);
-                    ui.container().grow(1).col(|ui| {
-                        ui.text_input(&mut filter_input);
+                    let _ = ui.container().grow(1).col(|ui| {
+                        let _ = ui.text_input(&mut filter_input);
                     });
                 });
                 table.set_filter(&filter_input.value);
 
-                ui.container().grow(1).gap(0).col(|ui| {
-                    ui.table(&mut table);
+                let _ = ui.container().grow(1).gap(0).col(|ui| {
+                    let _ = ui.table(&mut table);
                 });
 
                 ui.separator();
 
                 if let Some(row) = table.selected_row() {
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         ui.text("Selected").bold().fg(theme.primary);
                         ui.text(row.join(" · "));
                     });
@@ -79,7 +79,7 @@ fn main() -> std::io::Result<()> {
                     ui.text("No matching rows").dim();
                 }
 
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     ui.text(format!(
                         "{} / {} rows",
                         table.visible_indices().len(),
@@ -94,7 +94,7 @@ fn main() -> std::io::Result<()> {
                     }
                 });
 
-                ui.help(&[
+                let _ = ui.help(&[
                     ("q", "quit"),
                     ("↑↓/jk", "select"),
                     ("PgUp/Dn", "page"),

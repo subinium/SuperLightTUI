@@ -88,10 +88,10 @@ impl Context {
                 grow: 0,
                 group_name: None,
             });
-            self.styled(
-                format!("{label}{label_padding}"),
-                Style::new().fg(self.theme.text),
-            );
+            let mut label_text = String::with_capacity(label.len() + label_padding.len());
+            label_text.push_str(label);
+            label_text.push_str(&label_padding);
+            self.styled(label_text, Style::new().fg(self.theme.text));
             self.styled(bar, Style::new().fg(self.theme.primary));
             self.styled(
                 format_compact_number(*value),
@@ -263,10 +263,10 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.styled(
-            format!("{}{label_padding}", bar.label),
-            Style::new().fg(self.theme.text),
-        );
+        let mut label_text = String::with_capacity(bar.label.len() + label_padding.len());
+        label_text.push_str(&bar.label);
+        label_text.push_str(&label_padding);
+        self.styled(label_text, Style::new().fg(self.theme.text));
         self.styled(bar_text, Style::new().fg(color));
         self.styled(
             Self::bar_display_value(bar),
@@ -614,10 +614,12 @@ impl Context {
                     grow: 0,
                     group_name: None,
                 });
-                self.styled(
-                    format!("  {}{label_padding}", bar.label),
-                    Style::new().fg(self.theme.text),
-                );
+                let mut label_text =
+                    String::with_capacity(2 + bar.label.len() + label_padding.len());
+                label_text.push_str("  ");
+                label_text.push_str(&bar.label);
+                label_text.push_str(&label_padding);
+                self.styled(label_text, Style::new().fg(self.theme.text));
                 self.styled(
                     bar_text,
                     Style::new().fg(bar.color.unwrap_or(self.theme.primary)),
@@ -887,6 +889,12 @@ impl Context {
             grow: 0,
             group_name: None,
         });
+
+        if cells.is_empty() {
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+            return Response::none();
+        }
 
         let mut seg = String::new();
         let mut seg_color = cells[0].1;

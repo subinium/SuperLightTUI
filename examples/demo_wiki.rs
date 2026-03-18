@@ -84,14 +84,14 @@ fn main() -> std::io::Result<()> {
                 ui.quit();
             }
 
-            ui.container().bg(Color::Rgb(28, 30, 34)).p(1).row(|ui| {
+            let _ = ui.container().bg(Color::Rgb(28, 30, 34)).p(1).row(|ui| {
                 ui.text("BLACKPINK").bold().fg(Color::Rgb(255, 105, 180));
                 ui.text("  블랙핑크").fg(Color::White);
                 ui.spacer();
                 ui.text("나무위키 스타일").fg(Color::Rgb(126, 211, 33));
             });
 
-            ui.tabs(&mut tabs);
+            let _ = ui.tabs(&mut tabs);
 
             let selected = tabs.selected;
             let imgs = &member_images;
@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
                 _ => render_discography(ui),
             }
 
-            ui.help(&[("← →", "tab"), ("q", "quit")]);
+            let _ = ui.help(&[("← →", "tab"), ("q", "quit")]);
         },
     )
 }
@@ -110,14 +110,16 @@ fn render_member(ui: &mut Context, idx: usize, member_images: &[MemberImage]) {
     let p = &MEMBERS[idx];
     let img = &member_images[idx];
 
-    ui.bordered(Border::Single).p(1).row(|ui| {
-        ui.bordered(Border::Single)
+    let _ = ui.bordered(Border::Single).p(1).row(|ui| {
+        let _ = ui
+            .bordered(Border::Single)
             .title(format!("{} Photo", p.tab))
             .col(|ui| {
-                ui.kitty_image_fit(&img.rgba, img.width, img.height, 30);
+                let _ = ui.kitty_image_fit(&img.rgba, img.width, img.height, 30);
             });
 
-        ui.bordered(Border::Single)
+        let _ = ui
+            .bordered(Border::Single)
             .title("Profile Info")
             .grow(1)
             .p(1)
@@ -132,7 +134,7 @@ fn render_member(ui: &mut Context, idx: usize, member_images: &[MemberImage]) {
 }
 
 fn render_group(ui: &mut Context) {
-    ui.bordered(Border::Single).title("Group").p(1).col(|ui| {
+    let _ = ui.bordered(Border::Single).title("Group").p(1).col(|ui| {
         info_row(ui, "Debut", "2016-08-08");
         info_row(ui, "Agency", "YG Entertainment");
         info_row(ui, "Fandom", "BLINK");
@@ -146,7 +148,8 @@ fn render_group(ui: &mut Context) {
 }
 
 fn render_discography(ui: &mut Context) {
-    ui.bordered(Border::Single)
+    let _ = ui
+        .bordered(Border::Single)
         .title("Discography")
         .p(1)
         .col(|ui| {

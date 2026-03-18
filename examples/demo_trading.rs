@@ -132,35 +132,38 @@ fn main() -> std::io::Result<()> {
             }
             tick(&mut s);
 
-            ui.container().grow(1).gap(0).col(|ui| {
+            let _ = ui.container().grow(1).gap(0).col(|ui| {
                 // header
                 header(ui, &s);
                 // main 3-col
-                ui.container().grow(1).gap(0).row(|ui| {
+                let _ = ui.container().grow(1).gap(0).row(|ui| {
                     // LEFT: order book
-                    ui.bordered(Border::Single)
+                    let _ = ui
+                        .bordered(Border::Single)
                         .title("Order Book")
                         .w_pct(25)
                         .col(|ui| {
                             order_book(ui, &s);
                         });
                     // CENTER: chart + trades
-                    ui.container().w_pct(50).gap(0).col(|ui| {
+                    let _ = ui.container().w_pct(50).gap(0).col(|ui| {
                         let old_tf = s.tab_tf.selected;
-                        ui.tabs(&mut s.tab_tf);
+                        let _ = ui.tabs(&mut s.tab_tf);
                         if s.tab_tf.selected != old_tf {
                             s.candle_interval = tf_interval(s.tab_tf.selected);
                             regen_candles(&mut s);
                         }
                         let tf_label =
                             ["1m", "5m", "15m", "1H", "4H", "1D"][s.tab_tf.selected.min(5)];
-                        ui.bordered(Border::Single)
+                        let _ = ui
+                            .bordered(Border::Single)
                             .title(format!("BTC/USDT {tf_label}"))
                             .grow(2)
                             .col(|ui| {
                                 chart(ui, &s);
                             });
-                        ui.bordered(Border::Single)
+                        let _ = ui
+                            .bordered(Border::Single)
                             .title("Recent Trades")
                             .grow(1)
                             .col(|ui| {
@@ -168,20 +171,22 @@ fn main() -> std::io::Result<()> {
                             });
                     });
                     // RIGHT: order form + balance
-                    ui.container().w_pct(25).gap(0).col(|ui| {
-                        ui.bordered(Border::Single)
+                    let _ = ui.container().w_pct(25).gap(0).col(|ui| {
+                        let _ = ui
+                            .bordered(Border::Single)
                             .title("Order")
                             .grow(1)
                             .col(|ui| {
                                 order_form(ui, &mut s);
                             });
-                        ui.bordered(Border::Single).title("Balance").h(6).col(|ui| {
+                        let _ = ui.bordered(Border::Single).title("Balance").h(6).col(|ui| {
                             balance(ui, &s);
                         });
                     });
                 });
                 // bottom
-                ui.bordered(Border::Single)
+                let _ = ui
+                    .bordered(Border::Single)
                     .title("Orders & Positions")
                     .h(10)
                     .col(|ui| {
@@ -469,7 +474,7 @@ fn header(ui: &mut Context, s: &St) {
     let chg = ((s.price - 73_394.0) / 73_394.0) * 100.0;
     let c = if chg >= 0.0 { GREEN } else { RED };
     let arr = if chg >= 0.0 { "▲" } else { "▼" };
-    ui.container().bg(SURFACE).row(|ui| {
+    let _ = ui.container().bg(SURFACE).row(|ui| {
         ui.text(" BTC/USDT ").bold();
         ui.text(format!(" ${:.2} ", s.price)).bold().fg(c);
         ui.text(format!("{arr}{:+.2}%", chg)).fg(c);
@@ -516,7 +521,7 @@ fn order_book(ui: &mut Context, s: &St) {
     let best_b = s.ob.bids.first().map(|b| b.0).unwrap_or(s.price);
     let sp = (best_a - best_b).max(0.0);
     let sp_pct = sp / s.price * 100.0;
-    ui.container().bg(Color::Indexed(234)).row(|ui| {
+    let _ = ui.container().bg(Color::Indexed(234)).row(|ui| {
         ui.text(format!(
             "  ${:.2}  Spread {:.2} ({:.3}%)",
             s.price, sp, sp_pct
@@ -558,7 +563,7 @@ fn chart(ui: &mut Context, s: &St) {
         ui.text("No data").fg(DIM);
         return;
     }
-    ui.candlestick(&s.candles, GREEN, RED);
+    let _ = ui.candlestick(&s.candles, GREEN, RED);
 }
 
 // ── trades ──────────────────────────────────────────────────────
@@ -582,14 +587,14 @@ fn trades(ui: &mut Context, s: &St) {
 // ── order form ──────────────────────────────────────────────────
 
 fn order_form(ui: &mut Context, s: &mut St) {
-    ui.tabs(&mut s.tab_otype);
+    let _ = ui.tabs(&mut s.tab_otype);
     let is_limit = s.tab_otype.selected == 0;
 
     ui.text(" ").fg(DIM); // tiny spacer
 
     if is_limit {
         ui.text(" Price (USDT)").fg(DIM);
-        ui.text_input(&mut s.inp_price);
+        let _ = ui.text_input(&mut s.inp_price);
     } else {
         ui.line(|ui| {
             ui.text(" Price ").fg(DIM);
@@ -598,7 +603,7 @@ fn order_form(ui: &mut Context, s: &mut St) {
     }
 
     ui.text(" Amount (BTC)").fg(DIM);
-    ui.text_input(&mut s.inp_amount);
+    let _ = ui.text_input(&mut s.inp_amount);
 
     let amount = s.inp_amount.value.trim().parse::<f64>().unwrap_or(0.0);
     let price = if is_limit {
@@ -663,8 +668,8 @@ fn balance(ui: &mut Context, s: &St) {
 // ── bottom panel ────────────────────────────────────────────────
 
 fn bottom(ui: &mut Context, s: &mut St) {
-    ui.tabs(&mut s.tab_bottom);
-    match s.tab_bottom.selected {
+    let _ = ui.tabs(&mut s.tab_bottom);
+    let _ = match s.tab_bottom.selected {
         0 => ui.table(&mut s.tbl_orders),
         1 => ui.table(&mut s.tbl_history),
         _ => ui.table(&mut s.tbl_pos),
@@ -676,7 +681,7 @@ fn bottom(ui: &mut Context, s: &mut St) {
 fn status_bar(ui: &mut Context, s: &St) {
     let ms = 10 + (s.tick % 8);
     let spd = s.update_interval as f64 / 60.0;
-    ui.container().bg(SURFACE).row(|ui| {
+    let _ = ui.container().bg(SURFACE).row(|ui| {
         ui.text(" ● ").fg(GREEN);
         ui.text("Connected").fg(Color::White);
         ui.text(format!("  {ms}ms")).fg(DIM);

@@ -67,19 +67,20 @@ fn main() -> std::io::Result<()> {
                 scroll = ScrollState::new();
             }
 
-            ui.container().grow(1).col(|ui| {
+            let _ = ui.container().grow(1).col(|ui| {
                 let theme = *ui.theme();
 
                 // ── navbar ──
-                ui.container()
+                let _ = ui
+                    .container()
                     .bg(theme.surface)
                     .padding(Padding::xy(2, 0))
                     .col(|ui| {
-                        ui.row(|ui| {
+                        let _ = ui.row(|ui| {
                             ui.text("SLT").bold().fg(theme.primary);
                             ui.text(" ").fg(theme.text_dim);
                             ui.spacer();
-                            ui.tabs(&mut nav);
+                            let _ = ui.tabs(&mut nav);
                             ui.styled(
                                 format!(" {} ", theme_names[theme_idx]),
                                 Style::new().fg(theme.text).bg(theme.surface_hover),
@@ -88,7 +89,7 @@ fn main() -> std::io::Result<()> {
                     });
 
                 let selected = nav.selected;
-                ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
                     match selected {
                         0 => render_home(
                             ui,
@@ -117,18 +118,19 @@ fn main() -> std::io::Result<()> {
                     }
 
                     // ── footer ──
-                    ui.container()
+                    let _ = ui
+                        .container()
                         .bg(theme.surface)
                         .padding(Padding::xy(2, 1))
                         .col(|ui| {
-                            ui.row(|ui| {
+                            let _ = ui.row(|ui| {
                                 ui.text("SLT").bold().fg(theme.primary);
                                 ui.text("Framework").fg(theme.surface_text);
                                 ui.spacer();
                                 ui.text("MIT License").fg(theme.surface_text);
                             });
                             ui.text("");
-                            ui.row(|ui| {
+                            let _ = ui.row(|ui| {
                                 ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
                                 ui.link("Docs", "https://docs.rs/superlighttui");
                                 ui.link("Discord", "https://discord.gg/slt");
@@ -140,7 +142,7 @@ fn main() -> std::io::Result<()> {
 
                 ui.toast(&mut toasts);
 
-                ui.help(&[
+                let _ = ui.help(&[
                     ("Ctrl+Q", "quit"),
                     ("Ctrl+T", "theme"),
                     ("1-5", "tabs"),
@@ -181,7 +183,7 @@ fn md_p_dim(ui: &mut Context, theme: &Theme, text: &str) {
 
 fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
     for line in text.lines() {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             ui.text(" ▎ ").fg(theme.primary);
             ui.text_wrap(line).italic().fg(theme.text_dim);
         });
@@ -191,7 +193,7 @@ fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
 
 fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
     for item in items {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             ui.text("  • ").fg(theme.primary);
             ui.text_wrap(*item);
         });
@@ -201,7 +203,7 @@ fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
 
 fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
     for (i, item) in items.iter().enumerate() {
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             ui.styled(
                 format!("  {}. ", i + 1),
                 Style::new().fg(theme.primary).bold(),
@@ -213,7 +215,7 @@ fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
 }
 
 fn md_code_block(ui: &mut Context, theme: &Theme, lang: &str, code: &str) {
-    ui.container().bg(theme.surface).p(1).col(|ui| {
+    let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
         ui.text(lang).fg(theme.surface_text);
         for line in code.lines() {
             ui.text(line).fg(theme.text);
@@ -246,7 +248,7 @@ fn md_tag(ui: &mut Context, theme: &Theme, tag: &str, color: Color) {
 }
 
 fn md_meta(ui: &mut Context, theme: &Theme, date: &str, reading_time: &str) {
-    ui.row(|ui| {
+    let _ = ui.row(|ui| {
         ui.text(date).fg(theme.text_dim);
         ui.text(" · ").fg(theme.text_dim);
         ui.text(reading_time).fg(theme.text_dim);
@@ -267,7 +269,7 @@ fn render_home(
 ) {
     let theme = *ui.theme();
 
-    ui.container().px(2).py(1).col(|ui| {
+    let _ = ui.container().px(2).py(1).col(|ui| {
         let art = [
             r"  _____ _   _____",
             r" / ___// |  \_  _\",
@@ -283,11 +285,11 @@ fn render_home(
         ui.text("Immediate-mode TUI framework for Rust")
             .fg(theme.text_dim);
         ui.text("");
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             md_inline_code(ui, &theme, "cargo add superlighttui");
         });
         ui.text("");
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             if ui
                 .button_with("Get Started", ButtonVariant::Primary)
                 .clicked
@@ -302,14 +304,15 @@ fn render_home(
     md_hr(ui);
 
     // stats
-    ui.row(|ui| {
+    let _ = ui.row(|ui| {
         for (val, label) in [
             ("~11k", "Lines"),
             ("20+", "Widgets"),
             ("2", "Deps"),
             ("0", "unsafe"),
         ] {
-            ui.container()
+            let _ = ui
+                .container()
                 .bg(theme.surface)
                 .grow(1)
                 .center()
@@ -324,7 +327,7 @@ fn render_home(
     md_hr(ui);
 
     // quick start guide
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h2(ui, &theme, "Quick Start");
 
         md_p(
@@ -354,7 +357,7 @@ fn render_home(
     md_hr(ui);
 
     // why SLT
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h2(ui, &theme, "Why SLT?");
 
         md_p(
@@ -365,7 +368,7 @@ fn render_home(
                    them to the terminal.",
         );
 
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             feature_card(
                 ui,
                 &theme,
@@ -379,7 +382,7 @@ fn render_home(
                 "row() and col() with gap, grow, align. CSS Flexbox semantics without the CSS.",
             );
         });
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             feature_card(
                 ui,
                 &theme,
@@ -398,7 +401,7 @@ fn render_home(
     md_hr(ui);
 
     // newsletter
-    ui.container().px(2).py(1).col(|ui| {
+    let _ = ui.container().px(2).py(1).col(|ui| {
         md_h2(ui, &theme, "Stay Updated");
         if *subscribed {
             ui.text("Subscribed!").bold().fg(theme.success);
@@ -413,8 +416,8 @@ fn render_home(
                 &theme,
                 "Get notified about new releases, tutorials, and community highlights.",
             );
-            ui.row(|ui| {
-                ui.text_input(email);
+            let _ = ui.row(|ui| {
+                let _ = ui.text_input(email);
                 email.validate(|v| {
                     if v.is_empty() || (v.contains('@') && v.contains('.')) {
                         Ok(())
@@ -442,7 +445,7 @@ fn render_home(
 fn render_docs(ui: &mut Context) {
     let theme = *ui.theme();
 
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, &theme, "Documentation");
 
         // ── Getting Started ──
@@ -829,11 +832,11 @@ const BLOG_POSTS: &[BlogPost] = &[
 fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
     let theme = *ui.theme();
 
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         if let Some(idx) = *blog_view {
             // ── Single post view ──
             if let Some(post) = BLOG_POSTS.get(idx) {
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     if ui
                         .button_with("<< Back to Blog", ButtonVariant::Outline)
                         .clicked
@@ -856,13 +859,13 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
 
             for (i, post) in BLOG_POSTS.iter().enumerate() {
                 let resp = ui.container().bg(theme.surface).pad(1).col(|ui| {
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         ui.text(post.date).fg(theme.surface_text);
                         ui.text(" · ").fg(theme.surface_text);
                         ui.text(post.reading_time).fg(theme.surface_text);
                     });
                     ui.text(post.title).bold().fg(theme.primary);
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         for (tag, tone) in post.tags {
                             let color = tag_tone_color(&theme, *tone);
                             md_tag(ui, &theme, tag, color);
@@ -1298,8 +1301,8 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
 
     md_h2(ui, theme, "The Mapping");
 
-    ui.bordered(Border::Rounded).pad(1).col(|ui| {
-        ui.row(|ui| {
+    let _ = ui.bordered(Border::Rounded).pad(1).col(|ui| {
+        let _ = ui.row(|ui| {
             ui.styled(
                 format!("{:<32}", "CSS"),
                 Style::new().bold().fg(theme.primary),
@@ -1326,7 +1329,7 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
             ("border-radius: 4px", ".border(Border::Rounded)"),
         ];
         for (css, slt_api) in &mappings {
-            ui.row(|ui| {
+            let _ = ui.row(|ui| {
                 ui.styled(format!("{:<32}", css), Style::new().fg(theme.text));
                 ui.text(*slt_api).fg(theme.success);
             });
@@ -1417,7 +1420,7 @@ fn render_pricing(
 ) {
     let theme = *ui.theme();
 
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, &theme, "Pricing");
         md_p_dim(
             ui,
@@ -1425,7 +1428,7 @@ fn render_pricing(
             "SLT is free and open source forever. Sponsorship helps us ship faster.",
         );
 
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             ui.text("Transparent plans for solo builders to enterprise teams.")
                 .fg(theme.text);
             ui.spacer();
@@ -1433,7 +1436,7 @@ fn render_pricing(
         });
         ui.text("");
 
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             price_card(
                 ui,
                 "Open Source",
@@ -1453,7 +1456,7 @@ fn render_pricing(
                 selected_plan,
             );
 
-            ui.container().grow(1).col(|ui| {
+            let _ = ui.container().grow(1).col(|ui| {
                 ui.text("★ Recommended for most teams")
                     .bold()
                     .fg(theme.warning);
@@ -1522,7 +1525,7 @@ fn render_pricing(
         );
 
         ui.text("");
-        ui.container()
+        let _ = ui.container()
             .bg(theme.surface)
             .pad(1)
             .col(|ui| {
@@ -1532,7 +1535,7 @@ fn render_pricing(
                 )
                 .fg(theme.surface_text);
                 ui.text("");
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     if ui
                         .button_with("Choose Sponsor", ButtonVariant::Primary)
                         .clicked
@@ -1551,11 +1554,11 @@ fn render_pricing(
             });
 
         if *show_modal {
-            ui.modal(|ui| {
+            let _ = ui.modal(|ui| {
                 if ui.key_code(KeyCode::Esc) {
                     *show_modal = false;
                 }
-                ui.bordered(Border::Rounded)
+                let _ = ui.bordered(Border::Rounded)
                     .bg(theme.surface)
                     .pad(2)
                     .max_w(56)
@@ -1570,7 +1573,7 @@ fn render_pricing(
                         ui.text(selected_plan.as_str()).bold().fg(theme.accent);
                         ui.text("Thank you for supporting SLT!").fg(theme.surface_text);
                         ui.text("");
-                        ui.row(|ui| {
+                        let _ = ui.row(|ui| {
                             if ui
                                 .button_with("  Subscribe  ", ButtonVariant::Primary)
                                 .clicked
@@ -1634,7 +1637,7 @@ fn render_contact(
 ) {
     let theme = *ui.theme();
 
-    ui.container().padding(Padding::xy(2, 1)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         md_h1(ui, &theme, "Contact & Community");
 
         md_p(ui, "SLT is built in the open. Here's how to get involved:");
@@ -1660,7 +1663,7 @@ fn render_contact(
         md_link(ui, "Crates.io", "https://crates.io/crates/superlighttui");
         md_link(ui, "Discord Server", "https://discord.gg/slt");
         ui.text("");
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             if ui.button_with("View Docs", ButtonVariant::Primary).clicked {
                 *nav_target = Some(1);
             }
@@ -1719,8 +1722,8 @@ fn render_contact(
         );
 
         md_h2(ui, &theme, "Maintainers");
-        ui.container().bg(theme.surface).p(1).col(|ui| {
-            ui.row(|ui| {
+        let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
+            let _ = ui.row(|ui| {
                 ui.text("@subinium").bold().fg(theme.primary);
                 ui.text(" — Creator & lead maintainer")
                     .fg(theme.surface_text);
@@ -1749,7 +1752,7 @@ fn render_contact(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn feature_card(ui: &mut Context, theme: &Theme, title: &str, desc: &str) {
-    ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
+    let _ = ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
         ui.text(format!("◆ {title}")).bold().fg(theme.primary);
         ui.text_wrap(desc).fg(theme.surface_text);
     });
@@ -1783,14 +1786,14 @@ fn price_card(
     let mut card_content = |ui: &mut Context| {
         ui.text(tier).bold().fg(color);
         ui.text("");
-        ui.row(|ui| {
+        let _ = ui.row(|ui| {
             ui.text(price).bold().fg(color);
             ui.text(format!(" {period}")).fg(theme.surface_text);
         });
         ui.separator();
         ui.text("");
         for feat in features {
-            ui.row(|ui| {
+            let _ = ui.row(|ui| {
                 ui.text("✓ ").fg(theme.success);
                 ui.text(*feat).fg(theme.text);
             });
@@ -1803,7 +1806,8 @@ fn price_card(
     };
 
     if highlight {
-        ui.bordered(Border::Rounded)
+        let _ = ui
+            .bordered(Border::Rounded)
             .bg(theme.surface)
             .pad(1)
             .grow(1)
@@ -1811,16 +1815,16 @@ fn price_card(
                 card_content(ui);
             });
     } else {
-        ui.container().bg(theme.surface).pad(1).grow(1).col(|ui| {
+        let _ = ui.container().bg(theme.surface).pad(1).grow(1).col(|ui| {
             card_content(ui);
         });
     }
 }
 
 fn faq_item(ui: &mut Context, theme: &Theme, question: &str, answer: &str) {
-    ui.container().padding(Padding::xy(1, 0)).col(|ui| {
+    let _ = ui.container().padding(Padding::xy(1, 0)).col(|ui| {
         ui.text(question).bold().fg(theme.primary);
-        ui.container().padding(Padding::xy(2, 0)).col(|ui| {
+        let _ = ui.container().padding(Padding::xy(2, 0)).col(|ui| {
             ui.text_wrap(answer).fg(theme.text_dim);
         });
     });

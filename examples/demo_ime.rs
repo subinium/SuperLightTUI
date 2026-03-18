@@ -33,16 +33,16 @@ fn main() -> std::io::Result<()> {
             let theme = *ui.theme();
             let term_h = ui.height();
 
-            ui.col(|ui| {
-                ui.container().grow(1).gap(1).p(1).col(|ui| {
+            let _ = ui.col(|ui| {
+                let _ = ui.container().grow(1).gap(1).p(1).col(|ui| {
                     ui.text("IME Input Demo").bold().fg(theme.primary);
                     ui.text("한글, 日本語, 中文 조합 입력 테스트").dim();
                     ui.separator();
 
-                    ui.row_gap(2, |ui| {
-                        ui.container().grow(1).gap(1).col(|ui| {
+                    let _ = ui.row_gap(2, |ui| {
+                        let _ = ui.container().grow(1).gap(1).col(|ui| {
                             ui.text("Name").bold();
-                            ui.text_input(&mut name);
+                            let _ = ui.text_input(&mut name);
                             if !name.value.is_empty() {
                                 ui.line(|ui| {
                                     ui.text("→ ");
@@ -53,9 +53,9 @@ fn main() -> std::io::Result<()> {
                             }
                         });
 
-                        ui.container().grow(1).gap(1).col(|ui| {
+                        let _ = ui.container().grow(1).gap(1).col(|ui| {
                             ui.text("Search").bold();
-                            ui.text_input(&mut search);
+                            let _ = ui.text_input(&mut search);
 
                             let query = search.value.to_lowercase();
                             let tokens: Vec<&str> = query.split_whitespace().collect();
@@ -76,14 +76,14 @@ fn main() -> std::io::Result<()> {
 
                     ui.text("Message").bold();
                     let rows = term_h.saturating_sub(16).max(5);
-                    ui.textarea(&mut message, rows);
+                    let _ = ui.textarea(&mut message, rows);
 
                     let total: usize = message.lines.iter().map(|l| l.chars().count()).sum();
                     ui.text(format!("{} lines, {} chars", message.lines.len(), total,))
                         .dim();
                 });
 
-                ui.help(&[
+                let _ = ui.help(&[
                     ("^Q/Esc", "quit"),
                     ("Tab", "next field"),
                     ("Type", "한글/CJK input"),

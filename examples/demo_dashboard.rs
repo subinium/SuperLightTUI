@@ -84,12 +84,13 @@ fn main() -> std::io::Result<()> {
             let tick = ui.tick();
             let metrics = sim_metrics(tick);
 
-            ui.bordered(Border::Rounded)
+            let _ = ui
+                .bordered(Border::Rounded)
                 .title("System Dashboard")
                 .pad(1)
                 .grow(1)
                 .col(|ui| {
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         ui.spinner(&spinner);
                         ui.text(" LIVE").bold().fg(Color::Green);
                         ui.spacer();
@@ -101,8 +102,8 @@ fn main() -> std::io::Result<()> {
                         ))
                         .dim();
                     });
-                    ui.divider_text("System Metrics");
-                    ui.row(|ui| {
+                    let _ = ui.divider_text("System Metrics");
+                    let _ = ui.row(|ui| {
                         metric_card(ui, "CPU", metrics.cpu, "%", Color::Cyan);
                         metric_card(ui, "Memory", metrics.mem, "%", Color::Yellow);
                         metric_card(
@@ -120,13 +121,17 @@ fn main() -> std::io::Result<()> {
                         metric_card(ui, "Net Out", metrics.net_out, "MB/s", Color::Magenta);
                     });
 
-                    ui.divider_text("Key Metrics");
-                    ui.row(|ui| {
-                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
-                            ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
+                    let _ = ui.divider_text("Key Metrics");
+                    let _ = ui.row(|ui| {
+                        let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            let _ = ui.stat_trend(
+                                "Requests",
+                                &format!("{}", metrics.requests),
+                                Trend::Up,
+                            );
                         });
-                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
-                            ui.stat_colored(
+                        let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            let _ = ui.stat_colored(
                                 "Errors",
                                 &format!("{}", metrics.errors),
                                 if metrics.errors > 5 {
@@ -136,24 +141,25 @@ fn main() -> std::io::Result<()> {
                                 },
                             );
                         });
-                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
-                            ui.stat_colored("P99", "45ms", Color::Yellow);
+                        let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            let _ = ui.stat_colored("P99", "45ms", Color::Yellow);
                         });
-                        ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
-                            ui.stat_colored("Threads", "24", Color::Blue);
+                        let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                            let _ = ui.stat_colored("Threads", "24", Color::Blue);
                         });
                     });
 
-                    ui.container().grow(1).row(|ui| {
+                    let _ = ui.container().grow(1).row(|ui| {
                         // process table
-                        ui.bordered(Border::Rounded)
+                        let _ = ui
+                            .bordered(Border::Rounded)
                             .title("Processes")
                             .pad(1)
                             .grow(1)
                             .col(|ui| {
-                                ui.table(&mut proc_table);
+                                let _ = ui.table(&mut proc_table);
                                 ui.separator();
-                                ui.row(|ui| {
+                                let _ = ui.row(|ui| {
                                     if ui.button("Kill").clicked {
                                         let row = proc_table.selected;
                                         if let Some(name) =
@@ -174,12 +180,13 @@ fn main() -> std::io::Result<()> {
                             });
 
                         // log stream
-                        ui.bordered(Border::Rounded)
+                        let _ = ui
+                            .bordered(Border::Rounded)
                             .title("Logs")
                             .pad(1)
                             .grow(1)
                             .col(|ui| {
-                                ui.scrollable(&mut log_scroll).grow(1).col(|ui| {
+                                let _ = ui.scrollable(&mut log_scroll).grow(1).col(|ui| {
                                     for &(time, level, msg) in &logs {
                                         let color = match level {
                                             "ERROR" => Color::Red,
@@ -197,8 +204,8 @@ fn main() -> std::io::Result<()> {
 
                     ui.toast(&mut toasts);
 
-                    ui.divider_text("Controls");
-                    ui.help(&[
+                    let _ = ui.divider_text("Controls");
+                    let _ = ui.help(&[
                         ("Ctrl+Q", "quit"),
                         ("Ctrl+T", "theme"),
                         ("Tab", "focus"),
@@ -218,7 +225,7 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Col
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_w - filled);
         ui.text(bar).fg(color);
         if value > 80.0 {
-            ui.badge_colored("HIGH", Color::Red);
+            let _ = ui.badge_colored("HIGH", Color::Red);
         }
     });
     let _ = resp;

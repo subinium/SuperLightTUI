@@ -85,3 +85,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/audit@v1
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@master
+
+  feature-check:
+    name: Feature Combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - name: Check each feature independently
+        run: cargo hack check --each-feature --no-dev-deps
+
+  deny:
+    name: Deny Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        checks: [advisories, bans, licenses, sources]
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}
+
+  committed:
+    name: Commit Style
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: crate-ci/committed@master
+        with:
+          args: "--no-merge-commit"

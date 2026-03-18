@@ -322,13 +322,14 @@ fn main() -> std::io::Result<()> {
                 }
             };
 
-            ui.bordered(Border::Rounded)
+            let _ = ui
+                .bordered(Border::Rounded)
                 .title("Spreadsheet")
                 .pad(1)
                 .grow(1)
                 .col(|ui| {
                     // formula bar
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         ui.text(format!(
                             "{}{}",
                             col_letter(sheet.cursor_col),
@@ -338,7 +339,7 @@ fn main() -> std::io::Result<()> {
                         .fg(Color::Cyan);
                         ui.text(" │ ").dim();
                         if editing {
-                            ui.text_input(&mut edit_input);
+                            let _ = ui.text_input(&mut edit_input);
                         } else {
                             ui.text(&formula_bar);
                         }
@@ -346,7 +347,7 @@ fn main() -> std::io::Result<()> {
                     ui.separator();
 
                     // column headers
-                    ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                    let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
                         let mut header_line = String::from("     ");
                         for (c, h) in sheet.headers.iter().enumerate() {
                             let w = sheet.col_widths[c] + 2;
@@ -385,7 +386,7 @@ fn main() -> std::io::Result<()> {
                             }
 
                             let is_current_row = r == sheet.cursor_row;
-                            ui.row(|ui| {
+                            let _ = ui.row(|ui| {
                                 let num_style = if is_current_row {
                                     Style::new().fg(Color::Cyan).bold()
                                 } else {
@@ -434,7 +435,7 @@ fn main() -> std::io::Result<()> {
 
                     ui.separator();
                     // status bar
-                    ui.row(|ui| {
+                    let _ = ui.row(|ui| {
                         ui.text(format!(
                             "Cell {}{} | {} rows x {} cols",
                             col_letter(sheet.cursor_col),
@@ -450,7 +451,7 @@ fn main() -> std::io::Result<()> {
                             ui.text("NAV").bold().fg(Color::Green);
                         }
                     });
-                    ui.help(&[
+                    let _ = ui.help(&[
                         ("Ctrl+Q", "quit"),
                         ("Ctrl+T", "theme"),
                         ("Arrows", "navigate"),

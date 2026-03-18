@@ -268,16 +268,22 @@ impl Context {
         let errors = state.errors();
         if !errors.is_empty() {
             for error in errors {
+                let mut warning = String::with_capacity(2 + error.len());
+                warning.push_str("⚠ ");
+                warning.push_str(error);
                 self.styled(
-                    format!("⚠ {error}"),
+                    warning,
                     Style::new()
                         .dim()
                         .fg(colors.accent.unwrap_or(self.theme.error)),
                 );
             }
         } else if let Some(error) = state.validation_error.clone() {
+            let mut warning = String::with_capacity(2 + error.len());
+            warning.push_str("⚠ ");
+            warning.push_str(&error);
             self.styled(
-                format!("⚠ {error}"),
+                warning,
                 Style::new()
                     .dim()
                     .fg(colors.accent.unwrap_or(self.theme.error)),
@@ -288,7 +294,8 @@ impl Context {
             let start = state.suggestion_index.saturating_sub(4);
             let end = (start + 5).min(matched_suggestions.len());
             let suggestion_border = colors.border.unwrap_or(self.theme.border);
-            self.bordered(Border::Rounded)
+            let _ = self
+                .bordered(Border::Rounded)
                 .border_style(Style::new().fg(suggestion_border))
                 .px(1)
                 .col(|ui| {
@@ -360,7 +367,10 @@ impl Context {
                 ToastLevel::Warning => self.theme.warning,
                 ToastLevel::Error => self.theme.error,
             };
-            self.styled(format!("  ● {}", message.text), Style::new().fg(color));
+            let mut line = String::with_capacity(4 + message.text.len());
+            line.push_str("  ● ");
+            line.push_str(&message.text);
+            self.styled(line, Style::new().fg(color));
         }
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
