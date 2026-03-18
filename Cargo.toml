@@ -1,6 +1,6 @@
 [package]
 name = "superlighttui"
-version = "0.12.10"
+version = "0.12.11"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
 categories = ["command-line-interface"]
 rust-version = "1.81"
-exclude = ["examples/", ".github/"]
+exclude = ["examples/", ".github/", "AUDIT-REPORT.md", "CLAUDE.md"]
 
 [lib]
 name = "slt"

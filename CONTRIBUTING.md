@@ -1,9 +1,13 @@
 # Contributing to SLT
 
+Before contributing, read:
+- **[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md)** — Why things are the way they are
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — How the code is organized
+
 ## Getting Started
 
 ```sh
-git clone https://github.com/[owner]/superlighttui.git
+git clone https://github.com/subinium/SuperLightTUI.git
 cd superlighttui
 cargo test
 cargo run --example demo
@@ -21,9 +25,8 @@ cargo build --features async
 ### Test
 
 ```sh
-cargo test
-cargo clippy
-cargo clippy --features async
+cargo test --all-features
+cargo clippy --all-features -- -D warnings
 ```
 
 ### Run Examples
@@ -37,31 +40,61 @@ cargo run --example anim
 cargo run --example async_demo --features async
 ```
 
+### Quality Gate (run ALL before submitting)
+
+```sh
+cargo fmt -- --check
+cargo check --all-features
+cargo clippy --all-features -- -D warnings
+cargo test --all-features
+cargo check --examples --all-features
+```
+
 ## Pull Requests
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`
-- Run `cargo test` and `cargo clippy` before submitting
+- Run the full quality gate above before submitting
 - One logical change per PR
 - Add examples for new widgets
+- The [PR template](.github/PULL_REQUEST_TEMPLATE.md) includes a checklist — complete it
 
 ## Code Style
 
-- No `unsafe` code
+- No `unsafe` code — enforced by `#![forbid(unsafe_code)]`
+- No `unwrap()` in functions returning `Result` — enforced by lint
+- No `println!()`/`eprintln!()`/`dbg!()` in library code — enforced by lint
 - No unnecessary comments — code should be self-documenting
 - Use `self.theme.X` for colors, never hardcode
-- Follow existing patterns in `context.rs` for new widgets:
-  1. State struct in `widgets.rs`
-  2. Rendering method on `Context` in `context.rs`
-  3. Re-export in `lib.rs`
-- Widget methods should:
-  - Call `register_focusable()` if interactive
-  - Consume handled key events
-  - Use theme colors as defaults
+
+## Adding a Widget
+
+Follow this checklist when adding a new widget:
+
+1. **State struct** in `widgets.rs` — name it `{Widget}State`, implement `Default`
+2. **Rendering method** on `Context` in `context/widgets_interactive.rs` (or `widgets_display.rs` for non-interactive)
+3. **Re-export** in `lib.rs`
+4. **Doc comment** (`///`) on the public method with usage example
+5. **Response pattern** — interactive widgets return `Response`, display widgets return `&mut Self`
+6. **Focus** — call `register_focusable()` if the widget accepts keyboard input
+7. **Events** — consume handled key events so they don't bubble
+8. **Theme** — use `self.theme.*` for default colors
+9. **Example** — add to an existing example or create a new one
+
+## Error Handling
+
+See [DESIGN_PRINCIPLES.md — Error Handling](DESIGN_PRINCIPLES.md#6-error-handling) for the full policy.
+
+Summary:
+- Use `io::Result` for fallible operations
+- `panic!()` only for programmer errors (with descriptive messages)
+- No custom error types — `io::Error` is sufficient for SLT's error paths
 
 ## Architecture
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map and data flow.
+
 ```
-User closure -> Context collects Commands -> build_tree() -> flexbox compute -> render to Buffer -> diff -> flush
+User closure → Context collects Commands → build_tree() → flexbox compute → render to Buffer → diff → flush
 ```
 
 - **Immediate mode**: Each frame, the closure runs and describes the UI
@@ -87,7 +120,7 @@ git push --tags
 ```
 
 The release workflow (`.github/workflows/release.yml`) will:
-1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.74
+1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.81
 2. Verify tag matches `Cargo.toml` version
 3. Publish to crates.io
 4. Create GitHub Release with notes extracted from CHANGELOG.md
@@ -96,4 +129,6 @@ The release workflow (`.github/workflows/release.yml`) will:
 
 ## Dependencies
 
-Only `crossterm` and `unicode-width`. `tokio` is optional behind the `async` feature flag. Do not add new dependencies without discussion.
+Core: `crossterm`, `unicode-width`, `compact_str`. Optional: `tokio` (async), `serde`, `image`.
+
+Do not add new dependencies without discussion. See [DESIGN_PRINCIPLES.md — Dependencies](DESIGN_PRINCIPLES.md#9-dependencies).

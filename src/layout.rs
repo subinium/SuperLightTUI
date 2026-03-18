@@ -1091,6 +1091,7 @@ fn collect_raw_draw_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)
 }
 
 #[cfg(test)]
+#[allow(clippy::print_stderr)]
 mod tests {
     use super::*;
 

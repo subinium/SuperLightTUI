@@ -1,3 +1,17 @@
+// Safety
+#![forbid(unsafe_code)]
+// Documentation
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![warn(rustdoc::broken_intra_doc_links)]
+#![warn(rustdoc::private_intra_doc_links)]
+// Correctness
+#![deny(clippy::unwrap_in_result)]
+#![warn(clippy::unwrap_used)]
+// Library hygiene — a library must not write to stdout/stderr
+#![warn(clippy::dbg_macro)]
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+
 //! # SLT — Super Light TUI
 //!
 //! Immediate-mode terminal UI for Rust. Two dependencies. Zero `unsafe`.
@@ -244,6 +258,7 @@ pub fn frame(
 
 static PANIC_HOOK_ONCE: Once = Once::new();
 
+#[allow(clippy::print_stderr)]
 fn install_panic_hook() {
     PANIC_HOOK_ONCE.call_once(|| {
         let original = std::panic::take_hook();
