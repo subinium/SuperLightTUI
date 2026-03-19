@@ -2018,13 +2018,14 @@ impl Context {
                     if !in_bounds {
                         continue;
                     }
+                    let delta = self.scroll_lines_per_event as usize;
                     match mouse.kind {
                         MouseKind::ScrollUp => {
-                            state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                            state.scroll_offset = state.scroll_offset.saturating_sub(delta);
                             self.consumed[i] = true;
                         }
                         MouseKind::ScrollDown => {
-                            state.scroll_offset = (state.scroll_offset + 1).min(max_offset);
+                            state.scroll_offset = (state.scroll_offset + delta).min(max_offset);
                             self.consumed[i] = true;
                         }
                         _ => {}
@@ -3173,6 +3174,28 @@ impl Context {
         self.events.iter().enumerate().any(|(i, event)| {
             !self.consumed[i]
                 && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollDown))
+        })
+    }
+
+    /// Check if an unconsumed scroll-left event occurred this frame.
+    pub fn scroll_left(&self) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        self.events.iter().enumerate().any(|(i, event)| {
+            !self.consumed[i]
+                && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollLeft))
+        })
+    }
+
+    /// Check if an unconsumed scroll-right event occurred this frame.
+    pub fn scroll_right(&self) -> bool {
+        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+            return false;
+        }
+        self.events.iter().enumerate().any(|(i, event)| {
+            !self.consumed[i]
+                && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollRight))
         })
     }
 

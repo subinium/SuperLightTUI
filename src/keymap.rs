@@ -110,6 +110,15 @@ fn display_for_key_code(key: &KeyCode) -> String {
         KeyCode::PageUp => "PgUp".to_string(),
         KeyCode::PageDown => "PgDn".to_string(),
         KeyCode::Delete => "Del".to_string(),
+        KeyCode::Insert => "Ins".to_string(),
+        KeyCode::Null => "Null".to_string(),
+        KeyCode::CapsLock => "CapsLock".to_string(),
+        KeyCode::ScrollLock => "ScrollLock".to_string(),
+        KeyCode::NumLock => "NumLock".to_string(),
+        KeyCode::PrintScreen => "PrtSc".to_string(),
+        KeyCode::Pause => "Pause".to_string(),
+        KeyCode::Menu => "Menu".to_string(),
+        KeyCode::KeypadBegin => "KP5".to_string(),
         KeyCode::F(n) => format!("F{n}"),
     }
 }
@@ -124,6 +133,15 @@ fn display_for_mod_char(mods: KeyModifiers, key: char) -> String {
     }
     if mods.contains(KeyModifiers::SHIFT) {
         parts.push("Shift");
+    }
+    if mods.contains(KeyModifiers::SUPER) {
+        parts.push("Super");
+    }
+    if mods.contains(KeyModifiers::HYPER) {
+        parts.push("Hyper");
+    }
+    if mods.contains(KeyModifiers::META) {
+        parts.push("Meta");
     }
 
     if parts.is_empty() {

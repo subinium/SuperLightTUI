@@ -254,7 +254,7 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 
 ```rust
 // 7 built-in presets
-slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
+slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
     ui.set_theme(Theme::dark()); // switch at runtime
 });
 
@@ -365,7 +365,7 @@ React-style persistent state in immediate mode. `State<T>` handle pattern. Call 
 - **u32 coordinates** — no overflow on large terminals
 - **Clipping** — content outside container bounds is hidden
 - **Viewport culling** — off-screen widgets are skipped entirely
-- **FPS cap** — `RunConfig { max_fps: Some(60), .. }` for CPU control
+- **FPS cap** — `RunConfig::default().max_fps(60)` for CPU control
 - **Non-TTY safety** — graceful exit when stdout is not a terminal
 - **Resize handling** — automatic reflow on terminal resize
 - **`collect_all()`** — single DFS pass replaces 7 separate tree traversals (v0.9)

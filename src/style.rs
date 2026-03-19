@@ -12,6 +12,7 @@ pub use theme::{Theme, ThemeBuilder};
 ///
 /// Based on the current terminal width. Use [`crate::Context::breakpoint`] to
 /// get the active breakpoint.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Breakpoint {
     /// Width < 40 columns (phone-sized)
@@ -30,6 +31,7 @@ pub enum Breakpoint {
 ///
 /// Pass to `Context::bordered()` to draw a box around a container.
 /// Each variant uses a different set of Unicode box-drawing characters.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Border {
@@ -366,6 +368,7 @@ impl Constraints {
 /// Controls how children are positioned along the axis perpendicular to the
 /// container's main axis. For a `row()`, this is vertical alignment; for a
 /// `col()`, this is horizontal alignment.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Align {
@@ -386,6 +389,7 @@ pub enum Align {
 /// When children have `grow > 0`, they consume remaining space before justify
 /// distribution applies. Justify modes only affect the leftover space after
 /// flex-grow allocation.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Justify {

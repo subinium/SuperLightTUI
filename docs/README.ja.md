@@ -228,7 +228,7 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 
 ```rust
 // 7つの組み込みプリセット
-slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
+slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
     ui.set_theme(Theme::dark()); // 実行時に切り替え
 });
 

@@ -31,76 +31,70 @@ fn main() -> std::io::Result<()> {
     let mut filter_input = TextInputState::with_placeholder("Type to filter...");
     let mut dark_mode = true;
 
-    slt::run_with(
-        slt::RunConfig {
-            mouse: true,
-            ..Default::default()
-        },
-        |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
-                ui.quit();
-            }
-            ui.set_theme(if dark_mode {
-                Theme::dark()
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
+            ui.quit();
+        }
+        ui.set_theme(if dark_mode {
+            Theme::dark()
+        } else {
+            Theme::light()
+        });
+        let theme = *ui.theme();
+
+        let _ = ui.container().pad(1).grow(1).col(|ui| {
+            let _ = ui.row(|ui| {
+                ui.text("Table Demo").bold().fg(theme.primary);
+                ui.spacer();
+                let _ = ui.toggle("Dark", &mut dark_mode);
+            });
+
+            ui.separator();
+
+            let _ = ui.row(|ui| {
+                ui.text("Filter").bold().fg(theme.text_dim);
+                let _ = ui.container().grow(1).col(|ui| {
+                    let _ = ui.text_input(&mut filter_input);
+                });
+            });
+            table.set_filter(&filter_input.value);
+
+            let _ = ui.container().grow(1).gap(0).col(|ui| {
+                let _ = ui.table(&mut table);
+            });
+
+            ui.separator();
+
+            if let Some(row) = table.selected_row() {
+                let _ = ui.row(|ui| {
+                    ui.text("Selected").bold().fg(theme.primary);
+                    ui.text(row.join(" · "));
+                });
             } else {
-                Theme::light()
-            });
-            let theme = *ui.theme();
+                ui.text("No matching rows").dim();
+            }
 
-            let _ = ui.container().pad(1).grow(1).col(|ui| {
-                let _ = ui.row(|ui| {
-                    ui.text("Table Demo").bold().fg(theme.primary);
-                    ui.spacer();
-                    let _ = ui.toggle("Dark", &mut dark_mode);
-                });
-
-                ui.separator();
-
-                let _ = ui.row(|ui| {
-                    ui.text("Filter").bold().fg(theme.text_dim);
-                    let _ = ui.container().grow(1).col(|ui| {
-                        let _ = ui.text_input(&mut filter_input);
-                    });
-                });
-                table.set_filter(&filter_input.value);
-
-                let _ = ui.container().grow(1).gap(0).col(|ui| {
-                    let _ = ui.table(&mut table);
-                });
-
-                ui.separator();
-
-                if let Some(row) = table.selected_row() {
-                    let _ = ui.row(|ui| {
-                        ui.text("Selected").bold().fg(theme.primary);
-                        ui.text(row.join(" · "));
-                    });
-                } else {
-                    ui.text("No matching rows").dim();
+            let _ = ui.row(|ui| {
+                ui.text(format!(
+                    "{} / {} rows",
+                    table.visible_indices().len(),
+                    table.rows.len(),
+                ))
+                .dim();
+                ui.spacer();
+                if let Some(col) = table.sort_column {
+                    let dir = if table.sort_ascending { "ASC" } else { "DESC" };
+                    ui.text(format!("{} {}", table.headers[col], dir))
+                        .fg(theme.text_dim);
                 }
-
-                let _ = ui.row(|ui| {
-                    ui.text(format!(
-                        "{} / {} rows",
-                        table.visible_indices().len(),
-                        table.rows.len(),
-                    ))
-                    .dim();
-                    ui.spacer();
-                    if let Some(col) = table.sort_column {
-                        let dir = if table.sort_ascending { "ASC" } else { "DESC" };
-                        ui.text(format!("{} {}", table.headers[col], dir))
-                            .fg(theme.text_dim);
-                    }
-                });
-
-                let _ = ui.help(&[
-                    ("q", "quit"),
-                    ("↑↓/jk", "select"),
-                    ("PgUp/Dn", "page"),
-                    ("Header click", "sort"),
-                ]);
             });
-        },
-    )
+
+            let _ = ui.help(&[
+                ("q", "quit"),
+                ("↑↓/jk", "select"),
+                ("PgUp/Dn", "page"),
+                ("Header click", "sort"),
+            ]);
+        });
+    })
 }

@@ -109,6 +109,7 @@ impl Response {
 }
 
 /// Direction for bar chart rendering.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarDirection {
     /// Bars grow horizontally (default, current behavior).
@@ -373,6 +374,7 @@ pub struct Context {
     pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
     pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) text_color_stack: Vec<Option<Color>>,
+    scroll_lines_per_event: u32,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -1799,7 +1801,18 @@ impl Context {
             notification_queue: std::mem::take(&mut state.notification_queue),
             pending_tooltips: Vec::new(),
             text_color_stack: Vec::new(),
+            scroll_lines_per_event: 1,
         }
+    }
+
+    /// Set how many lines each scroll event moves. Default is 1.
+    pub fn set_scroll_speed(&mut self, lines: u32) {
+        self.scroll_lines_per_event = lines.max(1);
+    }
+
+    /// Get the current scroll speed (lines per scroll event).
+    pub fn scroll_speed(&self) -> u32 {
+        self.scroll_lines_per_event
     }
 
     pub(crate) fn process_focus_keys(&mut self) {

@@ -233,11 +233,7 @@ fn main() -> std::io::Result<()> {
     ]);
 
     slt::run_with(
-        RunConfig {
-            mouse: true,
-            kitty_keyboard: true,
-            ..Default::default()
-        },
+        RunConfig::default().mouse(true).kitty_keyboard(true),
         |ui: &mut Context| {
             let tick = ui.tick();
 
@@ -1247,6 +1243,7 @@ fn render_v070(
                 Breakpoint::Md => ("Md (80-119)", theme.secondary),
                 Breakpoint::Lg => ("Lg (120-159)", theme.success),
                 Breakpoint::Xl => ("Xl (160+)", theme.primary),
+                _ => ("Unknown", theme.text_dim),
             };
             let _ = ui.row(|ui| {
                 ui.text("Current: ").fg(theme.surface_text);

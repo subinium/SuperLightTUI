@@ -15,6 +15,7 @@ use crossterm::event as crossterm_event;
 /// Produced each frame by the run loop and passed to your UI closure via
 /// [`crate::Context`]. Use the helper methods on `Context` (e.g., `key()`,
 /// `key_code()`) rather than matching on this type directly.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A keyboard event.
@@ -80,16 +81,53 @@ impl Event {
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
         })
     }
 
-    /// Create a mouse move event to (x, y).
+    /// Create a mouse move event at the given position.
     pub fn mouse_move(x: u32, y: u32) -> Self {
         Event::Mouse(MouseEvent {
             kind: MouseKind::Moved,
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        })
+    }
+
+    /// Create a scroll up event at the given position.
+    pub fn scroll_up(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::ScrollUp,
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        })
+    }
+
+    /// Create a scroll down event at the given position.
+    pub fn scroll_down(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::ScrollDown,
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        })
+    }
+
+    /// Create a key release event for a character.
+    pub fn key_release(c: char) -> Self {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
         })
     }
 
@@ -129,9 +167,20 @@ impl Event {
             _ => None,
         }
     }
+
+    /// Returns `true` if this is a `Key` event.
+    pub fn is_key(&self) -> bool {
+        matches!(self, Event::Key(_))
+    }
+
+    /// Returns `true` if this is a `Mouse` event.
+    pub fn is_mouse(&self) -> bool {
+        matches!(self, Event::Mouse(_))
+    }
 }
 
 /// A keyboard event with key code and modifiers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
     /// The key that was pressed.
@@ -142,7 +191,31 @@ pub struct KeyEvent {
     pub kind: KeyEventKind,
 }
 
+impl KeyEvent {
+    /// Returns `true` if this is a press of the given character (no modifiers).
+    pub fn is_char(&self, c: char) -> bool {
+        self.code == KeyCode::Char(c)
+            && self.modifiers == KeyModifiers::NONE
+            && self.kind == KeyEventKind::Press
+    }
+
+    /// Returns `true` if this is Ctrl+`c`.
+    pub fn is_ctrl_char(&self, c: char) -> bool {
+        self.code == KeyCode::Char(c)
+            && self.modifiers == KeyModifiers::CONTROL
+            && self.kind == KeyEventKind::Press
+    }
+
+    /// Returns `true` if this is a press of the given key code (no modifiers).
+    pub fn is_code(&self, code: KeyCode) -> bool {
+        self.code == code
+            && self.modifiers == KeyModifiers::NONE
+            && self.kind == KeyEventKind::Press
+    }
+}
+
 /// The type of key event.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyEventKind {
     /// Key was pressed.
@@ -158,6 +231,7 @@ pub enum KeyEventKind {
 /// Covers printable characters, control keys, arrow keys, function keys,
 /// and navigation keys. Unrecognized keys are silently dropped by the
 /// crossterm conversion layer.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyCode {
     /// A printable character (letter, digit, symbol, space, etc.).
@@ -190,6 +264,24 @@ pub enum KeyCode {
     PageDown,
     /// Delete (forward delete) key.
     Delete,
+    /// Insert key.
+    Insert,
+    /// Null key (Ctrl+Space on some terminals).
+    Null,
+    /// Caps Lock key (Kitty keyboard protocol only).
+    CapsLock,
+    /// Scroll Lock key (Kitty keyboard protocol only).
+    ScrollLock,
+    /// Num Lock key (Kitty keyboard protocol only).
+    NumLock,
+    /// Print Screen key (Kitty keyboard protocol only).
+    PrintScreen,
+    /// Pause/Break key (Kitty keyboard protocol only).
+    Pause,
+    /// Menu / context menu key.
+    Menu,
+    /// Keypad center key (numpad 5 without NumLock).
+    KeypadBegin,
     /// Function key `F1`..`F12` (and beyond). The inner `u8` is the number.
     F(u8),
 }
@@ -210,6 +302,12 @@ impl KeyModifiers {
     pub const CONTROL: Self = Self(1 << 1);
     /// Alt / Option key held.
     pub const ALT: Self = Self(1 << 2);
+    /// Super key (Cmd on macOS, Win on Windows). Kitty keyboard protocol only.
+    pub const SUPER: Self = Self(1 << 3);
+    /// Hyper modifier. Kitty keyboard protocol only.
+    pub const HYPER: Self = Self(1 << 4);
+    /// Meta modifier. Kitty keyboard protocol only.
+    pub const META: Self = Self(1 << 5);
 
     /// Returns `true` if all bits in `other` are set in `self`.
     #[inline]
@@ -221,8 +319,11 @@ impl KeyModifiers {
 /// A mouse event with position and kind.
 ///
 /// Coordinates are zero-based terminal columns (`x`) and rows (`y`).
+/// When the terminal supports pixel-level reporting (e.g. Kitty, or WASM),
+/// `pixel_x` and `pixel_y` contain the sub-cell position in pixels.
 /// Mouse events are only produced when `mouse: true` is set in
 /// [`crate::RunConfig`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MouseEvent {
     /// The type of mouse action that occurred.
@@ -233,9 +334,46 @@ pub struct MouseEvent {
     pub y: u32,
     /// Modifier keys held at the time of the event.
     pub modifiers: KeyModifiers,
+    /// Pixel-level x coordinate, if available.
+    pub pixel_x: Option<u16>,
+    /// Pixel-level y coordinate, if available.
+    pub pixel_y: Option<u16>,
+}
+
+impl MouseEvent {
+    /// Create a new MouseEvent with all fields.
+    pub fn new(
+        kind: MouseKind,
+        x: u32,
+        y: u32,
+        modifiers: KeyModifiers,
+        pixel_x: Option<u16>,
+        pixel_y: Option<u16>,
+    ) -> Self {
+        Self {
+            kind,
+            x,
+            y,
+            modifiers,
+            pixel_x,
+            pixel_y,
+        }
+    }
+
+    /// Returns true if this is a scroll event.
+    pub fn is_scroll(&self) -> bool {
+        matches!(
+            self.kind,
+            MouseKind::ScrollUp
+                | MouseKind::ScrollDown
+                | MouseKind::ScrollLeft
+                | MouseKind::ScrollRight
+        )
+    }
 }
 
 /// The type of mouse event.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MouseKind {
     /// A mouse button was pressed.
@@ -248,11 +386,16 @@ pub enum MouseKind {
     ScrollUp,
     /// The scroll wheel was rotated downward.
     ScrollDown,
+    /// The scroll wheel was rotated leftward (horizontal scroll).
+    ScrollLeft,
+    /// The scroll wheel was rotated rightward (horizontal scroll).
+    ScrollRight,
     /// The mouse was moved without any button held.
     Moved,
 }
 
 /// Mouse button identifier.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
     /// Primary (left) mouse button.
@@ -274,6 +417,15 @@ fn convert_modifiers(modifiers: crossterm_event::KeyModifiers) -> KeyModifiers {
     }
     if modifiers.contains(crossterm_event::KeyModifiers::ALT) {
         out.0 |= KeyModifiers::ALT.0;
+    }
+    if modifiers.contains(crossterm_event::KeyModifiers::SUPER) {
+        out.0 |= KeyModifiers::SUPER.0;
+    }
+    if modifiers.contains(crossterm_event::KeyModifiers::HYPER) {
+        out.0 |= KeyModifiers::HYPER.0;
+    }
+    if modifiers.contains(crossterm_event::KeyModifiers::META) {
+        out.0 |= KeyModifiers::META.0;
     }
     out
 }
@@ -311,6 +463,15 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
                 crossterm_event::KeyCode::PageUp => KeyCode::PageUp,
                 crossterm_event::KeyCode::PageDown => KeyCode::PageDown,
                 crossterm_event::KeyCode::Delete => KeyCode::Delete,
+                crossterm_event::KeyCode::Insert => KeyCode::Insert,
+                crossterm_event::KeyCode::Null => KeyCode::Null,
+                crossterm_event::KeyCode::CapsLock => KeyCode::CapsLock,
+                crossterm_event::KeyCode::ScrollLock => KeyCode::ScrollLock,
+                crossterm_event::KeyCode::NumLock => KeyCode::NumLock,
+                crossterm_event::KeyCode::PrintScreen => KeyCode::PrintScreen,
+                crossterm_event::KeyCode::Pause => KeyCode::Pause,
+                crossterm_event::KeyCode::Menu => KeyCode::Menu,
+                crossterm_event::KeyCode::KeypadBegin => KeyCode::KeypadBegin,
                 crossterm_event::KeyCode::F(n) => KeyCode::F(n),
                 _ => return None,
             };
@@ -334,7 +495,8 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
                 crossterm_event::MouseEventKind::Moved => MouseKind::Moved,
                 crossterm_event::MouseEventKind::ScrollUp => MouseKind::ScrollUp,
                 crossterm_event::MouseEventKind::ScrollDown => MouseKind::ScrollDown,
-                _ => return None,
+                crossterm_event::MouseEventKind::ScrollLeft => MouseKind::ScrollLeft,
+                crossterm_event::MouseEventKind::ScrollRight => MouseKind::ScrollRight,
             };
 
             Some(Event::Mouse(MouseEvent {
@@ -342,6 +504,8 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
                 x: m.column as u32,
                 y: m.row as u32,
                 modifiers: convert_modifiers(m.modifiers),
+                pixel_x: None,
+                pixel_y: None,
             }))
         }
         crossterm_event::Event::Resize(cols, rows) => Some(Event::Resize(cols as u32, rows as u32)),

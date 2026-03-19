@@ -45,6 +45,7 @@ pub type ColorSpan = (usize, usize, Color);
 pub type RenderedLine = (String, Vec<ColorSpan>);
 
 /// Marker type for data points.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Marker {
     /// Braille marker (2x4 sub-cell dots).
@@ -62,6 +63,7 @@ pub enum Marker {
 }
 
 /// Graph rendering style.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphType {
     /// Connected points.
@@ -75,6 +77,7 @@ pub enum GraphType {
 }
 
 /// Legend placement.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegendPosition {
     /// Top-left corner.

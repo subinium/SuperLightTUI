@@ -463,6 +463,7 @@ pub(crate) use selection::{apply_selection_overlay, extract_selection_text, Sele
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 
 /// Detected terminal color scheme from OSC 11.
+#[non_exhaustive]
 #[cfg(feature = "crossterm")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorScheme {

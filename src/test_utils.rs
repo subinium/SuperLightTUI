@@ -79,6 +79,8 @@ impl EventBuilder {
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
         }));
         self
     }
@@ -90,6 +92,8 @@ impl EventBuilder {
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
         }));
         self
     }
@@ -101,6 +105,8 @@ impl EventBuilder {
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
         }));
         self
     }

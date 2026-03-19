@@ -207,6 +207,7 @@ impl Tween {
 }
 
 /// Defines how an animation behaves after reaching its end.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopMode {
     /// Play once, then stay at the final value.
