@@ -1975,6 +1975,66 @@ fn tree_renders_collapsed() {
 }
 
 #[test]
+fn rich_log_renders_entries() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = RichLogState::new();
+    state.push("INFO started", slt::Style::new().fg(slt::Color::Green));
+    state.push("WARN retry", slt::Style::new().fg(slt::Color::Yellow));
+    state.push_plain("DONE");
+
+    tb.render(|ui| {
+        ui.rich_log(&mut state);
+    });
+
+    tb.assert_contains("INFO started");
+    tb.assert_contains("WARN retry");
+    tb.assert_contains("DONE");
+}
+
+#[test]
+fn rich_log_scrolls_with_keyboard() {
+    let mut tb = TestBackend::new(40, 8);
+    let mut state = RichLogState::new();
+    state.auto_scroll = false;
+    for i in 0..100 {
+        state.push_plain(format!("Entry {i}"));
+    }
+
+    tb.render(|ui| {
+        ui.rich_log(&mut state);
+    });
+    tb.assert_contains("Entry 0");
+
+    let events = slt::EventBuilder::new().key_code(slt::KeyCode::End).build();
+    tb.run_with_events(events, |ui| {
+        ui.rich_log(&mut state);
+    });
+    tb.assert_contains("Entry 99");
+}
+
+#[test]
+fn directory_tree_from_paths_renders_structure() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = DirectoryTreeState::from_paths(&["src/main.rs", "src/lib.rs", "Cargo.toml"]);
+
+    tb.render(|ui| {
+        ui.directory_tree(&mut state);
+    });
+
+    tb.assert_contains("src");
+    tb.assert_contains("main.rs");
+    tb.assert_contains("lib.rs");
+    tb.assert_contains("Cargo.toml");
+    tb.assert_contains("├──");
+}
+
+#[test]
+fn directory_tree_selected_label_from_paths() {
+    let state = DirectoryTreeState::from_paths(&["src/main.rs", "src/lib.rs", "Cargo.toml"]);
+    assert_eq!(state.selected_label(), Some("src"));
+}
+
+#[test]
 fn virtual_list_renders_items() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = ListState::new(vec![

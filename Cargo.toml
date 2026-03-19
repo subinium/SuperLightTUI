@@ -1,6 +1,9 @@
+[workspace]
+members = [".", "crates/slt-wasm"]
+
 [package]
 name = "superlighttui"
-version = "0.13.2"
+version = "0.14.0"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -17,12 +20,13 @@ exclude = ["examples/", ".github/", "AUDIT-REPORT.md", "CLAUDE.md"]
 name = "slt"
 
 [dependencies]
-crossterm = { version = "0.28", features = ["bracketed-paste"] }
+crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
+qrcode = { version = "0.14", optional = true, default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -30,10 +34,13 @@ insta = "1"
 proptest = "1"
 
 [features]
-async = ["dep:tokio"]
+crossterm = ["dep:crossterm"]
+default = ["crossterm"]
+async = ["dep:tokio", "crossterm"]
 serde = ["dep:serde"]
 image = ["dep:image"]
-full = ["async", "serde", "image"]
+qrcode = ["dep:qrcode"]
+full = ["crossterm", "async", "serde", "image", "qrcode"]
 
 [package.metadata.docs.rs]
 all-features = true

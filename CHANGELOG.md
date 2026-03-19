@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.14.0] — 2026-03-19
+
+### Breaking Changes
+
+- **crossterm is now optional** — `crossterm` is a default feature. Users with `default-features = false` must add `features = ["crossterm"]` to retain `run()`, `run_with()`, and other terminal I/O functions. `Backend`, `AppState`, `frame()`, all widgets, and Event types remain always available.
+- **Workspace structure** — project is now a Cargo workspace with `slt-wasm` companion crate.
+
+### Features
+
+- **Gradient text** — `ui.text("hello").gradient(Color::Red, Color::Blue)` interpolates foreground color per character
+- **BigText (ASCII art)** — `ui.big_text("SLT")` renders 8×8 bitmap font as half-block characters (4 terminal rows tall)
+- **Timer display** — `ui.timer_display(elapsed)` formats `Duration` as `MM:SS.CC` or `HH:MM:SS.CC`, stateless display-only
+- **QR code** — `ui.qr_code("url")` renders QR codes using half-blocks (requires `features = ["qrcode"]`)
+- **RichLog** — `ui.rich_log(&mut state)` scrollable log viewer with styled entries, auto-scroll, max_entries trimming
+- **DirectoryTree** — `ui.directory_tree(&mut state)` tree widget with folder/file icons, `from_paths()` builder
+- **Event constructors** — `Event::key_char('q')`, `Event::key(KeyCode::Enter)`, `Event::resize(80, 24)`, `Event::mouse_click(x, y)`, etc. — create events without crossterm dependency
+- **OSC 11 background color query** — `detect_color_scheme()` returns `ColorScheme::Dark`/`Light`/`Unknown` (crossterm-only)
+- **OSC 52 clipboard read** — `read_clipboard()` returns clipboard contents via terminal query (crossterm-only)
+- **WASM backend** — `slt-wasm` companion crate provides `DomBackend` for browser rendering via `<span>` elements with `requestAnimationFrame` loop
+
+### Architecture
+
+- **crossterm decoupled** — crossterm is now `optional = true` with `default = ["crossterm"]`. Core API (`Backend`, `AppState`, `frame()`, all widgets, Event types) compiles without crossterm. Terminal I/O (`run()` family, `Terminal`, `InlineTerminal`) is `#[cfg(feature = "crossterm")]`
+- **Feature flag structure** — `default = ["crossterm"]`, `async = ["dep:tokio", "crossterm"]`, `qrcode = ["dep:qrcode"]`, `full = ["crossterm", "async", "serde", "image", "qrcode"]`
+
+### New Types
+
+- `RichLogState`, `RichLogEntry` — log viewer state
+- `DirectoryTreeState` — directory tree state (wraps `TreeState`)
+- `ColorScheme` — `Dark`, `Light`, `Unknown` (crossterm-only)
+
+### New Dependencies
+
+- `qrcode` 0.14 (optional, behind `qrcode` feature)
+- `wasm-bindgen`, `web-sys`, `js-sys` (slt-wasm crate only)
+
+### Demo
+
+- New "v0.14.0" tab showcasing gradient text, BigText, timer, QR code, RichLog, and DirectoryTree
+
 ## [0.13.2] — 2026-03-19
 
 ### Features

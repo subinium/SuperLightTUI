@@ -1,0 +1,26 @@
+[package]
+name = "slt-wasm"
+version = "0.14.0"
+edition = "2021"
+description = "WASM/browser backend for SuperLightTUI"
+license = "MIT"
+
+[dependencies]
+superlighttui = { path = "../..", default-features = false }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Document",
+    "DomRect",
+    "Element",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlPreElement",
+    "KeyboardEvent",
+    "MouseEvent",
+    "Node",
+    "Text",
+    "Window",
+    "console",
+] }
+js-sys = "0.3"

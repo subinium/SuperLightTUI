@@ -7,6 +7,9 @@
 //! [`Context::mouse_down`](crate::Context::mouse_down)) instead of matching
 //! on these types directly.
 
+#[cfg(feature = "crossterm")]
+use crossterm::event as crossterm_event;
+
 /// A terminal input event.
 ///
 /// Produced each frame by the run loop and passed to your UI closure via
@@ -26,6 +29,74 @@ pub enum Event {
     FocusGained,
     /// The terminal window lost focus. Used to clear hover state.
     FocusLost,
+}
+
+impl Event {
+    /// Create a key press event for a character.
+    pub fn key_char(c: char) -> Self {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    /// Create a key press event for a special key.
+    pub fn key(code: KeyCode) -> Self {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    /// Create a key press event with Ctrl modifier.
+    pub fn key_ctrl(c: char) -> Self {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    /// Create a key press event with custom modifiers.
+    pub fn key_mod(code: KeyCode, modifiers: KeyModifiers) -> Self {
+        Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    /// Create a terminal resize event.
+    pub fn resize(width: u32, height: u32) -> Self {
+        Event::Resize(width, height)
+    }
+
+    /// Create a left mouse click event at (x, y).
+    pub fn mouse_click(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::Down(MouseButton::Left),
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Create a mouse move event to (x, y).
+    pub fn mouse_move(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::Moved,
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Create a paste event with the given text.
+    pub fn paste(text: impl Into<String>) -> Self {
+        Event::Paste(text.into())
+    }
 }
 
 /// A keyboard event with key code and modifiers.
@@ -160,25 +231,27 @@ pub enum MouseButton {
     Middle,
 }
 
-fn convert_modifiers(modifiers: crossterm::event::KeyModifiers) -> KeyModifiers {
+#[cfg(feature = "crossterm")]
+fn convert_modifiers(modifiers: crossterm_event::KeyModifiers) -> KeyModifiers {
     let mut out = KeyModifiers::NONE;
-    if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+    if modifiers.contains(crossterm_event::KeyModifiers::SHIFT) {
         out.0 |= KeyModifiers::SHIFT.0;
     }
-    if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+    if modifiers.contains(crossterm_event::KeyModifiers::CONTROL) {
         out.0 |= KeyModifiers::CONTROL.0;
     }
-    if modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+    if modifiers.contains(crossterm_event::KeyModifiers::ALT) {
         out.0 |= KeyModifiers::ALT.0;
     }
     out
 }
 
-fn convert_button(button: crossterm::event::MouseButton) -> MouseButton {
+#[cfg(feature = "crossterm")]
+fn convert_button(button: crossterm_event::MouseButton) -> MouseButton {
     match button {
-        crossterm::event::MouseButton::Left => MouseButton::Left,
-        crossterm::event::MouseButton::Right => MouseButton::Right,
-        crossterm::event::MouseButton::Middle => MouseButton::Middle,
+        crossterm_event::MouseButton::Left => MouseButton::Left,
+        crossterm_event::MouseButton::Right => MouseButton::Right,
+        crossterm_event::MouseButton::Middle => MouseButton::Middle,
     }
 }
 
@@ -186,33 +259,34 @@ fn convert_button(button: crossterm::event::MouseButton) -> MouseButton {
 
 /// Convert a raw crossterm event into our lightweight [`Event`].
 /// Returns `None` for event kinds we don't handle.
-pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
+#[cfg(feature = "crossterm")]
+pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
     match raw {
-        crossterm::event::Event::Key(k) => {
+        crossterm_event::Event::Key(k) => {
             let code = match k.code {
-                crossterm::event::KeyCode::Char(c) => KeyCode::Char(c),
-                crossterm::event::KeyCode::Enter => KeyCode::Enter,
-                crossterm::event::KeyCode::Backspace => KeyCode::Backspace,
-                crossterm::event::KeyCode::Tab => KeyCode::Tab,
-                crossterm::event::KeyCode::BackTab => KeyCode::BackTab,
-                crossterm::event::KeyCode::Esc => KeyCode::Esc,
-                crossterm::event::KeyCode::Up => KeyCode::Up,
-                crossterm::event::KeyCode::Down => KeyCode::Down,
-                crossterm::event::KeyCode::Left => KeyCode::Left,
-                crossterm::event::KeyCode::Right => KeyCode::Right,
-                crossterm::event::KeyCode::Home => KeyCode::Home,
-                crossterm::event::KeyCode::End => KeyCode::End,
-                crossterm::event::KeyCode::PageUp => KeyCode::PageUp,
-                crossterm::event::KeyCode::PageDown => KeyCode::PageDown,
-                crossterm::event::KeyCode::Delete => KeyCode::Delete,
-                crossterm::event::KeyCode::F(n) => KeyCode::F(n),
+                crossterm_event::KeyCode::Char(c) => KeyCode::Char(c),
+                crossterm_event::KeyCode::Enter => KeyCode::Enter,
+                crossterm_event::KeyCode::Backspace => KeyCode::Backspace,
+                crossterm_event::KeyCode::Tab => KeyCode::Tab,
+                crossterm_event::KeyCode::BackTab => KeyCode::BackTab,
+                crossterm_event::KeyCode::Esc => KeyCode::Esc,
+                crossterm_event::KeyCode::Up => KeyCode::Up,
+                crossterm_event::KeyCode::Down => KeyCode::Down,
+                crossterm_event::KeyCode::Left => KeyCode::Left,
+                crossterm_event::KeyCode::Right => KeyCode::Right,
+                crossterm_event::KeyCode::Home => KeyCode::Home,
+                crossterm_event::KeyCode::End => KeyCode::End,
+                crossterm_event::KeyCode::PageUp => KeyCode::PageUp,
+                crossterm_event::KeyCode::PageDown => KeyCode::PageDown,
+                crossterm_event::KeyCode::Delete => KeyCode::Delete,
+                crossterm_event::KeyCode::F(n) => KeyCode::F(n),
                 _ => return None,
             };
             let modifiers = convert_modifiers(k.modifiers);
             let kind = match k.kind {
-                crossterm::event::KeyEventKind::Press => KeyEventKind::Press,
-                crossterm::event::KeyEventKind::Repeat => KeyEventKind::Repeat,
-                crossterm::event::KeyEventKind::Release => KeyEventKind::Release,
+                crossterm_event::KeyEventKind::Press => KeyEventKind::Press,
+                crossterm_event::KeyEventKind::Repeat => KeyEventKind::Repeat,
+                crossterm_event::KeyEventKind::Release => KeyEventKind::Release,
             };
             Some(Event::Key(KeyEvent {
                 code,
@@ -220,14 +294,14 @@ pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
                 kind,
             }))
         }
-        crossterm::event::Event::Mouse(m) => {
+        crossterm_event::Event::Mouse(m) => {
             let kind = match m.kind {
-                crossterm::event::MouseEventKind::Down(btn) => MouseKind::Down(convert_button(btn)),
-                crossterm::event::MouseEventKind::Up(btn) => MouseKind::Up(convert_button(btn)),
-                crossterm::event::MouseEventKind::Drag(btn) => MouseKind::Drag(convert_button(btn)),
-                crossterm::event::MouseEventKind::Moved => MouseKind::Moved,
-                crossterm::event::MouseEventKind::ScrollUp => MouseKind::ScrollUp,
-                crossterm::event::MouseEventKind::ScrollDown => MouseKind::ScrollDown,
+                crossterm_event::MouseEventKind::Down(btn) => MouseKind::Down(convert_button(btn)),
+                crossterm_event::MouseEventKind::Up(btn) => MouseKind::Up(convert_button(btn)),
+                crossterm_event::MouseEventKind::Drag(btn) => MouseKind::Drag(convert_button(btn)),
+                crossterm_event::MouseEventKind::Moved => MouseKind::Moved,
+                crossterm_event::MouseEventKind::ScrollUp => MouseKind::ScrollUp,
+                crossterm_event::MouseEventKind::ScrollDown => MouseKind::ScrollDown,
                 _ => return None,
             };
 
@@ -238,11 +312,101 @@ pub(crate) fn from_crossterm(raw: crossterm::event::Event) -> Option<Event> {
                 modifiers: convert_modifiers(m.modifiers),
             }))
         }
-        crossterm::event::Event::Resize(cols, rows) => {
-            Some(Event::Resize(cols as u32, rows as u32))
+        crossterm_event::Event::Resize(cols, rows) => Some(Event::Resize(cols as u32, rows as u32)),
+        crossterm_event::Event::Paste(s) => Some(Event::Paste(s)),
+        crossterm_event::Event::FocusGained => Some(Event::FocusGained),
+        crossterm_event::Event::FocusLost => Some(Event::FocusLost),
+    }
+}
+
+#[cfg(test)]
+mod event_constructor_tests {
+    use super::*;
+
+    #[test]
+    fn test_key_char() {
+        let e = Event::key_char('q');
+        if let Event::Key(k) = e {
+            assert!(matches!(k.code, KeyCode::Char('q')));
+            assert_eq!(k.modifiers, KeyModifiers::NONE);
+            assert!(matches!(k.kind, KeyEventKind::Press));
+        } else {
+            panic!("Expected Key event");
         }
-        crossterm::event::Event::Paste(s) => Some(Event::Paste(s)),
-        crossterm::event::Event::FocusGained => Some(Event::FocusGained),
-        crossterm::event::Event::FocusLost => Some(Event::FocusLost),
+    }
+
+    #[test]
+    fn test_key() {
+        let e = Event::key(KeyCode::Enter);
+        if let Event::Key(k) = e {
+            assert!(matches!(k.code, KeyCode::Enter));
+            assert_eq!(k.modifiers, KeyModifiers::NONE);
+            assert!(matches!(k.kind, KeyEventKind::Press));
+        } else {
+            panic!("Expected Key event");
+        }
+    }
+
+    #[test]
+    fn test_key_ctrl() {
+        let e = Event::key_ctrl('s');
+        if let Event::Key(k) = e {
+            assert!(matches!(k.code, KeyCode::Char('s')));
+            assert_eq!(k.modifiers, KeyModifiers::CONTROL);
+            assert!(matches!(k.kind, KeyEventKind::Press));
+        } else {
+            panic!("Expected Key event");
+        }
+    }
+
+    #[test]
+    fn test_key_mod() {
+        let modifiers = KeyModifiers(KeyModifiers::SHIFT.0 | KeyModifiers::ALT.0);
+        let e = Event::key_mod(KeyCode::Tab, modifiers);
+        if let Event::Key(k) = e {
+            assert!(matches!(k.code, KeyCode::Tab));
+            assert_eq!(k.modifiers, modifiers);
+            assert!(matches!(k.kind, KeyEventKind::Press));
+        } else {
+            panic!("Expected Key event");
+        }
+    }
+
+    #[test]
+    fn test_resize() {
+        let e = Event::resize(80, 24);
+        assert!(matches!(e, Event::Resize(80, 24)));
+    }
+
+    #[test]
+    fn test_mouse_click() {
+        let e = Event::mouse_click(10, 5);
+        if let Event::Mouse(m) = e {
+            assert!(matches!(m.kind, MouseKind::Down(MouseButton::Left)));
+            assert_eq!(m.x, 10);
+            assert_eq!(m.y, 5);
+            assert_eq!(m.modifiers, KeyModifiers::NONE);
+        } else {
+            panic!("Expected Mouse event");
+        }
+    }
+
+    #[test]
+    fn test_mouse_move() {
+        let e = Event::mouse_move(10, 5);
+        if let Event::Mouse(m) = e {
+            assert!(matches!(m.kind, MouseKind::Moved));
+            assert_eq!(m.x, 10);
+            assert_eq!(m.y, 5);
+            assert_eq!(m.modifiers, KeyModifiers::NONE);
+        } else {
+            panic!("Expected Mouse event");
+        }
+    }
+
+    #[test]
+    fn test_paste() {
+        let e = Event::paste("hello");
+        assert!(matches!(e, Event::Paste(s) if s == "hello"));
     }
 }

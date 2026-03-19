@@ -1892,11 +1892,17 @@ impl Context {
             Ok(()) => {}
             Err(panic_info) => {
                 if self.is_real_terminal {
-                    let _ = crossterm::terminal::enable_raw_mode();
-                    let _ = crossterm::execute!(
-                        std::io::stdout(),
-                        crossterm::terminal::EnterAlternateScreen
-                    );
+                    #[cfg(feature = "crossterm")]
+                    {
+                        let _ = crossterm::terminal::enable_raw_mode();
+                        let _ = crossterm::execute!(
+                            std::io::stdout(),
+                            crossterm::terminal::EnterAlternateScreen
+                        );
+                    }
+
+                    #[cfg(not(feature = "crossterm"))]
+                    {}
                 }
 
                 snapshot.restore(self);

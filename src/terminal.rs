@@ -1,4 +1,5 @@
-use std::io::{self, Stdout, Write};
+use std::io::{self, Read, Stdout, Write};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
@@ -461,6 +462,116 @@ pub(crate) use selection::{apply_selection_overlay, extract_selection_text, Sele
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 
+#[cfg(feature = "crossterm")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorScheme {
+    Dark,
+    Light,
+    Unknown,
+}
+
+#[cfg(feature = "crossterm")]
+fn read_osc_response(timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut stdin = io::stdin();
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1];
+
+    while Instant::now() < deadline {
+        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
+            continue;
+        }
+
+        let read = stdin.read(&mut buf).ok()?;
+        if read == 0 {
+            continue;
+        }
+
+        bytes.push(buf[0]);
+
+        if buf[0] == b'\x07' {
+            break;
+        }
+        let len = bytes.len();
+        if len >= 2 && bytes[len - 2] == 0x1B && bytes[len - 1] == b'\\' {
+            break;
+        }
+
+        if bytes.len() >= 4096 {
+            break;
+        }
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+
+    String::from_utf8(bytes).ok()
+}
+
+#[cfg(feature = "crossterm")]
+pub fn detect_color_scheme() -> ColorScheme {
+    let mut stdout = io::stdout();
+    if write!(stdout, "\x1b]11;?\x07").is_err() {
+        return ColorScheme::Unknown;
+    }
+    if stdout.flush().is_err() {
+        return ColorScheme::Unknown;
+    }
+
+    let Some(response) = read_osc_response(Duration::from_millis(100)) else {
+        return ColorScheme::Unknown;
+    };
+
+    parse_osc11_response(&response)
+}
+
+#[cfg(feature = "crossterm")]
+pub(crate) fn parse_osc11_response(response: &str) -> ColorScheme {
+    let Some(rgb_pos) = response.find("rgb:") else {
+        return ColorScheme::Unknown;
+    };
+
+    let payload = &response[rgb_pos + 4..];
+    let end = payload
+        .find(['\x07', '\x1b', '\r', '\n', ' ', '\t'])
+        .unwrap_or(payload.len());
+    let rgb = &payload[..end];
+
+    let mut channels = rgb.split('/');
+    let (Some(r), Some(g), Some(b), None) = (
+        channels.next(),
+        channels.next(),
+        channels.next(),
+        channels.next(),
+    ) else {
+        return ColorScheme::Unknown;
+    };
+
+    fn parse_channel(channel: &str) -> Option<f64> {
+        if channel.is_empty() || channel.len() > 4 {
+            return None;
+        }
+        let value = u16::from_str_radix(channel, 16).ok()? as f64;
+        let max = ((1u32 << (channel.len() * 4)) - 1) as f64;
+        if max <= 0.0 {
+            return None;
+        }
+        Some((value / max).clamp(0.0, 1.0))
+    }
+
+    let (Some(r), Some(g), Some(b)) = (parse_channel(r), parse_channel(g), parse_channel(b)) else {
+        return ColorScheme::Unknown;
+    };
+
+    let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    if luminance < 0.5 {
+        ColorScheme::Dark
+    } else {
+        ColorScheme::Light
+    }
+}
+
 fn base64_encode(input: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -489,6 +600,86 @@ pub(crate) fn copy_to_clipboard(w: &mut impl Write, text: &str) -> io::Result<()
     let encoded = base64_encode(text.as_bytes());
     write!(w, "\x1b]52;c;{encoded}\x1b\\")?;
     w.flush()
+}
+
+#[cfg(feature = "crossterm")]
+fn parse_osc52_response(response: &str) -> Option<String> {
+    let osc_pos = response.find("]52;")?;
+    let body = &response[osc_pos + 4..];
+    let semicolon = body.find(';')?;
+    let payload = &body[semicolon + 1..];
+
+    let end = payload
+        .find("\x1b\\")
+        .or_else(|| payload.find('\x07'))
+        .unwrap_or(payload.len());
+    let encoded = payload[..end].trim();
+    if encoded.is_empty() || encoded == "?" {
+        return None;
+    }
+
+    base64_decode(encoded)
+}
+
+#[cfg(feature = "crossterm")]
+pub fn read_clipboard() -> Option<String> {
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b]52;c;?\x07").ok()?;
+    stdout.flush().ok()?;
+
+    let response = read_osc_response(Duration::from_millis(200))?;
+    parse_osc52_response(&response)
+}
+
+#[cfg(feature = "crossterm")]
+fn base64_decode(input: &str) -> Option<String> {
+    let mut filtered: Vec<u8> = input
+        .bytes()
+        .filter(|b| !matches!(b, b' ' | b'\n' | b'\r' | b'\t'))
+        .collect();
+
+    match filtered.len() % 4 {
+        0 => {}
+        2 => filtered.extend_from_slice(b"=="),
+        3 => filtered.push(b'='),
+        _ => return None,
+    }
+
+    fn decode_val(b: u8) -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let mut out = Vec::with_capacity((filtered.len() / 4) * 3);
+    for chunk in filtered.chunks_exact(4) {
+        let p2 = chunk[2] == b'=';
+        let p3 = chunk[3] == b'=';
+        if p2 && !p3 {
+            return None;
+        }
+
+        let v0 = decode_val(chunk[0])? as u32;
+        let v1 = decode_val(chunk[1])? as u32;
+        let v2 = if p2 { 0 } else { decode_val(chunk[2])? as u32 };
+        let v3 = if p3 { 0 } else { decode_val(chunk[3])? as u32 };
+
+        let triple = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
+        out.push(((triple >> 16) & 0xFF) as u8);
+        if !p2 {
+            out.push(((triple >> 8) & 0xFF) as u8);
+        }
+        if !p3 {
+            out.push((triple & 0xFF) as u8);
+        }
+    }
+
+    String::from_utf8(out).ok()
 }
 
 // ── Cursor marker ───────────────────────────────────────────────
@@ -667,6 +858,34 @@ mod tests {
     #[test]
     fn base64_encode_unicode() {
         assert_eq!(base64_encode("한글".as_bytes()), "7ZWc6riA");
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_osc11_response_dark_and_light() {
+        assert_eq!(
+            parse_osc11_response("\x1b]11;rgb:0000/0000/0000\x1b\\"),
+            ColorScheme::Dark
+        );
+        assert_eq!(
+            parse_osc11_response("\x1b]11;rgb:ffff/ffff/ffff\x07"),
+            ColorScheme::Light
+        );
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn base64_decode_round_trip_hello() {
+        let encoded = base64_encode("hello".as_bytes());
+        assert_eq!(base64_decode(&encoded), Some("hello".to_string()));
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn color_scheme_equality() {
+        assert_eq!(ColorScheme::Dark, ColorScheme::Dark);
+        assert_ne!(ColorScheme::Dark, ColorScheme::Light);
+        assert_eq!(ColorScheme::Unknown, ColorScheme::Unknown);
     }
 
     fn pair(r: Rect) -> (Rect, Rect) {

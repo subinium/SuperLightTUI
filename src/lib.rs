@@ -60,18 +60,25 @@ pub mod keymap;
 pub mod layout;
 pub mod palette;
 pub mod rect;
+#[cfg(feature = "crossterm")]
 mod sixel;
 pub mod style;
+#[cfg(feature = "crossterm")]
 mod terminal;
 pub mod test_utils;
 pub mod widgets;
 
 use std::io;
+#[cfg(feature = "crossterm")]
 use std::io::IsTerminal;
+#[cfg(feature = "crossterm")]
 use std::io::Write;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "crossterm")]
+pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
+#[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
@@ -102,11 +109,11 @@ pub use style::{
 };
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
-    FileEntry, FilePickerState, FormField, FormState, ListState, MultiSelectState, PaletteCommand,
-    RadioState, ScreenState, ScrollState, SelectState, SpinnerState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend,
+    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, ListState,
+    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
+    ScrollState, SelectState, SpinnerState, StaticOutput, StreamingMarkdownState,
+    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
+    ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };
 
 /// Rendering backend for SLT.
@@ -262,6 +269,7 @@ pub fn frame(
 static PANIC_HOOK_ONCE: Once = Once::new();
 
 #[allow(clippy::print_stderr)]
+#[cfg(feature = "crossterm")]
 fn install_panic_hook() {
     PANIC_HOOK_ONCE.call_once(|| {
         let original = std::panic::take_hook();
@@ -395,6 +403,7 @@ pub(crate) struct FrameState {
     pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
     pub fps_ema: f32,
+    #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
 
@@ -419,6 +428,7 @@ impl Default for FrameState {
             notification_queue: Vec::new(),
             debug_mode: false,
             fps_ema: 0.0,
+            #[cfg(feature = "crossterm")]
             selection: terminal::SelectionState::default(),
         }
     }
@@ -438,6 +448,7 @@ impl Default for FrameState {
 ///     })
 /// }
 /// ```
+#[cfg(feature = "crossterm")]
 pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
     run_with(RunConfig::default(), f)
 }
@@ -461,6 +472,7 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 ///     )
 /// }
 /// ```
+#[cfg(feature = "crossterm")]
 pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
     if !io::stdout().is_terminal() {
         return Ok(());
@@ -559,7 +571,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "async")]
+#[cfg(all(feature = "crossterm", feature = "async"))]
 pub fn run_async<M: Send + 'static>(
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
 ) -> io::Result<tokio::sync::mpsc::Sender<M>> {
@@ -572,7 +584,7 @@ pub fn run_async<M: Send + 'static>(
 /// [`RunConfig`] to control tick rate, mouse support, and theming.
 ///
 /// Returns a [`tokio::sync::mpsc::Sender`] for pushing messages into the UI.
-#[cfg(feature = "async")]
+#[cfg(all(feature = "crossterm", feature = "async"))]
 pub fn run_async_with<M: Send + 'static>(
     config: RunConfig,
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
@@ -588,7 +600,7 @@ pub fn run_async_with<M: Send + 'static>(
     Ok(tx)
 }
 
-#[cfg(feature = "async")]
+#[cfg(all(feature = "crossterm", feature = "async"))]
 fn run_async_loop<M: Send + 'static>(
     config: RunConfig,
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
@@ -679,6 +691,7 @@ fn run_async_loop<M: Send + 'static>(
 ///     })
 /// }
 /// ```
+#[cfg(feature = "crossterm")]
 pub fn run_inline(height: u32, f: impl FnMut(&mut Context)) -> io::Result<()> {
     run_inline_with(height, RunConfig::default(), f)
 }
@@ -687,6 +700,7 @@ pub fn run_inline(height: u32, f: impl FnMut(&mut Context)) -> io::Result<()> {
 ///
 /// Like [`run_inline`], but accepts a [`RunConfig`] to control tick rate,
 /// mouse support, and theming.
+#[cfg(feature = "crossterm")]
 pub fn run_inline_with(
     height: u32,
     config: RunConfig,
@@ -774,6 +788,7 @@ pub fn run_inline_with(
 /// Static lines written through [`StaticOutput`] are printed into terminal
 /// scrollback, while the interactive UI stays rendered in a fixed-height inline
 /// area at the bottom.
+#[cfg(feature = "crossterm")]
 pub fn run_static(
     output: &mut StaticOutput,
     dynamic_height: u32,
@@ -865,6 +880,7 @@ pub fn run_static(
     Ok(())
 }
 
+#[cfg(feature = "crossterm")]
 fn write_static_lines(lines: &[String]) -> io::Result<()> {
     if lines.is_empty() {
         return Ok(());
@@ -901,9 +917,14 @@ fn run_frame(
     state.prev_modal_active = ctx.modal_active;
     state.prev_modal_focus_start = ctx.modal_focus_start;
     state.prev_modal_focus_count = ctx.modal_focus_count;
+    #[cfg(feature = "crossterm")]
     let clipboard_text = ctx.clipboard_text.take();
+    #[cfg(not(feature = "crossterm"))]
+    let _clipboard_text = ctx.clipboard_text.take();
 
+    #[cfg(feature = "crossterm")]
     let mut should_copy_selection = false;
+    #[cfg(feature = "crossterm")]
     for ev in &ctx.events {
         if let Event::Mouse(mouse) = ev {
             match mouse.kind {
@@ -969,6 +990,7 @@ fn run_frame(
         layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, state.fps_ema);
     }
 
+    #[cfg(feature = "crossterm")]
     if state.selection.active {
         terminal::apply_selection_overlay(
             term.buffer_mut(),
@@ -976,6 +998,7 @@ fn run_frame(
             &state.prev_content_map,
         );
     }
+    #[cfg(feature = "crossterm")]
     if should_copy_selection {
         let text = terminal::extract_selection_text(
             term.buffer_mut(),
@@ -989,6 +1012,7 @@ fn run_frame(
     }
 
     term.flush()?;
+    #[cfg(feature = "crossterm")]
     if let Some(text) = clipboard_text {
         #[allow(clippy::print_stderr)]
         if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
@@ -1025,6 +1049,7 @@ fn clear_frame_layout_cache(state: &mut FrameState) {
     state.last_mouse_pos = None;
 }
 
+#[cfg(feature = "crossterm")]
 fn is_ctrl_c(ev: &Event) -> bool {
     matches!(
         ev,
