@@ -8,10 +8,10 @@ use crate::style::{
     Modifiers, Padding, Style, Theme, WidgetColors,
 };
 use crate::widgets::{
-    ApprovalAction, ButtonVariant, CommandPaletteState, ContextItem, FilePickerState, FormField,
-    FormState, ListState, MultiSelectState, RadioState, ScrollState, SelectState, SpinnerState,
-    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
-    ToastState, ToolApprovalState, TreeState,
+    ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
+    FilePickerState, FormField, FormState, ListState, MultiSelectState, RadioState, ScreenState,
+    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -356,10 +356,16 @@ pub struct Context {
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
+    pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) text_color_stack: Vec<Option<Color>>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
+
+pub(crate) struct PendingTooltip {
+    pub anchor_rect: Rect,
+    pub lines: Vec<String>,
+}
 
 struct ContextSnapshot {
     cmd_count: usize,
@@ -378,6 +384,7 @@ struct ContextSnapshot {
     dark_mode: bool,
     deferred_draws_len: usize,
     notification_queue_len: usize,
+    pending_tooltips_len: usize,
     text_color_stack_len: usize,
 }
 
@@ -400,6 +407,7 @@ impl ContextSnapshot {
             dark_mode: ctx.dark_mode,
             deferred_draws_len: ctx.deferred_draws.len(),
             notification_queue_len: ctx.notification_queue.len(),
+            pending_tooltips_len: ctx.pending_tooltips.len(),
             text_color_stack_len: ctx.text_color_stack.len(),
         }
     }
@@ -421,6 +429,7 @@ impl ContextSnapshot {
         ctx.dark_mode = self.dark_mode;
         ctx.deferred_draws.truncate(self.deferred_draws_len);
         ctx.notification_queue.truncate(self.notification_queue_len);
+        ctx.pending_tooltips.truncate(self.pending_tooltips_len);
         ctx.text_color_stack.truncate(self.text_color_stack_len);
     }
 }
@@ -1595,8 +1604,7 @@ impl<'a> ContainerBuilder<'a> {
     }
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
-        let interaction_id = self.ctx.interaction_count;
-        self.ctx.interaction_count += 1;
+        let interaction_id = self.ctx.next_interaction_id();
         let resolved_gap = match direction {
             Direction::Column => self.row_gap.unwrap_or(self.gap),
             Direction::Row => self.col_gap.unwrap_or(self.gap),
@@ -1772,6 +1780,7 @@ impl Context {
             is_real_terminal: false,
             deferred_draws: Vec::new(),
             notification_queue: std::mem::take(&mut state.notification_queue),
+            pending_tooltips: Vec::new(),
             text_color_stack: Vec::new(),
         }
     }
@@ -1903,6 +1912,14 @@ impl Context {
                 fallback(self, msg);
             }
         }
+    }
+
+    /// Reserve the next interaction ID and emit a marker command.
+    pub(crate) fn next_interaction_id(&mut self) -> usize {
+        let id = self.interaction_count;
+        self.interaction_count += 1;
+        self.commands.push(Command::InteractionMarker(id));
+        id
     }
 
     /// Allocate a click/hover interaction slot and return the [`Response`].
@@ -2419,6 +2436,25 @@ mod tests {
 
         assert!(!first_modal);
         assert!(second_modal);
+    }
+
+    #[test]
+    fn screen_helper_renders_only_current_screen() {
+        let mut backend = TestBackend::new(24, 3);
+        let screens = ScreenState::new("settings");
+
+        backend.render(|ui| {
+            ui.screen("home", &screens, |ui| {
+                ui.text("Home Screen");
+            });
+            ui.screen("settings", &screens, |ui| {
+                ui.text("Settings Screen");
+            });
+        });
+
+        let rendered = backend.to_string();
+        assert!(rendered.contains("Settings Screen"));
+        assert!(!rendered.contains("Home Screen"));
     }
 
     fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {

@@ -1,0 +1,7 @@
+---
+source: tests/snapshots.rs
+expression: tb.to_string_trimmed()
+---
+Top
+────────────────────────────────────────
+Bottom

@@ -709,8 +709,7 @@ impl Context {
             state.scroll_offset = cursor_vrow + 1 - visible_rows as usize;
         }
 
-        let interaction_id = self.interaction_count;
-        self.interaction_count += 1;
+        let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
         self.commands.push(Command::BeginContainer {
@@ -819,7 +818,7 @@ mod tests {
 
         let events = EventBuilder::new().key('h').key('e').key('l').build();
         backend.run_with_events(events, |ui| {
-            ui.text_input(&mut input);
+            let _ = ui.text_input(&mut input);
         });
 
         backend.assert_contains("hello");
@@ -841,7 +840,7 @@ mod tests {
             .key_code(KeyCode::Tab)
             .build();
         backend.run_with_events(events, |ui| {
-            ui.text_input(&mut input);
+            let _ = ui.text_input(&mut input);
         });
 
         assert_eq!(input.value, "hello");
@@ -855,7 +854,7 @@ mod tests {
         input.set_suggestions(vec!["hello".into(), "help".into(), "world".into()]);
 
         backend.render(|ui| {
-            ui.text_input(&mut input);
+            let _ = ui.text_input(&mut input);
         });
 
         let rendered = backend.to_string_trimmed();

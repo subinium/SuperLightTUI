@@ -81,6 +81,7 @@ pub(crate) enum Command {
         grow: u16,
     },
     FocusMarker(usize),
+    InteractionMarker(usize),
     RawDraw {
         draw_id: usize,
         constraints: Constraints,
@@ -133,6 +134,7 @@ pub(crate) struct LayoutNode {
     segments: Option<Vec<(String, Style)>>,
     cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
     pub(crate) focus_id: Option<usize>,
+    pub(crate) interaction_id: Option<usize>,
     link_url: Option<String>,
     group_name: Option<String>,
     overlays: Vec<OverlayLayer>,
@@ -196,6 +198,7 @@ impl LayoutNode {
             segments: None,
             cached_wrapped_segments: None,
             focus_id: None,
+            interaction_id: None,
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
@@ -242,6 +245,7 @@ impl LayoutNode {
             segments: Some(segments),
             cached_wrapped_segments: None,
             focus_id: None,
+            interaction_id: None,
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
@@ -278,6 +282,7 @@ impl LayoutNode {
             segments: None,
             cached_wrapped_segments: None,
             focus_id: None,
+            interaction_id: None,
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
@@ -314,6 +319,7 @@ impl LayoutNode {
             segments: None,
             cached_wrapped_segments: None,
             focus_id: None,
+            interaction_id: None,
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
@@ -698,10 +704,15 @@ fn build_children(
     stop_on_end_overlay: bool,
 ) {
     let mut pending_focus_id: Option<usize> = None;
+    let mut pending_interaction_id: Option<usize> = None;
     while *pos < commands.len() {
         match &commands[*pos] {
             Command::FocusMarker(id) => {
                 pending_focus_id = Some(*id);
+                *pos += 1;
+            }
+            Command::InteractionMarker(id) => {
+                pending_interaction_id = Some(*id);
                 *pos += 1;
             }
             Command::Text {
@@ -758,6 +769,7 @@ fn build_children(
                 );
                 node.link_url = Some(url.clone());
                 node.focus_id = pending_focus_id.take();
+                node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);
                 *pos += 1;
             }
@@ -797,6 +809,7 @@ fn build_children(
                     },
                 );
                 node.focus_id = pending_focus_id.take();
+                node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name.clone();
                 *pos += 1;
                 build_children(&mut node, commands, pos, overlays, false);
@@ -834,6 +847,7 @@ fn build_children(
                 node.is_scrollable = true;
                 node.scroll_offset = *scroll_offset;
                 node.focus_id = pending_focus_id.take();
+                node.interaction_id = pending_interaction_id.take();
                 *pos += 1;
                 build_children(&mut node, commands, pos, overlays, false);
                 parent.children.push(node);
@@ -842,6 +856,7 @@ fn build_children(
                 *pos += 1;
                 let mut overlay_node =
                     LayoutNode::container(Direction::Column, default_container_config());
+                overlay_node.interaction_id = pending_interaction_id.take();
                 build_children(&mut overlay_node, commands, pos, overlays, true);
                 overlays.push(OverlayLayer {
                     node: overlay_node,
@@ -890,6 +905,7 @@ fn build_children(
                     segments: None,
                     cached_wrapped_segments: None,
                     focus_id: pending_focus_id.take(),
+                    interaction_id: None,
                     link_url: None,
                     group_name: None,
                     overlays: Vec::new(),
@@ -936,7 +952,7 @@ pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
     let mut data = FrameData::default();
 
     // scroll_infos, scroll_rects, focus_rects process the root node itself.
-    // hit_areas, group_rects, content_areas, focus_groups skip the root.
+    // group_rects, content_areas, focus_groups skip the root.
     if node.is_scrollable {
         let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
         data.scroll_infos.push((node.content_height, viewport_h));
@@ -950,6 +966,17 @@ pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
                 Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
             ));
         }
+    }
+    if let Some(id) = node.interaction_id {
+        let rect = if node.pos.1 + node.size.1 > 0 {
+            Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1)
+        } else {
+            Rect::new(0, 0, 0, 0)
+        };
+        if id >= data.hit_areas.len() {
+            data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
+        }
+        data.hit_areas[id] = rect;
     }
 
     let child_offset = if node.is_scrollable {
@@ -987,18 +1014,22 @@ fn collect_all_inner(
             .push(Rect::new(node.pos.0, adj_y, node.size.0, node.size.1));
     }
 
-    // --- hit_areas (container or link) ---
-    if matches!(node.kind, NodeKind::Container(_)) || node.link_url.is_some() {
-        if node.pos.1 + node.size.1 > y_offset {
-            data.hit_areas.push(Rect::new(
+    // --- hit_areas (indexed by interaction_id) ---
+    if let Some(id) = node.interaction_id {
+        let rect = if node.pos.1 + node.size.1 > y_offset {
+            Rect::new(
                 node.pos.0,
                 node.pos.1.saturating_sub(y_offset),
                 node.size.0,
                 node.size.1,
-            ));
+            )
         } else {
-            data.hit_areas.push(Rect::new(0, 0, 0, 0));
+            Rect::new(0, 0, 0, 0)
+        };
+        if id >= data.hit_areas.len() {
+            data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }
+        data.hit_areas[id] = rect;
     }
 
     // --- group_rects ---

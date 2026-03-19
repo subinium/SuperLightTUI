@@ -181,6 +181,7 @@ impl TestBackend {
         );
         f(&mut ctx);
         ctx.render_notifications();
+        ctx.emit_pending_tooltips();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
         let mut deferred = ctx.deferred_draws;
@@ -221,6 +222,7 @@ impl TestBackend {
         ctx.process_focus_keys();
         f(&mut ctx);
         ctx.render_notifications();
+        ctx.emit_pending_tooltips();
         let mut tree = layout::build_tree(&ctx.commands);
         self.hook_states = ctx.hook_states;
         let mut deferred = ctx.deferred_draws;

@@ -1,0 +1,9 @@
+---
+source: tests/snapshots.rs
+expression: tb.to_string_trimmed()
+---
+Name  │ Role   │ Status
+──────┼────────┼───────
+Alice │ Admin  │ Active
+Bob   │ Editor │ Away
+Cara  │ Viewer │ Active

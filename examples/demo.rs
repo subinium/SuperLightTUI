@@ -1,10 +1,10 @@
 use slt::{
-    AlertLevel, Align, ApprovalAction, Border, BorderSides, Breakpoint, Color, CommandPaletteState,
-    Context, ContextItem, FilePickerState, FormField, FormState, HalfBlockImage, Justify, KeyCode,
-    KeyMap, KeyModifiers, ListState, MultiSelectState, PaletteCommand, RadioState, RunConfig,
-    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
-    TextInputState, TextareaState, Theme, ToastLevel, ToastState, ToolApprovalState, TreeNode,
-    TreeState, Trend,
+    AlertLevel, Align, ApprovalAction, Border, BorderSides, Breakpoint, CalendarState, Color,
+    CommandPaletteState, Context, ContextItem, FilePickerState, FormField, FormState,
+    HalfBlockImage, Justify, KeyCode, KeyMap, KeyModifiers, ListState, MultiSelectState,
+    PaletteCommand, RadioState, RunConfig, ScreenState, ScrollState, SelectState, SpinnerState,
+    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme, ToastLevel,
+    ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };
 
 fn main() -> std::io::Result<()> {
@@ -21,6 +21,8 @@ fn main() -> std::io::Result<()> {
         "v0.9.4",
         "v0.11.0",
         "v0.12.10",
+        "v0.13",
+        "v0.13.2",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -183,6 +185,40 @@ fn main() -> std::io::Result<()> {
         .bind_code(KeyCode::Right, "slider +")
         .bind('y', "confirm yes")
         .bind('n', "confirm no");
+    let mut v13_show_modal = false;
+    let mut v13_modal_message = String::from("No modal interaction yet");
+    let mut v13_palette = CommandPaletteState::new(vec![
+        PaletteCommand::new("Build", "Run cargo check"),
+        PaletteCommand::new("Test", "Run cargo test"),
+        PaletteCommand::new("Format", "Run cargo fmt"),
+    ]);
+    let mut v13_palette_last = String::from("None");
+    let mut v13_debug_input = TextInputState::with_placeholder("Type and mutate this state");
+    v13_debug_input.value = "seed".to_string();
+    let mut v13_list_a = ListState::new(vec!["Alpha", "Beta", "Gamma", "Delta"]);
+    let mut v13_list_b = v13_list_a.clone();
+    let mut v132_zebra_table = TableState::new(
+        vec!["Name", "Role", "Status"],
+        vec![
+            vec!["Alice", "Engineer", "Active"],
+            vec!["Bob", "Designer", "Away"],
+            vec!["Carol", "PM", "Active"],
+            vec!["Dave", "QA", "Busy"],
+            vec!["Eve", "DevOps", "Active"],
+        ],
+    );
+    v132_zebra_table.zebra = true;
+    let mut v132_calendar = CalendarState::new();
+    let mut v132_screens = ScreenState::new("main");
+    let mut v132_fuzzy_palette = CommandPaletteState::new(vec![
+        PaletteCommand::new("Save File", "Save the current document"),
+        PaletteCommand::new("Open Project", "Open a project folder"),
+        PaletteCommand::new("Find Replace", "Search and replace text"),
+        PaletteCommand::new("Git Commit", "Commit staged changes"),
+        PaletteCommand::new("Run Tests", "Execute test suite"),
+        PaletteCommand::new("Toggle Theme", "Switch dark/light mode"),
+    ]);
+    let mut v132_fuzzy_last = String::from("None");
 
     slt::run_with(
         RunConfig {
@@ -321,6 +357,24 @@ fn main() -> std::io::Result<()> {
                                 &v11_keymap,
                             ),
                             11 => render_v01210(ui),
+                            12 => render_v013(
+                                ui,
+                                &mut v13_show_modal,
+                                &mut v13_modal_message,
+                                &mut v13_palette,
+                                &mut v13_palette_last,
+                                &mut v13_debug_input,
+                                &mut v13_list_a,
+                                &mut v13_list_b,
+                            ),
+                            13 => render_v0132(
+                                ui,
+                                &mut v132_zebra_table,
+                                &mut v132_calendar,
+                                &mut v132_screens,
+                                &mut v132_fuzzy_palette,
+                                &mut v132_fuzzy_last,
+                            ),
                             _ => {}
                         });
 
@@ -1552,6 +1606,302 @@ fn render_v080(
             }
         });
         ui.text("use_memo recomputes only when deps change").dim();
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_v013(
+    ui: &mut Context,
+    show_modal: &mut bool,
+    modal_message: &mut String,
+    palette: &mut CommandPaletteState,
+    palette_last: &mut String,
+    debug_input: &mut TextInputState,
+    list_a: &mut ListState,
+    list_b: &mut ListState,
+) {
+    let theme = *ui.theme();
+    section(ui, "v0.13 FEATURES (v0.12.12 - v0.13.1)");
+
+    card(ui, |ui| {
+        ui.text("1) Modal with Response + Focus Trap")
+            .bold()
+            .fg(theme.primary);
+        ui.text("Open modal, then press Tab: focus stays inside modal buttons")
+            .fg(theme.surface_text);
+        if ui.button("Open v0.13 modal").clicked {
+            *show_modal = true;
+            *modal_message = "Modal opened".to_string();
+        }
+        ui.text(format!("Status: {modal_message}"))
+            .fg(theme.surface_text);
+
+        if *show_modal {
+            let r = ui.modal(|ui| {
+                let _ = ui.bordered(Border::Rounded).pad(2).col(|ui| {
+                    ui.text("Modal with Focus Trap").bold().fg(theme.primary);
+                    ui.text("Tab only cycles within this modal")
+                        .fg(theme.surface_text);
+                    if ui.button("Action 1").clicked {
+                        *modal_message = "Action 1 clicked".to_string();
+                    }
+                    if ui.button("Close").clicked {
+                        *show_modal = false;
+                        *modal_message = "Closed by button".to_string();
+                    }
+                });
+            });
+            if r.clicked {
+                *show_modal = false;
+                *modal_message = "Modal clicked! (backdrop)".to_string();
+            }
+        }
+    });
+
+    let _ = ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("2) VS16 Emoji Rendering")
+                .bold()
+                .fg(theme.secondary);
+            ui.text("Emoji + trailing text should not leave artifacts")
+                .fg(theme.surface_text);
+            ui.line(|ui| {
+                ui.text("👍 Good ");
+                ui.text("❤️ Love ");
+                ui.text("🎉 Party ");
+                ui.text("✨ Sparkle ");
+                ui.text("🔥 Fire");
+            });
+            ui.text("Each emoji is followed by ASCII text for cell-boundary verification")
+                .dim();
+        });
+
+        card(ui, |ui| {
+            ui.text("3) Command Palette last_selected")
+                .bold()
+                .fg(theme.accent);
+            if ui.button("Open command palette").clicked {
+                palette.open = true;
+            }
+            let _ = ui.command_palette(palette);
+            if let Some(idx) = palette.last_selected {
+                *palette_last = palette
+                    .commands
+                    .get(idx)
+                    .map(|cmd| cmd.label.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+            }
+            ui.text(format!("Last selected: {palette_last}"))
+                .fg(theme.surface_text);
+        });
+    });
+
+    let _ = ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("4) State Debug / Clone").bold().fg(theme.primary);
+            ui.text("TextInputState mutation + Debug output")
+                .fg(theme.surface_text);
+            let _ = ui.text_input(debug_input);
+            let _ = ui.row(|ui| {
+                if ui.button("Append !").clicked {
+                    debug_input.value.push('!');
+                }
+                if ui.button("Clear").clicked {
+                    debug_input.value.clear();
+                }
+            });
+            ui.text(format!("Debug: {debug_input:?}")).dim().wrap();
+        });
+
+        card(ui, |ui| {
+            ui.text("ListState clone independence")
+                .bold()
+                .fg(theme.secondary);
+            ui.text("Both states started from one clone; selections can diverge")
+                .fg(theme.surface_text);
+            let _ = ui.row(|ui| {
+                let _ = ui.container().grow(1).col(|ui| {
+                    ui.text("List A").bold().fg(theme.primary);
+                    let _ = ui.list(list_a);
+                    ui.text(format!(
+                        "selected: {}",
+                        list_a.selected_item().unwrap_or("-")
+                    ))
+                    .dim();
+                });
+                let _ = ui.container().grow(1).col(|ui| {
+                    ui.text("List B (cloned)").bold().fg(theme.secondary);
+                    let _ = ui.list(list_b);
+                    ui.text(format!(
+                        "selected: {}",
+                        list_b.selected_item().unwrap_or("-")
+                    ))
+                    .dim();
+                });
+            });
+        });
+    });
+
+    card(ui, |ui| {
+        ui.text("5) #[must_use] Response").bold().fg(theme.warning);
+        ui.text("Response values are now #[must_use]. Bind intentionally ignored results with `let _ = ...`.")
+            .fg(theme.surface_text)
+            .wrap();
+    });
+}
+
+fn render_v0132(
+    ui: &mut Context,
+    zebra_table: &mut TableState,
+    calendar: &mut CalendarState,
+    screens: &mut ScreenState,
+    fuzzy_palette: &mut CommandPaletteState,
+    fuzzy_last: &mut String,
+) {
+    let theme = *ui.theme();
+    section(ui, "v0.13.2 FEATURES");
+
+    card(ui, |ui| {
+        ui.text("1) Table Zebra Striping").bold().fg(theme.primary);
+        ui.text("Alternating row backgrounds for readability")
+            .fg(theme.surface_text);
+        let _ = ui.table(zebra_table);
+    });
+
+    let _ = ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("2) Calendar Widget").bold().fg(theme.secondary);
+            ui.text("Arrow keys to move cursor, Enter to select, h/l for month (needs focus via Tab)")
+                .fg(theme.surface_text);
+            let _ = ui.row(|ui| {
+                if ui.button("◀ Prev Month").clicked {
+                    calendar.prev_month();
+                }
+                if ui.button("Next Month ▶").clicked {
+                    calendar.next_month();
+                }
+            });
+            let _ = ui.calendar(calendar);
+            if let Some((y, m, d)) = calendar.selected_date() {
+                ui.text(format!("Selected: {y}-{m:02}-{d:02}"))
+                    .fg(theme.primary);
+            } else {
+                ui.text("No date selected").dim();
+            }
+        });
+
+        card(ui, |ui| {
+            ui.text("3) Fuzzy Command Search").bold().fg(theme.accent);
+            ui.text("Open palette, then type partial chars. 'sf' → Save File, 'gc' → Git Commit, 'rt' → Run Tests")
+                .fg(theme.surface_text);
+            ui.text("Fuzzy scoring: characters match in order but can skip")
+                .fg(theme.surface_text);
+            if ui.button("Open Fuzzy Palette").clicked {
+                fuzzy_palette.open = true;
+            }
+            let _ = ui.command_palette(fuzzy_palette);
+            if let Some(idx) = fuzzy_palette.last_selected {
+                *fuzzy_last = fuzzy_palette
+                    .commands
+                    .get(idx)
+                    .map(|c| c.label.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+            }
+            ui.text(format!("Last: {fuzzy_last}"))
+                .fg(theme.surface_text);
+        });
+    });
+
+    card(ui, |ui| {
+        ui.text("4) Tooltip").bold().fg(theme.primary);
+        ui.text("Hover over buttons to see tooltip popups")
+            .fg(theme.surface_text);
+        let _ = ui.row(|ui| {
+            let _ = ui.button("Save");
+            ui.tooltip("Save the current document to disk");
+            let _ = ui.button("Delete");
+            ui.tooltip("Permanently delete the selected item");
+            let _ = ui.button("Export");
+            ui.tooltip("Export data as CSV or JSON format");
+        });
+    });
+
+    card(ui, |ui| {
+        ui.text("5) Screens / Navigation Stack")
+            .bold()
+            .fg(theme.secondary);
+        ui.text(format!(
+            "Current: {} (depth: {})",
+            screens.current(),
+            screens.depth()
+        ))
+        .fg(theme.surface_text);
+
+        let screens_view = screens.clone();
+        ui.screen("main", &screens_view, |ui| {
+            ui.text("This is the main screen").fg(theme.surface_text);
+            let _ = ui.row(|ui| {
+                if ui.button("-> Settings").clicked {
+                    screens.push("settings");
+                }
+                if ui.button("-> Profile").clicked {
+                    screens.push("profile");
+                }
+            });
+        });
+
+        ui.screen("settings", &screens_view, |ui| {
+            ui.text("Settings screen").fg(theme.surface_text);
+            if ui.button("<- Back").clicked {
+                screens.pop();
+            }
+        });
+
+        ui.screen("profile", &screens_view, |ui| {
+            ui.text("Profile screen").fg(theme.surface_text);
+            let _ = ui.row(|ui| {
+                if ui.button("<- Back").clicked {
+                    screens.pop();
+                }
+                if ui.button("-> Edit Profile").clicked {
+                    screens.push("edit_profile");
+                }
+            });
+        });
+
+        ui.screen("edit_profile", &screens_view, |ui| {
+            ui.text("Edit Profile (nested screen)")
+                .fg(theme.surface_text);
+            if ui.button("<- Back to Profile").clicked {
+                screens.pop();
+            }
+        });
+    });
+
+    let _ = ui.row(|ui| {
+        card(ui, |ui| {
+            ui.text("6) Sixel Image Protocol").bold().fg(theme.accent);
+            ui.text("Non-Kitty terminal image support")
+                .fg(theme.surface_text);
+            ui.text("Requires Sixel-capable terminal (xterm, foot, mlterm). Shows placeholder on unsupported terminals.")
+                .fg(theme.surface_text)
+                .wrap();
+            ui.text("ui.sixel_image(&rgba, w, h, cols, rows)").dim();
+            let _ = ui.code_block_numbered("// Render only on verified Sixel terminals\nlet _ = ui.sixel_image(&rgba, w, h, cols, rows);");
+        });
+
+        card(ui, |ui| {
+            ui.text("7) Static Output Mode").bold().fg(theme.primary);
+            ui.text("Fixed logs above + dynamic TUI below")
+                .fg(theme.surface_text);
+            let _ = ui.container().min_w(56).col(|ui| {
+                let _ = ui.code_block_numbered(
+                    "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n  out.println(\"Building...\");\n  ui.progress(0.6);\n});",
+                );
+            });
+            ui.text("CLI tool pattern: scrolling output + live status")
+                .dim();
+        });
     });
 }
 
