@@ -13,6 +13,8 @@
 
 [Crate] · [Docs] · [Examples] · [Contributing]
 
+**English** · [中文](docs/README.zh-CN.md) · [Español](docs/README.es.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md)
+
 </div>
 
 ## Showcase
