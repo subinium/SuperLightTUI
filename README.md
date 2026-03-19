@@ -105,7 +105,7 @@ ui.container()
 
 ## Widgets
 
-50+ built-in widgets, zero boilerplate:
+55+ built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -164,6 +164,12 @@ ui.empty_state_action("Empty", "desc", "Add"); // empty state with button
 // v0.10 additions
 ui.consume_key('x');                         // explicit event consumption
 ui.consume_key_code(KeyCode::Enter);         // consume special keys
+// v0.13 additions
+ui.tooltip("Save the current file");         // hover tooltip popup
+ui.calendar(&mut cal);                       // date picker with month nav
+ui.screen("home", &screens, |ui| {});        // screen routing stack
+ui.sixel_image(&rgba, w, h, cols, rows);     // sixel image (non-Kitty)
+ui.confirm("Delete?", &mut yes);             // yes/no with mouse support
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -518,6 +524,87 @@ Serialize/deserialize `Style`, `Color`, `Theme`, `Border`, `Padding`, `Margin`, 
 </details>
 
 <details>
+<summary><b>Tooltip</b></summary>
+
+```rust
+if ui.button("Save").clicked { save(); }
+ui.tooltip("Save the current document to disk");
+```
+
+Call `tooltip()` after any widget. Shows a bordered popup when the widget is hovered. Deferred overlay rendering keeps hit detection stable.
+
+</details>
+
+<details>
+<summary><b>Calendar</b></summary>
+
+```rust
+let mut cal = CalendarState::new();
+ui.calendar(&mut cal);
+if let Some((y, m, d)) = cal.selected_date() {
+    println!("Selected: {y}-{m:02}-{d:02}");
+}
+```
+
+Month grid with arrow key navigation, Enter to select, h/l for prev/next month. Mouse click on days and navigation arrows.
+
+</details>
+
+<details>
+<summary><b>Screens / Routing</b></summary>
+
+```rust
+let mut screens = ScreenState::new("home");
+
+ui.screen("home", &screens, |ui| {
+    ui.text("Home");
+    if ui.button("Settings").clicked { screens.push("settings"); }
+});
+ui.screen("settings", &screens, |ui| {
+    if ui.button("Back").clicked { screens.pop(); }
+});
+```
+
+Push/pop navigation stack. `ui.screen()` renders content only when the named screen is active.
+
+</details>
+
+<details>
+<summary><b>Static Output</b></summary>
+
+```rust
+let mut output = StaticOutput::new();
+slt::run_static(&mut output, 5, |ui| {
+    output.println("Building crate...");
+    ui.progress(0.6);
+});
+```
+
+CLI tool pattern: scrolling logs above + live interactive TUI below. Uses `InlineTerminal` internally.
+
+</details>
+
+<details>
+<summary><b>Fuzzy Search</b></summary>
+
+Command palette now uses fuzzy matching — characters match in order but can skip. "sf" matches "Save File", "gc" matches "Git Commit". Falls back to substring matching when no fuzzy results found.
+
+</details>
+
+<details>
+<summary><b>Table Zebra</b></summary>
+
+```rust
+let mut table = TableState::new(headers, rows);
+table.zebra = true;
+ui.table(&mut table);
+```
+
+Alternating row backgrounds for readability. Even rows use `theme.surface`, odd rows use `theme.surface_hover`.
+
+</details>
+
+<details>
 <summary><b>Image Rendering</b></summary>
 
 ```sh
@@ -534,6 +621,8 @@ ui.image(&img);
 
 Half-block (▀▄) image rendering. Also works without the `image` feature via `HalfBlockImage::from_rgb()`.
 
+**Sixel protocol** (v0.13.2): `ui.sixel_image(&rgba, w, h, cols, rows)` for pixel-perfect images on xterm, foot, mlterm. Falls back to placeholder on unsupported terminals.
+
 </details>
 
 <details>
@@ -548,7 +637,7 @@ Half-block (▀▄) image rendering. Also works without the `image` feature via 
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.12", features = ["full"] }
+superlighttui = { version = "0.13", features = ["full"] }
 ```
 
 </details>
