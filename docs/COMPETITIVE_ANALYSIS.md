@@ -1,6 +1,6 @@
 # SLT Competitive Analysis & Roadmap
 
-**Date**: 2026-03-19 (v0.13.2)
+**Date**: 2026-03-19 (v0.14.1)
 **Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
 
 ---
@@ -14,7 +14,7 @@
 | Rendering Model | Immediate (closure) | Immediate (Widget trait) | Retained (Event + CSS) | Component (React) | Elm (MVU) |
 | Built-in Widgets | **116+** | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
 | Ecosystem | Small | **2,928 deps, 50+ widget crates** | Moderate | **3.9K deps** | **25K deps** |
-| Dependencies | 2 (crossterm, unicode-width) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
+| Dependencies | 2 (crossterm optional, unicode-width) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
 
 ---
 
@@ -30,6 +30,7 @@
 | **Theme Presets** | 7 built-in + builder + runtime switching | Ratatui: no theme concept, manual styling only |
 | **Chart Widgets** | 8 types (bar, line, area, scatter, histogram, candlestick, heatmap, sparkline) | Ratatui: 3 types, others: 0-1 |
 | **Image Protocols** | 3 built-in (HalfBlock, Kitty, Sixel) | Ratatui: via ratatui-image (3rd party) |
+| **Syntax Highlighting** | Tree-sitter AST-accurate, 15 languages built-in | Textual: tree-sitter. Ratatui/Ink/Bubbletea: none built-in |
 | **Testing Suite** | TestBackend + EventBuilder + proptest + criterion + insta | Most comprehensive among all TUI frameworks |
 | **Widget Count** | 116+ built-in | Ratatui: ~15, Ink: ~18, Bubbletea: ~12, Textual: ~60 |
 
@@ -41,26 +42,17 @@
 
 | Gap | Impact | Competitor Reference |
 |---|---|---|
-| **Single backend (crossterm only)** | Cannot target WASM, embedded, egui, Bevy | Ratatui: 6 backends (crossterm, termion, termwiz, WASM via ratzilla, embedded via mousefood, Bevy/egui) |
 | **No plugin system** | Cannot grow a 3rd-party widget ecosystem | Ratatui: Widget trait enables 50+ community crates |
 | **No event bubbling** | Complex widget composition requires manual event forwarding | Textual: DOM-like message propagation |
 | **No CSS/declarative styling** | Style reuse limited to code-level composition | Textual: `.tcss` files with hot-reload |
-| **O(n) hit testing** | Mouse performance degrades with 1000+ widgets | Should be HashMap for O(1) lookup |
 
 ### Missing Features (Implementable)
 
 | Feature | Source | Difficulty | Notes |
 |---|---|---|---|
-| Gradient text | Ink (ink-gradient) | Easy | `Color::blend()` already exists |
-| BigText (ASCII art) | Ink (ink-big-text) | Easy | font8x8 data + `draw()` callback |
-| Timer/Stopwatch | Bubbletea (Bubbles) | Easy | Wrapper over animation system |
-| QR code | tui-qrcode | Easy | `draw()` + `qrcode` crate |
-| Background color query | Bubbletea v2 | Medium | OSC 11 sequence |
-| RichLog (log viewer) | Textual | Medium | Essential for AI/CLI apps |
-| DirectoryTree | Textual | Medium | Extend existing FilePicker |
-| TextArea syntax highlight | Textual (tree-sitter) | Hard | Editable code widget, killer feature |
-| Accessibility (screen reader) | **Nobody has this** | Hard | First-mover opportunity |
-| SSH server mode | Bubbletea (Wish) | Hard | Remote TUI serving |
+| TextArea + syntax highlight | Textual (tree-sitter) | Hard | `highlight_code()` exists (v0.14.1), needs TextareaState integration with incremental parsing |
+| Accessibility (screen reader) | **Nobody has this** | Hard | First-mover opportunity, terminal accessibility protocol absent |
+| SSH server mode | Bubbletea (Wish) | Hard | Backend trait ready, needs `russh` companion crate |
 
 ---
 
@@ -83,7 +75,6 @@
 |---|---|---|---|---|---|
 | State model | Closure + hooks | Manual struct | Reactive attrs | React hooks | Elm MVU |
 | Hooks | ✅ use_state, use_memo | ❌ | ❌ | ✅ Full React | ❌ |
-| Reactive binding | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Event bubbling | ❌ | ❌ | ✅ | ✅ | ❌ |
 | Error boundary | ✅ | ❌ | ❌ | ✅ | ❌ |
 | Custom widgets | ✅ Widget trait | ✅ Widget trait | ✅ Class inheritance | ✅ React components | ✅ Model interface |
@@ -103,8 +94,8 @@
 
 | Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
 |---|---|---|---|---|---|
-| Terminal backends | crossterm | crossterm, termion, termwiz | Built-in | Built-in | Built-in |
-| WASM/Browser | ❌ | ✅ ratzilla | ✅ textual serve | ❌ | ❌ |
+| Terminal backends | crossterm (optional) | crossterm, termion, termwiz | Built-in | Built-in | Built-in |
+| WASM/Browser | ✅ slt-wasm | ✅ ratzilla | ✅ textual serve | ❌ | ❌ |
 | Embedded (no_std) | ❌ | ✅ v0.30 | ❌ | ❌ | ❌ |
 | SSH server | ❌ | ❌ | ✅ | ❌ | ✅ Wish |
 | Game engine | ❌ | ✅ Bevy, egui | ❌ | ❌ | ❌ |
@@ -120,55 +111,76 @@
 | Kitty Graphics | ✅ built-in | ✅ ratatui-image | ❌ | ❌ | ❌ |
 | Sixel | ✅ built-in | ✅ ratatui-image | ❌ | ❌ | ❌ |
 | OSC 8 links | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OSC 52 clipboard | ✅ write | ❌ | ❌ | ❌ | ✅ v2 read+write |
-| Background color query | ❌ | ❌ | ❌ | ❌ | ✅ v2 |
+| OSC 52 clipboard | ✅ read+write | ❌ | ❌ | ❌ | ✅ v2 read+write |
+| OSC 11 color scheme | ✅ | ❌ | ❌ | ❌ | ✅ v2 |
+
+### Syntax Highlighting
+
+| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
+|---|---|---|---|---|---|
+| Built-in highlighting | ✅ 15 languages (tree-sitter) | ❌ | ✅ tree-sitter | ❌ | ❌ |
+| Language-aware code blocks | ✅ `code_block_lang()` | ❌ | ✅ | ❌ | ❌ |
+| Streaming code highlight | ✅ `streaming_markdown()` | ❌ | ❌ | ❌ | ❌ |
+| Per-language feature gates | ✅ `syntax-rust`, etc. | N/A | N/A | N/A | N/A |
 
 ---
 
-## Prioritized Development Roadmap
+## Completed Roadmap (v0.14.0–v0.14.1)
 
-### P0 — Ecosystem Foundation (v0.14)
+### v0.14.0 — Ecosystem Foundation
 
-| ID | Feature | Rationale |
+| ID | Feature | Status |
 |---|---|---|
-| P0-1 | **Backend trait abstraction** | crossterm-only → trait separation. Enables WASM/termion/egui backends. Largest structural gap vs ratatui |
-| P0-2 | **WASM backend** | Browser demos = adoption multiplier. ratzilla proves it's viable |
+| P0-1 | Backend trait abstraction (crossterm optional) | ✅ |
+| P0-2 | WASM backend (slt-wasm companion crate) | ✅ |
+| P1-1 | Gradient text | ✅ |
+| P1-2 | BigText (ASCII art) | ✅ |
+| P1-3 | Timer display | ✅ |
+| P1-4 | RichLog widget | ✅ |
+| P1-5 | Background color query (OSC 11) | ✅ |
+| — | QR code widget | ✅ |
+| — | DirectoryTree widget | ✅ |
+| — | Event constructors (crossterm-free) | ✅ |
+| — | OSC 52 clipboard read | ✅ |
 
-### P1 — Competitive Parity (v0.14–0.15)
+### v0.14.1 — Syntax Highlighting
+
+| ID | Feature | Status |
+|---|---|---|
+| P2-1 | Tree-sitter syntax highlighting (15 languages) | ✅ |
+| — | `code_block_lang()` / `code_block_numbered_lang()` APIs | ✅ |
+| — | `streaming_markdown()` code block highlighting upgrade | ✅ |
+| — | `markdown()` fenced code block fix | ✅ |
+
+---
+
+## Remaining Roadmap
+
+### P1 — Ecosystem Growth (v0.15)
 
 | ID | Feature | Difficulty | Rationale |
 |---|---|---|---|
-| P1-1 | Gradient text | Easy | High visual impact, `Color::blend()` exists |
-| P1-2 | BigText (ASCII art) | Easy | Dashboard/splash essential. font8x8 + `draw()` |
-| P1-3 | Timer/Stopwatch | Easy | Simple wrapper over animation system |
-| P1-4 | RichLog widget | Medium | Essential for AI/CLI apps. No alternative |
-| P1-5 | Background color query | Medium | Auto dark/light mode via OSC 11 |
-| P1-6 | Plugin/extension system | Medium | Prerequisite for 3rd-party ecosystem growth |
+| P1-6 | Plugin/extension system | Medium | pub API surface decision. Prerequisite for 3rd-party ecosystem |
 
 ### P2 — Differentiation (v0.15+)
 
 | ID | Feature | Difficulty | Rationale |
 |---|---|---|---|
-| P2-1 | TextArea syntax highlighting | Hard | tree-sitter integration. Editable code widget |
-| P2-2 | Accessibility (screen reader) | Hard | Nobody has this. First-mover advantage |
-| P2-3 | SSH server mode | Hard | Remote TUI serving |
-| P2-4 | Reactive binding | Medium | Cross-widget auto-sync |
-| P2-5 | CSS-like style files | Hard | Hot-reload = Textual-tier DX |
+| P2-2 | Accessibility (screen reader) | Hard | Nobody has this. First-mover advantage. Terminal protocol absent |
+| P2-3 | SSH server mode | Hard | Backend trait ready. `russh` + slt-ssh companion crate |
+| P2-5 | CSS-like style files | Hard | Hot-reload DX. Conflicts with immediate mode philosophy |
 
-### Quick Wins (Implementable Immediately)
+### Removed from Roadmap
 
-| Feature | Approach | Estimated Time |
+| ID | Feature | Reason |
 |---|---|---|
-| Gradient text | `Color::blend()` + per-character fg | 1 hour |
-| BigText | font8x8 data + `draw()` callback | 2 hours |
-| Timer/Stopwatch | Wrapper over `Tween` | 1 hour |
-| QR code | `qrcode` crate + `draw()` | 1 hour |
-| Background color query | OSC 11 sequence + response parsing | 2 hours |
+| ~~P2-4~~ | ~~Reactive binding~~ | Violates Principle 2 ("Your Closure IS the App"). Permanently removed |
+| ~~O(n) hit testing~~ | ~~HashMap conversion~~ | Already O(1) — original analysis was incorrect |
 
 ---
 
 ## Key Insight
 
-SLT is the **most widget-rich, easiest-to-start TUI framework** across all languages. But to become a **platform** (like ratatui), it needs Backend trait abstraction — the single change that unlocks WASM, embedded, egui, and 3rd-party ecosystem growth.
+SLT is the **most widget-rich, easiest-to-start TUI framework** across all languages, now with **multi-backend support** (crossterm, WASM) and **AST-accurate syntax highlighting**. The remaining gap to becoming a **platform** is the plugin/extension system — enabling 3rd-party widget crates to grow the ecosystem organically.
 
-**One-line summary**: SLT has the most widgets and the best DX. It needs the backend abstraction to run everywhere.
+**One-line summary**: SLT has the most widgets, the best DX, multi-backend, and tree-sitter highlighting. It needs the plugin system to unlock ecosystem growth.
