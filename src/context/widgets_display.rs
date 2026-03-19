@@ -341,7 +341,7 @@ impl Context {
                             break;
                         }
 
-                        let mask = 1u8 << (7 - bit as u8);
+                        let mask = 1u8 << (bit as u8);
                         let upper_on = (upper & mask) != 0;
                         let lower_on = (lower & mask) != 0;
                         let fg = if upper_on { on_color } else { Color::Reset };
