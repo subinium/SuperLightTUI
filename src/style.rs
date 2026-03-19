@@ -71,9 +71,13 @@ pub struct BorderChars {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BorderSides {
+    /// Top border visible.
     pub top: bool,
+    /// Right border visible.
     pub right: bool,
+    /// Bottom border visible.
     pub bottom: bool,
+    /// Left border visible.
     pub left: bool,
 }
 

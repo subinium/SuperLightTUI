@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.2] — 2026-03-19
+
+### Improvements
+
+- **100% doc coverage** — all 101 previously undocumented pub items now have `///` doc comments
+- **`#![warn(missing_docs)]`** enabled crate-wide — future pub items without docs produce compiler warnings
+- **Event safe accessors** — `Event::as_key()`, `Event::as_mouse()`, `Event::as_resize()`, `Event::as_paste()` return `Option` instead of panicking
+
+### Fixes
+
+- **cfg-gate cleanup** — 9 dead-code warnings when building with `--no-default-features` eliminated. `PANIC_HOOK_ONCE`, `update_last_mouse_pos`, `clear_frame_layout_cache`, `sleep_for_fps_cap` now properly gated behind `crossterm` feature. `sixel_image()` split into crossterm/non-crossterm variants.
+
 ## [0.14.1] — 2026-03-19
 
 ### Features

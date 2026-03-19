@@ -462,11 +462,15 @@ pub(crate) use selection::{apply_selection_overlay, extract_selection_text, Sele
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 
+/// Detected terminal color scheme from OSC 11.
 #[cfg(feature = "crossterm")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorScheme {
+    /// Dark background detected.
     Dark,
+    /// Light background detected.
     Light,
+    /// Could not determine the scheme.
     Unknown,
 }
 
@@ -509,6 +513,7 @@ fn read_osc_response(timeout: Duration) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
+/// Query the terminal's background color via OSC 11 and return the detected scheme.
 #[cfg(feature = "crossterm")]
 pub fn detect_color_scheme() -> ColorScheme {
     let mut stdout = io::stdout();
@@ -621,6 +626,7 @@ fn parse_osc52_response(response: &str) -> Option<String> {
     base64_decode(encoded)
 }
 
+/// Read clipboard contents via OSC 52 terminal query.
 #[cfg(feature = "crossterm")]
 pub fn read_clipboard() -> Option<String> {
     let mut stdout = io::stdout();

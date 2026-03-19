@@ -97,6 +97,38 @@ impl Event {
     pub fn paste(text: impl Into<String>) -> Self {
         Event::Paste(text.into())
     }
+
+    /// Returns the key event data if this is a `Key` variant.
+    pub fn as_key(&self) -> Option<&KeyEvent> {
+        match self {
+            Event::Key(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// Returns the mouse event data if this is a `Mouse` variant.
+    pub fn as_mouse(&self) -> Option<&MouseEvent> {
+        match self {
+            Event::Mouse(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Returns `(columns, rows)` if this is a `Resize` variant.
+    pub fn as_resize(&self) -> Option<(u32, u32)> {
+        match self {
+            Event::Resize(w, h) => Some((*w, *h)),
+            _ => None,
+        }
+    }
+
+    /// Returns the pasted text if this is a `Paste` variant.
+    pub fn as_paste(&self) -> Option<&str> {
+        match self {
+            Event::Paste(s) => Some(s),
+            _ => None,
+        }
+    }
 }
 
 /// A keyboard event with key code and modifiers.

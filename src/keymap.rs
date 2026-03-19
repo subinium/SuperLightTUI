@@ -29,10 +29,12 @@ pub struct Binding {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct KeyMap {
+    /// Registered key bindings.
     pub bindings: Vec<Binding>,
 }
 
 impl KeyMap {
+    /// Create an empty key map.
     pub fn new() -> Self {
         Self::default()
     }

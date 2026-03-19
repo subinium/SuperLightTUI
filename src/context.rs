@@ -126,7 +126,9 @@ pub struct Bar {
     pub value: f64,
     /// Bar color. If None, uses theme.primary.
     pub color: Option<Color>,
+    /// Optional text label displayed on the bar.
     pub text_value: Option<String>,
+    /// Optional style for the value text.
     pub value_style: Option<Style>,
 }
 
@@ -148,23 +150,31 @@ impl Bar {
         self
     }
 
+    /// Set the display text for this bar's value.
     pub fn text_value(mut self, text: impl Into<String>) -> Self {
         self.text_value = Some(text.into());
         self
     }
 
+    /// Set the style for the value text.
     pub fn value_style(mut self, style: Style) -> Self {
         self.value_style = Some(style);
         self
     }
 }
 
+/// Configuration for bar chart rendering.
 #[derive(Debug, Clone, Copy)]
 pub struct BarChartConfig {
+    /// Bar direction (horizontal or vertical).
     pub direction: BarDirection,
+    /// Width of each bar in cells.
     pub bar_width: u16,
+    /// Gap between bars in the same group.
     pub bar_gap: u16,
+    /// Gap between bar groups.
     pub group_gap: u16,
+    /// Optional maximum value for scaling.
     pub max_value: Option<f64>,
 }
 
@@ -181,26 +191,31 @@ impl Default for BarChartConfig {
 }
 
 impl BarChartConfig {
+    /// Set the bar direction.
     pub fn direction(&mut self, direction: BarDirection) -> &mut Self {
         self.direction = direction;
         self
     }
 
+    /// Set the width of each bar in cells.
     pub fn bar_width(&mut self, bar_width: u16) -> &mut Self {
         self.bar_width = bar_width.max(1);
         self
     }
 
+    /// Set the gap between bars.
     pub fn bar_gap(&mut self, bar_gap: u16) -> &mut Self {
         self.bar_gap = bar_gap;
         self
     }
 
+    /// Set the gap between bar groups.
     pub fn group_gap(&mut self, group_gap: u16) -> &mut Self {
         self.group_gap = group_gap;
         self
     }
 
+    /// Set the maximum value for bar scaling.
     pub fn max_value(&mut self, max_value: f64) -> &mut Self {
         self.max_value = Some(max_value);
         self
@@ -509,6 +524,7 @@ struct CanvasLayer {
     labels: Vec<CanvasLabel>,
 }
 
+/// Drawing context for the canvas widget.
 pub struct CanvasContext {
     layers: Vec<CanvasLayer>,
     cols: usize,
@@ -1140,6 +1156,7 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set the background color.
     pub fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
@@ -1303,7 +1320,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_w => ["Width applied only at Md breakpoint (80-119 cols)."],
         lg = lg_w => ["Width applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_w => ["Width applied only at Xl breakpoint (>= 160 cols)."],
-        at = w_at => []
+        at = w_at => ["Width applied only at the given breakpoint."]
     );
 
     /// Set a fixed height (sets both min and max height).
@@ -1321,7 +1338,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_h => ["Height applied only at Md breakpoint (80-119 cols)."],
         lg = lg_h => ["Height applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_h => ["Height applied only at Xl breakpoint (>= 160 cols)."],
-        at = h_at => []
+        at = h_at => ["Height applied only at the given breakpoint."]
     );
 
     /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
@@ -1338,7 +1355,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_min_w => ["Minimum width applied only at Md breakpoint (80-119 cols)."],
         lg = lg_min_w => ["Minimum width applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_min_w => ["Minimum width applied only at Xl breakpoint (>= 160 cols)."],
-        at = min_w_at => []
+        at = min_w_at => ["Minimum width applied only at the given breakpoint."]
     );
 
     /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
@@ -1355,7 +1372,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_max_w => ["Maximum width applied only at Md breakpoint (80-119 cols)."],
         lg = lg_max_w => ["Maximum width applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_max_w => ["Maximum width applied only at Xl breakpoint (>= 160 cols)."],
-        at = max_w_at => []
+        at = max_w_at => ["Maximum width applied only at the given breakpoint."]
     );
 
     /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
@@ -1449,7 +1466,7 @@ impl<'a> ContainerBuilder<'a> {
         ],
         lg = lg_gap => ["Gap applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_gap => ["Gap applied only at Xl breakpoint (>= 160 cols)."],
-        at = gap_at => []
+        at = gap_at => ["Gap applied only at the given breakpoint."]
     );
 
     /// Set the flex-grow factor. `1` means the container expands to fill available space.
@@ -1466,7 +1483,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_grow => ["Grow factor applied only at Md breakpoint (80-119 cols)."],
         lg = lg_grow => ["Grow factor applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_grow => ["Grow factor applied only at Xl breakpoint (>= 160 cols)."],
-        at = grow_at => []
+        at = grow_at => ["Grow factor applied only at the given breakpoint."]
     );
 
     define_breakpoint_methods!(
@@ -1477,7 +1494,7 @@ impl<'a> ContainerBuilder<'a> {
         md = md_p => ["Uniform padding applied only at Md breakpoint (80-119 cols)."],
         lg = lg_p => ["Uniform padding applied only at Lg breakpoint (120-159 cols)."],
         xl = xl_p => ["Uniform padding applied only at Xl breakpoint (>= 160 cols)."],
-        at = p_at => []
+        at = p_at => ["Padding applied only at the given breakpoint."]
     );
 
     // ── alignment ───────────────────────────────────────────────────
@@ -2312,6 +2329,7 @@ fn textarea_visual_to_logical(
     }
 }
 
+#[allow(unused_variables)]
 fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {

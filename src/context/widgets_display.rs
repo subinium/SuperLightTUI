@@ -265,6 +265,7 @@ impl Context {
         self
     }
 
+    /// Set foreground color when the current group is hovered or focused.
     pub fn group_hover_fg(&mut self, color: Color) -> &mut Self {
         let apply_group_style = self
             .group_stack
@@ -277,6 +278,7 @@ impl Context {
         self
     }
 
+    /// Set background color when the current group is hovered or focused.
     pub fn group_hover_bg(&mut self, color: Color) -> &mut Self {
         let apply_group_style = self
             .group_stack
@@ -502,6 +504,8 @@ impl Context {
         Response::none()
     }
 
+    /// Render an image using the Sixel protocol.
+    #[cfg(feature = "crossterm")]
     pub fn sixel_image(
         &mut self,
         rgba: &[u8],
@@ -521,23 +525,9 @@ impl Context {
             return Response::none();
         }
 
-        #[cfg(not(feature = "crossterm"))]
-        {
-            self.container().w(cols).h(rows).draw(|buf, rect| {
-                if rect.width == 0 || rect.height == 0 {
-                    return;
-                }
-                buf.set_string(rect.x, rect.y, "[sixel unsupported]", Style::new());
-            });
-            return Response::none();
-        }
-
-        #[cfg(feature = "crossterm")]
         let rgba = normalize_rgba(rgba, pixel_w, pixel_h);
-        #[cfg(feature = "crossterm")]
         let encoded = crate::sixel::encode_sixel(&rgba, pixel_w, pixel_h, 256);
 
-        #[cfg(feature = "crossterm")]
         if encoded.is_empty() {
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
@@ -548,12 +538,30 @@ impl Context {
             return Response::none();
         }
 
-        #[cfg(feature = "crossterm")]
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
             buf.raw_sequence(rect.x, rect.y, encoded);
+        });
+        Response::none()
+    }
+
+    /// Render an image using the Sixel protocol.
+    #[cfg(not(feature = "crossterm"))]
+    pub fn sixel_image(
+        &mut self,
+        _rgba: &[u8],
+        _pixel_w: u32,
+        _pixel_h: u32,
+        cols: u32,
+        rows: u32,
+    ) -> Response {
+        self.container().w(cols).h(rows).draw(|buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            buf.set_string(rect.x, rect.y, "[sixel unsupported]", Style::new());
         });
         Response::none()
     }
@@ -935,6 +943,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render an alert banner with icon and level-based coloring.
     pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
         use crate::widgets::AlertLevel;
 
@@ -1079,10 +1088,12 @@ impl Context {
         response
     }
 
+    /// Render a breadcrumb navigation bar. Returns the clicked segment index.
     pub fn breadcrumb(&mut self, segments: &[&str]) -> Option<usize> {
         self.breadcrumb_with(segments, " › ")
     }
 
+    /// Render a breadcrumb with a custom separator string.
     pub fn breadcrumb_with(&mut self, segments: &[&str], separator: &str) -> Option<usize> {
         let theme = self.theme;
         let last_idx = segments.len().saturating_sub(1);
@@ -1114,6 +1125,7 @@ impl Context {
         clicked_idx
     }
 
+    /// Collapsible section that toggles on click or Enter.
     pub fn accordion(
         &mut self,
         title: &str,
@@ -1154,6 +1166,7 @@ impl Context {
         response
     }
 
+    /// Render a key-value definition list with aligned columns.
     pub fn definition_list(&mut self, items: &[(&str, &str)]) -> Response {
         let max_key_width = items
             .iter()
@@ -1175,6 +1188,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a horizontal divider with a centered text label.
     pub fn divider_text(&mut self, label: &str) -> Response {
         let w = self.width();
         let label_len = unicode_width::UnicodeWidthStr::width(label) as u32;
@@ -1197,11 +1211,13 @@ impl Context {
         Response::none()
     }
 
+    /// Render a badge with the theme's primary color.
     pub fn badge(&mut self, label: &str) -> Response {
         let theme = self.theme;
         self.badge_colored(label, theme.primary)
     }
 
+    /// Render a badge with a custom background color.
     pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
         let fg = Color::contrast_fg(color);
         let mut label_text = String::with_capacity(label.len() + 2);
@@ -1213,6 +1229,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a keyboard shortcut hint with reversed styling.
     pub fn key_hint(&mut self, key: &str) -> Response {
         let theme = self.theme;
         let mut key_text = String::with_capacity(key.len() + 2);
@@ -1224,6 +1241,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a label-value stat pair.
     pub fn stat(&mut self, label: &str, value: &str) -> Response {
         let _ = self.col(|ui| {
             ui.text(label).dim();
@@ -1233,6 +1251,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a stat pair with a custom value color.
     pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
         let _ = self.col(|ui| {
             ui.text(label).dim();
@@ -1242,6 +1261,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a stat pair with an up/down trend arrow.
     pub fn stat_trend(
         &mut self,
         label: &str,
@@ -1267,6 +1287,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a centered empty-state placeholder.
     pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
         let _ = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
@@ -1276,6 +1297,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a centered empty-state placeholder with an action button.
     pub fn empty_state_action(
         &mut self,
         title: &str,
@@ -1298,13 +1320,16 @@ impl Context {
         }
     }
 
+    /// Render a code block with keyword-based syntax highlighting.
     pub fn code_block(&mut self, code: &str) -> Response {
         self.code_block_lang(code, "")
     }
 
+    /// Render a code block with language-aware syntax highlighting.
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
         let theme = self.theme;
-        let highlighted = crate::syntax::highlight_code(code, lang, &theme);
+        let highlighted: Option<Vec<Vec<(String, Style)>>> =
+            crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
@@ -1322,15 +1347,18 @@ impl Context {
         Response::none()
     }
 
+    /// Render a code block with line numbers and keyword highlighting.
     pub fn code_block_numbered(&mut self, code: &str) -> Response {
         self.code_block_numbered_lang(code, "")
     }
 
+    /// Render a code block with line numbers and language-aware highlighting.
     pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = format!("{}", lines.len()).len();
         let theme = self.theme;
-        let highlighted = crate::syntax::highlight_code(code, lang, &theme);
+        let highlighted: Option<Vec<Vec<(String, Style)>>> =
+            crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
@@ -1412,6 +1440,7 @@ impl Context {
 
     // ── containers ───────────────────────────────────────────────────
 
+    /// Conditionally render content when the named screen is active.
     pub fn screen(&mut self, name: &str, screens: &ScreenState, f: impl FnOnce(&mut Context)) {
         if screens.current() == name {
             f(self);
@@ -2582,6 +2611,7 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     chunks
 }
 
+#[cfg(feature = "crossterm")]
 fn terminal_supports_sixel() -> bool {
     let force = std::env::var("SLT_FORCE_SIXEL")
         .ok()

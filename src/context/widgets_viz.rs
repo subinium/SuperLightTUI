@@ -137,6 +137,7 @@ impl Context {
         )
     }
 
+    /// Render a bar chart with custom configuration.
     pub fn bar_chart_with(
         &mut self,
         bars: &[Bar],
@@ -498,6 +499,7 @@ impl Context {
         self.bar_chart_grouped_with(groups, |_| {}, max_width)
     }
 
+    /// Render a grouped bar chart with custom configuration.
     pub fn bar_chart_grouped_with(
         &mut self,
         groups: &[BarGroup],
@@ -1484,6 +1486,7 @@ impl Context {
     }
 
     #[cfg(feature = "qrcode")]
+    /// Render a QR code using half-block characters.
     pub fn qr_code(&mut self, data: impl AsRef<str>) -> Response {
         let code = match qrcode::QrCode::new(data.as_ref()) {
             Ok(code) => code,
