@@ -225,8 +225,8 @@ impl TestBackend {
             &mut frame_state,
             Theme::dark(),
         );
-        ctx.process_focus_keys();
         f(&mut ctx);
+        ctx.process_focus_keys();
         ctx.render_notifications();
         ctx.emit_pending_tooltips();
         let mut tree = layout::build_tree(&ctx.commands);

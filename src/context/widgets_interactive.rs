@@ -3011,10 +3011,27 @@ impl Context {
     /// Check if a specific key code was pressed this frame.
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
+    /// Blocked when a modal/overlay is active and the caller is outside the overlay.
+    /// Use [`raw_key_code`](Self::raw_key_code) for global shortcuts that must work
+    /// regardless of modal/overlay state.
     pub fn key_code(&self, code: KeyCode) -> bool {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
             return false;
         }
+        self.events.iter().enumerate().any(|(i, e)| {
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == code)
+        })
+    }
+
+    /// Check if a specific key code was pressed this frame, ignoring modal/overlay state.
+    ///
+    /// Unlike [`key_code`](Self::key_code), this method bypasses the modal/overlay guard
+    /// so it works even when a modal or overlay is active. Use this for global shortcuts
+    /// (e.g. Esc to close a modal, Ctrl+Q to quit) that must always be reachable.
+    ///
+    /// Returns `true` if the key event has not been consumed by another widget.
+    pub fn raw_key_code(&self, code: KeyCode) -> bool {
         self.events.iter().enumerate().any(|(i, e)| {
             !self.consumed[i]
                 && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == code)
@@ -3105,6 +3122,14 @@ impl Context {
         if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
             return false;
         }
+        self.events.iter().enumerate().any(|(i, e)| {
+            !self.consumed[i]
+                && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c) && k.modifiers.contains(modifiers))
+        })
+    }
+
+    /// Like [`key_mod`](Self::key_mod) but bypasses the modal/overlay guard.
+    pub fn raw_key_mod(&self, c: char, modifiers: KeyModifiers) -> bool {
         self.events.iter().enumerate().any(|(i, e)| {
             !self.consumed[i]
                 && matches!(e, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c) && k.modifiers.contains(modifiers))

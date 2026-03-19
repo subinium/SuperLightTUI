@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.1] — 2026-03-20
+
+### Fixes
+
+- **Tab/BackTab/Esc/F-keys now reachable via `key_code()` / `key_mod()`** — `process_focus_keys()` moved after user closure so user code sees events before the focus system consumes them. Focus cycling still works identically for apps that don't intercept Tab.
+- **`process_focus_keys()` respects consumed events** — if user calls `consume_key_code(KeyCode::Tab)`, the focus system no longer cycles on that event.
+
+### Features
+
+- **`raw_key_code(code)` / `raw_key_mod(c, mods)`** — global shortcut helpers that bypass the modal/overlay guard. Use for Esc-to-close, Ctrl+Q-to-quit, and other shortcuts that must work regardless of overlay state.
+
+### Demo
+
+- **`demo_key_test`** — interactive key event tester with mode switching, kitty keyboard toggle, and event log.
+
 ## [0.15.0] — 2026-03-19
 
 ### Breaking Changes
