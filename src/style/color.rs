@@ -3,6 +3,7 @@
 /// Covers the standard 16 named colors, 256-color palette indices, and
 /// 24-bit RGB true color. Use [`Color::Reset`] to restore the terminal's
 /// default foreground or background.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Color {
@@ -195,6 +196,7 @@ impl Color {
 /// Determines the maximum number of colors a terminal can display.
 /// Use [`ColorDepth::detect`] for automatic detection via environment
 /// variables, or specify explicitly in [`crate::RunConfig`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ColorDepth {

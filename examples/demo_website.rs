@@ -37,121 +37,103 @@ fn main() -> std::io::Result<()> {
         .field(FormField::new("Email").placeholder("jane@example.com"))
         .field(FormField::new("Message").placeholder("How can we help?"));
 
-    slt::run_with(
-        slt::RunConfig {
-            mouse: true,
-            ..Default::default()
-        },
-        |ui: &mut Context| {
-            let tick = ui.tick();
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+        let tick = ui.tick();
 
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
-                ui.quit();
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+            theme_idx = (theme_idx + 1) % themes.len();
+            toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
+        }
+        if ui.key_code(KeyCode::Esc) {
+            blog_view = None;
+        }
+        for (i, ch) in ['1', '2', '3', '4', '5'].iter().enumerate() {
+            if ui.key(*ch) {
+                nav_target = Some(i);
             }
-            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-                theme_idx = (theme_idx + 1) % themes.len();
-                toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
-            }
-            if ui.key_code(KeyCode::Esc) {
-                blog_view = None;
-            }
-            for (i, ch) in ['1', '2', '3', '4', '5'].iter().enumerate() {
-                if ui.key(*ch) {
-                    nav_target = Some(i);
+        }
+        ui.set_theme(themes[theme_idx]());
+
+        if let Some(target) = nav_target.take() {
+            nav.selected = target;
+            scroll = ScrollState::new();
+        }
+
+        let _ = ui.container().grow(1).col(|ui| {
+            let theme = *ui.theme();
+
+            // ── navbar ──
+            let _ = ui
+                .container()
+                .bg(theme.surface)
+                .padding(Padding::xy(2, 0))
+                .col(|ui| {
+                    let _ = ui.row(|ui| {
+                        ui.text("SLT").bold().fg(theme.primary);
+                        ui.text(" ").fg(theme.text_dim);
+                        ui.spacer();
+                        let _ = ui.tabs(&mut nav);
+                        ui.styled(
+                            format!(" {} ", theme_names[theme_idx]),
+                            Style::new().fg(theme.text).bg(theme.surface_hover),
+                        );
+                    });
+                });
+
+            let selected = nav.selected;
+            let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                match selected {
+                    0 => render_home(
+                        ui,
+                        &mut email,
+                        &mut nav_target,
+                        &mut toasts,
+                        &mut subscribed,
+                        tick,
+                    ),
+                    1 => render_docs(ui),
+                    2 => render_blog(ui, &mut blog_view),
+                    3 => render_pricing(ui, &mut toasts, tick, &mut show_modal, &mut selected_plan),
+                    _ => render_contact(ui, &mut nav_target, &mut contact_form, &mut toasts, tick),
                 }
-            }
-            ui.set_theme(themes[theme_idx]());
 
-            if let Some(target) = nav_target.take() {
-                nav.selected = target;
-                scroll = ScrollState::new();
-            }
-
-            let _ = ui.container().grow(1).col(|ui| {
-                let theme = *ui.theme();
-
-                // ── navbar ──
+                // ── footer ──
                 let _ = ui
                     .container()
                     .bg(theme.surface)
-                    .padding(Padding::xy(2, 0))
+                    .padding(Padding::xy(2, 1))
                     .col(|ui| {
                         let _ = ui.row(|ui| {
                             ui.text("SLT").bold().fg(theme.primary);
-                            ui.text(" ").fg(theme.text_dim);
+                            ui.text("Framework").fg(theme.surface_text);
                             ui.spacer();
-                            let _ = ui.tabs(&mut nav);
-                            ui.styled(
-                                format!(" {} ", theme_names[theme_idx]),
-                                Style::new().fg(theme.text).bg(theme.surface_hover),
-                            );
+                            ui.text("MIT License").fg(theme.surface_text);
+                        });
+                        ui.text("");
+                        let _ = ui.row(|ui| {
+                            ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
+                            ui.link("Docs", "https://docs.rs/superlighttui");
+                            ui.link("Discord", "https://discord.gg/slt");
+                            ui.spacer();
+                            ui.text("v0.5.0").fg(theme.surface_text);
                         });
                     });
-
-                let selected = nav.selected;
-                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
-                    match selected {
-                        0 => render_home(
-                            ui,
-                            &mut email,
-                            &mut nav_target,
-                            &mut toasts,
-                            &mut subscribed,
-                            tick,
-                        ),
-                        1 => render_docs(ui),
-                        2 => render_blog(ui, &mut blog_view),
-                        3 => render_pricing(
-                            ui,
-                            &mut toasts,
-                            tick,
-                            &mut show_modal,
-                            &mut selected_plan,
-                        ),
-                        _ => render_contact(
-                            ui,
-                            &mut nav_target,
-                            &mut contact_form,
-                            &mut toasts,
-                            tick,
-                        ),
-                    }
-
-                    // ── footer ──
-                    let _ = ui
-                        .container()
-                        .bg(theme.surface)
-                        .padding(Padding::xy(2, 1))
-                        .col(|ui| {
-                            let _ = ui.row(|ui| {
-                                ui.text("SLT").bold().fg(theme.primary);
-                                ui.text("Framework").fg(theme.surface_text);
-                                ui.spacer();
-                                ui.text("MIT License").fg(theme.surface_text);
-                            });
-                            ui.text("");
-                            let _ = ui.row(|ui| {
-                                ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
-                                ui.link("Docs", "https://docs.rs/superlighttui");
-                                ui.link("Discord", "https://discord.gg/slt");
-                                ui.spacer();
-                                ui.text("v0.5.0").fg(theme.surface_text);
-                            });
-                        });
-                });
-
-                ui.toast(&mut toasts);
-
-                let _ = ui.help(&[
-                    ("Ctrl+Q", "quit"),
-                    ("Ctrl+T", "theme"),
-                    ("1-5", "tabs"),
-                    ("Esc", "back"),
-                    ("Tab", "focus"),
-                ]);
             });
-        },
-    )
+
+            ui.toast(&mut toasts);
+
+            let _ = ui.help(&[
+                ("Ctrl+Q", "quit"),
+                ("Ctrl+T", "theme"),
+                ("1-5", "tabs"),
+                ("Esc", "back"),
+                ("Tab", "focus"),
+            ]);
+        });
+    })
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1139,7 +1121,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
          \x20   let mut scroll = ScrollState::new();\n\
          \n\
          \x20   slt::run_with(\n\
-         \x20       RunConfig { mouse: true, ..Default::default() },\n\
+         \x20       RunConfig::default().mouse(true),\n\
          \x20       |ui: &mut Context| {\n\
          \x20           if ui.key('q') { ui.quit(); }\n\
          \x20           // ... UI goes here\n\

@@ -228,7 +228,7 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 
 ```rust
 // 7 个内置预设
-slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
+slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
     ui.set_theme(Theme::dark()); // 运行时切换
 });
 
@@ -293,7 +293,7 @@ if ui.button("+1") { *count.get_mut(ui) += 1; }
 - **双缓冲差分** — 只有变化的单元格才会输出到终端
 - **同步输出** — DECSET 2026 防止支持的终端出现撕裂
 - **视口裁剪** — 屏幕外的 widget 完全跳过
-- **FPS 上限** — `RunConfig { max_fps: Some(60), .. }` 控制 CPU 占用
+- **FPS 上限** — `RunConfig::default().max_fps(60)` 控制 CPU 占用
 - **自动重排** — 终端大小变化时自动重新布局
 - **`collect_all()`** — 单次 DFS 遍历替代 7 次独立树遍历 (v0.9)
 

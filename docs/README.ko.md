@@ -228,7 +228,7 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 
 ```rust
 // 7개 내장 프리셋
-slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
+slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
     ui.set_theme(Theme::dark()); // 런타임에 전환
 });
 

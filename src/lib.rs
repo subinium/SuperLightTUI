@@ -108,7 +108,9 @@ pub use context::{
     Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
     Response, State, Widget,
 };
-pub use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind};
+pub use event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+};
 pub use halfblock::HalfBlockImage;
 pub use keymap::{Binding, KeyMap};
 pub use layout::Direction;
@@ -338,15 +340,13 @@ fn install_panic_hook() {
 /// use slt::{RunConfig, Theme};
 /// use std::time::Duration;
 ///
-/// let config = RunConfig {
-///     tick_rate: Duration::from_millis(50),
-///     mouse: true,
-///     kitty_keyboard: false,
-///     theme: Theme::light(),
-///     color_depth: None,
-///     max_fps: Some(60),
-/// };
+/// let config = RunConfig::default()
+///     .tick_rate(Duration::from_millis(50))
+///     .mouse(true)
+///     .theme(Theme::light())
+///     .max_fps(60);
 /// ```
+#[non_exhaustive]
 #[must_use = "configure loop behavior before passing to run_with or run_inline_with"]
 pub struct RunConfig {
     /// How long to wait for input before triggering a tick with no events.
@@ -381,6 +381,10 @@ pub struct RunConfig {
     /// `None` means unlimited frame rate. `Some(fps)` sleeps at the end of each
     /// loop iteration to target that frame time.
     pub max_fps: Option<u32>,
+    /// Lines scrolled per mouse scroll event. Defaults to 1.
+    pub scroll_speed: u32,
+    /// Optional terminal window title (set via OSC 2).
+    pub title: Option<String>,
 }
 
 impl Default for RunConfig {
@@ -392,7 +396,59 @@ impl Default for RunConfig {
             theme: Theme::dark(),
             color_depth: None,
             max_fps: Some(60),
+            scroll_speed: 1,
+            title: None,
         }
+    }
+}
+
+impl RunConfig {
+    /// Set the tick rate (input polling interval).
+    pub fn tick_rate(mut self, rate: Duration) -> Self {
+        self.tick_rate = rate;
+        self
+    }
+
+    /// Enable or disable mouse event reporting.
+    pub fn mouse(mut self, enabled: bool) -> Self {
+        self.mouse = enabled;
+        self
+    }
+
+    /// Enable or disable Kitty keyboard protocol.
+    pub fn kitty_keyboard(mut self, enabled: bool) -> Self {
+        self.kitty_keyboard = enabled;
+        self
+    }
+
+    /// Set the color theme.
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Override the color depth.
+    pub fn color_depth(mut self, depth: ColorDepth) -> Self {
+        self.color_depth = Some(depth);
+        self
+    }
+
+    /// Set the maximum frame rate.
+    pub fn max_fps(mut self, fps: u32) -> Self {
+        self.max_fps = Some(fps);
+        self
+    }
+
+    /// Set the scroll speed (lines per scroll event).
+    pub fn scroll_speed(mut self, lines: u32) -> Self {
+        self.scroll_speed = lines.max(1);
+        self
+    }
+
+    /// Set the terminal window title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
     }
 }
 
@@ -465,6 +521,14 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
     run_with(RunConfig::default(), f)
 }
 
+#[cfg(feature = "crossterm")]
+fn set_terminal_title(title: &Option<String>) {
+    if let Some(title) = title {
+        use std::io::Write;
+        let _ = write!(io::stdout(), "\x1b]2;{title}\x07");
+    }
+}
+
 /// Run the TUI loop with custom configuration.
 ///
 /// Like [`run`], but accepts a [`RunConfig`] to control tick rate, mouse
@@ -477,7 +541,7 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 ///
 /// fn main() -> std::io::Result<()> {
 ///     slt::run_with(
-///         RunConfig { theme: Theme::light(), ..Default::default() },
+///         RunConfig::default().theme(Theme::light()),
 ///         |ui| {
 ///             ui.text("Light theme!");
 ///         },
@@ -493,6 +557,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -625,6 +690,7 @@ fn run_async_loop<M: Send + 'static>(
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -725,6 +791,7 @@ pub fn run_inline_with(
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(height, config.mouse, color_depth)?;
+    set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -818,6 +885,7 @@ pub fn run_static(
 
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(dynamic_height, config.mouse, color_depth)?;
+    set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
@@ -917,6 +985,7 @@ fn run_frame(
     let (w, h) = term.size();
     let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
     ctx.is_real_terminal = true;
+    ctx.set_scroll_speed(config.scroll_speed);
     ctx.process_focus_keys();
 
     f(&mut ctx);

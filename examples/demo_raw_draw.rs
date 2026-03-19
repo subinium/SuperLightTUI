@@ -3,11 +3,9 @@ use std::time::Duration;
 
 fn main() {
     let _ = slt::run_with(
-        RunConfig {
-            tick_rate: Duration::from_millis(16),
-            max_fps: Some(60),
-            ..RunConfig::default()
-        },
+        RunConfig::default()
+            .tick_rate(Duration::from_millis(16))
+            .max_fps(60),
         move |ui: &mut Context| {
             if ui.key('q') || ui.key_code(KeyCode::Esc) {
                 ui.quit();

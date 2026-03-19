@@ -228,7 +228,7 @@ ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
 
 ```rust
 // 7 presets integrados
-slt::run_with(RunConfig { theme: Theme::catppuccin(), ..Default::default() }, |ui| {
+slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
     ui.set_theme(Theme::dark()); // cambiar en tiempo de ejecución
 });
 
@@ -293,7 +293,7 @@ Estado persistente al estilo React en modo inmediato. Patrón de handle `State<T
 - **Diff de doble buffer** — solo las celdas modificadas llegan al terminal
 - **Salida sincronizada** — DECSET 2026 previene el tearing en terminales compatibles
 - **Recorte de viewport** — los widgets fuera de pantalla se omiten completamente
-- **Límite de FPS** — `RunConfig { max_fps: Some(60), .. }` para controlar la CPU
+- **Límite de FPS** — `RunConfig::default().max_fps(60)` para controlar la CPU
 - **Redimensionado automático** — reflow automático al cambiar el tamaño del terminal
 - **`collect_all()`** — un único paso DFS reemplaza 7 recorridos de árbol separados (v0.9)
 

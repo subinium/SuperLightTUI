@@ -120,11 +120,7 @@ fn main() -> std::io::Result<()> {
     let mut s = St::new();
 
     slt::run_with(
-        RunConfig {
-            mouse: true,
-            theme: Theme::dark(),
-            ..Default::default()
-        },
+        RunConfig::default().mouse(true).theme(Theme::dark()),
         move |ui: &mut Context| {
             hotkeys(ui, &mut s);
             if let Some(ord) = s.pending.take() {

@@ -45,10 +45,7 @@ impl Backend for FrameBackend {
 fn tooltip_hidden_when_widget_not_hovered() {
     let mut backend = FrameBackend::new(80, 24);
     let mut state = slt::AppState::new();
-    let config = RunConfig {
-        mouse: true,
-        ..Default::default()
-    };
+    let config = RunConfig::default().mouse(true);
 
     frame(&mut backend, &mut state, &config, &[], &mut |ui| {
         let _ = ui.button("Save");
@@ -56,12 +53,7 @@ fn tooltip_hidden_when_widget_not_hovered() {
     })
     .unwrap();
 
-    let events = vec![Event::Mouse(MouseEvent {
-        kind: MouseKind::Moved,
-        x: 79,
-        y: 23,
-        modifiers: KeyModifiers::NONE,
-    })];
+    let events = vec![Event::mouse_move(79, 23)];
 
     frame(&mut backend, &mut state, &config, &events, &mut |ui| {
         let _ = ui.button("Save");
@@ -79,10 +71,7 @@ fn tooltip_hidden_when_widget_not_hovered() {
 fn tooltip_renders_when_widget_hovered() {
     let mut backend = FrameBackend::new(80, 24);
     let mut state = slt::AppState::new();
-    let config = RunConfig {
-        mouse: true,
-        ..Default::default()
-    };
+    let config = RunConfig::default().mouse(true);
 
     frame(&mut backend, &mut state, &config, &[], &mut |ui| {
         let _ = ui.button("Save");
@@ -90,12 +79,7 @@ fn tooltip_renders_when_widget_hovered() {
     })
     .unwrap();
 
-    let events = vec![Event::Mouse(MouseEvent {
-        kind: MouseKind::Moved,
-        x: 1,
-        y: 0,
-        modifiers: KeyModifiers::NONE,
-    })];
+    let events = vec![Event::mouse_move(1, 0)];
 
     frame(&mut backend, &mut state, &config, &events, &mut |ui| {
         let _ = ui.button("Save");

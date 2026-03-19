@@ -362,6 +362,7 @@ pub enum ToastLevel {
 }
 
 /// Severity level for alert widgets.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertLevel {
     /// Informational alert.
@@ -1348,6 +1349,7 @@ impl Default for CalendarState {
 /// - `Primary` — primary color background with contrasting text
 /// - `Danger` — error/red color for destructive actions
 /// - `Outline` — bordered appearance without fill
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ButtonVariant {
     /// Standard button style.
@@ -1362,6 +1364,7 @@ pub enum ButtonVariant {
 }
 
 /// Direction indicator for stat widgets.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trend {
     /// Positive movement.
@@ -2044,6 +2047,7 @@ impl ScreenState {
 }
 
 /// Approval state for a tool call.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalAction {
     /// No action taken yet.

@@ -72,11 +72,7 @@ fn main() -> std::io::Result<()> {
     let member_images: Vec<MemberImage> = MEMBERS.iter().map(load_member_image).collect();
 
     slt::run_with(
-        RunConfig {
-            mouse: true,
-            theme: Theme::dark(),
-            ..Default::default()
-        },
+        RunConfig::default().mouse(true).theme(Theme::dark()),
         move |ui: &mut Context| {
             let quit_key = ui.key('q');
             let esc_key = ui.key_code(KeyCode::Esc);

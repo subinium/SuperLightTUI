@@ -182,6 +182,7 @@ fn color_to_css(color: Option<Color>) -> Option<String> {
             let (r, g, b) = indexed_to_rgb(i);
             Some(format!("#{r:02x}{g:02x}{b:02x}"))
         }
+        _ => None,
     }
 }
 
@@ -261,6 +262,9 @@ fn keyboard_event_to_slt(event: &KeyboardEvent) -> Option<Event> {
     if event.alt_key() {
         modifiers.0 |= KeyModifiers::ALT.0;
     }
+    if event.meta_key() {
+        modifiers.0 |= KeyModifiers::SUPER.0;
+    }
 
     Some(Event::key_mod(code, modifiers))
 }
@@ -271,6 +275,12 @@ fn mouse_button(button: i16) -> MouseButton {
         2 => MouseButton::Right,
         _ => MouseButton::Left,
     }
+}
+
+fn mouse_pixel_position(event: &MouseEvent) -> (Option<u16>, Option<u16>) {
+    let px = u16::try_from(event.offset_x()).ok();
+    let py = u16::try_from(event.offset_y()).ok();
+    (px, py)
 }
 
 fn mouse_cell_position(
@@ -326,12 +336,17 @@ fn install_event_listeners(
     let container_move = container.clone();
     let mousemove = Closure::wrap(Box::new(move |event: MouseEvent| {
         if let Some((x, y)) = mouse_cell_position(&event, &container_move, width, height) {
-            move_events.borrow_mut().push(Event::Mouse(SltMouseEvent {
-                kind: MouseKind::Moved,
-                x,
-                y,
-                modifiers: KeyModifiers::NONE,
-            }));
+            let (pixel_x, pixel_y) = mouse_pixel_position(&event);
+            move_events
+                .borrow_mut()
+                .push(Event::Mouse(SltMouseEvent::new(
+                    MouseKind::Moved,
+                    x,
+                    y,
+                    KeyModifiers::NONE,
+                    pixel_x,
+                    pixel_y,
+                )));
         }
     }) as Box<dyn FnMut(_)>);
     container.add_event_listener_with_callback("mousemove", mousemove.as_ref().unchecked_ref())?;
@@ -341,12 +356,17 @@ fn install_event_listeners(
     let container_down = container.clone();
     let mousedown = Closure::wrap(Box::new(move |event: MouseEvent| {
         if let Some((x, y)) = mouse_cell_position(&event, &container_down, width, height) {
-            down_events.borrow_mut().push(Event::Mouse(SltMouseEvent {
-                kind: MouseKind::Down(mouse_button(event.button())),
-                x,
-                y,
-                modifiers: KeyModifiers::NONE,
-            }));
+            let (pixel_x, pixel_y) = mouse_pixel_position(&event);
+            down_events
+                .borrow_mut()
+                .push(Event::Mouse(SltMouseEvent::new(
+                    MouseKind::Down(mouse_button(event.button())),
+                    x,
+                    y,
+                    KeyModifiers::NONE,
+                    pixel_x,
+                    pixel_y,
+                )));
         }
     }) as Box<dyn FnMut(_)>);
     container.add_event_listener_with_callback("mousedown", mousedown.as_ref().unchecked_ref())?;
@@ -356,12 +376,15 @@ fn install_event_listeners(
     let container_up = container.clone();
     let mouseup = Closure::wrap(Box::new(move |event: MouseEvent| {
         if let Some((x, y)) = mouse_cell_position(&event, &container_up, width, height) {
-            up_events.borrow_mut().push(Event::Mouse(SltMouseEvent {
-                kind: MouseKind::Up(mouse_button(event.button())),
+            let (pixel_x, pixel_y) = mouse_pixel_position(&event);
+            up_events.borrow_mut().push(Event::Mouse(SltMouseEvent::new(
+                MouseKind::Up(mouse_button(event.button())),
                 x,
                 y,
-                modifiers: KeyModifiers::NONE,
-            }));
+                KeyModifiers::NONE,
+                pixel_x,
+                pixel_y,
+            )));
         }
     }) as Box<dyn FnMut(_)>);
     container.add_event_listener_with_callback("mouseup", mouseup.as_ref().unchecked_ref())?;

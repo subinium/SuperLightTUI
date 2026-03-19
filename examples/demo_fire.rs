@@ -103,11 +103,9 @@ fn main() {
     let mut paused = false;
 
     let _ = slt::run_with(
-        RunConfig {
-            tick_rate: Duration::from_millis(16),
-            max_fps: Some(60),
-            ..RunConfig::default()
-        },
+        RunConfig::default()
+            .tick_rate(Duration::from_millis(16))
+            .max_fps(60),
         move |ui: &mut Context| {
             let term_w = ui.width() as usize;
             let term_h = ui.height() as usize;

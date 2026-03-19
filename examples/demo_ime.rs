@@ -20,11 +20,7 @@ fn main() -> std::io::Result<()> {
     ];
 
     slt::run_with(
-        RunConfig {
-            mouse: true,
-            kitty_keyboard: true,
-            ..Default::default()
-        },
+        RunConfig::default().mouse(true).kitty_keyboard(true),
         |ui: &mut Context| {
             if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();

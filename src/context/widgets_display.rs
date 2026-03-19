@@ -1864,13 +1864,14 @@ impl Context {
                 if in_inner {
                     continue;
                 }
+                let delta = self.scroll_lines_per_event as usize;
                 match mouse.kind {
                     MouseKind::ScrollUp => {
-                        state.scroll_up(1);
+                        state.scroll_up(delta);
                         to_consume.push(i);
                     }
                     MouseKind::ScrollDown => {
-                        state.scroll_down(1);
+                        state.scroll_down(delta);
                         to_consume.push(i);
                     }
                     MouseKind::Drag(MouseButton::Left) => {}

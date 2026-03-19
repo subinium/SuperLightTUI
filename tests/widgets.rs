@@ -2534,11 +2534,7 @@ fn key_release_not_matched_by_key() {
     use slt::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     let mut tb = TestBackend::new(40, 5);
-    let events = vec![Event::Key(KeyEvent {
-        code: KeyCode::Char('q'),
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Release,
-    })];
+    let events = vec![Event::key_release('q')];
     let mut pressed = false;
     tb.run_with_events(events, |ui| {
         if ui.key('q') {

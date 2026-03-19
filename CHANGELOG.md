@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.15.0] — 2026-03-19
+
+### Breaking Changes
+
+- **`#[non_exhaustive]` on all extensible enums and structs** — 22 enums (`Event`, `KeyCode`, `KeyEventKind`, `MouseKind`, `MouseButton`, `Color`, `ColorDepth`, `Border`, `Breakpoint`, `Align`, `Justify`, `Direction`, `BarDirection`, `AlertLevel`, `Trend`, `ButtonVariant`, `ApprovalAction`, `LoopMode`, `Marker`, `GraphType`, `LegendPosition`, `ColorScheme`) + 3 structs (`RunConfig`, `KeyEvent`, `MouseEvent`). Existing exhaustive `match` statements must add `_ =>` arm. Struct literal construction from external crates must use builder/constructor.
+- **`RunConfig` is now `#[non_exhaustive]`** — use `RunConfig::default().mouse(true).theme(Theme::dark())` builder pattern instead of struct literal
+
+### Features
+
+- **9 new `KeyCode` variants** — `Insert`, `Null`, `CapsLock`, `ScrollLock`, `NumLock`, `PrintScreen`, `Pause`, `Menu`, `KeypadBegin`. Previously silently dropped by the crossterm conversion.
+- **3 new `KeyModifiers`** — `SUPER` (Cmd/Win), `HYPER`, `META`. Enables capturing Cmd+S, Win+key combos with Kitty keyboard protocol.
+- **`MouseKind::ScrollLeft` / `ScrollRight`** — horizontal scroll events
+- **`MouseEvent::pixel_x` / `pixel_y`** — optional pixel-level coordinates. WASM populates from browser; `None` for crossterm
+- **`MouseEvent::new()`** — constructor for `#[non_exhaustive]` struct
+- **`MouseEvent::is_scroll()`** — check if event is any scroll variant
+- **`RunConfig` builder methods** — `.mouse()`, `.kitty_keyboard()`, `.theme()`, `.tick_rate()`, `.color_depth()`, `.max_fps()`, `.scroll_speed()`, `.title()`
+- **`RunConfig::scroll_speed`** — configure scroll lines per event at startup
+- **`RunConfig::title`** — set terminal window title via OSC 2
+- **`Context::set_scroll_speed(n)` / `scroll_speed()`** — runtime scroll speed
+- **`Context::scroll_left()` / `scroll_right()`** — horizontal scroll query methods
+- **`Event::scroll_up(x, y)` / `scroll_down(x, y)` / `key_release(c)`** — new constructors
+- **`Event::is_key()` / `is_mouse()`** — type check helpers
+- **`KeyEvent::is_char(c)` / `is_ctrl_char(c)` / `is_code(code)`** — pattern matching helpers
+- **`KeyEvent` re-exported** from `slt::KeyEvent` (was missing)
+
+### Notes
+
+- This is a **semver-breaking** release (0.14 → 0.15) due to `#[non_exhaustive]` additions
+- Compositing/z-order (overlay, modal) was already fully implemented — no changes needed
+- Pixel mouse SGR pixel mode and smooth sub-pixel scrolling deferred to v0.16 pending crossterm upstream support and layout engine refactor
+- WASM backend now populates `pixel_x`/`pixel_y` from `event.offset_x()`/`event.offset_y()` — first TUI framework with pixel mouse in browser
+
 ## [0.14.2] — 2026-03-19
 
 ### Improvements
