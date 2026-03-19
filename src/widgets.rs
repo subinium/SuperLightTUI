@@ -361,6 +361,7 @@ pub enum ToastLevel {
     Error,
 }
 
+/// Severity level for alert widgets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertLevel {
     /// Informational alert.
@@ -1211,20 +1212,26 @@ impl Default for RichLogState {
     }
 }
 
+/// State for the calendar date picker widget.
 #[derive(Debug, Clone)]
 pub struct CalendarState {
+    /// Current display year.
     pub year: i32,
+    /// Current display month (1–12).
     pub month: u32,
+    /// Currently selected day, if any.
     pub selected_day: Option<u32>,
     pub(crate) cursor_day: u32,
 }
 
 impl CalendarState {
+    /// Create a new `CalendarState` initialized to the current month.
     pub fn new() -> Self {
         let (year, month) = Self::current_year_month();
         Self::from_ym(year, month)
     }
 
+    /// Create a `CalendarState` for a specific year and month.
     pub fn from_ym(year: i32, month: u32) -> Self {
         let month = month.clamp(1, 12);
         Self {
@@ -1235,10 +1242,12 @@ impl CalendarState {
         }
     }
 
+    /// Returns the selected date as `(year, month, day)`, if any.
     pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
         self.selected_day.map(|day| (self.year, self.month, day))
     }
 
+    /// Navigate to the previous month.
     pub fn prev_month(&mut self) {
         if self.month == 1 {
             self.month = 12;
@@ -1249,6 +1258,7 @@ impl CalendarState {
         self.clamp_days();
     }
 
+    /// Navigate to the next month.
     pub fn next_month(&mut self) {
         if self.month == 12 {
             self.month = 1;
@@ -1351,6 +1361,7 @@ pub enum ButtonVariant {
     Outline,
 }
 
+/// Direction indicator for stat widgets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trend {
     /// Positive movement.

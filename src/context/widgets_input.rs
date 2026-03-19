@@ -20,6 +20,7 @@ impl Context {
         self.text_input_colored(state, &WidgetColors::new())
     }
 
+    /// Render a text input with custom widget colors.
     pub fn text_input_colored(
         &mut self,
         state: &mut TextInputState,
@@ -786,10 +787,12 @@ impl Context {
     ///
     /// `ratio` is clamped to `0.0..=1.0`. `width` is the total number of
     /// characters rendered.
+    /// Render a progress bar filled to the given ratio (0.0–1.0).
     pub fn progress_bar(&mut self, ratio: f64, width: u32) -> &mut Self {
         self.progress_bar_colored(ratio, width, self.theme.primary)
     }
 
+    /// Render a progress bar with a custom fill color.
     pub fn progress_bar_colored(&mut self, ratio: f64, width: u32, color: Color) -> &mut Self {
         let clamped = ratio.clamp(0.0, 1.0);
         let filled = (clamped * width as f64).round() as u32;

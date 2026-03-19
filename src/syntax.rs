@@ -5,7 +5,25 @@
 //! Without those features the function always returns `None` so callers
 //! can fall back to the built-in keyword highlighter.
 
-use crate::style::{Color, Style, Theme};
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+use crate::style::Color;
+use crate::style::{Style, Theme};
 
 /// Ordered list of tree-sitter highlight capture names.
 ///

@@ -3,19 +3,31 @@ use crate::Color;
 /// A color palette with 11 shades from lightest (c50) to darkest (c950).
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
+    /// Lightest shade (50).
     pub c50: Color,
+    /// Shade 100.
     pub c100: Color,
+    /// Shade 200.
     pub c200: Color,
+    /// Shade 300.
     pub c300: Color,
+    /// Shade 400.
     pub c400: Color,
+    /// Mid shade (500).
     pub c500: Color,
+    /// Shade 600.
     pub c600: Color,
+    /// Shade 700.
     pub c700: Color,
+    /// Shade 800.
     pub c800: Color,
+    /// Shade 900.
     pub c900: Color,
+    /// Darkest shade (950).
     pub c950: Color,
 }
 
+/// Tailwind CSS color palettes.
 pub mod tailwind {
     use super::Palette;
     use crate::Color;

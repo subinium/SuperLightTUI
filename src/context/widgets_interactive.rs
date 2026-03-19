@@ -132,10 +132,12 @@ impl Context {
     ///
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
+    /// Render a navigable list widget.
     pub fn list(&mut self, state: &mut ListState) -> Response {
         self.list_colored(state, &WidgetColors::new())
     }
 
+    /// Render a navigable list with custom widget colors.
     pub fn list_colored(&mut self, state: &mut ListState, colors: &WidgetColors) -> Response {
         let visible = state.visible_indices().to_vec();
         if visible.is_empty() && state.items.is_empty() {
@@ -250,6 +252,7 @@ impl Context {
         response
     }
 
+    /// Render a calendar date picker with month navigation.
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.next_interaction_id();
@@ -494,6 +497,7 @@ impl Context {
         response
     }
 
+    /// Render a file system browser with directory navigation.
     pub fn file_picker(&mut self, state: &mut FilePickerState) -> Response {
         if state.dirty {
             state.refresh();
@@ -651,10 +655,12 @@ impl Context {
     ///
     /// Column widths are computed automatically from header and cell content.
     /// The selected row is highlighted with the theme's selection colors.
+    /// Render a data table with sortable columns and row selection.
     pub fn table(&mut self, state: &mut TableState) -> Response {
         self.table_colored(state, &WidgetColors::new())
     }
 
+    /// Render a data table with custom widget colors.
     pub fn table_colored(&mut self, state: &mut TableState, colors: &WidgetColors) -> Response {
         if state.is_dirty() {
             state.recompute_widths();
@@ -945,10 +951,12 @@ impl Context {
     ///
     /// The active tab is rendered in the theme's primary color. If the labels
     /// list is empty, nothing is rendered.
+    /// Render a horizontal tab bar.
     pub fn tabs(&mut self, state: &mut TabsState) -> Response {
         self.tabs_colored(state, &WidgetColors::new())
     }
 
+    /// Render a horizontal tab bar with custom widget colors.
     pub fn tabs_colored(&mut self, state: &mut TabsState, colors: &WidgetColors) -> Response {
         if state.labels.is_empty() {
             state.selected = 0;
@@ -1073,10 +1081,12 @@ impl Context {
     ///
     /// The button is styled with the theme's primary color when focused and the
     /// accent color when hovered.
+    /// Render a clickable button.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         self.button_colored(label, &WidgetColors::new())
     }
 
+    /// Render a clickable button with custom widget colors.
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
         let interaction_id = self.next_interaction_id();
@@ -1293,10 +1303,12 @@ impl Context {
     ///
     /// The checked state is shown with the theme's success color. When focused,
     /// a `▸` prefix is added.
+    /// Render a checkbox toggle.
     pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> Response {
         self.checkbox_colored(label, checked, &WidgetColors::new())
     }
 
+    /// Render a checkbox toggle with custom widget colors.
     pub fn checkbox_colored(
         &mut self,
         label: impl Into<String>,
@@ -1390,10 +1402,12 @@ impl Context {
     /// Toggles `on` when activated via Enter, Space, or click. The switch
     /// renders as `●━━ ON` or `━━● OFF` colored with the theme's success or
     /// dim color respectively.
+    /// Render an on/off toggle switch.
     pub fn toggle(&mut self, label: impl Into<String>, on: &mut bool) -> Response {
         self.toggle_colored(label, on, &WidgetColors::new())
     }
 
+    /// Render an on/off toggle switch with custom widget colors.
     pub fn toggle_colored(
         &mut self,
         label: impl Into<String>,
@@ -1487,10 +1501,12 @@ impl Context {
     /// Render a dropdown select. Shows the selected item; expands on activation.
     ///
     /// Returns `true` when the selection changed this frame.
+    /// Render a dropdown select widget.
     pub fn select(&mut self, state: &mut SelectState) -> Response {
         self.select_colored(state, &WidgetColors::new())
     }
 
+    /// Render a dropdown select widget with custom widget colors.
     pub fn select_colored(&mut self, state: &mut SelectState, colors: &WidgetColors) -> Response {
         if state.items.is_empty() {
             return Response::none();
@@ -1669,10 +1685,12 @@ impl Context {
     // ── radio ────────────────────────────────────────────────────────
 
     /// Render a radio button group. Returns `true` when selection changed.
+    /// Render a radio button group.
     pub fn radio(&mut self, state: &mut RadioState) -> Response {
         self.radio_colored(state, &WidgetColors::new())
     }
 
+    /// Render a radio button group with custom widget colors.
     pub fn radio_colored(&mut self, state: &mut RadioState, colors: &WidgetColors) -> Response {
         if state.items.is_empty() {
             return Response::none();
@@ -2637,7 +2655,7 @@ impl Context {
                     in_code_block = false;
                     let code_content = code_block_lines.join("\n");
                     let theme = self.theme;
-                    let highlighted =
+                    let highlighted: Option<Vec<Vec<(String, Style)>>> =
                         crate::syntax::highlight_code(&code_content, &code_block_lang, &theme);
                     let _ = self.container().bg(theme.surface).p(1).col(|ui| {
                         if let Some(ref hl_lines) = highlighted {
@@ -2875,6 +2893,7 @@ impl Context {
         self
     }
 
+    /// Render a horizontal separator line with a custom color.
     pub fn separator_colored(&mut self, color: Color) -> &mut Self {
         self.commands.push(Command::Text {
             content: "─".repeat(200),
@@ -2931,6 +2950,7 @@ impl Context {
         Response::none()
     }
 
+    /// Render a help bar with custom key/description colors.
     pub fn help_colored(
         &mut self,
         bindings: &[(&str, &str)],

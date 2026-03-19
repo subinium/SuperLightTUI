@@ -3,6 +3,7 @@
 // Documentation
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(rustdoc::broken_intra_doc_links)]
+#![warn(missing_docs)]
 #![warn(rustdoc::private_intra_doc_links)]
 // Correctness
 #![deny(clippy::unwrap_in_result)]
@@ -51,13 +52,21 @@
 
 pub mod anim;
 pub mod buffer;
+/// Terminal cell representation.
 pub mod cell;
+/// Chart and data visualization widgets.
 pub mod chart;
+/// UI context, container builder, and widget rendering.
 pub mod context;
+/// Input events (keyboard, mouse, resize, paste).
 pub mod event;
+/// Half-block image rendering.
 pub mod halfblock;
+/// Keyboard shortcut mapping.
 pub mod keymap;
+/// Flexbox layout engine and command tree.
 pub mod layout;
+/// Color palettes (Tailwind-style).
 pub mod palette;
 pub mod rect;
 #[cfg(feature = "crossterm")]
@@ -74,6 +83,7 @@ use std::io;
 use std::io::IsTerminal;
 #[cfg(feature = "crossterm")]
 use std::io::Write;
+#[cfg(feature = "crossterm")]
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
@@ -267,6 +277,7 @@ pub fn frame(
     run_frame(backend, &mut state.inner, config, events, f)
 }
 
+#[cfg(feature = "crossterm")]
 static PANIC_HOOK_ONCE: Once = Once::new();
 
 #[allow(clippy::print_stderr)]
@@ -1025,6 +1036,7 @@ fn run_frame(
     Ok(true)
 }
 
+#[cfg(feature = "crossterm")]
 fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
     for ev in events {
         match ev {
@@ -1039,6 +1051,7 @@ fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
     }
 }
 
+#[cfg(feature = "crossterm")]
 fn clear_frame_layout_cache(state: &mut FrameState) {
     state.prev_hit_map.clear();
     state.prev_group_rects.clear();
@@ -1062,6 +1075,7 @@ fn is_ctrl_c(ev: &Event) -> bool {
     )
 }
 
+#[cfg(feature = "crossterm")]
 fn sleep_for_fps_cap(max_fps: Option<u32>, frame_start: Instant) {
     if let Some(fps) = max_fps.filter(|fps| *fps > 0) {
         let target = Duration::from_secs_f64(1.0 / fps as f64);
