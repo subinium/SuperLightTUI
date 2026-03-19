@@ -1,4 +1,5 @@
 use super::*;
+use crate::{DirectoryTreeState, RichLogState, TreeNode};
 
 impl Context {
     /// Render children in a fixed grid with the given number of columns.
@@ -1910,6 +1911,166 @@ impl Context {
 
     // ── tree ─────────────────────────────────────────────────────────
 
+    /// Render a scrollable rich log view with styled entries.
+    pub fn rich_log(&mut self, state: &mut RichLogState) -> Response {
+        let focused = self.register_focusable();
+        let interaction_id = self.next_interaction_id();
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+
+        let widget_height = if response.rect.height > 0 {
+            response.rect.height as usize
+        } else {
+            self.area_height as usize
+        };
+        let viewport_height = widget_height.saturating_sub(2);
+        let effective_height = if viewport_height == 0 {
+            state.entries.len().max(1)
+        } else {
+            viewport_height
+        };
+        let show_indicator = state.entries.len() > effective_height;
+        let visible_rows = if show_indicator {
+            effective_height.saturating_sub(1).max(1)
+        } else {
+            effective_height
+        };
+        let max_offset = state.entries.len().saturating_sub(visible_rows);
+        if state.auto_scroll && state.scroll_offset == usize::MAX {
+            state.scroll_offset = max_offset;
+        } else {
+            state.scroll_offset = state.scroll_offset.min(max_offset);
+        }
+        let old_offset = state.scroll_offset;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            state.scroll_offset = (state.scroll_offset + 1).min(max_offset);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageUp => {
+                            state.scroll_offset = state.scroll_offset.saturating_sub(10);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::PageDown => {
+                            state.scroll_offset = (state.scroll_offset + 10).min(max_offset);
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Home => {
+                            state.scroll_offset = 0;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::End => {
+                            state.scroll_offset = max_offset;
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    let in_bounds = mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom();
+                    if !in_bounds {
+                        continue;
+                    }
+                    match mouse.kind {
+                        MouseKind::ScrollUp => {
+                            state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                            self.consumed[i] = true;
+                        }
+                        MouseKind::ScrollDown => {
+                            state.scroll_offset = (state.scroll_offset + 1).min(max_offset);
+                            self.consumed[i] = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        state.scroll_offset = state.scroll_offset.min(max_offset);
+        let start = state
+            .scroll_offset
+            .min(state.entries.len().saturating_sub(visible_rows));
+        let end = (start + visible_rows).min(state.entries.len());
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: Some(Border::Single),
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        for entry in state
+            .entries
+            .iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+        {
+            self.commands.push(Command::RichText {
+                segments: entry.segments.clone(),
+                wrap: false,
+                align: Align::Start,
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+            });
+        }
+
+        if show_indicator {
+            let end_pos = end.min(state.entries.len());
+            let line = format!(
+                "{}-{} / {}",
+                start.saturating_add(1),
+                end_pos,
+                state.entries.len()
+            );
+            self.styled(line, Style::new().dim().fg(self.theme.text_dim));
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        response.changed = state.scroll_offset != old_offset;
+        response
+    }
+
     /// Render a tree view. Left/Right to collapse/expand, Up/Down to navigate.
     pub fn tree(&mut self, state: &mut TreeState) -> Response {
         let entries = state.flatten();
@@ -2016,6 +2177,148 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
         response.changed = changed || state.selected != old_selected;
+        response
+    }
+
+    /// Render a directory tree with guide lines and tree connectors.
+    pub fn directory_tree(&mut self, state: &mut DirectoryTreeState) -> Response {
+        let entries = state.tree.flatten();
+        if entries.is_empty() {
+            return Response::none();
+        }
+        state.tree.selected = state.tree.selected.min(entries.len().saturating_sub(1));
+        let old_selected = state.tree.selected;
+        let focused = self.register_focusable();
+        let interaction_id = self.next_interaction_id();
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+        let mut changed = false;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, event) in self.events.iter().enumerate() {
+                if self.consumed[i] {
+                    continue;
+                }
+                if let Event::Key(key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                            let max_index = state.tree.flatten().len().saturating_sub(1);
+                            let _ = handle_vertical_nav(
+                                &mut state.tree.selected,
+                                max_index,
+                                key.code.clone(),
+                            );
+                            changed = changed || state.tree.selected != old_selected;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Right => {
+                            let current_entries = state.tree.flatten();
+                            let entry = &current_entries
+                                [state.tree.selected.min(current_entries.len() - 1)];
+                            if !entry.is_leaf && !entry.expanded {
+                                state.tree.toggle_at(state.tree.selected);
+                                changed = true;
+                            }
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            state.tree.toggle_at(state.tree.selected);
+                            changed = true;
+                            consumed_indices.push(i);
+                        }
+                        KeyCode::Left => {
+                            let current_entries = state.tree.flatten();
+                            let entry = &current_entries
+                                [state.tree.selected.min(current_entries.len() - 1)];
+                            if entry.expanded {
+                                state.tree.toggle_at(state.tree.selected);
+                                changed = true;
+                            }
+                            consumed_indices.push(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for idx in consumed_indices {
+                self.consumed[idx] = true;
+            }
+        }
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        let mut rows = Vec::new();
+        flatten_directory_rows(&state.tree.nodes, Vec::new(), &mut rows);
+        for (idx, row_entry) in rows.iter().enumerate() {
+            let mut row = String::new();
+            let cursor = if idx == state.tree.selected && focused {
+                "▸"
+            } else {
+                " "
+            };
+            row.push_str(cursor);
+            row.push(' ');
+
+            if row_entry.depth > 0 {
+                for has_more in &row_entry.branch_mask {
+                    if *has_more {
+                        row.push_str("│   ");
+                    } else {
+                        row.push_str("    ");
+                    }
+                }
+                if row_entry.is_last {
+                    row.push_str("└── ");
+                } else {
+                    row.push_str("├── ");
+                }
+            }
+
+            let icon = if row_entry.is_leaf {
+                "  "
+            } else if row_entry.expanded {
+                "▾ "
+            } else {
+                "▸ "
+            };
+            if state.show_icons {
+                row.push_str(icon);
+            }
+            row.push_str(&row_entry.label);
+
+            let style = if idx == state.tree.selected && focused {
+                Style::new().bold().fg(self.theme.primary)
+            } else if idx == state.tree.selected {
+                Style::new().fg(self.theme.primary)
+            } else {
+                Style::new().fg(self.theme.text)
+            };
+            self.styled(row, style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.last_text_idx = None;
+        response.changed = changed || state.tree.selected != old_selected;
         response
     }
 
@@ -2926,6 +3229,39 @@ fn calendar_month_name(month: u32) -> &'static str {
         11 => "Nov",
         12 => "Dec",
         _ => "???",
+    }
+}
+
+struct DirectoryRenderRow {
+    depth: usize,
+    label: String,
+    is_leaf: bool,
+    expanded: bool,
+    is_last: bool,
+    branch_mask: Vec<bool>,
+}
+
+fn flatten_directory_rows(
+    nodes: &[TreeNode],
+    branch_mask: Vec<bool>,
+    out: &mut Vec<DirectoryRenderRow>,
+) {
+    for (idx, node) in nodes.iter().enumerate() {
+        let is_last = idx + 1 == nodes.len();
+        out.push(DirectoryRenderRow {
+            depth: branch_mask.len(),
+            label: node.label.clone(),
+            is_leaf: node.children.is_empty(),
+            expanded: node.expanded,
+            is_last,
+            branch_mask: branch_mask.clone(),
+        });
+
+        if node.expanded && !node.children.is_empty() {
+            let mut next_mask = branch_mask.clone();
+            next_mask.push(!is_last);
+            flatten_directory_rows(&node.children, next_mask, out);
+        }
     }
 }
 

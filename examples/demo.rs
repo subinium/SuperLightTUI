@@ -1,10 +1,10 @@
 use slt::{
     AlertLevel, Align, ApprovalAction, Border, BorderSides, Breakpoint, CalendarState, Color,
-    CommandPaletteState, Context, ContextItem, FilePickerState, FormField, FormState,
-    HalfBlockImage, Justify, KeyCode, KeyMap, KeyModifiers, ListState, MultiSelectState,
-    PaletteCommand, RadioState, RunConfig, ScreenState, ScrollState, SelectState, SpinnerState,
-    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme, ToastLevel,
-    ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    CommandPaletteState, Context, ContextItem, DirectoryTreeState, FilePickerState, FormField,
+    FormState, HalfBlockImage, Justify, KeyCode, KeyMap, KeyModifiers, ListState, MultiSelectState,
+    PaletteCommand, RadioState, RichLogState, RunConfig, ScreenState, ScrollState, SelectState,
+    SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme,
+    ToastLevel, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };
 
 fn main() -> std::io::Result<()> {
@@ -23,6 +23,7 @@ fn main() -> std::io::Result<()> {
         "v0.12.10",
         "v0.13",
         "v0.13.2",
+        "v0.14.0",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -219,6 +220,16 @@ fn main() -> std::io::Result<()> {
         PaletteCommand::new("Toggle Theme", "Switch dark/light mode"),
     ]);
     let mut v132_fuzzy_last = String::from("None");
+    let mut rich_log = RichLogState::new();
+    let mut dir_tree = DirectoryTreeState::from_paths(&[
+        "src/lib.rs",
+        "src/context.rs",
+        "src/context/widgets_display.rs",
+        "src/context/widgets_interactive.rs",
+        "src/widgets.rs",
+        "Cargo.toml",
+        "README.md",
+    ]);
 
     slt::run_with(
         RunConfig {
@@ -375,6 +386,7 @@ fn main() -> std::io::Result<()> {
                                 &mut v132_fuzzy_palette,
                                 &mut v132_fuzzy_last,
                             ),
+                            14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
                             _ => {}
                         });
 
@@ -1902,6 +1914,98 @@ fn render_v0132(
             ui.text("CLI tool pattern: scrolling output + live status")
                 .dim();
         });
+    });
+}
+
+fn render_v014(
+    ui: &mut Context,
+    tick: u64,
+    rich_log: &mut RichLogState,
+    dir_tree: &mut DirectoryTreeState,
+) {
+    section(ui, "v0.14.0 FEATURES");
+
+    if rich_log.is_empty() {
+        rich_log.push(
+            "Application started",
+            slt::Style::new().fg(slt::Color::Green),
+        );
+        rich_log.push(
+            "Loading configuration...",
+            slt::Style::new().fg(slt::Color::Cyan),
+        );
+        rich_log.push_plain("Connected to database");
+        rich_log.push(
+            "Warning: cache miss",
+            slt::Style::new().fg(slt::Color::Yellow),
+        );
+        rich_log.push(
+            "Error: timeout on /api/users",
+            slt::Style::new().fg(slt::Color::Red),
+        );
+        rich_log.max_entries = Some(100);
+    }
+
+    let _ = ui.col_gap(1, |ui| {
+        let _ = ui
+            .bordered(slt::Border::Rounded)
+            .title("Gradient Text")
+            .p(1)
+            .col(|ui| {
+                ui.text("Rainbow Gradient")
+                    .gradient(slt::Color::Red, slt::Color::Blue);
+                ui.text("Warm Sunset")
+                    .gradient(slt::Color::Yellow, slt::Color::Magenta);
+                ui.text("Ocean Wave")
+                    .gradient(slt::Color::Cyan, slt::Color::Blue);
+            });
+
+        let _ = ui
+            .bordered(slt::Border::Rounded)
+            .title("BigText")
+            .p(1)
+            .col(|ui| {
+                let _ = ui.big_text("SLT 0.14");
+            });
+
+        let _ = ui
+            .bordered(slt::Border::Rounded)
+            .title("Timer")
+            .p(1)
+            .row(|ui| {
+                let elapsed = std::time::Duration::from_millis(tick * 16);
+                ui.text("Elapsed: ");
+                ui.timer_display(elapsed).bold().fg(slt::Color::Cyan);
+            });
+
+        #[cfg(feature = "qrcode")]
+        {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("QR Code")
+                .p(1)
+                .col(|ui| {
+                    let _ = ui.qr_code("https://github.com/subinium/SuperLightTUI");
+                });
+        }
+
+        let _ = ui
+            .bordered(slt::Border::Rounded)
+            .title("RichLog")
+            .p(1)
+            .h(10)
+            .col(|ui| {
+                let _ = ui.rich_log(rich_log);
+            });
+
+        let _ = ui
+            .bordered(slt::Border::Rounded)
+            .title("DirectoryTree")
+            .p(1)
+            .h(12)
+            .col(|ui| {
+                let _ = ui.directory_tree(dir_tree);
+            });
     });
 }
 

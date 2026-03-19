@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthStr;
 
+use crate::Style;
+
 type FormValidator = fn(&str) -> Result<(), String>;
 type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
 
@@ -1128,6 +1130,87 @@ impl Default for ScrollState {
     }
 }
 
+/// State for the rich log viewer widget.
+#[derive(Debug, Clone)]
+pub struct RichLogState {
+    /// Log entries to display.
+    pub entries: Vec<RichLogEntry>,
+    /// Scroll offset (0 = top).
+    pub(crate) scroll_offset: usize,
+    /// Whether to auto-scroll to bottom when new entries are added.
+    pub auto_scroll: bool,
+    /// Maximum number of entries to keep (None = unlimited).
+    pub max_entries: Option<usize>,
+}
+
+/// A single entry in a RichLog.
+#[derive(Debug, Clone)]
+pub struct RichLogEntry {
+    /// Styled text segments for this entry.
+    pub segments: Vec<(String, Style)>,
+}
+
+impl RichLogState {
+    /// Create an empty rich log state.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            scroll_offset: 0,
+            auto_scroll: true,
+            max_entries: None,
+        }
+    }
+
+    /// Add a single-style entry to the log.
+    pub fn push(&mut self, text: impl Into<String>, style: Style) {
+        self.push_segments(vec![(text.into(), style)]);
+    }
+
+    /// Add a plain text entry using default style.
+    pub fn push_plain(&mut self, text: impl Into<String>) {
+        self.push(text, Style::new());
+    }
+
+    /// Add a multi-segment styled entry to the log.
+    pub fn push_segments(&mut self, segments: Vec<(String, Style)>) {
+        self.entries.push(RichLogEntry { segments });
+
+        if let Some(max_entries) = self.max_entries {
+            if self.entries.len() > max_entries {
+                let remove_count = self.entries.len() - max_entries;
+                self.entries.drain(0..remove_count);
+                self.scroll_offset = self.scroll_offset.saturating_sub(remove_count);
+            }
+        }
+
+        if self.auto_scroll {
+            self.scroll_offset = usize::MAX;
+        }
+    }
+
+    /// Clear all entries and reset scroll position.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.scroll_offset = 0;
+    }
+
+    /// Return number of entries in the log.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true when no entries are present.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl Default for RichLogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CalendarState {
     pub year: i32,
@@ -1505,6 +1588,100 @@ impl TreeState {
         }
         false
     }
+}
+
+/// State for the directory tree widget.
+#[derive(Debug, Clone)]
+pub struct DirectoryTreeState {
+    /// The underlying tree state (reuses existing TreeState).
+    pub tree: TreeState,
+    /// Whether to show file/folder icons.
+    pub show_icons: bool,
+}
+
+impl DirectoryTreeState {
+    /// Create directory tree state from root nodes.
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self {
+            tree: TreeState::new(nodes),
+            show_icons: true,
+        }
+    }
+
+    /// Build a directory tree from slash-delimited paths.
+    pub fn from_paths(paths: &[&str]) -> Self {
+        let mut roots: Vec<TreeNode> = Vec::new();
+
+        for raw_path in paths {
+            let parts: Vec<&str> = raw_path
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            insert_path(&mut roots, &parts, 0);
+        }
+
+        Self::new(roots)
+    }
+
+    /// Return selected node label if a node is selected.
+    pub fn selected_label(&self) -> Option<&str> {
+        let mut cursor = 0usize;
+        selected_label_in_nodes(&self.tree.nodes, self.tree.selected, &mut cursor)
+    }
+}
+
+impl Default for DirectoryTreeState {
+    fn default() -> Self {
+        Self::new(Vec::<TreeNode>::new())
+    }
+}
+
+fn insert_path(nodes: &mut Vec<TreeNode>, parts: &[&str], depth: usize) {
+    let Some(label) = parts.get(depth) else {
+        return;
+    };
+
+    let is_last = depth + 1 == parts.len();
+    let idx = nodes
+        .iter()
+        .position(|node| node.label == *label)
+        .unwrap_or_else(|| {
+            let mut node = TreeNode::new(*label);
+            if !is_last {
+                node.expanded = true;
+            }
+            nodes.push(node);
+            nodes.len() - 1
+        });
+
+    if is_last {
+        return;
+    }
+
+    nodes[idx].expanded = true;
+    insert_path(&mut nodes[idx].children, parts, depth + 1);
+}
+
+fn selected_label_in_nodes<'a>(
+    nodes: &'a [TreeNode],
+    target: usize,
+    cursor: &mut usize,
+) -> Option<&'a str> {
+    for node in nodes {
+        if *cursor == target {
+            return Some(node.label.as_str());
+        }
+        *cursor += 1;
+        if node.expanded {
+            if let Some(found) = selected_label_in_nodes(&node.children, target, cursor) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 // ── Command Palette ───────────────────────────────────────────────────
@@ -1982,7 +2159,7 @@ mod tests {
         assert!(state.items.is_empty());
         assert_eq!(state.selected, 0);
         assert_eq!(state.filter, "");
-        assert_eq!(state.visible_indices(), &[]);
+        assert!(state.visible_indices().is_empty());
         assert_eq!(state.selected_item(), None);
     }
 
@@ -2015,7 +2192,7 @@ mod tests {
         assert_eq!(state.page, 0);
         assert_eq!(state.page_size, 0);
         assert!(!state.zebra);
-        assert_eq!(state.visible_indices(), &[]);
+        assert!(state.visible_indices().is_empty());
     }
 
     #[test]

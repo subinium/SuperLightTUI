@@ -714,6 +714,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -994,6 +1000,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
+name = "slt-wasm"
+version = "0.14.0"
+dependencies = [
+ "js-sys",
+ "superlighttui",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1007,7 +1023,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "superlighttui"
-version = "0.13.2"
+version = "0.14.0"
 dependencies = [
  "compact_str",
  "criterion",
@@ -1015,6 +1031,7 @@ dependencies = [
  "image",
  "insta",
  "proptest",
+ "qrcode",
  "serde",
  "tokio",
  "unicode-width",

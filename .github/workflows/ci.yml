@@ -93,6 +93,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@master
 
+  check-no-default:
+    name: Check (no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p superlighttui --no-default-features
+
+  check-wasm:
+    name: Check (WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p slt-wasm --target wasm32-unknown-unknown
+
   feature-check:
     name: Feature Combinations
     runs-on: ubuntu-latest
@@ -101,7 +121,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - name: Check each feature independently
-        run: cargo hack check --each-feature --no-dev-deps
+        run: cargo hack check -p superlighttui --each-feature --no-dev-deps
 
   deny:
     name: Deny Check
