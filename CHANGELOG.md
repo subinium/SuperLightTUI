@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.13.2] — 2026-03-19
+
+### Features
+
+- **Tooltip** — `ui.tooltip("text")` renders a hover popup for any widget (deferred overlay rendering)
+- **Table zebra striping** — `state.zebra = true` for alternating row backgrounds
+- **Fuzzy matching** — `command_palette` now scores by character order match, not just substring
+- **Calendar widget** — `ui.calendar(&mut CalendarState)` date picker with month navigation and day selection
+- **Screens/routing** — `ScreenState` push/pop navigation stack with `ui.screen()` helper
+- **Static output** — `slt::run_static()` for CLI tools with scrolling logs above + live TUI below
+- **Sixel image** — `ui.sixel_image()` renders images on Sixel-capable terminals (xterm, foot, mlterm)
+
+### Fixes
+
+- **Hit detection architecture** — `hit_areas` now indexed by `interaction_id` (sparse vector) instead of DFS traversal order; fixes mouse hover/click targeting wrong widgets when overlays exist
+- **Confirm widget** — add mouse click support for [Yes]/[No] (was keyboard-only)
+- **Tooltip rendering** — deferred emit pattern prevents `interaction_count` shifts between main content widgets
+
+### Testing & Infrastructure
+
+- 8 new criterion benchmarks (tabs, checkbox, select, progress, tree, sparkline, grid, calendar)
+- 8 new insta snapshot tests for key widget renders
+- Demo tab `v0.13.2` added (tab index 13) showcasing all new features
+
 ## [0.13.1] — 2026-03-19
 
 ### Fixes
