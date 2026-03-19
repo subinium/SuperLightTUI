@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.14.1] — 2026-03-19
+
+### Features
+
+- **Tree-sitter syntax highlighting** — `syntax` feature enables AST-accurate code highlighting via `tree-sitter-highlight`. Supports 15 languages: Rust, Python, JavaScript, TypeScript/TSX, Go, Bash, JSON, TOML, C, C++, Java, Ruby, CSS, HTML, YAML. Per-language features available (`syntax-rust`, `syntax-python`, etc.)
+- **`code_block_lang(code, lang)`** — new API renders code blocks with language-aware tree-sitter highlighting (falls back to keyword highlighter when `syntax` feature is off or language is unknown)
+- **`code_block_numbered_lang(code, lang)`** — numbered variant with same tree-sitter integration
+- **`highlight_code(code, lang, theme)`** — public API in `slt::syntax` returns styled segments for custom rendering
+- **`is_language_supported(lang)`** — query whether tree-sitter highlighting is available for a language
+
+### Improvements
+
+- **`streaming_markdown()`** code blocks now use per-token keyword highlighting instead of single-color rendering
+- **`markdown()`** fenced code blocks now properly track open/close state and render with syntax highlighting (tree-sitter when available, keyword fallback otherwise). Previously, code blocks were rendered as a single `┌─code─` border with no content handling.
+
+### New Dependencies (all optional)
+
+- `tree-sitter-highlight` 0.26 (behind `syntax-*` features)
+- 15 grammar crates: `tree-sitter-rust`, `tree-sitter-python`, `tree-sitter-javascript`, `tree-sitter-typescript`, `tree-sitter-go`, `tree-sitter-bash`, `tree-sitter-json`, `tree-sitter-toml-ng`, `tree-sitter-c`, `tree-sitter-cpp`, `tree-sitter-java`, `tree-sitter-ruby`, `tree-sitter-css`, `tree-sitter-html`, `tree-sitter-yaml` (each behind their `syntax-*` feature)
+
+### Notes
+
+- `syntax` feature requires Rust 1.84+ (tree-sitter MSRV). Base MSRV unchanged at 1.81.
+- `syntax` is NOT included in `full` to avoid C build dependency surprises. Opt in explicitly with `features = ["syntax"]`.
+- Existing `code_block()` and `code_block_numbered()` APIs unchanged — no breaking changes.
+
 ## [0.14.0] — 2026-03-19
 
 ### Breaking Changes

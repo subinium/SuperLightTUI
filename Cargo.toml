@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.14.0"
+version = "0.14.1"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -27,6 +27,22 @@ serde = { version = "1", features = ["derive"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
 qrcode = { version = "0.14", optional = true, default-features = false }
+tree-sitter-highlight = { version = "0.26", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
+tree-sitter-bash = { version = "0.25", optional = true }
+tree-sitter-json = { version = "0.24", optional = true }
+tree-sitter-toml-ng = { version = "0.7", optional = true }
+tree-sitter-c = { version = "0.24", optional = true }
+tree-sitter-cpp = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-css = { version = "0.25", optional = true }
+tree-sitter-html = { version = "0.23", optional = true }
+tree-sitter-yaml = { version = "0.7", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -40,6 +56,38 @@ async = ["dep:tokio", "crossterm"]
 serde = ["dep:serde"]
 image = ["dep:image"]
 qrcode = ["dep:qrcode"]
+syntax-rust = ["dep:tree-sitter-highlight", "dep:tree-sitter-rust"]
+syntax-python = ["dep:tree-sitter-highlight", "dep:tree-sitter-python"]
+syntax-javascript = ["dep:tree-sitter-highlight", "dep:tree-sitter-javascript"]
+syntax-go = ["dep:tree-sitter-highlight", "dep:tree-sitter-go"]
+syntax-bash = ["dep:tree-sitter-highlight", "dep:tree-sitter-bash"]
+syntax-json = ["dep:tree-sitter-highlight", "dep:tree-sitter-json"]
+syntax-toml = ["dep:tree-sitter-highlight", "dep:tree-sitter-toml-ng"]
+syntax-c = ["dep:tree-sitter-highlight", "dep:tree-sitter-c"]
+syntax-cpp = ["dep:tree-sitter-highlight", "dep:tree-sitter-cpp"]
+syntax-typescript = ["dep:tree-sitter-highlight", "dep:tree-sitter-typescript"]
+syntax-java = ["dep:tree-sitter-highlight", "dep:tree-sitter-java"]
+syntax-ruby = ["dep:tree-sitter-highlight", "dep:tree-sitter-ruby"]
+syntax-css = ["dep:tree-sitter-highlight", "dep:tree-sitter-css"]
+syntax-html = ["dep:tree-sitter-highlight", "dep:tree-sitter-html"]
+syntax-yaml = ["dep:tree-sitter-highlight", "dep:tree-sitter-yaml"]
+syntax = [
+    "syntax-rust",
+    "syntax-python",
+    "syntax-javascript",
+    "syntax-typescript",
+    "syntax-go",
+    "syntax-bash",
+    "syntax-json",
+    "syntax-toml",
+    "syntax-c",
+    "syntax-cpp",
+    "syntax-java",
+    "syntax-ruby",
+    "syntax-css",
+    "syntax-html",
+    "syntax-yaml",
+]
 full = ["crossterm", "async", "serde", "image", "qrcode"]
 
 [package.metadata.docs.rs]

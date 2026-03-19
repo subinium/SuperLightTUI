@@ -63,6 +63,7 @@ pub mod rect;
 #[cfg(feature = "crossterm")]
 mod sixel;
 pub mod style;
+pub mod syntax;
 #[cfg(feature = "crossterm")]
 mod terminal;
 pub mod test_utils;
