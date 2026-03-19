@@ -3199,3 +3199,63 @@ fn demo_list_set_items_no_panic() {
     });
     tb.assert_contains("X");
 }
+
+#[test]
+fn code_block_lang_renders_content() {
+    let mut tb = slt::TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.code_block_lang("let x = 1;", "rust");
+    });
+    tb.assert_contains("let");
+    tb.assert_contains("1");
+}
+
+#[test]
+fn code_block_lang_unknown_falls_back() {
+    let mut tb = slt::TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.code_block_lang("hello world", "brainfuck");
+    });
+    tb.assert_contains("hello");
+}
+
+#[test]
+fn code_block_numbered_lang_renders() {
+    let mut tb = slt::TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.code_block_numbered_lang("fn main() {}\nlet x = 1;", "rust");
+    });
+    let output = tb.to_string();
+    assert!(output.contains("1"));
+    assert!(output.contains("2"));
+    assert!(output.contains("main"));
+}
+
+#[test]
+fn code_block_lang_empty_lang_uses_fallback() {
+    let mut tb = slt::TestBackend::new(60, 10);
+    tb.render(|ui| {
+        ui.code_block_lang("let x = 1;", "");
+    });
+    tb.assert_contains("let");
+}
+
+#[test]
+fn markdown_fenced_code_block_renders() {
+    let mut tb = slt::TestBackend::new(80, 20);
+    tb.render(|ui| {
+        ui.markdown("# Title\n\n```rust\nfn main() {}\n```\n\nDone.");
+    });
+    tb.assert_contains("Title");
+    tb.assert_contains("main");
+    tb.assert_contains("Done");
+}
+
+#[test]
+fn markdown_unclosed_code_block_no_panic() {
+    let mut tb = slt::TestBackend::new(80, 20);
+    tb.render(|ui| {
+        ui.markdown("```python\ndef foo():\n    pass");
+    });
+    tb.assert_contains("def");
+}

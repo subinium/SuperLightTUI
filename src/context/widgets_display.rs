@@ -676,11 +676,13 @@ impl Context {
                     line.push_str(cursor);
                     self.styled(line, border_style);
                 } else {
-                    let mut line_text = String::with_capacity(2 + line.len() + cursor.len());
-                    line_text.push_str("  ");
-                    line_text.push_str(line);
-                    line_text.push_str(cursor);
-                    self.styled(line_text, code_style);
+                    self.line(|ui| {
+                        ui.text("  ");
+                        render_highlighted_line(ui, line);
+                        if !cursor.is_empty() {
+                            ui.styled(cursor, Style::new().fg(ui.theme.primary));
+                        }
+                    });
                 }
                 continue;
             }
@@ -1297,14 +1299,23 @@ impl Context {
     }
 
     pub fn code_block(&mut self, code: &str) -> Response {
+        self.code_block_lang(code, "")
+    }
+
+    pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
         let theme = self.theme;
+        let highlighted = crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
             .pad(1)
             .col(|ui| {
-                for line in code.lines() {
-                    render_highlighted_line(ui, line);
+                if let Some(ref lines) = highlighted {
+                    render_tree_sitter_lines(ui, lines);
+                } else {
+                    for line in code.lines() {
+                        render_highlighted_line(ui, line);
+                    }
                 }
             });
 
@@ -1312,20 +1323,37 @@ impl Context {
     }
 
     pub fn code_block_numbered(&mut self, code: &str) -> Response {
+        self.code_block_numbered_lang(code, "")
+    }
+
+    pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = format!("{}", lines.len()).len();
         let theme = self.theme;
+        let highlighted = crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
             .pad(1)
             .col(|ui| {
-                for (i, line) in lines.iter().enumerate() {
-                    ui.line(|ui| {
-                        ui.text(format!("{:>gutter_w$} │ ", i + 1))
-                            .fg(theme.text_dim);
-                        render_highlighted_line(ui, line);
-                    });
+                if let Some(ref hl_lines) = highlighted {
+                    for (i, segs) in hl_lines.iter().enumerate() {
+                        ui.line(|ui| {
+                            ui.text(format!("{:>gutter_w$} │ ", i + 1))
+                                .fg(theme.text_dim);
+                            for (text, style) in segs {
+                                ui.styled(text, *style);
+                            }
+                        });
+                    }
+                } else {
+                    for (i, line) in lines.iter().enumerate() {
+                        ui.line(|ui| {
+                            ui.text(format!("{:>gutter_w$} │ ", i + 1))
+                                .fg(theme.text_dim);
+                            render_highlighted_line(ui, line);
+                        });
+                    }
                 }
             });
 
@@ -2388,6 +2416,20 @@ const KEYWORDS: &[&str] = &[
     "fallthrough",
     "nil",
 ];
+
+fn render_tree_sitter_lines(ui: &mut Context, lines: &[Vec<(String, crate::style::Style)>]) {
+    for segs in lines {
+        if segs.is_empty() {
+            ui.text(" ");
+        } else {
+            ui.line(|ui| {
+                for (text, style) in segs {
+                    ui.styled(text, *style);
+                }
+            });
+        }
+    }
+}
 
 fn render_highlighted_line(ui: &mut Context, line: &str) {
     let theme = ui.theme;

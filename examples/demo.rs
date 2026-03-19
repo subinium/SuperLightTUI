@@ -24,6 +24,7 @@ fn main() -> std::io::Result<()> {
         "v0.13",
         "v0.13.2",
         "v0.14.0",
+        "v0.14.1",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -387,6 +388,7 @@ fn main() -> std::io::Result<()> {
                                 &mut v132_fuzzy_last,
                             ),
                             14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
+                            15 => render_v0141(ui),
                             _ => {}
                         });
 
@@ -2007,6 +2009,151 @@ fn render_v014(
                 let _ = ui.directory_tree(dir_tree);
             });
     });
+}
+
+fn render_v0141(ui: &mut Context) {
+    section(ui, "v0.14.1 — TREE-SITTER SYNTAX HIGHLIGHTING");
+
+    ui.text("15 languages with AST-accurate highlighting via tree-sitter")
+        .dim();
+    ui.text("");
+
+    let _ = ui.col_gap(1, |ui| {
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Rust")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("use std::collections::HashMap;\n\nfn main() {\n    let mut map = HashMap::new();\n    map.insert(\"key\", 42);\n    println!(\"{:?}\", map);\n}", "rust");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Python")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("import json\n\ndef process(data: list[str]) -> dict:\n    \"\"\"Parse and transform data.\"\"\"\n    result = {k: len(k) for k in data}\n    return result", "python");
+                });
+        });
+
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("TypeScript")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("interface User {\n  name: string;\n  age: number;\n}\n\nconst greet = (user: User): string => {\n  return `Hello, ${user.name}!`;\n};", "ts");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Go")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tch := make(chan int, 10)\n\tgo func() { ch <- 42 }()\n\tfmt.Println(<-ch)\n}", "go");
+                });
+        });
+
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("C++")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("#include <vector>\n#include <algorithm>\n\nint main() {\n    std::vector<int> v = {3, 1, 4};\n    std::sort(v.begin(), v.end());\n    return 0;\n}", "cpp");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Java")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("import java.util.List;\n\npublic class Main {\n    public static void main(String[] args) {\n        var items = List.of(\"a\", \"b\");\n        items.forEach(System.out::println);\n    }\n}", "java");
+                });
+        });
+
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Bash")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("#!/bin/bash\nset -euo pipefail\n\nfor file in *.rs; do\n  echo \"Processing $file\"\n  wc -l \"$file\"\ndone", "bash");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("Ruby")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("class Person\n  attr_reader :name, :age\n\n  def initialize(name, age)\n    @name = name\n    @age = age\n  end\n\n  def greet = \"Hi, I'm #{name}\"\nend", "ruby");
+                });
+        });
+
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("JSON")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("{\n  \"name\": \"slt\",\n  \"version\": \"0.14.1\",\n  \"features\": [\"syntax\", \"async\"],\n  \"count\": 15\n}", "json");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("TOML")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("[package]\nname = \"superlighttui\"\nversion = \"0.14.1\"\n\n[features]\nsyntax = [\"syntax-rust\"]", "toml");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("YAML")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4", "yaml");
+                });
+        });
+
+        let _ = ui.row_gap(1, |ui| {
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("HTML")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SLT Demo</title>\n</head>\n<body>\n  <h1 class=\"title\">Hello</h1>\n</body>\n</html>", "html");
+                });
+
+            let _ = ui
+                .bordered(slt::Border::Rounded)
+                .title("CSS")
+                .p(1)
+                .grow(1)
+                .col(|ui| {
+                    let _ = ui.code_block_lang(".container {\n  display: flex;\n  gap: 1rem;\n  background: #1e1e2e;\n  border-radius: 8px;\n  padding: 16px;\n}", "css");
+                });
+        });
+    });
+
+    ui.text("");
+    ui.text("syntax feature OFF → falls back to keyword highlighter")
+        .dim();
+    ui.text("syntax feature ON  → tree-sitter AST-accurate colors")
+        .dim();
 }
 
 fn card(ui: &mut Context, f: impl FnOnce(&mut Context)) {

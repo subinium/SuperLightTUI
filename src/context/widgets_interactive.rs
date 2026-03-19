@@ -2623,15 +2623,55 @@ impl Context {
         let text_style = Style::new().fg(self.theme.text);
         let bold_style = Style::new().fg(self.theme.text).bold();
         let code_style = Style::new().fg(self.theme.accent);
+        let border_style = Style::new().fg(self.theme.border).dim();
+
+        let mut in_code_block = false;
+        let mut code_block_lang = String::new();
+        let mut code_block_lines: Vec<String> = Vec::new();
 
         for line in text.lines() {
             let trimmed = line.trim();
+
+            if in_code_block {
+                if trimmed.starts_with("```") {
+                    in_code_block = false;
+                    let code_content = code_block_lines.join("\n");
+                    let theme = self.theme;
+                    let highlighted =
+                        crate::syntax::highlight_code(&code_content, &code_block_lang, &theme);
+                    let _ = self.container().bg(theme.surface).p(1).col(|ui| {
+                        if let Some(ref hl_lines) = highlighted {
+                            for segs in hl_lines {
+                                if segs.is_empty() {
+                                    ui.text(" ");
+                                } else {
+                                    ui.line(|ui| {
+                                        for (t, s) in segs {
+                                            ui.styled(t, *s);
+                                        }
+                                    });
+                                }
+                            }
+                        } else {
+                            for cl in &code_block_lines {
+                                ui.styled(cl, code_style);
+                            }
+                        }
+                    });
+                    code_block_lang.clear();
+                    code_block_lines.clear();
+                } else {
+                    code_block_lines.push(line.to_string());
+                }
+                continue;
+            }
+
             if trimmed.is_empty() {
                 self.text(" ");
                 continue;
             }
             if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-                self.styled("─".repeat(40), Style::new().fg(self.theme.border).dim());
+                self.styled("─".repeat(40), border_style);
                 continue;
             }
             if let Some(heading) = trimmed.strip_prefix("### ") {
@@ -2685,9 +2725,9 @@ impl Context {
                 } else {
                     self.text(trimmed);
                 }
-            } else if let Some(code) = trimmed.strip_prefix("```") {
-                let _ = code;
-                self.styled("  ┌─code─", Style::new().fg(self.theme.border).dim());
+            } else if let Some(lang) = trimmed.strip_prefix("```") {
+                in_code_block = true;
+                code_block_lang = lang.trim().to_string();
             } else {
                 let segs = Self::parse_inline_segments(trimmed, text_style, bold_style, code_style);
                 if segs.len() <= 1 {
@@ -2699,6 +2739,12 @@ impl Context {
                         }
                     });
                 }
+            }
+        }
+
+        if in_code_block && !code_block_lines.is_empty() {
+            for cl in &code_block_lines {
+                self.styled(cl, code_style);
             }
         }
 
