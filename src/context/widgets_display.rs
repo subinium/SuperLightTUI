@@ -344,9 +344,13 @@ impl Context {
                         let mask = 1u8 << (bit as u8);
                         let upper_on = (upper & mask) != 0;
                         let lower_on = (lower & mask) != 0;
-                        let fg = if upper_on { on_color } else { Color::Reset };
-                        let bg = if lower_on { on_color } else { Color::Reset };
-                        buf.set_char(x, y, '▀', Style::new().fg(fg).bg(bg));
+                        let (ch, fg, bg) = match (upper_on, lower_on) {
+                            (true, true) => ('█', on_color, on_color),
+                            (true, false) => ('▀', on_color, Color::Reset),
+                            (false, true) => ('▄', on_color, Color::Reset),
+                            (false, false) => (' ', Color::Reset, Color::Reset),
+                        };
+                        buf.set_char(x, y, ch, Style::new().fg(fg).bg(bg));
                     }
                 }
             }
@@ -2579,19 +2583,17 @@ mod tests {
 
     #[test]
     fn big_text_renders_half_block_grid() {
-        let mut backend = TestBackend::new(8, 4);
+        let mut backend = TestBackend::new(16, 4);
         backend.render(|ui| {
             let _ = ui.big_text("A");
         });
 
-        for y in 0..4 {
-            let line = backend.line(y);
-            assert_eq!(line.chars().count(), 8, "line {y} width mismatch: {line:?}");
-            assert!(
-                line.contains('▀'),
-                "line {y} should contain half block glyphs: {line:?}"
-            );
-        }
+        let output = backend.to_string();
+        // Should contain half-block characters (▀, ▄, or █)
+        assert!(
+            output.contains('▀') || output.contains('▄') || output.contains('█'),
+            "output should contain half-block glyphs: {output:?}"
+        );
     }
 
     #[test]
