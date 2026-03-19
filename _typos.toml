@@ -9,4 +9,4 @@
 "Pn" = "Pn"
 
 [files]
-extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md"]
+extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md", "docs/README.*.md"]
