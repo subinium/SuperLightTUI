@@ -97,7 +97,7 @@ ui.container()
     });
 ```
 
-**Two core dependencies** — `crossterm` for terminal I/O. `unicode-width` for character measurement. Optional: `tokio` for async, `serde` for serialization, `image` for image loading. Zero `unsafe` code.
+**Minimal dependencies** — `unicode-width` + `compact_str` at core. `crossterm` for terminal I/O (optional for custom backends). Optional: `tokio` for async, `serde` for serialization, `image` for image loading, `tree-sitter` for syntax highlighting. Zero `unsafe` code.
 
 > **AI-Assisted Development** — Use the `rust-tui-development-with-slt` skill in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for full API reference, best patterns, and codegen templates. Or design visually with [tui.builders](https://tui.builders):
 
@@ -639,7 +639,7 @@ Half-block (▀▄) image rendering. Also works without the `image` feature via 
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.13", features = ["full"] }
+superlighttui = { version = "0.15", features = ["full"] }
 ```
 
 </details>
@@ -715,6 +715,11 @@ Press **F12** in any SLT app to toggle the layout debugger overlay. Shows contai
 | anim | `cargo run --example anim` | Tween + Spring + Keyframes |
 | demo_infoviz | `cargo run --example demo_infoviz` | Data visualization |
 | demo_trading | `cargo run --example demo_trading` | Exchange-style trading terminal |
+| demo_wiki | `cargo run --example demo_wiki` | Wiki-style text layout |
+| demo_key_test | `cargo run --example demo_key_test` | Key event tester |
+| demo_raw_draw | `cargo run --example demo_raw_draw` | Direct buffer drawing |
+| demo_table | `cargo run --example demo_table` | Table widget showcase |
+| error_boundary | `cargo run --example error_boundary_demo` | Panic recovery |
 | async_demo | `cargo run --example async_demo --features async` | Background tasks |
 
 ## Architecture
