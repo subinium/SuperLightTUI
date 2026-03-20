@@ -2851,7 +2851,12 @@ impl Context {
             return;
         }
         let mut col_widths = vec![0usize; col_count];
-        for row in &all_rows {
+        // Strip markdown formatting for accurate display-width calculation
+        let stripped_rows: Vec<Vec<String>> = all_rows
+            .iter()
+            .map(|row| row.iter().map(|c| Self::md_strip(c)).collect())
+            .collect();
+        for row in &stripped_rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
                     col_widths[i] = col_widths[i].max(UnicodeWidthStr::width(cell.as_str()));
@@ -2873,10 +2878,11 @@ impl Context {
         if let Some(ref hdr) = header {
             let mut s = String::from("│");
             for (i, w) in col_widths.iter().enumerate() {
-                let cell = hdr.get(i).map(String::as_str).unwrap_or("");
-                let cell_w = UnicodeWidthStr::width(cell);
+                let raw = hdr.get(i).map(String::as_str).unwrap_or("");
+                let display = Self::md_strip(raw);
+                let cell_w = UnicodeWidthStr::width(display.as_str());
                 s.push(' ');
-                s.push_str(cell);
+                s.push_str(&display);
                 for _ in cell_w..*w {
                     s.push(' ');
                 }
@@ -2899,10 +2905,11 @@ impl Context {
         for row in &data_rows {
             let mut s = String::from("│");
             for (i, w) in col_widths.iter().enumerate() {
-                let cell = row.get(i).map(String::as_str).unwrap_or("");
-                let cell_w = UnicodeWidthStr::width(cell);
+                let raw = row.get(i).map(String::as_str).unwrap_or("");
+                let display = Self::md_strip(raw);
+                let cell_w = UnicodeWidthStr::width(display.as_str());
                 s.push(' ');
-                s.push_str(cell);
+                s.push_str(&display);
                 for _ in cell_w..*w {
                     s.push(' ');
                 }
@@ -3131,6 +3138,70 @@ impl Context {
         let url: String = chars[paren_start..paren_end].iter().collect();
         let consumed = paren_end - start + 1;
         Some((text, url, consumed))
+    }
+
+    /// Strip markdown inline formatting, returning plain display text.
+    ///
+    /// `**bold**` → `bold`, `*italic*` → `italic`, `` `code` `` → `code`,
+    /// `[text](url)` → `text`, `![alt](url)` → `alt`.
+    fn md_strip(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // Image ![alt](url) → alt
+            if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
+                if let Some((alt, _, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
+                    result.push_str(&alt);
+                    i += 1 + consumed;
+                    continue;
+                }
+            }
+            // Link [text](url) → text
+            if chars[i] == '[' {
+                if let Some((link_text, _, consumed)) = Self::parse_md_bracket_paren(&chars, i) {
+                    result.push_str(&link_text);
+                    i += consumed;
+                    continue;
+                }
+            }
+            // Bold **text**
+            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
+                let rest: String = chars[i + 2..].iter().collect();
+                if let Some(end) = rest.find("**") {
+                    let inner = &rest[..end];
+                    result.push_str(inner);
+                    i += 2 + inner.chars().count() + 2;
+                    continue;
+                }
+            }
+            // Italic *text*
+            if chars[i] == '*'
+                && (i + 1 >= chars.len() || chars[i + 1] != '*')
+                && (i == 0 || chars[i - 1] != '*')
+            {
+                let rest: String = chars[i + 1..].iter().collect();
+                if let Some(end) = rest.find('*') {
+                    let inner = &rest[..end];
+                    result.push_str(inner);
+                    i += 1 + inner.chars().count() + 1;
+                    continue;
+                }
+            }
+            // Inline code `text`
+            if chars[i] == '`' {
+                let rest: String = chars[i + 1..].iter().collect();
+                if let Some(end) = rest.find('`') {
+                    let inner = &rest[..end];
+                    result.push_str(inner);
+                    i += 1 + inner.chars().count() + 1;
+                    continue;
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        }
+        result
     }
 
     // ── key sequence ─────────────────────────────────────────────────
