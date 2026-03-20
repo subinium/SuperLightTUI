@@ -5,7 +5,7 @@ use crate::{DirectoryTreeState, RichLogState, TreeNode};
 enum MdInline {
     Text(String),
     Link { text: String, url: String },
-    Image { alt: String, url: String },
+    Image { alt: String },
 }
 
 impl Context {
@@ -2703,7 +2703,13 @@ impl Context {
             }
             // Flush accumulated table rows when a non-table line is encountered
             if !table_lines.is_empty() {
-                self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+                self.render_markdown_table(
+                    &table_lines,
+                    text_style,
+                    bold_style,
+                    code_style,
+                    border_style,
+                );
                 table_lines.clear();
             }
 
@@ -2732,44 +2738,23 @@ impl Context {
                 .strip_prefix("- ")
                 .or_else(|| trimmed.strip_prefix("* "))
             {
-                let segs = Self::parse_inline_segments(item, text_style, bold_style, code_style);
-                if segs.len() <= 1 {
-                    let mut line = String::with_capacity(4 + item.len());
-                    line.push_str("  • ");
-                    line.push_str(item);
-                    self.styled(line, text_style);
-                } else {
-                    self.line(|ui| {
-                        ui.styled("  • ", text_style);
-                        for (s, st) in segs {
-                            ui.styled(s, st);
-                        }
-                    });
-                }
+                self.line_wrap(|ui| {
+                    ui.styled("  • ", text_style);
+                    Self::render_md_inline_into(ui, item, text_style, bold_style, code_style);
+                });
             } else if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(". ") {
                 let parts: Vec<&str> = trimmed.splitn(2, ". ").collect();
                 if parts.len() == 2 {
-                    let segs =
-                        Self::parse_inline_segments(parts[1], text_style, bold_style, code_style);
-                    if segs.len() <= 1 {
-                        let mut line = String::with_capacity(4 + parts[0].len() + parts[1].len());
-                        line.push_str("  ");
-                        line.push_str(parts[0]);
-                        line.push_str(". ");
-                        line.push_str(parts[1]);
-                        self.styled(line, text_style);
-                    } else {
-                        self.line(|ui| {
-                            let mut prefix = String::with_capacity(4 + parts[0].len());
-                            prefix.push_str("  ");
-                            prefix.push_str(parts[0]);
-                            prefix.push_str(". ");
-                            ui.styled(prefix, text_style);
-                            for (s, st) in segs {
-                                ui.styled(s, st);
-                            }
-                        });
-                    }
+                    self.line_wrap(|ui| {
+                        let mut prefix = String::with_capacity(4 + parts[0].len());
+                        prefix.push_str("  ");
+                        prefix.push_str(parts[0]);
+                        prefix.push_str(". ");
+                        ui.styled(prefix, text_style);
+                        Self::render_md_inline_into(
+                            ui, parts[1], text_style, bold_style, code_style,
+                        );
+                    });
                 } else {
                     self.text(trimmed);
                 }
@@ -2789,7 +2774,13 @@ impl Context {
 
         // Flush any remaining table rows at end of input
         if !table_lines.is_empty() {
-            self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+            self.render_markdown_table(
+                &table_lines,
+                text_style,
+                bold_style,
+                code_style,
+                border_style,
+            );
         }
 
         self.commands.push(Command::EndContainer);
@@ -2803,6 +2794,7 @@ impl Context {
         lines: &[String],
         text_style: Style,
         bold_style: Style,
+        code_style: Style,
         border_style: Style,
     ) {
         if lines.is_empty() {
@@ -2876,19 +2868,19 @@ impl Context {
 
         // Header row │ H1 │ H2 │
         if let Some(ref hdr) = header {
-            let mut s = String::from("│");
-            for (i, w) in col_widths.iter().enumerate() {
-                let raw = hdr.get(i).map(String::as_str).unwrap_or("");
-                let display = Self::md_strip(raw);
-                let cell_w = UnicodeWidthStr::width(display.as_str());
-                s.push(' ');
-                s.push_str(&display);
-                for _ in cell_w..*w {
-                    s.push(' ');
+            self.line(|ui| {
+                ui.styled("│", border_style);
+                for (i, w) in col_widths.iter().enumerate() {
+                    let raw = hdr.get(i).map(String::as_str).unwrap_or("");
+                    let display_text = Self::md_strip(raw);
+                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let padding: String = " ".repeat(w.saturating_sub(cell_w));
+                    ui.styled(" ", bold_style);
+                    ui.styled(&display_text, bold_style);
+                    ui.styled(padding, bold_style);
+                    ui.styled(" │", border_style);
                 }
-                s.push_str(" │");
-            }
-            self.styled(&s, bold_style);
+            });
 
             // Separator ├───┼───┤
             let mut sep = String::from("├");
@@ -2901,21 +2893,21 @@ impl Context {
             self.styled(&sep, border_style);
         }
 
-        // Data rows
+        // Data rows — render with inline formatting (bold, italic, code, links)
         for row in &data_rows {
-            let mut s = String::from("│");
-            for (i, w) in col_widths.iter().enumerate() {
-                let raw = row.get(i).map(String::as_str).unwrap_or("");
-                let display = Self::md_strip(raw);
-                let cell_w = UnicodeWidthStr::width(display.as_str());
-                s.push(' ');
-                s.push_str(&display);
-                for _ in cell_w..*w {
-                    s.push(' ');
+            self.line(|ui| {
+                ui.styled("│", border_style);
+                for (i, w) in col_widths.iter().enumerate() {
+                    let raw = row.get(i).map(String::as_str).unwrap_or("");
+                    let display_text = Self::md_strip(raw);
+                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let padding: String = " ".repeat(w.saturating_sub(cell_w));
+                    ui.styled(" ", text_style);
+                    Self::render_md_inline_into(ui, raw, text_style, bold_style, code_style);
+                    ui.styled(padding, text_style);
+                    ui.styled(" │", border_style);
                 }
-                s.push_str(" │");
-            }
-            self.styled(&s, text_style);
+            });
         }
 
         // Bottom border └───┴───┘
@@ -3009,7 +3001,8 @@ impl Context {
             if let MdInline::Text(ref t) = items[0] {
                 let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
                 if segs.len() <= 1 {
-                    self.text_wrap(text)
+                    self.text(text)
+                        .wrap()
                         .fg(text_style.fg.unwrap_or(Color::Reset));
                 } else {
                     self.line_wrap(|ui| {
@@ -3022,12 +3015,8 @@ impl Context {
             }
         }
 
-        // Mixed content with links/images — use line() (not line_wrap) because
-        // line_wrap only collects Command::Text and drops Command::Link.
-        let has_link = items
-            .iter()
-            .any(|i| matches!(i, MdInline::Link { .. } | MdInline::Image { .. }));
-        let render_items = |ui: &mut Context| {
+        // Mixed content — line_wrap collects both Text and Link commands
+        self.line_wrap(|ui| {
             for item in &items {
                 match item {
                     MdInline::Text(t) => {
@@ -3040,20 +3029,43 @@ impl Context {
                     MdInline::Link { text, url } => {
                         ui.link(text.clone(), url.clone());
                     }
-                    MdInline::Image { alt, url } => {
-                        let label = format!("[Image: {alt}]");
-                        ui.styled(label, code_style);
-                        if !url.is_empty() {
-                            ui.styled(format!(" ({url})"), text_style.dim());
-                        }
+                    MdInline::Image { alt, .. } => {
+                        // Render alt text only — matches md_strip() output for width consistency
+                        ui.styled(alt.as_str(), code_style);
                     }
                 }
             }
-        };
-        if has_link {
-            self.line(render_items);
-        } else {
-            self.line_wrap(render_items);
+        });
+    }
+
+    /// Emit inline markdown segments into an existing context.
+    ///
+    /// Unlike `render_md_inline` which wraps in its own `line_wrap`,
+    /// this emits raw commands into `ui` so callers can prepend a bullet
+    /// or prefix before calling this inside their own `line_wrap`.
+    fn render_md_inline_into(
+        ui: &mut Context,
+        text: &str,
+        text_style: Style,
+        bold_style: Style,
+        code_style: Style,
+    ) {
+        let items = Self::split_md_links(text);
+        for item in &items {
+            match item {
+                MdInline::Text(t) => {
+                    let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
+                    for (s, st) in segs {
+                        ui.styled(s, st);
+                    }
+                }
+                MdInline::Link { text, url } => {
+                    ui.link(text.clone(), url.clone());
+                }
+                MdInline::Image { alt, .. } => {
+                    ui.styled(alt.as_str(), code_style);
+                }
+            }
         }
     }
 
@@ -3067,11 +3079,11 @@ impl Context {
         while i < chars.len() {
             // Image: ![alt](url)
             if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-                if let Some((alt, url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
+                if let Some((alt, _url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
                     if !current.is_empty() {
                         items.push(MdInline::Text(std::mem::take(&mut current)));
                     }
-                    items.push(MdInline::Image { alt, url });
+                    items.push(MdInline::Image { alt });
                     i += 1 + consumed;
                     continue;
                 }

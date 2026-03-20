@@ -156,18 +156,18 @@ fn md_h3(ui: &mut Context, theme: &Theme, text: &str) {
 }
 
 fn md_p(ui: &mut Context, text: &str) {
-    ui.text_wrap(text);
+    ui.text(text).wrap();
 }
 
 fn md_p_dim(ui: &mut Context, theme: &Theme, text: &str) {
-    ui.text_wrap(text).fg(theme.text_dim);
+    ui.text(text).fg(theme.text_dim).wrap();
 }
 
 fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
     for line in text.lines() {
         let _ = ui.row(|ui| {
             ui.text(" ▎ ").fg(theme.primary);
-            ui.text_wrap(line).italic().fg(theme.text_dim);
+            ui.text(line).italic().fg(theme.text_dim).wrap();
         });
     }
     ui.text("");
@@ -177,7 +177,7 @@ fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
     for item in items {
         let _ = ui.row(|ui| {
             ui.text("  • ").fg(theme.primary);
-            ui.text_wrap(*item);
+            ui.text(*item).wrap();
         });
     }
     ui.text("");
@@ -190,7 +190,7 @@ fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
                 format!("  {}. ", i + 1),
                 Style::new().fg(theme.primary).bold(),
             );
-            ui.text_wrap(*item);
+            ui.text(*item).wrap();
         });
     }
     ui.text("");
@@ -855,7 +855,7 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
                         }
                     });
                     ui.text("");
-                    ui.text_wrap(post.excerpt);
+                    ui.text(post.excerpt).wrap();
                     ui.text("");
                     ui.text("Read more ->").fg(theme.primary);
                 });
@@ -1512,9 +1512,9 @@ fn render_pricing(
             .pad(1)
             .col(|ui| {
                 ui.text("Ship faster with SLT").bold().fg(theme.primary);
-                ui.text_wrap(
+                ui.text(
                     "Start for free, upgrade when your team needs priority support and direct access.",
-                )
+                ).wrap()
                 .fg(theme.surface_text);
                 ui.text("");
                 let _ = ui.row(|ui| {
@@ -1736,7 +1736,7 @@ fn render_contact(
 fn feature_card(ui: &mut Context, theme: &Theme, title: &str, desc: &str) {
     let _ = ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
         ui.text(format!("◆ {title}")).bold().fg(theme.primary);
-        ui.text_wrap(desc).fg(theme.surface_text);
+        ui.text(desc).fg(theme.surface_text).wrap();
     });
 }
 
@@ -1807,7 +1807,7 @@ fn faq_item(ui: &mut Context, theme: &Theme, question: &str, answer: &str) {
     let _ = ui.container().padding(Padding::xy(1, 0)).col(|ui| {
         ui.text(question).bold().fg(theme.primary);
         let _ = ui.container().padding(Padding::xy(2, 0)).col(|ui| {
-            ui.text_wrap(answer).fg(theme.text_dim);
+            ui.text(answer).fg(theme.text_dim).wrap();
         });
     });
     ui.text("");

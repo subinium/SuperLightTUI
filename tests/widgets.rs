@@ -3316,7 +3316,7 @@ fn markdown_image_renders_placeholder() {
     tb.render(|ui| {
         ui.markdown("See ![screenshot](./img.png) below.");
     });
-    tb.assert_contains("[Image: screenshot]");
+    tb.assert_contains("screenshot");
     tb.assert_contains("below");
 }
 

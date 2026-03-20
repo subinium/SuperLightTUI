@@ -1151,9 +1151,9 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
         card(ui, |ui| {
             ui.text("Text & Links").bold().fg(theme.secondary);
             ui.text("Secondary text uses theme tokens").fg(theme.surface_text);
-            ui.text_wrap(
+            ui.text(
                 "SLT wraps text at word boundaries. This panel uses surface text for readability on elevated surfaces.",
-            )
+            ).wrap()
             .fg(theme.surface_text);
             ui.link("Docs", "https://docs.rs/superlighttui");
             ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
@@ -2590,4 +2590,69 @@ fn render_v0152(ui: &mut Context) {
         });
 
     ui.text("");
+
+    // ── Markdown complex cases ──────────────────────────────────────
+    let _ = ui.divider_text("Markdown — Complex Cases (v0.15.3+)");
+
+    let _ = ui.row_gap(1, |ui| {
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Wrapping + Links")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "This paragraph contains an inline [link to docs](https://docs.rs) \
+                     and **bold text** that should all wrap correctly at the container boundary \
+                     without overflowing. Links preserve their styling even when wrapped.",
+                );
+            });
+
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Blockquote")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "> The best way to predict the future is to invent it.\n\
+                     > — Alan Kay\n\n\
+                     Blockquotes use `│` left bar with dim italic styling.",
+                );
+            });
+    });
+
+    let _ = ui.row_gap(1, |ui| {
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Table with formatting")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "| Widget | Status | Notes |\n\
+                     |--------|--------|-------|\n\
+                     | **text_input** | *stable* | `grow(1)` default |\n\
+                     | [markdown](https://docs.rs) | new | tables + links |\n\
+                     | ![icon](logo.png) | planned | image placeholder |",
+                );
+            });
+
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Mixed content")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "# Heading\n\n\
+                     Regular paragraph with **bold**, *italic*, and `code`.\n\n\
+                     - List with [link](https://example.com)\n\
+                     - List with **bold** and `code`\n\n\
+                     > Quoted text\n\n\
+                     | A | B |\n|---|---|\n| 1 | 2 |\n\n\
+                     ```rust\nfn main() {}\n```",
+                );
+            });
+    });
 }

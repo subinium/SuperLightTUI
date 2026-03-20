@@ -99,6 +99,10 @@ impl Context {
     ///
     /// Long lines are broken at word boundaries to fit the container width.
     /// Style chaining works the same as [`Context::text`].
+    ///
+    /// **Prefer** `ui.text("...").wrap()` — this method exists for convenience
+    /// but the chaining form is more consistent with the rest of the API.
+    #[deprecated(since = "0.15.4", note = "use ui.text(s).wrap() instead")]
     pub fn text_wrap(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
         let default_fg = self
@@ -613,9 +617,9 @@ impl Context {
 
         if !state.content.is_empty() {
             if state.streaming && state.cursor_visible {
-                self.text_wrap(format!("{}▌", state.content));
+                self.text(format!("{}▌", state.content)).wrap();
             } else {
-                self.text_wrap(&state.content);
+                self.text(&state.content).wrap();
             }
         }
 
@@ -1561,8 +1565,16 @@ impl Context {
         f(self);
         let mut segments: Vec<(String, Style)> = Vec::new();
         for cmd in self.commands.drain(start..) {
-            if let Command::Text { content, style, .. } = cmd {
-                segments.push((content, style));
+            match cmd {
+                Command::Text { content, style, .. } => {
+                    segments.push((content, style));
+                }
+                Command::Link { text, style, .. } => {
+                    // Preserve link text with underline styling (URL lost in RichText,
+                    // but text is visible and wraps correctly)
+                    segments.push((text, style));
+                }
+                _ => {}
             }
         }
         self.commands.push(Command::RichText {
