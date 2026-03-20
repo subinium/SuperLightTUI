@@ -3328,3 +3328,23 @@ fn markdown_blockquote_renders() {
     });
     tb.assert_contains("This is a quote");
 }
+
+#[test]
+fn markdown_link_with_apostrophe() {
+    let mut tb = slt::TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown(r#"[Girls' Generation](/wiki/Girls%27_Generation "Girls' Generation")"#);
+    });
+    // Link text should be extracted despite apostrophe and tooltip in URL
+    tb.assert_contains("Girls");
+}
+
+#[test]
+fn markdown_link_with_tooltip_quotes() {
+    let mut tb = slt::TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown(r#"See [Beyoncé](/wiki/Beyoncé "Beyoncé") here."#);
+    });
+    tb.assert_contains("See");
+    tb.assert_contains("here");
+}

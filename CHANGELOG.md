@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.3] — 2026-03-20
+
+### Fixes
+
+- **Markdown text wrapping** — paragraph text in `ui.markdown()` now auto-wraps to container width using `text_wrap()`/`line_wrap()` instead of overflowing.
+- **Markdown links in wrapped text** — `line_wrap()` was silently dropping `Command::Link`; mixed content with links now uses `line()` to preserve clickable links.
+- **Table cell width with markdown** — cells containing `**bold**`, `*italic*`, `[links](url)` now calculate column width from display text, not raw markdown source. Prevents column blowup from long URLs.
+- **CI commit style check removed** — redundant with squash merge workflow.
+
+### Features
+
+- **Blockquote rendering** — `> text` in `ui.markdown()` renders with `│ ` left bar and italic dim styling.
+
 ## [0.15.2] — 2026-03-20
 
 ### Features
