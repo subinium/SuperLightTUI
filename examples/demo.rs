@@ -1151,9 +1151,9 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
         card(ui, |ui| {
             ui.text("Text & Links").bold().fg(theme.secondary);
             ui.text("Secondary text uses theme tokens").fg(theme.surface_text);
-            ui.text_wrap(
+            ui.text(
                 "SLT wraps text at word boundaries. This panel uses surface text for readability on elevated surfaces.",
-            )
+            ).wrap()
             .fg(theme.surface_text);
             ui.link("Docs", "https://docs.rs/superlighttui");
             ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.15.4] — 2026-03-20
+
+### Features
+
+- **Table cell inline formatting** — `**bold**`, `*italic*`, `` `code` ``, and `[links](url)` in table cells are now rendered with proper styling instead of plain text.
+- **List item link/image support** — `- [text](url)` in markdown now renders clickable links, not raw syntax.
+- **`line_wrap()` preserves links** — `Command::Link` is no longer dropped; lines with inline links wrap correctly at container boundaries.
+
+### Fixes
+
+- **Image display consistency** — `![alt](url)` renders as alt text only (code styled), matching `md_strip()` output for correct table column alignment.
+
+### Deprecations
+
+- **`text_wrap()`** — use `ui.text("...").wrap()` chaining instead. `text_wrap()` is still available but marked `#[deprecated]`.
+
+### Demo
+
+- **Complex markdown cases** section: wrapping + links, blockquotes, tables with formatting, mixed content.
+
 ## [0.15.3] — 2026-03-20
 
 ### Fixes
