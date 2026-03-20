@@ -25,6 +25,7 @@ fn main() -> std::io::Result<()> {
         "v0.13.2",
         "v0.14.0",
         "v0.14.1",
+        "v0.15.2",
     ]);
     let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
     let mut scroll = ScrollState::new();
@@ -385,6 +386,7 @@ fn main() -> std::io::Result<()> {
                             ),
                             14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
                             15 => render_v0141(ui),
+                            16 => render_v0152(ui),
                             _ => {}
                         });
 
@@ -2440,4 +2442,152 @@ fn render_v094(
     let _ = ui.container().h(3).col(|ui| {
         let _ = ui.empty_state("No items yet", "Items will appear here when added");
     });
+}
+
+fn render_v0152(ui: &mut Context) {
+    section(
+        ui,
+        "v0.15.2 — MARKDOWN TABLES, FOCUS CONTROL, TEXT INPUT GROW",
+    );
+
+    // ── Markdown pipe table ─────────────────────────────────────────
+    let _ = ui.divider_text("Markdown Pipe Tables");
+    ui.text("ui.markdown() now renders GFM-style pipe tables with box-drawing borders.")
+        .dim();
+    ui.text("");
+
+    let _ = ui.row_gap(1, |ui| {
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Table in Markdown")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "## Feature Matrix\n\n\
+                     | Feature | Status | Since |\n\
+                     |---------|--------|-------|\n\
+                     | Pipe tables | New | v0.15.2 |\n\
+                     | Focus API | New | v0.15.2 |\n\
+                     | Sixel image | Existing | v0.14.0 |\n\
+                     | Syntax HL | Existing | v0.14.1 |\n\n\
+                     Tables are **auto-detected** inside `markdown()` calls.",
+                );
+            });
+
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Mixed Content")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "# API Summary\n\n\
+                     Core methods added in this release:\n\n\
+                     | Method | Returns | Description |\n\
+                     |--------|---------|-------------|\n\
+                     | `focus_index()` | `usize` | Current focus |\n\
+                     | `set_focus_index(n)` | `()` | Set focus |\n\
+                     | `focus_count()` | `usize` | Widget count |\n\n\
+                     - All methods are on `Context`\n\
+                     - Index is **0-based**",
+                );
+            });
+    });
+
+    ui.text("");
+
+    // ── Markdown links & images ────────────────────────────────────
+    let _ = ui.divider_text("Markdown Links & Images");
+    ui.text("ui.markdown() now parses [text](url) as OSC 8 links and ![alt](url) as image placeholders.")
+        .dim();
+    ui.text("");
+
+    let _ = ui.row_gap(1, |ui| {
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Links")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "Visit [SLT on GitHub](https://github.com/user/slt) for the source.\n\n\
+                     - [Docs](https://docs.rs/superlighttui) — API reference\n\
+                     - [Examples](https://github.com/user/slt/examples) — demo code\n\n\
+                     Links are **clickable** in supporting terminals.",
+                );
+            });
+
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Images")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.markdown(
+                    "Inline image: ![logo](./assets/logo.png)\n\n\
+                     Images render as `[Image: alt]` placeholders.\n\
+                     Use `kitty_image_placed()` for actual pixel rendering.\n\n\
+                     Mixed: text before ![icon](x.png) and after.",
+                );
+            });
+    });
+
+    ui.text("");
+
+    // ── Focus control API ───────────────────────────────────────────
+    let _ = ui.divider_text("Programmatic Focus Control");
+    ui.text("ui.set_focus_index(n) / ui.focus_index() / ui.focus_count()")
+        .dim();
+    ui.text("");
+
+    let focus_idx = ui.focus_index();
+    let focus_cnt = ui.focus_count();
+    let _ = ui.row_gap(1, |ui| {
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Focus State")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                ui.text(format!("focus_index() = {focus_idx}"));
+                ui.text(format!("focus_count() = {focus_cnt}"));
+                ui.text("");
+                ui.text("Press Tab/Shift+Tab to cycle focus,").dim();
+                ui.text("or use set_focus_index(n) in code.").dim();
+            });
+
+        let _ = ui
+            .bordered(Border::Rounded)
+            .title("Focusable Widgets")
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let mut a = TextInputState::with_placeholder("Input A (focusable #0)");
+                let mut b = TextInputState::with_placeholder("Input B (focusable #1)");
+                ui.text("Two text inputs — Tab cycles between them:").dim();
+                let _ = ui.text_input(&mut a);
+                let _ = ui.text_input(&mut b);
+            });
+    });
+
+    ui.text("");
+
+    // ── text_input grow ─────────────────────────────────────────────
+    let _ = ui.divider_text("text_input auto-fill (grow)");
+    ui.text("text_input now uses grow(1) internally — fills available width in rows.")
+        .dim();
+    ui.text("");
+
+    let _ = ui
+        .bordered(Border::Rounded)
+        .title("Row with text_input + button")
+        .p(1)
+        .row(|ui| {
+            let mut search = TextInputState::with_placeholder("Search fills remaining space...");
+            let _ = ui.text_input(&mut search);
+            let _ = ui.button("Go");
+        });
+
+    ui.text("");
 }

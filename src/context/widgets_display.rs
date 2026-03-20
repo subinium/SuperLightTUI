@@ -505,6 +505,23 @@ impl Context {
     }
 
     /// Render an image using the Sixel protocol.
+    ///
+    /// `rgba` is raw RGBA pixel data, `pixel_w`/`pixel_h` are pixel dimensions,
+    /// and `cols`/`rows` are the terminal cell size to reserve for the image.
+    ///
+    /// Requires the `crossterm` feature (enabled by default). Falls back to
+    /// `[sixel unsupported]` on terminals without Sixel support. Set the
+    /// `SLT_FORCE_SIXEL=1` environment variable to skip terminal detection.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // 2x2 red square (RGBA: 4 pixels × 4 bytes)
+    /// let rgba = [255u8, 0, 0, 255].repeat(4);
+    /// ui.sixel_image(&rgba, 2, 2, 20, 2);
+    /// # });
+    /// ```
     #[cfg(feature = "crossterm")]
     pub fn sixel_image(
         &mut self,

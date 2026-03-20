@@ -3255,3 +3255,75 @@ fn markdown_unclosed_code_block_no_panic() {
     });
     tb.assert_contains("def");
 }
+
+#[test]
+fn markdown_pipe_table_renders() {
+    let mut tb = slt::TestBackend::new(60, 12);
+    tb.render(|ui| {
+        ui.markdown("| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |");
+    });
+    tb.assert_contains("Name");
+    tb.assert_contains("Age");
+    tb.assert_contains("Alice");
+    tb.assert_contains("Bob");
+    // Box-drawing borders
+    tb.assert_contains("┌");
+    tb.assert_contains("┘");
+    tb.assert_contains("├");
+}
+
+#[test]
+fn markdown_pipe_table_followed_by_text() {
+    let mut tb = slt::TestBackend::new(60, 12);
+    tb.render(|ui| {
+        ui.markdown("| A | B |\n|---|---|\n| 1 | 2 |\n\nParagraph after table.");
+    });
+    tb.assert_contains("A");
+    tb.assert_contains("1");
+    tb.assert_contains("Paragraph after table");
+}
+
+#[test]
+fn focus_control_api() {
+    let mut tb = slt::TestBackend::new(40, 10);
+    tb.render(|ui| {
+        assert_eq!(ui.focus_count(), 0, "first frame has no prev focus count");
+        let mut input1 = slt::TextInputState::with_placeholder("A");
+        let mut input2 = slt::TextInputState::with_placeholder("B");
+        ui.text_input(&mut input1);
+        ui.text_input(&mut input2);
+        // On the first frame, set_focus_index should work without panic
+        ui.set_focus_index(1);
+        assert_eq!(ui.focus_index(), 1);
+    });
+}
+
+#[test]
+fn markdown_link_renders_text() {
+    let mut tb = slt::TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("Click [here](https://example.com) for info.");
+    });
+    tb.assert_contains("here");
+    tb.assert_contains("for info");
+}
+
+#[test]
+fn markdown_image_renders_placeholder() {
+    let mut tb = slt::TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("See ![screenshot](./img.png) below.");
+    });
+    tb.assert_contains("[Image: screenshot]");
+    tb.assert_contains("below");
+}
+
+#[test]
+fn markdown_mixed_links_and_text() {
+    let mut tb = slt::TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("Use [SLT](https://github.com/user/slt) or [Ratatui](https://ratatui.rs).");
+    });
+    tb.assert_contains("SLT");
+    tb.assert_contains("Ratatui");
+}
