@@ -986,9 +986,9 @@ fn run_frame(
     let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
     ctx.is_real_terminal = true;
     ctx.set_scroll_speed(config.scroll_speed);
-    ctx.process_focus_keys();
 
     f(&mut ctx);
+    ctx.process_focus_keys();
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
