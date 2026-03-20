@@ -2625,8 +2625,10 @@ impl Context {
     /// Render a markdown string with basic formatting.
     ///
     /// Supports headers (`#`), bold (`**`), italic (`*`), inline code (`` ` ``),
-    /// unordered lists (`-`/`*`), ordered lists (`1.`), horizontal rules (`---`),
-    /// code blocks with syntax highlighting, and GFM-style pipe tables.
+    /// unordered lists (`-`/`*`), ordered lists (`1.`), blockquotes (`>`),
+    /// horizontal rules (`---`), links (`[text](url)`), image placeholders
+    /// (`![alt](url)`), code blocks with syntax highlighting, and GFM-style
+    /// pipe tables. Paragraph text auto-wraps to container width.
     pub fn markdown(&mut self, text: &str) -> Response {
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
@@ -2713,7 +2715,14 @@ impl Context {
                 self.styled("─".repeat(40), border_style);
                 continue;
             }
-            if let Some(heading) = trimmed.strip_prefix("### ") {
+            if let Some(quote) = trimmed.strip_prefix("> ") {
+                let quote_style = Style::new().fg(self.theme.text_dim).italic();
+                let bar_style = Style::new().fg(self.theme.border);
+                self.line(|ui| {
+                    ui.styled("│ ", bar_style);
+                    ui.styled(quote, quote_style);
+                });
+            } else if let Some(heading) = trimmed.strip_prefix("### ") {
                 self.styled(heading, Style::new().bold().fg(self.theme.accent));
             } else if let Some(heading) = trimmed.strip_prefix("## ") {
                 self.styled(heading, Style::new().bold().fg(self.theme.secondary));
@@ -2993,9 +3002,10 @@ impl Context {
             if let MdInline::Text(ref t) = items[0] {
                 let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
                 if segs.len() <= 1 {
-                    self.styled(text, text_style);
+                    self.text_wrap(text)
+                        .fg(text_style.fg.unwrap_or(Color::Reset));
                 } else {
-                    self.line(|ui| {
+                    self.line_wrap(|ui| {
                         for (s, st) in segs {
                             ui.styled(s, st);
                         }
@@ -3005,8 +3015,8 @@ impl Context {
             }
         }
 
-        // Mixed content — render in a line container
-        self.line(|ui| {
+        // Mixed content — render in a line_wrap container for word-break
+        self.line_wrap(|ui| {
             for item in &items {
                 match item {
                     MdInline::Text(t) => {
