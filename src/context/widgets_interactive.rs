@@ -2703,7 +2703,13 @@ impl Context {
             }
             // Flush accumulated table rows when a non-table line is encountered
             if !table_lines.is_empty() {
-                self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+                self.render_markdown_table(
+                    &table_lines,
+                    text_style,
+                    bold_style,
+                    code_style,
+                    border_style,
+                );
                 table_lines.clear();
             }
 
@@ -2768,7 +2774,13 @@ impl Context {
 
         // Flush any remaining table rows at end of input
         if !table_lines.is_empty() {
-            self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+            self.render_markdown_table(
+                &table_lines,
+                text_style,
+                bold_style,
+                code_style,
+                border_style,
+            );
         }
 
         self.commands.push(Command::EndContainer);
@@ -2782,6 +2794,7 @@ impl Context {
         lines: &[String],
         text_style: Style,
         bold_style: Style,
+        code_style: Style,
         border_style: Style,
     ) {
         if lines.is_empty() {
@@ -2855,19 +2868,19 @@ impl Context {
 
         // Header row │ H1 │ H2 │
         if let Some(ref hdr) = header {
-            let mut s = String::from("│");
-            for (i, w) in col_widths.iter().enumerate() {
-                let raw = hdr.get(i).map(String::as_str).unwrap_or("");
-                let display = Self::md_strip(raw);
-                let cell_w = UnicodeWidthStr::width(display.as_str());
-                s.push(' ');
-                s.push_str(&display);
-                for _ in cell_w..*w {
-                    s.push(' ');
+            self.line(|ui| {
+                ui.styled("│", border_style);
+                for (i, w) in col_widths.iter().enumerate() {
+                    let raw = hdr.get(i).map(String::as_str).unwrap_or("");
+                    let display_text = Self::md_strip(raw);
+                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let padding: String = " ".repeat(w.saturating_sub(cell_w));
+                    ui.styled(" ", bold_style);
+                    ui.styled(&display_text, bold_style);
+                    ui.styled(padding, bold_style);
+                    ui.styled(" │", border_style);
                 }
-                s.push_str(" │");
-            }
-            self.styled(&s, bold_style);
+            });
 
             // Separator ├───┼───┤
             let mut sep = String::from("├");
@@ -2880,21 +2893,21 @@ impl Context {
             self.styled(&sep, border_style);
         }
 
-        // Data rows
+        // Data rows — render with inline formatting (bold, italic, code, links)
         for row in &data_rows {
-            let mut s = String::from("│");
-            for (i, w) in col_widths.iter().enumerate() {
-                let raw = row.get(i).map(String::as_str).unwrap_or("");
-                let display = Self::md_strip(raw);
-                let cell_w = UnicodeWidthStr::width(display.as_str());
-                s.push(' ');
-                s.push_str(&display);
-                for _ in cell_w..*w {
-                    s.push(' ');
+            self.line(|ui| {
+                ui.styled("│", border_style);
+                for (i, w) in col_widths.iter().enumerate() {
+                    let raw = row.get(i).map(String::as_str).unwrap_or("");
+                    let display_text = Self::md_strip(raw);
+                    let cell_w = UnicodeWidthStr::width(display_text.as_str());
+                    let padding: String = " ".repeat(w.saturating_sub(cell_w));
+                    ui.styled(" ", text_style);
+                    Self::render_md_inline_into(ui, raw, text_style, bold_style, code_style);
+                    ui.styled(padding, text_style);
+                    ui.styled(" │", border_style);
                 }
-                s.push_str(" │");
-            }
-            self.styled(&s, text_style);
+            });
         }
 
         // Bottom border └───┴───┘
