@@ -1052,7 +1052,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "superlighttui"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "compact_str",
  "criterion",

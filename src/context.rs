@@ -1817,6 +1817,9 @@ impl Context {
 
     pub(crate) fn process_focus_keys(&mut self) {
         for (i, event) in self.events.iter().enumerate() {
+            if self.consumed[i] {
+                continue;
+            }
             if let Event::Key(key) = event {
                 if key.kind != KeyEventKind::Press {
                     continue;
