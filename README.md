@@ -107,7 +107,7 @@ ui.container()
 
 ## Widgets
 
-55+ built-in widgets, zero boilerplate:
+65+ built-in widgets, zero boilerplate:
 
 ```rust
 ui.text_input(&mut name);                    // single-line input
@@ -133,7 +133,7 @@ ui.link("Docs", "https://docs.rs/superlighttui");      // clickable hyperlink (O
 ui.modal(|ui| { ui.text("overlay"); });      // modal with dim backdrop
 ui.overlay(|ui| { ui.text("floating"); });   // overlay without backdrop
 ui.command_palette(&mut palette);            // searchable command palette
-ui.markdown("# Hello **world**");            // markdown rendering
+ui.markdown("# Hello **world**");            // markdown rendering (tables, links, blockquotes)
 ui.form_field(&mut field);                   // labeled input with validation
 ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // line/scatter/bar chart
 ui.scatter(&points, 50, 16);                 // standalone scatter plot
@@ -153,9 +153,11 @@ ui.stat("Users", "1,234");                   // metric card
 ui.stat_trend("Users", "1,234", Trend::Up);  // metric with trend indicator
 ui.definition_list(&[("CPU", "4 cores"), ("RAM", "16 GB")]); // term/value pairs
 ui.empty_state("No results", "Try a different search"); // empty placeholder
-ui.code_block("fn main() {}", "rust");       // syntax-highlighted code
+ui.code_block("fn main() {}");               // syntax-highlighted code
+ui.code_block_lang("fn main() {}", "rust");  // language-specific highlighting
 ui.code_block_numbered("let x = 1;");        // code with line numbers
 ui.streaming_text(&mut stream);              // AI streaming text with cursor
+ui.streaming_markdown(&mut md_stream);       // streaming markdown rendering
 ui.tool_approval(&mut tool);                 // approve/reject tool call
 ui.context_bar(&items);                      // context window token bar
 ui.image(&img);                              // half-block image rendering
@@ -172,6 +174,17 @@ ui.calendar(&mut cal);                       // date picker with month nav
 ui.screen("home", &screens, |ui| {});        // screen routing stack
 ui.sixel_image(&rgba, w, h, cols, rows);     // sixel image (non-Kitty)
 ui.confirm("Delete?", &mut yes);             // yes/no with mouse support
+// v0.14 additions
+ui.kitty_image(&rgba, pw, ph, cols, rows);   // Kitty graphics protocol image
+ui.kitty_image_fit(&rgba, w, h, cols);       // Kitty image with aspect ratio
+ui.big_text("TITLE");                        // large banner text (3x height)
+ui.timer_display(elapsed);                   // formatted duration display
+ui.slider("Volume", &mut vol, 0.0..=100.0); // draggable slider
+ui.heatmap(&grid, 40, 10, lo, hi);          // 2D heatmap visualization
+ui.line_chart(&data, 50, 16);               // line chart (braille)
+ui.area_chart(&data, 50, 16);               // filled area chart
+ui.bar_chart_grouped(&groups, 24);           // grouped horizontal bars
+ui.qr_code("https://example.com");          // QR code (requires `qrcode` feature)
 ```
 
 Every widget handles its own keyboard events, focus state, and mouse interaction.
@@ -231,7 +244,7 @@ Focus, events, theming, layout — all accessible through `Context`. One trait, 
 | Constraints | `.min_w(10)`, `.max_w(60)` |
 | Percentage sizing | `.w_pct(50)`, `.h_pct(80)` |
 | Justify | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| Text wrapping | `ui.text_wrap("long text...")` |
+| Text wrapping | `ui.text("long text...").wrap()` |
 | Borders with titles | `.border(Border::Rounded).title("Panel")` |
 | Per-side borders | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 | Responsive gap | `.gap_at(Breakpoint::Md, 2)` |
@@ -594,6 +607,17 @@ Command palette now uses fuzzy matching — characters match in order but can sk
 </details>
 
 <details>
+<summary><b>Markdown Rendering</b></summary>
+
+```rust
+ui.markdown("# Heading\n\n**Bold** and *italic* text.\n\n> Blockquote with bar.\n\n| Name | Value |\n|------|-------|\n| CPU  | 72%   |\n\n[Click here](https://example.com)");
+```
+
+Full GFM-style markdown: headings, bold/italic/code inline formatting, blockquotes with `│` left bar, pipe tables with box-drawing borders, clickable OSC 8 links, images as alt text placeholders, and auto-wrapping paragraphs. Table cells also render inline markdown (`**bold**`, `` `code` ``, links).
+
+</details>
+
+<details>
 <summary><b>Table Zebra</b></summary>
 
 ```rust
@@ -623,6 +647,8 @@ ui.image(&img);
 
 Half-block (▀▄) image rendering. Also works without the `image` feature via `HalfBlockImage::from_rgb()`.
 
+**Kitty graphics protocol** (v0.14.0): `ui.kitty_image(&rgba, pw, ph, cols, rows)` for pixel-perfect images on Kitty, Ghostty, WezTerm. `kitty_image_fit()` auto-calculates height to preserve aspect ratio. Static images are diff-compared between frames — zero cost for unchanged images.
+
 **Sixel protocol** (v0.13.2): `ui.sixel_image(&rgba, w, h, cols, rows)` for pixel-perfect images on xterm, foot, mlterm. Falls back to placeholder on unsupported terminals.
 
 </details>
@@ -635,11 +661,16 @@ Half-block (▀▄) image rendering. Also works without the `image` feature via 
 | `async` | `run_async()` with tokio channel-based message passing |
 | `serde` | Serialize/Deserialize for Style, Color, Theme, layout types |
 | `image` | `HalfBlockImage::from_dynamic()` with the `image` crate |
-| `full` | All of the above |
+| `qrcode` | `qr_code()` widget via the `qrcode` crate |
+| `syntax` | Tree-sitter highlighting for all 15 languages |
+| `syntax-rust` | Tree-sitter highlighting for Rust only (also: `-python`, `-javascript`, `-typescript`, `-go`, `-bash`, `-json`, `-toml`, `-c`, `-cpp`, `-java`, `-ruby`, `-css`, `-html`, `-yaml`) |
+| `full` | `async` + `serde` + `image` + `qrcode` (does **not** include `syntax` — add separately) |
 
 ```toml
 [dependencies]
 superlighttui = { version = "0.15", features = ["full"] }
+# or pick syntax languages individually:
+superlighttui = { version = "0.15", features = ["syntax-rust", "syntax-python"] }
 ```
 
 </details>
@@ -683,10 +714,12 @@ ui.container().w(40).h(20).draw(|buf, rect| {
 <summary><b>Syntax-Highlighted Code</b></summary>
 
 ```rust
-ui.code_block("fn greet(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}", "rust");
+ui.code_block_lang("fn greet(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}", "rust");
 ```
 
-Renders code with One Dark palette syntax highlighting. Supports Rust keywords, string literals, comments, and numeric literals. Falls back to plain monospace for unknown languages.
+Tree-sitter powered syntax highlighting with 15 language grammars: **Rust**, **Python**, **JavaScript**, **TypeScript**, **Go**, **Bash**, **JSON**, **TOML**, **C**, **C++**, **Java**, **Ruby**, **CSS**, **HTML**, **YAML**. Falls back to keyword-based highlighting for unknown languages.
+
+Enable per-language (`syntax-rust`) or all at once (`syntax`). See [Feature Flags](#feature-flags).
 
 </details>
 
@@ -730,7 +763,7 @@ Closure → Context collects Commands → build_tree() → flexbox layout → di
 
 Each frame: your closure runs, SLT collects what you described, computes flexbox layout, diffs against the previous frame, and flushes only the changed cells.
 
-Pure Rust. No macros, no code generation, no build scripts.
+Pure Rust. No macros, no code generation, no build scripts. **WASM target supported** via the `slt-wasm` crate — run SLT apps in the browser with pixel-level mouse coordinates.
 
 ### Custom Backends
 
