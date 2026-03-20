@@ -5,7 +5,7 @@ use crate::{DirectoryTreeState, RichLogState, TreeNode};
 enum MdInline {
     Text(String),
     Link { text: String, url: String },
-    Image { alt: String, url: String },
+    Image { alt: String },
 }
 
 impl Context {
@@ -3028,12 +3028,9 @@ impl Context {
                     MdInline::Link { text, url } => {
                         ui.link(text.clone(), url.clone());
                     }
-                    MdInline::Image { alt, url } => {
-                        let label = format!("[Image: {alt}]");
-                        ui.styled(label, code_style);
-                        if !url.is_empty() {
-                            ui.styled(format!(" ({url})"), text_style.dim());
-                        }
+                    MdInline::Image { alt, .. } => {
+                        // Render alt text only — matches md_strip() output for width consistency
+                        ui.styled(alt.as_str(), code_style);
                     }
                 }
             }
@@ -3064,12 +3061,8 @@ impl Context {
                 MdInline::Link { text, url } => {
                     ui.link(text.clone(), url.clone());
                 }
-                MdInline::Image { alt, url } => {
-                    let label = format!("[Image: {alt}]");
-                    ui.styled(label, code_style);
-                    if !url.is_empty() {
-                        ui.styled(format!(" ({url})"), text_style.dim());
-                    }
+                MdInline::Image { alt, .. } => {
+                    ui.styled(alt.as_str(), code_style);
                 }
             }
         }
@@ -3085,11 +3078,11 @@ impl Context {
         while i < chars.len() {
             // Image: ![alt](url)
             if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-                if let Some((alt, url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
+                if let Some((alt, _url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
                     if !current.is_empty() {
                         items.push(MdInline::Text(std::mem::take(&mut current)));
                     }
-                    items.push(MdInline::Image { alt, url });
+                    items.push(MdInline::Image { alt });
                     i += 1 + consumed;
                     continue;
                 }
