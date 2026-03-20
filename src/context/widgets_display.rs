@@ -1561,8 +1561,16 @@ impl Context {
         f(self);
         let mut segments: Vec<(String, Style)> = Vec::new();
         for cmd in self.commands.drain(start..) {
-            if let Command::Text { content, style, .. } = cmd {
-                segments.push((content, style));
+            match cmd {
+                Command::Text { content, style, .. } => {
+                    segments.push((content, style));
+                }
+                Command::Link { text, style, .. } => {
+                    // Preserve link text with underline styling (URL lost in RichText,
+                    // but text is visible and wraps correctly)
+                    segments.push((text, style));
+                }
+                _ => {}
             }
         }
         self.commands.push(Command::RichText {

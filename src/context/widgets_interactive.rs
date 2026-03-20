@@ -3022,12 +3022,8 @@ impl Context {
             }
         }
 
-        // Mixed content with links/images — use line() (not line_wrap) because
-        // line_wrap only collects Command::Text and drops Command::Link.
-        let has_link = items
-            .iter()
-            .any(|i| matches!(i, MdInline::Link { .. } | MdInline::Image { .. }));
-        let render_items = |ui: &mut Context| {
+        // Mixed content — line_wrap collects both Text and Link commands
+        self.line_wrap(|ui| {
             for item in &items {
                 match item {
                     MdInline::Text(t) => {
@@ -3049,12 +3045,7 @@ impl Context {
                     }
                 }
             }
-        };
-        if has_link {
-            self.line(render_items);
-        } else {
-            self.line_wrap(render_items);
-        }
+        });
     }
 
     /// Split a markdown line into text, link, and image segments.
