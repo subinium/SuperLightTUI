@@ -3001,7 +3001,8 @@ impl Context {
             if let MdInline::Text(ref t) = items[0] {
                 let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
                 if segs.len() <= 1 {
-                    self.text_wrap(text)
+                    self.text(text)
+                        .wrap()
                         .fg(text_style.fg.unwrap_or(Color::Reset));
                 } else {
                     self.line_wrap(|ui| {
