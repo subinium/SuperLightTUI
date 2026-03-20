@@ -2732,44 +2732,23 @@ impl Context {
                 .strip_prefix("- ")
                 .or_else(|| trimmed.strip_prefix("* "))
             {
-                let segs = Self::parse_inline_segments(item, text_style, bold_style, code_style);
-                if segs.len() <= 1 {
-                    let mut line = String::with_capacity(4 + item.len());
-                    line.push_str("  • ");
-                    line.push_str(item);
-                    self.styled(line, text_style);
-                } else {
-                    self.line(|ui| {
-                        ui.styled("  • ", text_style);
-                        for (s, st) in segs {
-                            ui.styled(s, st);
-                        }
-                    });
-                }
+                self.line_wrap(|ui| {
+                    ui.styled("  • ", text_style);
+                    Self::render_md_inline_into(ui, item, text_style, bold_style, code_style);
+                });
             } else if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(". ") {
                 let parts: Vec<&str> = trimmed.splitn(2, ". ").collect();
                 if parts.len() == 2 {
-                    let segs =
-                        Self::parse_inline_segments(parts[1], text_style, bold_style, code_style);
-                    if segs.len() <= 1 {
-                        let mut line = String::with_capacity(4 + parts[0].len() + parts[1].len());
-                        line.push_str("  ");
-                        line.push_str(parts[0]);
-                        line.push_str(". ");
-                        line.push_str(parts[1]);
-                        self.styled(line, text_style);
-                    } else {
-                        self.line(|ui| {
-                            let mut prefix = String::with_capacity(4 + parts[0].len());
-                            prefix.push_str("  ");
-                            prefix.push_str(parts[0]);
-                            prefix.push_str(". ");
-                            ui.styled(prefix, text_style);
-                            for (s, st) in segs {
-                                ui.styled(s, st);
-                            }
-                        });
-                    }
+                    self.line_wrap(|ui| {
+                        let mut prefix = String::with_capacity(4 + parts[0].len());
+                        prefix.push_str("  ");
+                        prefix.push_str(parts[0]);
+                        prefix.push_str(". ");
+                        ui.styled(prefix, text_style);
+                        Self::render_md_inline_into(
+                            ui, parts[1], text_style, bold_style, code_style,
+                        );
+                    });
                 } else {
                     self.text(trimmed);
                 }
@@ -3046,6 +3025,41 @@ impl Context {
                 }
             }
         });
+    }
+
+    /// Emit inline markdown segments into an existing context.
+    ///
+    /// Unlike `render_md_inline` which wraps in its own `line_wrap`,
+    /// this emits raw commands into `ui` so callers can prepend a bullet
+    /// or prefix before calling this inside their own `line_wrap`.
+    fn render_md_inline_into(
+        ui: &mut Context,
+        text: &str,
+        text_style: Style,
+        bold_style: Style,
+        code_style: Style,
+    ) {
+        let items = Self::split_md_links(text);
+        for item in &items {
+            match item {
+                MdInline::Text(t) => {
+                    let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
+                    for (s, st) in segs {
+                        ui.styled(s, st);
+                    }
+                }
+                MdInline::Link { text, url } => {
+                    ui.link(text.clone(), url.clone());
+                }
+                MdInline::Image { alt, url } => {
+                    let label = format!("[Image: {alt}]");
+                    ui.styled(label, code_style);
+                    if !url.is_empty() {
+                        ui.styled(format!(" ({url})"), text_style.dim());
+                    }
+                }
+            }
+        }
     }
 
     /// Split a markdown line into text, link, and image segments.
