@@ -1,6 +1,13 @@
 use super::*;
 use crate::{DirectoryTreeState, RichLogState, TreeNode};
 
+/// Inline markdown segment — text, link, or image reference.
+enum MdInline {
+    Text(String),
+    Link { text: String, url: String },
+    Image { alt: String, url: String },
+}
+
 impl Context {
     /// Render children in a fixed grid with the given number of columns.
     ///
@@ -2618,7 +2625,8 @@ impl Context {
     /// Render a markdown string with basic formatting.
     ///
     /// Supports headers (`#`), bold (`**`), italic (`*`), inline code (`` ` ``),
-    /// unordered lists (`-`/`*`), ordered lists (`1.`), and horizontal rules (`---`).
+    /// unordered lists (`-`/`*`), ordered lists (`1.`), horizontal rules (`---`),
+    /// code blocks with syntax highlighting, and GFM-style pipe tables.
     pub fn markdown(&mut self, text: &str) -> Response {
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
@@ -2647,6 +2655,7 @@ impl Context {
         let mut in_code_block = false;
         let mut code_block_lang = String::new();
         let mut code_block_lines: Vec<String> = Vec::new();
+        let mut table_lines: Vec<String> = Vec::new();
 
         for line in text.lines() {
             let trimmed = line.trim();
@@ -2683,6 +2692,17 @@ impl Context {
                     code_block_lines.push(line.to_string());
                 }
                 continue;
+            }
+
+            // Table row detection — collect lines starting with `|`
+            if trimmed.starts_with('|') && trimmed.matches('|').count() >= 2 {
+                table_lines.push(trimmed.to_string());
+                continue;
+            }
+            // Flush accumulated table rows when a non-table line is encountered
+            if !table_lines.is_empty() {
+                self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+                table_lines.clear();
             }
 
             if trimmed.is_empty() {
@@ -2748,16 +2768,7 @@ impl Context {
                 in_code_block = true;
                 code_block_lang = lang.trim().to_string();
             } else {
-                let segs = Self::parse_inline_segments(trimmed, text_style, bold_style, code_style);
-                if segs.len() <= 1 {
-                    self.styled(trimmed, text_style);
-                } else {
-                    self.line(|ui| {
-                        for (s, st) in segs {
-                            ui.styled(s, st);
-                        }
-                    });
-                }
+                self.render_md_inline(trimmed, text_style, bold_style, code_style);
             }
         }
 
@@ -2767,9 +2778,139 @@ impl Context {
             }
         }
 
+        // Flush any remaining table rows at end of input
+        if !table_lines.is_empty() {
+            self.render_markdown_table(&table_lines, text_style, bold_style, border_style);
+        }
+
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;
         Response::none()
+    }
+
+    /// Render a GFM-style pipe table collected from markdown lines.
+    fn render_markdown_table(
+        &mut self,
+        lines: &[String],
+        text_style: Style,
+        bold_style: Style,
+        border_style: Style,
+    ) {
+        if lines.is_empty() {
+            return;
+        }
+
+        // Separate header, separator, and data rows
+        let is_separator = |line: &str| -> bool {
+            let inner = line.trim_matches('|').trim();
+            !inner.is_empty()
+                && inner
+                    .chars()
+                    .all(|c| c == '-' || c == ':' || c == '|' || c == ' ')
+        };
+
+        let parse_row = |line: &str| -> Vec<String> {
+            let trimmed = line.trim().trim_start_matches('|').trim_end_matches('|');
+            trimmed.split('|').map(|c| c.trim().to_string()).collect()
+        };
+
+        let mut header: Option<Vec<String>> = None;
+        let mut data_rows: Vec<Vec<String>> = Vec::new();
+        let mut found_separator = false;
+
+        for (i, line) in lines.iter().enumerate() {
+            if is_separator(line) {
+                found_separator = true;
+                continue;
+            }
+            if i == 0 && !found_separator {
+                header = Some(parse_row(line));
+            } else {
+                data_rows.push(parse_row(line));
+            }
+        }
+
+        // If no separator found, treat first row as header anyway
+        if !found_separator && header.is_none() && !data_rows.is_empty() {
+            header = Some(data_rows.remove(0));
+        }
+
+        // Calculate column count and widths
+        let all_rows: Vec<&Vec<String>> = header.iter().chain(data_rows.iter()).collect();
+        let col_count = all_rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if col_count == 0 {
+            return;
+        }
+        let mut col_widths = vec![0usize; col_count];
+        for row in &all_rows {
+            for (i, cell) in row.iter().enumerate() {
+                if i < col_count {
+                    col_widths[i] = col_widths[i].max(UnicodeWidthStr::width(cell.as_str()));
+                }
+            }
+        }
+
+        // Top border ┌───┬───┐
+        let mut top = String::from("┌");
+        for (i, &w) in col_widths.iter().enumerate() {
+            for _ in 0..w + 2 {
+                top.push('─');
+            }
+            top.push(if i < col_count - 1 { '┬' } else { '┐' });
+        }
+        self.styled(&top, border_style);
+
+        // Header row │ H1 │ H2 │
+        if let Some(ref hdr) = header {
+            let mut s = String::from("│");
+            for (i, w) in col_widths.iter().enumerate() {
+                let cell = hdr.get(i).map(String::as_str).unwrap_or("");
+                let cell_w = UnicodeWidthStr::width(cell);
+                s.push(' ');
+                s.push_str(cell);
+                for _ in cell_w..*w {
+                    s.push(' ');
+                }
+                s.push_str(" │");
+            }
+            self.styled(&s, bold_style);
+
+            // Separator ├───┼───┤
+            let mut sep = String::from("├");
+            for (i, &w) in col_widths.iter().enumerate() {
+                for _ in 0..w + 2 {
+                    sep.push('─');
+                }
+                sep.push(if i < col_count - 1 { '┼' } else { '┤' });
+            }
+            self.styled(&sep, border_style);
+        }
+
+        // Data rows
+        for row in &data_rows {
+            let mut s = String::from("│");
+            for (i, w) in col_widths.iter().enumerate() {
+                let cell = row.get(i).map(String::as_str).unwrap_or("");
+                let cell_w = UnicodeWidthStr::width(cell);
+                s.push(' ');
+                s.push_str(cell);
+                for _ in cell_w..*w {
+                    s.push(' ');
+                }
+                s.push_str(" │");
+            }
+            self.styled(&s, text_style);
+        }
+
+        // Bottom border └───┴───┘
+        let mut bot = String::from("└");
+        for (i, &w) in col_widths.iter().enumerate() {
+            for _ in 0..w + 2 {
+                bot.push('─');
+            }
+            bot.push(if i < col_count - 1 { '┴' } else { '┘' });
+        }
+        self.styled(&bot, border_style);
     }
 
     pub(crate) fn parse_inline_segments(
@@ -2832,6 +2973,154 @@ impl Context {
             segments.push((current, base));
         }
         segments
+    }
+
+    /// Render a markdown line with link/image support.
+    ///
+    /// Parses `[text](url)` as clickable OSC 8 links and `![alt](url)` as
+    /// image placeholders, delegating the rest to `parse_inline_segments`.
+    fn render_md_inline(
+        &mut self,
+        text: &str,
+        text_style: Style,
+        bold_style: Style,
+        code_style: Style,
+    ) {
+        let items = Self::split_md_links(text);
+
+        // Fast path: no links/images found
+        if items.len() == 1 {
+            if let MdInline::Text(ref t) = items[0] {
+                let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
+                if segs.len() <= 1 {
+                    self.styled(text, text_style);
+                } else {
+                    self.line(|ui| {
+                        for (s, st) in segs {
+                            ui.styled(s, st);
+                        }
+                    });
+                }
+                return;
+            }
+        }
+
+        // Mixed content — render in a line container
+        self.line(|ui| {
+            for item in &items {
+                match item {
+                    MdInline::Text(t) => {
+                        let segs =
+                            Self::parse_inline_segments(t, text_style, bold_style, code_style);
+                        for (s, st) in segs {
+                            ui.styled(s, st);
+                        }
+                    }
+                    MdInline::Link { text, url } => {
+                        ui.link(text.clone(), url.clone());
+                    }
+                    MdInline::Image { alt, url } => {
+                        let label = format!("[Image: {alt}]");
+                        ui.styled(label, code_style);
+                        if !url.is_empty() {
+                            ui.styled(format!(" ({url})"), text_style.dim());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Split a markdown line into text, link, and image segments.
+    fn split_md_links(text: &str) -> Vec<MdInline> {
+        let chars: Vec<char> = text.chars().collect();
+        let mut items: Vec<MdInline> = Vec::new();
+        let mut current = String::new();
+        let mut i = 0;
+
+        while i < chars.len() {
+            // Image: ![alt](url)
+            if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
+                if let Some((alt, url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
+                    if !current.is_empty() {
+                        items.push(MdInline::Text(std::mem::take(&mut current)));
+                    }
+                    items.push(MdInline::Image { alt, url });
+                    i += 1 + consumed;
+                    continue;
+                }
+            }
+            // Link: [text](url)
+            if chars[i] == '[' {
+                if let Some((link_text, url, consumed)) = Self::parse_md_bracket_paren(&chars, i) {
+                    if !current.is_empty() {
+                        items.push(MdInline::Text(std::mem::take(&mut current)));
+                    }
+                    items.push(MdInline::Link {
+                        text: link_text,
+                        url,
+                    });
+                    i += consumed;
+                    continue;
+                }
+            }
+            current.push(chars[i]);
+            i += 1;
+        }
+        if !current.is_empty() {
+            items.push(MdInline::Text(current));
+        }
+        if items.is_empty() {
+            items.push(MdInline::Text(String::new()));
+        }
+        items
+    }
+
+    /// Parse `[text](url)` starting at `chars[start]` which must be `[`.
+    /// Returns `(text, url, chars_consumed)` or `None` if no match.
+    fn parse_md_bracket_paren(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+        if start >= chars.len() || chars[start] != '[' {
+            return None;
+        }
+        // Find closing ]
+        let mut depth = 0i32;
+        let mut bracket_end = None;
+        for (j, &ch) in chars.iter().enumerate().skip(start) {
+            if ch == '[' {
+                depth += 1;
+            } else if ch == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    bracket_end = Some(j);
+                    break;
+                }
+            }
+        }
+        let bracket_end = bracket_end?;
+        // Must be followed by (
+        if bracket_end + 1 >= chars.len() || chars[bracket_end + 1] != '(' {
+            return None;
+        }
+        // Find closing )
+        let paren_start = bracket_end + 2;
+        let mut paren_end = None;
+        let mut paren_depth = 1i32;
+        for (j, &ch) in chars.iter().enumerate().skip(paren_start) {
+            if ch == '(' {
+                paren_depth += 1;
+            } else if ch == ')' {
+                paren_depth -= 1;
+                if paren_depth == 0 {
+                    paren_end = Some(j);
+                    break;
+                }
+            }
+        }
+        let paren_end = paren_end?;
+        let text: String = chars[start + 1..bracket_end].iter().collect();
+        let url: String = chars[paren_start..paren_end].iter().collect();
+        let consumed = paren_end - start + 1;
+        Some((text, url, consumed))
     }
 
     // ── key sequence ─────────────────────────────────────────────────

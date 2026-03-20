@@ -1815,6 +1815,45 @@ impl Context {
         self.scroll_lines_per_event
     }
 
+    /// Get the current focus index.
+    ///
+    /// Widget indices are assigned in the order [`register_focusable()`](Self::register_focusable) is called.
+    /// Indices are 0-based and wrap at [`focus_count()`](Self::focus_count).
+    pub fn focus_index(&self) -> usize {
+        self.focus_index
+    }
+
+    /// Set the focus index to a specific focusable widget.
+    ///
+    /// Widget indices are assigned in the order [`register_focusable()`](Self::register_focusable) is called
+    /// (0-based). If `index` exceeds the number of focusable widgets it will
+    /// be clamped by the modulo in [`register_focusable`](Self::register_focusable).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Focus the second focusable widget (index 1)
+    /// ui.set_focus_index(1);
+    /// # });
+    /// ```
+    pub fn set_focus_index(&mut self, index: usize) {
+        self.focus_index = index;
+    }
+
+    /// Get the number of focusable widgets registered in the previous frame.
+    ///
+    /// Returns 0 on the very first frame. Useful together with
+    /// [`set_focus_index()`](Self::set_focus_index) for programmatic focus control.
+    ///
+    /// Note: this intentionally reads `prev_focus_count` (the settled count
+    /// from the last completed frame) rather than `focus_count` (the
+    /// still-incrementing counter for the current frame).
+    #[allow(clippy::misnamed_getters)]
+    pub fn focus_count(&self) -> usize {
+        self.prev_focus_count
+    }
+
     pub(crate) fn process_focus_keys(&mut self) {
         for (i, event) in self.events.iter().enumerate() {
             if self.consumed[i] {

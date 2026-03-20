@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.15.2] — 2026-03-20
+
+### Features
+
+- **Programmatic focus control** — `ui.focus_index()`, `ui.set_focus_index(n)`, `ui.focus_count()` for keyboard focus management in complex UIs with multiple focusable widgets.
+- **Markdown pipe table rendering** — `ui.markdown()` now renders GFM-style pipe tables (`| A | B |`) with box-drawing borders and bold headers.
+- **Markdown link support** — `[text](url)` in `ui.markdown()` renders as clickable OSC 8 links via `ui.link()`. `![alt](url)` renders as `[Image: alt]` placeholder.
+- **text_input auto-fill** — `text_input()` now uses `grow(1)` internally, filling available width in row layouts without manual container wrapping.
+- **Sixel image docs** — `sixel_image()` docstring expanded with usage example and `SLT_FORCE_SIXEL` documentation (API was already public since v0.14.0).
+
+### Performance
+
+- **Image flush optimization** — `raw_sequences` (Kitty/Sixel image data) are now diff-compared between frames. Static images skip the delete + re-upload cycle entirely, reducing per-frame cost to zero for unchanged images.
+
+### Demo
+
+- **`v0.15.2` tab** in the demo showcasing markdown tables, links, focus control, and text_input grow.
+
 ## [0.15.1] — 2026-03-20
 
 ### Fixes

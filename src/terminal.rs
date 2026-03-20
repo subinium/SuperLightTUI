@@ -161,13 +161,16 @@ impl Terminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
-        if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
-            queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
-        }
-
-        for (x, y, seq) in &self.current.raw_sequences {
-            queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
-            queue!(self.stdout, Print(seq))?;
+        // Only delete + re-upload images when raw_sequences actually changed.
+        // This avoids the expensive a=d,d=A + re-upload cycle for static images.
+        if self.current.raw_sequences != self.previous.raw_sequences {
+            if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
+                queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
+            }
+            for (x, y, seq) in &self.current.raw_sequences {
+                queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
+                queue!(self.stdout, Print(seq))?;
+            }
         }
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
@@ -342,14 +345,15 @@ impl InlineTerminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
-        if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
-            queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
-        }
-
-        for (x, y, seq) in &self.current.raw_sequences {
-            let abs_y = self.start_row as u32 + *y;
-            queue!(self.stdout, cursor::MoveTo(*x as u16, abs_y as u16))?;
-            queue!(self.stdout, Print(seq))?;
+        if self.current.raw_sequences != self.previous.raw_sequences {
+            if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
+                queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
+            }
+            for (x, y, seq) in &self.current.raw_sequences {
+                let abs_y = self.start_row as u32 + *y;
+                queue!(self.stdout, cursor::MoveTo(*x as u16, abs_y as u16))?;
+                queue!(self.stdout, Print(seq))?;
+            }
         }
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
