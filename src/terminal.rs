@@ -401,7 +401,7 @@ impl Terminal {
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
 
-        let cursor_pos = find_cursor_marker(&self.current);
+        let cursor_pos = self.current.cursor_pos();
         match cursor_pos {
             Some((cx, cy)) => {
                 if !self.cursor_visible {
@@ -514,17 +514,20 @@ impl InlineTerminal {
             }
         }
 
-        let updates = self.current.diff(&self.previous);
-        if !updates.is_empty() {
-            let mut last_style = Style::new();
-            let mut first_style = true;
-            let mut last_pos: Option<(u32, u32)> = None;
-            let mut active_link: Option<&str> = None;
+        let mut last_style = Style::new();
+        let mut first_style = true;
+        let mut last_pos: Option<(u32, u32)> = None;
+        let mut active_link: Option<&str> = None;
+        let mut has_updates = false;
 
-            for &(x, y, cell) in &updates {
-                if cell.symbol.is_empty() {
+        for y in self.current.area.y..self.current.area.bottom() {
+            for x in self.current.area.x..self.current.area.right() {
+                let cell = self.current.get(x, y);
+                let prev = self.previous.get(x, y);
+                if cell == prev || cell.symbol.is_empty() {
                     continue;
                 }
+                has_updates = true;
 
                 let abs_y = self.start_row as u32 + y;
                 let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
@@ -565,7 +568,9 @@ impl InlineTerminal {
                 }
                 last_pos = Some((x + char_width, abs_y));
             }
+        }
 
+        if has_updates {
             if active_link.is_some() {
                 queue!(self.stdout, Print("\x1b]8;;\x07"))?;
             }
@@ -597,7 +602,7 @@ impl InlineTerminal {
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
 
-        let cursor_pos = find_cursor_marker(&self.current);
+        let cursor_pos = self.current.cursor_pos();
         match cursor_pos {
             Some((cx, cy)) => {
                 let abs_cy = self.start_row as u32 + cy;
@@ -933,22 +938,6 @@ fn base64_decode(input: &str) -> Option<String> {
     }
 
     String::from_utf8(out).ok()
-}
-
-// ── Cursor marker ───────────────────────────────────────────────
-
-const CURSOR_MARKER: &str = "▎";
-
-fn find_cursor_marker(buffer: &Buffer) -> Option<(u32, u32)> {
-    let area = buffer.area;
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            if buffer.get(x, y).symbol == CURSOR_MARKER {
-                return Some((x, y));
-            }
-        }
-    }
-    None
 }
 
 fn apply_style_delta(

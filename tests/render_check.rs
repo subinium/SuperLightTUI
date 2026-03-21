@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use slt::widgets::*;
 use slt::*;
 

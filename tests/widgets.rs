@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use slt::widgets::*;
 use slt::{KeyCode, KeyMap, KeyModifiers, TestBackend};
 use std::fs;
@@ -2531,7 +2533,7 @@ fn key_event_kind_default_is_press() {
 
 #[test]
 fn key_release_not_matched_by_key() {
-    use slt::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use slt::event::Event;
 
     let mut tb = TestBackend::new(40, 5);
     let events = vec![Event::key_release('q')];
@@ -3156,7 +3158,7 @@ fn demo_v094_content_does_not_panic() {
     let mut tb = TestBackend::new(120, 40);
     let mut acc_gen = true;
     let mut acc_adv = false;
-    let mut alert = true;
+    let alert = true;
     tb.render(|ui| {
         if alert {
             ui.alert("Test alert", AlertLevel::Success);

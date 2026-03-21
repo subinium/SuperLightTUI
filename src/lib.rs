@@ -1030,7 +1030,7 @@ fn run_frame(
     state.focus_index = ctx.focus_index;
     state.prev_focus_count = ctx.focus_count;
 
-    let mut tree = layout::build_tree(&ctx.commands);
+    let mut tree = layout::build_tree(std::mem::take(&mut ctx.commands));
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
     let fd = layout::collect_all(&tree);
@@ -1042,7 +1042,7 @@ fn run_frame(
     state.prev_focus_rects = fd.focus_rects;
     state.prev_focus_groups = fd.focus_groups;
     layout::render(&tree, term.buffer_mut());
-    let raw_rects = layout::collect_raw_draw_rects(&tree);
+    let raw_rects = fd.raw_draw_rects;
     for rdr in raw_rects {
         if rdr.rect.width == 0 || rdr.rect.height == 0 {
             continue;

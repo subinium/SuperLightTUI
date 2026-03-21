@@ -75,6 +75,7 @@ pub struct Buffer {
     pub(crate) clip_stack: Vec<Rect>,
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
     pub(crate) kitty_placements: Vec<KittyPlacement>,
+    pub(crate) cursor_pos: Option<(u32, u32)>,
     /// Scroll clip info set by the run loop before invoking draw closures:
     /// `(top_clip_rows, original_total_rows)`.
     pub(crate) kitty_clip_info: Option<(u32, u32)>,
@@ -90,8 +91,18 @@ impl Buffer {
             clip_stack: Vec::new(),
             raw_sequences: Vec::new(),
             kitty_placements: Vec::new(),
+            cursor_pos: None,
             kitty_clip_info: None,
         }
+    }
+
+    pub(crate) fn set_cursor_pos(&mut self, x: u32, y: u32) {
+        self.cursor_pos = Some((x, y));
+    }
+
+    #[cfg(feature = "crossterm")]
+    pub(crate) fn cursor_pos(&self) -> Option<(u32, u32)> {
+        self.cursor_pos
     }
 
     /// Store a raw escape sequence to be written at position `(x, y)` during flush.
@@ -362,6 +373,7 @@ impl Buffer {
         self.clip_stack.clear();
         self.raw_sequences.clear();
         self.kitty_placements.clear();
+        self.cursor_pos = None;
         self.kitty_clip_info = None;
     }
 
@@ -374,6 +386,7 @@ impl Buffer {
         self.clip_stack.clear();
         self.raw_sequences.clear();
         self.kitty_placements.clear();
+        self.cursor_pos = None;
         self.kitty_clip_info = None;
     }
 

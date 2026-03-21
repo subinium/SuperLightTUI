@@ -24,6 +24,7 @@ impl Context {
             .unwrap_or(self.theme.text);
         self.commands.push(Command::Text {
             content,
+            cursor_offset: None,
             style: Style::new().fg(default_fg),
             grow: 0,
             align: Align::Start,
@@ -113,6 +114,7 @@ impl Context {
             .unwrap_or(self.theme.text);
         self.commands.push(Command::Text {
             content,
+            cursor_offset: None,
             style: Style::new().fg(default_fg),
             grow: 0,
             align: Align::Start,
@@ -144,6 +146,7 @@ impl Context {
 
         self.commands.push(Command::Text {
             content,
+            cursor_offset: None,
             style: Style::new().fg(self.theme.text),
             grow: 0,
             align: Align::Start,
@@ -300,8 +303,18 @@ impl Context {
     /// Equivalent to calling `text(s)` followed by style-chain methods, but
     /// more concise when you already have a `Style` value.
     pub fn styled(&mut self, s: impl Into<String>, style: Style) -> &mut Self {
+        self.styled_with_cursor(s, style, None)
+    }
+
+    pub(crate) fn styled_with_cursor(
+        &mut self,
+        s: impl Into<String>,
+        style: Style,
+        cursor_offset: Option<usize>,
+    ) -> &mut Self {
         self.commands.push(Command::Text {
             content: s.into(),
+            cursor_offset,
             style,
             grow: 0,
             align: Align::Start,
@@ -1564,6 +1577,36 @@ impl Context {
     pub fn line_wrap(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
         let start = self.commands.len();
         f(self);
+        let has_link = self.commands[start..]
+            .iter()
+            .any(|cmd| matches!(cmd, Command::Link { .. }));
+
+        if has_link {
+            self.commands.insert(
+                start,
+                Command::BeginContainer {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new(),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                },
+            );
+            self.commands.push(Command::EndContainer);
+            self.last_text_idx = None;
+            return self;
+        }
+
         let mut segments: Vec<(String, Style)> = Vec::new();
         for cmd in self.commands.drain(start..) {
             match cmd {
@@ -2196,6 +2239,50 @@ impl Context {
     /// Returns `true` when the button is clicked or activated.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
         self.button(label)
+    }
+}
+
+#[cfg(test)]
+mod line_wrap_tests {
+    use super::*;
+    use crate::event::Event;
+    use crate::FrameState;
+
+    #[test]
+    fn line_wrap_without_links_compacts_to_rich_text() {
+        let mut frame = FrameState::default();
+        let mut ctx = Context::new(Vec::<Event>::new(), 80, 24, &mut frame, Theme::dark());
+
+        ctx.line_wrap(|ui| {
+            ui.text("hello ");
+            ui.text("world").bold();
+        });
+
+        assert!(matches!(
+            ctx.commands.as_slice(),
+            [Command::RichText { .. }]
+        ));
+    }
+
+    #[test]
+    fn line_wrap_with_links_keeps_interactive_commands() {
+        let mut frame = FrameState::default();
+        let mut ctx = Context::new(Vec::<Event>::new(), 80, 24, &mut frame, Theme::dark());
+
+        ctx.line_wrap(|ui| {
+            ui.text("Visit ");
+            ui.link("Docs", "https://docs.rs");
+        });
+
+        assert!(matches!(
+            ctx.commands.first(),
+            Some(Command::BeginContainer { .. })
+        ));
+        assert!(ctx
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, Command::Link { text, .. } if text == "Docs")));
+        assert!(matches!(ctx.commands.last(), Some(Command::EndContainer)));
     }
 }
 

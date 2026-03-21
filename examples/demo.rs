@@ -4,7 +4,7 @@ use slt::{
     FormState, HalfBlockImage, Justify, KeyCode, KeyMap, KeyModifiers, ListState, MultiSelectState,
     PaletteCommand, RadioState, RichLogState, RunConfig, ScreenState, ScrollState, SelectState,
     SpinnerState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState, Theme,
-    ToastLevel, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    ToastLevel, ToastState, ToolApprovalState, TreeNode, TreeState, Trend, WidgetColors,
 };
 
 fn main() -> std::io::Result<()> {
@@ -232,6 +232,9 @@ fn main() -> std::io::Result<()> {
         "Cargo.toml",
         "README.md",
     ]);
+    let mut v152_focus_a = TextInputState::with_placeholder("Input A (focusable #0)");
+    let mut v152_focus_b = TextInputState::with_placeholder("Input B (focusable #1)");
+    let mut v152_search = TextInputState::with_placeholder("Search fills remaining space...");
 
     slt::run_with(
         RunConfig::default().mouse(true).kitty_keyboard(true),
@@ -289,7 +292,7 @@ fn main() -> std::io::Result<()> {
                         .fg(theme.text_dim);
                     ui.separator();
 
-                    let _ = ui.tabs(&mut page_tabs);
+                    render_page_tabs(ui, &mut page_tabs);
                     ui.separator();
 
                     let _ = ui
@@ -386,7 +389,12 @@ fn main() -> std::io::Result<()> {
                             ),
                             14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
                             15 => render_v0141(ui),
-                            16 => render_v0152(ui),
+                            16 => render_v0152(
+                                ui,
+                                &mut v152_focus_a,
+                                &mut v152_focus_b,
+                                &mut v152_search,
+                            ),
                             _ => {}
                         });
 
@@ -442,6 +450,32 @@ fn main() -> std::io::Result<()> {
             }
         },
     )
+}
+
+fn render_page_tabs(ui: &mut Context, page_tabs: &mut TabsState) {
+    let theme = *ui.theme();
+    let split_at = page_tabs.labels.len().div_ceil(2);
+    let selected_colors = WidgetColors::new()
+        .fg(theme.selected_fg)
+        .bg(theme.selected_bg)
+        .accent(theme.selected_fg);
+
+    for (row_idx, labels) in page_tabs.labels.chunks(split_at).enumerate() {
+        let row_start = row_idx * split_at;
+        let _ = ui.row_gap(1, |ui| {
+            for (offset, label) in labels.iter().enumerate() {
+                let tab_idx = row_start + offset;
+                let clicked = if page_tabs.selected == tab_idx {
+                    ui.button_colored(label, &selected_colors).clicked
+                } else {
+                    ui.button(label).clicked
+                };
+                if clicked {
+                    page_tabs.selected = tab_idx;
+                }
+            }
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -956,22 +990,28 @@ fn render_v011(
             }
         });
 
-        card(ui, |ui| {
-            ui.text("File Picker + KeyMap").bold().fg(theme.accent);
-            if ui.file_picker(file_picker).changed {
-                if let Some(path) = file_picker.selected() {
-                    let name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("selected file");
-                    ui.notify(&format!("Picked: {name}"), ToastLevel::Success);
+        let _ = ui.col(|ui| {
+            card(ui, |ui| {
+                ui.text("File Picker").bold().fg(theme.accent);
+                if ui.file_picker(file_picker).changed {
+                    if let Some(path) = file_picker.selected() {
+                        let name = path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("selected file");
+                        ui.notify(&format!("Picked: {name}"), ToastLevel::Success);
+                    }
                 }
-            }
-            ui.text(format!("Dir: {}", file_picker.current_dir.display()))
-                .fg(theme.surface_text)
-                .wrap();
-            ui.separator();
-            let _ = ui.help_from_keymap(keymap);
+                ui.text(format!("Dir: {}", file_picker.current_dir.display()))
+                    .fg(theme.surface_text)
+                    .wrap();
+            });
+
+            card(ui, |ui| {
+                ui.text("Keyboard Shortcuts").bold().fg(theme.accent);
+                ui.text("KeyMap helper preview").fg(theme.surface_text);
+                let _ = ui.help_from_keymap(keymap);
+            });
         });
     });
 }
@@ -2444,7 +2484,12 @@ fn render_v094(
     });
 }
 
-fn render_v0152(ui: &mut Context) {
+fn render_v0152(
+    ui: &mut Context,
+    focus_a: &mut TextInputState,
+    focus_b: &mut TextInputState,
+    search: &mut TextInputState,
+) {
     section(
         ui,
         "v0.15.2 — MARKDOWN TABLES, FOCUS CONTROL, TEXT INPUT GROW",
@@ -2563,11 +2608,9 @@ fn render_v0152(ui: &mut Context) {
             .p(1)
             .grow(1)
             .col(|ui| {
-                let mut a = TextInputState::with_placeholder("Input A (focusable #0)");
-                let mut b = TextInputState::with_placeholder("Input B (focusable #1)");
                 ui.text("Two text inputs — Tab cycles between them:").dim();
-                let _ = ui.text_input(&mut a);
-                let _ = ui.text_input(&mut b);
+                let _ = ui.text_input(focus_a);
+                let _ = ui.text_input(focus_b);
             });
     });
 
@@ -2584,8 +2627,7 @@ fn render_v0152(ui: &mut Context) {
         .title("Row with text_input + button")
         .p(1)
         .row(|ui| {
-            let mut search = TextInputState::with_placeholder("Search fills remaining space...");
-            let _ = ui.text_input(&mut search);
+            let _ = ui.text_input(search);
             let _ = ui.button("Go");
         });
 
