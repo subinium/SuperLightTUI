@@ -816,7 +816,7 @@ pub struct TableState {
     /// Index of the currently selected row.
     pub selected: usize,
     column_widths: Vec<u32>,
-    dirty: bool,
+    widths_dirty: bool,
     /// Sorted column index (`None` means no sorting).
     pub sort_column: Option<usize>,
     /// Sort direction (`true` for ascending).
@@ -830,6 +830,8 @@ pub struct TableState {
     /// Whether alternating row backgrounds are enabled.
     pub zebra: bool,
     view_indices: Vec<usize>,
+    row_search_cache: Vec<String>,
+    filter_tokens: Vec<String>,
 }
 
 impl Default for TableState {
@@ -839,7 +841,7 @@ impl Default for TableState {
             rows: Vec::new(),
             selected: 0,
             column_widths: Vec::new(),
-            dirty: true,
+            widths_dirty: true,
             sort_column: None,
             sort_ascending: true,
             filter: String::new(),
@@ -847,6 +849,8 @@ impl Default for TableState {
             page_size: 0,
             zebra: false,
             view_indices: Vec::new(),
+            row_search_cache: Vec::new(),
+            filter_tokens: Vec::new(),
         }
     }
 }
@@ -864,7 +868,7 @@ impl TableState {
             rows,
             selected: 0,
             column_widths: Vec::new(),
-            dirty: true,
+            widths_dirty: true,
             sort_column: None,
             sort_ascending: true,
             filter: String::new(),
@@ -872,7 +876,10 @@ impl TableState {
             page_size: 0,
             zebra: false,
             view_indices: Vec::new(),
+            row_search_cache: Vec::new(),
+            filter_tokens: Vec::new(),
         };
+        state.rebuild_row_search_cache();
         state.rebuild_view();
         state.recompute_widths();
         state
@@ -887,6 +894,7 @@ impl TableState {
             .into_iter()
             .map(|r| r.into_iter().map(Into::into).collect())
             .collect();
+        self.rebuild_row_search_cache();
         self.rebuild_view();
     }
 
@@ -903,6 +911,9 @@ impl TableState {
 
     /// Sort by column without toggling (always sets to ascending first).
     pub fn sort_by(&mut self, column: usize) {
+        if self.sort_column == Some(column) && self.sort_ascending {
+            return;
+        }
         self.sort_column = Some(column);
         self.sort_ascending = true;
         self.rebuild_view();
@@ -912,13 +923,21 @@ impl TableState {
     /// together — all tokens must match across any cell in the same row.
     /// Empty string disables filtering.
     pub fn set_filter(&mut self, filter: impl Into<String>) {
-        self.filter = filter.into();
+        let filter = filter.into();
+        if self.filter == filter {
+            return;
+        }
+        self.filter = filter;
+        self.filter_tokens = Self::tokenize_filter(&self.filter);
         self.page = 0;
         self.rebuild_view();
     }
 
     /// Clear sorting.
     pub fn clear_sort(&mut self) {
+        if self.sort_column.is_none() && self.sort_ascending {
+            return;
+        }
         self.sort_column = None;
         self.sort_ascending = true;
         self.rebuild_view();
@@ -970,21 +989,15 @@ impl TableState {
     fn rebuild_view(&mut self) {
         let mut indices: Vec<usize> = (0..self.rows.len()).collect();
 
-        let tokens: Vec<String> = self
-            .filter
-            .split_whitespace()
-            .map(|t| t.to_lowercase())
-            .collect();
-        if !tokens.is_empty() {
+        if !self.filter_tokens.is_empty() {
             indices.retain(|&idx| {
-                let row = match self.rows.get(idx) {
-                    Some(r) => r,
+                let searchable = match self.row_search_cache.get(idx) {
+                    Some(row) => row,
                     None => return false,
                 };
-                tokens.iter().all(|token| {
-                    row.iter()
-                        .any(|cell| cell.to_lowercase().contains(token.as_str()))
-                })
+                self.filter_tokens
+                    .iter()
+                    .all(|token| searchable.contains(token.as_str()))
             });
         }
 
@@ -1005,7 +1018,10 @@ impl TableState {
 
                 match (left.parse::<f64>(), right.parse::<f64>()) {
                     (Ok(l), Ok(r)) => l.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
-                    _ => left.to_lowercase().cmp(&right.to_lowercase()),
+                    _ => left
+                        .chars()
+                        .flat_map(char::to_lowercase)
+                        .cmp(right.chars().flat_map(char::to_lowercase)),
                 }
             });
 
@@ -1023,7 +1039,33 @@ impl TableState {
         }
 
         self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
-        self.dirty = true;
+        self.widths_dirty = true;
+    }
+
+    fn rebuild_row_search_cache(&mut self) {
+        self.row_search_cache = self
+            .rows
+            .iter()
+            .map(|row| {
+                let mut searchable = String::new();
+                for (idx, cell) in row.iter().enumerate() {
+                    if idx > 0 {
+                        searchable.push('\n');
+                    }
+                    searchable.extend(cell.chars().flat_map(char::to_lowercase));
+                }
+                searchable
+            })
+            .collect();
+        self.filter_tokens = Self::tokenize_filter(&self.filter);
+        self.widths_dirty = true;
+    }
+
+    fn tokenize_filter(filter: &str) -> Vec<String> {
+        filter
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect()
     }
 
     pub(crate) fn recompute_widths(&mut self) {
@@ -1044,7 +1086,7 @@ impl TableState {
                 }
             }
         }
-        self.dirty = false;
+        self.widths_dirty = false;
     }
 
     pub(crate) fn column_widths(&self) -> &[u32] {
@@ -1052,7 +1094,7 @@ impl TableState {
     }
 
     pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
+        self.widths_dirty
     }
 }
 
@@ -2208,6 +2250,39 @@ mod tests {
         assert_eq!(state.page_size, 0);
         assert!(!state.zebra);
         assert!(state.visible_indices().is_empty());
+        assert!(state.row_search_cache.is_empty());
+        assert!(state.filter_tokens.is_empty());
+    }
+
+    #[test]
+    fn table_state_builds_lowercase_search_cache() {
+        let state = TableState::new(vec!["Name"], vec![vec!["Alice Smith"], vec!["Bob"]]);
+
+        assert_eq!(state.row_search_cache.len(), 2);
+        assert_eq!(state.row_search_cache[0], "alice smith");
+        assert_eq!(state.row_search_cache[1], "bob");
+    }
+
+    #[test]
+    fn table_filter_tokens_are_cached_and_reused() {
+        let mut state = TableState::new(
+            vec!["Name", "Role"],
+            vec![vec!["Alice", "Admin"], vec!["Bob", "Viewer"]],
+        );
+
+        state.set_filter("AL admin");
+        assert_eq!(
+            state.filter_tokens,
+            vec!["al".to_string(), "admin".to_string()]
+        );
+        assert_eq!(state.visible_indices(), &[0]);
+
+        state.set_filter("AL admin");
+        assert_eq!(
+            state.filter_tokens,
+            vec!["al".to_string(), "admin".to_string()]
+        );
+        assert_eq!(state.visible_indices(), &[0]);
     }
 
     #[test]

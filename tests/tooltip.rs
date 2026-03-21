@@ -1,4 +1,4 @@
-use slt::event::{Event, KeyModifiers, MouseEvent, MouseKind};
+use slt::event::Event;
 use slt::rect::Rect;
 use slt::{frame, Backend, Buffer, RunConfig};
 

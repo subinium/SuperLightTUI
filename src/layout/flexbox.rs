@@ -27,18 +27,10 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     );
 
     if matches!(node.kind, NodeKind::Text) && node.wrap {
-        if let Some(ref segs) = node.segments {
-            let wrapped = wrap_segments(segs, area.width);
-            node.size = (area.width, wrapped.len().max(1) as u32);
-            node.cached_wrapped_segments = Some(wrapped);
-            node.cached_wrapped = None;
-        } else {
-            let lines = wrap_lines(node.content.as_deref().unwrap_or(""), area.width);
-            node.size = (area.width, lines.len().max(1) as u32);
-            node.cached_wrapped = Some(lines);
-            node.cached_wrapped_segments = None;
-        }
+        let lines = node.ensure_wrapped_for_width(area.width);
+        node.size = (area.width, lines);
     } else {
+        node.cached_wrap_width = None;
         node.cached_wrapped = None;
         node.cached_wrapped_segments = None;
     }
@@ -72,7 +64,7 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                 };
                 let natural_height: u32 = node
                     .children
-                    .iter()
+                    .iter_mut()
                     .map(|c| c.min_height_for_width(viewport_area.width))
                     .sum::<u32>()
                     + total_gaps;
@@ -282,7 +274,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let available = area.height.saturating_sub(total_gaps);
     let min_heights: Vec<u32> = node
         .children
-        .iter()
+        .iter_mut()
         .map(|child| child.min_height_for_width(area.width))
         .collect();
 

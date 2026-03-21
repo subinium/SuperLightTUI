@@ -23,6 +23,7 @@ pub enum Direction {
 pub(crate) enum Command {
     Text {
         content: String,
+        cursor_offset: Option<usize>,
         style: Style,
         grow: u16,
         align: Align,
@@ -109,6 +110,7 @@ enum NodeKind {
 pub(crate) struct LayoutNode {
     kind: NodeKind,
     content: Option<String>,
+    cursor_offset: Option<usize>,
     style: Style,
     pub grow: u16,
     align: Align,
@@ -131,6 +133,7 @@ pub(crate) struct LayoutNode {
     is_scrollable: bool,
     scroll_offset: u32,
     content_height: u32,
+    cached_wrap_width: Option<u32>,
     cached_wrapped: Option<Vec<String>>,
     segments: Option<Vec<(String, Style)>>,
     cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
@@ -164,15 +167,16 @@ impl LayoutNode {
         style: Style,
         grow: u16,
         align: Align,
-        text_flags: (bool, bool),
+        text_meta: (Option<usize>, bool, bool),
         margin: Margin,
         constraints: Constraints,
     ) -> Self {
-        let (wrap, truncate) = text_flags;
+        let (cursor_offset, wrap, truncate) = text_meta;
         let width = UnicodeWidthStr::width(content.as_str()) as u32;
         Self {
             kind: NodeKind::Text,
             content: Some(content),
+            cursor_offset,
             style,
             grow,
             align,
@@ -195,6 +199,7 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrap_width: None,
             cached_wrapped: None,
             segments: None,
             cached_wrapped_segments: None,
@@ -220,6 +225,7 @@ impl LayoutNode {
         Self {
             kind: NodeKind::Text,
             content: None,
+            cursor_offset: None,
             style: Style::new(),
             grow: 0,
             align,
@@ -242,6 +248,7 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrap_width: None,
             cached_wrapped: None,
             segments: Some(segments),
             cached_wrapped_segments: None,
@@ -257,6 +264,7 @@ impl LayoutNode {
         Self {
             kind: NodeKind::Container(direction),
             content: None,
+            cursor_offset: None,
             style: Style::new(),
             grow: config.grow,
             align: config.align,
@@ -279,6 +287,7 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrap_width: None,
             cached_wrapped: None,
             segments: None,
             cached_wrapped_segments: None,
@@ -294,6 +303,7 @@ impl LayoutNode {
         Self {
             kind: NodeKind::Spacer,
             content: None,
+            cursor_offset: None,
             style: Style::new(),
             grow,
             align: Align::Start,
@@ -316,6 +326,7 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            cached_wrap_width: None,
             cached_wrapped: None,
             segments: None,
             cached_wrapped_segments: None,
@@ -433,16 +444,39 @@ impl LayoutNode {
         height.saturating_add(self.margin.vertical())
     }
 
-    fn min_height_for_width(&self, available_width: u32) -> u32 {
+    fn ensure_wrapped_for_width(&mut self, available_width: u32) -> u32 {
+        if self.cached_wrap_width == Some(available_width) {
+            if let Some(ref segs) = self.cached_wrapped_segments {
+                return segs.len().max(1) as u32;
+            }
+            if let Some(ref lines) = self.cached_wrapped {
+                return lines.len().max(1) as u32;
+            }
+        }
+
+        if let Some(ref segs) = self.segments {
+            let wrapped = wrap_segments(segs, available_width);
+            let line_count = wrapped.len().max(1) as u32;
+            self.cached_wrap_width = Some(available_width);
+            self.cached_wrapped_segments = Some(wrapped);
+            self.cached_wrapped = None;
+            line_count
+        } else {
+            let text = self.content.as_deref().unwrap_or("");
+            let lines = wrap_lines(text, available_width);
+            let line_count = lines.len().max(1) as u32;
+            self.cached_wrap_width = Some(available_width);
+            self.cached_wrapped = Some(lines);
+            self.cached_wrapped_segments = None;
+            line_count
+        }
+    }
+
+    fn min_height_for_width(&mut self, available_width: u32) -> u32 {
         match self.kind {
             NodeKind::Text if self.wrap => {
                 let inner_width = available_width.saturating_sub(self.margin.horizontal());
-                let lines = if let Some(ref segs) = self.segments {
-                    wrap_segments(segs, inner_width).len().max(1) as u32
-                } else {
-                    let text = self.content.as_deref().unwrap_or("");
-                    wrap_lines(text, inner_width).len().max(1) as u32
-                };
+                let lines = self.ensure_wrapped_for_width(inner_width);
                 lines.saturating_add(self.margin.vertical())
             }
             _ => self.min_height(),
@@ -671,10 +705,11 @@ fn wrap_segments(segments: &[(String, Style)], max_width: u32) -> Vec<Vec<(Strin
     }
 }
 
-pub(crate) fn build_tree(commands: &[Command]) -> LayoutNode {
+pub(crate) fn build_tree(commands: Vec<Command>) -> LayoutNode {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut overlays: Vec<OverlayLayer> = Vec::new();
-    build_children(&mut root, commands, &mut 0, &mut overlays, false);
+    let mut commands = commands.into_iter();
+    build_children(&mut root, &mut commands, &mut overlays, false);
     root.overlays = overlays;
     root
 }
@@ -699,25 +734,19 @@ fn default_container_config() -> ContainerConfig {
 
 fn build_children(
     parent: &mut LayoutNode,
-    commands: &[Command],
-    pos: &mut usize,
+    commands: &mut std::vec::IntoIter<Command>,
     overlays: &mut Vec<OverlayLayer>,
     stop_on_end_overlay: bool,
 ) {
     let mut pending_focus_id: Option<usize> = None;
     let mut pending_interaction_id: Option<usize> = None;
-    while *pos < commands.len() {
-        match &commands[*pos] {
-            Command::FocusMarker(id) => {
-                pending_focus_id = Some(*id);
-                *pos += 1;
-            }
-            Command::InteractionMarker(id) => {
-                pending_interaction_id = Some(*id);
-                *pos += 1;
-            }
+    while let Some(command) = commands.next() {
+        match command {
+            Command::FocusMarker(id) => pending_focus_id = Some(id),
+            Command::InteractionMarker(id) => pending_interaction_id = Some(id),
             Command::Text {
                 content,
+                cursor_offset,
                 style,
                 grow,
                 align,
@@ -727,17 +756,16 @@ fn build_children(
                 constraints,
             } => {
                 let mut node = LayoutNode::text(
-                    content.clone(),
-                    *style,
-                    *grow,
-                    *align,
-                    (*wrap, *truncate),
-                    *margin,
-                    *constraints,
+                    content,
+                    style,
+                    grow,
+                    align,
+                    (cursor_offset, wrap, truncate),
+                    margin,
+                    constraints,
                 );
                 node.focus_id = pending_focus_id.take();
                 parent.children.push(node);
-                *pos += 1;
             }
             Command::RichText {
                 segments,
@@ -746,11 +774,9 @@ fn build_children(
                 margin,
                 constraints,
             } => {
-                let mut node =
-                    LayoutNode::rich_text(segments.clone(), *wrap, *align, *margin, *constraints);
+                let mut node = LayoutNode::rich_text(segments, wrap, align, margin, constraints);
                 node.focus_id = pending_focus_id.take();
                 parent.children.push(node);
-                *pos += 1;
             }
             Command::Link {
                 text,
@@ -760,19 +786,18 @@ fn build_children(
                 constraints,
             } => {
                 let mut node = LayoutNode::text(
-                    text.clone(),
-                    *style,
+                    text,
+                    style,
                     0,
                     Align::Start,
-                    (false, false),
-                    *margin,
-                    *constraints,
+                    (None, false, false),
+                    margin,
+                    constraints,
                 );
-                node.link_url = Some(url.clone());
+                node.link_url = Some(url);
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);
-                *pos += 1;
             }
             Command::BeginContainer {
                 direction,
@@ -792,28 +817,27 @@ fn build_children(
                 group_name,
             } => {
                 let mut node = LayoutNode::container(
-                    *direction,
+                    direction,
                     ContainerConfig {
-                        gap: *gap,
-                        align: *align,
-                        align_self: *align_self,
-                        justify: *justify,
-                        border: *border,
-                        border_sides: *border_sides,
-                        border_style: *border_style,
-                        bg_color: *bg_color,
-                        padding: *padding,
-                        margin: *margin,
-                        constraints: *constraints,
-                        title: title.clone(),
-                        grow: *grow,
+                        gap,
+                        align,
+                        align_self,
+                        justify,
+                        border,
+                        border_sides,
+                        border_style,
+                        bg_color,
+                        padding,
+                        margin,
+                        constraints,
+                        title,
+                        grow,
                     },
                 );
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
-                node.group_name = group_name.clone();
-                *pos += 1;
-                build_children(&mut node, commands, pos, overlays, false);
+                node.group_name = group_name;
+                build_children(&mut node, commands, overlays, false);
                 parent.children.push(node);
             }
             Command::BeginScrollable {
@@ -834,40 +858,35 @@ fn build_children(
                         align: Align::Start,
                         align_self: None,
                         justify: Justify::Start,
-                        border: *border,
-                        border_sides: *border_sides,
-                        border_style: *border_style,
+                        border,
+                        border_sides,
+                        border_style,
                         bg_color: None,
-                        padding: *padding,
-                        margin: *margin,
-                        constraints: *constraints,
-                        title: title.clone(),
-                        grow: *grow,
+                        padding,
+                        margin,
+                        constraints,
+                        title,
+                        grow,
                     },
                 );
                 node.is_scrollable = true;
-                node.scroll_offset = *scroll_offset;
+                node.scroll_offset = scroll_offset;
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
-                *pos += 1;
-                build_children(&mut node, commands, pos, overlays, false);
+                build_children(&mut node, commands, overlays, false);
                 parent.children.push(node);
             }
             Command::BeginOverlay { modal } => {
-                *pos += 1;
                 let mut overlay_node =
                     LayoutNode::container(Direction::Column, default_container_config());
                 overlay_node.interaction_id = pending_interaction_id.take();
-                build_children(&mut overlay_node, commands, pos, overlays, true);
+                build_children(&mut overlay_node, commands, overlays, true);
                 overlays.push(OverlayLayer {
                     node: overlay_node,
-                    modal: *modal,
+                    modal,
                 });
             }
-            Command::Spacer { grow } => {
-                parent.children.push(LayoutNode::spacer(*grow));
-                *pos += 1;
-            }
+            Command::Spacer { grow } => parent.children.push(LayoutNode::spacer(grow)),
             Command::RawDraw {
                 draw_id,
                 constraints,
@@ -875,10 +894,11 @@ fn build_children(
                 margin,
             } => {
                 let node = LayoutNode {
-                    kind: NodeKind::RawDraw(*draw_id),
+                    kind: NodeKind::RawDraw(draw_id),
                     content: None,
+                    cursor_offset: None,
                     style: Style::new(),
-                    grow: *grow,
+                    grow,
                     align: Align::Start,
                     align_self: None,
                     justify: Justify::Start,
@@ -890,8 +910,8 @@ fn build_children(
                     border_style: Style::new(),
                     bg_color: None,
                     padding: Padding::default(),
-                    margin: *margin,
-                    constraints: *constraints,
+                    margin,
+                    constraints,
                     title: None,
                     children: Vec::new(),
                     pos: (0, 0),
@@ -902,6 +922,7 @@ fn build_children(
                     is_scrollable: false,
                     scroll_offset: 0,
                     content_height: 0,
+                    cached_wrap_width: None,
                     cached_wrapped: None,
                     segments: None,
                     cached_wrapped_segments: None,
@@ -912,14 +933,9 @@ fn build_children(
                     overlays: Vec::new(),
                 };
                 parent.children.push(node);
-                *pos += 1;
             }
-            Command::EndContainer => {
-                *pos += 1;
-                return;
-            }
+            Command::EndContainer => return,
             Command::EndOverlay => {
-                *pos += 1;
                 if stop_on_end_overlay {
                     return;
                 }
@@ -943,6 +959,7 @@ pub(crate) struct FrameData {
     pub content_areas: Vec<(Rect, Rect)>,
     pub focus_rects: Vec<(usize, Rect)>,
     pub focus_groups: Vec<Option<String>>,
+    pub raw_draw_rects: Vec<RawDrawRect>,
 }
 
 /// Collect all per-frame data from a laid-out tree in a single DFS pass.
@@ -986,11 +1003,11 @@ pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
         0
     };
     for child in &node.children {
-        collect_all_inner(child, &mut data, child_offset, None);
+        collect_all_inner(child, &mut data, child_offset, None, None);
     }
 
     for overlay in &node.overlays {
-        collect_all_inner(&overlay.node, &mut data, 0, None);
+        collect_all_inner(&overlay.node, &mut data, 0, None, None);
     }
 
     data
@@ -1001,6 +1018,7 @@ fn collect_all_inner(
     data: &mut FrameData,
     y_offset: u32,
     active_group: Option<&str>,
+    viewport: Option<Rect>,
 ) {
     // --- scroll_infos (no y_offset dependency) ---
     if node.is_scrollable {
@@ -1031,6 +1049,41 @@ fn collect_all_inner(
             data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }
         data.hit_areas[id] = rect;
+    }
+
+    if let NodeKind::RawDraw(draw_id) = node.kind {
+        let node_x = node.pos.0;
+        let node_w = node.size.0;
+        let node_h = node.size.1;
+        let screen_y = node.pos.1 as i64 - y_offset as i64;
+
+        if let Some(vp) = viewport {
+            let img_top = screen_y;
+            let img_bottom = screen_y + node_h as i64;
+            let vp_top = vp.y as i64;
+            let vp_bottom = vp.bottom() as i64;
+
+            if img_bottom > vp_top && img_top < vp_bottom {
+                let visible_top = img_top.max(vp_top) as u32;
+                let visible_bottom = img_bottom.min(vp_bottom) as u32;
+                let visible_height = visible_bottom.saturating_sub(visible_top);
+                let top_clip_rows = (vp_top - img_top).max(0) as u32;
+
+                data.raw_draw_rects.push(RawDrawRect {
+                    draw_id,
+                    rect: Rect::new(node_x, visible_top, node_w, visible_height),
+                    top_clip_rows,
+                    original_height: node_h,
+                });
+            }
+        } else {
+            data.raw_draw_rects.push(RawDrawRect {
+                draw_id,
+                rect: Rect::new(node_x, screen_y.max(0) as u32, node_w, node_h),
+                top_clip_rows: 0,
+                original_height: node_h,
+            });
+        }
     }
 
     // --- group_rects ---
@@ -1085,13 +1138,16 @@ fn collect_all_inner(
     }
 
     // --- Recurse into children ---
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
+    let (child_offset, child_viewport) = if node.is_scrollable {
+        let screen_y = node.pos.1.saturating_sub(y_offset);
+        let area = Rect::new(node.pos.0, screen_y, node.size.0, node.size.1);
+        let inner = flexbox::inner_area(node, area);
+        (y_offset.saturating_add(node.scroll_offset), Some(inner))
     } else {
-        y_offset
+        (y_offset, viewport)
     };
     for child in &node.children {
-        collect_all_inner(child, data, child_offset, current_group);
+        collect_all_inner(child, data, child_offset, current_group, child_viewport);
     }
 }
 
@@ -1280,7 +1336,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1291,7 +1347,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1322,7 +1378,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1331,7 +1387,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1340,7 +1396,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1353,7 +1409,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1364,7 +1420,7 @@ mod tests {
             Style::new(),
             0,
             Align::Start,
-            (false, false),
+            (None, false, false),
             Margin::default(),
             Constraints::default(),
         ));
@@ -1444,6 +1500,7 @@ mod tests {
             Command::FocusMarker(0),
             Command::Text {
                 content: "input1".into(),
+                cursor_offset: None,
                 style: Style::new(),
                 grow: 0,
                 align: Align::Start,
@@ -1455,6 +1512,7 @@ mod tests {
             Command::FocusMarker(1),
             Command::Text {
                 content: "input2".into(),
+                cursor_offset: None,
                 style: Style::new(),
                 grow: 0,
                 align: Align::Start,
@@ -1465,7 +1523,7 @@ mod tests {
             },
         ];
 
-        let mut tree = build_tree(&commands);
+        let mut tree = build_tree(commands);
         let area = crate::rect::Rect::new(0, 0, 40, 10);
         compute(&mut tree, area);
 
@@ -1504,6 +1562,7 @@ mod tests {
             },
             Command::Text {
                 content: "inside".into(),
+                cursor_offset: None,
                 style: Style::new(),
                 grow: 0,
                 align: Align::Start,
@@ -1515,7 +1574,7 @@ mod tests {
             Command::EndContainer,
         ];
 
-        let mut tree = build_tree(&commands);
+        let mut tree = build_tree(commands);
         let area = crate::rect::Rect::new(0, 0, 40, 10);
         compute(&mut tree, area);
 
@@ -1524,5 +1583,86 @@ mod tests {
         assert_eq!(fd.focus_rects[0].0, 0);
         assert!(fd.focus_rects[0].1.width >= 8);
         assert!(fd.focus_rects[0].1.height >= 3);
+    }
+
+    #[test]
+    fn wrapped_text_cache_reused_for_same_width() {
+        let mut node = LayoutNode::text(
+            "alpha beta gamma".to_string(),
+            Style::new(),
+            0,
+            Align::Start,
+            (None, true, false),
+            Margin::default(),
+            Constraints::default(),
+        );
+
+        let height_a = node.min_height_for_width(6);
+        let first_ptr = node.cached_wrapped.as_ref().map(Vec::as_ptr).unwrap();
+        let height_b = node.min_height_for_width(6);
+        let second_ptr = node.cached_wrapped.as_ref().map(Vec::as_ptr).unwrap();
+
+        assert_eq!(height_a, height_b);
+        assert_eq!(first_ptr, second_ptr);
+        assert_eq!(node.cached_wrap_width, Some(6));
+    }
+
+    #[test]
+    fn collect_all_matches_raw_draw_collection() {
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+        let mut scroll = LayoutNode::container(Direction::Column, default_container_config());
+        scroll.is_scrollable = true;
+        scroll.pos = (0, 0);
+        scroll.size = (20, 4);
+        scroll.scroll_offset = 2;
+        scroll.children.push(LayoutNode {
+            kind: NodeKind::RawDraw(7),
+            content: None,
+            cursor_offset: None,
+            style: Style::new(),
+            grow: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            wrap: false,
+            truncate: false,
+            gap: 0,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            children: Vec::new(),
+            pos: (1, 3),
+            size: (6, 3),
+            is_scrollable: false,
+            scroll_offset: 0,
+            content_height: 0,
+            cached_wrap_width: None,
+            cached_wrapped: None,
+            segments: None,
+            cached_wrapped_segments: None,
+            focus_id: None,
+            interaction_id: None,
+            link_url: None,
+            group_name: None,
+            overlays: Vec::new(),
+        });
+        root.children.push(scroll);
+
+        let via_collect_all = collect_all(&root)
+            .raw_draw_rects
+            .into_iter()
+            .map(|r| (r.draw_id, r.rect, r.top_clip_rows, r.original_height))
+            .collect::<Vec<_>>();
+        let via_legacy = collect_raw_draw_rects(&root)
+            .into_iter()
+            .map(|r| (r.draw_id, r.rect, r.top_clip_rows, r.original_height))
+            .collect::<Vec<_>>();
+
+        assert_eq!(via_collect_all, via_legacy);
     }
 }

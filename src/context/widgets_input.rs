@@ -188,7 +188,7 @@ impl Context {
         }
 
         let visible_width = self.area_width.saturating_sub(4) as usize;
-        let input_text = if state.value.is_empty() {
+        let (input_text, cursor_offset) = if state.value.is_empty() {
             if state.placeholder.len() > 100 {
                 slt_warn(
                     "text_input placeholder is very long (>100 chars) — consider shortening it",
@@ -197,8 +197,10 @@ impl Context {
             let mut ph = state.placeholder.clone();
             if focused {
                 ph.insert(0, '▎');
+                (ph, Some(0))
+            } else {
+                (ph, None)
             }
-            ph
         } else {
             let chars: Vec<char> = state.value.chars().collect();
             let display_chars: Vec<char> = if state.masked {
@@ -219,6 +221,7 @@ impl Context {
             };
 
             let mut rendered = String::new();
+            let mut cursor_offset = None;
             let mut current_width: usize = 0;
             for (idx, &ch) in display_chars.iter().enumerate() {
                 let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
@@ -230,15 +233,17 @@ impl Context {
                     break;
                 }
                 if focused && idx == state.cursor {
+                    cursor_offset = Some(rendered.chars().count());
                     rendered.push('▎');
                 }
                 rendered.push(ch);
                 current_width += cw;
             }
             if focused && state.cursor >= display_chars.len() {
+                cursor_offset = Some(rendered.chars().count());
                 rendered.push('▎');
             }
-            rendered
+            (rendered, cursor_offset)
         };
         let input_style = if state.value.is_empty() && !focused {
             Style::new()
@@ -262,7 +267,7 @@ impl Context {
             .px(1)
             .grow(1)
             .col(|ui| {
-                ui.styled(input_text, input_style);
+                ui.styled_with_cursor(input_text, input_style, cursor_offset);
             });
         response.focused = focused;
         response.changed = state.value != old_value;
@@ -747,6 +752,7 @@ impl Context {
             };
 
             let mut rendered = seg_text.clone();
+            let mut cursor_offset = None;
             let mut style = if seg_text.is_empty() {
                 Style::new().fg(self.theme.text_dim)
             } else {
@@ -757,17 +763,19 @@ impl Context {
                 rendered.clear();
                 for (idx, ch) in seg_text.chars().enumerate() {
                     if idx == cursor_vcol {
+                        cursor_offset = Some(rendered.chars().count());
                         rendered.push('▎');
                     }
                     rendered.push(ch);
                 }
                 if cursor_vcol >= seg_text.chars().count() {
+                    cursor_offset = Some(rendered.chars().count());
                     rendered.push('▎');
                 }
                 style = Style::new().fg(self.theme.text);
             }
 
-            self.styled(rendered, style);
+            self.styled_with_cursor(rendered, style, cursor_offset);
         }
         self.commands.push(Command::EndContainer);
         self.last_text_idx = None;

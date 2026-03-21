@@ -35,7 +35,7 @@ fn main() -> std::io::Result<()> {
             .title("Kitty Image Gallery")
             .grow(1)
             .col(|ui| {
-                ui.row(|ui| {
+                let _ = ui.row(|ui| {
                     ui.text("j/k scroll | q quit").dim();
                     ui.spacer();
                     ui.text(format!("offset: {}", scroll.offset)).dim();

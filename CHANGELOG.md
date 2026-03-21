@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.6] — 2026-03-21
+
+### Improvements
+
+- **Hot-path render cleanup** — text input and textarea cursor placement now tracks the cursor during rendering instead of scanning the full terminal buffer during flush.
+- **Inline flush path** — `InlineTerminal` now emits diffs with direct buffer iteration, removing the per-frame `Vec` allocation previously used by `Buffer::diff()`.
+- **Layout build path** — `build_tree()` now consumes the command list and moves owned strings/segments into `LayoutNode`s instead of cloning them through the hot path.
+- **Wrapped text reuse** — wrapped text measurements now cache by width so repeated layout sizing and render passes can reuse the same wrapped output within a frame.
+- **`perf_regression` example** — new headless perf sanity example covering input cursor rendering, wrapped text, and textarea cursor behavior.
+
 ## [0.15.5] — 2026-03-21
 
 ### Features

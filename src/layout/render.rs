@@ -365,6 +365,14 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
                             0
                         };
                         let draw_x = node.pos.0.saturating_add(x_offset);
+                        if let Some(cursor_offset) = node.cursor_offset {
+                            let cursor_x = text
+                                .chars()
+                                .take(cursor_offset)
+                                .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0) as u32)
+                                .sum::<u32>();
+                            buf.set_cursor_pos(draw_x.saturating_add(cursor_x), sy as u32);
+                        }
                         if let Some(ref url) = node.link_url {
                             buf.set_string_linked(draw_x, sy as u32, text, style, url);
                         } else {
@@ -589,4 +597,29 @@ fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     }
     result.push('\u{2026}');
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_tracks_cursor_position_from_text_node() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
+        let mut node = LayoutNode::text(
+            "ab▎cd".to_string(),
+            Style::new(),
+            0,
+            Align::Start,
+            (Some(2), false, false),
+            Margin::default(),
+            Constraints::default(),
+        );
+        node.pos = (3, 1);
+        node.size = (5, 1);
+
+        render(&node, &mut buf);
+
+        assert_eq!(buf.cursor_pos(), Some((5, 1)));
+    }
 }
