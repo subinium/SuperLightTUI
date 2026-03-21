@@ -429,30 +429,28 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
-        let rgba = normalize_rgba(rgba, pixel_width, pixel_height);
-        let encoded = base64_encode(&rgba);
-        let pw = pixel_width;
-        let ph = pixel_height;
-        let c = cols;
-        let r = rows;
+        let rgba_data = normalize_rgba(rgba, pixel_width, pixel_height);
+        let content_hash = crate::buffer::hash_rgba(&rgba_data);
+        let rgba_arc = std::sync::Arc::new(rgba_data);
+        let sw = pixel_width;
+        let sh = pixel_height;
 
         self.container().w(cols).h(rows).draw(move |buf, rect| {
-            let chunks = split_base64(&encoded, 4096);
-            let mut all_sequences = String::new();
-
-            for (i, chunk) in chunks.iter().enumerate() {
-                let more = if i < chunks.len() - 1 { 1 } else { 0 };
-                if i == 0 {
-                    all_sequences.push_str(&format!(
-                        "\x1b_Ga=T,f=32,s={},v={},c={},r={},C=1,q=2,m={};{}\x1b\\",
-                        pw, ph, c, r, more, chunk
-                    ));
-                } else {
-                    all_sequences.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk));
-                }
+            if rect.width == 0 || rect.height == 0 {
+                return;
             }
-
-            buf.raw_sequence(rect.x, rect.y, all_sequences);
+            buf.kitty_place(crate::buffer::KittyPlacement {
+                content_hash,
+                rgba: rgba_arc.clone(),
+                src_width: sw,
+                src_height: sh,
+                x: rect.x,
+                y: rect.y,
+                cols: rect.width,
+                rows: rect.height,
+                crop_y: 0,
+                crop_h: 0,
+            });
         });
         Response::none()
     }
@@ -462,7 +460,8 @@ impl Context {
     /// Sends the original RGBA data to the terminal and lets the Kitty
     /// protocol handle scaling. The container width is `cols` cells;
     /// height is calculated automatically from the image aspect ratio
-    /// (assuming 8px wide, 16px tall per cell).
+    /// using detected cell pixel dimensions (falls back to 8×16 if
+    /// detection fails).
     ///
     /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm).
     pub fn kitty_image_fit(
@@ -472,38 +471,40 @@ impl Context {
         src_height: u32,
         cols: u32,
     ) -> Response {
+        #[cfg(feature = "crossterm")]
+        let (cell_w, cell_h) = crate::terminal::cell_pixel_size();
+        #[cfg(not(feature = "crossterm"))]
+        let (cell_w, cell_h) = (8u32, 16u32);
+
         let rows = if src_width == 0 {
             1
         } else {
-            ((cols as f64 * src_height as f64 * 8.0) / (src_width as f64 * 16.0))
+            ((cols as f64 * src_height as f64 * cell_w as f64) / (src_width as f64 * cell_h as f64))
                 .ceil()
                 .max(1.0) as u32
         };
-        let rgba = normalize_rgba(rgba, src_width, src_height);
+        let rgba_data = normalize_rgba(rgba, src_width, src_height);
+        let content_hash = crate::buffer::hash_rgba(&rgba_data);
+        let rgba_arc = std::sync::Arc::new(rgba_data);
         let sw = src_width;
         let sh = src_height;
-        let c = cols;
-        let r = rows;
 
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
-            let encoded = base64_encode(&rgba);
-            let chunks = split_base64(&encoded, 4096);
-            let mut seq = String::new();
-            for (i, chunk) in chunks.iter().enumerate() {
-                let more = if i < chunks.len() - 1 { 1 } else { 0 };
-                if i == 0 {
-                    seq.push_str(&format!(
-                        "\x1b_Ga=T,f=32,s={},v={},c={},r={},C=1,q=2,m={};{}\x1b\\",
-                        sw, sh, c, r, more, chunk
-                    ));
-                } else {
-                    seq.push_str(&format!("\x1b_Gm={};{}\x1b\\", more, chunk));
-                }
-            }
-            buf.raw_sequence(rect.x, rect.y, seq);
+            buf.kitty_place(crate::buffer::KittyPlacement {
+                content_hash,
+                rgba: rgba_arc.clone(),
+                src_width: sw,
+                src_height: sh,
+                x: rect.x,
+                y: rect.y,
+                cols: rect.width,
+                rows: rect.height,
+                crop_y: 0,
+                crop_h: 0,
+            });
         });
         Response::none()
     }
@@ -2600,45 +2601,6 @@ fn normalize_rgba(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     buf.extend_from_slice(data);
     buf.resize(expected, 0);
     buf
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
-}
-
-fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
-    let mut chunks = Vec::new();
-    let bytes = encoded.as_bytes();
-    let mut offset = 0;
-    while offset < bytes.len() {
-        let end = (offset + chunk_size).min(bytes.len());
-        chunks.push(&encoded[offset..end]);
-        offset = end;
-    }
-    if chunks.is_empty() {
-        chunks.push("");
-    }
-    chunks
 }
 
 #[cfg(feature = "crossterm")]

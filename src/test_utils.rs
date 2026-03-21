@@ -195,10 +195,15 @@ impl TestBackend {
         layout::compute(&mut tree, area);
         self.buffer.reset();
         layout::render(&tree, &mut self.buffer);
-        for (draw_id, rect) in layout::collect_raw_draw_rects(&tree) {
-            if let Some(cb) = deferred.get_mut(draw_id).and_then(|c| c.take()) {
-                self.buffer.push_clip(rect);
-                cb(&mut self.buffer, rect);
+        for rdr in layout::collect_raw_draw_rects(&tree) {
+            if rdr.rect.width == 0 || rdr.rect.height == 0 {
+                continue;
+            }
+            if let Some(cb) = deferred.get_mut(rdr.draw_id).and_then(|c| c.take()) {
+                self.buffer.push_clip(rdr.rect);
+                self.buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
+                cb(&mut self.buffer, rdr.rect);
+                self.buffer.kitty_clip_info = None;
                 self.buffer.pop_clip();
             }
         }
@@ -236,10 +241,15 @@ impl TestBackend {
         layout::compute(&mut tree, area);
         self.buffer.reset();
         layout::render(&tree, &mut self.buffer);
-        for (draw_id, rect) in layout::collect_raw_draw_rects(&tree) {
-            if let Some(cb) = deferred.get_mut(draw_id).and_then(|c| c.take()) {
-                self.buffer.push_clip(rect);
-                cb(&mut self.buffer, rect);
+        for rdr in layout::collect_raw_draw_rects(&tree) {
+            if rdr.rect.width == 0 || rdr.rect.height == 0 {
+                continue;
+            }
+            if let Some(cb) = deferred.get_mut(rdr.draw_id).and_then(|c| c.take()) {
+                self.buffer.push_clip(rdr.rect);
+                self.buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
+                cb(&mut self.buffer, rdr.rect);
+                self.buffer.kitty_clip_info = None;
                 self.buffer.pop_clip();
             }
         }

@@ -1043,11 +1043,20 @@ fn run_frame(
     state.prev_focus_groups = fd.focus_groups;
     layout::render(&tree, term.buffer_mut());
     let raw_rects = layout::collect_raw_draw_rects(&tree);
-    for (draw_id, rect) in raw_rects {
-        if let Some(cb) = ctx.deferred_draws.get_mut(draw_id).and_then(|c| c.take()) {
+    for rdr in raw_rects {
+        if rdr.rect.width == 0 || rdr.rect.height == 0 {
+            continue;
+        }
+        if let Some(cb) = ctx
+            .deferred_draws
+            .get_mut(rdr.draw_id)
+            .and_then(|c| c.take())
+        {
             let buf = term.buffer_mut();
-            buf.push_clip(rect);
-            cb(buf, rect);
+            buf.push_clip(rdr.rect);
+            buf.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
+            cb(buf, rdr.rect);
+            buf.kitty_clip_info = None;
             buf.pop_clip();
         }
     }

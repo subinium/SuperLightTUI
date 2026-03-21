@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{self, Read, Stdout, Write};
 use std::time::{Duration, Instant};
 
@@ -14,9 +15,231 @@ use crossterm::{cursor, execute, queue, terminal};
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, KittyPlacement};
 use crate::rect::Rect;
 use crate::style::{Color, ColorDepth, Modifiers, Style};
+
+// ---------------------------------------------------------------------------
+// Kitty graphics protocol image manager
+// ---------------------------------------------------------------------------
+
+/// Manages Kitty graphics protocol image IDs, uploads, and placements.
+///
+/// Images are deduplicated by content hash — identical RGBA data is uploaded
+/// only once. Each frame, placements are diffed against the previous frame
+/// to minimize terminal I/O.
+pub(crate) struct KittyImageManager {
+    next_id: u32,
+    /// content_hash → kitty image ID for uploaded images.
+    uploaded: HashMap<u64, u32>,
+    /// Previous frame's placements (for diff).
+    prev_placements: Vec<KittyPlacement>,
+}
+
+impl KittyImageManager {
+    pub fn new() -> Self {
+        Self {
+            next_id: 1,
+            uploaded: HashMap::new(),
+            prev_placements: Vec::new(),
+        }
+    }
+
+    /// Flush Kitty image placements: upload new images, manage placements.
+    pub fn flush(&mut self, stdout: &mut impl Write, current: &[KittyPlacement]) -> io::Result<()> {
+        // Fast path: nothing changed
+        if current == self.prev_placements.as_slice() {
+            return Ok(());
+        }
+
+        // Delete all previous placements (keep uploaded image data for reuse)
+        if !self.prev_placements.is_empty() {
+            // Delete all visible placements by ID
+            let mut deleted_ids = std::collections::HashSet::new();
+            for p in &self.prev_placements {
+                if let Some(&img_id) = self.uploaded.get(&p.content_hash) {
+                    if deleted_ids.insert(img_id) {
+                        // Delete all placements of this image (but keep image data)
+                        queue!(
+                            stdout,
+                            Print(format!("\x1b_Ga=d,d=i,i={},q=2\x1b\\", img_id))
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // Upload new images and create placements
+        for (idx, p) in current.iter().enumerate() {
+            let img_id = if let Some(&existing_id) = self.uploaded.get(&p.content_hash) {
+                existing_id
+            } else {
+                // Upload new image with zlib compression if available
+                let id = self.next_id;
+                self.next_id += 1;
+                self.upload_image(stdout, id, p)?;
+                self.uploaded.insert(p.content_hash, id);
+                id
+            };
+
+            // Place the image
+            let pid = idx as u32 + 1;
+            self.place_image(stdout, img_id, pid, p)?;
+        }
+
+        // Clean up images no longer used by any placement
+        let used_hashes: std::collections::HashSet<u64> =
+            current.iter().map(|p| p.content_hash).collect();
+        let stale: Vec<u64> = self
+            .uploaded
+            .keys()
+            .filter(|h| !used_hashes.contains(h))
+            .copied()
+            .collect();
+        for hash in stale {
+            if let Some(id) = self.uploaded.remove(&hash) {
+                // Delete image data from terminal memory
+                queue!(stdout, Print(format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", id)))?;
+            }
+        }
+
+        self.prev_placements = current.to_vec();
+        Ok(())
+    }
+
+    /// Upload image data to the terminal with `a=t` (transmit only, no display).
+    fn upload_image(&self, stdout: &mut impl Write, id: u32, p: &KittyPlacement) -> io::Result<()> {
+        let (payload, compression) = compress_rgba(&p.rgba);
+        let encoded = base64_encode(&payload);
+        let chunks = split_base64(&encoded, 4096);
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let more = if i < chunks.len() - 1 { 1 } else { 0 };
+            if i == 0 {
+                queue!(
+                    stdout,
+                    Print(format!(
+                        "\x1b_Ga=t,i={},f=32,{}s={},v={},q=2,m={};{}\x1b\\",
+                        id, compression, p.src_width, p.src_height, more, chunk
+                    ))
+                )?;
+            } else {
+                queue!(stdout, Print(format!("\x1b_Gm={};{}\x1b\\", more, chunk)))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Place an already-uploaded image at a screen position with optional crop.
+    fn place_image(
+        &self,
+        stdout: &mut impl Write,
+        img_id: u32,
+        placement_id: u32,
+        p: &KittyPlacement,
+    ) -> io::Result<()> {
+        queue!(stdout, cursor::MoveTo(p.x as u16, p.y as u16))?;
+
+        let mut cmd = format!(
+            "\x1b_Ga=p,i={},p={},c={},r={},C=1,q=2",
+            img_id, placement_id, p.cols, p.rows
+        );
+
+        // Add crop parameters for scroll clipping
+        if p.crop_y > 0 || p.crop_h > 0 {
+            cmd.push_str(&format!(",y={}", p.crop_y));
+            if p.crop_h > 0 {
+                cmd.push_str(&format!(",h={}", p.crop_h));
+            }
+        }
+
+        cmd.push_str("\x1b\\");
+        queue!(stdout, Print(cmd))?;
+        Ok(())
+    }
+
+    /// Delete all images from the terminal (used on drop/cleanup).
+    pub fn delete_all(&self, stdout: &mut impl Write) -> io::Result<()> {
+        queue!(stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))
+    }
+}
+
+/// Compress RGBA data with zlib if available, returning (payload, format_string).
+fn compress_rgba(data: &[u8]) -> (Vec<u8>, &'static str) {
+    #[cfg(feature = "kitty-compress")]
+    {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+        if encoder.write_all(data).is_ok() {
+            if let Ok(compressed) = encoder.finish() {
+                // Only use compression if it actually saves space
+                if compressed.len() < data.len() {
+                    return (compressed, "o=z,");
+                }
+            }
+        }
+    }
+    (data.to_vec(), "")
+}
+
+/// Query the terminal for the actual cell pixel dimensions via CSI 16 t.
+///
+/// Returns `(cell_width, cell_height)` in pixels. Falls back to `(8, 16)` if
+/// detection fails. Used by `kitty_image_fit` for accurate aspect ratio.
+///
+/// Cached after first successful detection.
+pub fn cell_pixel_size() -> (u32, u32) {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<(u32, u32)> = OnceLock::new();
+    *CACHED.get_or_init(|| detect_cell_pixel_size().unwrap_or((8, 16)))
+}
+
+fn detect_cell_pixel_size() -> Option<(u32, u32)> {
+    // CSI 16 t → reports cell size as CSI 6 ; height ; width t
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b[16t").ok()?;
+    stdout.flush().ok()?;
+
+    let response = read_osc_response(Duration::from_millis(100))?;
+
+    // Parse: ESC [ 6 ; <height> ; <width> t
+    let body = response.strip_prefix("\x1b[6;").or_else(|| {
+        // CSI can also start with 0x9B (single-byte CSI)
+        let bytes = response.as_bytes();
+        if bytes.len() > 3 && bytes[0] == 0x9b && bytes[1] == b'6' && bytes[2] == b';' {
+            Some(&response[3..])
+        } else {
+            None
+        }
+    })?;
+    let body = body
+        .strip_suffix('t')
+        .or_else(|| body.strip_suffix("t\x1b"))?;
+    let mut parts = body.split(';');
+    let ch: u32 = parts.next()?.parse().ok()?;
+    let cw: u32 = parts.next()?.parse().ok()?;
+    if cw > 0 && ch > 0 {
+        Some((cw, ch))
+    } else {
+        None
+    }
+}
+
+fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let bytes = encoded.as_bytes();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let end = (offset + chunk_size).min(bytes.len());
+        chunks.push(&encoded[offset..end]);
+        offset = end;
+    }
+    if chunks.is_empty() {
+        chunks.push("");
+    }
+    chunks
+}
 
 pub(crate) struct Terminal {
     stdout: Stdout,
@@ -27,6 +250,7 @@ pub(crate) struct Terminal {
     kitty_keyboard: bool,
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
+    kitty_mgr: KittyImageManager,
 }
 
 pub(crate) struct InlineTerminal {
@@ -40,6 +264,7 @@ pub(crate) struct InlineTerminal {
     reserved: bool,
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
+    kitty_mgr: KittyImageManager,
 }
 
 impl Terminal {
@@ -78,6 +303,7 @@ impl Terminal {
             kitty_keyboard,
             color_depth,
             theme_bg: None,
+            kitty_mgr: KittyImageManager::new(),
         })
     }
 
@@ -161,12 +387,12 @@ impl Terminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
-        // Only delete + re-upload images when raw_sequences actually changed.
-        // This avoids the expensive a=d,d=A + re-upload cycle for static images.
+        // Kitty graphics: structured image management with IDs and compression
+        self.kitty_mgr
+            .flush(&mut self.stdout, &self.current.kitty_placements)?;
+
+        // Raw sequences (sixel, other passthrough) — simple diff
         if self.current.raw_sequences != self.previous.raw_sequences {
-            if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
-                queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
-            }
             for (x, y, seq) in &self.current.raw_sequences {
                 queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
                 queue!(self.stdout, Print(seq))?;
@@ -255,6 +481,7 @@ impl InlineTerminal {
             reserved: false,
             color_depth,
             theme_bg: None,
+            kitty_mgr: KittyImageManager::new(),
         })
     }
 
@@ -345,10 +572,22 @@ impl InlineTerminal {
             queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
         }
 
+        // Kitty graphics: structured image management with IDs and compression
+        // Adjust Y positions for inline terminal offset
+        let adjusted: Vec<KittyPlacement> = self
+            .current
+            .kitty_placements
+            .iter()
+            .map(|p| {
+                let mut ap = p.clone();
+                ap.y += self.start_row as u32;
+                ap
+            })
+            .collect();
+        self.kitty_mgr.flush(&mut self.stdout, &adjusted)?;
+
+        // Raw sequences (sixel, other passthrough) — simple diff
         if self.current.raw_sequences != self.previous.raw_sequences {
-            if !self.previous.raw_sequences.is_empty() || !self.current.raw_sequences.is_empty() {
-                queue!(self.stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))?;
-            }
             for (x, y, seq) in &self.current.raw_sequences {
                 let abs_y = self.start_row as u32 + *y;
                 queue!(self.stdout, cursor::MoveTo(*x as u16, abs_y as u16))?;
@@ -415,6 +654,9 @@ impl crate::Backend for InlineTerminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
+        // Clean up Kitty images before leaving alternate screen
+        let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        let _ = self.stdout.flush();
         if self.kitty_keyboard {
             use crossterm::event::PopKeyboardEnhancementFlags;
             let _ = execute!(self.stdout, PopKeyboardEnhancementFlags);

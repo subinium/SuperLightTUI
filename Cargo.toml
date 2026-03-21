@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.15.4"
+version = "0.15.5"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional =
 serde = { version = "1", features = ["derive"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
+flate2 = { version = "1", optional = true }
 qrcode = { version = "0.14", optional = true, default-features = false }
 tree-sitter-highlight = { version = "0.26", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
@@ -88,7 +89,8 @@ syntax = [
     "syntax-html",
     "syntax-yaml",
 ]
-full = ["crossterm", "async", "serde", "image", "qrcode"]
+kitty-compress = ["dep:flate2"]
+full = ["crossterm", "async", "serde", "image", "qrcode", "kitty-compress"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -150,6 +152,10 @@ path = "examples/demo_fire.rs"
 [[example]]
 name = "demo_game"
 path = "examples/demo_game.rs"
+
+[[example]]
+name = "demo_kitty_image"
+path = "examples/demo_kitty_image.rs"
 
 [[bench]]
 name = "benchmarks"

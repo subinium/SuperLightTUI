@@ -1095,30 +1095,87 @@ fn collect_all_inner(
     }
 }
 
-pub(crate) fn collect_raw_draw_rects(node: &LayoutNode) -> Vec<(usize, Rect)> {
+/// Information about a raw-draw node's visible screen rect.
+pub(crate) struct RawDrawRect {
+    pub draw_id: usize,
+    /// The visible portion of the node on screen (clipped to viewport).
+    pub rect: Rect,
+    /// How many cell rows are clipped from the top (for pixel crop).
+    pub top_clip_rows: u32,
+    /// The original unclipped height in cell rows.
+    pub original_height: u32,
+}
+
+pub(crate) fn collect_raw_draw_rects(node: &LayoutNode) -> Vec<RawDrawRect> {
     let mut rects = Vec::new();
-    collect_raw_draw_rects_inner(node, &mut rects, 0);
+    collect_raw_draw_rects_inner(node, &mut rects, 0, None);
     for overlay in &node.overlays {
-        collect_raw_draw_rects_inner(&overlay.node, &mut rects, 0);
+        collect_raw_draw_rects_inner(&overlay.node, &mut rects, 0, None);
     }
     rects
 }
 
-fn collect_raw_draw_rects_inner(node: &LayoutNode, rects: &mut Vec<(usize, Rect)>, y_offset: u32) {
+fn collect_raw_draw_rects_inner(
+    node: &LayoutNode,
+    rects: &mut Vec<RawDrawRect>,
+    y_offset: u32,
+    viewport: Option<Rect>,
+) {
     if let NodeKind::RawDraw(draw_id) = node.kind {
-        let adj_y = node.pos.1.saturating_sub(y_offset);
-        rects.push((
-            draw_id,
-            Rect::new(node.pos.0, adj_y, node.size.0, node.size.1),
-        ));
+        let node_x = node.pos.0;
+        let node_w = node.size.0;
+        let node_h = node.size.1;
+
+        // Use signed math for Y to correctly handle scrolled-above-viewport images
+        let screen_y = node.pos.1 as i64 - y_offset as i64;
+
+        if let Some(vp) = viewport {
+            let img_top = screen_y;
+            let img_bottom = screen_y + node_h as i64;
+            let vp_top = vp.y as i64;
+            let vp_bottom = vp.bottom() as i64;
+
+            // Fully outside viewport — cull entirely
+            if img_bottom <= vp_top || img_top >= vp_bottom {
+                return;
+            }
+
+            // Compute visible rect (intersection with viewport)
+            let visible_top = img_top.max(vp_top) as u32;
+            let visible_bottom = (img_bottom.min(vp_bottom)) as u32;
+            let visible_height = visible_bottom.saturating_sub(visible_top);
+            let top_clip_rows = (vp_top - img_top).max(0) as u32;
+
+            rects.push(RawDrawRect {
+                draw_id,
+                rect: Rect::new(node_x, visible_top, node_w, visible_height),
+                top_clip_rows,
+                original_height: node_h,
+            });
+        } else {
+            // No scrollable parent — render at screen position (clamp to 0)
+            let screen_y_clamped = screen_y.max(0) as u32;
+            rects.push(RawDrawRect {
+                draw_id,
+                rect: Rect::new(node_x, screen_y_clamped, node_w, node_h),
+                top_clip_rows: 0,
+                original_height: node_h,
+            });
+        }
     }
-    let child_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
+
+    let (child_offset, child_viewport) = if node.is_scrollable {
+        // Compute this scrollable container's inner viewport in screen coords
+        let screen_y = node.pos.1.saturating_sub(y_offset);
+        let area = Rect::new(node.pos.0, screen_y, node.size.0, node.size.1);
+        let inner = flexbox::inner_area(node, area);
+        (y_offset.saturating_add(node.scroll_offset), Some(inner))
     } else {
-        y_offset
+        (y_offset, viewport)
     };
+
     for child in &node.children {
-        collect_raw_draw_rects_inner(child, rects, child_offset);
+        collect_raw_draw_rects_inner(child, rects, child_offset, child_viewport);
     }
 }
 

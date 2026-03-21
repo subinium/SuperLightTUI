@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.5] — 2026-03-21
+
+### Features
+
+- **Kitty image ID management** — images are uploaded once with `a=t,i=ID` and placed with `a=p`. Identical images (by content hash) are never re-uploaded. Unused images are automatically cleaned up from terminal memory.
+- **Kitty zlib compression** — new `kitty-compress` feature flag (included in `full`). Image data is compressed with zlib (`o=z`) before base64 encoding, reducing upload size 2–5×.
+- **Kitty scroll crop** — images inside `scrollable()` containers are cropped to the visible viewport using Kitty's `y=` and `h=` source rect parameters. Partially visible images render correctly instead of overlapping.
+- **Cell pixel size detection** — `kitty_image_fit()` now queries the terminal's actual cell dimensions via CSI 16 t for accurate aspect ratio calculation. Falls back to 8×16 if detection fails.
+- **`demo_kitty_image`** — new example: scrollable gallery of 10 generated images demonstrating viewport culling, scroll crop, and image ID reuse.
+
+### Fixes
+
+- **Viewport culling for images** — `collect_raw_draw_rects` uses signed math for Y calculation and tracks scrollable viewport bounds. Images fully outside the viewport are culled entirely (zero I/O cost).
+- **`raw_sequence()` respects clip stack** — sixel and other passthrough sequences are now skipped when outside the current clip region, fixing sixel images inside scrollable containers.
+- **Kitty image cleanup on exit** — `Terminal::drop` sends `a=d,d=A` to delete all images before leaving the alternate screen.
+- **Individual image deletion** — replaced `d=A` (delete all) with `d=i` (delete by ID) for targeted cleanup. Only changed images are re-uploaded.
+
+### Dependencies
+
+- **`flate2`** — optional dependency for zlib compression (behind `kitty-compress` feature).
+
 ## [0.15.4] — 2026-03-20
 
 ### Features

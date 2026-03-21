@@ -4,10 +4,60 @@
 //! is flushed to the terminal, giving immediate-mode ergonomics with
 //! retained-mode efficiency.
 
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 use crate::cell::Cell;
 use crate::rect::Rect;
 use crate::style::Style;
 use unicode_width::UnicodeWidthChar;
+
+/// Structured Kitty graphics protocol image placement.
+///
+/// Stored separately from raw escape sequences so the terminal can manage
+/// image IDs, compression, and placement lifecycle. Images are deduplicated
+/// by `content_hash` — identical pixel data is uploaded only once.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct KittyPlacement {
+    /// Hash of the RGBA pixel data for dedup (avoids re-uploading).
+    pub content_hash: u64,
+    /// Reference-counted raw RGBA pixel data (shared across frames).
+    pub rgba: Arc<Vec<u8>>,
+    /// Source image width in pixels.
+    pub src_width: u32,
+    /// Source image height in pixels.
+    pub src_height: u32,
+    /// Screen cell position.
+    pub x: u32,
+    pub y: u32,
+    /// Cell columns/rows to display.
+    pub cols: u32,
+    pub rows: u32,
+    /// Source crop Y offset in pixels (for scroll clipping).
+    pub crop_y: u32,
+    /// Source crop height in pixels (0 = full height from crop_y).
+    pub crop_h: u32,
+}
+
+/// Compute a content hash for RGBA pixel data.
+pub(crate) fn hash_rgba(data: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl PartialEq for KittyPlacement {
+    fn eq(&self, other: &Self) -> bool {
+        self.content_hash == other.content_hash
+            && self.x == other.x
+            && self.y == other.y
+            && self.cols == other.cols
+            && self.rows == other.rows
+            && self.crop_y == other.crop_y
+            && self.crop_h == other.crop_h
+    }
+}
 
 /// A 2D grid of [`Cell`]s backing the terminal display.
 ///
@@ -24,6 +74,10 @@ pub struct Buffer {
     pub content: Vec<Cell>,
     pub(crate) clip_stack: Vec<Rect>,
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
+    pub(crate) kitty_placements: Vec<KittyPlacement>,
+    /// Scroll clip info set by the run loop before invoking draw closures:
+    /// `(top_clip_rows, original_total_rows)`.
+    pub(crate) kitty_clip_info: Option<(u32, u32)>,
 }
 
 impl Buffer {
@@ -35,14 +89,53 @@ impl Buffer {
             content: vec![Cell::default(); size],
             clip_stack: Vec::new(),
             raw_sequences: Vec::new(),
+            kitty_placements: Vec::new(),
+            kitty_clip_info: None,
         }
     }
 
     /// Store a raw escape sequence to be written at position `(x, y)` during flush.
     ///
-    /// Used for Kitty graphics protocol and other passthrough sequences.
+    /// Used for Sixel images and other passthrough sequences.
+    /// Respects the clip stack: sequences fully outside the current clip are skipped.
     pub fn raw_sequence(&mut self, x: u32, y: u32, seq: String) {
+        if let Some(clip) = self.effective_clip() {
+            if x >= clip.right() || y >= clip.bottom() {
+                return;
+            }
+        }
         self.raw_sequences.push((x, y, seq));
+    }
+
+    /// Store a structured Kitty graphics protocol placement.
+    ///
+    /// Unlike `raw_sequence`, Kitty placements are managed with image IDs,
+    /// compression, and placement lifecycle by the terminal flush code.
+    /// Scroll crop info is automatically applied from `kitty_clip_info`.
+    pub(crate) fn kitty_place(&mut self, mut p: KittyPlacement) {
+        // Apply clip check
+        if let Some(clip) = self.effective_clip() {
+            if p.x >= clip.right()
+                || p.y >= clip.bottom()
+                || p.x + p.cols <= clip.x
+                || p.y + p.rows <= clip.y
+            {
+                return;
+            }
+        }
+
+        // Apply scroll crop info if set
+        if let Some((top_clip_rows, original_height)) = self.kitty_clip_info {
+            if original_height > 0 && (top_clip_rows > 0 || p.rows < original_height) {
+                let ratio = p.src_height as f64 / original_height as f64;
+                p.crop_y = (top_clip_rows as f64 * ratio) as u32;
+                let bottom_clip = original_height.saturating_sub(top_clip_rows + p.rows);
+                let bottom_pixels = (bottom_clip as f64 * ratio) as u32;
+                p.crop_h = p.src_height.saturating_sub(p.crop_y + bottom_pixels);
+            }
+        }
+
+        self.kitty_placements.push(p);
     }
 
     /// Push a clipping rectangle onto the clip stack.
@@ -268,6 +361,8 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.kitty_placements.clear();
+        self.kitty_clip_info = None;
     }
 
     /// Reset every cell and apply a background color to all cells.
@@ -278,6 +373,8 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.kitty_placements.clear();
+        self.kitty_clip_info = None;
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
