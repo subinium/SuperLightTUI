@@ -97,7 +97,7 @@ ui.container()
     });
 ```
 
-**两个核心依赖** — `crossterm` 处理终端 I/O，`unicode-width` 测量字符宽度。可选：`tokio`（异步）、`serde`（序列化）、`image`（图片加载）。零 `unsafe` 代码。
+**小而稳的核心，按需扩展** — 核心依赖是 `unicode-width` 和 `compact_str`。终端 I/O 由默认启用的 `crossterm` feature 提供。可选：`tokio`（异步）、`serde`（序列化）、`image`（图片加载）、`qrcode`。零 `unsafe` 代码。
 
 > **AI 辅助开发** — 在 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 中使用 `rust-tui-development-with-slt` skill，获取完整 API 参考、最佳实践和代码生成模板。或者用 [tui.builders](https://tui.builders) 可视化设计：
 
@@ -107,7 +107,7 @@ ui.container()
 
 ## Widgets
 
-55+ 个内置 widget，零样板代码：
+内置 widget 覆盖面很广，零样板代码：
 
 ```rust
 ui.text_input(&mut name);                    // 单行输入
@@ -205,7 +205,7 @@ impl Widget for Rating {
 | 约束 | `.min_w(10)`, `.max_w(60)` |
 | 百分比尺寸 | `.w_pct(50)`, `.h_pct(80)` |
 | 对齐分布 | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| 文本换行 | `ui.text_wrap("long text...")` |
+| 文本换行 | `ui.text("long text...").wrap()` |
 | 带标题边框 | `.border(Border::Rounded).title("Panel")` |
 | 单侧边框 | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 | 响应式间距 | `.gap_at(Breakpoint::Md, 2)` |

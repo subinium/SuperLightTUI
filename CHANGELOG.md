@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.7] — 2026-03-22
+
+### Improvements
+
+- **Documentation layering** — root `README.md` is now a landing page focused on the product hook, quick start, example highlights, and the next docs to read instead of acting as the full widget catalog.
+- **Guided docs** — added `docs/QUICK_START.md`, `docs/WIDGETS.md`, `docs/PATTERNS.md`, and `docs/EXAMPLES.md` to separate onboarding, API discovery, composition patterns, and runnable example navigation.
+- **Contributor navigation** — `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, and `docs/DESIGN_PRINCIPLES.md` now cross-link the new guides so contributors can move between product-facing and codebase-facing documentation without guessing.
+- **Docs consistency** — translated README variants now avoid stale widget counts, align dependency wording with the feature-flagged architecture, and replace deprecated `ui.text_wrap(...)` examples with `ui.text(...).wrap()`.
+
+### Cleanup
+
+- **Duplicate local copies removed** — orphaned `* 2.rs` files under `src/layout/` and `examples/` are removed from the release prep branch to reduce contributor confusion.
+
 ## [0.15.6] — 2026-03-21
 
 ### Improvements

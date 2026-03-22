@@ -3,6 +3,12 @@
 These principles guide every design decision in SLT.
 Read this before contributing code. If a decision conflicts with these principles, raise it in the PR.
 
+Related docs:
+- [QUICK_START.md](QUICK_START.md)
+- [WIDGETS.md](WIDGETS.md)
+- [PATTERNS.md](PATTERNS.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+
 ---
 
 ## 1. Ease of Use Above All
