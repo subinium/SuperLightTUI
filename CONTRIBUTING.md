@@ -4,6 +4,8 @@ Before contributing, read:
 - **[`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md)** — Why things are the way they are
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — How the code is organized
 - **[`docs/WIDGETS.md`](docs/WIDGETS.md)** — Which APIs and state types live where
+- **[`docs/TESTING.md`](docs/TESTING.md)** — How to verify widget and layout behavior
+- **[`docs/BACKENDS.md`](docs/BACKENDS.md)** — Low-level backend and run-loop contracts
 
 ## Getting Started
 

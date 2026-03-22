@@ -120,7 +120,7 @@ pub(crate) fn apply_selection_overlay(
             } else {
                 true
             };
-            if in_sel {
+            if in_sel && buffer.in_bounds(x, y) {
                 let cell = buffer.get_mut(x, y);
                 cell.style.modifiers |= Modifiers::REVERSED;
             }
@@ -158,7 +158,7 @@ pub(crate) fn extract_selection_text(
             rect.right().saturating_sub(1)
         };
         for x in x_lo..=x_hi {
-            if is_border_cell(x, y, content_map) {
+            if is_border_cell(x, y, content_map) || !buffer.in_bounds(x, y) {
                 continue;
             }
             let sym = &buffer.get(x, y).symbol;

@@ -44,6 +44,20 @@ if ui.button("+1").clicked {
 Use hooks for small local state when a dedicated app struct feels heavy.
 Keep hook call order stable across frames.
 
+## Derived state with `use_memo`
+
+```rust
+let filtered = ui.use_memo(&(query.clone(), items.len()), |(query, _)| {
+    items.iter()
+        .filter(|item| item.contains(query))
+        .cloned()
+        .collect::<Vec<_>>()
+});
+```
+
+Use `use_memo` when the computation is deterministic and should only rerun when the dependency tuple changes.
+Like `use_state`, call order must stay stable across frames.
+
 ## Forms and validation
 
 ```rust
@@ -76,6 +90,21 @@ if ui.raw_key_code(KeyCode::Esc) {
 
 Use `raw_*` shortcuts for keys that must work regardless of modal or overlay state.
 
+## Screen helpers and navigation
+
+```rust
+ui.screen("home", &screens, |ui| {
+    ui.text("Home").bold();
+});
+
+ui.screen("settings", &screens, |ui| {
+    ui.text("Settings");
+});
+```
+
+Use `screen(name, &screens, ...)` when you want declarative rendering that only runs for the active screen.
+Use manual `push()` / `pop()` logic on `ScreenState` when you need explicit navigation transitions.
+
 ## Modal, overlay, and screen composition
 
 ```rust
@@ -100,6 +129,31 @@ if show_modal {
 
 Use screens for view-level navigation and modal/overlay for transient UI layers.
 
+## Error boundaries and recovery
+
+```rust
+ui.error_boundary(|ui| {
+    ui.text("Protected subtree");
+});
+```
+
+Use `error_boundary` or `error_boundary_with` when you want one subtree to fail without taking down the whole app.
+This is especially useful for experimental widgets, user-generated content, or plugins.
+
+## Custom widgets: focus and interaction
+
+```rust
+let focused = ui.register_focusable();
+let response = ui.interaction();
+
+if response.hovered {
+    ui.tooltip("Hovered");
+}
+```
+
+Use `register_focusable()` when the widget needs keyboard participation.
+Use `interaction()` when the widget needs click/hover without wrapping everything in a container.
+
 ## Async background messages
 
 ```rust
@@ -113,6 +167,47 @@ tx.send("Background work done".into()).await?;
 ```
 
 Enable with the `async` feature.
+
+## Animation patterns
+
+```rust
+// Tween: smooth transition over N ticks
+let mut fade = Tween::new(0.0, 1.0, 30);
+let opacity = fade.value(ui.tick());
+
+// Spring: physics-based, responds to target changes
+let mut spring = Spring::new(0.0, 0.2, 0.85);
+if hovered { spring.set_target(1.0); } else { spring.set_target(0.0); }
+spring.tick();
+let scale = spring.value();
+
+// Stagger: offset animation across list items
+let mut stagger = Stagger::new(0.0, 1.0, 20).delay(3).items(items.len());
+for (i, item) in items.iter().enumerate() {
+    let alpha = stagger.value(ui.tick(), i);
+    ui.text(item).fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
+}
+```
+
+Animation types are standalone structs that compute values from `ui.tick()`.
+Pass computed values to style and layout methods.
+See `docs/ANIMATION.md` for the full API.
+
+## Responsive layout
+
+```rust
+match ui.breakpoint() {
+    Breakpoint::Xs | Breakpoint::Sm => {
+        ui.col(|ui| { /* stacked layout */ });
+    }
+    _ => {
+        ui.row(|ui| { /* side-by-side */ });
+    }
+};
+```
+
+Use `breakpoint()` for width-dependent layout decisions.
+ContainerBuilder also supports responsive methods: `.gap_sm(1).gap_lg(2)`.
 
 ## Custom widgets
 
@@ -167,3 +262,5 @@ assert!(backend.to_string().contains("Hello"));
 ```
 
 Use `TestBackend` for headless rendering checks and snapshot-style assertions.
+
+For deeper coverage, see `docs/TESTING.md`.

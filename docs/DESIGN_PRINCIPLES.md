@@ -52,7 +52,7 @@ This is the foundational decision. Every other principle flows from it.
 
 ## 3. Widget Contract
 
-Every widget follows the same pattern. No exceptions.
+Every widget should fit one of a very small number of patterns. Prefer consistency over cleverness.
 
 ### Interactive Widgets
 
@@ -194,7 +194,7 @@ SLT follows [Semantic Versioning](https://semver.org/).
 
 | Version range | Compatibility promise |
 |---------------|----------------------|
-| 0.12.x (patch) | Backward compatible — no breaking changes |
+| 0.15.x (patch) | Backward compatible — no breaking changes |
 | 0.x → 0.y (minor) | May contain breaking changes (pre-1.0) |
 | 1.x (post-1.0) | Strict semver — breaking changes only in major versions |
 
@@ -218,12 +218,15 @@ SLT follows [Semantic Versioning](https://semver.org/).
 
 | Dependency | Purpose | Required? |
 |------------|---------|-----------|
-| `crossterm` | Terminal I/O, event polling | Yes |
+| `crossterm` | Built-in terminal runtime and terminal helpers | Default feature |
 | `unicode-width` | Character width measurement | Yes |
 | `compact_str` | String optimization | Yes |
 | `tokio` | Async runtime | Optional (`async` feature) |
 | `serde` | Serialization | Optional (`serde` feature) |
 | `image` | Image loading | Optional (`image` feature) |
+| `qrcode` | QR code widget support | Optional (`qrcode` feature) |
+| `syntax` / `syntax-*` | Tree-sitter syntax highlighting | Optional |
+| `kitty-compress` | Compressed Kitty image uploads | Optional |
 
 ### Rules
 
@@ -231,6 +234,7 @@ SLT follows [Semantic Versioning](https://semver.org/).
 - Optional dependencies go behind feature flags
 - Feature flags must be **additive** — enabling a feature must not remove types or change existing behavior
 - Prefer `dep:` syntax in `[features]` to avoid implicit feature names
+- Keep docs explicit about which APIs require `crossterm` and which work on the core backend path without it
 
 ---
 

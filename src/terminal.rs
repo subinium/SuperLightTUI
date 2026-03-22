@@ -19,6 +19,12 @@ use crate::buffer::{Buffer, KittyPlacement};
 use crate::rect::Rect;
 use crate::style::{Color, ColorDepth, Modifiers, Style};
 
+/// Saturating cast from `u32` to `u16` — clamps to `u16::MAX` instead of truncating.
+#[inline]
+fn sat_u16(v: u32) -> u16 {
+    v.min(u16::MAX as u32) as u16
+}
+
 // ---------------------------------------------------------------------------
 // Kitty graphics protocol image manager
 // ---------------------------------------------------------------------------
@@ -138,7 +144,7 @@ impl KittyImageManager {
         placement_id: u32,
         p: &KittyPlacement,
     ) -> io::Result<()> {
-        queue!(stdout, cursor::MoveTo(p.x as u16, p.y as u16))?;
+        queue!(stdout, cursor::MoveTo(sat_u16(p.x), sat_u16(p.y)))?;
 
         let mut cmd = format!(
             "\x1b_Ga=p,i={},p={},c={},r={},C=1,q=2",
@@ -342,7 +348,7 @@ impl Terminal {
 
                 let need_move = last_pos.map_or(true, |(lx, ly)| ly != y || lx != x);
                 if need_move {
-                    queue!(self.stdout, cursor::MoveTo(x as u16, y as u16))?;
+                    queue!(self.stdout, cursor::MoveTo(sat_u16(x), sat_u16(y)))?;
                 }
 
                 if cur.style != last_style {
@@ -394,7 +400,7 @@ impl Terminal {
         // Raw sequences (sixel, other passthrough) — simple diff
         if self.current.raw_sequences != self.previous.raw_sequences {
             for (x, y, seq) in &self.current.raw_sequences {
-                queue!(self.stdout, cursor::MoveTo(*x as u16, *y as u16))?;
+                queue!(self.stdout, cursor::MoveTo(sat_u16(*x), sat_u16(*y)))?;
                 queue!(self.stdout, Print(seq))?;
             }
         }
@@ -408,7 +414,7 @@ impl Terminal {
                     queue!(self.stdout, cursor::Show)?;
                     self.cursor_visible = true;
                 }
-                queue!(self.stdout, cursor::MoveTo(cx as u16, cy as u16))?;
+                queue!(self.stdout, cursor::MoveTo(sat_u16(cx), sat_u16(cy)))?;
             }
             None => {
                 if self.cursor_visible {
@@ -508,9 +514,9 @@ impl InlineTerminal {
             self.reserved = true;
 
             let (_, rows) = terminal::size()?;
-            let bottom = self.start_row + self.height as u16;
+            let bottom = self.start_row.saturating_add(sat_u16(self.height));
             if bottom > rows {
-                self.start_row = rows.saturating_sub(self.height as u16);
+                self.start_row = rows.saturating_sub(sat_u16(self.height));
             }
         }
 
@@ -532,7 +538,7 @@ impl InlineTerminal {
                 let abs_y = self.start_row as u32 + y;
                 let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
                 if need_move {
-                    queue!(self.stdout, cursor::MoveTo(x as u16, abs_y as u16))?;
+                    queue!(self.stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
                 }
 
                 if cell.style != last_style {
@@ -595,7 +601,7 @@ impl InlineTerminal {
         if self.current.raw_sequences != self.previous.raw_sequences {
             for (x, y, seq) in &self.current.raw_sequences {
                 let abs_y = self.start_row as u32 + *y;
-                queue!(self.stdout, cursor::MoveTo(*x as u16, abs_y as u16))?;
+                queue!(self.stdout, cursor::MoveTo(sat_u16(*x), sat_u16(abs_y)))?;
                 queue!(self.stdout, Print(seq))?;
             }
         }
@@ -610,14 +616,16 @@ impl InlineTerminal {
                     queue!(self.stdout, cursor::Show)?;
                     self.cursor_visible = true;
                 }
-                queue!(self.stdout, cursor::MoveTo(cx as u16, abs_cy as u16))?;
+                queue!(self.stdout, cursor::MoveTo(sat_u16(cx), sat_u16(abs_cy)))?;
             }
             None => {
                 if self.cursor_visible {
                     queue!(self.stdout, cursor::Hide)?;
                     self.cursor_visible = false;
                 }
-                let end_row = self.start_row + self.height.saturating_sub(1) as u16;
+                let end_row = self
+                    .start_row
+                    .saturating_add(sat_u16(self.height.saturating_sub(1)));
                 queue!(self.stdout, cursor::MoveTo(0, end_row))?;
             }
         }

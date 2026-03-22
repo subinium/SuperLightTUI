@@ -11,11 +11,14 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[Crate] · [Docs] · [Examples] · [Contributing]
+[文档索引] · [快速开始] · [组件指南] · [示例指南] · [模式指南] · [架构指南] · [贡献指南]
 
 [English](../README.md) · **中文** · [Español](README.es.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
 </div>
+
+SuperLightTUI 是一个 Rust 的即时模式 TUI 库。
+你只需要写一个闭包，SLT 每帧调用它，库负责布局、差分、焦点和渲染。
 
 ## 效果展示
 
@@ -57,16 +60,22 @@ fn main() -> std::io::Result<()> {
     let mut count: i32 = 0;
 
     slt::run(|ui: &mut Context| {
-        if ui.key('q') { ui.quit(); }
-        if ui.key('k') || ui.key_code(KeyCode::Up) { count += 1; }
-        if ui.key('j') || ui.key_code(KeyCode::Down) { count -= 1; }
+        if ui.key('q') {
+            ui.quit();
+        }
+        if ui.key('k') || ui.key_code(KeyCode::Up) {
+            count += 1;
+        }
+        if ui.key('j') || ui.key_code(KeyCode::Down) {
+            count -= 1;
+        }
 
         ui.bordered(Border::Rounded).title("Counter").pad(1).gap(1).col(|ui| {
             ui.text("Counter").bold().fg(Color::Cyan);
             ui.row(|ui| {
                 ui.text("Count:");
-                let c = if count >= 0 { Color::Green } else { Color::Red };
-                ui.text(format!("{count}")).bold().fg(c);
+                let color = if count >= 0 { Color::Green } else { Color::Red };
+                ui.text(format!("{count}")).bold().fg(color);
             });
             ui.text("k +1 / j -1 / q quit").dim();
         });
@@ -78,420 +87,100 @@ fn main() -> std::io::Result<()> {
 
 ## 为什么选择 SLT
 
-**闭包即应用** — 没有框架状态，没有消息传递，没有 trait 实现。你写一个函数，SLT 每帧调用它。
+- **闭包即应用** — 没有框架状态，没有 trait 实现样板代码，没有消息循环 API。
+- **CSS 布局，Tailwind 语法** — `row()`、`col()`、`gap()`、`grow()`、`spacer()`，以及 `.p()`、`.px()`、`.m()`、`.w()`、`.max_w()` 等简写。
+- **组件自动处理繁琐部分** — 焦点顺序、悬停、点击处理、滚动和常见键盘行为全部内置。
+- **小核心，可选扩展** — 核心依赖是 `unicode-width` 和 `compact_str`；终端 I/O 由可选的 `crossterm` 提供；async、serde、image、qrcode 和语法高亮均在 feature flag 后面。
+- **库的工程素养** — 零 `unsafe`，显式 feature flag，文档、示例、测试齐全，遵循语义化版本发布纪律。
 
-**一切自动连接** — Tab 键循环焦点，鼠标滚轮滚动，容器自动上报点击和悬停事件，每个 widget 自己消费事件。
-
-**CSS 布局，Tailwind 语法** — 用 `row()`、`col()`、`grow()`、`gap()`、`spacer()` 实现 Flexbox。Tailwind 风格简写：`.p()`、`.px()`、`.py()`、`.m()`、`.mx()`、`.my()`、`.w()`、`.h()`、`.min_w()`、`.max_w()`。
-
-```rust
-ui.container()
-    .border(Border::Rounded)
-    .p(2).mx(1).grow(1).max_w(60)
-    .col(|ui| {
-        ui.row(|ui| {
-            ui.text("left");
-            ui.spacer();
-            ui.text("right");
-        });
-    });
-```
-
-**小而稳的核心，按需扩展** — 核心依赖是 `unicode-width` 和 `compact_str`。终端 I/O 由默认启用的 `crossterm` feature 提供。可选：`tokio`（异步）、`serde`（序列化）、`image`（图片加载）、`qrcode`。零 `unsafe` 代码。
-
-> **AI 辅助开发** — 在 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 中使用 `rust-tui-development-with-slt` skill，获取完整 API 参考、最佳实践和代码生成模板。或者用 [tui.builders](https://tui.builders) 可视化设计：
-
-[![tui.builders demo](../assets/tui-builders-demo.gif)](https://tui.builders)
-
-> 拖拽 widget，在检查器中设置属性，导出地道的 Rust 代码。免费，无需注册，开源。
-
-## Widgets
-
-内置 widget 覆盖面很广，零样板代码：
+## 常用 API 概览
 
 ```rust
-ui.text_input(&mut name);                    // 单行输入
-ui.textarea(&mut notes, 5);                  // 多行编辑器
-if ui.button("Submit").clicked { /* … */ }    // 返回 Response
-ui.checkbox("Dark mode", &mut dark);         // 复选框
-ui.toggle("Notifications", &mut on);         // 开关
-ui.tabs(&mut tabs);                          // 标签页导航
-ui.list(&mut items);                         // 可选列表
-ui.select(&mut sel);                         // 下拉选择
-ui.radio(&mut radio);                        // 单选按钮组
-ui.multi_select(&mut multi);                 // 多选复选框
-ui.tree(&mut tree);                          // 可展开树形视图
-ui.virtual_list(&mut list, 20, |ui, i| {}); // 虚拟化列表
-ui.table(&mut data);                         // 数据表格
-ui.spinner(&spin);                           // 加载动画
-ui.progress(0.75);                           // 进度条
-ui.scrollable(&mut scroll).col(|ui| { });    // 滚动容器
-ui.toast(&mut toasts);                       // 通知提示
-ui.separator();                              // 水平分隔线
-ui.help(&[("q", "quit"), ("Tab", "focus")]); // 快捷键提示
-ui.link("Docs", "https://docs.rs/superlighttui");      // 可点击超链接 (OSC 8)
-ui.modal(|ui| { ui.text("overlay"); });      // 带遮罩的模态框
-ui.overlay(|ui| { ui.text("floating"); });   // 无遮罩浮层
-ui.command_palette(&mut palette);            // 可搜索命令面板
-ui.markdown("# Hello **world**");            // Markdown 渲染
-ui.form_field(&mut field);                   // 带验证的标签输入
-ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // 折线/散点/柱状图
-ui.scatter(&points, 50, 16);                 // 独立散点图
-ui.histogram(&values, 40, 12);               // 自动分箱直方图
-ui.bar_chart(&data, 24);                     // 水平条形图
-ui.sparkline(&values, 16);                   // 趋势迷你图 ▁▂▃▅▇
-ui.canvas(40, 10, |cv| { cv.circle(20, 20, 15); }); // 盲文点阵画布
-ui.grid(3, |ui| { /* 3列网格 */ });          // 网格布局
-ui.tooltip("Save the current file");         // 悬停提示弹窗
-ui.calendar(&mut cal);                       // 带月份导航的日期选择器
-ui.screen("home", &screens, |ui| {});        // 屏幕路由栈
-ui.confirm("Delete?", &mut yes);             // 支持鼠标的确认对话框
-```
-
-每个 widget 自行处理键盘事件、焦点状态和鼠标交互。
-
-### 自定义 Widget
-
-实现 `Widget` trait 来构建你自己的 widget：
-
-```rust
-use slt::{Context, Widget, Color, Style};
-
-struct Rating { value: u8, max: u8 }
-
-impl Widget for Rating {
-    type Response = bool;
-
-    fn ui(&mut self, ui: &mut Context) -> bool {
-        let focused = ui.register_focusable();
-        let mut changed = false;
-
-        if focused {
-            if ui.key('+') && self.value < self.max { self.value += 1; changed = true; }
-            if ui.key('-') && self.value > 0 { self.value -= 1; changed = true; }
-        }
-
-        let stars: String = (0..self.max)
-            .map(|i| if i < self.value { '★' } else { '☆' })
-            .collect();
-        let color = if focused { Color::Yellow } else { Color::White };
-        ui.styled(stars, Style::new().fg(color));
-        changed
-    }
-}
-
-// 用法：ui.widget(&mut rating);
-```
-
-焦点、事件、主题、布局，全部通过 `Context` 访问。一个 trait，一个方法。
-
-## 功能特性
-
-<details>
-<summary><b>布局</b></summary>
-
-| 功能 | API |
-|------|-----|
-| 垂直堆叠 | `ui.col(\|ui\| { })` |
-| 水平堆叠 | `ui.row(\|ui\| { })` |
-| 网格布局 | `ui.grid(3, \|ui\| { })` |
-| 子元素间距 | `.gap(1)` |
-| 弹性增长 | `.grow(1)` |
-| 推到末尾 | `ui.spacer()` |
-| 对齐方式 | `.align(Align::Center)` |
-| 内边距 | `.p(1)`, `.px(2)`, `.py(1)` |
-| 外边距 | `.m(1)`, `.mx(2)`, `.my(1)` |
-| 固定尺寸 | `.w(20)`, `.h(10)` |
-| 约束 | `.min_w(10)`, `.max_w(60)` |
-| 百分比尺寸 | `.w_pct(50)`, `.h_pct(80)` |
-| 对齐分布 | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| 文本换行 | `ui.text("long text...").wrap()` |
-| 带标题边框 | `.border(Border::Rounded).title("Panel")` |
-| 单侧边框 | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
-| 响应式间距 | `.gap_at(Breakpoint::Md, 2)` |
-
-</details>
-
-<details>
-<summary><b>样式</b></summary>
-
-```rust
-ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
-```
-
-16 种命名颜色 · 256 色调色板 · 24 位 RGB · 6 种修饰符 · 6 种边框样式
-
-</details>
-
-<details>
-<summary><b>主题</b></summary>
-
-```rust
-// 7 个内置预设
-slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
-    ui.set_theme(Theme::dark()); // 运行时切换
+// 文本和布局
+ui.text("Hello").bold().fg(Color::Cyan);
+ui.row(|ui| {
+    ui.text("left");
+    ui.spacer();
+    ui.text("right");
 });
 
-// 构建自定义主题
-let theme = Theme::builder()
-    .primary(Color::Rgb(255, 107, 107))
-    .accent(Color::Cyan)
-    .build();
-```
+// 输入和操作
+ui.text_input(&mut name);
+if ui.button("Save").clicked {}
+ui.checkbox("Dark mode", &mut dark);
 
-7 个预设（dark、light、dracula、catppuccin、nord、solarized_dark、tokyo_night）。自定义主题支持 15 个颜色槽 + `is_dark` 标志。所有 widget 自动继承。
+// 数据和导航
+ui.tabs(&mut tabs);
+ui.list(&mut items);
+ui.table(&mut data);
+ui.command_palette(&mut palette);
 
-</details>
-
-<details>
-<summary><b>样式复用</b></summary>
-
-```rust
-use slt::{ContainerStyle, Border, Color};
-
-const CARD: ContainerStyle = ContainerStyle::new()
-    .border(Border::Rounded).p(1).bg(Color::Indexed(236));
-
-// 应用并组合
-ui.container().apply(&CARD).grow(1).gap(2).col(|ui| { ... });
-```
-
-定义一次，随处使用。`const` 样式零运行时开销。链式 `.apply()` 组合，内联方法始终覆盖。
-
-</details>
-
-<details>
-<summary><b>响应式布局</b></summary>
-
-```rust
-ui.container()
-    .w(20).md_w(40).lg_w(60)  // 在断点处改变宽度
-    .p(1).lg_p(2)
-    .col(|ui| { ... });
-```
-
-35 个断点条件方法（`xs_`、`sm_`、`md_`、`lg_`、`xl_` × `w`、`h`、`min_w`、`max_w`、`gap`、`p`、`grow`）。断点：Xs (<40)、Sm (40-79)、Md (80-119)、Lg (120-159)、Xl (≥160)。
-
-</details>
-
-<details>
-<summary><b>Hooks</b></summary>
-
-```rust
-let count = ui.use_state(|| 0i32);
-ui.text(format!("{}", count.get(ui)));
-if ui.button("+1") { *count.get_mut(ui) += 1; }
-```
-
-即时模式下的 React 风格持久状态。`State<T>` 句柄模式，每帧按相同顺序调用。
-
-</details>
-
-<details>
-<summary><b>渲染</b></summary>
-
-- **双缓冲差分** — 只有变化的单元格才会输出到终端
-- **同步输出** — DECSET 2026 防止支持的终端出现撕裂
-- **视口裁剪** — 屏幕外的 widget 完全跳过
-- **FPS 上限** — `RunConfig::default().max_fps(60)` 控制 CPU 占用
-- **自动重排** — 终端大小变化时自动重新布局
-- **`collect_all()`** — 单次 DFS 遍历替代 7 次独立树遍历 (v0.9)
-
-</details>
-
-<details>
-<summary><b>动画</b></summary>
-
-```rust
-let mut tween = Tween::new(0.0, 100.0, 60).easing(ease_out_bounce);
-let value = tween.value(ui.tick());
-
-let mut spring = Spring::new(0.0, 180.0, 12.0);
-spring.set_target(100.0);
-
-let mut kf = Keyframes::new(120)
-    .stop(0.0, 0.0).stop(0.5, 100.0).stop(1.0, 50.0)
-    .loop_mode(LoopMode::PingPong);
-```
-
-Tween（9 种缓动函数）、弹簧物理、关键帧时间轴（含循环模式）、Sequence 链、Stagger 列表动画。全部支持 `.on_complete()` 回调。
-
-</details>
-
-<details>
-<summary><b>异步支持</b></summary>
-
-```rust
-let tx = slt::run_async(|ui, messages: &mut Vec<String>| {
-    for msg in messages.drain(..) { ui.text(msg); }
-})?;
-tx.send("Hello from background!".into()).await?;
-```
-
-可选 tokio 集成。通过 `cargo add superlighttui --features async` 启用。
-
-</details>
-
-<details>
-<summary><b>错误边界</b></summary>
-
-```rust
-ui.error_boundary(|ui| {
-    ui.text("If this panics, the app keeps running.");
-});
-```
-
-捕获 widget panic 而不崩溃整个应用。部分命令回滚，渲染降级内容。
-
-</details>
-
-<details>
-<summary><b>模态框与浮层</b></summary>
-
-```rust
+// 浮层和富文本输出
+ui.toast(&mut toasts);
 ui.modal(|ui| {
-    ui.bordered(Border::Rounded).pad(2).col(|ui| {
-        ui.text("Confirm?").bold();
-        if ui.button("OK") { show = false; }
-    });
+    ui.text("Confirm?").bold();
+});
+ui.markdown("# Hello **world**");
+
+// 数据可视化
+ui.chart(|c| {
+    c.line(&data);
+    c.grid(true);
+}, 50, 16);
+ui.sparkline(&values, 16);
+ui.canvas(40, 10, |cv| {
+    cv.circle(20, 20, 15);
 });
 ```
 
-`modal()` 遮暗背景并在顶层渲染内容。`overlay()` 渲染浮动内容但不遮暗背景。两者均支持完整布局和交互。
+完整分类组件列表请参阅 [组件指南]。
 
-</details>
+## 学习指南
 
-<details>
-<summary><b>快照测试</b></summary>
+| 文档 | 涵盖内容 |
+|------|----------|
+| [文档索引] | 完整文档结构和指南索引 |
+| [快速开始] | 安装、第一个应用、计数器、布局、输入 |
+| [组件指南] | 组件目录和主要 API |
+| [模式指南] | 状态管理、表单、覆盖层、异步、自定义组件 |
+| [示例指南] | 示例索引和运行命令 |
+| [架构指南] | 模块映射、帧生命周期、依赖流 |
+| [后端指南] | `Backend`、`AppState`、`frame()`、内联模式 |
+| [测试指南] | `TestBackend`、`EventBuilder`、交互测试 |
+| [调试指南] | F12 覆盖层、裁剪、单帧延迟 |
+| [AI 指南] | AI 编程助手快速参考 |
+| [动画指南] | Tween、Spring、Keyframes、Sequence、Stagger |
+| [主题指南] | 主题预设、ThemeBuilder、自定义主题 |
+| [特性指南] | 功能标志、可选依赖、推荐组合 |
+| [`docs/DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) | API 设计理念 |
 
-```rust
-use slt::TestBackend;
+## 示例精选
 
-let mut backend = TestBackend::new(40, 10);
-backend.render(|ui| {
-    ui.bordered(Border::Rounded).pad(1).col(|ui| {
-        ui.text("Hello");
-    });
-});
-insta::assert_snapshot!(backend.to_string_trimmed());
-```
-
-配合 [insta](https://crates.io/crates/insta) 进行基于快照的 UI 回归测试。
-
-</details>
-
-<details>
-<summary><b>图片渲染</b></summary>
-
-```sh
-cargo add superlighttui --features image
-```
-
-```rust
-use slt::HalfBlockImage;
-
-let photo = image::open("photo.png").unwrap();
-let img = HalfBlockImage::from_dynamic(&photo, 60, 30);
-ui.image(&img);
-```
-
-半块字符（▀▄）图片渲染。Sixel 协议（v0.13.2）：`ui.sixel_image(&rgba, w, h, cols, rows)` 在 xterm、foot、mlterm 上实现像素级图片。
-
-</details>
-
-<details>
-<summary><b>Feature Flags</b></summary>
-
-| Flag | 说明 |
-|------|------|
-| `async` | `run_async()`，基于 tokio channel 的消息传递 |
-| `serde` | 为 Style、Color、Theme、布局类型实现序列化/反序列化 |
-| `image` | `HalfBlockImage::from_dynamic()`，依赖 `image` crate |
-| `full` | 以上全部 |
-
-```toml
-[dependencies]
-superlighttui = { version = "0.13", features = ["full"] }
-```
-
-</details>
-
-<details>
-<summary><b>调试</b></summary>
-
-在任意 SLT 应用中按 **F12** 切换布局调试器浮层，显示容器边界、嵌套深度和布局结构。
-
-</details>
-
-## 示例
-
-| 示例 | 命令 | 展示内容 |
-|------|------|----------|
-| hello | `cargo run --example hello` | 最简配置 |
-| counter | `cargo run --example counter` | 状态 + 键盘 |
-| demo | `cargo run --example demo` | 所有 widget |
-| demo_dashboard | `cargo run --example demo_dashboard` | 实时仪表盘 |
+| 示例 | 命令 | 重点 |
+|------|------|------|
+| hello | `cargo run --example hello` | 最简应用 |
+| counter | `cargo run --example counter` | 状态 + 键盘输入 |
+| demo | `cargo run --example demo` | 全组件概览 |
+| demo_dashboard | `cargo run --example demo_dashboard` | 仪表盘布局 |
 | demo_cli | `cargo run --example demo_cli` | CLI 工具布局 |
-| demo_spreadsheet | `cargo run --example demo_spreadsheet` | 数据表格 |
-| demo_website | `cargo run --example demo_website` | 终端中的网站 |
-| demo_game | `cargo run --example demo_game` | 俄罗斯方块 + 贪吃蛇 + 扫雷 |
-| demo_fire | `cargo run --release --example demo_fire` | DOOM 火焰效果（半块字符） |
-| demo_ime | `cargo run --example demo_ime` | 韩文/CJK 输入法 |
-| inline | `cargo run --example inline` | 内联模式 |
-| anim | `cargo run --example anim` | Tween + Spring + Keyframes |
-| demo_infoviz | `cargo run --example demo_infoviz` | 数据可视化 |
-| demo_trading | `cargo run --example demo_trading` | 交易所风格终端 |
-| async_demo | `cargo run --example async_demo --features async` | 后台任务 |
+| demo_infoviz | `cargo run --example demo_infoviz` | 图表和数据可视化 |
+| demo_game | `cargo run --example demo_game` | 即时模式交互 |
+| async_demo | `cargo run --example async_demo --features async` | 后台消息 |
 
-## 架构
+完整分类索引请参阅 [示例指南]。
 
-```
-Closure → Context collects Commands → build_tree() → flexbox layout → diff buffer → flush
-```
+## 自定义组件和后端
 
-每一帧：你的闭包运行，SLT 收集你描述的内容，计算 flexbox 布局，与上一帧做差分，只刷新变化的单元格。
+- 实现 `Widget` trait 来构建可复用组件，完整支持焦点、布局、事件和主题。
+- 实现 `Backend` + 驱动 `frame()`，可用于非终端渲染器、测试工具或嵌入式目标。
+- 使用 `TestBackend` 进行无头渲染和快照式断言。
 
-纯 Rust。无宏，无代码生成，无构建脚本。
-
-### 自定义 Backend
-
-SLT 的渲染通过 `Backend` trait 抽象，支持终端以外的自定义渲染目标：
-
-```rust
-use slt::{Backend, AppState, Buffer, Rect, RunConfig, Context, Event};
-
-struct MyBackend { buffer: Buffer }
-
-impl Backend for MyBackend {
-    fn size(&self) -> (u32, u32) {
-        (self.buffer.area.width, self.buffer.area.height)
-    }
-    fn buffer_mut(&mut self) -> &mut Buffer { &mut self.buffer }
-    fn flush(&mut self) -> std::io::Result<()> {
-        // 将 self.buffer 渲染到你的目标（canvas、GPU、网络等）
-        Ok(())
-    }
-}
-```
-
-`Backend` trait 只有 3 个方法：`size()`、`buffer_mut()`、`flush()`。自定义 backend 接收完整渲染好的 `Buffer`，可以用任何方式呈现，WebGL、egui 嵌入、SSH 隧道、测试框架等皆可。
-
-### AI 原生 Widgets
-
-SLT 内置专为 AI/LLM 工作流设计的 widget：
-
-| Widget | 说明 |
-|--------|------|
-| `streaming_text()` | 逐 token 文本显示，带闪烁光标 |
-| `streaming_markdown()` | 流式 Markdown，支持标题、代码块、内联格式 |
-| `tool_approval()` | 人工审批/拒绝工具调用 |
-| `context_bar()` | 显示活跃上下文来源的 token 计数条 |
-| `markdown()` | 静态 Markdown 渲染 |
-| `code_block()` | 语法高亮代码展示 |
+更多内容请参阅 [模式指南] 和 [架构指南]。
 
 ## 贡献
 
-参见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+请先阅读 [贡献指南]，然后查看 `docs/DESIGN_PRINCIPLES.md` 和 [架构指南]。
+发布和 CI 流程要求格式化、检查、clippy、测试和示例编译保持通过。
 
 ## 许可证
 
@@ -509,6 +198,18 @@ SLT 内置专为 AI/LLM 工作流设计的 widget：
 [CI]: https://github.com/subinium/SuperLightTUI/actions/workflows/ci.yml
 [Crate]: https://crates.io/crates/superlighttui
 [Docs]: https://docs.rs/superlighttui
-[Examples]: https://github.com/subinium/SuperLightTUI/tree/main/examples
-[Contributing]: https://github.com/subinium/SuperLightTUI/blob/main/CONTRIBUTING.md
+[文档索引]: README.md
+[快速开始]: QUICK_START.md
+[组件指南]: WIDGETS.md
+[示例指南]: EXAMPLES.md
+[模式指南]: PATTERNS.md
+[架构指南]: ARCHITECTURE.md
+[后端指南]: BACKENDS.md
+[测试指南]: TESTING.md
+[调试指南]: DEBUGGING.md
+[AI 指南]: AI_GUIDE.md
+[动画指南]: ANIMATION.md
+[主题指南]: THEMING.md
+[特性指南]: FEATURES.md
+[贡献指南]: ../CONTRIBUTING.md
 [License]: ../LICENSE

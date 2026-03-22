@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.8] — 2026-03-22
+
+### Documentation
+
+- **Complete docs overhaul** — added 7 new guides: `ANIMATION.md`, `THEMING.md`, `BACKENDS.md`, `TESTING.md`, `DEBUGGING.md`, `FEATURES.md`, `AI_GUIDE.md`.
+- **WIDGETS.md rewritten** — now a complete API catalog of every widget, state type, ContainerBuilder method, and CanvasContext primitive.
+- **PATTERNS.md expanded** — added animation patterns, responsive layout patterns; removed single-API-usage sections that belong in WIDGETS.md.
+- **Translation sync** — Korean, Chinese, Japanese, and Spanish READMEs aligned with the current English structure including all new guide links.
+- **Cross-reference cleanup** — README.md, docs/README.md, CONTRIBUTING.md, ARCHITECTURE.md, and DESIGN_PRINCIPLES.md now link to all guides consistently.
+- **Stale data fixed** — SECURITY.md version updated to 0.15.x, DESIGN_PRINCIPLES.md version range updated, EXAMPLES.md now shows feature flag requirements.
+
+### Fixes
+
+- **Buffer bounds safety** — `Buffer::get()` and `get_mut()` upgraded from `debug_assert!` to `assert!`, enforcing bounds checks in release builds. Selection overlay now guards against out-of-bounds widget rects.
+- **F12 debug toggle missing in async** — `run_async_loop` was the only run loop without F12 support; now fixed via shared `poll_events()`.
+- **Syntax highlighting graceful degradation** — tree-sitter config failures now return `None` instead of panicking, allowing fallback to keyword highlighting.
+
+### Performance
+
+- **Events clone eliminated** — internal run loops now transfer event ownership via `std::mem::take` instead of cloning the events vector every frame.
+
+### Internal
+
+- **Run loop dedup** — extracted `poll_events()` shared function, reducing ~160 lines of duplicated event polling across 4 run loops to a single implementation.
+- **Saturating u16 casts** — all `u32` to `u16` coordinate casts in `terminal.rs` now use a saturating helper instead of raw `as u16` truncation.
+- **CLAUDE.md architecture tree** — updated to reflect current module split with accurate line counts.
+
 ## [0.15.7] — 2026-03-22
 
 ### Improvements

@@ -37,6 +37,9 @@ impl<T: 'static> State<T> {
 ///
 /// Container methods return a [`Response`]. Check `.clicked`, `.changed`, etc.
 /// to react to user interactions.
+/// `rect` is meaningful after the widget has participated in layout.
+/// Container responses describe the container's own interaction area, not
+/// automatically the focus state of every child widget.
 ///
 /// # Examples
 ///
