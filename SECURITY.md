@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.13.x  | Yes       |
-| < 0.13  | No        |
+| 0.15.x  | Yes       |
+| < 0.15  | No        |
 
 Only the latest minor release receives security fixes.
 

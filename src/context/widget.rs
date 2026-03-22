@@ -2,6 +2,9 @@
 ///
 /// Implement this trait to build reusable, composable widgets with full access
 /// to the [`Context`] API — focus, events, theming, layout, and mouse interaction.
+/// Choose `Self::Response` based on what the widget needs to report:
+/// `()` for pure display, `bool` for simple changed/not-changed signals,
+/// or [`Response`] for click/hover/focus-aware interaction.
 ///
 /// # Examples
 ///

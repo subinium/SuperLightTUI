@@ -8,6 +8,9 @@ Related docs:
 - [WIDGETS.md](WIDGETS.md)
 - [PATTERNS.md](PATTERNS.md)
 - [EXAMPLES.md](EXAMPLES.md)
+- [BACKENDS.md](BACKENDS.md)
+- [DEBUGGING.md](DEBUGGING.md)
+- [TESTING.md](TESTING.md)
 
 ---
 
@@ -144,6 +147,8 @@ Every frame follows this exact sequence:
    └── Swap front ↔ back buffers
 ```
 
+For the custom-backend entry point that drives this lifecycle manually, see `docs/BACKENDS.md`.
+
 ---
 
 ## One-Frame Delay Feedback
@@ -192,6 +197,8 @@ Key observations:
 - `terminal.rs` is isolated — it only knows about `buffer` and `event`
 - `style`, `layout`, `anim` are largely independent of each other
 - Widget facades under `src/context/widgets_*.rs` now act as indexes for narrower implementation files
+
+- The `Backend` / `AppState` / `frame()` path in `src/lib.rs` is the low-level escape hatch when SLT does not own the event loop
 
 ---
 

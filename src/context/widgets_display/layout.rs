@@ -66,6 +66,9 @@ impl Context {
     /// Unlike [`row`](Context::row), `line()` is designed for rich text —
     /// children are rendered as continuous inline text without gaps.
     ///
+    /// It intentionally returns `&mut Self` instead of [`Response`] so you can
+    /// keep chaining display-oriented modifiers after composing the inline run.
+    ///
     /// # Example
     ///
     /// ```no_run

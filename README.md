@@ -145,6 +145,13 @@ For the categorized widget list, see [Widget Guide].
 | [Patterns Guide] | State, forms, overlays, async, custom widgets, testing |
 | [Examples Guide] | Curated example index with commands and use cases |
 | [Architecture Guide] | Module map, frame lifecycle, dependency flow |
+| [Backends Guide] | `Backend`, `AppState`, `frame()`, inline mode, static output |
+| [Testing Guide] | `TestBackend`, `EventBuilder`, interaction testing |
+| [Debugging Guide] | F12 overlay, clipping, one-frame delay, focus issues |
+| [AI Guide] | Fastest path for AI-assisted builders and agents |
+| [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
+| [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
+| [Features Guide] | Feature flags, optional dependencies, recommended combos |
 | [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md) | Why the API is shaped this way |
 
 ## Example Highlights
@@ -192,10 +199,17 @@ The release and CI process expects formatting, check, clippy, tests, and example
 [Crate]: https://crates.io/crates/superlighttui
 [Docs Index]: docs/README.md
 [Docs]: https://docs.rs/superlighttui
+[Backends Guide]: docs/BACKENDS.md
+[Testing Guide]: docs/TESTING.md
+[Debugging Guide]: docs/DEBUGGING.md
+[AI Guide]: docs/AI_GUIDE.md
 [Quick Start]: docs/QUICK_START.md
 [Widget Guide]: docs/WIDGETS.md
 [Examples Guide]: docs/EXAMPLES.md
 [Patterns Guide]: docs/PATTERNS.md
 [Architecture Guide]: docs/ARCHITECTURE.md
+[Animation Guide]: docs/ANIMATION.md
+[Theming Guide]: docs/THEMING.md
+[Features Guide]: docs/FEATURES.md
 [Contributing]: CONTRIBUTING.md
 [License]: ./LICENSE

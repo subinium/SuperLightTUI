@@ -15,7 +15,7 @@
 
 //! # SLT — Super Light TUI
 //!
-//! Immediate-mode terminal UI for Rust. Two dependencies. Zero `unsafe`.
+//! Immediate-mode terminal UI for Rust. Small core. Zero `unsafe`.
 //!
 //! SLT gives you an egui-style API for terminals: your closure runs each frame,
 //! you describe your UI, and SLT handles layout, diffing, and rendering.
@@ -47,8 +47,20 @@
 //!
 //! | Flag | Description |
 //! |------|-------------|
+//! | `crossterm` | Built-in terminal runtime (`run`, `run_inline`, clipboard query helpers). Enabled by default. |
 //! | `async` | Enable `run_async()` with tokio channel-based message passing |
 //! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
+//! | `image` | Enable image-loading helpers for terminal image widgets |
+//! | `qrcode` | Enable `ui.qr_code(...)` |
+//! | `syntax` / `syntax-*` | Enable tree-sitter syntax highlighting |
+//!
+//! ## Learn More
+//!
+//! - Guides index: <https://github.com/subinium/SuperLightTUI/blob/main/docs/README.md>
+//! - Quick start: <https://github.com/subinium/SuperLightTUI/blob/main/docs/QUICK_START.md>
+//! - Backends and run loops: <https://github.com/subinium/SuperLightTUI/blob/main/docs/BACKENDS.md>
+//! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/TESTING.md>
+//! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DEBUGGING.md>
 
 pub mod anim;
 pub mod buffer;
@@ -258,6 +270,10 @@ impl Default for AppState {
 /// * `events` — Input events for this frame (keyboard, mouse, resize)
 /// * `f` — Your UI closure, called once per frame
 ///
+/// Build a fresh event slice each frame in your outer loop, then pass it here.
+/// `frame()` reads from that slice but does not own your event source.
+/// Reuse the same [`AppState`] for the lifetime of the session.
+///
 /// # Example
 ///
 /// ```ignore
@@ -276,7 +292,7 @@ pub fn frame(
     events: &[Event],
     f: &mut impl FnMut(&mut Context),
 ) -> io::Result<bool> {
-    run_frame(backend, &mut state.inner, config, events, f)
+    run_frame(backend, &mut state.inner, config, events.to_vec(), f)
 }
 
 #[cfg(feature = "crossterm")]
@@ -333,6 +349,7 @@ fn install_panic_hook() {
 ///
 /// Pass to [`run_with`] or [`run_inline_with`] to customize behavior.
 /// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, no mouse, dark theme).
+/// This type is `#[non_exhaustive]`, so prefer builder methods instead of struct literals.
 ///
 /// # Example
 ///
@@ -572,54 +589,20 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             continue;
         }
 
-        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
+        if !run_frame(
+            &mut term,
+            &mut state,
+            &config,
+            std::mem::take(&mut events),
+            &mut f,
+        )? {
             break;
         }
 
-        events.clear();
-        if crossterm::event::poll(config.tick_rate)? {
-            let raw = crossterm::event::read()?;
-            if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
-                    break;
-                }
-                if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
-                }
-                events.push(ev);
-            }
-
-            while crossterm::event::poll(Duration::ZERO)? {
-                let raw = crossterm::event::read()?;
-                if let Some(ev) = event::from_crossterm(raw) {
-                    if is_ctrl_c(&ev) {
-                        return Ok(());
-                    }
-                    if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
-                    }
-                    events.push(ev);
-                }
-            }
-
-            for ev in &events {
-                if matches!(
-                    ev,
-                    Event::Key(event::KeyEvent {
-                        code: KeyCode::F(12),
-                        kind: event::KeyEventKind::Press,
-                        ..
-                    })
-                ) {
-                    state.debug_mode = !state.debug_mode;
-                }
-            }
-        }
-
-        update_last_mouse_pos(&mut state, &events);
-
-        if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
-            clear_frame_layout_cache(&mut state);
+        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
+            term.handle_resize()
+        })? {
+            break;
         }
 
         sleep_for_fps_cap(config.max_fps, frame_start);
@@ -713,40 +696,21 @@ fn run_async_loop<M: Send + 'static>(
         let mut render = |ctx: &mut Context| {
             f(ctx, &mut messages);
         };
-        if !run_frame(&mut term, &mut state, &config, &events, &mut render)? {
+        if !run_frame(
+            &mut term,
+            &mut state,
+            &config,
+            std::mem::take(&mut events),
+            &mut render,
+        )? {
             break;
         }
 
-        events.clear();
-        if crossterm::event::poll(config.tick_rate)? {
-            let raw = crossterm::event::read()?;
-            if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
-                    break;
-                }
-                if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
-                    clear_frame_layout_cache(&mut state);
-                }
-                events.push(ev);
-            }
-
-            while crossterm::event::poll(Duration::ZERO)? {
-                let raw = crossterm::event::read()?;
-                if let Some(ev) = event::from_crossterm(raw) {
-                    if is_ctrl_c(&ev) {
-                        return Ok(());
-                    }
-                    if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
-                        clear_frame_layout_cache(&mut state);
-                    }
-                    events.push(ev);
-                }
-            }
+        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
+            term.handle_resize()
+        })? {
+            break;
         }
-
-        update_last_mouse_pos(&mut state, &events);
 
         sleep_for_fps_cap(config.max_fps, frame_start);
     }
@@ -759,6 +723,9 @@ fn run_async_loop<M: Send + 'static>(
 /// Renders `height` rows directly below the current cursor position without
 /// entering alternate screen mode. Useful for CLI tools that want a small
 /// interactive widget below the prompt.
+///
+/// `height` is the reserved inline render area in terminal rows.
+/// The rest of the terminal stays in normal scrollback mode.
 ///
 /// # Example
 ///
@@ -806,54 +773,20 @@ pub fn run_inline_with(
             continue;
         }
 
-        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
+        if !run_frame(
+            &mut term,
+            &mut state,
+            &config,
+            std::mem::take(&mut events),
+            &mut f,
+        )? {
             break;
         }
 
-        events.clear();
-        if crossterm::event::poll(config.tick_rate)? {
-            let raw = crossterm::event::read()?;
-            if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
-                    break;
-                }
-                if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
-                }
-                events.push(ev);
-            }
-
-            while crossterm::event::poll(Duration::ZERO)? {
-                let raw = crossterm::event::read()?;
-                if let Some(ev) = event::from_crossterm(raw) {
-                    if is_ctrl_c(&ev) {
-                        return Ok(());
-                    }
-                    if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
-                    }
-                    events.push(ev);
-                }
-            }
-
-            for ev in &events {
-                if matches!(
-                    ev,
-                    Event::Key(event::KeyEvent {
-                        code: KeyCode::F(12),
-                        kind: event::KeyEventKind::Press,
-                        ..
-                    })
-                ) {
-                    state.debug_mode = !state.debug_mode;
-                }
-            }
-        }
-
-        update_last_mouse_pos(&mut state, &events);
-
-        if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
-            clear_frame_layout_cache(&mut state);
+        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
+            term.handle_resize()
+        })? {
+            break;
         }
 
         sleep_for_fps_cap(config.max_fps, frame_start);
@@ -867,6 +800,8 @@ pub fn run_inline_with(
 /// Static lines written through [`StaticOutput`] are printed into terminal
 /// scrollback, while the interactive UI stays rendered in a fixed-height inline
 /// area at the bottom.
+///
+/// Use this when you want a log-style output stream above a live inline UI.
 #[cfg(feature = "crossterm")]
 pub fn run_static(
     output: &mut StaticOutput,
@@ -904,54 +839,20 @@ pub fn run_static(
         let new_lines = output.drain_new();
         write_static_lines(&new_lines)?;
 
-        if !run_frame(&mut term, &mut state, &config, &events, &mut f)? {
+        if !run_frame(
+            &mut term,
+            &mut state,
+            &config,
+            std::mem::take(&mut events),
+            &mut f,
+        )? {
             break;
         }
 
-        events.clear();
-        if crossterm::event::poll(config.tick_rate)? {
-            let raw = crossterm::event::read()?;
-            if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
-                    break;
-                }
-                if let Event::Resize(_, _) = &ev {
-                    term.handle_resize()?;
-                }
-                events.push(ev);
-            }
-
-            while crossterm::event::poll(Duration::ZERO)? {
-                let raw = crossterm::event::read()?;
-                if let Some(ev) = event::from_crossterm(raw) {
-                    if is_ctrl_c(&ev) {
-                        return Ok(());
-                    }
-                    if let Event::Resize(_, _) = &ev {
-                        term.handle_resize()?;
-                    }
-                    events.push(ev);
-                }
-            }
-
-            for ev in &events {
-                if matches!(
-                    ev,
-                    Event::Key(event::KeyEvent {
-                        code: KeyCode::F(12),
-                        kind: event::KeyEventKind::Press,
-                        ..
-                    })
-                ) {
-                    state.debug_mode = !state.debug_mode;
-                }
-            }
-        }
-
-        update_last_mouse_pos(&mut state, &events);
-
-        if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
-            clear_frame_layout_cache(&mut state);
+        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
+            term.handle_resize()
+        })? {
+            break;
         }
 
         sleep_for_fps_cap(config.max_fps, frame_start);
@@ -974,16 +875,73 @@ fn write_static_lines(lines: &[String]) -> io::Result<()> {
     stdout.flush()
 }
 
+/// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
+/// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
+#[cfg(feature = "crossterm")]
+fn poll_events(
+    events: &mut Vec<Event>,
+    state: &mut FrameState,
+    tick_rate: Duration,
+    on_resize: &mut impl FnMut() -> io::Result<()>,
+) -> io::Result<bool> {
+    if crossterm::event::poll(tick_rate)? {
+        let raw = crossterm::event::read()?;
+        if let Some(ev) = event::from_crossterm(raw) {
+            if is_ctrl_c(&ev) {
+                return Ok(false);
+            }
+            if matches!(ev, Event::Resize(_, _)) {
+                on_resize()?;
+            }
+            events.push(ev);
+        }
+
+        while crossterm::event::poll(Duration::ZERO)? {
+            let raw = crossterm::event::read()?;
+            if let Some(ev) = event::from_crossterm(raw) {
+                if is_ctrl_c(&ev) {
+                    return Ok(false);
+                }
+                if matches!(ev, Event::Resize(_, _)) {
+                    on_resize()?;
+                }
+                events.push(ev);
+            }
+        }
+
+        for ev in events.iter() {
+            if matches!(
+                ev,
+                Event::Key(event::KeyEvent {
+                    code: KeyCode::F(12),
+                    kind: event::KeyEventKind::Press,
+                    ..
+                })
+            ) {
+                state.debug_mode = !state.debug_mode;
+            }
+        }
+    }
+
+    update_last_mouse_pos(state, events);
+
+    if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
+        clear_frame_layout_cache(state);
+    }
+
+    Ok(true)
+}
+
 fn run_frame(
     term: &mut impl Backend,
     state: &mut FrameState,
     config: &RunConfig,
-    events: &[event::Event],
+    events: Vec<event::Event>,
     f: &mut impl FnMut(&mut context::Context),
 ) -> io::Result<bool> {
     let frame_start = Instant::now();
     let (w, h) = term.size();
-    let mut ctx = Context::new(events.to_vec(), w, h, state, config.theme);
+    let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = true;
     ctx.set_scroll_speed(config.scroll_speed);
 

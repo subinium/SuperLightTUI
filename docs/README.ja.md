@@ -11,11 +11,14 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[Crate] · [Docs] · [Examples] · [Contributing]
+[ドキュメント] · [クイックスタート] · [ウィジェットガイド] · [サンプル集] · [パターンガイド] · [アーキテクチャ] · [コントリビュート]
 
 [English](../README.md) · [中文](README.zh-CN.md) · [Español](README.es.md) · **日本語** · [한국어](README.ko.md)
 
 </div>
+
+SuperLightTUI は Rust 用のイミディエイトモード TUI ライブラリです。
+クロージャを1つ書くだけで、SLT が毎フレームそれを呼び出し、レイアウト、差分、フォーカス、レンダリングを処理します。
 
 ## ショーケース
 
@@ -57,16 +60,22 @@ fn main() -> std::io::Result<()> {
     let mut count: i32 = 0;
 
     slt::run(|ui: &mut Context| {
-        if ui.key('q') { ui.quit(); }
-        if ui.key('k') || ui.key_code(KeyCode::Up) { count += 1; }
-        if ui.key('j') || ui.key_code(KeyCode::Down) { count -= 1; }
+        if ui.key('q') {
+            ui.quit();
+        }
+        if ui.key('k') || ui.key_code(KeyCode::Up) {
+            count += 1;
+        }
+        if ui.key('j') || ui.key_code(KeyCode::Down) {
+            count -= 1;
+        }
 
         ui.bordered(Border::Rounded).title("Counter").pad(1).gap(1).col(|ui| {
             ui.text("Counter").bold().fg(Color::Cyan);
             ui.row(|ui| {
                 ui.text("Count:");
-                let c = if count >= 0 { Color::Green } else { Color::Red };
-                ui.text(format!("{count}")).bold().fg(c);
+                let color = if count >= 0 { Color::Green } else { Color::Red };
+                ui.text(format!("{count}")).bold().fg(color);
             });
             ui.text("k +1 / j -1 / q quit").dim();
         });
@@ -78,396 +87,100 @@ fn main() -> std::io::Result<()> {
 
 ## なぜ SLT か
 
-**クロージャがそのままアプリになる** — フレームワークの状態管理なし。メッセージパッシングなし。トレイト実装なし。関数を書けば、SLT が毎フレーム呼び出します。
+- **クロージャがそのままアプリになる** — フレームワークの状態管理なし、トレイト実装のボイラープレートなし、メッセージループ API なし。
+- **CSS のようなレイアウト、Tailwind のような構文** — `row()`、`col()`、`gap()`、`grow()`、`spacer()`。ショートハンド: `.p()`、`.px()`、`.m()`、`.w()`、`.max_w()`。
+- **ウィジェットが面倒な部分を自動処理** — フォーカス順序、ホバー、クリック処理、スクロール、一般的なキーボード操作が組み込み済み。
+- **小さなコア、オプションの拡張** — コア依存は `unicode-width` と `compact_str`。ターミナル I/O はオプションの `crossterm`。async、serde、image、qrcode、シンタックスハイライトはフィーチャーフラグで提供。
+- **ライブラリの品質にこだわる** — `unsafe` ゼロ、明示的なフィーチャーフラグ、ドキュメント、サンプル、テスト、semver に基づくリリース規律。
 
-**すべて自動でつながる** — Tab でフォーカスが循環。マウスホイールでスクロール。コンテナはクリックとホバーを報告。ウィジェットは自分でイベントを消費します。
-
-**CSS のようなレイアウト、Tailwind のような構文** — `row()`、`col()`、`grow()`、`gap()`、`spacer()` で Flexbox。Tailwind 風ショートハンド: `.p()`、`.px()`、`.py()`、`.m()`、`.mx()`、`.my()`、`.w()`、`.h()`、`.min_w()`、`.max_w()`。
-
-```rust
-ui.container()
-    .border(Border::Rounded)
-    .p(2).mx(1).grow(1).max_w(60)
-    .col(|ui| {
-        ui.row(|ui| {
-            ui.text("left");
-            ui.spacer();
-            ui.text("right");
-        });
-    });
-```
-
-**小さなコアと必要な分だけの拡張** — コア依存は `unicode-width` と `compact_str`。ターミナル I/O はデフォルト有効の `crossterm` feature で提供されます。オプション: 非同期に `tokio`、シリアライズに `serde`、画像読み込みに `image`、QR コードに `qrcode`。`unsafe` コードはゼロです。
-
-> **AI 支援開発** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) の `rust-tui-development-with-slt` スキルで完全な API リファレンス、ベストプラクティス、コード生成テンプレートを利用できます。または [tui.builders](https://tui.builders) でビジュアルデザインも可能です:
-
-[![tui.builders demo](../assets/tui-builders-demo.gif)](https://tui.builders)
-
-> ウィジェットをドラッグし、インスペクターでプロパティを設定して、慣用的な Rust コードをエクスポート。無料、サインアップ不要、オープンソース。
-
-## ウィジェット
-
-組み込みウィジェットは幅広く、ボイラープレートは不要です:
+## 主要 API
 
 ```rust
-ui.text_input(&mut name);                    // 単行入力
-ui.textarea(&mut notes, 5);                  // 複数行エディタ
-if ui.button("Submit").clicked { /* … */ }    // Response を返す
-ui.checkbox("Dark mode", &mut dark);         // トグルチェックボックス
-ui.toggle("Notifications", &mut on);         // オン/オフスイッチ
-ui.tabs(&mut tabs);                          // タブナビゲーション
-ui.list(&mut items);                         // 選択可能なリスト
-ui.select(&mut sel);                         // ドロップダウン選択
-ui.radio(&mut radio);                        // ラジオボタングループ
-ui.multi_select(&mut multi);                 // 複数選択チェックボックス
-ui.tree(&mut tree);                          // 展開可能なツリービュー
-ui.virtual_list(&mut list, 20, |ui, i| {}); // 仮想化リスト
-ui.table(&mut data);                         // データテーブル
-ui.spinner(&spin);                           // ローディングアニメーション
-ui.progress(0.75);                           // プログレスバー
-ui.scrollable(&mut scroll).col(|ui| { });    // スクロールコンテナ
-ui.toast(&mut toasts);                       // 通知
-ui.separator();                              // 水平線
-ui.help(&[("q", "quit"), ("Tab", "focus")]); // キーヒント
-ui.link("Docs", "https://docs.rs/superlighttui");      // クリック可能なハイパーリンク (OSC 8)
-ui.modal(|ui| { ui.text("overlay"); });      // 背景を暗くするモーダル
-ui.overlay(|ui| { ui.text("floating"); });   // 背景を暗くしないオーバーレイ
-ui.command_palette(&mut palette);            // 検索可能なコマンドパレット
-ui.markdown("# Hello **world**");            // Markdown レンダリング
-ui.form_field(&mut field);                   // バリデーション付きラベル入力
-ui.chart(|c| { c.line(&data); c.grid(true); }, 50, 16); // 折れ線/散布図/棒グラフ
-ui.scatter(&points, 50, 16);                 // 散布図
-ui.histogram(&values, 40, 12);               // 自動ビニングヒストグラム
-ui.bar_chart(&data, 24);                     // 水平棒グラフ
-ui.sparkline(&values, 16);                   // トレンドライン ▁▂▃▅▇
-ui.canvas(40, 10, |cv| { cv.circle(20, 20, 15); }); // ブレイルキャンバス
-ui.grid(3, |ui| { /* 3列グリッド */ });      // グリッドレイアウト
-ui.tooltip("Save the current file");         // ホバー時ツールチップ
-ui.calendar(&mut cal);                       // 月ナビ付き日付ピッカー
-ui.screen("home", &screens, |ui| {});        // 画面ルーティングスタック
-ui.confirm("Delete?", &mut yes);             // マウス対応の確認ダイアログ
-```
-
-すべてのウィジェットが自分でキーボードイベント、フォーカス状態、マウスインタラクションを処理します。
-
-### カスタムウィジェット
-
-`Widget` トレイトを実装して独自ウィジェットを作成できます:
-
-```rust
-use slt::{Context, Widget, Color, Style};
-
-struct Rating { value: u8, max: u8 }
-
-impl Widget for Rating {
-    type Response = bool;
-
-    fn ui(&mut self, ui: &mut Context) -> bool {
-        let focused = ui.register_focusable();
-        let mut changed = false;
-
-        if focused {
-            if ui.key('+') && self.value < self.max { self.value += 1; changed = true; }
-            if ui.key('-') && self.value > 0 { self.value -= 1; changed = true; }
-        }
-
-        let stars: String = (0..self.max)
-            .map(|i| if i < self.value { '★' } else { '☆' })
-            .collect();
-        let color = if focused { Color::Yellow } else { Color::White };
-        ui.styled(stars, Style::new().fg(color));
-        changed
-    }
-}
-
-// 使い方: ui.widget(&mut rating);
-```
-
-フォーカス、イベント、テーマ、レイアウト — すべて `Context` 経由でアクセス可能。トレイト1つ、メソッド1つ。
-
-## 機能
-
-<details>
-<summary><b>レイアウト</b></summary>
-
-| 機能 | API |
-|------|-----|
-| 縦方向スタック | `ui.col(\|ui\| { })` |
-| 横方向スタック | `ui.row(\|ui\| { })` |
-| グリッドレイアウト | `ui.grid(3, \|ui\| { })` |
-| 子要素間のギャップ | `.gap(1)` |
-| Flex grow | `.grow(1)` |
-| 末尾へ押し出し | `ui.spacer()` |
-| 整列 | `.align(Align::Center)` |
-| パディング | `.p(1)`, `.px(2)`, `.py(1)` |
-| マージン | `.m(1)`, `.mx(2)`, `.my(1)` |
-| 固定サイズ | `.w(20)`, `.h(10)` |
-| 制約 | `.min_w(10)`, `.max_w(60)` |
-| パーセント指定 | `.w_pct(50)`, `.h_pct(80)` |
-| 均等配置 | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| テキスト折り返し | `ui.text("long text...").wrap()` |
-| タイトル付きボーダー | `.border(Border::Rounded).title("Panel")` |
-| 辺ごとのボーダー | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
-| レスポンシブギャップ | `.gap_at(Breakpoint::Md, 2)` |
-
-</details>
-
-<details>
-<summary><b>スタイリング</b></summary>
-
-```rust
-ui.text("styled").bold().italic().underline().fg(Color::Cyan).bg(Color::Black);
-```
-
-16の名前付きカラー · 256色パレット · 24ビット RGB · 6つの修飾子 · 6つのボーダースタイル
-
-</details>
-
-<details>
-<summary><b>テーマ</b></summary>
-
-```rust
-// 7つの組み込みプリセット
-slt::run_with(RunConfig::default().theme(Theme::catppuccin()), |ui| {
-    ui.set_theme(Theme::dark()); // 実行時に切り替え
+// テキストとレイアウト
+ui.text("Hello").bold().fg(Color::Cyan);
+ui.row(|ui| {
+    ui.text("left");
+    ui.spacer();
+    ui.text("right");
 });
 
-// カスタムテーマの構築
-let theme = Theme::builder()
-    .primary(Color::Rgb(255, 107, 107))
-    .accent(Color::Cyan)
-    .build();
-```
+// 入力とアクション
+ui.text_input(&mut name);
+if ui.button("Save").clicked {}
+ui.checkbox("Dark mode", &mut dark);
 
-7プリセット (dark, light, dracula, catppuccin, nord, solarized_dark, tokyo_night)。15色スロット + `is_dark` フラグでカスタムテーマを作成。すべてのウィジェットが自動的に継承します。
+// データとナビゲーション
+ui.tabs(&mut tabs);
+ui.list(&mut items);
+ui.table(&mut data);
+ui.command_palette(&mut palette);
 
-</details>
+// オーバーレイとリッチ出力
+ui.toast(&mut toasts);
+ui.modal(|ui| {
+    ui.text("Confirm?").bold();
+});
+ui.markdown("# Hello **world**");
 
-<details>
-<summary><b>スタイルレシピ</b></summary>
-
-```rust
-use slt::{ContainerStyle, Border, Color};
-
-const CARD: ContainerStyle = ContainerStyle::new()
-    .border(Border::Rounded).p(1).bg(Color::Indexed(236));
-
-// 一度定義してどこでも適用
-ui.container().apply(&CARD).col(|ui| { ... });
-
-// 複数を合成 — 後から書いたものが優先
-ui.container().apply(&CARD).grow(1).gap(2).col(|ui| { ... });
-```
-
-`const` スタイルはランタイムコストゼロ。`.apply()` チェーンで合成可能。
-
-</details>
-
-<details>
-<summary><b>レスポンシブレイアウト</b></summary>
-
-```rust
-ui.container()
-    .w(20).md_w(40).lg_w(60)  // ブレークポイントで幅が変わる
-    .p(1).lg_p(2)
-    .col(|ui| { ... });
-```
-
-35のブレークポイント条件付きメソッド (`xs_`, `sm_`, `md_`, `lg_`, `xl_`)。ブレークポイント: Xs (<40), Sm (40–79), Md (80–119), Lg (120–159), Xl (≥160)。
-
-</details>
-
-<details>
-<summary><b>アニメーション</b></summary>
-
-```rust
-let mut tween = Tween::new(0.0, 100.0, 60).easing(ease_out_bounce);
-let value = tween.value(ui.tick());
-
-let mut spring = Spring::new(0.0, 180.0, 12.0);
-spring.set_target(100.0);
-
-let mut kf = Keyframes::new(120)
-    .stop(0.0, 0.0).stop(0.5, 100.0).stop(1.0, 50.0)
-    .loop_mode(LoopMode::PingPong);
-```
-
-9つのイージング関数を持つ Tween。スプリング物理演算。ループモード付きキーフレームタイムライン。Sequence チェーン。リストアニメーション用 Stagger。
-
-</details>
-
-<details>
-<summary><b>非同期 (Async)</b></summary>
-
-```rust
-let tx = slt::run_async(|ui, messages: &mut Vec<String>| {
-    for msg in messages.drain(..) { ui.text(msg); }
-})?;
-tx.send("Hello from background!".into()).await?;
-```
-
-オプションの tokio 統合。`cargo add superlighttui --features async` で有効化。
-
-</details>
-
-<details>
-<summary><b>インラインモード</b></summary>
-
-```rust
-slt::run_inline(3, |ui| {
-    ui.text("Renders below your prompt.");
-    ui.text("No alternate screen.").dim();
+// ビジュアライゼーション
+ui.chart(|c| {
+    c.line(&data);
+    c.grid(true);
+}, 50, 16);
+ui.sparkline(&values, 16);
+ui.canvas(40, 10, |cv| {
+    cv.circle(20, 20, 15);
 });
 ```
 
-ターミナルを占有せず、カーソルの下に固定高さの UI をレンダリングします。
+ウィジェットの分類一覧は [ウィジェットガイド] を参照してください。
 
-</details>
+## ライブラリガイド
 
-<details>
-<summary><b>エラーバウンダリ</b></summary>
+| ドキュメント | 内容 |
+|-------------|------|
+| [ドキュメント] | ドキュメント構造とガイドマップ |
+| [クイックスタート] | インストール、初めてのアプリ、カウンター、レイアウト |
+| [ウィジェットガイド] | ウィジェットカタログと主要 API |
+| [パターンガイド] | 状態管理、フォーム、オーバーレイ、非同期、カスタムウィジェット |
+| [サンプル集] | サンプルインデックスと実行コマンド |
+| [アーキテクチャ] | モジュールマップ、フレームライフサイクル |
+| [バックエンドガイド] | `Backend`、`AppState`、`frame()`、インラインモード |
+| [テストガイド] | `TestBackend`、`EventBuilder`、インタラクションテスト |
+| [デバッグガイド] | F12 オーバーレイ、クリッピング、1フレーム遅延 |
+| [AIガイド] | AI コーディングエージェント向けクイックリファレンス |
+| [アニメーションガイド] | Tween、Spring、Keyframes、Sequence、Stagger |
+| [テーマガイド] | テーマプリセット、ThemeBuilder、カスタムテーマ |
+| [機能フラグガイド] | フィーチャーフラグ、オプション依存関係 |
+| [`docs/DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) | API がこの形になった理由 |
 
-```rust
-ui.error_boundary(|ui| {
-    ui.text("If this panics, the app keeps running.");
-});
-```
-
-ウィジェットのパニックをキャッチしてアプリをクラッシュさせません。部分的なコマンドはロールバックされ、フォールバックがレンダリングされます。
-
-</details>
-
-<details>
-<summary><b>画像レンダリング</b></summary>
-
-```sh
-cargo add superlighttui --features image
-```
-
-```rust
-use slt::HalfBlockImage;
-
-let photo = image::open("photo.png").unwrap();
-let img = HalfBlockImage::from_dynamic(&photo, 60, 30);
-ui.image(&img);
-```
-
-ハーフブロック (▀▄) 画像レンダリング。Sixel プロトコル (v0.13.2): `ui.sixel_image()` で xterm、foot、mlterm 上のピクセルパーフェクト画像表示。
-
-</details>
-
-<details>
-<summary><b>フィーチャーフラグ</b></summary>
-
-| フラグ | 説明 |
-|--------|------|
-| `async` | tokio チャンネルベースのメッセージパッシングで `run_async()` |
-| `serde` | Style、Color、Theme、レイアウト型の Serialize/Deserialize |
-| `image` | `image` クレートで `HalfBlockImage::from_dynamic()` |
-| `full` | 上記すべて |
-
-```toml
-[dependencies]
-superlighttui = { version = "0.13", features = ["full"] }
-```
-
-</details>
-
-<details>
-<summary><b>スナップショットテスト</b></summary>
-
-```rust
-use slt::TestBackend;
-
-let mut backend = TestBackend::new(40, 10);
-backend.render(|ui| {
-    ui.bordered(Border::Rounded).pad(1).col(|ui| {
-        ui.text("Hello");
-    });
-});
-insta::assert_snapshot!(backend.to_string_trimmed());
-```
-
-[insta](https://crates.io/crates/insta) と組み合わせてスナップショットベースの UI リグレッションテストに使用できます。
-
-</details>
-
-<details>
-<summary><b>デバッグ</b></summary>
-
-SLT アプリで **F12** を押すとレイアウトデバッガーオーバーレイを切り替えられます。コンテナの境界、ネスト深度、レイアウト構造を表示します。
-
-</details>
-
-## サンプル
+## サンプルハイライト
 
 | サンプル | コマンド | 内容 |
 |---------|---------|------|
-| hello | `cargo run --example hello` | 最小構成 |
-| counter | `cargo run --example counter` | 状態 + キーボード |
-| demo | `cargo run --example demo` | 全ウィジェット |
-| demo_dashboard | `cargo run --example demo_dashboard` | ライブダッシュボード |
+| hello | `cargo run --example hello` | 最小構成のアプリ |
+| counter | `cargo run --example counter` | 状態 + キーボード入力 |
+| demo | `cargo run --example demo` | ウィジェット全体ツアー |
+| demo_dashboard | `cargo run --example demo_dashboard` | ダッシュボードレイアウト |
 | demo_cli | `cargo run --example demo_cli` | CLI ツールレイアウト |
-| demo_spreadsheet | `cargo run --example demo_spreadsheet` | データグリッド |
-| demo_website | `cargo run --example demo_website` | ターミナル内 Web サイト |
-| demo_game | `cargo run --example demo_game` | Tetris + Snake + Minesweeper |
-| demo_fire | `cargo run --release --example demo_fire` | DOOM 炎エフェクト (ハーフブロック) |
-| demo_ime | `cargo run --example demo_ime` | 韓国語/CJK IME 入力 |
-| inline | `cargo run --example inline` | インラインモード |
-| anim | `cargo run --example anim` | Tween + Spring + Keyframes |
-| demo_infoviz | `cargo run --example demo_infoviz` | データビジュアライゼーション |
-| demo_trading | `cargo run --example demo_trading` | 取引所スタイルのトレーディング端末 |
-| async_demo | `cargo run --example async_demo --features async` | バックグラウンドタスク |
+| demo_infoviz | `cargo run --example demo_infoviz` | チャートとデータビジュアライゼーション |
+| demo_game | `cargo run --example demo_game` | イミディエイトモードのインタラクション |
+| async_demo | `cargo run --example async_demo --features async` | バックグラウンドメッセージ |
 
-## アーキテクチャ
+すべてのサンプルの分類インデックスは [サンプル集] にあります。
 
-```
-Closure → Context collects Commands → build_tree() → flexbox layout → diff buffer → flush
-```
+## カスタムウィジェットとバックエンド
 
-各フレーム: クロージャが実行され、SLT が記述内容を収集し、Flexbox レイアウトを計算し、前フレームとの差分を取り、変更されたセルだけをフラッシュします。
+- `Widget` トレイトを実装して、フォーカス、レイアウト、イベント、テーマにフルアクセスできる再利用可能なウィジェットを構築できます。
+- `Backend` を実装し `frame()` を駆動すれば、ターミナル以外のレンダラー、テストハーネス、組み込みターゲットに対応できます。
+- `TestBackend` でヘッドレスレンダリングとスナップショット形式のアサーションが可能です。
 
-Pure Rust。マクロなし、コード生成なし、ビルドスクリプトなし。
-
-### カスタムバックエンド
-
-SLT のレンダリングは `Backend` トレイトで抽象化されており、ターミナル以外のカスタムレンダリングターゲットを実装できます:
-
-```rust
-use slt::{Backend, AppState, Buffer, Rect, RunConfig, Context, Event};
-
-struct MyBackend { buffer: Buffer }
-
-impl Backend for MyBackend {
-    fn size(&self) -> (u32, u32) {
-        (self.buffer.area.width, self.buffer.area.height)
-    }
-    fn buffer_mut(&mut self) -> &mut Buffer { &mut self.buffer }
-    fn flush(&mut self) -> std::io::Result<()> {
-        // self.buffer をターゲット (canvas, GPU, network など) にレンダリング
-        Ok(())
-    }
-}
-```
-
-`Backend` トレイトのメソッドは3つ: `size()`、`buffer_mut()`、`flush()`。カスタムバックエンドは完全にレンダリングされた `Buffer` を受け取り、WebGL、egui 埋め込み、SSH トンネル、テストハーネスなど好きな方法で表示できます。
-
-### AI ネイティブウィジェット
-
-SLT には AI/LLM ワークフロー向けの専用ウィジェットが含まれています:
-
-| ウィジェット | 説明 |
-|------------|------|
-| `streaming_text()` | 点滅カーソル付きトークンバイトークンテキスト表示 |
-| `streaming_markdown()` | 見出し、コードブロック、インライン書式付きストリーミング Markdown |
-| `tool_approval()` | ツール呼び出しの人間によるアプローブ/リジェクト |
-| `context_bar()` | アクティブなコンテキストソースを示すトークンカウンターバー |
-| `markdown()` | 静的 Markdown レンダリング |
-| `code_block()` | シンタックスハイライト付きコード表示 |
+詳細は [パターンガイド] と [アーキテクチャ] を参照してください。
 
 ## コントリビューション
 
-ガイドラインは [CONTRIBUTING.md](../CONTRIBUTING.md) を参照してください。
+[コントリビュート] を読んでから、`docs/DESIGN_PRINCIPLES.md` と [アーキテクチャ] を参照してください。
+リリースと CI プロセスでは、フォーマット、チェック、clippy、テスト、サンプルのコンパイルがすべて通ることが求められます。
 
 ## ライセンス
 
@@ -485,6 +198,18 @@ SLT には AI/LLM ワークフロー向けの専用ウィジェットが含ま�
 [CI]: https://github.com/subinium/SuperLightTUI/actions/workflows/ci.yml
 [Crate]: https://crates.io/crates/superlighttui
 [Docs]: https://docs.rs/superlighttui
-[Examples]: https://github.com/subinium/SuperLightTUI/tree/main/examples
-[Contributing]: https://github.com/subinium/SuperLightTUI/blob/main/CONTRIBUTING.md
+[ドキュメント]: README.md
+[クイックスタート]: QUICK_START.md
+[ウィジェットガイド]: WIDGETS.md
+[サンプル集]: EXAMPLES.md
+[パターンガイド]: PATTERNS.md
+[アーキテクチャ]: ARCHITECTURE.md
+[バックエンドガイド]: BACKENDS.md
+[テストガイド]: TESTING.md
+[デバッグガイド]: DEBUGGING.md
+[AIガイド]: AI_GUIDE.md
+[アニメーションガイド]: ANIMATION.md
+[テーマガイド]: THEMING.md
+[機能フラグガイド]: FEATURES.md
+[コントリビュート]: ../CONTRIBUTING.md
 [License]: ../LICENSE

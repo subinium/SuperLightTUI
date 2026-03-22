@@ -137,144 +137,168 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
     match lang {
         #[cfg(feature = "syntax-rust")]
         "rust" | "rs" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_rust::LANGUAGE.into(),
                     "rust",
                     tree_sitter_rust::HIGHLIGHTS_QUERY,
                     tree_sitter_rust::INJECTIONS_QUERY,
                     "",
                 )
-                .expect("valid rust highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-python")]
         "python" | "py" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_python::LANGUAGE.into(),
                     "python",
                     tree_sitter_python::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid python highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-javascript")]
         "javascript" | "js" | "jsx" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_javascript::LANGUAGE.into(),
                     "javascript",
                     tree_sitter_javascript::HIGHLIGHT_QUERY,
                     tree_sitter_javascript::INJECTIONS_QUERY,
                     tree_sitter_javascript::LOCALS_QUERY,
                 )
-                .expect("valid javascript highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-go")]
         "go" | "golang" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_go::LANGUAGE.into(),
                     "go",
                     tree_sitter_go::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid go highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-bash")]
         "bash" | "sh" | "shell" | "zsh" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_bash::LANGUAGE.into(),
                     "bash",
                     tree_sitter_bash::HIGHLIGHT_QUERY,
                     "",
                     "",
                 )
-                .expect("valid bash highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-json")]
         "json" | "jsonc" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_json::LANGUAGE.into(),
                     "json",
                     tree_sitter_json::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid json highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-toml")]
         "toml" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_toml_ng::LANGUAGE.into(),
                     "toml",
                     tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid toml highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-c")]
         "c" | "h" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_c::LANGUAGE.into(),
                     "c",
                     tree_sitter_c::HIGHLIGHT_QUERY,
                     "",
                     "",
                 )
-                .expect("valid c highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-cpp")]
         "cpp" | "c++" | "cxx" | "cc" | "hpp" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
                 #[cfg(feature = "syntax-c")]
                 let highlights = {
                     let mut combined = String::with_capacity(
@@ -290,136 +314,160 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
                 #[cfg(not(feature = "syntax-c"))]
                 let highlights = tree_sitter_cpp::HIGHLIGHT_QUERY.to_string();
 
-                let mut c = HighlightConfiguration::new(
+                HighlightConfiguration::new(
                     tree_sitter_cpp::LANGUAGE.into(),
                     "cpp",
                     &highlights,
                     "",
                     "",
                 )
-                .expect("valid cpp highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-typescript")]
         "typescript" | "ts" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                     "typescript",
                     tree_sitter_typescript::HIGHLIGHTS_QUERY,
                     tree_sitter_typescript::LOCALS_QUERY,
                     "",
                 )
-                .expect("valid typescript highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-typescript")]
         "tsx" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_typescript::LANGUAGE_TSX.into(),
                     "tsx",
                     tree_sitter_typescript::HIGHLIGHTS_QUERY,
                     tree_sitter_typescript::LOCALS_QUERY,
                     "",
                 )
-                .expect("valid tsx highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-java")]
         "java" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_java::LANGUAGE.into(),
                     "java",
                     tree_sitter_java::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid java highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-ruby")]
         "ruby" | "rb" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_ruby::LANGUAGE.into(),
                     "ruby",
                     tree_sitter_ruby::HIGHLIGHTS_QUERY,
                     tree_sitter_ruby::LOCALS_QUERY,
                     "",
                 )
-                .expect("valid ruby highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-css")]
         "css" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_css::LANGUAGE.into(),
                     "css",
                     tree_sitter_css::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid css highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-html")]
         "html" | "htm" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_html::LANGUAGE.into(),
                     "html",
                     tree_sitter_html::HIGHLIGHTS_QUERY,
                     tree_sitter_html::INJECTIONS_QUERY,
                     "",
                 )
-                .expect("valid html highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         #[cfg(feature = "syntax-yaml")]
         "yaml" | "yml" => {
-            static CFG: OnceLock<HighlightConfiguration> = OnceLock::new();
-            Some(CFG.get_or_init(|| {
-                let mut c = HighlightConfiguration::new(
+            static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+            CFG.get_or_init(|| {
+                HighlightConfiguration::new(
                     tree_sitter_yaml::LANGUAGE.into(),
                     "yaml",
                     tree_sitter_yaml::HIGHLIGHTS_QUERY,
                     "",
                     "",
                 )
-                .expect("valid yaml highlight config");
-                c.configure(HIGHLIGHT_NAMES);
-                c
-            }))
+                .ok()
+                .map(|mut c| {
+                    c.configure(HIGHLIGHT_NAMES);
+                    c
+                })
+            })
+            .as_ref()
         }
 
         _ => None,
