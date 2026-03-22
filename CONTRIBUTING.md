@@ -1,8 +1,9 @@
 # Contributing to SLT
 
 Before contributing, read:
-- **[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md)** — Why things are the way they are
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — How the code is organized
+- **[`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md)** — Why things are the way they are
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — How the code is organized
+- **[`docs/WIDGETS.md`](docs/WIDGETS.md)** — Which APIs and state types live where
 
 ## Getting Started
 
@@ -71,18 +72,19 @@ cargo check --examples --all-features
 Follow this checklist when adding a new widget:
 
 1. **State struct** in `widgets.rs` — name it `{Widget}State`, implement `Default`
-2. **Rendering method** on `Context` in `context/widgets_interactive.rs` (or `widgets_display.rs` for non-interactive)
-3. **Re-export** in `lib.rs`
-4. **Doc comment** (`///`) on the public method with usage example
-5. **Response pattern** — interactive widgets return `Response`, display widgets return `&mut Self`
-6. **Focus** — call `register_focusable()` if the widget accepts keyboard input
-7. **Events** — consume handled key events so they don't bubble
-8. **Theme** — use `self.theme.*` for default colors
-9. **Example** — add to an existing example or create a new one
+2. **State placement** in the matching `src/widgets/*.rs` group file, then surfaced through `src/widgets.rs`
+3. **Rendering method** on `Context` in the matching `src/context/widgets_*/` subfile (`widgets_input/`, `widgets_display/`, `widgets_interactive/`, or `widgets_viz.rs`)
+4. **Re-export** in `lib.rs`
+5. **Doc comment** (`///`) on the public method with usage example
+6. **Response pattern** — interactive widgets return `Response`, display widgets return `&mut Self`
+7. **Focus** — call `register_focusable()` if the widget accepts keyboard input
+8. **Events** — consume handled key events so they don't bubble
+9. **Theme** — use `self.theme.*` for default colors
+10. **Example** — add to an existing example or create a new one
 
 ## Error Handling
 
-See [DESIGN_PRINCIPLES.md — Error Handling](DESIGN_PRINCIPLES.md#6-error-handling) for the full policy.
+See [`docs/DESIGN_PRINCIPLES.md` — Error Handling](docs/DESIGN_PRINCIPLES.md#6-error-handling) for the full policy.
 
 Summary:
 - Use `io::Result` for fallible operations
@@ -91,7 +93,7 @@ Summary:
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map and data flow.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full module map and data flow.
 
 ```
 User closure → Context collects Commands → build_tree() → flexbox compute → render to Buffer → diff → flush
@@ -129,6 +131,6 @@ The release workflow (`.github/workflows/release.yml`) will:
 
 ## Dependencies
 
-Core: `crossterm`, `unicode-width`, `compact_str`. Optional: `tokio` (async), `serde`, `image`.
+Core: `unicode-width`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, tree-sitter syntax features.
 
-Do not add new dependencies without discussion. See [DESIGN_PRINCIPLES.md — Dependencies](DESIGN_PRINCIPLES.md#9-dependencies).
+Do not add new dependencies without discussion. See [`docs/DESIGN_PRINCIPLES.md` — Dependencies](docs/DESIGN_PRINCIPLES.md#9-dependencies).

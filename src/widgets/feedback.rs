@@ -1,0 +1,242 @@
+/// State for the rich log viewer widget.
+#[derive(Debug, Clone)]
+pub struct RichLogState {
+    /// Log entries to display.
+    pub entries: Vec<RichLogEntry>,
+    /// Scroll offset (0 = top).
+    pub(crate) scroll_offset: usize,
+    /// Whether to auto-scroll to bottom when new entries are added.
+    pub auto_scroll: bool,
+    /// Maximum number of entries to keep (None = unlimited).
+    pub max_entries: Option<usize>,
+}
+
+/// A single entry in a RichLog.
+#[derive(Debug, Clone)]
+pub struct RichLogEntry {
+    /// Styled text segments for this entry.
+    pub segments: Vec<(String, Style)>,
+}
+
+impl RichLogState {
+    /// Create an empty rich log state.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            scroll_offset: 0,
+            auto_scroll: true,
+            max_entries: None,
+        }
+    }
+
+    /// Add a single-style entry to the log.
+    pub fn push(&mut self, text: impl Into<String>, style: Style) {
+        self.push_segments(vec![(text.into(), style)]);
+    }
+
+    /// Add a plain text entry using default style.
+    pub fn push_plain(&mut self, text: impl Into<String>) {
+        self.push(text, Style::new());
+    }
+
+    /// Add a multi-segment styled entry to the log.
+    pub fn push_segments(&mut self, segments: Vec<(String, Style)>) {
+        self.entries.push(RichLogEntry { segments });
+
+        if let Some(max_entries) = self.max_entries {
+            if self.entries.len() > max_entries {
+                let remove_count = self.entries.len() - max_entries;
+                self.entries.drain(0..remove_count);
+                self.scroll_offset = self.scroll_offset.saturating_sub(remove_count);
+            }
+        }
+
+        if self.auto_scroll {
+            self.scroll_offset = usize::MAX;
+        }
+    }
+
+    /// Clear all entries and reset scroll position.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.scroll_offset = 0;
+    }
+
+    /// Return number of entries in the log.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true when no entries are present.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl Default for RichLogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// State for the calendar date picker widget.
+#[derive(Debug, Clone)]
+pub struct CalendarState {
+    /// Current display year.
+    pub year: i32,
+    /// Current display month (1–12).
+    pub month: u32,
+    /// Currently selected day, if any.
+    pub selected_day: Option<u32>,
+    pub(crate) cursor_day: u32,
+}
+
+impl CalendarState {
+    /// Create a new `CalendarState` initialized to the current month.
+    pub fn new() -> Self {
+        let (year, month) = Self::current_year_month();
+        Self::from_ym(year, month)
+    }
+
+    /// Create a `CalendarState` for a specific year and month.
+    pub fn from_ym(year: i32, month: u32) -> Self {
+        let month = month.clamp(1, 12);
+        Self {
+            year,
+            month,
+            selected_day: None,
+            cursor_day: 1,
+        }
+    }
+
+    /// Returns the selected date as `(year, month, day)`, if any.
+    pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
+        self.selected_day.map(|day| (self.year, self.month, day))
+    }
+
+    /// Navigate to the previous month.
+    pub fn prev_month(&mut self) {
+        if self.month == 1 {
+            self.month = 12;
+            self.year -= 1;
+        } else {
+            self.month -= 1;
+        }
+        self.clamp_days();
+    }
+
+    /// Navigate to the next month.
+    pub fn next_month(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
+        } else {
+            self.month += 1;
+        }
+        self.clamp_days();
+    }
+
+    pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if Self::is_leap_year(year) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        }
+    }
+
+    pub(crate) fn first_weekday(year: i32, month: u32) -> u32 {
+        let month = month.clamp(1, 12);
+        let offsets = [0_i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let mut y = year;
+        if month < 3 {
+            y -= 1;
+        }
+        let sunday_based = (y + y / 4 - y / 100 + y / 400 + offsets[(month - 1) as usize] + 1) % 7;
+        ((sunday_based + 6) % 7) as u32
+    }
+
+    fn clamp_days(&mut self) {
+        let max_day = Self::days_in_month(self.year, self.month);
+        self.cursor_day = self.cursor_day.clamp(1, max_day);
+        if let Some(day) = self.selected_day {
+            self.selected_day = Some(day.min(max_day));
+        }
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    }
+
+    fn current_year_month() -> (i32, u32) {
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return (1970, 1);
+        };
+        let days_since_epoch = (duration.as_secs() / 86_400) as i64;
+        let (year, month, _) = Self::civil_from_days(days_since_epoch);
+        (year, month)
+    }
+
+    fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+        let z = days_since_epoch + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let mut year = (yoe as i32) + (era as i32) * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let month = (mp + if mp < 10 { 3 } else { -9 }) as u32;
+        if month <= 2 {
+            year += 1;
+        }
+        (year, month, day)
+    }
+}
+
+impl Default for CalendarState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Visual variant for buttons.
+///
+/// Controls the color scheme used when rendering a button. Pass to
+/// [`crate::Context::button_with`] to create styled button variants.
+///
+/// - `Default` — theme text color, primary when focused (same as `button()`)
+/// - `Primary` — primary color background with contrasting text
+/// - `Danger` — error/red color for destructive actions
+/// - `Outline` — bordered appearance without fill
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ButtonVariant {
+    /// Standard button style.
+    #[default]
+    Default,
+    /// Filled button with primary background color.
+    Primary,
+    /// Filled button with error/danger background color.
+    Danger,
+    /// Bordered button without background fill.
+    Outline,
+}
+
+/// Direction indicator for stat widgets.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trend {
+    /// Positive movement.
+    Up,
+    /// Negative movement.
+    Down,
+}
+
+// ── Select / Dropdown ─────────────────────────────────────────────────

@@ -3,32 +3,54 @@
 This document describes how the code is organized and how data flows through the system.
 For design philosophy and conventions, see [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md).
 
+Related docs:
+- [QUICK_START.md](QUICK_START.md)
+- [WIDGETS.md](WIDGETS.md)
+- [PATTERNS.md](PATTERNS.md)
+- [EXAMPLES.md](EXAMPLES.md)
+
 ---
 
 ## Module Map
 
 ```
 src/
-├── lib.rs                      # Crate root
-│   ├── Re-exports (public API surface)
-│   ├── Backend trait
-│   ├── AppState, RunConfig
-│   └── run(), run_with(), run_inline(), run_async(), frame()
-│
-├── context.rs                  # The "UI handle" — passed to user closures
-│   ├── Context struct (25+ fields: layout, focus, scroll, animation, hooks, theme, events, debug)
-│   ├── ContainerBuilder        # Fluent builder for row/col/grid containers
-│   ├── Response                # Widget interaction result { clicked, hovered, changed, focused, rect }
-│   └── State<T> / use_state()  # Hook system for component-local state
-│
+├── lib.rs                      # Crate root, public re-exports, run()/frame() entry points
+├── context.rs                  # Facade for core context types + widget impl modules
 ├── context/
-│   ├── widgets_display.rs      # impl Context: text, styled, button, tabs, modal, overlay, markdown, code_block...
-│   ├── widgets_interactive.rs  # impl Context: list, table, select, radio, multi_select, tree, virtual_list...
-│   ├── widgets_input.rs        # impl Context: text_input, textarea, form_field, validation
-│   └── widgets_viz.rs          # impl Context: chart, bar_chart, sparkline, histogram, canvas, scatter, candlestick...
+│   ├── state.rs                # State<T>, Response
+│   ├── bars.rs                 # BarDirection, Bar, BarChartConfig, BarGroup
+│   ├── widget.rs               # Widget trait
+│   ├── core.rs                 # Context struct + ContextSnapshot
+│   ├── container.rs            # ContainerBuilder + CanvasContext
+│   ├── runtime.rs              # Core Context methods (hooks, focus, notifications)
+│   ├── helpers.rs              # Shared helper functions for widget impls
+│   ├── widgets_display.rs      # Display/layout facade
+│   ├── widgets_display/
+│   │   ├── text.rs             # text, style chains, size/margin helpers
+│   │   ├── rich_output.rs      # big_text, image, streaming, tool approval, context bar
+│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, empty_state
+│   │   └── layout.rs           # screen, row/col, modal, tooltip, container, scrollable, form helpers
+│   ├── widgets_interactive.rs  # Interactive facade
+│   ├── widgets_interactive/
+│   │   ├── collections.rs      # grid, list, calendar, file picker
+│   │   ├── selection.rs        # table, tabs, button, checkbox, toggle, select, radio, multi_select
+│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_seq
+│   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
+│   │   └── tree_widgets.rs     # tree widget internals
+│   ├── widgets_input.rs        # Input facade
+│   └── widgets_input/
+│       ├── text_input.rs       # text input widget
+│       ├── feedback.rs         # spinner, toast, slider
+│       └── textarea_progress.rs # textarea and progress widgets
 │
-├── widgets.rs                  # State structs: TextInputState, TableState, ListState, SelectState, TabsState...
-│                               # (30+ state types — one per interactive widget)
+├── widgets.rs                  # Facade for widget state types
+├── widgets/
+│   ├── input.rs                # StaticOutput, TextInputState, FormField, FormState, TextareaState, SpinnerState
+│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, ScrollState
+│   ├── feedback.rs             # RichLogState, CalendarState, Toast types, ButtonVariant, Trend
+│   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
+│   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, tool approval types, ContextItem
 │
 ├── layout.rs                   # Layout engine
 │   ├── Command enum            # Flat representation of UI calls
@@ -165,10 +187,11 @@ lib.rs (entry point)
 ```
 
 Key observations:
-- `context.rs` is the central hub — it depends on almost everything
+- `context.rs` stays the public hub, but heavy logic is now split into smaller files under `src/context/`
+- `widgets.rs` stays the public state catalog, but the concrete state types are grouped under `src/widgets/`
 - `terminal.rs` is isolated — it only knows about `buffer` and `event`
-- `style`, `layout`, `anim` are independent of each other
-- Widget submodules (`context/widgets_*.rs`) add `impl Context` blocks — they don't define new types
+- `style`, `layout`, `anim` are largely independent of each other
+- Widget facades under `src/context/widgets_*.rs` now act as indexes for narrower implementation files
 
 ---
 

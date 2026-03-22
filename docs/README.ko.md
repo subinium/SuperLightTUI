@@ -97,7 +97,7 @@ ui.container()
     });
 ```
 
-**핵심 의존성은 2개** — 터미널 I/O에 `crossterm`, 문자 너비 측정에 `unicode-width`. 선택적: 비동기에 `tokio`, 직렬화에 `serde`, 이미지 로딩에 `image`. `unsafe` 코드 없음.
+**작은 코어, 선택적 확장** — 핵심은 `unicode-width`와 `compact_str`. 터미널 I/O는 기본 활성화되는 `crossterm` 기능으로 제공됩니다. 선택적: 비동기에 `tokio`, 직렬화에 `serde`, 이미지 로딩에 `image`, QR 코드에 `qrcode`. `unsafe` 코드 없음.
 
 > **AI 지원 개발** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code)의 `rust-tui-development-with-slt` 스킬로 전체 API 레퍼런스, 베스트 패턴, 코드 생성 템플릿을 활용하세요. 또는 [tui.builders](https://tui.builders)에서 시각적으로 디자인할 수도 있습니다:
 
@@ -107,7 +107,7 @@ ui.container()
 
 ## 위젯
 
-55개 이상의 내장 위젯, 보일러플레이트 없음:
+다양한 내장 위젯, 보일러플레이트 없음:
 
 ```rust
 ui.text_input(&mut name);                    // 단일 행 입력
@@ -205,7 +205,7 @@ impl Widget for Rating {
 | 제약 조건 | `.min_w(10)`, `.max_w(60)` |
 | 퍼센트 크기 | `.w_pct(50)`, `.h_pct(80)` |
 | 균등 배치 | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| 텍스트 줄 바꿈 | `ui.text_wrap("long text...")` |
+| 텍스트 줄 바꿈 | `ui.text("long text...").wrap()` |
 | 타이틀 포함 보더 | `.border(Border::Rounded).title("Panel")` |
 | 면별 보더 | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 | 반응형 간격 | `.gap_at(Breakpoint::Md, 2)` |

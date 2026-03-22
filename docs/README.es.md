@@ -97,7 +97,7 @@ ui.container()
     });
 ```
 
-**Dos dependencias principales** — `crossterm` para I/O de terminal. `unicode-width` para medir caracteres. Opcionales: `tokio` (async), `serde` (serialización), `image` (carga de imágenes). Cero código `unsafe`.
+**Núcleo pequeño, extras opcionales** — el núcleo usa `unicode-width` y `compact_str`. El I/O de terminal llega por la feature `crossterm`, activada por defecto. Opcionales: `tokio` (async), `serde` (serialización), `image` (carga de imágenes), `qrcode`. Cero código `unsafe`.
 
 > **Desarrollo asistido por IA** — Usa el skill `rust-tui-development-with-slt` en [Claude Code](https://docs.anthropic.com/en/docs/claude-code) para referencia completa de API, mejores patrones y plantillas de generación de código. O diseña visualmente con [tui.builders](https://tui.builders):
 
@@ -107,7 +107,7 @@ ui.container()
 
 ## Widgets
 
-Más de 55 widgets integrados, sin código repetitivo:
+Amplio conjunto de widgets integrados, sin código repetitivo:
 
 ```rust
 ui.text_input(&mut name);                    // entrada de una línea
@@ -205,7 +205,7 @@ Foco, eventos, temas, layout: todo accesible a través de `Context`. Un trait, u
 | Restricciones | `.min_w(10)`, `.max_w(60)` |
 | Tamaño porcentual | `.w_pct(50)`, `.h_pct(80)` |
 | Justificación | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| Ajuste de texto | `ui.text_wrap("long text...")` |
+| Ajuste de texto | `ui.text("long text...").wrap()` |
 | Bordes con títulos | `.border(Border::Rounded).title("Panel")` |
 | Bordes por lado | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 | Espacio responsivo | `.gap_at(Breakpoint::Md, 2)` |

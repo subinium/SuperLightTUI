@@ -97,7 +97,7 @@ ui.container()
     });
 ```
 
-**コア依存は2つだけ** — ターミナル I/O に `crossterm`、文字幅計測に `unicode-width`。オプション: 非同期に `tokio`、シリアライズに `serde`、画像読み込みに `image`。`unsafe` コードはゼロです。
+**小さなコアと必要な分だけの拡張** — コア依存は `unicode-width` と `compact_str`。ターミナル I/O はデフォルト有効の `crossterm` feature で提供されます。オプション: 非同期に `tokio`、シリアライズに `serde`、画像読み込みに `image`、QR コードに `qrcode`。`unsafe` コードはゼロです。
 
 > **AI 支援開発** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) の `rust-tui-development-with-slt` スキルで完全な API リファレンス、ベストプラクティス、コード生成テンプレートを利用できます。または [tui.builders](https://tui.builders) でビジュアルデザインも可能です:
 
@@ -107,7 +107,7 @@ ui.container()
 
 ## ウィジェット
 
-55以上の組み込みウィジェット、ボイラープレートなし:
+組み込みウィジェットは幅広く、ボイラープレートは不要です:
 
 ```rust
 ui.text_input(&mut name);                    // 単行入力
@@ -205,7 +205,7 @@ impl Widget for Rating {
 | 制約 | `.min_w(10)`, `.max_w(60)` |
 | パーセント指定 | `.w_pct(50)`, `.h_pct(80)` |
 | 均等配置 | `.space_between()`, `.space_around()`, `.space_evenly()` |
-| テキスト折り返し | `ui.text_wrap("long text...")` |
+| テキスト折り返し | `ui.text("long text...").wrap()` |
 | タイトル付きボーダー | `.border(Border::Rounded).title("Panel")` |
 | 辺ごとのボーダー | `.border_top(false)`, `.border_sides(BorderSides::horizontal())` |
 | レスポンシブギャップ | `.gap_at(Breakpoint::Md, 2)` |
