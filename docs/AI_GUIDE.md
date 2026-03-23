@@ -84,6 +84,18 @@ Because layout feedback often uses previous-frame data in immediate-mode UI.
 - Use `palette::tailwind` colors instead of hardcoding RGB values.
 - Check `docs/FEATURES.md` before using feature-gated APIs.
 
+## Internal widget rules for agents
+
+When editing SLT built-in widgets inside `src/context/*`, prefer the internal interaction helpers instead of hand-rolling event scans again.
+These are internal `pub(crate)` helpers, not stable public API for external widgets.
+
+- Use `begin_widget_interaction(focused)` for marker + `Response` setup.
+- Use `available_key_presses()` / `available_pastes()` to iterate unconsumed inputs.
+- Use `left_clicks_for_interaction()` or `mouse_events_in_rect()` for hit-tested mouse handling.
+- Finish by calling `consume_indices(...)` instead of mutating `self.consumed[...]` across the widget body.
+
+Public custom widgets should still use the stable public surface (`register_focusable()`, `interaction()`, `Response`).
+
 ## Keep docs and implementation aligned
 
 When an agent changes a public API, it should update:

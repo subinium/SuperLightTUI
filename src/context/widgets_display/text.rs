@@ -15,6 +15,7 @@ impl Context {
     pub fn text(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
         let default_fg = self
+            .rollback
             .text_color_stack
             .iter()
             .rev()
@@ -31,7 +32,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -44,23 +45,9 @@ impl Context {
     pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
         let url_str = url.into();
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let response = self.response_for(interaction_id);
+        let (_interaction_id, response) = self.begin_widget_interaction(focused);
 
-        let mut activated = response.clicked;
-        if focused {
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        activated = true;
-                        self.consumed[i] = true;
-                    }
-                }
-            }
-        }
+        let activated = response.clicked || self.consume_activation_keys(focused);
 
         if activated {
             if let Err(e) = open_url(&url_str) {
@@ -90,7 +77,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -105,6 +92,7 @@ impl Context {
     pub fn text_wrap(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
         let default_fg = self
+            .rollback
             .text_color_stack
             .iter()
             .rev()
@@ -121,7 +109,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -153,7 +141,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -227,7 +215,7 @@ impl Context {
 
     /// Apply a per-character foreground gradient to the last rendered text.
     pub fn gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             let replacement = match &self.commands[idx] {
                 Command::Text {
                     content,
@@ -273,6 +261,7 @@ impl Context {
     /// Set foreground color when the current group is hovered or focused.
     pub fn group_hover_fg(&mut self, color: Color) -> &mut Self {
         let apply_group_style = self
+            .rollback
             .group_stack
             .last()
             .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
@@ -286,6 +275,7 @@ impl Context {
     /// Set background color when the current group is hovered or focused.
     pub fn group_hover_bg(&mut self, color: Color) -> &mut Self {
         let apply_group_style = self
+            .rollback
             .group_stack
             .last()
             .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
@@ -321,13 +311,13 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
     /// Enable word-boundary wrapping on the last rendered text element.
     pub fn wrap(&mut self) -> &mut Self {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             if let Command::Text { wrap, .. } = &mut self.commands[idx] {
                 *wrap = true;
             }
@@ -338,7 +328,7 @@ impl Context {
     /// Truncate the last rendered text with `…` when it exceeds its allocated width.
     /// Use with `.w()` to set a fixed width, or let the parent container constrain it.
     pub fn truncate(&mut self) -> &mut Self {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             if let Command::Text { truncate, .. } = &mut self.commands[idx] {
                 *truncate = true;
             }
@@ -347,7 +337,7 @@ impl Context {
     }
 
     fn modify_last_style(&mut self, f: impl FnOnce(&mut Style)) {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             match &mut self.commands[idx] {
                 Command::Text { style, .. } | Command::Link { style, .. } => f(style),
                 _ => {}
@@ -356,7 +346,7 @@ impl Context {
     }
 
     fn modify_last_constraints(&mut self, f: impl FnOnce(&mut Constraints)) {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             match &mut self.commands[idx] {
                 Command::Text { constraints, .. } | Command::Link { constraints, .. } => {
                     f(constraints)
@@ -367,7 +357,7 @@ impl Context {
     }
 
     fn modify_last_margin(&mut self, f: impl FnOnce(&mut Margin)) {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             match &mut self.commands[idx] {
                 Command::Text { margin, .. } | Command::Link { margin, .. } => f(margin),
                 _ => {}
@@ -382,7 +372,7 @@ impl Context {
     /// A value of `1` causes the element to expand and fill remaining space
     /// along the main axis.
     pub fn grow(&mut self, value: u16) -> &mut Self {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             if let Command::Text { grow, .. } = &mut self.commands[idx] {
                 *grow = value;
             }
@@ -392,7 +382,7 @@ impl Context {
 
     /// Set the text alignment of the last rendered text element.
     pub fn align(&mut self, align: Align) -> &mut Self {
-        if let Some(idx) = self.last_text_idx {
+        if let Some(idx) = self.rollback.last_text_idx {
             if let Command::Text {
                 align: text_align, ..
             } = &mut self.commands[idx]
@@ -520,7 +510,7 @@ impl Context {
     /// Useful for pushing siblings to opposite ends of a row or column.
     pub fn spacer(&mut self) -> &mut Self {
         self.commands.push(Command::Spacer { grow: 1 });
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         self
     }
 }

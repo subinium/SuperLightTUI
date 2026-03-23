@@ -1,3 +1,5 @@
+use super::*;
+
 impl Context {
     pub(crate) fn new(
         events: Vec<Event>,
@@ -6,9 +8,13 @@ impl Context {
         state: &mut FrameState,
         theme: Theme,
     ) -> Self {
+        let hook_states = &mut state.hook_states;
+        let focus = &mut state.focus;
+        let layout_feedback = &mut state.layout_feedback;
+        let diagnostics = &mut state.diagnostics;
         let consumed = vec![false; events.len()];
 
-        let mut mouse_pos = state.last_mouse_pos;
+        let mut mouse_pos = layout_feedback.last_mouse_pos;
         let mut click_pos = None;
         for event in &events {
             if let Event::Mouse(mouse) = event {
@@ -19,10 +25,10 @@ impl Context {
             }
         }
 
-        let mut focus_index = state.focus_index;
+        let mut focus_index = focus.focus_index;
         if let Some((mx, my)) = click_pos {
             let mut best: Option<(usize, u64)> = None;
-            for &(fid, rect) in &state.prev_focus_rects {
+            for &(fid, rect) in &layout_feedback.prev_focus_rects {
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
                     let area = rect.width as u64 * rect.height as u64;
                     if best.map_or(true, |(_, ba)| area < ba) {
@@ -42,41 +48,43 @@ impl Context {
             should_quit: false,
             area_width: width,
             area_height: height,
-            tick: state.tick,
+            tick: diagnostics.tick,
             focus_index,
-            focus_count: 0,
-            hook_states: std::mem::take(&mut state.hook_states),
-            hook_cursor: 0,
-            prev_focus_count: state.prev_focus_count,
-            modal_focus_start: 0,
-            modal_focus_count: 0,
-            prev_modal_focus_start: state.prev_modal_focus_start,
-            prev_modal_focus_count: state.prev_modal_focus_count,
-            scroll_count: 0,
-            prev_scroll_infos: std::mem::take(&mut state.prev_scroll_infos),
-            prev_scroll_rects: std::mem::take(&mut state.prev_scroll_rects),
-            interaction_count: 0,
-            prev_hit_map: std::mem::take(&mut state.prev_hit_map),
-            group_stack: Vec::new(),
-            prev_group_rects: std::mem::take(&mut state.prev_group_rects),
-            group_count: 0,
-            prev_focus_groups: std::mem::take(&mut state.prev_focus_groups),
-            _prev_focus_rects: std::mem::take(&mut state.prev_focus_rects),
+            hook_states: std::mem::take(hook_states),
+            prev_focus_count: focus.prev_focus_count,
+            prev_modal_focus_start: focus.prev_modal_focus_start,
+            prev_modal_focus_count: focus.prev_modal_focus_count,
+            prev_scroll_infos: std::mem::take(&mut layout_feedback.prev_scroll_infos),
+            prev_scroll_rects: std::mem::take(&mut layout_feedback.prev_scroll_rects),
+            prev_hit_map: std::mem::take(&mut layout_feedback.prev_hit_map),
+            prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
+            prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
+            _prev_focus_rects: std::mem::take(&mut layout_feedback.prev_focus_rects),
             mouse_pos,
             click_pos,
-            last_text_idx: None,
-            overlay_depth: 0,
-            modal_active: false,
-            prev_modal_active: state.prev_modal_active,
+            prev_modal_active: focus.prev_modal_active,
             clipboard_text: None,
-            debug: state.debug_mode,
+            debug: diagnostics.debug_mode,
             theme,
-            dark_mode: theme.is_dark,
             is_real_terminal: false,
             deferred_draws: Vec::new(),
-            notification_queue: std::mem::take(&mut state.notification_queue),
-            pending_tooltips: Vec::new(),
-            text_color_stack: Vec::new(),
+            rollback: ContextRollbackState {
+                last_text_idx: None,
+                focus_count: 0,
+                interaction_count: 0,
+                scroll_count: 0,
+                group_count: 0,
+                group_stack: Vec::new(),
+                overlay_depth: 0,
+                modal_active: false,
+                modal_focus_start: 0,
+                modal_focus_count: 0,
+                hook_cursor: 0,
+                dark_mode: theme.is_dark,
+                notification_queue: std::mem::take(&mut diagnostics.notification_queue),
+                pending_tooltips: Vec::new(),
+                text_color_stack: Vec::new(),
+            },
             scroll_lines_per_event: 1,
         }
     }
@@ -230,7 +238,7 @@ impl Context {
         f: impl FnOnce(&mut Context),
         fallback: impl FnOnce(&mut Context, String),
     ) {
-        let snapshot = ContextSnapshot::capture(self);
+        let snapshot = ContextCheckpoint::capture(self);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             f(self);
@@ -268,10 +276,22 @@ impl Context {
         }
     }
 
+    /// Reserve the next interaction slot without emitting a marker command.
+    pub(crate) fn reserve_interaction_slot(&mut self) -> usize {
+        let id = self.rollback.interaction_count;
+        self.rollback.interaction_count += 1;
+        id
+    }
+
+    /// Advance the interaction counter for structural commands that still
+    /// participate in hit-map indexing.
+    pub(crate) fn skip_interaction_slot(&mut self) {
+        self.reserve_interaction_slot();
+    }
+
     /// Reserve the next interaction ID and emit a marker command.
     pub(crate) fn next_interaction_id(&mut self) -> usize {
-        let id = self.interaction_count;
-        self.interaction_count += 1;
+        let id = self.reserve_interaction_slot();
         self.commands.push(Command::InteractionMarker(id));
         id
     }
@@ -279,15 +299,130 @@ impl Context {
     /// Allocate a click/hover interaction slot and return the [`Response`].
     ///
     /// Use this in custom widgets to detect mouse clicks and hovers without
-    /// wrapping content in a container. Each call reserves one slot in the
-    /// hit-test map, so the call order must be stable across frames.
+    /// wrapping content in a container. Call it immediately before the text,
+    /// rich text, link, or container that should own the interaction rect.
+    /// Each call reserves one slot in the hit-test map, so the call order
+    /// must be stable across frames.
     pub fn interaction(&mut self) -> Response {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return Response::none();
         }
-        let id = self.interaction_count;
-        self.interaction_count += 1;
+        let id = self.next_interaction_id();
         self.response_for(id)
+    }
+
+    pub(crate) fn begin_widget_interaction(&mut self, focused: bool) -> (usize, Response) {
+        let interaction_id = self.next_interaction_id();
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+        (interaction_id, response)
+    }
+
+    pub(crate) fn consume_indices<I>(&mut self, indices: I)
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        for index in indices {
+            self.consumed[index] = true;
+        }
+    }
+
+    pub(crate) fn available_key_presses(
+        &self,
+    ) -> impl Iterator<Item = (usize, &crate::event::KeyEvent)> + '_ {
+        self.events.iter().enumerate().filter_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            match event {
+                Event::Key(key) if key.kind == KeyEventKind::Press => Some((i, key)),
+                _ => None,
+            }
+        })
+    }
+
+    pub(crate) fn available_pastes(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
+        self.events.iter().enumerate().filter_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            match event {
+                Event::Paste(text) => Some((i, text.as_str())),
+                _ => None,
+            }
+        })
+    }
+
+    pub(crate) fn left_clicks_in_rect(
+        &self,
+        rect: Rect,
+    ) -> impl Iterator<Item = (usize, &crate::event::MouseEvent)> + '_ {
+        self.mouse_events_in_rect(rect).filter_map(|(i, mouse)| {
+            if matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
+                Some((i, mouse))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn mouse_events_in_rect(
+        &self,
+        rect: Rect,
+    ) -> impl Iterator<Item = (usize, &crate::event::MouseEvent)> + '_ {
+        self.events
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, event)| {
+                if self.consumed[i] {
+                    return None;
+                }
+
+                let Event::Mouse(mouse) = event else {
+                    return None;
+                };
+
+                if mouse.x < rect.x
+                    || mouse.x >= rect.right()
+                    || mouse.y < rect.y
+                    || mouse.y >= rect.bottom()
+                {
+                    return None;
+                }
+
+                Some((i, mouse))
+            })
+    }
+
+    pub(crate) fn left_clicks_for_interaction(
+        &self,
+        interaction_id: usize,
+    ) -> Option<(Rect, Vec<(usize, &crate::event::MouseEvent)>)> {
+        let rect = self.prev_hit_map.get(interaction_id).copied()?;
+        let clicks = self.left_clicks_in_rect(rect).collect();
+        Some((rect, clicks))
+    }
+
+    pub(crate) fn consume_activation_keys(&mut self, focused: bool) -> bool {
+        if !focused {
+            return false;
+        }
+
+        let consumed: Vec<usize> = self
+            .available_key_presses()
+            .filter_map(|(i, key)| {
+                if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let activated = !consumed.is_empty();
+        self.consume_indices(consumed);
+        activated
     }
 
     /// Register a widget as focusable and return whether it currently has focus.
@@ -295,18 +430,20 @@ impl Context {
     /// Call this in custom widgets that need keyboard focus. Each call increments
     /// the internal focus counter, so the call order must be stable across frames.
     pub fn register_focusable(&mut self) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
-        let id = self.focus_count;
-        self.focus_count += 1;
+        let id = self.rollback.focus_count;
+        self.rollback.focus_count += 1;
         self.commands.push(Command::FocusMarker(id));
         if self.prev_modal_active
             && self.prev_modal_focus_count > 0
-            && self.modal_active
-            && self.overlay_depth > 0
+            && self.rollback.modal_active
+            && self.rollback.overlay_depth > 0
         {
-            let mut modal_local_id = id.saturating_sub(self.modal_focus_start);
+            let mut modal_local_id = id.saturating_sub(self.rollback.modal_focus_start);
             modal_local_id %= self.prev_modal_focus_count;
             let mut modal_focus_idx = self.focus_index.saturating_sub(self.prev_modal_focus_start);
             modal_focus_idx %= self.prev_modal_focus_count;
@@ -336,17 +473,14 @@ impl Context {
     /// }
     /// ```
     pub fn use_state<T: 'static>(&mut self, init: impl FnOnce() -> T) -> State<T> {
-        let idx = self.hook_cursor;
-        self.hook_cursor += 1;
+        let idx = self.rollback.hook_cursor;
+        self.rollback.hook_cursor += 1;
 
         if idx >= self.hook_states.len() {
             self.hook_states.push(Box::new(init()));
         }
 
-        State {
-            idx,
-            _marker: std::marker::PhantomData,
-        }
+        State::from_idx(idx)
     }
 
     /// Memoize a computed value. Recomputes only when `deps` changes.
@@ -361,8 +495,8 @@ impl Context {
         deps: &D,
         compute: impl FnOnce(&D) -> T,
     ) -> &T {
-        let idx = self.hook_cursor;
-        self.hook_cursor += 1;
+        let idx = self.rollback.hook_cursor;
+        self.rollback.hook_cursor += 1;
 
         let should_recompute = if idx >= self.hook_states.len() {
             true
@@ -421,18 +555,21 @@ impl Context {
     /// ```
     pub fn notify(&mut self, message: &str, level: ToastLevel) {
         let tick = self.tick;
-        self.notification_queue
+        self.rollback
+            .notification_queue
             .push((message.to_string(), level, tick));
     }
 
     pub(crate) fn render_notifications(&mut self) {
-        self.notification_queue
+        self.rollback
+            .notification_queue
             .retain(|(_, _, created)| self.tick.saturating_sub(*created) < 180);
-        if self.notification_queue.is_empty() {
+        if self.rollback.notification_queue.is_empty() {
             return;
         }
 
         let items: Vec<(String, Color)> = self
+            .rollback
             .notification_queue
             .iter()
             .rev()
@@ -462,4 +599,3 @@ impl Context {
         });
     }
 }
-

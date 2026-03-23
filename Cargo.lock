@@ -1024,7 +1024,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "slt-wasm"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "js-sys",
  "superlighttui",
@@ -1052,7 +1052,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "superlighttui"
-version = "0.15.7"
+version = "0.16.0"
 dependencies = [
  "compact_str",
  "criterion",

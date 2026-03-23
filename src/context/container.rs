@@ -1,3 +1,5 @@
+use super::*;
+
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
 /// Obtain one via [`Context::container`] or [`Context::bordered`]. Chain the
@@ -20,29 +22,29 @@
 /// ```
 #[must_use = "ContainerBuilder does nothing until .col(), .row(), .line(), or .draw() is called"]
 pub struct ContainerBuilder<'a> {
-    ctx: &'a mut Context,
-    gap: u32,
-    row_gap: Option<u32>,
-    col_gap: Option<u32>,
-    align: Align,
-    align_self_value: Option<Align>,
-    justify: Justify,
-    border: Option<Border>,
-    border_sides: BorderSides,
-    border_style: Style,
-    bg: Option<Color>,
-    text_color: Option<Color>,
-    dark_bg: Option<Color>,
-    dark_border_style: Option<Style>,
-    group_hover_bg: Option<Color>,
-    group_hover_border_style: Option<Style>,
-    group_name: Option<String>,
-    padding: Padding,
-    margin: Margin,
-    constraints: Constraints,
-    title: Option<(String, Style)>,
-    grow: u16,
-    scroll_offset: Option<u32>,
+    pub(crate) ctx: &'a mut Context,
+    pub(crate) gap: u32,
+    pub(crate) row_gap: Option<u32>,
+    pub(crate) col_gap: Option<u32>,
+    pub(crate) align: Align,
+    pub(crate) align_self_value: Option<Align>,
+    pub(crate) justify: Justify,
+    pub(crate) border: Option<Border>,
+    pub(crate) border_sides: BorderSides,
+    pub(crate) border_style: Style,
+    pub(crate) bg: Option<Color>,
+    pub(crate) text_color: Option<Color>,
+    pub(crate) dark_bg: Option<Color>,
+    pub(crate) dark_border_style: Option<Style>,
+    pub(crate) group_hover_bg: Option<Color>,
+    pub(crate) group_hover_border_style: Option<Style>,
+    pub(crate) group_name: Option<String>,
+    pub(crate) padding: Padding,
+    pub(crate) margin: Margin,
+    pub(crate) constraints: Constraints,
+    pub(crate) title: Option<(String, Style)>,
+    pub(crate) grow: u16,
+    pub(crate) scroll_offset: Option<u32>,
 }
 
 /// Drawing context for the [`Context::canvas`] widget.
@@ -84,7 +86,7 @@ pub struct CanvasContext {
 }
 
 impl CanvasContext {
-    fn new(cols: usize, rows: usize) -> Self {
+    pub(crate) fn new(cols: usize, rows: usize) -> Self {
         Self {
             layers: vec![Self::new_layer(cols, rows)],
             cols,
@@ -1113,7 +1115,7 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    fn group_name(mut self, name: String) -> Self {
+    pub(crate) fn group_name(mut self, name: String) -> Self {
         self.group_name = Some(name);
         self
     }
@@ -1160,7 +1162,7 @@ impl<'a> ContainerBuilder<'a> {
     pub fn draw(self, f: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static) {
         let draw_id = self.ctx.deferred_draws.len();
         self.ctx.deferred_draws.push(Some(Box::new(f)));
-        self.ctx.interaction_count += 1;
+        self.ctx.skip_interaction_slot();
         self.ctx.commands.push(Command::RawDraw {
             draw_id,
             constraints: self.constraints,
@@ -1183,6 +1185,7 @@ impl<'a> ContainerBuilder<'a> {
             .unwrap_or(false)
             || self
                 .ctx
+                .rollback
                 .group_stack
                 .last()
                 .map(|name| self.ctx.is_group_hovered(name))
@@ -1194,17 +1197,18 @@ impl<'a> ContainerBuilder<'a> {
             .unwrap_or(false)
             || self
                 .ctx
+                .rollback
                 .group_stack
                 .last()
                 .map(|name| self.ctx.is_group_focused(name))
                 .unwrap_or(false);
 
-        let resolved_bg = if self.ctx.dark_mode {
+        let resolved_bg = if self.ctx.rollback.dark_mode {
             self.dark_bg.or(self.bg)
         } else {
             self.bg
         };
-        let resolved_border_style = if self.ctx.dark_mode {
+        let resolved_border_style = if self.ctx.rollback.dark_mode {
             self.dark_border_style.unwrap_or(self.border_style)
         } else {
             self.border_style
@@ -1254,18 +1258,17 @@ impl<'a> ContainerBuilder<'a> {
                 group_name,
             });
         }
-        self.ctx.text_color_stack.push(self.text_color);
+        self.ctx.rollback.text_color_stack.push(self.text_color);
         f(self.ctx);
-        self.ctx.text_color_stack.pop();
+        self.ctx.rollback.text_color_stack.pop();
         self.ctx.commands.push(Command::EndContainer);
-        self.ctx.last_text_idx = None;
+        self.ctx.rollback.last_text_idx = None;
 
         if is_group_container {
-            self.ctx.group_stack.pop();
-            self.ctx.group_count = self.ctx.group_count.saturating_sub(1);
+            self.ctx.rollback.group_stack.pop();
+            self.ctx.rollback.group_count = self.ctx.rollback.group_count.saturating_sub(1);
         }
 
         self.ctx.response_for(interaction_id)
     }
 }
-

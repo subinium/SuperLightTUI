@@ -1,6 +1,11 @@
 # Documentation Guide
 
-Use this directory by depth, not by file name guessing.
+Use this directory by depth, not by file-name guessing.
+The idea is simple:
+
+- the root `README.md` sells the shape of the library
+- this directory tells you where to go next
+- docs.rs is the API signature source of truth
 
 ## Start here
 
@@ -8,6 +13,29 @@ Use this directory by depth, not by file name guessing.
 - [WIDGETS.md](WIDGETS.md) - categorized widget map
 - [PATTERNS.md](PATTERNS.md) - common composition patterns
 - [EXAMPLES.md](EXAMPLES.md) - runnable example index
+
+## Recommended paths
+
+### I want to build an app quickly
+
+1. [QUICK_START.md](QUICK_START.md)
+2. [WIDGETS.md](WIDGETS.md)
+3. [PATTERNS.md](PATTERNS.md)
+4. [EXAMPLES.md](EXAMPLES.md)
+
+### I want to trust the runtime and backend path
+
+1. [BACKENDS.md](BACKENDS.md)
+2. [TESTING.md](TESTING.md)
+3. [DEBUGGING.md](DEBUGGING.md)
+4. [ARCHITECTURE.md](ARCHITECTURE.md)
+
+### I want to contribute to the library itself
+
+1. [Design Principles](DESIGN_PRINCIPLES.md)
+2. [ARCHITECTURE.md](ARCHITECTURE.md)
+3. [TESTING.md](TESTING.md)
+4. [CHANGELOG.md](../CHANGELOG.md)
 
 ## By task
 
@@ -22,7 +50,7 @@ Use this directory by depth, not by file name guessing.
 
 ## Contributor docs
 
-- [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) - API rules and design constraints
+- [Design Principles](DESIGN_PRINCIPLES.md) - API rules and design constraints
 - [ARCHITECTURE.md](ARCHITECTURE.md) - module map and frame lifecycle
 
 ## Translations

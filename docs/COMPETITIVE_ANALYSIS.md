@@ -1,6 +1,6 @@
 # SLT Competitive Analysis & Roadmap
 
-**Date**: 2026-03-19 (v0.14.1)
+**Date**: 2026-03-23 (v0.16.0)
 **Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
 
 ---
@@ -12,9 +12,13 @@
 | Language | Rust | Rust | Python | JS (React) | Go |
 | GitHub Stars | New | 19K | 34K | 14K | 40K |
 | Rendering Model | Immediate (closure) | Immediate (Widget trait) | Retained (Event + CSS) | Component (React) | Elm (MVU) |
-| Built-in Widgets | **116+** | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
+| Built-in Widgets | Broad built-in catalog | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
 | Ecosystem | Small | **2,928 deps, 50+ widget crates** | Moderate | **3.9K deps** | **25K deps** |
 | Dependencies | 2 (crossterm optional, unicode-width) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
+
+---
+
+Widget counts are not perfectly apples-to-apples across frameworks, so this document avoids treating every public helper method or specialized primitive as a separate widget type.
 
 ---
 
@@ -32,7 +36,7 @@
 | **Image Protocols** | 3 built-in (HalfBlock, Kitty, Sixel) | Ratatui: via ratatui-image (3rd party) |
 | **Syntax Highlighting** | Tree-sitter AST-accurate, 15 languages built-in | Textual: tree-sitter. Ratatui/Ink/Bubbletea: none built-in |
 | **Testing Suite** | TestBackend + EventBuilder + proptest + criterion + insta | Most comprehensive among all TUI frameworks |
-| **Widget Count** | 116+ built-in | Ratatui: ~15, Ink: ~18, Bubbletea: ~12, Textual: ~60 |
+| **Widget Surface** | Broad built-in catalog spanning text, forms, overlays, charts, AI widgets, and terminal-specific primitives | Ratatui: ~15, Ink: ~18, Bubbletea: ~12, Textual: ~60 |
 
 ---
 
@@ -152,20 +156,28 @@
 | — | `streaming_markdown()` code block highlighting upgrade | ✅ |
 | — | `markdown()` fenced code block fix | ✅ |
 
+### v0.16.0 — Core Consolidation
+
+| ID | Feature | Status |
+|---|---|---|
+| P1-6 | Single frame kernel + `TestBackend` parity | ✅ |
+| P1-7 | Context/session hardening | ✅ |
+| P1-8 | Layout kernel split + `collect_all()` sole collector | ✅ |
+| P1-9 | Runner/terminal flush dedup | ✅ |
+| — | Backend contract tests | ✅ |
+| — | Kernel parity + proptest coverage | ✅ |
+| — | Terminal session hardening | ✅ |
+| — | Interaction allocator unification | ✅ |
+
 ---
 
 ## Remaining Roadmap
 
-### P1 — Ecosystem Growth (v0.15)
+### P2 — Ecosystem Growth (post-0.16)
 
 | ID | Feature | Difficulty | Rationale |
 |---|---|---|---|
-| P1-6 | Plugin/extension system | Medium | pub API surface decision. Prerequisite for 3rd-party ecosystem |
-
-### P2 — Differentiation (v0.15+)
-
-| ID | Feature | Difficulty | Rationale |
-|---|---|---|---|
+| P2-1 | Plugin/extension system | Medium | Better postponed until internal contracts stop moving |
 | P2-2 | Accessibility (screen reader) | Hard | Nobody has this. First-mover advantage. Terminal protocol absent |
 | P2-3 | SSH server mode | Hard | Backend trait ready. `russh` + slt-ssh companion crate |
 | P2-5 | CSS-like style files | Hard | Hot-reload DX. Conflicts with immediate mode philosophy |
@@ -181,6 +193,6 @@
 
 ## Key Insight
 
-SLT is the **most widget-rich, easiest-to-start TUI framework** across all languages, now with **multi-backend support** (crossterm, WASM) and **AST-accurate syntax highlighting**. The remaining gap to becoming a **platform** is the plugin/extension system — enabling 3rd-party widget crates to grow the ecosystem organically.
+SLT is already one of the broadest and easiest-to-start TUI libraries in Rust, now with **multi-backend support** (crossterm, WASM) and **AST-accurate syntax highlighting**. The next gap is no longer raw feature count; it is making the frame kernel and state boundaries boring, explicit, and hard to regress.
 
-**One-line summary**: SLT has the most widgets, the best DX, multi-backend, and tree-sitter highlighting. It needs the plugin system to unlock ecosystem growth.
+**One-line summary**: SLT now has the core consolidation it needed. The next priority is ecosystem growth without losing the small public grammar or backend discipline.

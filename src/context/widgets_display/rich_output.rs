@@ -369,7 +369,7 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
 
         let text_style = Style::new().fg(self.theme.text);
         let bold_style = Style::new().fg(self.theme.text).bold();
@@ -557,7 +557,7 @@ impl Context {
         state.code_block_lang = code_block_lang;
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         Response::none()
     }
 

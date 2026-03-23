@@ -76,7 +76,7 @@ impl Context {
 
         let cols = cols.max(1) as usize;
         for row in elements.chunks(cols) {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 0,
@@ -96,7 +96,7 @@ impl Context {
             });
 
             for element in row {
-                self.interaction_count += 1;
+                self.skip_interaction_slot();
                 self.commands.push(Command::BeginContainer {
                     direction: Direction::Column,
                     gap: 0,
@@ -122,7 +122,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         self.response_for(interaction_id)
     }
@@ -150,59 +150,36 @@ impl Context {
 
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let _ = handle_vertical_nav(
+                            &mut state.selected,
+                            visible.len().saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let _ = handle_vertical_nav(
-                                &mut state.selected,
-                                visible.len().saturating_sub(1),
-                                key.code.clone(),
-                            );
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
-                    }
+                    _ => {}
                 }
             }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
-                    }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
-                    let clicked_idx = (mouse.y - rect.y) as usize;
-                    if clicked_idx < visible.len() {
-                        state.selected = clicked_idx;
-                        self.consumed[i] = true;
-                    }
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                let clicked_idx = (mouse.y - rect.y) as usize;
+                if clicked_idx < visible.len() {
+                    state.selected = clicked_idx;
+                    consumed.push(i);
                 }
             }
+            self.consume_indices(consumed);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -245,7 +222,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.changed = state.selected != old_selected;
         response
@@ -254,9 +231,7 @@ impl Context {
     /// Render a calendar date picker with month navigation.
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         let month_days = CalendarState::days_in_month(state.year, state.month);
         state.cursor_day = state.cursor_day.clamp(1, month_days);
@@ -267,109 +242,84 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left => {
+                        calendar_move_cursor_by_days(state, -1);
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Left => {
-                            calendar_move_cursor_by_days(state, -1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Right => {
-                            calendar_move_cursor_by_days(state, 1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Up => {
-                            calendar_move_cursor_by_days(state, -7);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down => {
-                            calendar_move_cursor_by_days(state, 7);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Char('h') => {
-                            state.prev_month();
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Char('l') => {
-                            state.next_month();
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            state.selected_day = Some(state.cursor_day);
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::Right => {
+                        calendar_move_cursor_by_days(state, 1);
+                        consumed_indices.push(i);
                     }
+                    KeyCode::Up => {
+                        calendar_move_cursor_by_days(state, -7);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Down => {
+                        calendar_move_cursor_by_days(state, 7);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('h') => {
+                        state.prev_month();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('l') => {
+                        state.next_month();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        state.selected_day = Some(state.cursor_day);
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                let rel_x = mouse.x.saturating_sub(rect.x);
+                let rel_y = mouse.y.saturating_sub(rect.y);
+                if rel_y == 0 {
+                    if rel_x <= 2 {
+                        state.prev_month();
+                        consumed.push(i);
+                        continue;
+                    }
+                    if rel_x + 3 >= rect.width {
+                        state.next_month();
+                        consumed.push(i);
+                        continue;
+                    }
+                }
+
+                if !(2..8).contains(&rel_y) {
                     continue;
                 }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
-                    }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
-
-                    let rel_x = mouse.x.saturating_sub(rect.x);
-                    let rel_y = mouse.y.saturating_sub(rect.y);
-                    if rel_y == 0 {
-                        if rel_x <= 2 {
-                            state.prev_month();
-                            self.consumed[i] = true;
-                            continue;
-                        }
-                        if rel_x + 3 >= rect.width {
-                            state.next_month();
-                            self.consumed[i] = true;
-                            continue;
-                        }
-                    }
-
-                    if !(2..8).contains(&rel_y) {
-                        continue;
-                    }
-                    if rel_x >= 21 {
-                        continue;
-                    }
-
-                    let week = rel_y - 2;
-                    let col = rel_x / 3;
-                    let day_index = week * 7 + col;
-                    let first = CalendarState::first_weekday(state.year, state.month);
-                    let days = CalendarState::days_in_month(state.year, state.month);
-                    if day_index < first {
-                        continue;
-                    }
-                    let day = day_index - first + 1;
-                    if day == 0 || day > days {
-                        continue;
-                    }
-                    state.cursor_day = day;
-                    state.selected_day = Some(day);
-                    self.consumed[i] = true;
+                if rel_x >= 21 {
+                    continue;
                 }
+
+                let week = rel_y - 2;
+                let col = rel_x / 3;
+                let day_index = week * 7 + col;
+                let first = CalendarState::first_weekday(state.year, state.month);
+                let days = CalendarState::days_in_month(state.year, state.month);
+                if day_index < first {
+                    continue;
+                }
+                let day = day_index - first + 1;
+                if day == 0 || day > days {
+                    continue;
+                }
+                state.cursor_day = day;
+                state.selected_day = Some(day);
+                consumed.push(i);
             }
+            self.consume_indices(consumed);
         }
 
         let title = {
@@ -491,7 +441,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = state.selected_day != old_selected;
         response
     }
@@ -506,75 +456,60 @@ impl Context {
         }
 
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut file_selected = false;
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        if !state.entries.is_empty() {
+                            let _ = handle_vertical_nav(
+                                &mut state.selected,
+                                state.entries.len().saturating_sub(1),
+                                key.code.clone(),
+                            );
+                        }
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            if !state.entries.is_empty() {
-                                let _ = handle_vertical_nav(
-                                    &mut state.selected,
-                                    state.entries.len().saturating_sub(1),
-                                    key.code.clone(),
-                                );
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter => {
-                            if let Some(entry) = state.entries.get(state.selected).cloned() {
-                                if entry.is_dir {
-                                    state.current_dir = entry.path;
-                                    state.selected = 0;
-                                    state.selected_file = None;
-                                    state.dirty = true;
-                                } else {
-                                    state.selected_file = Some(entry.path);
-                                    file_selected = true;
-                                }
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Backspace => {
-                            if let Some(parent) =
-                                state.current_dir.parent().map(|p| p.to_path_buf())
-                            {
-                                state.current_dir = parent;
+                    KeyCode::Enter => {
+                        if let Some(entry) = state.entries.get(state.selected).cloned() {
+                            if entry.is_dir {
+                                state.current_dir = entry.path;
                                 state.selected = 0;
                                 state.selected_file = None;
                                 state.dirty = true;
+                            } else {
+                                state.selected_file = Some(entry.path);
+                                file_selected = true;
                             }
-                            consumed_indices.push(i);
                         }
-                        KeyCode::Char('h') => {
-                            state.show_hidden = !state.show_hidden;
-                            state.selected = 0;
-                            state.dirty = true;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Esc => {
-                            state.selected_file = None;
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
+                    KeyCode::Backspace => {
+                        if let Some(parent) = state.current_dir.parent().map(|p| p.to_path_buf()) {
+                            state.current_dir = parent;
+                            state.selected = 0;
+                            state.selected_file = None;
+                            state.dirty = true;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('h') => {
+                        state.show_hidden = !state.show_hidden;
+                        state.selected = 0;
+                        state.dirty = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Esc => {
+                        state.selected_file = None;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         if state.dirty {
@@ -644,7 +579,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.changed = file_selected;
         response

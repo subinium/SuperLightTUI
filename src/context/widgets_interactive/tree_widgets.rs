@@ -11,52 +11,37 @@ impl Context {
         state.selected = state.selected.min(entries.len().saturating_sub(1));
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut changed = false;
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let max_index = state.flatten().len().saturating_sub(1);
+                        let _ =
+                            handle_vertical_nav(&mut state.selected, max_index, key.code.clone());
+                        changed = changed || state.selected != old_selected;
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let max_index = state.flatten().len().saturating_sub(1);
-                            let _ = handle_vertical_nav(
-                                &mut state.selected,
-                                max_index,
-                                key.code.clone(),
-                            );
-                            changed = changed || state.selected != old_selected;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                    KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                        state.toggle_at(state.selected);
+                        changed = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Left => {
+                        let entry = &entries[state.selected.min(entries.len() - 1)];
+                        if entry.expanded {
                             state.toggle_at(state.selected);
                             changed = true;
-                            consumed_indices.push(i);
                         }
-                        KeyCode::Left => {
-                            let entry = &entries[state.selected.min(entries.len() - 1)];
-                            if entry.expanded {
-                                state.toggle_at(state.selected);
-                                changed = true;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -106,7 +91,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = changed || state.selected != old_selected;
         response
     }
@@ -120,64 +105,52 @@ impl Context {
         state.tree.selected = state.tree.selected.min(entries.len().saturating_sub(1));
         let old_selected = state.tree.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut changed = false;
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let max_index = state.tree.flatten().len().saturating_sub(1);
+                        let _ = handle_vertical_nav(
+                            &mut state.tree.selected,
+                            max_index,
+                            key.code.clone(),
+                        );
+                        changed = changed || state.tree.selected != old_selected;
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let max_index = state.tree.flatten().len().saturating_sub(1);
-                            let _ = handle_vertical_nav(
-                                &mut state.tree.selected,
-                                max_index,
-                                key.code.clone(),
-                            );
-                            changed = changed || state.tree.selected != old_selected;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Right => {
-                            let current_entries = state.tree.flatten();
-                            let entry = &current_entries
-                                [state.tree.selected.min(current_entries.len() - 1)];
-                            if !entry.is_leaf && !entry.expanded {
-                                state.tree.toggle_at(state.tree.selected);
-                                changed = true;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter | KeyCode::Char(' ') => {
+                    KeyCode::Right => {
+                        let current_entries = state.tree.flatten();
+                        let entry =
+                            &current_entries[state.tree.selected.min(current_entries.len() - 1)];
+                        if !entry.is_leaf && !entry.expanded {
                             state.tree.toggle_at(state.tree.selected);
                             changed = true;
-                            consumed_indices.push(i);
                         }
-                        KeyCode::Left => {
-                            let current_entries = state.tree.flatten();
-                            let entry = &current_entries
-                                [state.tree.selected.min(current_entries.len() - 1)];
-                            if entry.expanded {
-                                state.tree.toggle_at(state.tree.selected);
-                                changed = true;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        state.tree.toggle_at(state.tree.selected);
+                        changed = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Left => {
+                        let current_entries = state.tree.flatten();
+                        let entry =
+                            &current_entries[state.tree.selected.min(current_entries.len() - 1)];
+                        if entry.expanded {
+                            state.tree.toggle_at(state.tree.selected);
+                            changed = true;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -248,7 +221,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = changed || state.tree.selected != old_selected;
         response
     }

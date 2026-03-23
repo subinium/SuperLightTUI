@@ -1,7 +1,28 @@
 # Widget API Catalog
 
-Complete reference for every widget and public `Context` method in SLT.
-For patterns and composition, see [PATTERNS.md](PATTERNS.md). For animation, see the `anim` module.
+This page is the API map, not the onboarding guide.
+Use it when you already know the SLT mental model and want to find the right method or state type quickly.
+
+If you are new, read in this order first:
+
+1. `README.md`
+2. `docs/QUICK_START.md`
+3. this file
+
+For composition advice, see [PATTERNS.md](PATTERNS.md).
+For animation, see the `anim` module.
+
+## If you only learn a small core first
+
+Most apps can go a long way with this subset:
+
+- `text()`
+- `row()` / `col()`
+- `container()` / `bordered()`
+- `button()`, `text_input()`, `checkbox()`
+- `list()`, `table()`, `tabs()`
+- `modal()`, `overlay()`, `tooltip()`
+- `use_state()` / `use_memo()`
 
 ---
 
@@ -233,7 +254,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 
 | Method | Returns | Description |
 |---|---|---|
-| `use_state(init)` | `State<T>` | Persistent state across frames. Read with `.get(ui)`, write with `.set(ui, val)` |
+| `use_state(init)` | `State<T>` | Persistent state across frames. Read with `.get(ui)`, mutate with `.get_mut(ui)` |
 | `use_memo(deps, compute)` | `&T` | Memoized computation, recomputes when `deps` changes |
 
 ### Focus & interaction
@@ -435,12 +456,12 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets_display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
 | `src/context/widgets_display/status.rs` | `alert`, `badge`, `stat`, `breadcrumb`, `accordion`, `code_block`, `divider_text`, `definition_list`, `empty_state`, `confirm`, `key_hint` |
 | `src/context/widgets_display/rich_output.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar` |
-| `src/context/widgets_display/layout.rs` | `col`, `row`, `line`, `line_wrap`, `grid`, `modal`, `overlay`, `tooltip`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `screen`, `form`, `form_field`, `form_submit` |
+| `src/context/widgets_display/layout.rs` | `col`, `row`, `line`, `line_wrap`, `modal`, `overlay`, `tooltip`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `screen`, `form`, `form_field`, `form_submit` |
 | `src/context/widgets_input/text_input.rs` | `text_input`, `text_input_colored` |
 | `src/context/widgets_input/textarea_progress.rs` | `textarea`, `progress`, `progress_bar` |
 | `src/context/widgets_input/feedback.rs` | `spinner`, `toast`, `slider`, `notify` |
 | `src/context/widgets_interactive/selection.rs` | `table`, `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select` |
-| `src/context/widgets_interactive/collections.rs` | `list`, `calendar`, `file_picker` |
+| `src/context/widgets_interactive/collections.rs` | `grid`, `list`, `calendar`, `file_picker` |
 | `src/context/widgets_interactive/tree_widgets.rs` | `tree`, `directory_tree` |
 | `src/context/widgets_interactive/rich_markdown.rs` | `markdown`, `virtual_list`, `command_palette`, `rich_log`, `key_seq` |
 | `src/context/widgets_interactive/events.rs` | Key/mouse input, clipboard, theme, environment queries, `help`, `help_colored` |

@@ -233,17 +233,17 @@ impl AppState {
 
     /// Returns the current frame tick count (increments each frame).
     pub fn tick(&self) -> u64 {
-        self.inner.tick
+        self.inner.diagnostics.tick
     }
 
     /// Returns the smoothed FPS estimate (exponential moving average).
     pub fn fps(&self) -> f32 {
-        self.inner.fps_ema
+        self.inner.diagnostics.fps_ema
     }
 
     /// Toggle the debug overlay (same as pressing F12).
     pub fn set_debug(&mut self, enabled: bool) {
-        self.inner.debug_mode = enabled;
+        self.inner.diagnostics.debug_mode = enabled;
     }
 }
 
@@ -469,13 +469,17 @@ impl RunConfig {
     }
 }
 
-pub(crate) struct FrameState {
-    pub hook_states: Vec<Box<dyn std::any::Any>>,
+#[derive(Default)]
+pub(crate) struct FocusState {
     pub focus_index: usize,
     pub prev_focus_count: usize,
+    pub prev_modal_active: bool,
     pub prev_modal_focus_start: usize,
     pub prev_modal_focus_count: usize,
-    pub tick: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct LayoutFeedbackState {
     pub prev_scroll_infos: Vec<(u32, u32)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
@@ -484,39 +488,24 @@ pub(crate) struct FrameState {
     pub prev_focus_rects: Vec<(usize, rect::Rect)>,
     pub prev_focus_groups: Vec<Option<String>>,
     pub last_mouse_pos: Option<(u32, u32)>,
-    pub prev_modal_active: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct DiagnosticsState {
+    pub tick: u64,
     pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
     pub fps_ema: f32,
-    #[cfg(feature = "crossterm")]
-    pub selection: terminal::SelectionState,
 }
 
-impl Default for FrameState {
-    fn default() -> Self {
-        Self {
-            hook_states: Vec::new(),
-            focus_index: 0,
-            prev_focus_count: 0,
-            prev_modal_focus_start: 0,
-            prev_modal_focus_count: 0,
-            tick: 0,
-            prev_scroll_infos: Vec::new(),
-            prev_scroll_rects: Vec::new(),
-            prev_hit_map: Vec::new(),
-            prev_group_rects: Vec::new(),
-            prev_content_map: Vec::new(),
-            prev_focus_rects: Vec::new(),
-            prev_focus_groups: Vec::new(),
-            last_mouse_pos: None,
-            prev_modal_active: false,
-            notification_queue: Vec::new(),
-            debug_mode: false,
-            fps_ema: 0.0,
-            #[cfg(feature = "crossterm")]
-            selection: terminal::SelectionState::default(),
-        }
-    }
+#[derive(Default)]
+pub(crate) struct FrameState {
+    pub hook_states: Vec<Box<dyn std::any::Any>>,
+    pub focus: FocusState,
+    pub layout_feedback: LayoutFeedbackState,
+    pub diagnostics: DiagnosticsState,
+    #[cfg(feature = "crossterm")]
+    pub selection: terminal::SelectionState,
 }
 
 /// Run the TUI loop with default configuration.
@@ -918,7 +907,7 @@ fn poll_events(
                     ..
                 })
             ) {
-                state.debug_mode = !state.debug_mode;
+                state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
             }
         }
     }
@@ -932,17 +921,27 @@ fn poll_events(
     Ok(true)
 }
 
-fn run_frame(
-    term: &mut impl Backend,
+struct FrameKernelResult {
+    should_quit: bool,
+    #[cfg(feature = "crossterm")]
+    clipboard_text: Option<String>,
+    #[cfg(feature = "crossterm")]
+    should_copy_selection: bool,
+}
+
+pub(crate) fn run_frame_kernel(
+    buffer: &mut Buffer,
     state: &mut FrameState,
     config: &RunConfig,
+    size: (u32, u32),
     events: Vec<event::Event>,
+    is_real_terminal: bool,
     f: &mut impl FnMut(&mut context::Context),
-) -> io::Result<bool> {
+) -> FrameKernelResult {
     let frame_start = Instant::now();
-    let (w, h) = term.size();
+    let (w, h) = size;
     let mut ctx = Context::new(events, w, h, state, config.theme);
-    ctx.is_real_terminal = true;
+    ctx.is_real_terminal = is_real_terminal;
     ctx.set_scroll_speed(config.scroll_speed);
 
     f(&mut ctx);
@@ -950,12 +949,45 @@ fn run_frame(
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
+    debug_assert_eq!(
+        ctx.rollback.overlay_depth, 0,
+        "overlay depth must settle back to zero before layout"
+    );
+    debug_assert_eq!(
+        ctx.rollback.group_count, 0,
+        "group count must settle back to zero before layout"
+    );
+    debug_assert!(
+        ctx.rollback.group_stack.is_empty(),
+        "group stack must be empty before layout"
+    );
+    debug_assert!(
+        ctx.rollback.text_color_stack.is_empty(),
+        "text color stack must be empty before layout"
+    );
+    debug_assert!(
+        ctx.rollback.pending_tooltips.is_empty(),
+        "pending tooltips must be emitted before layout"
+    );
+
     if ctx.should_quit {
-        return Ok(false);
+        state.hook_states = ctx.hook_states;
+        state.diagnostics.notification_queue = ctx.rollback.notification_queue;
+        #[cfg(feature = "crossterm")]
+        let clipboard_text = ctx.clipboard_text.take();
+        #[cfg(feature = "crossterm")]
+        let should_copy_selection = false;
+        return FrameKernelResult {
+            should_quit: true,
+            #[cfg(feature = "crossterm")]
+            clipboard_text,
+            #[cfg(feature = "crossterm")]
+            should_copy_selection,
+        };
     }
-    state.prev_modal_active = ctx.modal_active;
-    state.prev_modal_focus_start = ctx.modal_focus_start;
-    state.prev_modal_focus_count = ctx.modal_focus_count;
+    state.focus.prev_modal_active = ctx.rollback.modal_active;
+    state.focus.prev_modal_focus_start = ctx.rollback.modal_focus_start;
+    state.focus.prev_modal_focus_count = ctx.rollback.modal_focus_count;
     #[cfg(feature = "crossterm")]
     let clipboard_text = ctx.clipboard_text.take();
     #[cfg(not(feature = "crossterm"))]
@@ -968,14 +1000,18 @@ fn run_frame(
         if let Event::Mouse(mouse) = ev {
             match mouse.kind {
                 event::MouseKind::Down(event::MouseButton::Left) => {
-                    state
-                        .selection
-                        .mouse_down(mouse.x, mouse.y, &state.prev_content_map);
+                    state.selection.mouse_down(
+                        mouse.x,
+                        mouse.y,
+                        &state.layout_feedback.prev_content_map,
+                    );
                 }
                 event::MouseKind::Drag(event::MouseButton::Left) => {
-                    state
-                        .selection
-                        .mouse_drag(mouse.x, mouse.y, &state.prev_content_map);
+                    state.selection.mouse_drag(
+                        mouse.x,
+                        mouse.y,
+                        &state.layout_feedback.prev_content_map,
+                    );
                 }
                 event::MouseKind::Up(event::MouseButton::Left) => {
                     should_copy_selection = state.selection.active;
@@ -985,21 +1021,26 @@ fn run_frame(
         }
     }
 
-    state.focus_index = ctx.focus_index;
-    state.prev_focus_count = ctx.focus_count;
+    state.focus.focus_index = ctx.focus_index;
+    state.focus.prev_focus_count = ctx.rollback.focus_count;
 
     let mut tree = layout::build_tree(std::mem::take(&mut ctx.commands));
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
     let fd = layout::collect_all(&tree);
-    state.prev_scroll_infos = fd.scroll_infos;
-    state.prev_scroll_rects = fd.scroll_rects;
-    state.prev_hit_map = fd.hit_areas;
-    state.prev_group_rects = fd.group_rects;
-    state.prev_content_map = fd.content_areas;
-    state.prev_focus_rects = fd.focus_rects;
-    state.prev_focus_groups = fd.focus_groups;
-    layout::render(&tree, term.buffer_mut());
+    debug_assert_eq!(
+        fd.scroll_infos.len(),
+        fd.scroll_rects.len(),
+        "scroll feedback vectors must stay aligned"
+    );
+    state.layout_feedback.prev_scroll_infos = fd.scroll_infos;
+    state.layout_feedback.prev_scroll_rects = fd.scroll_rects;
+    state.layout_feedback.prev_hit_map = fd.hit_areas;
+    state.layout_feedback.prev_group_rects = fd.group_rects;
+    state.layout_feedback.prev_content_map = fd.content_areas;
+    state.layout_feedback.prev_focus_rects = fd.focus_rects;
+    state.layout_feedback.prev_focus_groups = fd.focus_groups;
+    layout::render(&tree, buffer);
     let raw_rects = fd.raw_draw_rects;
     for rdr in raw_rects {
         if rdr.rect.width == 0 || rdr.rect.height == 0 {
@@ -1010,16 +1051,15 @@ fn run_frame(
             .get_mut(rdr.draw_id)
             .and_then(|c| c.take())
         {
-            let buf = term.buffer_mut();
-            buf.push_clip(rdr.rect);
-            buf.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
-            cb(buf, rdr.rect);
-            buf.kitty_clip_info = None;
-            buf.pop_clip();
+            buffer.push_clip(rdr.rect);
+            buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
+            cb(buffer, rdr.rect);
+            buffer.kitty_clip_info = None;
+            buffer.pop_clip();
         }
     }
     state.hook_states = ctx.hook_states;
-    state.notification_queue = ctx.notification_queue;
+    state.diagnostics.notification_queue = ctx.rollback.notification_queue;
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
@@ -1029,13 +1069,35 @@ fn run_frame(
     } else {
         0.0
     };
-    state.fps_ema = if state.fps_ema == 0.0 {
+    state.diagnostics.fps_ema = if state.diagnostics.fps_ema == 0.0 {
         inst_fps
     } else {
-        (state.fps_ema * 0.9) + (inst_fps * 0.1)
+        (state.diagnostics.fps_ema * 0.9) + (inst_fps * 0.1)
     };
-    if state.debug_mode {
-        layout::render_debug_overlay(&tree, term.buffer_mut(), frame_time_us, state.fps_ema);
+    if state.diagnostics.debug_mode {
+        layout::render_debug_overlay(&tree, buffer, frame_time_us, state.diagnostics.fps_ema);
+    }
+
+    FrameKernelResult {
+        should_quit: false,
+        #[cfg(feature = "crossterm")]
+        clipboard_text,
+        #[cfg(feature = "crossterm")]
+        should_copy_selection,
+    }
+}
+
+fn run_frame(
+    term: &mut impl Backend,
+    state: &mut FrameState,
+    config: &RunConfig,
+    events: Vec<event::Event>,
+    f: &mut impl FnMut(&mut context::Context),
+) -> io::Result<bool> {
+    let size = term.size();
+    let kernel = run_frame_kernel(term.buffer_mut(), state, config, size, events, true, f);
+    if kernel.should_quit {
+        return Ok(false);
     }
 
     #[cfg(feature = "crossterm")]
@@ -1043,15 +1105,15 @@ fn run_frame(
         terminal::apply_selection_overlay(
             term.buffer_mut(),
             &state.selection,
-            &state.prev_content_map,
+            &state.layout_feedback.prev_content_map,
         );
     }
     #[cfg(feature = "crossterm")]
-    if should_copy_selection {
+    if kernel.should_copy_selection {
         let text = terminal::extract_selection_text(
             term.buffer_mut(),
             &state.selection,
-            &state.prev_content_map,
+            &state.layout_feedback.prev_content_map,
         );
         if !text.is_empty() {
             terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
@@ -1061,13 +1123,13 @@ fn run_frame(
 
     term.flush()?;
     #[cfg(feature = "crossterm")]
-    if let Some(text) = clipboard_text {
+    if let Some(text) = kernel.clipboard_text {
         #[allow(clippy::print_stderr)]
         if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
             eprintln!("[slt] failed to copy to clipboard: {e}");
         }
     }
-    state.tick = state.tick.wrapping_add(1);
+    state.diagnostics.tick = state.diagnostics.tick.wrapping_add(1);
 
     Ok(true)
 }
@@ -1077,10 +1139,10 @@ fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
     for ev in events {
         match ev {
             Event::Mouse(mouse) => {
-                state.last_mouse_pos = Some((mouse.x, mouse.y));
+                state.layout_feedback.last_mouse_pos = Some((mouse.x, mouse.y));
             }
             Event::FocusLost => {
-                state.last_mouse_pos = None;
+                state.layout_feedback.last_mouse_pos = None;
             }
             _ => {}
         }
@@ -1089,14 +1151,14 @@ fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
 
 #[cfg(feature = "crossterm")]
 fn clear_frame_layout_cache(state: &mut FrameState) {
-    state.prev_hit_map.clear();
-    state.prev_group_rects.clear();
-    state.prev_content_map.clear();
-    state.prev_focus_rects.clear();
-    state.prev_focus_groups.clear();
-    state.prev_scroll_infos.clear();
-    state.prev_scroll_rects.clear();
-    state.last_mouse_pos = None;
+    state.layout_feedback.prev_hit_map.clear();
+    state.layout_feedback.prev_group_rects.clear();
+    state.layout_feedback.prev_content_map.clear();
+    state.layout_feedback.prev_focus_rects.clear();
+    state.layout_feedback.prev_focus_groups.clear();
+    state.layout_feedback.prev_scroll_infos.clear();
+    state.layout_feedback.prev_scroll_rects.clear();
+    state.layout_feedback.last_mouse_pos = None;
 }
 
 #[cfg(feature = "crossterm")]

@@ -5,9 +5,7 @@ impl Context {
     /// Render a scrollable rich log view with styled entries.
     pub fn rich_log(&mut self, state: &mut RichLogState) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         let widget_height = if response.rect.height > 0 {
             response.rect.height as usize
@@ -36,75 +34,55 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            state.scroll_offset = state.scroll_offset.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.scroll_offset = (state.scroll_offset + 1).min(max_offset);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::PageUp => {
-                            state.scroll_offset = state.scroll_offset.saturating_sub(10);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::PageDown => {
-                            state.scroll_offset = (state.scroll_offset + 10).min(max_offset);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Home => {
-                            state.scroll_offset = 0;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::End => {
-                            state.scroll_offset = max_offset;
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        state.scroll_offset = (state.scroll_offset + 1).min(max_offset);
+                        consumed_indices.push(i);
                     }
+                    KeyCode::PageUp => {
+                        state.scroll_offset = state.scroll_offset.saturating_sub(10);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::PageDown => {
+                        state.scroll_offset = (state.scroll_offset + 10).min(max_offset);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Home => {
+                        state.scroll_offset = 0;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::End => {
+                        state.scroll_offset = max_offset;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Mouse(mouse) = event {
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
+            let mut consumed = Vec::new();
+            for (i, mouse) in self.mouse_events_in_rect(rect) {
+                let delta = self.scroll_lines_per_event as usize;
+                match mouse.kind {
+                    MouseKind::ScrollUp => {
+                        state.scroll_offset = state.scroll_offset.saturating_sub(delta);
+                        consumed.push(i);
                     }
-                    let delta = self.scroll_lines_per_event as usize;
-                    match mouse.kind {
-                        MouseKind::ScrollUp => {
-                            state.scroll_offset = state.scroll_offset.saturating_sub(delta);
-                            self.consumed[i] = true;
-                        }
-                        MouseKind::ScrollDown => {
-                            state.scroll_offset = (state.scroll_offset + delta).min(max_offset);
-                            self.consumed[i] = true;
-                        }
-                        _ => {}
+                    MouseKind::ScrollDown => {
+                        state.scroll_offset = (state.scroll_offset + delta).min(max_offset);
+                        consumed.push(i);
                     }
+                    _ => {}
                 }
             }
+            self.consume_indices(consumed);
         }
 
         state.scroll_offset = state.scroll_offset.min(max_offset);
@@ -158,7 +136,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = state.scroll_offset != old_offset;
         response
     }
@@ -179,53 +157,43 @@ impl Context {
             return Response::none();
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
-        let interaction_id = self.next_interaction_id();
         let focused = self.register_focusable();
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let _ = handle_vertical_nav(
+                            &mut state.selected,
+                            state.items.len().saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let _ = handle_vertical_nav(
-                                &mut state.selected,
-                                state.items.len().saturating_sub(1),
-                                key.code.clone(),
-                            );
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::PageUp => {
-                            state.selected = state.selected.saturating_sub(visible_height);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::PageDown => {
-                            state.selected = (state.selected + visible_height)
-                                .min(state.items.len().saturating_sub(1));
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Home => {
-                            state.selected = 0;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::End => {
-                            state.selected = state.items.len().saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::PageUp => {
+                        state.selected = state.selected.saturating_sub(visible_height);
+                        consumed_indices.push(i);
                     }
+                    KeyCode::PageDown => {
+                        state.selected = (state.selected + visible_height)
+                            .min(state.items.len().saturating_sub(1));
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Home => {
+                        state.selected = 0;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::End => {
+                        state.selected = state.items.len().saturating_sub(1);
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         let start = if state.selected >= visible_height {
@@ -277,9 +245,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        self.rollback.last_text_idx = None;
         response.changed = state.selected != old_selected;
         response
     }
@@ -301,60 +267,50 @@ impl Context {
 
         let mut consumed_indices = Vec::new();
 
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
-                continue;
-            }
-            if let Event::Key(key) = event {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        for (i, key) in self.available_key_presses() {
+            match key.code {
+                KeyCode::Esc => {
+                    state.open = false;
+                    consumed_indices.push(i);
                 }
-                match key.code {
-                    KeyCode::Esc => {
+                KeyCode::Up => {
+                    let s = state.selected();
+                    state.set_selected(s.saturating_sub(1));
+                    consumed_indices.push(i);
+                }
+                KeyCode::Down => {
+                    let s = state.selected();
+                    state.set_selected((s + 1).min(filtered.len().saturating_sub(1)));
+                    consumed_indices.push(i);
+                }
+                KeyCode::Enter => {
+                    if let Some(&cmd_idx) = filtered.get(state.selected()) {
+                        state.last_selected = Some(cmd_idx);
                         state.open = false;
-                        consumed_indices.push(i);
                     }
-                    KeyCode::Up => {
-                        let s = state.selected();
-                        state.set_selected(s.saturating_sub(1));
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Down => {
-                        let s = state.selected();
-                        state.set_selected((s + 1).min(filtered.len().saturating_sub(1)));
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Enter => {
-                        if let Some(&cmd_idx) = filtered.get(state.selected()) {
-                            state.last_selected = Some(cmd_idx);
-                            state.open = false;
-                        }
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Backspace => {
-                        if state.cursor > 0 {
-                            let byte_idx = byte_index_for_char(&state.input, state.cursor - 1);
-                            let end_idx = byte_index_for_char(&state.input, state.cursor);
-                            state.input.replace_range(byte_idx..end_idx, "");
-                            state.cursor -= 1;
-                            state.set_selected(0);
-                        }
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Char(ch) => {
-                        let byte_idx = byte_index_for_char(&state.input, state.cursor);
-                        state.input.insert(byte_idx, ch);
-                        state.cursor += 1;
-                        state.set_selected(0);
-                        consumed_indices.push(i);
-                    }
-                    _ => {}
+                    consumed_indices.push(i);
                 }
+                KeyCode::Backspace => {
+                    if state.cursor > 0 {
+                        let byte_idx = byte_index_for_char(&state.input, state.cursor - 1);
+                        let end_idx = byte_index_for_char(&state.input, state.cursor);
+                        state.input.replace_range(byte_idx..end_idx, "");
+                        state.cursor -= 1;
+                        state.set_selected(0);
+                    }
+                    consumed_indices.push(i);
+                }
+                KeyCode::Char(ch) => {
+                    let byte_idx = byte_index_for_char(&state.input, state.cursor);
+                    state.input.insert(byte_idx, ch);
+                    state.cursor += 1;
+                    state.set_selected(0);
+                    consumed_indices.push(i);
+                }
+                _ => {}
             }
         }
-        for idx in consumed_indices {
-            self.consumed[idx] = true;
-        }
+        self.consume_indices(consumed_indices);
 
         let filtered = state.filtered_indices();
 
@@ -462,7 +418,7 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
 
         let text_style = Style::new().fg(self.theme.text);
         let bold_style = Style::new().fg(self.theme.text).bold();
@@ -599,7 +555,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         Response::none()
     }
 
@@ -1050,30 +1006,24 @@ impl Context {
         if seq.is_empty() {
             return false;
         }
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         let target: Vec<char> = seq.chars().collect();
         let mut matched = 0;
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
-                continue;
-            }
-            if let Event::Key(key) = event {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                if let KeyCode::Char(c) = key.code {
-                    if c == target[matched] {
-                        matched += 1;
-                        if matched == target.len() {
-                            return true;
-                        }
-                    } else {
-                        matched = 0;
-                        if c == target[0] {
-                            matched = 1;
-                        }
+        for (_, key) in self.available_key_presses() {
+            if let KeyCode::Char(c) = key.code {
+                if c == target[matched] {
+                    matched += 1;
+                    if matched == target.len() {
+                        return true;
+                    }
+                } else {
+                    matched = 0;
+                    if c == target[0] {
+                        matched = 1;
                     }
                 }
             }

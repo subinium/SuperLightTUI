@@ -23,9 +23,7 @@ impl Context {
         let old_filter = state.filter.clone();
 
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         self.table_handle_events(state, focused, interaction_id);
 
@@ -55,62 +53,48 @@ impl Context {
             return;
         }
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                if mouse.y == rect.y {
+                    let rel_x = mouse.x.saturating_sub(rect.x);
+                    let mut x_offset = 0u32;
+                    for (col_idx, width) in state.column_widths().iter().enumerate() {
+                        if rel_x >= x_offset && rel_x < x_offset + *width {
+                            state.toggle_sort(col_idx);
+                            state.selected = 0;
+                            consumed.push(i);
+                            break;
+                        }
+                        x_offset += *width;
+                        if col_idx + 1 < state.column_widths().len() {
+                            x_offset += 3;
+                        }
+                    }
                     continue;
                 }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
-                    }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
 
-                    if mouse.y == rect.y {
-                        let rel_x = mouse.x.saturating_sub(rect.x);
-                        let mut x_offset = 0u32;
-                        for (col_idx, width) in state.column_widths().iter().enumerate() {
-                            if rel_x >= x_offset && rel_x < x_offset + *width {
-                                state.toggle_sort(col_idx);
-                                state.selected = 0;
-                                self.consumed[i] = true;
-                                break;
-                            }
-                            x_offset += *width;
-                            if col_idx + 1 < state.column_widths().len() {
-                                x_offset += 3;
-                            }
-                        }
-                        continue;
-                    }
+                if mouse.y < rect.y + 2 {
+                    continue;
+                }
 
-                    if mouse.y < rect.y + 2 {
-                        continue;
-                    }
-
-                    let visible_len = if state.page_size > 0 {
-                        let start = state
-                            .page
-                            .saturating_mul(state.page_size)
-                            .min(state.visible_indices().len());
-                        let end = (start + state.page_size).min(state.visible_indices().len());
-                        end.saturating_sub(start)
-                    } else {
-                        state.visible_indices().len()
-                    };
-                    let clicked_idx = (mouse.y - rect.y - 2) as usize;
-                    if clicked_idx < visible_len {
-                        state.selected = clicked_idx;
-                        self.consumed[i] = true;
-                    }
+                let visible_len = if state.page_size > 0 {
+                    let start = state
+                        .page
+                        .saturating_mul(state.page_size)
+                        .min(state.visible_indices().len());
+                    let end = (start + state.page_size).min(state.visible_indices().len());
+                    end.saturating_sub(start)
+                } else {
+                    state.visible_indices().len()
+                };
+                let clicked_idx = (mouse.y - rect.y - 2) as usize;
+                if clicked_idx < visible_len {
+                    state.selected = clicked_idx;
+                    consumed.push(i);
                 }
             }
+            self.consume_indices(consumed);
         }
     }
 
@@ -170,7 +154,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn handle_table_keys(&mut self, state: &mut TableState, focused: bool) {
@@ -179,45 +163,38 @@ impl Context {
         }
 
         let mut consumed_indices = Vec::new();
-        for (i, event) in self.events.iter().enumerate() {
-            if let Event::Key(key) = event {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        for (i, key) in self.available_key_presses() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                    let visible_len = table_visible_len(state);
+                    state.selected = state.selected.min(visible_len.saturating_sub(1));
+                    let _ = handle_vertical_nav(
+                        &mut state.selected,
+                        visible_len.saturating_sub(1),
+                        key.code.clone(),
+                    );
+                    consumed_indices.push(i);
                 }
-                match key.code {
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let visible_len = table_visible_len(state);
-                        state.selected = state.selected.min(visible_len.saturating_sub(1));
-                        let _ = handle_vertical_nav(
-                            &mut state.selected,
-                            visible_len.saturating_sub(1),
-                            key.code.clone(),
-                        );
-                        consumed_indices.push(i);
+                KeyCode::PageUp => {
+                    let old_page = state.page;
+                    state.prev_page();
+                    if state.page != old_page {
+                        state.selected = 0;
                     }
-                    KeyCode::PageUp => {
-                        let old_page = state.page;
-                        state.prev_page();
-                        if state.page != old_page {
-                            state.selected = 0;
-                        }
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::PageDown => {
-                        let old_page = state.page;
-                        state.next_page();
-                        if state.page != old_page {
-                            state.selected = 0;
-                        }
-                        consumed_indices.push(i);
-                    }
-                    _ => {}
+                    consumed_indices.push(i);
                 }
+                KeyCode::PageDown => {
+                    let old_page = state.page;
+                    state.next_page();
+                    if state.page != old_page {
+                        state.selected = 0;
+                    }
+                    consumed_indices.push(i);
+                }
+                _ => {}
             }
         }
-        for index in consumed_indices {
-            self.consumed[index] = true;
-        }
+        self.consume_indices(consumed_indices);
     }
 
     fn render_table_header(&mut self, state: &TableState, colors: &WidgetColors) {
@@ -316,72 +293,48 @@ impl Context {
         state.selected = state.selected.min(state.labels.len().saturating_sub(1));
         let old_selected = state.selected;
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left => {
+                        state.selected = if state.selected == 0 {
+                            state.labels.len().saturating_sub(1)
+                        } else {
+                            state.selected - 1
+                        };
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Left => {
-                            state.selected = if state.selected == 0 {
-                                state.labels.len().saturating_sub(1)
-                            } else {
-                                state.selected - 1
-                            };
-                            consumed_indices.push(i);
+                    KeyCode::Right => {
+                        if !state.labels.is_empty() {
+                            state.selected = (state.selected + 1) % state.labels.len();
                         }
-                        KeyCode::Right => {
-                            if !state.labels.is_empty() {
-                                state.selected = (state.selected + 1) % state.labels.len();
-                            }
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
+                    _ => {}
                 }
             }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                let mut x_offset = 0u32;
+                let rel_x = mouse.x - rect.x;
+                for (idx, label) in state.labels.iter().enumerate() {
+                    let tab_width = UnicodeWidthStr::width(label.as_str()) as u32 + 4;
+                    if rel_x >= x_offset && rel_x < x_offset + tab_width {
+                        state.selected = idx;
+                        consumed.push(i);
+                        break;
                     }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
-
-                    let mut x_offset = 0u32;
-                    let rel_x = mouse.x - rect.x;
-                    for (idx, label) in state.labels.iter().enumerate() {
-                        let tab_width = UnicodeWidthStr::width(label.as_str()) as u32 + 4;
-                        if rel_x >= x_offset && rel_x < x_offset + tab_width {
-                            state.selected = idx;
-                            self.consumed[i] = true;
-                            break;
-                        }
-                        x_offset += tab_width + 1;
-                    }
+                    x_offset += tab_width + 1;
                 }
             }
+            self.consume_indices(consumed);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -421,7 +374,7 @@ impl Context {
             self.styled(tab, style);
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.changed = state.selected != old_selected;
         response
@@ -439,29 +392,9 @@ impl Context {
     /// Render a clickable button with custom widget colors.
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        let mut activated = response.clicked;
-        if focused {
-            let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        activated = true;
-                        consumed_indices.push(i);
-                    }
-                }
-            }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
-        }
+        let activated = response.clicked || self.consume_activation_keys(focused);
 
         let hovered = response.hovered;
         let base_fg = colors.fg.unwrap_or(self.theme.text);
@@ -505,7 +438,7 @@ impl Context {
         label_text.push_str(" ]");
         self.styled(label_text, style);
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.clicked = activated;
         response
@@ -517,28 +450,9 @@ impl Context {
     /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
     pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        let mut activated = response.clicked;
-        if focused {
-            let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        activated = true;
-                        consumed_indices.push(i);
-                    }
-                }
-            }
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
-        }
+        let activated = response.clicked || self.consume_activation_keys(focused);
 
         let label = label.into();
         let hover_bg = if response.hovered || focused {
@@ -643,7 +557,7 @@ impl Context {
         });
         self.styled(text, style);
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.clicked = activated;
         response
@@ -666,30 +580,11 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut should_toggle = response.clicked;
         let old_checked = *checked;
 
-        if focused {
-            let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        should_toggle = true;
-                        consumed_indices.push(i);
-                    }
-                }
-            }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
-        }
+        should_toggle |= self.consume_activation_keys(focused);
 
         if should_toggle {
             *checked = !*checked;
@@ -741,7 +636,7 @@ impl Context {
             );
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.changed = *checked != old_checked;
         response
@@ -765,30 +660,11 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut should_toggle = response.clicked;
         let old_on = *on;
 
-        if focused {
-            let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                        should_toggle = true;
-                        consumed_indices.push(i);
-                    }
-                }
-            }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
-            }
-        }
+        should_toggle |= self.consume_activation_keys(focused);
 
         if should_toggle {
             *on = !*on;
@@ -840,7 +716,7 @@ impl Context {
             self.styled(switch, switch_style);
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         response.changed = *on != old_on;
         response
@@ -864,9 +740,7 @@ impl Context {
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
 
         self.select_handle_events(state, focused, response.clicked);
@@ -888,47 +762,37 @@ impl Context {
         }
 
         let mut consumed_indices = Vec::new();
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
-                continue;
-            }
-            if let Event::Key(key) = event {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                if state.open {
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let mut cursor = state.cursor();
-                            let _ = handle_vertical_nav(
-                                &mut cursor,
-                                state.items.len().saturating_sub(1),
-                                key.code.clone(),
-                            );
-                            state.set_cursor(cursor);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            state.selected = state.cursor();
-                            state.open = false;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Esc => {
-                            state.open = false;
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+        for (i, key) in self.available_key_presses() {
+            if state.open {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let mut cursor = state.cursor();
+                        let _ = handle_vertical_nav(
+                            &mut cursor,
+                            state.items.len().saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        state.set_cursor(cursor);
+                        consumed_indices.push(i);
                     }
-                } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                    state.open = true;
-                    state.set_cursor(state.selected);
-                    consumed_indices.push(i);
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        state.selected = state.cursor();
+                        state.open = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Esc => {
+                        state.open = false;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
+            } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                state.open = true;
+                state.set_cursor(state.selected);
+                consumed_indices.push(i);
             }
         }
-        for idx in consumed_indices {
-            self.consumed[idx] = true;
-        }
+        self.consume_indices(consumed_indices);
     }
 
     fn select_render(&mut self, state: &SelectState, focused: bool, colors: &WidgetColors) {
@@ -969,7 +833,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn render_select_trigger(
@@ -1001,7 +865,7 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.styled(
             display_text,
             Style::new().fg(colors.fg.unwrap_or(self.theme.text)),
@@ -1011,7 +875,7 @@ impl Context {
             Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim)),
         );
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn render_select_dropdown(&mut self, state: &SelectState, colors: &WidgetColors) {
@@ -1051,62 +915,37 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let _ = handle_vertical_nav(
+                            &mut state.selected,
+                            state.items.len().saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let _ = handle_vertical_nav(
-                                &mut state.selected,
-                                state.items.len().saturating_sub(1),
-                                key.code.clone(),
-                            );
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        consumed_indices.push(i);
                     }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
-                    }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
-                    let clicked_idx = (mouse.y - rect.y) as usize;
-                    if clicked_idx < state.items.len() {
-                        state.selected = clicked_idx;
-                        self.consumed[i] = true;
-                    }
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                let clicked_idx = (mouse.y - rect.y) as usize;
+                if clicked_idx < state.items.len() {
+                    state.selected = clicked_idx;
+                    consumed.push(i);
                 }
             }
+            self.consume_indices(consumed);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -1155,7 +994,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = state.selected != old_selected;
         response
     }
@@ -1173,64 +1012,39 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let _ = handle_vertical_nav(
+                            &mut state.cursor,
+                            state.items.len().saturating_sub(1),
+                            key.code.clone(),
+                        );
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                            let _ = handle_vertical_nav(
-                                &mut state.cursor,
-                                state.items.len().saturating_sub(1),
-                                key.code.clone(),
-                            );
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Char(' ') | KeyCode::Enter => {
-                            state.toggle(state.cursor);
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::Char(' ') | KeyCode::Enter => {
+                        state.toggle(state.cursor);
+                        consumed_indices.push(i);
                     }
+                    _ => {}
                 }
             }
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
-            for (i, event) in self.events.iter().enumerate() {
-                if self.consumed[i] {
-                    continue;
-                }
-                if let Event::Mouse(mouse) = event {
-                    if !matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                        continue;
-                    }
-                    let in_bounds = mouse.x >= rect.x
-                        && mouse.x < rect.right()
-                        && mouse.y >= rect.y
-                        && mouse.y < rect.bottom();
-                    if !in_bounds {
-                        continue;
-                    }
-                    let clicked_idx = (mouse.y - rect.y) as usize;
-                    if clicked_idx < state.items.len() {
-                        state.toggle(clicked_idx);
-                        state.cursor = clicked_idx;
-                        self.consumed[i] = true;
-                    }
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                let clicked_idx = (mouse.y - rect.y) as usize;
+                if clicked_idx < state.items.len() {
+                    state.toggle(clicked_idx);
+                    state.cursor = clicked_idx;
+                    consumed.push(i);
                 }
             }
+            self.consume_indices(consumed);
         }
 
         self.commands.push(Command::BeginContainer {
@@ -1272,7 +1086,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         response.changed = state.selected != old_selected;
         response
     }

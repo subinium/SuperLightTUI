@@ -1,3 +1,5 @@
+use super::*;
+
 /// Direction for bar chart rendering.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

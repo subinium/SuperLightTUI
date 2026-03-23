@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**빠르게 작성하고. 가볍게 실행합니다.**
+**빠르게 만들고. 가볍게 실행합니다.**
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -11,14 +11,17 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[문서 인덱스] · [빠른 시작] · [위젯 가이드] · [예제 가이드] · [패턴 가이드] · [아키텍처 가이드] · [기여하기]
+[문서 인덱스] · [빠른 시작] · [위젯 가이드] · [패턴 가이드] · [예제 가이드] · [백엔드 가이드] · [아키텍처 가이드]
 
 [English](../README.md) · [中文](README.zh-CN.md) · [Español](README.es.md) · [日本語](README.ja.md) · **한국어**
 
 </div>
 
-SuperLightTUI는 Rust를 위한 즉시 모드(immediate-mode) TUI 라이브러리입니다.
-클로저 하나를 작성하면, SLT가 매 프레임 호출하고, 라이브러리가 레이아웃, 디핑, 포커스, 렌더링을 처리합니다.
+SuperLightTUI는 Rust를 위한 immediate-mode TUI 라이브러리로, public grammar를 의도적으로 작게 유지합니다.
+클로저 하나를 쓰면 SLT가 매 프레임 그 클로저를 호출하고, 라이브러리가 레이아웃, 포커스, diff, 렌더링을 처리합니다.
+
+빠른 제품 반복, 읽기 쉬운 Rust 문법, 그리고 진지한 백엔드 규율을 함께 가져가도록 설계했습니다.
+그래서 도구를 빠르게 시제품화하는 사람에게도, 문서로 UI를 생성하는 코딩 에이전트에게도 자연스럽게 맞습니다.
 
 ## 쇼케이스
 
@@ -35,7 +38,7 @@ SuperLightTUI는 Rust를 위한 즉시 모드(immediate-mode) TUI 라이브러�
   </tr>
 </table>
 
-## 시작하기
+## 빠른 시작
 
 ```sh
 cargo add superlighttui
@@ -49,7 +52,32 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5줄. `App` 구조체 없음. `Model`/`Update`/`View` 없음. 이벤트 루프 없음. Ctrl+C는 그냥 동작합니다.
+5줄이면 시작됩니다. `App` 트레이트도, `Model`/`Update`/`View`도, 수동 이벤트 루프도 필요 없습니다. Ctrl+C도 바로 동작합니다.
+
+## 60초 문법
+
+대부분의 앱은 네 가지 개념으로 시작합니다.
+
+1. 상태는 일반적인 Rust 변수나 구조체에 둡니다.
+2. 레이아웃은 대부분 `row()`, `col()`, `container()`로 충분합니다.
+3. 스타일링은 메서드 체이닝으로 끝납니다.
+4. 상호작용 위젯은 보통 `Response`를 돌려줍니다.
+
+```rust
+ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
+    ui.text("SLT").bold().fg(Color::Cyan);
+    ui.row(|ui| {
+        ui.text("mode:");
+        ui.text("ready").fg(Color::Green);
+        ui.spacer();
+        if ui.button("Quit").clicked {
+            ui.quit();
+        }
+    });
+});
+```
+
+이게 핵심 mental model입니다. 나머지는 별도의 프레임워크가 아니라 깊이와 확장입니다.
 
 ## 실제 앱
 
@@ -70,7 +98,7 @@ fn main() -> std::io::Result<()> {
             count -= 1;
         }
 
-        ui.bordered(Border::Rounded).title("Counter").pad(1).gap(1).col(|ui| {
+        ui.bordered(Border::Rounded).title("Counter").p(1).gap(1).col(|ui| {
             ui.text("Counter").bold().fg(Color::Cyan);
             ui.row(|ui| {
                 ui.text("Count:");
@@ -83,17 +111,20 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-상태는 클로저 안에 있습니다. 레이아웃은 `row()`와 `col()`. 스타일은 메서드 체이닝. 그게 전부입니다.
+## 왜 SLT인가
 
-## SLT를 선택하는 이유
+- **작은 public grammar**. 대부분의 화면은 일반 Rust 상태, `row()` / `col()` / `container()`, 메서드 체이닝, `Response`로 시작합니다.
+- **프레임워크 의식이 적습니다**. 움직이기 위해 앱 트레이트, retained tree, 메시지 enum을 먼저 만들 필요가 없는 경우가 많습니다.
+- **기본기는 풍부하지만 백엔드는 진지합니다**. 공용 위젯이 포커스, hover, 클릭, scroll을 기본으로 연결해 주고, 내부 런타임은 `Backend`, `AppState`, `frame()`으로 보수적인 low-level 경로를 유지합니다.
+- **내부 구현도 보수적으로 다집니다**. shared frame kernel, explicit backend contract test, zero `unsafe`, feature-gated runtime path, `all-features`/`no-default-features`/WASM/clippy/examples/cargo-hack/semver/deny 검증으로 품질을 잠급니다.
 
-- **클로저가 곧 앱입니다** — 프레임워크 상태 없음, 트레이트 구현 보일러플레이트 없음, 메시지 루프 API 없음.
-- **CSS 같은 레이아웃, Tailwind 같은 문법** — `row()`, `col()`, `gap()`, `grow()`, `spacer()`, 그리고 `.p()`, `.px()`, `.m()`, `.w()`, `.max_w()` 같은 단축 표기.
-- **위젯이 지루한 작업을 자동 처리** — 포커스 순서, 호버, 클릭 핸들링, 스크롤, 공통 키보드 동작이 내장되어 있습니다.
-- **작은 코어, 선택적 확장** — 핵심 의존성은 `unicode-width`와 `compact_str`; 터미널 I/O는 선택적 `crossterm`; async, serde, image, qrcode, 신택스 하이라이팅은 피처 플래그 뒤에 있습니다.
-- **라이브러리 위생이 중요합니다** — `unsafe` 없음, 명시적 피처 플래그, 문서, 예제, 테스트, 시맨틱 버저닝 릴리스 규율.
+Rust 사용자에게는 retained-mode TUI보다 초기 설정이 덜한 경우가 많습니다.
+AI 보조 워크플로에서는 문서와 예제만으로도 public grammar를 추론하기 쉽다는 뜻이기도 합니다.
 
-## 주요 API
+SLT는 Rust의 타입 안정성을 유지하면서 빠르게 터미널 앱을 만들고 싶을 때 특히 잘 맞습니다.
+반대로 retained component tree가 중심이거나 GUI-first 툴킷이 필요하다면 다른 선택지가 더 잘 맞을 수 있습니다.
+
+## 자주 쓰는 API
 
 ```rust
 // 텍스트와 레이아웃
@@ -133,54 +164,55 @@ ui.canvas(40, 10, |cv| {
 });
 ```
 
-전체 위젯 카탈로그는 [위젯 가이드]를 참고하세요.
+분류된 전체 위젯 목록은 [위젯 가이드]를, 조합 패턴은 [패턴 가이드]를 참고하세요.
 
-## 라이브러리 학습하기
+## 라이브러리 익히기
 
 | 문서 | 내용 |
 |------|------|
 | [문서 인덱스] | 전체 문서 구조와 가이드 맵 |
-| [빠른 시작] | 설치, 첫 앱, 카운터, 레이아웃, 입력 |
-| [위젯 가이드] | 위젯 카탈로그와 주요 API |
-| [패턴 가이드] | 상태 관리, 폼, 오버레이, 비동기, 커스텀 위젯 |
-| [예제 가이드] | 예제 인덱스와 실행 명령어 |
-| [아키텍처 가이드] | 모듈 맵, 프레임 라이프사이클, 의존성 흐름 |
-| [백엔드 가이드] | `Backend`, `AppState`, `frame()`, 인라인 모드 |
-| [테스트 가이드] | `TestBackend`, `EventBuilder`, 상호작용 테스트 |
-| [디버깅 가이드] | F12 오버레이, 클리핑, 원프레임 딜레이 |
-| [AI 가이드] | AI 코딩 에이전트를 위한 빠른 참조 |
-| [애니메이션 가이드] | Tween, Spring, Keyframes, Sequence, Stagger |
-| [테마 가이드] | 테마 프리셋, ThemeBuilder, 커스텀 테마 |
-| [기능 가이드] | 피처 플래그, 선택적 의존성 |
-| [`docs/DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) | API가 이렇게 설계된 이유 |
+| [빠른 시작] | 설치, 첫 앱, 클로저 mental model, 레이아웃, 위젯 상태 |
+| [위젯 가이드] | 위젯, 런타임 메서드, 상태 타입 전체 카탈로그 |
+| [패턴 가이드] | 상태 배치, 화면 조합, helper 추출, 큰 앱 구조 |
+| [예제 가이드] | 제품 형태와 기능 영역별로 정리된 실행 예제 |
+| [백엔드 가이드] | `Backend`, `AppState`, `frame()`, inline mode, static output |
+| [테스트 가이드] | `TestBackend`, `EventBuilder`, multi-frame test, backend contract test |
+| [디버깅 가이드] | F12 오버레이, clipping, focus surprise, previous-frame behavior |
+| [AI 가이드] | AI 빌더와 코딩 에이전트를 위한 가장 빠른 진입 경로 |
+| [아키텍처 가이드] | 모듈 맵, 프레임 라이프사이클, layout/render 파이프라인 |
+| [기능 가이드] | feature flag, optional dependency, 추천 조합 |
+| [애니메이션 가이드] | Tween, spring, keyframe, sequence, stagger |
+| [테마 가이드] | Theme struct, preset, ThemeBuilder, 커스텀 테마 |
+| [설계 원칙] | API 제약과 설계 철학 |
 
-## 예제 하이라이트
+## 대표 예제
 
-| 예제 | 커맨드 | 내용 |
+| 예제 | 커맨드 | 초점 |
 |------|--------|------|
-| hello | `cargo run --example hello` | 최소 구성 앱 |
-| counter | `cargo run --example counter` | 상태 + 키보드 입력 |
-| demo | `cargo run --example demo` | 전체 위젯 투어 |
-| demo_dashboard | `cargo run --example demo_dashboard` | 대시보드 레이아웃 |
-| demo_cli | `cargo run --example demo_cli` | CLI 도구 레이아웃 |
-| demo_infoviz | `cargo run --example demo_infoviz` | 차트와 데이터 시각화 |
-| demo_game | `cargo run --example demo_game` | 즉시 모드 인터랙션 |
-| async_demo | `cargo run --example async_demo --features async` | 백그라운드 메시지 |
+| `hello` | `cargo run --example hello` | 가장 작은 앱 |
+| `counter` | `cargo run --example counter` | 상태 + 키보드 입력 |
+| `demo` | `cargo run --example demo` | 폭넓은 위젯 투어 |
+| `demo_dashboard` | `cargo run --example demo_dashboard` | 대시보드 레이아웃 |
+| `demo_cli` | `cargo run --example demo_cli` | CLI 도구 레이아웃 |
+| `demo_infoviz` | `cargo run --example demo_infoviz` | 차트와 데이터 시각화 |
+| `demo_game` | `cargo run --example demo_game` | immediate-mode 상호작용 |
+| `inline` | `cargo run --example inline` | 일반 프롬프트 아래 inline 렌더링 |
+| `async_demo` | `cargo run --example async_demo --features async` | 백그라운드 메시지 |
 
-전체 분류 인덱스는 [예제 가이드]를 참고하세요.
+전체 분류 인덱스는 [예제 가이드]에 있습니다.
 
 ## 커스텀 위젯과 백엔드
 
-- `Widget` 트레이트를 구현하면 포커스, 레이아웃, 이벤트, 테마에 완전히 접근할 수 있는 재사용 가능한 위젯을 만들 수 있습니다.
-- `Backend` 트레이트를 구현하고 `frame()`을 구동하면 비터미널 렌더러, 테스트 하네스, 임베디드 타겟을 만들 수 있습니다.
-- `TestBackend`로 헤드리스 렌더링과 스냅샷 스타일 검증을 할 수 있습니다.
+- 재사용 가능한 고수준 빌딩 블록이 필요하면 `Widget`을 구현하세요.
+- 비터미널 타깃, 외부 이벤트 루프, 임베디드 런타임이 필요하면 `Backend`를 구현하고 `frame()`을 구동하세요.
+- 헤드리스 렌더링 검증과 안정적인 상호작용 테스트에는 `TestBackend`를 쓰면 됩니다.
 
-자세한 내용은 [패턴 가이드]와 [아키텍처 가이드]를 참고하세요.
+escape hatch가 필요해져도 public grammar는 작게 유지됩니다.
 
 ## 기여
 
-[기여하기] 가이드를 읽은 다음 `docs/DESIGN_PRINCIPLES.md`와 [아키텍처 가이드]를 참고하세요.
-릴리스와 CI 프로세스는 포맷팅, 체크, clippy, 테스트, 예제 컴파일이 모두 통과해야 합니다.
+[기여하기]를 읽고, 이어서 [설계 원칙]과 [아키텍처 가이드]를 참고하세요.
+릴리즈 과정에서는 format, check, clippy, test, example, backend gate가 계속 녹색이어야 합니다.
 
 ## 라이선스
 
@@ -212,4 +244,5 @@ ui.canvas(40, 10, |cv| {
 [애니메이션 가이드]: ANIMATION.md
 [테마 가이드]: THEMING.md
 [기능 가이드]: FEATURES.md
+[설계 원칙]: DESIGN_PRINCIPLES.md
 [기여하기]: ../CONTRIBUTING.md

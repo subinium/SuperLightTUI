@@ -9,10 +9,8 @@ use crate::context::Context;
 use crate::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
 };
-use crate::layout;
 use crate::rect::Rect;
-use crate::style::Theme;
-use crate::FrameState;
+use crate::{run_frame_kernel, FrameState, RunConfig};
 
 /// Builder for constructing a sequence of input [`Event`]s.
 ///
@@ -141,6 +139,8 @@ impl Default for EventBuilder {
 /// Use [`render`](TestBackend::render) to run one frame, then inspect the
 /// output with [`line`](TestBackend::line), [`assert_contains`](TestBackend::assert_contains),
 /// or [`to_string_trimmed`](TestBackend::to_string_trimmed).
+/// Session state persists across renders, so multi-frame tests can exercise
+/// hooks, focus, and previous-frame hit testing.
 ///
 /// # Example
 ///
@@ -157,7 +157,7 @@ pub struct TestBackend {
     buffer: Buffer,
     width: u32,
     height: u32,
-    hook_states: Vec<Box<dyn std::any::Any>>,
+    frame_state: FrameState,
 }
 
 impl TestBackend {
@@ -168,45 +168,41 @@ impl TestBackend {
             buffer: Buffer::empty(area),
             width,
             height,
-            hook_states: Vec::new(),
+            frame_state: FrameState::default(),
         }
+    }
+
+    fn render_frame(
+        &mut self,
+        events: Vec<Event>,
+        setup_state: impl FnOnce(&mut FrameState),
+        f: impl FnOnce(&mut Context),
+    ) {
+        setup_state(&mut self.frame_state);
+
+        self.buffer.reset();
+        let mut once = Some(f);
+        let mut render = |ui: &mut Context| {
+            if let Some(f) = once.take() {
+                f(ui);
+            } else {
+                panic!("render closure called twice");
+            }
+        };
+        let _ = run_frame_kernel(
+            &mut self.buffer,
+            &mut self.frame_state,
+            &RunConfig::default(),
+            (self.width, self.height),
+            events,
+            false,
+            &mut render,
+        );
     }
 
     /// Run a UI closure for one frame and render to the internal buffer.
     pub fn render(&mut self, f: impl FnOnce(&mut Context)) {
-        let mut frame_state = FrameState {
-            hook_states: std::mem::take(&mut self.hook_states),
-            ..FrameState::default()
-        };
-        let mut ctx = Context::new(
-            Vec::new(),
-            self.width,
-            self.height,
-            &mut frame_state,
-            Theme::dark(),
-        );
-        f(&mut ctx);
-        ctx.render_notifications();
-        ctx.emit_pending_tooltips();
-        let mut tree = layout::build_tree(std::mem::take(&mut ctx.commands));
-        self.hook_states = ctx.hook_states;
-        let mut deferred = ctx.deferred_draws;
-        let area = Rect::new(0, 0, self.width, self.height);
-        layout::compute(&mut tree, area);
-        self.buffer.reset();
-        layout::render(&tree, &mut self.buffer);
-        for rdr in layout::collect_raw_draw_rects(&tree) {
-            if rdr.rect.width == 0 || rdr.rect.height == 0 {
-                continue;
-            }
-            if let Some(cb) = deferred.get_mut(rdr.draw_id).and_then(|c| c.take()) {
-                self.buffer.push_clip(rdr.rect);
-                self.buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
-                cb(&mut self.buffer, rdr.rect);
-                self.buffer.kitty_clip_info = None;
-                self.buffer.pop_clip();
-            }
-        }
+        self.render_frame(Vec::new(), |_| {}, f);
     }
 
     /// Render with injected events and focus state for interaction testing.
@@ -217,42 +213,14 @@ impl TestBackend {
         prev_focus_count: usize,
         f: impl FnOnce(&mut Context),
     ) {
-        let mut frame_state = FrameState {
-            hook_states: std::mem::take(&mut self.hook_states),
-            focus_index,
-            prev_focus_count,
-            ..FrameState::default()
-        };
-        let mut ctx = Context::new(
+        self.render_frame(
             events,
-            self.width,
-            self.height,
-            &mut frame_state,
-            Theme::dark(),
+            |state| {
+                state.focus.focus_index = focus_index;
+                state.focus.prev_focus_count = prev_focus_count;
+            },
+            f,
         );
-        f(&mut ctx);
-        ctx.process_focus_keys();
-        ctx.render_notifications();
-        ctx.emit_pending_tooltips();
-        let mut tree = layout::build_tree(std::mem::take(&mut ctx.commands));
-        self.hook_states = ctx.hook_states;
-        let mut deferred = ctx.deferred_draws;
-        let area = Rect::new(0, 0, self.width, self.height);
-        layout::compute(&mut tree, area);
-        self.buffer.reset();
-        layout::render(&tree, &mut self.buffer);
-        for rdr in layout::collect_raw_draw_rects(&tree) {
-            if rdr.rect.width == 0 || rdr.rect.height == 0 {
-                continue;
-            }
-            if let Some(cb) = deferred.get_mut(rdr.draw_id).and_then(|c| c.take()) {
-                self.buffer.push_clip(rdr.rect);
-                self.buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
-                cb(&mut self.buffer, rdr.rect);
-                self.buffer.kitty_clip_info = None;
-                self.buffer.pop_clip();
-            }
-        }
     }
 
     /// Convenience wrapper: render with events using default focus state.

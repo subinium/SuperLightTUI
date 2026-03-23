@@ -36,135 +36,128 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                let matched_suggestions = if state.show_suggestions {
+                    state
+                        .matched_suggestions()
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect::<Vec<String>>()
+                } else {
+                    Vec::new()
+                };
+                let suggestions_visible = !matched_suggestions.is_empty();
+                if suggestions_visible {
+                    state.suggestion_index = state
+                        .suggestion_index
+                        .min(matched_suggestions.len().saturating_sub(1));
+                }
+                match key.code {
+                    KeyCode::Up if suggestions_visible => {
+                        state.suggestion_index = state.suggestion_index.saturating_sub(1);
+                        consumed_indices.push(i);
                     }
-                    let matched_suggestions = if state.show_suggestions {
-                        state
-                            .matched_suggestions()
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect::<Vec<String>>()
-                    } else {
-                        Vec::new()
-                    };
-                    let suggestions_visible = !matched_suggestions.is_empty();
-                    if suggestions_visible {
-                        state.suggestion_index = state
-                            .suggestion_index
+                    KeyCode::Down if suggestions_visible => {
+                        state.suggestion_index = (state.suggestion_index + 1)
                             .min(matched_suggestions.len().saturating_sub(1));
+                        consumed_indices.push(i);
                     }
-                    match key.code {
-                        KeyCode::Up if suggestions_visible => {
-                            state.suggestion_index = state.suggestion_index.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Down if suggestions_visible => {
-                            state.suggestion_index = (state.suggestion_index + 1)
-                                .min(matched_suggestions.len().saturating_sub(1));
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Esc if state.show_suggestions => {
+                    KeyCode::Esc if state.show_suggestions => {
+                        state.show_suggestions = false;
+                        state.suggestion_index = 0;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Tab if suggestions_visible => {
+                        if let Some(selected) = matched_suggestions
+                            .get(state.suggestion_index)
+                            .or_else(|| matched_suggestions.first())
+                        {
+                            state.value = selected.clone();
+                            state.cursor = state.value.chars().count();
                             state.show_suggestions = false;
                             state.suggestion_index = 0;
-                            consumed_indices.push(i);
                         }
-                        KeyCode::Tab if suggestions_visible => {
-                            if let Some(selected) = matched_suggestions
-                                .get(state.suggestion_index)
-                                .or_else(|| matched_suggestions.first())
-                            {
-                                state.value = selected.clone();
-                                state.cursor = state.value.chars().count();
-                                state.show_suggestions = false;
-                                state.suggestion_index = 0;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Char(ch) => {
-                            if let Some(max) = state.max_length {
-                                if state.value.chars().count() >= max {
-                                    continue;
-                                }
-                            }
-                            let index = byte_index_for_char(&state.value, state.cursor);
-                            state.value.insert(index, ch);
-                            state.cursor += 1;
-                            if !state.suggestions.is_empty() {
-                                state.show_suggestions = true;
-                                state.suggestion_index = 0;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Backspace => {
-                            if state.cursor > 0 {
-                                let start = byte_index_for_char(&state.value, state.cursor - 1);
-                                let end = byte_index_for_char(&state.value, state.cursor);
-                                state.value.replace_range(start..end, "");
-                                state.cursor -= 1;
-                            }
-                            if !state.suggestions.is_empty() {
-                                state.show_suggestions = true;
-                                state.suggestion_index = 0;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Left => {
-                            state.cursor = state.cursor.saturating_sub(1);
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Right => {
-                            state.cursor = (state.cursor + 1).min(state.value.chars().count());
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Home => {
-                            state.cursor = 0;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Delete => {
-                            let len = state.value.chars().count();
-                            if state.cursor < len {
-                                let start = byte_index_for_char(&state.value, state.cursor);
-                                let end = byte_index_for_char(&state.value, state.cursor + 1);
-                                state.value.replace_range(start..end, "");
-                            }
-                            if !state.suggestions.is_empty() {
-                                state.show_suggestions = true;
-                                state.suggestion_index = 0;
-                            }
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::End => {
-                            state.cursor = state.value.chars().count();
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
-                }
-                if let Event::Paste(ref text) = event {
-                    for ch in text.chars() {
+                    KeyCode::Char(ch) => {
                         if let Some(max) = state.max_length {
                             if state.value.chars().count() >= max {
-                                break;
+                                continue;
                             }
                         }
                         let index = byte_index_for_char(&state.value, state.cursor);
                         state.value.insert(index, ch);
                         state.cursor += 1;
+                        if !state.suggestions.is_empty() {
+                            state.show_suggestions = true;
+                            state.suggestion_index = 0;
+                        }
+                        consumed_indices.push(i);
                     }
-                    if !state.suggestions.is_empty() {
-                        state.show_suggestions = true;
-                        state.suggestion_index = 0;
+                    KeyCode::Backspace => {
+                        if state.cursor > 0 {
+                            let start = byte_index_for_char(&state.value, state.cursor - 1);
+                            let end = byte_index_for_char(&state.value, state.cursor);
+                            state.value.replace_range(start..end, "");
+                            state.cursor -= 1;
+                        }
+                        if !state.suggestions.is_empty() {
+                            state.show_suggestions = true;
+                            state.suggestion_index = 0;
+                        }
+                        consumed_indices.push(i);
                     }
-                    consumed_indices.push(i);
+                    KeyCode::Left => {
+                        state.cursor = state.cursor.saturating_sub(1);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right => {
+                        state.cursor = (state.cursor + 1).min(state.value.chars().count());
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Home => {
+                        state.cursor = 0;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Delete => {
+                        let len = state.value.chars().count();
+                        if state.cursor < len {
+                            let start = byte_index_for_char(&state.value, state.cursor);
+                            let end = byte_index_for_char(&state.value, state.cursor + 1);
+                            state.value.replace_range(start..end, "");
+                        }
+                        if !state.suggestions.is_empty() {
+                            state.show_suggestions = true;
+                            state.suggestion_index = 0;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::End => {
+                        state.cursor = state.value.chars().count();
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-
-            for index in consumed_indices {
-                self.consumed[index] = true;
+            for (i, text) in self.available_pastes() {
+                for ch in text.chars() {
+                    if let Some(max) = state.max_length {
+                        if state.value.chars().count() >= max {
+                            break;
+                        }
+                    }
+                    let index = byte_index_for_char(&state.value, state.cursor);
+                    state.value.insert(index, ch);
+                    state.cursor += 1;
+                }
+                if !state.suggestions.is_empty() {
+                    state.show_suggestions = true;
+                    state.suggestion_index = 0;
+                }
+                consumed_indices.push(i);
             }
+
+            self.consume_indices(consumed_indices);
         }
 
         if state.value.is_empty() {

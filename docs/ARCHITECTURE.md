@@ -1,7 +1,7 @@
 # SLT Architecture
 
 This document describes how the code is organized and how data flows through the system.
-For design philosophy and conventions, see [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md).
+For design philosophy and conventions, see [Design Principles](DESIGN_PRINCIPLES.md).
 
 Related docs:
 - [QUICK_START.md](QUICK_START.md)
@@ -24,7 +24,7 @@ src/
 │   ├── state.rs                # State<T>, Response
 │   ├── bars.rs                 # BarDirection, Bar, BarChartConfig, BarGroup
 │   ├── widget.rs               # Widget trait
-│   ├── core.rs                 # Context struct + ContextSnapshot
+│   ├── core.rs                 # Context struct + checkpoint / rollback state
 │   ├── container.rs            # ContainerBuilder + CanvasContext
 │   ├── runtime.rs              # Core Context methods (hooks, focus, notifications)
 │   ├── helpers.rs              # Shared helper functions for widget impls
@@ -42,10 +42,11 @@ src/
 │   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
 │   │   └── tree_widgets.rs     # tree widget internals
 │   ├── widgets_input.rs        # Input facade
-│   └── widgets_input/
-│       ├── text_input.rs       # text input widget
-│       ├── feedback.rs         # spinner, toast, slider
-│       └── textarea_progress.rs # textarea and progress widgets
+│   ├── widgets_input/
+│   │   ├── text_input.rs       # text input widget
+│   │   ├── feedback.rs         # spinner, toast, slider
+│   │   └── textarea_progress.rs # textarea and progress widgets
+│   └── widgets_viz.rs          # Charts, sparklines, canvas, QR, and other data-viz widgets
 │
 ├── widgets.rs                  # Facade for widget state types
 ├── widgets/
@@ -55,15 +56,14 @@ src/
 │   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
 │   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, tool approval types, ContextItem
 │
-├── layout.rs                   # Layout engine
-│   ├── Command enum            # Flat representation of UI calls
-│   ├── LayoutNode              # Tree node with resolved children
-│   ├── build_tree()            # Command list → LayoutNode tree
-│   └── collect_all()           # Single DFS pass — collects focus, scroll, hits, animations, draws, modals, toasts
-│
+├── layout.rs                   # Thin facade re-exporting layout kernels
 ├── layout/
+│   ├── command.rs              # Command enum recorded by Context
+│   ├── tree.rs                 # LayoutNode, NodeKind, build_tree(), wrap helpers
+│   ├── collect.rs              # collect_all(), FrameData, raw-draw collection helpers
 │   ├── flexbox.rs              # compute(), layout_row(), layout_column(), gap/grow/shrink resolution
-│   └── render.rs               # render(), render_inner(), render_border(), clipping, viewport culling
+│   ├── render.rs               # render(), render_inner(), render_border(), clipping, viewport culling
+│   └── tests.rs                # Layout-focused kernel tests
 │
 ├── style.rs                    # Style struct, Border, Padding, Margin, Constraints, Modifiers, Align, Justify
 ├── style/
@@ -94,6 +94,8 @@ src/
 │   └── braille.rs              # Braille dot patterns for line/scatter charts
 │
 ├── buffer.rs                   # Double-buffer with clip stack and diff tracking
+├── syntax.rs                   # Tree-sitter-based syntax highlighting helpers
+├── sixel.rs                    # Sixel image protocol support
 ├── cell.rs                     # Cell = char + Style + optional URL
 ├── rect.rs                     # Rect struct, bounds checking, intersection
 ├── event.rs                    # Event, KeyCode, KeyModifiers, MouseEvent, MouseButton
@@ -119,28 +121,35 @@ Every frame follows this exact sequence:
    └── Each call pushes a Command to Context's internal command list
    └── No layout is computed yet — just recording intent
 
-3. BUILD TREE — build_tree()
+3. POST-CLOSURE NORMALIZATION
+   └── process_focus_keys()
+   └── render_notifications()
+   └── emit_pending_tooltips()
+   └── Scoped stacks settle before layout; quit can short-circuit here
+
+4. BUILD TREE — build_tree()
    └── Flat Command list → nested LayoutNode tree
    └── Parent-child relationships resolved from open/close markers
-
-4. COLLECT ALL — collect_all()
-   └── Single DFS traversal of the LayoutNode tree
-   └── Collects: focus targets, scroll regions, hit areas,
-       animation values, draw closures, modals, toasts
-   └── This single pass replaced 7 separate traversals (v0.9)
 
 5. FLEXBOX LAYOUT
    └── layout_row() / layout_column()
    └── Resolves: sizes, gaps, grow factors, min/max constraints
    └── Breakpoint-conditional styles evaluated against terminal width
 
-6. RENDER
+6. COLLECT ALL — collect_all()
+   └── Single DFS traversal of the laid-out LayoutNode tree
+   └── Collects: scroll regions, hit areas, group rects, content rects,
+       focus rects/groups, raw-draw viewport rects
+   └── This single pass replaced multiple feedback traversals
+
+7. RENDER + DEFERRED DRAW
    └── render() → render_inner() → render_border()
    └── Writes Cell values to the back buffer
    └── Clip stack ensures children don't overflow parent bounds
    └── Viewport culling: nodes fully outside the viewport are skipped
+   └── Deferred raw-draw callbacks replay into collected raw-draw rects
 
-7. DIFF + FLUSH
+8. DIFF + FLUSH
    └── Compare front buffer (previous frame) vs back buffer (current frame)
    └── apply_style_delta() — only emit ANSI attributes that changed
    └── Synchronized output (DECSET 2026) prevents tearing on supported terminals
@@ -148,12 +157,13 @@ Every frame follows this exact sequence:
 ```
 
 For the custom-backend entry point that drives this lifecycle manually, see `docs/BACKENDS.md`.
+Terminal-owned run loops add selection overlay and clipboard handling around the shared kernel before the final flush.
 
 ---
 
 ## One-Frame Delay Feedback
 
-Layout-computed data feeds back to the **next** frame via `prev_*` fields on Context:
+Layout-computed data feeds back to the **next** frame via settled `prev_*` fields on `Context`, sourced from session state carried between frames:
 
 ```
 Frame N:   closure runs → layout computed → focus_count, hit_areas, scroll_bounds stored
@@ -178,7 +188,7 @@ lib.rs (entry point)
   │     ↑
   │     ├── widgets.rs (state types)
   │     ├── style.rs ←── style/color.rs, style/theme.rs
-  │     ├── layout.rs ←── layout/flexbox.rs, layout/render.rs
+  │     ├── layout.rs ←── layout/command.rs, layout/tree.rs, layout/collect.rs, layout/flexbox.rs, layout/render.rs
   │     ├── buffer.rs ←── cell.rs
   │     ├── anim.rs
   │     ├── event.rs
@@ -195,6 +205,7 @@ Key observations:
 - `context.rs` stays the public hub, but heavy logic is now split into smaller files under `src/context/`
 - `widgets.rs` stays the public state catalog, but the concrete state types are grouped under `src/widgets/`
 - `terminal.rs` is isolated — it only knows about `buffer` and `event`
+- `layout.rs` is now only a facade; the real kernels live under `src/layout/`
 - `style`, `layout`, `anim` are largely independent of each other
 - Widget facades under `src/context/widgets_*.rs` now act as indexes for narrower implementation files
 

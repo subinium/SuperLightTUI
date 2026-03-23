@@ -14,7 +14,23 @@ impl Context {
         };
 
         let focused = self.register_focusable();
-        let key_dismiss = focused && (self.key_code(KeyCode::Enter) || self.key('x'));
+        let key_dismiss = if focused {
+            let consumed: Vec<usize> = self
+                .available_key_presses()
+                .filter_map(|(i, key)| {
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Char('x')) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let dismissed = !consumed.is_empty();
+            self.consume_indices(consumed);
+            dismissed
+        } else {
+            false
+        };
 
         let mut response = self.container().col(|ui| {
             ui.line(|ui| {
@@ -55,43 +71,34 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Char('y') => {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
+                        consumed_indices.push(i);
                     }
-
-                    match key.code {
-                        KeyCode::Char('y') => {
-                            is_yes = true;
-                            *result = true;
-                            clicked = true;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Char('n') => {
-                            is_yes = false;
-                            *result = false;
-                            clicked = true;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
-                            is_yes = !is_yes;
-                            *result = is_yes;
-                            consumed_indices.push(i);
-                        }
-                        KeyCode::Enter => {
-                            *result = is_yes;
-                            clicked = true;
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                    KeyCode::Char('n') => {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
+                        consumed_indices.push(i);
                     }
+                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                        is_yes = !is_yes;
+                        *result = is_yes;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        *result = is_yes;
+                        clicked = true;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         let yes_style = if is_yes {
@@ -164,15 +171,15 @@ impl Context {
                     ui.text(*segment).bold();
                 } else {
                     let focused = ui.register_focusable();
-                    let pressed = focused && (ui.key_code(KeyCode::Enter) || ui.key(' '));
                     let resp = ui.interaction();
+                    let activated = resp.clicked || ui.consume_activation_keys(focused);
                     let color = if resp.hovered || focused {
                         theme.accent
                     } else {
                         theme.primary
                     };
                     ui.text(*segment).fg(color).underline();
-                    if resp.clicked || pressed {
+                    if activated {
                         clicked_idx = Some(i);
                     }
                     ui.text(separator).dim();
@@ -183,7 +190,7 @@ impl Context {
         clicked_idx
     }
 
-    /// Collapsible section that toggles on click or Enter.
+    /// Collapsible section that toggles on click, Enter, or Space.
     pub fn accordion(
         &mut self,
         title: &str,
@@ -193,8 +200,8 @@ impl Context {
         let theme = self.theme;
         let focused = self.register_focusable();
         let old_open = *open;
-
-        if focused && self.key_code(KeyCode::Enter) {
+        let toggled_from_key = self.consume_activation_keys(focused);
+        if toggled_from_key {
             *open = !*open;
         }
 

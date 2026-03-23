@@ -17,7 +17,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -34,7 +34,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = Some(self.commands.len() - 1);
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
@@ -48,7 +48,7 @@ impl Context {
             return Response::none();
         }
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 2,
@@ -74,7 +74,7 @@ impl Context {
             self.styled(*action, Style::new().fg(self.theme.text_dim));
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         Response::none()
     }
@@ -90,7 +90,7 @@ impl Context {
             return Response::none();
         }
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 2,
@@ -116,7 +116,7 @@ impl Context {
             self.styled(*action, Style::new().fg(text_color));
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         Response::none()
     }
@@ -127,7 +127,9 @@ impl Context {
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
     pub fn key(&self, c: char) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
@@ -143,7 +145,9 @@ impl Context {
     /// Use [`raw_key_code`](Self::raw_key_code) for global shortcuts that must work
     /// regardless of modal/overlay state.
     pub fn key_code(&self, code: KeyCode) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
@@ -170,7 +174,9 @@ impl Context {
     ///
     /// Returns `true` if the key release event has not been consumed by another widget.
     pub fn key_release(&self, c: char) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
@@ -183,7 +189,9 @@ impl Context {
     ///
     /// Returns `true` if the key release event has not been consumed by another widget.
     pub fn key_code_release(&self, code: KeyCode) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
@@ -202,20 +210,24 @@ impl Context {
     /// Call **after** widgets if you want widgets to have priority over your
     /// handler, or **before** widgets to intercept first.
     pub fn consume_key(&mut self, c: char) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
-                continue;
+        let index = self.available_key_presses().find_map(|(i, key)| {
+            if key.code == KeyCode::Char(c) {
+                Some(i)
+            } else {
+                None
             }
-            if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == KeyCode::Char(c))
-            {
-                self.consumed[i] = true;
-                return true;
-            }
+        });
+        if let Some(index) = index {
+            self.consume_indices([index]);
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Check for a special key press and consume the event, preventing other
@@ -228,26 +240,36 @@ impl Context {
     /// Call **after** widgets if you want widgets to have priority over your
     /// handler, or **before** widgets to intercept first.
     pub fn consume_key_code(&mut self, code: KeyCode) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
-                continue;
-            }
-            if matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press && k.code == code) {
-                self.consumed[i] = true;
-                return true;
-            }
+        let index =
+            self.available_key_presses().find_map(
+                |(i, key)| {
+                    if key.code == code {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                },
+            );
+        if let Some(index) = index {
+            self.consume_indices([index]);
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Check if a character key with specific modifiers was pressed this frame.
     ///
     /// Returns `true` if the key event has not been consumed by another widget.
     pub fn key_mod(&self, c: char, modifiers: KeyModifiers) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, e)| {
@@ -268,7 +290,9 @@ impl Context {
     ///
     /// Returns `None` if no unconsumed mouse-down event occurred.
     pub fn mouse_down(&self) -> Option<(u32, u32)> {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return None;
         }
         self.events.iter().enumerate().find_map(|(i, event)| {
@@ -294,7 +318,9 @@ impl Context {
 
     /// Return the first unconsumed paste event text, if any.
     pub fn paste(&self) -> Option<&str> {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return None;
         }
         self.events.iter().enumerate().find_map(|(i, event)| {
@@ -310,7 +336,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-up event occurred this frame.
     pub fn scroll_up(&self) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, event)| {
@@ -321,7 +349,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-down event occurred this frame.
     pub fn scroll_down(&self) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, event)| {
@@ -332,7 +362,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-left event occurred this frame.
     pub fn scroll_left(&self) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, event)| {
@@ -343,7 +375,9 @@ impl Context {
 
     /// Check if an unconsumed scroll-right event occurred this frame.
     pub fn scroll_right(&self) -> bool {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return false;
         }
         self.events.iter().enumerate().any(|(i, event)| {
@@ -382,12 +416,12 @@ impl Context {
 
     /// Check if dark mode is active.
     pub fn is_dark_mode(&self) -> bool {
-        self.dark_mode
+        self.rollback.dark_mode
     }
 
     /// Set dark mode. When true, dark_* style variants are applied.
     pub fn set_dark_mode(&mut self, dark: bool) {
-        self.dark_mode = dark;
+        self.rollback.dark_mode = dark;
     }
 
     // ── info ─────────────────────────────────────────────────────────
