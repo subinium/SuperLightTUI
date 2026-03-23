@@ -1,3 +1,5 @@
+use super::*;
+
 /// Trait for creating custom widgets.
 ///
 /// Implement this trait to build reusable, composable widgets with full access

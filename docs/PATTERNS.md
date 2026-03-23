@@ -1,6 +1,20 @@
 # Common Patterns
 
-This page collects the patterns that new users usually need after the first hello-world example.
+This page is for the moment when “hello world” is no longer enough and a real app starts to form.
+
+The goal is not to teach every API again.
+It is to show how to keep SLT code readable as screens, widgets, and state grow.
+
+## The default shape of a real SLT app
+
+For most medium-sized apps, the most readable shape is:
+
+- one plain Rust `App` struct for app state
+- one top-level `run(...)` or `run_with(...)` closure
+- a few `render_*` helper functions for big panels or screens
+- occasional hooks for truly local persistent state
+
+That keeps the public grammar small without turning the closure into a 400-line blob.
 
 ## Application state lives in normal Rust
 
@@ -13,7 +27,10 @@ struct App {
 }
 
 fn main() -> std::io::Result<()> {
-    let mut app = App { count: 0, dark: false };
+    let mut app = App {
+        count: 0,
+        dark: false,
+    };
 
     slt::run(|ui: &mut Context| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
@@ -29,7 +46,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Use plain structs when the state belongs to your app.
+Use plain structs when the state belongs to your app, your domain, or your screens.
 
 ## Local persistent state with hooks
 
@@ -41,14 +58,37 @@ if ui.button("+1").clicked {
 }
 ```
 
-Use hooks for small local state when a dedicated app struct feels heavy.
+Use hooks when:
+
+- the state is local to one render subtree
+- introducing a top-level field would add more noise than clarity
+- you want to prototype quickly
+
 Keep hook call order stable across frames.
+
+## When to use app state vs hooks
+
+Use app state when:
+
+- multiple screens need the value
+- the value matters outside rendering
+- you want explicit ownership and easier refactoring
+
+Use hooks when:
+
+- the value is local to one widget subtree
+- the lifetime is purely UI-local
+- you want a lightweight scratchpad for a small interactive fragment
+
+The mistake is not using hooks.
+The mistake is using hooks for everything until the screen becomes impossible to reason about.
 
 ## Derived state with `use_memo`
 
 ```rust
 let filtered = ui.use_memo(&(query.clone(), items.len()), |(query, _)| {
-    items.iter()
+    items
+        .iter()
         .filter(|item| item.contains(query))
         .cloned()
         .collect::<Vec<_>>()
@@ -57,6 +97,49 @@ let filtered = ui.use_memo(&(query.clone(), items.len()), |(query, _)| {
 
 Use `use_memo` when the computation is deterministic and should only rerun when the dependency tuple changes.
 Like `use_state`, call order must stay stable across frames.
+
+## Reduce repeated builder chains with helpers
+
+Large SLT screens start to look noisy when the same builder chain repeats everywhere.
+The fix is usually not a new framework.
+It is a helper function.
+
+```rust
+use slt::{Border, Context};
+
+fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
+    let _ = ui
+        .bordered(Border::Rounded)
+        .title(title)
+        .p(1)
+        .grow(1)
+        .col(f);
+}
+```
+
+This keeps the chaining style but moves the repetition out of the screen body.
+
+## Split big screens into render helpers
+
+```rust
+fn render_sidebar(ui: &mut Context, app: &mut App) {
+    ui.text("Navigation").bold();
+    let _ = ui.list(&mut app.sidebar);
+}
+
+fn render_content(ui: &mut Context, app: &mut App) {
+    ui.text(format!("Selected: {}", app.current_title()));
+}
+
+fn render_app(ui: &mut Context, app: &mut App) {
+    ui.row(|ui| {
+        panel(ui, "Sidebar", |ui| render_sidebar(ui, app));
+        panel(ui, "Content", |ui| render_content(ui, app));
+    });
+}
+```
+
+If a closure becomes hard to scan, extract render helpers before inventing a new abstraction layer.
 
 ## Forms and validation
 
@@ -177,7 +260,11 @@ let opacity = fade.value(ui.tick());
 
 // Spring: physics-based, responds to target changes
 let mut spring = Spring::new(0.0, 0.2, 0.85);
-if hovered { spring.set_target(1.0); } else { spring.set_target(0.0); }
+if hovered {
+    spring.set_target(1.0);
+} else {
+    spring.set_target(0.0);
+}
 spring.tick();
 let scale = spring.value();
 
@@ -185,7 +272,8 @@ let scale = spring.value();
 let mut stagger = Stagger::new(0.0, 1.0, 20).delay(3).items(items.len());
 for (i, item) in items.iter().enumerate() {
     let alpha = stagger.value(ui.tick(), i);
-    ui.text(item).fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
+    ui.text(item)
+        .fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
 }
 ```
 
@@ -201,13 +289,13 @@ match ui.breakpoint() {
         ui.col(|ui| { /* stacked layout */ });
     }
     _ => {
-        ui.row(|ui| { /* side-by-side */ });
+        ui.row(|ui| { /* side-by-side layout */ });
     }
 };
 ```
 
 Use `breakpoint()` for width-dependent layout decisions.
-ContainerBuilder also supports responsive methods: `.gap_sm(1).gap_lg(2)`.
+ContainerBuilder also supports responsive methods like `.gap_sm(1).gap_lg(2)`.
 
 ## Custom widgets
 
@@ -240,13 +328,20 @@ impl Widget for Rating {
         let stars: String = (0..self.max)
             .map(|i| if i < self.value { '★' } else { '☆' })
             .collect();
-        ui.styled(stars, Style::new().fg(if focused { Color::Yellow } else { Color::White }));
+        ui.styled(
+            stars,
+            Style::new().fg(if focused {
+                Color::Yellow
+            } else {
+                Color::White
+            }),
+        );
         changed
     }
 }
 ```
 
-If you add a new widget to the library itself, also follow the checklist in `CONTRIBUTING.md`.
+If you add a new built-in widget to the library itself, also follow the checklist in `CONTRIBUTING.md`.
 
 ## Testing and verification
 
@@ -258,9 +353,18 @@ backend.render(|ui| {
     ui.text("Hello");
 });
 
-assert!(backend.to_string().contains("Hello"));
+backend.assert_contains("Hello");
 ```
 
 Use `TestBackend` for headless rendering checks and snapshot-style assertions.
+For runtime-contract work, add a custom `Backend` + `frame()` test too.
 
-For deeper coverage, see `docs/TESTING.md`.
+## Heuristics that keep SLT readable
+
+- If a builder chain repeats three times, extract a helper.
+- If a closure becomes hard to scan, split it into `render_*` functions.
+- If state is shared across screens, move it into your app struct.
+- If state is local to one subtree, hooks are fine.
+- If behavior depends on previous-frame data, test at least two frames.
+
+SLT stays pleasant when you keep the public grammar small even as the codebase grows.

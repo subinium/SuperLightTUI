@@ -1,3 +1,5 @@
+use super::*;
+
 /// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct State<T> {
@@ -6,6 +8,13 @@ pub struct State<T> {
 }
 
 impl<T: 'static> State<T> {
+    pub(crate) fn from_idx(idx: usize) -> Self {
+        Self {
+            idx,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
     /// Read the current value.
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
         ui.hook_states[self.idx]

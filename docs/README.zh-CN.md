@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**写得飞快。跑得极轻。**
+**写得快。跑得轻。**
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -11,14 +11,17 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[文档索引] · [快速开始] · [组件指南] · [示例指南] · [模式指南] · [架构指南] · [贡献指南]
+[文档索引] · [快速开始] · [组件指南] · [模式指南] · [示例指南] · [后端指南] · [架构指南]
 
 [English](../README.md) · **中文** · [Español](README.es.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
 </div>
 
-SuperLightTUI 是一个 Rust 的即时模式 TUI 库。
-你只需要写一个闭包，SLT 每帧调用它，库负责布局、差分、焦点和渲染。
+SuperLightTUI 是一个为 Rust 提供的 immediate-mode TUI 库，并且有意把公开语法保持得很小。
+你只需要写一个闭包，SLT 会在每一帧调用它，库本身负责布局、焦点、差分和渲染。
+
+它面向快速产品迭代、易读的 Rust 语法，以及认真的后端纪律。
+这让它同样适合快速做工具原型的人，也适合根据文档生成 UI 的 coding agent。
 
 ## 效果展示
 
@@ -49,7 +52,32 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5 行代码。没有 `App` 结构体，没有 `Model`/`Update`/`View`，没有事件循环。Ctrl+C 直接退出。
+5 行代码就能启动。没有 `App` trait，没有 `Model`/`Update`/`View`，也不需要手写事件循环。Ctrl+C 也能直接工作。
+
+## 60 秒理解语法
+
+大多数应用都从四个概念开始：
+
+1. 状态放在普通的 Rust 变量或结构体里。
+2. 布局主要靠 `row()`、`col()` 和 `container()`。
+3. 样式通过链式方法调用完成。
+4. 交互组件通常返回 `Response`。
+
+```rust
+ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
+    ui.text("SLT").bold().fg(Color::Cyan);
+    ui.row(|ui| {
+        ui.text("mode:");
+        ui.text("ready").fg(Color::Green);
+        ui.spacer();
+        if ui.button("Quit").clicked {
+            ui.quit();
+        }
+    });
+});
+```
+
+这就是核心 mental model。剩下的是深度，不是第二套框架。
 
 ## 一个真实的应用
 
@@ -70,7 +98,7 @@ fn main() -> std::io::Result<()> {
             count -= 1;
         }
 
-        ui.bordered(Border::Rounded).title("Counter").pad(1).gap(1).col(|ui| {
+        ui.bordered(Border::Rounded).title("Counter").p(1).gap(1).col(|ui| {
             ui.text("Counter").bold().fg(Color::Cyan);
             ui.row(|ui| {
                 ui.text("Count:");
@@ -83,15 +111,18 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-状态存在于你的闭包中。布局用 `row()` 和 `col()`。样式链式调用。就这么简单。
+## 为什么是 SLT
 
-## 为什么选择 SLT
+- **公开语法足够小**。很多界面只需要普通 Rust 状态、`row()` / `col()` / `container()`、方法链和 `Response`。
+- **更少框架仪式感**。很多应用一开始并不需要 app trait、retained tree 或 message enum。
+- **组件够用，后端也认真**。常用组件会自动接好 focus、hover、click、scroll，而 runtime 通过 `Backend`、`AppState` 和 `frame()` 保持一条保守的底层路径。
+- **内部实现同样保守**。SLT 保持公开表面紧凑，但内部用 shared frame kernel、明确的 backend contract test、零 `unsafe`、feature-gated runtime path，以及覆盖 `all-features`、`no-default-features`、WASM、clippy、examples、cargo-hack、semver 和 deny 的验证来锁定质量。
 
-- **闭包即应用** — 没有框架状态，没有 trait 实现样板代码，没有消息循环 API。
-- **CSS 布局，Tailwind 语法** — `row()`、`col()`、`gap()`、`grow()`、`spacer()`，以及 `.p()`、`.px()`、`.m()`、`.w()`、`.max_w()` 等简写。
-- **组件自动处理繁琐部分** — 焦点顺序、悬停、点击处理、滚动和常见键盘行为全部内置。
-- **小核心，可选扩展** — 核心依赖是 `unicode-width` 和 `compact_str`；终端 I/O 由可选的 `crossterm` 提供；async、serde、image、qrcode 和语法高亮均在 feature flag 后面。
-- **库的工程素养** — 零 `unsafe`，显式 feature flag，文档、示例、测试齐全，遵循语义化版本发布纪律。
+对 Rust 用户来说，这通常意味着比 retained-mode TUI 框架更少的启动样板代码。
+对 AI 辅助工作流来说，则意味着只看文档和示例就更容易推断出公开语法。
+
+如果你想快速做出终端应用，同时保留 Rust 的类型安全和后端 escape hatch，SLT 很合适。
+如果你更需要 retained component tree，或者更偏 GUI-first 的工具包，那么别的库可能更适合。
 
 ## 常用 API 概览
 
@@ -115,14 +146,14 @@ ui.list(&mut items);
 ui.table(&mut data);
 ui.command_palette(&mut palette);
 
-// 浮层和富文本输出
+// 浮层和富输出
 ui.toast(&mut toasts);
 ui.modal(|ui| {
     ui.text("Confirm?").bold();
 });
 ui.markdown("# Hello **world**");
 
-// 数据可视化
+// 可视化
 ui.chart(|c| {
     c.line(&data);
     c.grid(true);
@@ -133,54 +164,55 @@ ui.canvas(40, 10, |cv| {
 });
 ```
 
-完整分类组件列表请参阅 [组件指南]。
+完整的分类组件列表请看[组件指南]，组合方式和组织建议请看[模式指南]。
 
-## 学习指南
+## 学习路线
 
-| 文档 | 涵盖内容 |
+| 文档 | 覆盖内容 |
 |------|----------|
-| [文档索引] | 完整文档结构和指南索引 |
-| [快速开始] | 安装、第一个应用、计数器、布局、输入 |
-| [组件指南] | 组件目录和主要 API |
-| [模式指南] | 状态管理、表单、覆盖层、异步、自定义组件 |
-| [示例指南] | 示例索引和运行命令 |
-| [架构指南] | 模块映射、帧生命周期、依赖流 |
-| [后端指南] | `Backend`、`AppState`、`frame()`、内联模式 |
-| [测试指南] | `TestBackend`、`EventBuilder`、交互测试 |
-| [调试指南] | F12 覆盖层、裁剪、单帧延迟 |
-| [AI 指南] | AI 编程助手快速参考 |
-| [动画指南] | Tween、Spring、Keyframes、Sequence、Stagger |
-| [主题指南] | 主题预设、ThemeBuilder、自定义主题 |
-| [特性指南] | 功能标志、可选依赖、推荐组合 |
-| [`docs/DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) | API 设计理念 |
+| [文档索引] | 完整文档结构和指南地图 |
+| [快速开始] | 安装、第一个应用、闭包 mental model、布局和组件状态 |
+| [组件指南] | 组件、runtime 方法和状态类型的完整目录 |
+| [模式指南] | 状态放置、界面组合、helper 提取和大型应用结构 |
+| [示例指南] | 按产品形态和功能分组的可运行示例 |
+| [后端指南] | `Backend`、`AppState`、`frame()`、inline mode、static output |
+| [测试指南] | `TestBackend`、`EventBuilder`、multi-frame test 和 backend contract test |
+| [调试指南] | F12 覆盖层、clipping、focus 异常和 previous-frame behavior |
+| [AI 指南] | 给 AI builder 和 coding agent 的最快入口 |
+| [架构指南] | 模块图、帧生命周期、layout/render 管线 |
+| [特性指南] | feature flag、optional dependency 和推荐组合 |
+| [动画指南] | Tween、spring、keyframe、sequence、stagger |
+| [主题指南] | Theme、preset、ThemeBuilder 和自定义主题 |
+| [设计原则] | API 约束和设计哲学 |
 
-## 示例精选
+## 代表示例
 
 | 示例 | 命令 | 重点 |
 |------|------|------|
-| hello | `cargo run --example hello` | 最简应用 |
-| counter | `cargo run --example counter` | 状态 + 键盘输入 |
-| demo | `cargo run --example demo` | 全组件概览 |
-| demo_dashboard | `cargo run --example demo_dashboard` | 仪表盘布局 |
-| demo_cli | `cargo run --example demo_cli` | CLI 工具布局 |
-| demo_infoviz | `cargo run --example demo_infoviz` | 图表和数据可视化 |
-| demo_game | `cargo run --example demo_game` | 即时模式交互 |
-| async_demo | `cargo run --example async_demo --features async` | 后台消息 |
+| `hello` | `cargo run --example hello` | 最小应用 |
+| `counter` | `cargo run --example counter` | 状态 + 键盘输入 |
+| `demo` | `cargo run --example demo` | 大范围组件导览 |
+| `demo_dashboard` | `cargo run --example demo_dashboard` | 仪表盘布局 |
+| `demo_cli` | `cargo run --example demo_cli` | CLI 工具布局 |
+| `demo_infoviz` | `cargo run --example demo_infoviz` | 图表和数据可视化 |
+| `demo_game` | `cargo run --example demo_game` | immediate-mode 交互 |
+| `inline` | `cargo run --example inline` | 在普通提示符下方做 inline 渲染 |
+| `async_demo` | `cargo run --example async_demo --features async` | 后台消息 |
 
-完整分类索引请参阅 [示例指南]。
+完整分类索引见[示例指南]。
 
 ## 自定义组件和后端
 
-- 实现 `Widget` trait 来构建可复用组件，完整支持焦点、布局、事件和主题。
-- 实现 `Backend` + 驱动 `frame()`，可用于非终端渲染器、测试工具或嵌入式目标。
-- 使用 `TestBackend` 进行无头渲染和快照式断言。
+- 如果你需要可复用的高层构件，可以实现 `Widget`。
+- 如果你需要非终端目标、外部事件循环或嵌入式 runtime，可以实现 `Backend` 并驱动 `frame()`。
+- 如果你想做无头渲染验证和稳定的交互测试，可以使用 `TestBackend`。
 
-更多内容请参阅 [模式指南] 和 [架构指南]。
+即使需要 escape hatch，公开语法也依然保持紧凑。
 
 ## 贡献
 
-请先阅读 [贡献指南]，然后查看 `docs/DESIGN_PRINCIPLES.md` 和 [架构指南]。
-发布和 CI 流程要求格式化、检查、clippy、测试和示例编译保持通过。
+先阅读[贡献指南]，然后查看[设计原则]和[架构指南]。
+发布流程要求 format、check、clippy、test、example 和 backend gate 保持通过。
 
 ## 许可证
 
@@ -211,5 +243,6 @@ ui.canvas(40, 10, |cv| {
 [动画指南]: ANIMATION.md
 [主题指南]: THEMING.md
 [特性指南]: FEATURES.md
+[设计原则]: DESIGN_PRINCIPLES.md
 [贡献指南]: ../CONTRIBUTING.md
 [License]: ../LICENSE

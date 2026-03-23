@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**Rapidísimo de escribir. Ultraligero de ejecutar.**
+**Se escribe rápido. Se ejecuta ligero.**
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -11,16 +11,19 @@
 [![Downloads Badge]][Crate]
 [![License Badge]][License]
 
-[Índice de Docs] · [Inicio Rápido] · [Guía de Widgets] · [Ejemplos] · [Guía de Patrones] · [Arquitectura] · [Contribuir]
+[Índice de Docs] · [Inicio Rápido] · [Guía de Widgets] · [Guía de Patrones] · [Ejemplos] · [Guía de Backends] · [Arquitectura]
 
 [English](../README.md) · [中文](README.zh-CN.md) · **Español** · [日本語](README.ja.md) · [한국어](README.ko.md)
 
 </div>
 
-SuperLightTUI es una biblioteca TUI de modo inmediato para Rust.
-Escribes un closure, SLT lo llama en cada frame, y la biblioteca se encarga del layout, diffing, foco y renderizado.
+SuperLightTUI es una biblioteca TUI immediate-mode para Rust con una gramática pública deliberadamente pequeña.
+Escribes un closure, SLT lo ejecuta en cada frame, y la biblioteca se encarga del layout, el foco, el diff y el renderizado.
 
-## Galería
+Está diseñada para iteración rápida de producto, sintaxis de Rust fácil de leer y disciplina seria en el backend.
+Eso hace que encaje igual de bien para personas que prototipan una herramienta y para agentes que generan UI a partir de docs.
+
+## Showcase
 
 <table>
   <tr>
@@ -35,7 +38,7 @@ Escribes un closure, SLT lo llama en cada frame, y la biblioteca se encarga del 
   </tr>
 </table>
 
-## Primeros pasos
+## Inicio rápido
 
 ```sh
 cargo add superlighttui
@@ -49,7 +52,32 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5 líneas. Sin struct `App`. Sin `Model`/`Update`/`View`. Sin bucle de eventos. Ctrl+C funciona sin configuración.
+Cinco líneas y ya arranca. Sin trait `App`. Sin `Model`/`Update`/`View`. Sin bucle de eventos manual. Ctrl+C funciona sin configuración extra.
+
+## Gramática en 60 segundos
+
+La mayoría de las apps empiezan con cuatro ideas:
+
+1. El estado vive en variables o structs normales de Rust.
+2. El layout suele resolverse con `row()`, `col()` y `container()`.
+3. El estilo se aplica con method chaining.
+4. Los widgets interactivos normalmente devuelven `Response`.
+
+```rust
+ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
+    ui.text("SLT").bold().fg(Color::Cyan);
+    ui.row(|ui| {
+        ui.text("mode:");
+        ui.text("ready").fg(Color::Green);
+        ui.spacer();
+        if ui.button("Quit").clicked {
+            ui.quit();
+        }
+    });
+});
+```
+
+Ese es el mental model central. Lo demás es profundidad, no un segundo framework.
 
 ## Una aplicación real
 
@@ -70,7 +98,7 @@ fn main() -> std::io::Result<()> {
             count -= 1;
         }
 
-        ui.bordered(Border::Rounded).title("Counter").pad(1).gap(1).col(|ui| {
+        ui.bordered(Border::Rounded).title("Counter").p(1).gap(1).col(|ui| {
             ui.text("Counter").bold().fg(Color::Cyan);
             ui.row(|ui| {
                 ui.text("Count:");
@@ -83,17 +111,20 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-El estado vive en tu closure. El layout usa `row()` y `col()`. El estilo se encadena. Eso es todo.
-
 ## Por qué SLT
 
-- **Tu closure ES la aplicación** — sin estado de framework, sin implementaciones de traits, sin bucle de mensajes.
-- **Layout como CSS, sintaxis como Tailwind** — `row()`, `col()`, `gap()`, `grow()`, `spacer()`, más abreviaciones como `.p()`, `.px()`, `.m()`, `.w()`, `.max_w()`.
-- **Los widgets conectan todo automáticamente** — orden de foco, hover, clics, scroll y comportamiento de teclado vienen integrados.
-- **Núcleo pequeño, extras opcionales** — las dependencias del núcleo son `unicode-width` y `compact_str`; el I/O de terminal viene del `crossterm` opcional; async, serde, image, qrcode y resaltado de sintaxis van tras feature flags.
-- **La higiene de biblioteca importa** — cero `unsafe`, feature flags explícitos, documentación, ejemplos, tests y disciplina de releases con semver.
+- **Gramática pública pequeña**. Muchas pantallas arrancan con estado normal de Rust, `row()` / `col()` / `container()`, method chaining y `Response`.
+- **Menos ceremonia de framework**. En muchas apps no hace falta un app trait, un árbol retained ni un enum de mensajes solo para empezar.
+- **Baterías incluidas, backend serio**. Los widgets comunes ya resuelven foco, hover, clic y scroll, mientras el runtime mantiene una ruta low-level conservadora a través de `Backend`, `AppState` y `frame()`.
+- **Internals conservadores**. SLT mantiene la superficie pública pequeña, pero asegura el interior con shared frame kernel, pruebas explícitas de contrato para backends, cero `unsafe`, rutas runtime detrás de feature flags y validación en `all-features`, `no-default-features`, WASM, clippy, ejemplos, cargo-hack, semver y deny.
 
-## Superficie de API común
+Para usuarios de Rust, eso normalmente significa menos configuración inicial que en frameworks TUI retained-mode.
+Para flujos asistidos por AI, significa que la gramática pública se infiere con facilidad a partir de docs y ejemplos.
+
+SLT encaja especialmente bien si quieres construir apps de terminal rápido sin renunciar a la seguridad de tipos de Rust ni a escape hatches de backend.
+Si buscas un árbol de componentes retained o un toolkit GUI-first, otra biblioteca puede ser mejor opción.
+
+## Superficie común de API
 
 ```rust
 // Texto y layout
@@ -133,54 +164,55 @@ ui.canvas(40, 10, |cv| {
 });
 ```
 
-Para la lista categorizada de widgets, consulta la [Guía de Widgets].
+Para la lista categorizada de widgets, consulta la [Guía de Widgets]. Para composición y organización, mira la [Guía de Patrones].
 
 ## Aprende la biblioteca
 
 | Documento | Qué cubre |
 |-----------|-----------|
-| [Índice de Docs] | Estructura de documentación y mapa de guías |
-| [Inicio Rápido] | Instalación, primera app, contador, layout, input |
-| [Guía de Widgets] | Catálogo de widgets y APIs principales |
-| [Guía de Patrones] | Estado, formularios, overlays, async, widgets personalizados |
-| [Ejemplos] | Índice de ejemplos y comandos de ejecución |
-| [Arquitectura] | Mapa de módulos, ciclo de vida del frame |
-| [Guía de Backends] | `Backend`, `AppState`, `frame()`, modo inline |
-| [Guía de Testing] | `TestBackend`, `EventBuilder`, pruebas de interacción |
-| [Guía de Depuración] | Overlay F12, clipping, retardo de un frame |
-| [Guía AI] | Referencia rápida para agentes de código AI |
-| [Guía de Animación] | Tween, Spring, Keyframes, Sequence, Stagger |
-| [Guía de Temas] | Temas predefinidos, ThemeBuilder, temas personalizados |
-| [Guía de Características] | Feature flags, dependencias opcionales |
-| [`docs/DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) | Por qué la API tiene esta forma |
+| [Índice de Docs] | Estructura completa de la documentación y mapa de guías |
+| [Inicio Rápido] | Instalación, primera app, mental model del closure, layout y estado de widgets |
+| [Guía de Widgets] | Catálogo completo de widgets, métodos del runtime y tipos de estado |
+| [Guía de Patrones] | Ubicación del estado, composición de pantallas, extracción de helpers y estructura para apps grandes |
+| [Ejemplos] | Ejemplos ejecutables agrupados por forma de producto y área funcional |
+| [Guía de Backends] | `Backend`, `AppState`, `frame()`, modo inline y salida estática |
+| [Guía de Testing] | `TestBackend`, `EventBuilder`, pruebas multi-frame y contratos de backend |
+| [Guía de Depuración] | Overlay F12, clipping, sorpresas de foco y comportamiento del frame anterior |
+| [Guía AI] | Camino más rápido para builders asistidos por AI y agentes de código |
+| [Arquitectura] | Mapa de módulos, ciclo de vida del frame y pipeline layout/render |
+| [Guía de Características] | Feature flags, dependencias opcionales y combinaciones recomendadas |
+| [Guía de Animación] | Tween, spring, keyframes, sequence y stagger |
+| [Guía de Temas] | `Theme`, presets, `ThemeBuilder` y temas personalizados |
+| [Principios de Diseño] | Restricciones de API y filosofía de diseño |
 
-## Ejemplos destacados
+## Ejemplos representativos
 
 | Ejemplo | Comando | Enfoque |
 |---------|---------|---------|
-| hello | `cargo run --example hello` | La app más pequeña posible |
-| counter | `cargo run --example counter` | Estado + entrada de teclado |
-| demo | `cargo run --example demo` | Tour amplio de widgets |
-| demo_dashboard | `cargo run --example demo_dashboard` | Layout de dashboard |
-| demo_cli | `cargo run --example demo_cli` | Layout de herramienta CLI |
-| demo_infoviz | `cargo run --example demo_infoviz` | Gráficos y visualización de datos |
-| demo_game | `cargo run --example demo_game` | Interacción en modo inmediato |
-| async_demo | `cargo run --example async_demo --features async` | Mensajes en segundo plano |
+| `hello` | `cargo run --example hello` | La app más pequeña posible |
+| `counter` | `cargo run --example counter` | Estado + entrada de teclado |
+| `demo` | `cargo run --example demo` | Recorrido amplio de widgets |
+| `demo_dashboard` | `cargo run --example demo_dashboard` | Layout de dashboard |
+| `demo_cli` | `cargo run --example demo_cli` | Layout de herramienta CLI |
+| `demo_infoviz` | `cargo run --example demo_infoviz` | Gráficos y visualización de datos |
+| `demo_game` | `cargo run --example demo_game` | Interacción immediate-mode |
+| `inline` | `cargo run --example inline` | Render inline bajo un prompt normal |
+| `async_demo` | `cargo run --example async_demo --features async` | Mensajes en segundo plano |
 
-El índice categorizado completo está en [Ejemplos].
+El índice completo categorizado está en [Ejemplos].
 
 ## Widgets personalizados y backends
 
-- Implementa `Widget` para construir widgets reutilizables con acceso completo a foco, layout, eventos y temas.
-- Implementa `Backend` + controla `frame()` si quieres un renderer no terminal, harness de tests, o destino embebido.
-- Usa `TestBackend` para renderizado headless y aserciones estilo snapshot.
+- Implementa `Widget` si quieres bloques reutilizables de alto nivel.
+- Implementa `Backend` y controla `frame()` si necesitas un destino no terminal, un event loop externo o un runtime embebido.
+- Usa `TestBackend` para validar render headless y pruebas de interacción estables.
 
-Consulta [Guía de Patrones] y [Arquitectura] para los caminos más profundos.
+La gramática pública sigue siendo pequeña incluso cuando necesitas escape hatches.
 
 ## Contribuir
 
-Lee [Contribuir], luego `docs/DESIGN_PRINCIPLES.md` y [Arquitectura].
-El proceso de release y CI espera que el formato, check, clippy, tests y compilación de ejemplos estén en verde.
+Lee [Contribuir] y luego revisa [Principios de Diseño] y [Arquitectura].
+El proceso de release asume que format, check, clippy, tests, ejemplos y backend gates se mantienen en verde.
 
 ## Licencia
 
@@ -211,5 +243,6 @@ El proceso de release y CI espera que el formato, check, clippy, tests y compila
 [Guía de Animación]: ANIMATION.md
 [Guía de Temas]: THEMING.md
 [Guía de Características]: FEATURES.md
+[Principios de Diseño]: DESIGN_PRINCIPLES.md
 [Contribuir]: ../CONTRIBUTING.md
 [License]: ../LICENSE

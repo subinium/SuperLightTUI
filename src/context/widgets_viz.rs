@@ -45,7 +45,7 @@ impl Context {
             .fold(f64::NEG_INFINITY, f64::max);
         let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -70,7 +70,7 @@ impl Context {
             let normalized = (*value / denom).clamp(0.0, 1.0);
             let bar = Self::horizontal_bar_text(normalized, max_width);
 
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 1,
@@ -98,11 +98,11 @@ impl Context {
                 Style::new().fg(self.theme.text_dim),
             );
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         Response::none()
     }
@@ -206,7 +206,7 @@ impl Context {
             .max()
             .unwrap_or(0);
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: bar_gap as u32,
@@ -230,7 +230,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn render_horizontal_styled_bar_row(
@@ -246,7 +246,7 @@ impl Context {
         let bar_text = Self::horizontal_bar_text(normalized, max_width);
         let color = bar.color.unwrap_or(self.theme.primary);
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 1,
@@ -275,7 +275,7 @@ impl Context {
                 .unwrap_or(Style::new().fg(self.theme.text_dim)),
         );
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn render_vertical_styled_bars(
@@ -288,7 +288,7 @@ impl Context {
     ) {
         let layout = self.compute_vertical_bar_layout(bars, max_height, denom, bar_width);
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -319,7 +319,7 @@ impl Context {
         self.render_vertical_bar_labels(bars, layout.col_width, bar_gap);
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn compute_vertical_bar_layout(
@@ -385,7 +385,7 @@ impl Context {
             .collect();
 
         for row in (0..chart_height).rev() {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: bar_gap as u32,
@@ -446,12 +446,12 @@ impl Context {
             }
 
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
     }
 
     fn render_vertical_bar_labels(&mut self, bars: &[Bar], col_width: usize, bar_gap: u16) {
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: bar_gap as u32,
@@ -476,7 +476,7 @@ impl Context {
             );
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     /// Render a grouped bar chart.
@@ -551,7 +551,7 @@ impl Context {
             .max()
             .unwrap_or(0);
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: config.group_gap as u32,
@@ -571,7 +571,7 @@ impl Context {
         });
 
         for group in groups {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Column,
                 gap: config.bar_gap as u32,
@@ -598,7 +598,7 @@ impl Context {
                 let normalized = (bar.value / denom).clamp(0.0, 1.0);
                 let bar_text = Self::horizontal_bar_text(normalized, max_width);
 
-                self.interaction_count += 1;
+                self.skip_interaction_slot();
                 self.commands.push(Command::BeginContainer {
                     direction: Direction::Row,
                     gap: 1,
@@ -632,15 +632,15 @@ impl Context {
                         .unwrap_or(Style::new().fg(self.theme.text_dim)),
                 );
                 self.commands.push(Command::EndContainer);
-                self.last_text_idx = None;
+                self.rollback.last_text_idx = None;
             }
 
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn render_grouped_vertical_bars(
@@ -650,7 +650,7 @@ impl Context {
         denom: f64,
         config: &BarChartConfig,
     ) {
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: config.group_gap as u32,
@@ -683,7 +683,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
     }
 
     fn horizontal_bar_text(normalized: f64, max_width: u32) -> String {
@@ -873,7 +873,7 @@ impl Context {
             cells.push((BLOCKS[idx.min(7)], color.unwrap_or(self.theme.primary)));
         }
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Row,
             gap: 0,
@@ -894,7 +894,7 @@ impl Context {
 
         if cells.is_empty() {
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
             return Response::none();
         }
 
@@ -913,7 +913,7 @@ impl Context {
         }
 
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         Response::none()
     }
@@ -1238,7 +1238,7 @@ impl Context {
             let source_row = &data[data_row_idx];
             let source_cols = source_row.len();
 
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 0,
@@ -1299,7 +1299,7 @@ impl Context {
             }
 
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         Response::none()
@@ -1335,7 +1335,7 @@ impl Context {
         draw(&mut canvas);
 
         for segments in canvas.render() {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 0,
@@ -1362,7 +1362,7 @@ impl Context {
                 self.styled(text, Style::new().fg(c));
             }
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         Response::none()
@@ -1391,7 +1391,7 @@ impl Context {
         let rows = render_chart(&config);
 
         for row in rows {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 0,
@@ -1413,7 +1413,7 @@ impl Context {
                 self.styled(text, style);
             }
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         Response::none()
@@ -1457,7 +1457,7 @@ impl Context {
         let rows = render_chart(&config);
 
         for row in rows {
-            self.interaction_count += 1;
+            self.skip_interaction_slot();
             self.commands.push(Command::BeginContainer {
                 direction: Direction::Row,
                 gap: 0,
@@ -1479,7 +1479,7 @@ impl Context {
                 self.styled(text, style);
             }
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
         }
 
         Response::none()

@@ -1,5 +1,50 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.16.0] — 2026-03-23
+
+This release is about consolidation, not API sprawl.
+The public grammar stays familiar while the runtime, backend path, and verification story become more disciplined.
+
+### What gets better for users
+
+- **Same easy mental model, stronger core** — the closure-oriented API stays the same, but production run loops, `frame()`, and `TestBackend` now share a single internal frame kernel.
+- **Large apps are easier to trust** — interaction allocation, rollback handling, layout collection, and frame/session bookkeeping are more explicit internally instead of relying on scattered implicit coupling.
+- **Backend path is more credible** — the `Backend` / `AppState` / `frame()` route now has clearer guarantees, stronger docs, and dedicated contract coverage.
+
+### Backend and runtime hardening
+
+- **Single frame kernel** — production and test rendering now share the same internal frame kernel, reducing lifecycle drift between `frame()`, run loops, and `TestBackend`.
+- **Session state split** — internal frame/session data is now grouped into explicit focus, layout-feedback, and diagnostics state instead of one broad bucket.
+- **Structured rollback** — `Context` rollback state is restored through a dedicated structured checkpoint instead of manual snapshot field syncing.
+- **Real `context` modules** — the old `include!`-based aggregation was replaced with actual Rust modules and narrower `pub(crate)` boundaries.
+- **Layout kernel split** — the former `layout.rs` monolith is now separated into command, tree, and collect kernels with `collect_all()` as the sole runtime collector.
+- **Interaction allocator unification** — widget interaction slot allocation now flows through shared helpers instead of scattered direct counter mutation.
+- **Terminal session hardening** — terminal session setup and teardown are now centralized instead of being split across duplicated fullscreen and inline paths.
+- **Terminal flush dedup** — fullscreen and inline terminals share the same internal diff, raw-sequence, and cursor writer path.
+- **Interactive widget helpers** — core widgets now prefer shared input and hit-test helpers such as `begin_widget_interaction()`, `available_key_presses()`, and `consume_indices()`.
+
+### Testing and verification
+
+- **Backend contract coverage** — added direct `frame()` / `Backend` contract tests for flush-error propagation, quit semantics, `AppState` persistence, and resize handling.
+- **Kernel parity coverage** — added dedicated parity tests that compare `TestBackend` with a custom `frame()` backend across stateful hook frames and previous-frame hit testing.
+- **Kernel proptest coverage** — added event-sequence property tests to lock parity between the shared frame kernel and headless test rendering.
+- **Persistent `TestBackend` session state** — headless tests now retain full internal frame state across renders, allowing multi-frame focus and hit-map regression coverage instead of hook-only persistence.
+
+### Documentation
+
+- **README sharpened** — the landing page now explains the small grammar, where SLT fits well, where it does not, and why the runtime can be trusted.
+- **Backend and testing guides expanded** — low-level guarantees, contract testing, and verification strategy are now documented directly instead of being left implicit in the codebase.
+- **Patterns guide upgraded** — large-app organization, helper extraction, and readability practices are now first-class documentation topics.
+
+### Migration notes
+
+- **No planned public breaking change for typical apps** — most users should not need to rewrite application code.
+- **Custom backend users get stronger guarantees, not a new abstraction** — the `Backend` trait remains intentionally small.
+- **Performance note** — the current 0.16 baseline shows a few small micro-benchmark regressions in core buffer/layout paths and a small win in list rendering; correctness and runtime stability were prioritized first.
+- **Pixel mouse / smooth scrolling status** — terminal-side SGR pixel mouse mode and smooth sub-cell scrolling are still deferred beyond 0.16; browser-side pixel mouse remains available in the WASM path.
+
 ## [0.15.8] — 2026-03-22
 
 ### Documentation

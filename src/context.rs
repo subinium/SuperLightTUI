@@ -38,13 +38,25 @@ mod widgets_input;
 mod widgets_interactive;
 mod widgets_viz;
 
-include!("context/state.rs");
-include!("context/bars.rs");
-include!("context/widget.rs");
-include!("context/core.rs");
-include!("context/container.rs");
-include!("context/runtime.rs");
-include!("context/helpers.rs");
+mod state;
+pub use state::*;
+
+mod bars;
+pub use bars::*;
+
+mod widget;
+pub use widget::*;
+
+mod core;
+pub use core::*;
+
+mod container;
+pub use container::*;
+
+mod runtime;
+
+mod helpers;
+pub(crate) use helpers::*;
 
 #[cfg(test)]
 mod tests;

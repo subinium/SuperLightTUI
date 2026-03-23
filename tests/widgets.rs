@@ -1149,6 +1149,19 @@ fn confirm_n_key_sets_false_and_clicks() {
 }
 
 #[test]
+fn confirm_tab_toggles_choice_before_focus_processing() {
+    let mut tb = TestBackend::new(80, 5);
+    let mut answer = false;
+    let events = slt::EventBuilder::new().key_code(KeyCode::Tab).build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.confirm("Delete this file?", &mut answer);
+    });
+
+    assert!(answer);
+}
+
+#[test]
 fn notify_renders_without_toast_state() {
     let mut tb = TestBackend::new(80, 5);
     tb.render(|ui| {
@@ -3016,6 +3029,22 @@ fn alert_dismiss_on_key() {
 }
 
 #[test]
+fn alert_consumes_dismiss_key() {
+    let mut tb = TestBackend::new(60, 5);
+    let mut dismissed = false;
+    let mut saw_x_after_alert = false;
+    let events = slt::EventBuilder::new().key('x').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        if ui.alert("msg", slt::AlertLevel::Info).clicked {
+            dismissed = true;
+        }
+        saw_x_after_alert = ui.key('x');
+    });
+    assert!(dismissed);
+    assert!(!saw_x_after_alert);
+}
+
+#[test]
 fn breadcrumb_renders_segments() {
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
@@ -3024,6 +3053,33 @@ fn breadcrumb_renders_segments() {
     let output = tb.to_string();
     assert!(output.contains("Home"));
     assert!(output.contains("Profile"));
+}
+
+#[test]
+fn breadcrumb_enter_activates_focused_segment() {
+    let mut tb = TestBackend::new(60, 3);
+    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut clicked = None;
+    tb.render_with_events(events, 0, 1, |ui| {
+        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    });
+    assert_eq!(clicked, Some(0));
+}
+
+#[test]
+fn breadcrumb_mouse_click_activates_segment() {
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    });
+
+    let events = slt::EventBuilder::new().click(1, 0).build();
+    let mut clicked = None;
+    tb.render_with_events(events, 0, 0, |ui| {
+        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    });
+
+    assert_eq!(clicked, Some(0));
 }
 
 #[test]
@@ -3053,6 +3109,34 @@ fn accordion_open_shows_content() {
     let output = tb.to_string();
     assert!(output.contains("▾"));
     assert!(output.contains("visible content"));
+}
+
+#[test]
+fn accordion_enter_toggles_open() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut open = false;
+    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.accordion("Title", &mut open, |ui| {
+            ui.text("visible content");
+        });
+    });
+    assert!(open);
+    assert!(tb.to_string().contains("visible content"));
+}
+
+#[test]
+fn accordion_space_toggles_open() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut open = false;
+    let events = slt::EventBuilder::new().key(' ').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.accordion("Title", &mut open, |ui| {
+            ui.text("visible content");
+        });
+    });
+    assert!(open);
+    assert!(tb.to_string().contains("visible content"));
 }
 
 #[test]

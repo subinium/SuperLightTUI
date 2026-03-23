@@ -1,5 +1,7 @@
+use super::*;
+
 #[inline]
-fn byte_index_for_char(value: &str, char_index: usize) -> usize {
+pub(crate) fn byte_index_for_char(value: &str, char_index: usize) -> usize {
     if char_index == 0 {
         return 0;
     }
@@ -9,7 +11,7 @@ fn byte_index_for_char(value: &str, char_index: usize) -> usize {
         .map_or(value.len(), |(idx, _)| idx)
 }
 
-fn format_token_count(count: usize) -> String {
+pub(crate) fn format_token_count(count: usize) -> String {
     if count >= 1_000_000 {
         format!("{:.1}M", count as f64 / 1_000_000.0)
     } else if count >= 1_000 {
@@ -19,7 +21,7 @@ fn format_token_count(count: usize) -> String {
     }
 }
 
-fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
+pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
     let sep_width = UnicodeWidthStr::width(separator);
     let total_cells_width: usize = widths.iter().map(|w| *w as usize).sum();
     let mut row = String::with_capacity(
@@ -38,7 +40,7 @@ fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String
     row
 }
 
-fn table_visible_len(state: &TableState) -> usize {
+pub(crate) fn table_visible_len(state: &TableState) -> usize {
     if state.page_size == 0 {
         return state.visible_indices().len();
     }
@@ -77,7 +79,7 @@ pub(crate) fn handle_vertical_nav(
     }
 }
 
-fn format_compact_number(value: f64) -> String {
+pub(crate) fn format_compact_number(value: f64) -> String {
     if value.fract().abs() < f64::EPSILON {
         return format!("{value:.0}");
     }
@@ -92,7 +94,7 @@ fn format_compact_number(value: f64) -> String {
     s
 }
 
-fn center_text(text: &str, width: usize) -> String {
+pub(crate) fn center_text(text: &str, width: usize) -> String {
     let text_width = UnicodeWidthStr::width(text);
     if text_width >= width {
         return text.to_string();
@@ -108,13 +110,13 @@ fn center_text(text: &str, width: usize) -> String {
     centered
 }
 
-struct TextareaVLine {
-    logical_row: usize,
-    char_start: usize,
-    char_count: usize,
+pub(crate) struct TextareaVLine {
+    pub(crate) logical_row: usize,
+    pub(crate) char_start: usize,
+    pub(crate) char_count: usize,
 }
 
-fn textarea_build_visual_lines(lines: &[String], wrap_width: u32) -> Vec<TextareaVLine> {
+pub(crate) fn textarea_build_visual_lines(lines: &[String], wrap_width: u32) -> Vec<TextareaVLine> {
     let mut out = Vec::new();
     for (row, line) in lines.iter().enumerate() {
         if line.is_empty() || wrap_width == u32::MAX {
@@ -152,7 +154,7 @@ fn textarea_build_visual_lines(lines: &[String], wrap_width: u32) -> Vec<Textare
     out
 }
 
-fn textarea_logical_to_visual(
+pub(crate) fn textarea_logical_to_visual(
     vlines: &[TextareaVLine],
     logical_row: usize,
     logical_col: usize,
@@ -177,7 +179,7 @@ fn textarea_logical_to_visual(
     (vlines.len().saturating_sub(1), 0)
 }
 
-fn textarea_visual_to_logical(
+pub(crate) fn textarea_visual_to_logical(
     vlines: &[TextareaVLine],
     visual_row: usize,
     visual_col: usize,
@@ -191,7 +193,7 @@ fn textarea_visual_to_logical(
 }
 
 #[allow(unused_variables)]
-fn open_url(url: &str) -> std::io::Result<()> {
+pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open").arg(url).spawn()?;
@@ -208,4 +210,3 @@ fn open_url(url: &str) -> std::io::Result<()> {
     }
     Ok(())
 }
-

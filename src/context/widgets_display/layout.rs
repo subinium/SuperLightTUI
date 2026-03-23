@@ -132,7 +132,7 @@ impl Context {
                 },
             );
             self.commands.push(Command::EndContainer);
-            self.last_text_idx = None;
+            self.rollback.last_text_idx = None;
             return self;
         }
 
@@ -157,7 +157,7 @@ impl Context {
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         self
     }
 
@@ -172,14 +172,17 @@ impl Context {
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
         self.commands.push(Command::BeginOverlay { modal: true });
-        self.overlay_depth += 1;
-        self.modal_active = true;
-        self.modal_focus_start = self.focus_count;
+        self.rollback.overlay_depth += 1;
+        self.rollback.modal_active = true;
+        self.rollback.modal_focus_start = self.rollback.focus_count;
         f(self);
-        self.modal_focus_count = self.focus_count.saturating_sub(self.modal_focus_start);
-        self.overlay_depth = self.overlay_depth.saturating_sub(1);
+        self.rollback.modal_focus_count = self
+            .rollback
+            .focus_count
+            .saturating_sub(self.rollback.modal_focus_start);
+        self.rollback.overlay_depth = self.rollback.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         self.response_for(interaction_id)
     }
 
@@ -187,11 +190,11 @@ impl Context {
     pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
         self.commands.push(Command::BeginOverlay { modal: false });
-        self.overlay_depth += 1;
+        self.rollback.overlay_depth += 1;
         f(self);
-        self.overlay_depth = self.overlay_depth.saturating_sub(1);
+        self.rollback.overlay_depth = self.rollback.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
         self.response_for(interaction_id)
     }
 
@@ -207,21 +210,21 @@ impl Context {
         if tooltip_text.is_empty() {
             return;
         }
-        let last_interaction_id = self.interaction_count.saturating_sub(1);
+        let last_interaction_id = self.rollback.interaction_count.saturating_sub(1);
         let last_response = self.response_for(last_interaction_id);
         if !last_response.hovered || last_response.rect.width == 0 || last_response.rect.height == 0
         {
             return;
         }
         let lines = wrap_tooltip_text(&tooltip_text, 38);
-        self.pending_tooltips.push(PendingTooltip {
+        self.rollback.pending_tooltips.push(PendingTooltip {
             anchor_rect: last_response.rect,
             lines,
         });
     }
 
     pub(crate) fn emit_pending_tooltips(&mut self) {
-        let tooltips = std::mem::take(&mut self.pending_tooltips);
+        let tooltips = std::mem::take(&mut self.rollback.pending_tooltips);
         if tooltips.is_empty() {
             return;
         }
@@ -279,8 +282,8 @@ impl Context {
     ///     .col(|ui| { ui.text("Hover anywhere"); });
     /// ```
     pub fn group(&mut self, name: &str) -> ContainerBuilder<'_> {
-        self.group_count = self.group_count.saturating_add(1);
-        self.group_stack.push(name.to_string());
+        self.rollback.group_count = self.rollback.group_count.saturating_add(1);
+        self.rollback.group_stack.push(name.to_string());
         self.container().group_name(name.to_string())
     }
 
@@ -352,15 +355,15 @@ impl Context {
     /// # });
     /// ```
     pub fn scrollable(&mut self, state: &mut ScrollState) -> ContainerBuilder<'_> {
-        let index = self.scroll_count;
-        self.scroll_count += 1;
+        let index = self.rollback.scroll_count;
+        self.rollback.scroll_count += 1;
         if let Some(&(ch, vh)) = self.prev_scroll_infos.get(index) {
             state.set_bounds(ch, vh);
             let max = ch.saturating_sub(vh) as usize;
             state.offset = state.offset.min(max);
         }
 
-        let next_id = self.interaction_count;
+        let next_id = self.rollback.interaction_count;
         if let Some(rect) = self.prev_hit_map.get(next_id).copied() {
             let inner_rects: Vec<Rect> = self
                 .prev_scroll_rects
@@ -443,48 +446,30 @@ impl Context {
         state: &mut ScrollState,
         inner_scroll_rects: &[Rect],
     ) {
-        let mut to_consume: Vec<usize> = Vec::new();
-
-        for (i, event) in self.events.iter().enumerate() {
-            if self.consumed[i] {
+        let mut to_consume = Vec::new();
+        for (i, mouse) in self.mouse_events_in_rect(*rect) {
+            let in_inner = inner_scroll_rects.iter().any(|sr| {
+                mouse.x >= sr.x && mouse.x < sr.right() && mouse.y >= sr.y && mouse.y < sr.bottom()
+            });
+            if in_inner {
                 continue;
             }
-            if let Event::Mouse(mouse) = event {
-                let in_bounds = mouse.x >= rect.x
-                    && mouse.x < rect.right()
-                    && mouse.y >= rect.y
-                    && mouse.y < rect.bottom();
-                if !in_bounds {
-                    continue;
+
+            let delta = self.scroll_lines_per_event as usize;
+            match mouse.kind {
+                MouseKind::ScrollUp => {
+                    state.scroll_up(delta);
+                    to_consume.push(i);
                 }
-                let in_inner = inner_scroll_rects.iter().any(|sr| {
-                    mouse.x >= sr.x
-                        && mouse.x < sr.right()
-                        && mouse.y >= sr.y
-                        && mouse.y < sr.bottom()
-                });
-                if in_inner {
-                    continue;
+                MouseKind::ScrollDown => {
+                    state.scroll_down(delta);
+                    to_consume.push(i);
                 }
-                let delta = self.scroll_lines_per_event as usize;
-                match mouse.kind {
-                    MouseKind::ScrollUp => {
-                        state.scroll_up(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::ScrollDown => {
-                        state.scroll_down(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::Drag(MouseButton::Left) => {}
-                    _ => {}
-                }
+                MouseKind::Drag(MouseButton::Left) => {}
+                _ => {}
             }
         }
-
-        for i in to_consume {
-            self.consumed[i] = true;
-        }
+        self.consume_indices(to_consume);
     }
 
     /// Shortcut for `container().border(border)`.
@@ -522,17 +507,19 @@ impl Context {
             grow: 0,
             group_name: None,
         });
-        self.text_color_stack.push(None);
+        self.rollback.text_color_stack.push(None);
         f(self);
-        self.text_color_stack.pop();
+        self.rollback.text_color_stack.pop();
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         self.response_for(interaction_id)
     }
 
     pub(crate) fn response_for(&self, interaction_id: usize) -> Response {
-        if (self.modal_active || self.prev_modal_active) && self.overlay_depth == 0 {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
             return Response::none();
         }
         if let Some(rect) = self.prev_hit_map.get(interaction_id) {

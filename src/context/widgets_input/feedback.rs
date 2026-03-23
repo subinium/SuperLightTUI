@@ -22,7 +22,7 @@ impl Context {
             return self;
         }
 
-        self.interaction_count += 1;
+        self.skip_interaction_slot();
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,
             gap: 0,
@@ -53,7 +53,7 @@ impl Context {
             self.styled(line, Style::new().fg(color));
         }
         self.commands.push(Command::EndContainer);
-        self.last_text_idx = None;
+        self.rollback.last_text_idx = None;
 
         self
     }
@@ -87,41 +87,32 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, event) in self.events.iter().enumerate() {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-
-                    match key.code {
-                        KeyCode::Left | KeyCode::Char('h') => {
-                            if step > 0.0 {
-                                let next = (*value - step).max(start);
-                                if (next - *value).abs() > f64::EPSILON {
-                                    *value = next;
-                                    changed = true;
-                                }
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        if step > 0.0 {
+                            let next = (*value - step).max(start);
+                            if (next - *value).abs() > f64::EPSILON {
+                                *value = next;
+                                changed = true;
                             }
-                            consumed_indices.push(i);
                         }
-                        KeyCode::Right | KeyCode::Char('l') => {
-                            if step > 0.0 {
-                                let next = (*value + step).min(end);
-                                if (next - *value).abs() > f64::EPSILON {
-                                    *value = next;
-                                    changed = true;
-                                }
-                            }
-                            consumed_indices.push(i);
-                        }
-                        _ => {}
+                        consumed_indices.push(i);
                     }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        if step > 0.0 {
+                            let next = (*value + step).min(end);
+                            if (next - *value).abs() > f64::EPSILON {
+                                *value = next;
+                                changed = true;
+                            }
+                        }
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
                 }
             }
-
-            for idx in consumed_indices {
-                self.consumed[idx] = true;
-            }
+            self.consume_indices(consumed_indices);
         }
 
         let ratio = if span <= f64::EPSILON {

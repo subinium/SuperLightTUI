@@ -251,9 +251,8 @@ pub(crate) struct Terminal {
     stdout: Stdout,
     current: Buffer,
     previous: Buffer,
-    mouse_enabled: bool,
     cursor_visible: bool,
-    kitty_keyboard: bool,
+    session: TerminalSessionGuard,
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
@@ -263,8 +262,8 @@ pub(crate) struct InlineTerminal {
     stdout: Stdout,
     current: Buffer,
     previous: Buffer,
-    mouse_enabled: bool,
     cursor_visible: bool,
+    session: TerminalSessionGuard,
     height: u32,
     start_row: u16,
     reserved: bool,
@@ -273,40 +272,73 @@ pub(crate) struct InlineTerminal {
     kitty_mgr: KittyImageManager,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalSessionMode {
+    Fullscreen,
+    Inline,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalSessionGuard {
+    mode: TerminalSessionMode,
+    mouse_enabled: bool,
+    kitty_keyboard: bool,
+}
+
+impl TerminalSessionGuard {
+    fn enter(
+        mode: TerminalSessionMode,
+        stdout: &mut Stdout,
+        mouse_enabled: bool,
+        kitty_keyboard: bool,
+    ) -> io::Result<Self> {
+        let guard = Self {
+            mode,
+            mouse_enabled,
+            kitty_keyboard,
+        };
+
+        terminal::enable_raw_mode()?;
+        if let Err(err) = write_session_enter(stdout, &guard) {
+            guard.restore(stdout, false);
+            return Err(err);
+        }
+
+        Ok(guard)
+    }
+
+    fn restore(&self, stdout: &mut Stdout, inline_reserved: bool) {
+        if self.kitty_keyboard {
+            use crossterm::event::PopKeyboardEnhancementFlags;
+            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        }
+        if self.mouse_enabled {
+            let _ = execute!(stdout, DisableMouseCapture, DisableFocusChange);
+        }
+        let _ = write_session_cleanup(stdout, self.mode, inline_reserved);
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
 impl Terminal {
     pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
 
         let mut stdout = io::stdout();
-        terminal::enable_raw_mode()?;
-        execute!(
-            stdout,
-            terminal::EnterAlternateScreen,
-            cursor::Hide,
-            EnableBracketedPaste
+        let session = TerminalSessionGuard::enter(
+            TerminalSessionMode::Fullscreen,
+            &mut stdout,
+            mouse,
+            kitty_keyboard,
         )?;
-        if mouse {
-            execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
-        }
-        if kitty_keyboard {
-            use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
-            let _ = execute!(
-                stdout,
-                PushKeyboardEnhancementFlags(
-                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                )
-            );
-        }
 
         Ok(Self {
             stdout,
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
-            mouse_enabled: mouse,
             cursor_visible: false,
-            kitty_keyboard,
+            session,
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
@@ -327,102 +359,29 @@ impl Terminal {
         }
 
         queue!(self.stdout, BeginSynchronizedUpdate)?;
-
-        let mut last_style = Style::new();
-        let mut first_style = true;
-        let mut last_pos: Option<(u32, u32)> = None;
-        let mut active_link: Option<&str> = None;
-        let mut has_updates = false;
-
-        for y in self.current.area.y..self.current.area.bottom() {
-            for x in self.current.area.x..self.current.area.right() {
-                let cur = self.current.get(x, y);
-                let prev = self.previous.get(x, y);
-                if cur == prev {
-                    continue;
-                }
-                if cur.symbol.is_empty() {
-                    continue;
-                }
-                has_updates = true;
-
-                let need_move = last_pos.map_or(true, |(lx, ly)| ly != y || lx != x);
-                if need_move {
-                    queue!(self.stdout, cursor::MoveTo(sat_u16(x), sat_u16(y)))?;
-                }
-
-                if cur.style != last_style {
-                    if first_style {
-                        queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                        apply_style(&mut self.stdout, &cur.style, self.color_depth)?;
-                        first_style = false;
-                    } else {
-                        apply_style_delta(
-                            &mut self.stdout,
-                            &last_style,
-                            &cur.style,
-                            self.color_depth,
-                        )?;
-                    }
-                    last_style = cur.style;
-                }
-
-                let cell_link = cur.hyperlink.as_deref();
-                if cell_link != active_link {
-                    if let Some(url) = cell_link {
-                        queue!(self.stdout, Print(format!("\x1b]8;;{url}\x07")))?;
-                    } else {
-                        queue!(self.stdout, Print("\x1b]8;;\x07"))?;
-                    }
-                    active_link = cell_link;
-                }
-
-                queue!(self.stdout, Print(&*cur.symbol))?;
-                let char_width = UnicodeWidthStr::width(cur.symbol.as_str()).max(1) as u32;
-                if char_width > 1 && cur.symbol.chars().any(|c| c == '\u{FE0F}') {
-                    queue!(self.stdout, Print(" "))?;
-                }
-                last_pos = Some((x + char_width, y));
-            }
-        }
-
-        if has_updates {
-            if active_link.is_some() {
-                queue!(self.stdout, Print("\x1b]8;;\x07"))?;
-            }
-            queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-        }
+        flush_buffer_diff(
+            &mut self.stdout,
+            &self.current,
+            &self.previous,
+            self.color_depth,
+            0,
+        )?;
 
         // Kitty graphics: structured image management with IDs and compression
         self.kitty_mgr
             .flush(&mut self.stdout, &self.current.kitty_placements)?;
 
         // Raw sequences (sixel, other passthrough) — simple diff
-        if self.current.raw_sequences != self.previous.raw_sequences {
-            for (x, y, seq) in &self.current.raw_sequences {
-                queue!(self.stdout, cursor::MoveTo(sat_u16(*x), sat_u16(*y)))?;
-                queue!(self.stdout, Print(seq))?;
-            }
-        }
+        flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
-
-        let cursor_pos = self.current.cursor_pos();
-        match cursor_pos {
-            Some((cx, cy)) => {
-                if !self.cursor_visible {
-                    queue!(self.stdout, cursor::Show)?;
-                    self.cursor_visible = true;
-                }
-                queue!(self.stdout, cursor::MoveTo(sat_u16(cx), sat_u16(cy)))?;
-            }
-            None => {
-                if self.cursor_visible {
-                    queue!(self.stdout, cursor::Hide)?;
-                    self.cursor_visible = false;
-                }
-            }
-        }
+        flush_cursor(
+            &mut self.stdout,
+            &mut self.cursor_visible,
+            self.current.cursor_pos(),
+            0,
+            None,
+        )?;
 
         self.stdout.flush()?;
 
@@ -469,19 +428,22 @@ impl InlineTerminal {
         let area = Rect::new(0, 0, cols as u32, height);
 
         let mut stdout = io::stdout();
-        terminal::enable_raw_mode()?;
-        execute!(stdout, cursor::Hide, EnableBracketedPaste)?;
-        if mouse {
-            execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
-        }
+        let session =
+            TerminalSessionGuard::enter(TerminalSessionMode::Inline, &mut stdout, mouse, false)?;
 
-        let (_, cursor_row) = cursor::position()?;
+        let (_, cursor_row) = match cursor::position() {
+            Ok(pos) => pos,
+            Err(err) => {
+                session.restore(&mut stdout, false);
+                return Err(err);
+            }
+        };
         Ok(Self {
             stdout,
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
-            mouse_enabled: mouse,
             cursor_visible: false,
+            session,
             height,
             start_row: cursor_row,
             reserved: false,
@@ -519,69 +481,14 @@ impl InlineTerminal {
                 self.start_row = rows.saturating_sub(sat_u16(self.height));
             }
         }
-
-        let mut last_style = Style::new();
-        let mut first_style = true;
-        let mut last_pos: Option<(u32, u32)> = None;
-        let mut active_link: Option<&str> = None;
-        let mut has_updates = false;
-
-        for y in self.current.area.y..self.current.area.bottom() {
-            for x in self.current.area.x..self.current.area.right() {
-                let cell = self.current.get(x, y);
-                let prev = self.previous.get(x, y);
-                if cell == prev || cell.symbol.is_empty() {
-                    continue;
-                }
-                has_updates = true;
-
-                let abs_y = self.start_row as u32 + y;
-                let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
-                if need_move {
-                    queue!(self.stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
-                }
-
-                if cell.style != last_style {
-                    if first_style {
-                        queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                        apply_style(&mut self.stdout, &cell.style, self.color_depth)?;
-                        first_style = false;
-                    } else {
-                        apply_style_delta(
-                            &mut self.stdout,
-                            &last_style,
-                            &cell.style,
-                            self.color_depth,
-                        )?;
-                    }
-                    last_style = cell.style;
-                }
-
-                let cell_link = cell.hyperlink.as_deref();
-                if cell_link != active_link {
-                    if let Some(url) = cell_link {
-                        queue!(self.stdout, Print(format!("\x1b]8;;{url}\x07")))?;
-                    } else {
-                        queue!(self.stdout, Print("\x1b]8;;\x07"))?;
-                    }
-                    active_link = cell_link;
-                }
-
-                queue!(self.stdout, Print(&cell.symbol))?;
-                let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
-                if char_width > 1 && cell.symbol.chars().any(|c| c == '\u{FE0F}') {
-                    queue!(self.stdout, Print(" "))?;
-                }
-                last_pos = Some((x + char_width, abs_y));
-            }
-        }
-
-        if has_updates {
-            if active_link.is_some() {
-                queue!(self.stdout, Print("\x1b]8;;\x07"))?;
-            }
-            queue!(self.stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-        }
+        let row_offset = self.start_row as u32;
+        flush_buffer_diff(
+            &mut self.stdout,
+            &self.current,
+            &self.previous,
+            self.color_depth,
+            row_offset,
+        )?;
 
         // Kitty graphics: structured image management with IDs and compression
         // Adjust Y positions for inline terminal offset
@@ -591,44 +498,24 @@ impl InlineTerminal {
             .iter()
             .map(|p| {
                 let mut ap = p.clone();
-                ap.y += self.start_row as u32;
+                ap.y += row_offset;
                 ap
             })
             .collect();
         self.kitty_mgr.flush(&mut self.stdout, &adjusted)?;
 
         // Raw sequences (sixel, other passthrough) — simple diff
-        if self.current.raw_sequences != self.previous.raw_sequences {
-            for (x, y, seq) in &self.current.raw_sequences {
-                let abs_y = self.start_row as u32 + *y;
-                queue!(self.stdout, cursor::MoveTo(sat_u16(*x), sat_u16(abs_y)))?;
-                queue!(self.stdout, Print(seq))?;
-            }
-        }
+        flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
-
-        let cursor_pos = self.current.cursor_pos();
-        match cursor_pos {
-            Some((cx, cy)) => {
-                let abs_cy = self.start_row as u32 + cy;
-                if !self.cursor_visible {
-                    queue!(self.stdout, cursor::Show)?;
-                    self.cursor_visible = true;
-                }
-                queue!(self.stdout, cursor::MoveTo(sat_u16(cx), sat_u16(abs_cy)))?;
-            }
-            None => {
-                if self.cursor_visible {
-                    queue!(self.stdout, cursor::Hide)?;
-                    self.cursor_visible = false;
-                }
-                let end_row = self
-                    .start_row
-                    .saturating_add(sat_u16(self.height.saturating_sub(1)));
-                queue!(self.stdout, cursor::MoveTo(0, end_row))?;
-            }
-        }
+        let fallback_row = row_offset + self.height.saturating_sub(1);
+        flush_cursor(
+            &mut self.stdout,
+            &mut self.cursor_visible,
+            self.current.cursor_pos(),
+            row_offset,
+            Some(fallback_row),
+        )?;
 
         self.stdout.flush()?;
 
@@ -670,49 +557,15 @@ impl Drop for Terminal {
         // Clean up Kitty images before leaving alternate screen
         let _ = self.kitty_mgr.delete_all(&mut self.stdout);
         let _ = self.stdout.flush();
-        if self.kitty_keyboard {
-            use crossterm::event::PopKeyboardEnhancementFlags;
-            let _ = execute!(self.stdout, PopKeyboardEnhancementFlags);
-        }
-        if self.mouse_enabled {
-            let _ = execute!(self.stdout, DisableMouseCapture, DisableFocusChange);
-        }
-        let _ = execute!(
-            self.stdout,
-            ResetColor,
-            SetAttribute(Attribute::Reset),
-            cursor::Show,
-            DisableBracketedPaste,
-            terminal::LeaveAlternateScreen
-        );
-        let _ = terminal::disable_raw_mode();
+        self.session.restore(&mut self.stdout, false);
     }
 }
 
 impl Drop for InlineTerminal {
     fn drop(&mut self) {
-        if self.mouse_enabled {
-            let _ = execute!(self.stdout, DisableMouseCapture, DisableFocusChange);
-        }
-        let _ = execute!(
-            self.stdout,
-            ResetColor,
-            SetAttribute(Attribute::Reset),
-            cursor::Show,
-            DisableBracketedPaste
-        );
-        if self.reserved {
-            let _ = execute!(
-                self.stdout,
-                cursor::MoveToColumn(0),
-                cursor::MoveDown(1),
-                cursor::MoveToColumn(0),
-                Print("\n")
-            );
-        } else {
-            let _ = execute!(self.stdout, Print("\n"));
-        }
-        let _ = terminal::disable_raw_mode();
+        let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        let _ = self.stdout.flush();
+        self.session.restore(&mut self.stdout, self.reserved);
     }
 }
 
@@ -948,6 +801,127 @@ fn base64_decode(input: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+fn flush_buffer_diff(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    color_depth: ColorDepth,
+    row_offset: u32,
+) -> io::Result<()> {
+    let mut last_style = Style::new();
+    let mut first_style = true;
+    let mut last_pos: Option<(u32, u32)> = None;
+    let mut active_link: Option<&str> = None;
+    let mut has_updates = false;
+
+    for y in current.area.y..current.area.bottom() {
+        for x in current.area.x..current.area.right() {
+            let cell = current.get(x, y);
+            let prev = previous.get(x, y);
+            if cell == prev || cell.symbol.is_empty() {
+                continue;
+            }
+            has_updates = true;
+
+            let abs_y = row_offset + y;
+            let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
+            if need_move {
+                queue!(stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
+            }
+
+            if cell.style != last_style {
+                if first_style {
+                    queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                    apply_style(stdout, &cell.style, color_depth)?;
+                    first_style = false;
+                } else {
+                    apply_style_delta(stdout, &last_style, &cell.style, color_depth)?;
+                }
+                last_style = cell.style;
+            }
+
+            let cell_link = cell.hyperlink.as_deref();
+            if cell_link != active_link {
+                if let Some(url) = cell_link {
+                    queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                } else {
+                    queue!(stdout, Print("\x1b]8;;\x07"))?;
+                }
+                active_link = cell_link;
+            }
+
+            queue!(stdout, Print(&cell.symbol))?;
+            let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
+            if char_width > 1 && cell.symbol.chars().any(|c| c == '\u{FE0F}') {
+                queue!(stdout, Print(" "))?;
+            }
+            last_pos = Some((x + char_width, abs_y));
+        }
+    }
+
+    if has_updates {
+        if active_link.is_some() {
+            queue!(stdout, Print("\x1b]8;;\x07"))?;
+        }
+        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+    }
+
+    Ok(())
+}
+
+fn flush_raw_sequences(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+) -> io::Result<()> {
+    if current.raw_sequences == previous.raw_sequences {
+        return Ok(());
+    }
+
+    for (x, y, seq) in &current.raw_sequences {
+        queue!(
+            stdout,
+            cursor::MoveTo(sat_u16(*x), sat_u16(row_offset + *y)),
+            Print(seq)
+        )?;
+    }
+
+    Ok(())
+}
+
+fn flush_cursor(
+    stdout: &mut impl Write,
+    cursor_visible: &mut bool,
+    cursor_pos: Option<(u32, u32)>,
+    row_offset: u32,
+    fallback_row: Option<u32>,
+) -> io::Result<()> {
+    match cursor_pos {
+        Some((cx, cy)) => {
+            if !*cursor_visible {
+                queue!(stdout, cursor::Show)?;
+                *cursor_visible = true;
+            }
+            queue!(
+                stdout,
+                cursor::MoveTo(sat_u16(cx), sat_u16(row_offset + cy))
+            )?;
+        }
+        None => {
+            if *cursor_visible {
+                queue!(stdout, cursor::Hide)?;
+                *cursor_visible = false;
+            }
+            if let Some(row) = fallback_row {
+                queue!(stdout, cursor::MoveTo(0, sat_u16(row)))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn apply_style_delta(
     w: &mut impl Write,
     old: &Style,
@@ -1073,6 +1047,73 @@ fn reset_current_buffer(buffer: &mut Buffer, theme_bg: Option<Color>) {
     }
 }
 
+fn write_session_enter(stdout: &mut impl Write, session: &TerminalSessionGuard) -> io::Result<()> {
+    match session.mode {
+        TerminalSessionMode::Fullscreen => {
+            execute!(
+                stdout,
+                terminal::EnterAlternateScreen,
+                cursor::Hide,
+                EnableBracketedPaste
+            )?;
+        }
+        TerminalSessionMode::Inline => {
+            execute!(stdout, cursor::Hide, EnableBracketedPaste)?;
+        }
+    }
+
+    if session.mouse_enabled {
+        execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
+    }
+    if session.kitty_keyboard {
+        use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        );
+    }
+
+    Ok(())
+}
+
+fn write_session_cleanup(
+    stdout: &mut impl Write,
+    mode: TerminalSessionMode,
+    inline_reserved: bool,
+) -> io::Result<()> {
+    execute!(
+        stdout,
+        ResetColor,
+        SetAttribute(Attribute::Reset),
+        cursor::Show,
+        DisableBracketedPaste
+    )?;
+
+    match mode {
+        TerminalSessionMode::Fullscreen => {
+            execute!(stdout, terminal::LeaveAlternateScreen)?;
+        }
+        TerminalSessionMode::Inline => {
+            if inline_reserved {
+                execute!(
+                    stdout,
+                    cursor::MoveToColumn(0),
+                    cursor::MoveDown(1),
+                    cursor::MoveToColumn(0),
+                    Print("\n")
+                )?;
+            } else {
+                execute!(stdout, Print("\n"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1086,6 +1127,57 @@ mod tests {
 
         reset_current_buffer(&mut buffer, None);
         assert_eq!(buffer.get(0, 0).style.bg, None);
+    }
+
+    #[test]
+    fn fullscreen_session_enter_writes_alt_screen_sequence() {
+        let session = TerminalSessionGuard {
+            mode: TerminalSessionMode::Fullscreen,
+            mouse_enabled: false,
+            kitty_keyboard: false,
+        };
+        let mut out = Vec::new();
+        write_session_enter(&mut out, &session).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1049h"));
+        assert!(output.contains("\u{1b}[?25l"));
+        assert!(output.contains("\u{1b}[?2004h"));
+    }
+
+    #[test]
+    fn inline_session_enter_skips_alt_screen_sequence() {
+        let session = TerminalSessionGuard {
+            mode: TerminalSessionMode::Inline,
+            mouse_enabled: false,
+            kitty_keyboard: false,
+        };
+        let mut out = Vec::new();
+        write_session_enter(&mut out, &session).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(!output.contains("\u{1b}[?1049h"));
+        assert!(output.contains("\u{1b}[?25l"));
+        assert!(output.contains("\u{1b}[?2004h"));
+    }
+
+    #[test]
+    fn fullscreen_session_cleanup_leaves_alt_screen() {
+        let mut out = Vec::new();
+        write_session_cleanup(&mut out, TerminalSessionMode::Fullscreen, false).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1049l"));
+        assert!(output.contains("\u{1b}[?25h"));
+        assert!(output.contains("\u{1b}[?2004l"));
+    }
+
+    #[test]
+    fn inline_session_cleanup_keeps_normal_screen() {
+        let mut out = Vec::new();
+        write_session_cleanup(&mut out, TerminalSessionMode::Inline, false).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(!output.contains("\u{1b}[?1049l"));
+        assert!(output.ends_with('\n'));
+        assert!(output.contains("\u{1b}[?25h"));
+        assert!(output.contains("\u{1b}[?2004l"));
     }
 
     #[test]
