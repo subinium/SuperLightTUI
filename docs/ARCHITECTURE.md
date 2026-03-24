@@ -46,7 +46,7 @@ src/
 │   │   ├── text_input.rs       # text input widget
 │   │   ├── feedback.rs         # spinner, toast, slider
 │   │   └── textarea_progress.rs # textarea and progress widgets
-│   └── widgets_viz.rs          # Charts, sparklines, canvas, QR, and other data-viz widgets
+│   └── widgets_viz.rs          # Charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
 │
 ├── widgets.rs                  # Facade for widget state types
 ├── widgets/

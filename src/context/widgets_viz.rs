@@ -110,7 +110,7 @@ impl Context {
     /// Render a styled bar chart with per-bar colors, grouping, and direction control.
     ///
     /// # Example
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::{Bar, Color};
     /// let bars = vec![
@@ -122,6 +122,7 @@ impl Context {
     /// ui.bar_chart_styled(&bars, 30, slt::BarDirection::Horizontal);
     /// # });
     /// ```
+    #[deprecated(since = "0.16.1", note = "use `bar_chart_with` instead")]
     pub fn bar_chart_styled(
         &mut self,
         bars: &[Bar],
@@ -485,7 +486,7 @@ impl Context {
     /// comparing categories across groups (e.g., quarterly revenue by product).
     ///
     /// # Example
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::{Bar, BarGroup, Color};
     /// let groups = vec![
@@ -784,7 +785,7 @@ impl Context {
     /// Use `f64::NAN` for absent values (rendered as spaces).
     ///
     /// # Example
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::Color;
     /// let data: Vec<(f64, Option<Color>)> = vec![
@@ -925,7 +926,7 @@ impl Context {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// let data = [1.0, 3.0, 2.0, 5.0, 4.0, 6.0, 3.0, 7.0];
     /// ui.line_chart(&data, 40, 8);
@@ -1313,7 +1314,7 @@ impl Context {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// ui.canvas(40, 10, |cv| {
     ///     cv.line(0, 0, cv.width() - 1, cv.height() - 1);
@@ -1552,6 +1553,830 @@ impl Context {
             });
 
         Response::none()
+    }
+
+    /// Render a heatmap using half-block characters for 2× vertical resolution.
+    ///
+    /// Each terminal cell packs two data rows using `▀` with `fg` for the upper
+    /// half and `bg` for the lower half. This doubles the effective vertical
+    /// resolution compared to [`heatmap`](Self::heatmap).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// let data: Vec<Vec<f64>> = (0..20)
+    ///     .map(|r| (0..40).map(|c| ((r * 3 + c * 7) % 20) as f64).collect())
+    ///     .collect();
+    /// ui.heatmap_halfblock(&data, 40, 10, Color::Rgb(10, 10, 40), Color::Rgb(255, 80, 30));
+    /// # });
+    /// ```
+    pub fn heatmap_halfblock(
+        &mut self,
+        data: &[Vec<f64>],
+        width: u32,
+        height: u32,
+        low_color: Color,
+        high_color: Color,
+    ) -> Response {
+        if data.is_empty() || width == 0 || height == 0 {
+            return Response::none();
+        }
+
+        let data_rows = data.len();
+        let max_data_cols = data.iter().map(Vec::len).max().unwrap_or(0);
+        if max_data_cols == 0 {
+            return Response::none();
+        }
+
+        let mut min_value = f64::INFINITY;
+        let mut max_value = f64::NEG_INFINITY;
+        for row in data {
+            for value in row {
+                if value.is_finite() {
+                    min_value = min_value.min(*value);
+                    max_value = max_value.max(*value);
+                }
+            }
+        }
+
+        if !min_value.is_finite() || !max_value.is_finite() {
+            return Response::none();
+        }
+
+        let range = max_value - min_value;
+        let zero_range = range.abs() < f64::EPSILON;
+
+        let data = data.to_vec();
+        let cols = width as usize;
+        let rows = height as usize;
+        // Each terminal row maps to 2 data rows
+        let virtual_rows = rows * 2;
+
+        self.container().w(width).h(height).draw(move |buf, rect| {
+            let w = rect.width as usize;
+            let h = rect.height as usize;
+            if w == 0 || h == 0 {
+                return;
+            }
+
+            let sample = |data_row_idx: usize, col_idx: usize| -> f64 {
+                let src_row = &data[data_row_idx.min(data_rows.saturating_sub(1))];
+                let src_cols = src_row.len();
+                if src_cols == 0 {
+                    return 0.0;
+                }
+                let data_col = (col_idx * src_cols / cols.max(1)).min(src_cols - 1);
+                let v = src_row[data_col];
+                if !v.is_finite() {
+                    0.0
+                } else if zero_range {
+                    0.5
+                } else {
+                    ((v - min_value) / range).clamp(0.0, 1.0)
+                }
+            };
+
+            let blend = |t: f64| -> Color {
+                let t = t.clamp(0.0, 1.0);
+                match (low_color, high_color) {
+                    (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
+                        (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
+                        (g1 as f64 * (1.0 - t) + g2 as f64 * t).round() as u8,
+                        (b1 as f64 * (1.0 - t) + b2 as f64 * t).round() as u8,
+                    ),
+                    _ => {
+                        if t > 0.5 {
+                            high_color
+                        } else {
+                            low_color
+                        }
+                    }
+                }
+            };
+
+            for row in 0..h {
+                let upper_data_row =
+                    (row * 2 * data_rows / virtual_rows).min(data_rows.saturating_sub(1));
+                let lower_data_row =
+                    ((row * 2 + 1) * data_rows / virtual_rows).min(data_rows.saturating_sub(1));
+
+                for col in 0..w.min(cols) {
+                    let upper_t = sample(upper_data_row, col);
+                    let lower_t = sample(lower_data_row, col);
+                    let upper_color = blend(upper_t);
+                    let lower_color = blend(lower_t);
+
+                    buf.set_char(
+                        rect.x + col as u32,
+                        rect.y + row as u32,
+                        '▀',
+                        Style::new().fg(upper_color).bg(lower_color),
+                    );
+                }
+            }
+        });
+
+        Response::none()
+    }
+
+    /// Render a candlestick chart with heavy box-drawing and half-block precision.
+    ///
+    /// Uses `┃` for wicks (heavier than `│`) and `▀`/`▄` at body edges for
+    /// sub-cell vertical precision, effectively doubling the price resolution.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Candle, Color};
+    /// let candles = vec![
+    ///     Candle { open: 100.0, high: 108.0, low: 98.0, close: 105.0 },
+    ///     Candle { open: 105.0, high: 112.0, low: 103.0, close: 110.0 },
+    /// ];
+    /// ui.candlestick_hd(&candles, Color::Rgb(38, 166, 91), Color::Rgb(234, 57, 67));
+    /// # });
+    /// ```
+    pub fn candlestick_hd(
+        &mut self,
+        candles: &[Candle],
+        up_color: Color,
+        down_color: Color,
+    ) -> Response {
+        if candles.is_empty() {
+            return Response::none();
+        }
+
+        let candles = candles.to_vec();
+        self.container().grow(1).draw(move |buf, rect| {
+            let w = rect.width as usize;
+            let h = rect.height as usize;
+            if w < 2 || h < 2 {
+                return;
+            }
+
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            for c in &candles {
+                if c.low.is_finite() {
+                    lo = lo.min(c.low);
+                }
+                if c.high.is_finite() {
+                    hi = hi.max(c.high);
+                }
+            }
+            if !lo.is_finite() || !hi.is_finite() {
+                return;
+            }
+
+            let price_range = if (hi - lo).abs() < 0.01 { 1.0 } else { hi - lo };
+            let map_y = |v: f64| -> usize {
+                let t = ((v - lo) / price_range).clamp(0.0, 1.0);
+                ((1.0 - t) * h.saturating_sub(1) as f64).round() as usize
+            };
+
+            let n = candles.len();
+
+            for (i, c) in candles.iter().enumerate() {
+                if !c.open.is_finite()
+                    || !c.high.is_finite()
+                    || !c.low.is_finite()
+                    || !c.close.is_finite()
+                {
+                    continue;
+                }
+
+                // Distribute candles evenly across full width
+                let x0 = i * w / n;
+                let x1 = ((i + 1) * w / n).saturating_sub(1).max(x0);
+                if x0 >= w {
+                    continue;
+                }
+                // Wick at exact center of body range (inclusive)
+                let xm = x0 + (x1 - x0) / 2;
+                let color = if c.close >= c.open {
+                    up_color
+                } else {
+                    down_color
+                };
+
+                // Wick
+                let wick_top = map_y(c.high);
+                let wick_bot = map_y(c.low);
+                for row in wick_top..=wick_bot.min(h - 1) {
+                    buf.set_char(
+                        rect.x + xm as u32,
+                        rect.y + row as u32,
+                        '┃',
+                        Style::new().fg(color),
+                    );
+                }
+
+                // Body
+                let body_top = map_y(c.open.max(c.close));
+                let body_bot = map_y(c.open.min(c.close));
+                for row in body_top..=body_bot.min(h - 1) {
+                    for col in x0..=x1.min(w - 1) {
+                        buf.set_char(
+                            rect.x + col as u32,
+                            rect.y + row as u32,
+                            '█',
+                            Style::new().fg(color),
+                        );
+                    }
+                }
+            }
+        });
+
+        Response::none()
+    }
+
+    /// Render a treemap using the squarified layout algorithm.
+    ///
+    /// Each item occupies a rectangle proportional to its value, filled with the
+    /// item's color and labeled when space permits.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{TreemapItem, Color};
+    /// let items = vec![
+    ///     TreemapItem::new("Rust", 40.0, Color::Cyan),
+    ///     TreemapItem::new("Go", 25.0, Color::Blue),
+    ///     TreemapItem::new("Python", 20.0, Color::Yellow),
+    ///     TreemapItem::new("Java", 15.0, Color::Red),
+    /// ];
+    /// ui.treemap(&items);
+    /// # });
+    /// ```
+    pub fn treemap(&mut self, items: &[TreemapItem]) -> Response {
+        if items.is_empty() {
+            return Response::none();
+        }
+
+        let items = items.to_vec();
+        self.container().grow(1).draw(move |buf, rect| {
+            let w = rect.width as usize;
+            let h = rect.height as usize;
+            if w < 2 || h < 2 {
+                return;
+            }
+
+            // Filter out items that would be too small to render (< 1 cell)
+            let total_area = w as f64 * h as f64;
+            let total_value: f64 = items.iter().map(|i| i.value.max(0.0)).sum();
+            let min_area_threshold = 1.0; // at least 1 cell
+            let visible_items: Vec<&TreemapItem> = if total_value > 0.0 {
+                items
+                    .iter()
+                    .filter(|item| {
+                        item.value.max(0.0) / total_value * total_area >= min_area_threshold
+                    })
+                    .collect()
+            } else {
+                return;
+            };
+
+            if visible_items.is_empty() {
+                return;
+            }
+
+            // Build filtered items for layout
+            let filtered: Vec<TreemapItem> = visible_items.into_iter().cloned().collect();
+            let rects = squarify_layout(&filtered, 0.0, 0.0, w as f64, h as f64);
+
+            for (item, r) in filtered.iter().zip(rects.iter()) {
+                // Integer cell bounds — use round for consistent placement
+                let x0 = r.x.round() as usize;
+                let y0 = r.y.round() as usize;
+                let x1 = (r.x + r.w).round() as usize;
+                let y1 = (r.y + r.h).round() as usize;
+
+                let cell_w = x1.min(w).saturating_sub(x0);
+                let cell_h = y1.min(h).saturating_sub(y0);
+                if cell_w == 0 || cell_h == 0 {
+                    continue;
+                }
+
+                // Fill the rectangle with the item's color
+                for row in y0..y1.min(h) {
+                    for col in x0..x1.min(w) {
+                        buf.set_char(
+                            rect.x + col as u32,
+                            rect.y + row as u32,
+                            ' ',
+                            Style::new().bg(item.color),
+                        );
+                    }
+                }
+
+                let text_color = treemap_label_color(item.color);
+
+                // Label: truncate to fit, center in cell
+                if cell_w >= 2 {
+                    let max_label_w = cell_w.saturating_sub(1);
+                    let label = if item.label.len() > max_label_w {
+                        &item.label[..max_label_w]
+                    } else {
+                        &item.label
+                    };
+                    let label_y = y0 + cell_h / 2;
+                    let label_x = x0 + (cell_w.saturating_sub(label.len())) / 2;
+                    if label_y < y1.min(h) {
+                        for (offset, ch) in label.chars().enumerate() {
+                            let cx = label_x + offset;
+                            if cx < x1.min(w) {
+                                buf.set_char(
+                                    rect.x + cx as u32,
+                                    rect.y + label_y as u32,
+                                    ch,
+                                    Style::new().fg(text_color).bg(item.color).bold(),
+                                );
+                            }
+                        }
+                    }
+
+                    // Value label below if space permits
+                    if cell_h >= 3 {
+                        let value_str = format_compact_number(item.value);
+                        let value_y = label_y + 1;
+                        if value_y < y1.min(h) && value_str.len() < cell_w {
+                            let vx = x0 + (cell_w.saturating_sub(value_str.len())) / 2;
+                            for (offset, ch) in value_str.chars().enumerate() {
+                                let cx = vx + offset;
+                                if cx < x1.min(w) {
+                                    buf.set_char(
+                                        rect.x + cx as u32,
+                                        rect.y + value_y as u32,
+                                        ch,
+                                        Style::new().fg(text_color).bg(item.color).dim(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Response::none()
+    }
+
+    /// Render a stacked bar chart with custom configuration.
+    ///
+    /// Each group's bars are stacked on top of each other rather than placed
+    /// side-by-side.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Bar, BarGroup, Color};
+    /// let groups = vec![
+    ///     BarGroup::new("2023", vec![
+    ///         Bar::new("Rev", 100.0).color(Color::Cyan),
+    ///         Bar::new("Cost", 60.0).color(Color::Red),
+    ///     ]),
+    ///     BarGroup::new("2024", vec![
+    ///         Bar::new("Rev", 140.0).color(Color::Cyan),
+    ///         Bar::new("Cost", 80.0).color(Color::Red),
+    ///     ]),
+    /// ];
+    /// ui.bar_chart_stacked(&groups, 20);
+    /// # });
+    /// ```
+    pub fn bar_chart_stacked(&mut self, groups: &[BarGroup], max_height: u32) -> Response {
+        self.bar_chart_stacked_with(groups, |_| {}, max_height)
+    }
+
+    /// Render a stacked bar chart with custom configuration.
+    ///
+    /// Uses [`BarChartConfig`] for bar width, gap, and max value settings.
+    pub fn bar_chart_stacked_with(
+        &mut self,
+        groups: &[BarGroup],
+        configure: impl FnOnce(&mut BarChartConfig),
+        max_height: u32,
+    ) -> Response {
+        if groups.is_empty() {
+            return Response::none();
+        }
+
+        let all_bars: Vec<&Bar> = groups.iter().flat_map(|g| g.bars.iter()).collect();
+        if all_bars.is_empty() {
+            return Response::none();
+        }
+
+        let mut config = BarChartConfig::default();
+        config.bar_width(3).bar_gap(1);
+        configure(&mut config);
+
+        // Find max stacked total
+        let max_total: f64 = groups
+            .iter()
+            .map(|g| g.bars.iter().map(|b| b.value.max(0.0)).sum::<f64>())
+            .fold(f64::NEG_INFINITY, f64::max);
+        let denom = config.max_value.unwrap_or(max_total);
+        let denom = if denom > 0.0 { denom } else { 1.0 };
+
+        let chart_height = max_height.max(1) as usize;
+        let bar_width = config.bar_width.max(1) as usize;
+        let gap = config.bar_gap as u32;
+
+        const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+
+        self.skip_interaction_slot();
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        // Compute stacked units per group
+        struct StackedSegment {
+            units: usize,
+            color: Color,
+        }
+        let stacked_groups: Vec<(String, Vec<StackedSegment>)> = groups
+            .iter()
+            .map(|g| {
+                let segs: Vec<StackedSegment> = g
+                    .bars
+                    .iter()
+                    .map(|b| {
+                        let normalized = (b.value.max(0.0) / denom).clamp(0.0, 1.0);
+                        StackedSegment {
+                            units: (normalized * chart_height as f64 * 8.0).round() as usize,
+                            color: b.color.unwrap_or(self.theme.primary),
+                        }
+                    })
+                    .collect();
+                (g.label.clone(), segs)
+            })
+            .collect();
+
+        // Render rows top to bottom
+        for row in (0..chart_height).rev() {
+            self.skip_interaction_slot();
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            let row_base = row * 8;
+
+            for (_label, segs) in &stacked_groups {
+                // Find which segment covers this row
+                let mut accumulated = 0usize;
+                let mut cell_char = ' ';
+                let mut cell_color = self.theme.bg;
+
+                for seg in segs {
+                    let seg_bottom = accumulated;
+                    let seg_top = accumulated + seg.units;
+
+                    if seg_top <= row_base {
+                        // Segment is entirely below this row
+                        accumulated = seg_top;
+                        continue;
+                    }
+
+                    if seg_bottom >= row_base + 8 {
+                        // Segment is entirely above this row
+                        break;
+                    }
+
+                    // This segment covers (part of) this row
+                    let local_bottom = seg_bottom.saturating_sub(row_base);
+                    let local_top = (seg_top - row_base).min(8);
+                    let fill = local_top - local_bottom;
+
+                    if local_bottom == 0 {
+                        // This segment starts from the bottom of the cell
+                        cell_char = if fill >= 8 {
+                            '█'
+                        } else {
+                            FRACTION_BLOCKS[fill]
+                        };
+                        cell_color = seg.color;
+                    } else {
+                        // This segment starts partway up — just use full block
+                        cell_char = '█';
+                        cell_color = seg.color;
+                    }
+
+                    accumulated = seg_top;
+                }
+
+                let fill_text = cell_char.to_string().repeat(bar_width);
+                self.styled(fill_text, Style::new().fg(cell_color));
+            }
+
+            self.commands.push(Command::EndContainer);
+            self.rollback.last_text_idx = None;
+        }
+
+        // Labels row
+        self.skip_interaction_slot();
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Row,
+            gap,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(self.theme.border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+        for (label, _) in &stacked_groups {
+            self.styled(
+                Self::center_and_truncate_text(label, bar_width),
+                Style::new().fg(self.theme.text),
+            );
+        }
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        Response::none()
+    }
+}
+
+/// A single item in a treemap.
+#[derive(Debug, Clone)]
+pub struct TreemapItem {
+    /// Display label.
+    pub label: String,
+    /// Numeric value determining area.
+    pub value: f64,
+    /// Fill color for this item's rectangle.
+    pub color: Color,
+}
+
+impl TreemapItem {
+    /// Create a new treemap item.
+    pub fn new(label: impl Into<String>, value: f64, color: Color) -> Self {
+        Self {
+            label: label.into(),
+            value,
+            color,
+        }
+    }
+}
+
+/// Rectangle produced by the squarified layout.
+#[derive(Clone)]
+struct LayoutRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+/// Squarified treemap layout algorithm (Bruls, Huizing, van Wijk 2000).
+fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec<LayoutRect> {
+    if items.is_empty() || w <= 0.0 || h <= 0.0 {
+        return Vec::new();
+    }
+
+    let total: f64 = items.iter().map(|i| i.value.max(0.0)).sum();
+    if total <= 0.0 {
+        return items
+            .iter()
+            .map(|_| LayoutRect {
+                x,
+                y,
+                w: 0.0,
+                h: 0.0,
+            })
+            .collect();
+    }
+
+    // Normalize values to fill the available area
+    let area = w * h;
+    let mut sorted_indices: Vec<usize> = (0..items.len()).collect();
+    sorted_indices.sort_by(|a, b| {
+        items[*b]
+            .value
+            .partial_cmp(&items[*a].value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let areas: Vec<f64> = sorted_indices
+        .iter()
+        .map(|&i| items[i].value.max(0.0) / total * area)
+        .collect();
+
+    let mut result = vec![
+        LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        };
+        items.len()
+    ];
+    squarify_recursive(&areas, &sorted_indices, x, y, w, h, &mut result);
+    result
+}
+
+fn worst_ratio(row: &[f64], side: f64) -> f64 {
+    if row.is_empty() || side <= 0.0 {
+        return f64::INFINITY;
+    }
+    let sum: f64 = row.iter().sum();
+    let mut worst = 0.0f64;
+    for &a in row {
+        if a <= 0.0 {
+            continue;
+        }
+        let ratio1 = (side * side * a) / (sum * sum);
+        let ratio2 = (sum * sum) / (side * side * a);
+        worst = worst.max(ratio1.max(ratio2));
+    }
+    worst
+}
+
+fn squarify_recursive(
+    areas: &[f64],
+    indices: &[usize],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    result: &mut [LayoutRect],
+) {
+    if areas.is_empty() || w <= 0.0 || h <= 0.0 {
+        return;
+    }
+
+    if areas.len() == 1 {
+        result[indices[0]] = LayoutRect { x, y, w, h };
+        return;
+    }
+
+    let short_side = w.min(h);
+    let mut row: Vec<f64> = Vec::new();
+    let mut row_indices: Vec<usize> = Vec::new();
+
+    for (i, &area) in areas.iter().enumerate() {
+        let mut candidate = row.clone();
+        candidate.push(area);
+        if row.is_empty() || worst_ratio(&candidate, short_side) <= worst_ratio(&row, short_side) {
+            row.push(area);
+            row_indices.push(indices[i]);
+        } else {
+            // Layout the current row
+            let row_sum: f64 = row.iter().sum();
+            let row_fraction = row_sum / (w * h).max(f64::EPSILON);
+
+            if w >= h {
+                // Lay out vertically on the left
+                let row_w = w * row_fraction;
+                let mut cy = y;
+                for (j, &a) in row.iter().enumerate() {
+                    let cell_h = if row_sum > 0.0 {
+                        h * (a / row_sum)
+                    } else {
+                        0.0
+                    };
+                    result[row_indices[j]] = LayoutRect {
+                        x,
+                        y: cy,
+                        w: row_w,
+                        h: cell_h,
+                    };
+                    cy += cell_h;
+                }
+                squarify_recursive(
+                    &areas[i..],
+                    &indices[i..],
+                    x + row_w,
+                    y,
+                    w - row_w,
+                    h,
+                    result,
+                );
+            } else {
+                // Lay out horizontally on top
+                let row_h = h * row_fraction;
+                let mut cx = x;
+                for (j, &a) in row.iter().enumerate() {
+                    let cell_w = if row_sum > 0.0 {
+                        w * (a / row_sum)
+                    } else {
+                        0.0
+                    };
+                    result[row_indices[j]] = LayoutRect {
+                        x: cx,
+                        y,
+                        w: cell_w,
+                        h: row_h,
+                    };
+                    cx += cell_w;
+                }
+                squarify_recursive(
+                    &areas[i..],
+                    &indices[i..],
+                    x,
+                    y + row_h,
+                    w,
+                    h - row_h,
+                    result,
+                );
+            }
+            return;
+        }
+    }
+
+    // Layout remaining row
+    if !row.is_empty() {
+        let row_sum: f64 = row.iter().sum();
+        if w >= h {
+            let mut cy = y;
+            for (j, &a) in row.iter().enumerate() {
+                let cell_h = if row_sum > 0.0 {
+                    h * (a / row_sum)
+                } else {
+                    0.0
+                };
+                result[row_indices[j]] = LayoutRect {
+                    x,
+                    y: cy,
+                    w,
+                    h: cell_h,
+                };
+                cy += cell_h;
+            }
+        } else {
+            let mut cx = x;
+            for (j, &a) in row.iter().enumerate() {
+                let cell_w = if row_sum > 0.0 {
+                    w * (a / row_sum)
+                } else {
+                    0.0
+                };
+                result[row_indices[j]] = LayoutRect {
+                    x: cx,
+                    y,
+                    w: cell_w,
+                    h,
+                };
+                cx += cell_w;
+            }
+        }
+    }
+}
+
+/// Choose a contrasting label color for treemap cells.
+fn treemap_label_color(bg: Color) -> Color {
+    match bg {
+        Color::Rgb(r, g, b) => {
+            // Relative luminance (simplified)
+            let lum = 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64;
+            if lum > 128.0 {
+                Color::Rgb(0, 0, 0)
+            } else {
+                Color::Rgb(255, 255, 255)
+            }
+        }
+        _ => Color::White,
     }
 }
 

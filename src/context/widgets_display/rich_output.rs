@@ -198,7 +198,7 @@ impl Context {
 
     /// Render an image using the Sixel protocol.
     ///
-    /// `rgba` is raw RGBA pixel data, `pixel_w`/`pixel_h` are pixel dimensions,
+    /// `rgba` is raw RGBA pixel data, `pixel_width`/`pixel_height` are pixel dimensions,
     /// and `cols`/`rows` are the terminal cell size to reserve for the image.
     ///
     /// Requires the `crossterm` feature (enabled by default). Falls back to
@@ -218,8 +218,8 @@ impl Context {
     pub fn sixel_image(
         &mut self,
         rgba: &[u8],
-        pixel_w: u32,
-        pixel_h: u32,
+        pixel_width: u32,
+        pixel_height: u32,
         cols: u32,
         rows: u32,
     ) -> Response {
@@ -234,8 +234,8 @@ impl Context {
             return Response::none();
         }
 
-        let rgba = normalize_rgba(rgba, pixel_w, pixel_h);
-        let encoded = crate::sixel::encode_sixel(&rgba, pixel_w, pixel_h, 256);
+        let rgba = normalize_rgba(rgba, pixel_width, pixel_height);
+        let encoded = crate::sixel::encode_sixel(&rgba, pixel_width, pixel_height, 256);
 
         if encoded.is_empty() {
             self.container().w(cols).h(rows).draw(|buf, rect| {
@@ -261,8 +261,8 @@ impl Context {
     pub fn sixel_image(
         &mut self,
         _rgba: &[u8],
-        _pixel_w: u32,
-        _pixel_h: u32,
+        _pixel_width: u32,
+        _pixel_height: u32,
         cols: u32,
         rows: u32,
     ) -> Response {

@@ -33,7 +33,7 @@
 //! ## Features
 //!
 //! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
-//! - **30+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, separator, help bar, scrollable, chart, bar chart, sparkline, histogram, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown
+//! - **50+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, slider, separator, help bar, scrollable, chart, bar chart, stacked bar chart, sparkline, histogram, heatmap, treemap, candlestick, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown, alert, badge, stat, breadcrumb, accordion, code block, big text, image, modal, tooltip, form, calendar, file picker, qr code
 //! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
 //! - **Mouse** — click, hover, drag-to-scroll
 //! - **Focus** — automatic Tab/Shift+Tab cycling
@@ -113,12 +113,12 @@ pub use anim::{
 pub use buffer::Buffer;
 pub use cell::Cell;
 pub use chart::{
-    Axis, Candle, ChartBuilder, ChartConfig, ChartRenderer, Dataset, DatasetEntry, GraphType,
-    HistogramBuilder, LegendPosition, Marker,
+    Axis, Candle, ChartBuilder, ChartConfig, ChartRenderer, ColorSpan, Dataset, DatasetEntry,
+    GraphType, HistogramBuilder, LegendPosition, Marker, RenderedLine,
 };
 pub use context::{
     Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
-    Response, State, Widget,
+    Response, State, TreemapItem, Widget,
 };
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
@@ -795,9 +795,22 @@ pub fn run_inline_with(
 pub fn run_static(
     output: &mut StaticOutput,
     dynamic_height: u32,
+    f: impl FnMut(&mut Context),
+) -> io::Result<()> {
+    run_static_with(output, dynamic_height, RunConfig::default(), f)
+}
+
+/// Run the TUI in static-output mode with custom configuration.
+///
+/// Like [`run_static`] but accepts a [`RunConfig`] for theme, mouse, tick rate,
+/// and other settings.
+#[cfg(feature = "crossterm")]
+pub fn run_static_with(
+    output: &mut StaticOutput,
+    dynamic_height: u32,
+    config: RunConfig,
     mut f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
-    let config = RunConfig::default();
     if !io::stdout().is_terminal() {
         return Ok(());
     }
@@ -1028,7 +1041,7 @@ pub(crate) fn run_frame_kernel(
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
     let fd = layout::collect_all(&tree);
-    debug_assert_eq!(
+    assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
         "scroll feedback vectors must stay aligned"
