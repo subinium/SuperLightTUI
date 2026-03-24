@@ -150,7 +150,7 @@ impl Context {
     pub fn virtual_list(
         &mut self,
         state: &mut ListState,
-        visible_height: usize,
+        visible_height: u32,
         f: impl Fn(&mut Context, usize),
     ) -> Response {
         if state.items.is_empty() {
@@ -174,11 +174,11 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::PageUp => {
-                        state.selected = state.selected.saturating_sub(visible_height);
+                        state.selected = state.selected.saturating_sub(visible_height as usize);
                         consumed_indices.push(i);
                     }
                     KeyCode::PageDown => {
-                        state.selected = (state.selected + visible_height)
+                        state.selected = (state.selected + visible_height as usize)
                             .min(state.items.len().saturating_sub(1));
                         consumed_indices.push(i);
                     }
@@ -196,12 +196,13 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        let start = if state.selected >= visible_height {
-            state.selected - visible_height + 1
+        let vh = visible_height as usize;
+        let start = if state.selected >= vh {
+            state.selected - vh + 1
         } else {
             0
         };
-        let end = (start + visible_height).min(state.items.len());
+        let end = (start + vh).min(state.items.len());
 
         self.commands.push(Command::BeginContainer {
             direction: Direction::Column,

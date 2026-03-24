@@ -189,6 +189,9 @@ impl Tween {
             return self.to;
         }
 
+        if self.duration_ticks == 0 {
+            return self.to;
+        }
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)
@@ -370,6 +373,9 @@ impl Keyframes {
             }
         };
 
+        if self.duration_ticks == 0 {
+            return stops.last().map_or(0.0, |s| s.value);
+        }
         let progress = loop_tick as f64 / self.duration_ticks as f64;
 
         if progress <= stops[0].position {
@@ -715,6 +721,9 @@ impl Stagger {
         }
 
         self.done = false;
+        if self.duration_ticks == 0 {
+            return self.to;
+        }
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)

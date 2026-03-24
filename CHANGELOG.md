@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-03-24
+
+### Features
+
+- **Treemap widget** — `ui.treemap(&items)` renders a squarified treemap from `&[TreemapItem]`. Auto-filters items too small to display. Labels and values are centered with contrast-aware text color.
+- **Half-block heatmap** — `ui.heatmap_halfblock()` uses `▀` with fg/bg color to pack two data rows per terminal row, doubling vertical resolution over `heatmap()`.
+- **HD candlestick** — `ui.candlestick_hd()` uses heavy box-drawing `┃` for wicks with proper center alignment, improving readability over the standard `candlestick()`.
+- **Stacked bar chart** — `ui.bar_chart_stacked()` / `ui.bar_chart_stacked_with()` stacks bars vertically within each group. Accepts `BarChartConfig` for bar_width, gap, and max_value.
+- **`run_static_with`** — static-output mode now accepts `RunConfig` for theme, mouse, and tick rate customization.
+- **Expanded demo_infoviz** — 8 tabs (was 4): Overview, Lines, Scatter, Bars, Heatmap, Financial, Treemap, Canvas.
+
+### Improvements
+
+- **`ColorSpan` / `RenderedLine` re-exported** — chart renderer types now accessible from crate root.
+- **`virtual_list` visible_height** — changed from `usize` to `u32` for consistency with other size parameters.
+- **`sixel_image` parameter names** — unified to `pixel_width`/`pixel_height` (was `pixel_w`/`pixel_h`).
+- **Doc examples** — standardized to `no_run` (was mixed `ignore`/`no_run`).
+- **Widget count** — crate-level doc updated from "30+" to "50+" reflecting actual widget count.
+
+### Deprecations
+
+- **`bar_chart_styled`** — use `bar_chart_with` instead.
+
+### Safety
+
+- **Scroll feedback assert** — promoted `debug_assert` to `assert` for scroll vector alignment check; prevents silent corruption in release builds.
+- **Animation div-by-zero guard** — `Tween`, `Keyframes`, and `Stagger` now return target value immediately when `duration_ticks == 0`.
+
+### Tests
+
+- Added 18 new tests (234 → 252): treemap (5), heatmap_halfblock (3), candlestick_hd (3), bar_chart_stacked (3), bar_chart (1), sparkline (1), heatmap (1), candlestick (1).
+
 ## [0.16.0] — 2026-03-23
 
 This release is about consolidation, not API sprawl.

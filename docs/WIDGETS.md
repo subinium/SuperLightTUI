@@ -204,8 +204,12 @@ All return `Response`.
 | `area_chart(data, width, height)` | Filled area chart. Variant: `area_chart_colored(...)` |
 | `scatter(data, width, height)` | Braille scatter plot from `&[(f64, f64)]` |
 | `histogram(data, width, height)` | Histogram from `&[f64]`. Variant: `histogram_with(data, configure, w, h)` |
+| `bar_chart_stacked(groups, max_height)` | Stacked bar chart from `&[BarGroup]`. Variant: `bar_chart_stacked_with(groups, configure, max_height)` |
 | `candlestick(candles, up_color, down_color)` | OHLC candlestick chart |
+| `candlestick_hd(candles, up_color, down_color)` | HD candlestick with heavy `┃` wicks and center-aligned bodies |
 | `heatmap(data, w, h, low_color, high_color)` | 2D color gradient heatmap |
+| `heatmap_halfblock(data, w, h, low_color, high_color)` | Half-block heatmap with 2× vertical resolution using `▀` fg/bg |
+| `treemap(items)` | Squarified treemap from `&[TreemapItem]`. Auto-sizes via `grow(1)` |
 | `canvas(width, height, draw)` | Braille drawing canvas. Closure receives `&mut CanvasContext` |
 | `chart(configure, width, height)` | Multi-series chart via `ChartBuilder`. Closure receives `&mut ChartBuilder` |
 | `qr_code(data)` | QR code (requires `qrcode` feature) |
@@ -347,6 +351,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.done` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: Option<ApprovalAction>` |
 | `rich_log` | `RichLogState` | `.push(line, style)`, `.lines`, `.scroll` |
+| `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
 
 ---
 
@@ -465,6 +470,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets_interactive/tree_widgets.rs` | `tree`, `directory_tree` |
 | `src/context/widgets_interactive/rich_markdown.rs` | `markdown`, `virtual_list`, `command_palette`, `rich_log`, `key_seq` |
 | `src/context/widgets_interactive/events.rs` | Key/mouse input, clipboard, theme, environment queries, `help`, `help_colored` |
+| `src/context/widgets_viz.rs` | `bar_chart`, `bar_chart_styled`, `bar_chart_with`, `bar_chart_grouped`, `bar_chart_stacked`, `sparkline`, `candlestick`, `candlestick_hd`, `heatmap`, `heatmap_halfblock`, `treemap`, `histogram`, `chart`, `scatter`, `canvas`, `qr_code` |
 | `src/context/runtime.rs` | `use_state`, `use_memo`, `register_focusable`, `widget`, `error_boundary`, `notify`, `light_dark`, focus/scroll management |
 | `src/context/container.rs` | `ContainerBuilder`, `CanvasContext` |
 | `src/context/state.rs` | `Response`, `State<T>` |

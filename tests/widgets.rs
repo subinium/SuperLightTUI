@@ -1252,14 +1252,20 @@ fn histogram_empty_no_panic() {
 }
 
 #[test]
-fn bar_chart_styled_horizontal() {
+fn bar_chart_with_horizontal() {
     let mut tb = TestBackend::new(50, 10);
     let bars = vec![
         slt::Bar::new("A", 10.0).color(slt::Color::Cyan),
         slt::Bar::new("B", 20.0).color(slt::Color::Red),
     ];
     tb.render(|ui| {
-        ui.bar_chart_styled(&bars, 20, slt::BarDirection::Horizontal);
+        ui.bar_chart_with(
+            &bars,
+            |c| {
+                c.direction(slt::BarDirection::Horizontal);
+            },
+            20,
+        );
     });
     tb.assert_contains("A");
     tb.assert_contains("B");
@@ -1267,11 +1273,17 @@ fn bar_chart_styled_horizontal() {
 }
 
 #[test]
-fn bar_chart_styled_vertical() {
+fn bar_chart_with_vertical() {
     let mut tb = TestBackend::new(50, 15);
     let bars = vec![slt::Bar::new("X", 5.0), slt::Bar::new("Y", 10.0)];
     tb.render(|ui| {
-        ui.bar_chart_styled(&bars, 8, slt::BarDirection::Vertical);
+        ui.bar_chart_with(
+            &bars,
+            |c| {
+                c.direction(slt::BarDirection::Vertical);
+            },
+            8,
+        );
     });
     tb.assert_contains("X");
     tb.assert_contains("Y");
@@ -3433,4 +3445,359 @@ fn markdown_link_with_tooltip_quotes() {
     });
     tb.assert_contains("See");
     tb.assert_contains("here");
+}
+
+// ── Treemap ─────────────────────────────────────────────────────
+
+#[test]
+fn treemap_renders_labels() {
+    let mut tb = TestBackend::new(60, 20);
+    let items = vec![
+        slt::TreemapItem::new("Rust", 40.0, slt::Color::Cyan),
+        slt::TreemapItem::new("Go", 25.0, slt::Color::Blue),
+        slt::TreemapItem::new("Python", 20.0, slt::Color::Yellow),
+    ];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    tb.assert_contains("Rust");
+    tb.assert_contains("Go");
+    tb.assert_contains("Python");
+}
+
+#[test]
+fn treemap_uses_bg_colors() {
+    let mut tb = TestBackend::new(40, 10);
+    let items = vec![
+        slt::TreemapItem::new("A", 50.0, slt::Color::Rgb(255, 0, 0)),
+        slt::TreemapItem::new("B", 50.0, slt::Color::Rgb(0, 0, 255)),
+    ];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    // At least one cell should have a red bg and one blue bg
+    let buf = tb.buffer();
+    let mut found_red = false;
+    let mut found_blue = false;
+    for y in 0..10 {
+        for x in 0..40 {
+            if let Some(bg) = buf.get(x, y).style.bg {
+                if bg == slt::Color::Rgb(255, 0, 0) {
+                    found_red = true;
+                }
+                if bg == slt::Color::Rgb(0, 0, 255) {
+                    found_blue = true;
+                }
+            }
+        }
+    }
+    assert!(found_red, "expected red bg in treemap");
+    assert!(found_blue, "expected blue bg in treemap");
+}
+
+#[test]
+fn treemap_empty_input() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.treemap(&[]);
+    });
+    // Should not panic, renders nothing
+}
+
+#[test]
+fn treemap_single_item() {
+    let mut tb = TestBackend::new(30, 8);
+    let items = vec![slt::TreemapItem::new("Only", 100.0, slt::Color::Green)];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    tb.assert_contains("Only");
+}
+
+#[test]
+fn treemap_filters_tiny_items() {
+    let mut tb = TestBackend::new(20, 5);
+    // "Tiny" has value 0.01 out of 100 total — much less than 1 cell in 20x5 = 100 area
+    let items = vec![
+        slt::TreemapItem::new("Big", 99.99, slt::Color::Cyan),
+        slt::TreemapItem::new("Tiny", 0.01, slt::Color::Red),
+    ];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    tb.assert_contains("Big");
+    // "Tiny" should be filtered out (area < 1 cell)
+    let output = tb.to_string();
+    assert!(
+        !output.contains("Tiny"),
+        "tiny items should be filtered out"
+    );
+}
+
+// ── Heatmap Halfblock ───────────────────────────────────────────
+
+#[test]
+fn heatmap_halfblock_renders() {
+    let mut tb = TestBackend::new(20, 5);
+    let data: Vec<Vec<f64>> = (0..10)
+        .map(|r| (0..20).map(|c| (r * 3 + c * 7) as f64).collect())
+        .collect();
+    tb.render(|ui| {
+        ui.heatmap_halfblock(
+            &data,
+            20,
+            5,
+            slt::Color::Rgb(0, 0, 0),
+            slt::Color::Rgb(255, 255, 255),
+        );
+    });
+    // Check that half-block character is used
+    let output = tb.to_string();
+    assert!(
+        output.contains('▀'),
+        "heatmap_halfblock should use ▀ character"
+    );
+}
+
+#[test]
+fn heatmap_halfblock_uses_fg_and_bg() {
+    let mut tb = TestBackend::new(10, 3);
+    // 6 data rows → 3 terminal rows, each packing 2 data rows
+    let data: Vec<Vec<f64>> = vec![
+        vec![0.0; 10],   // row 0: low
+        vec![100.0; 10], // row 1: high
+        vec![0.0; 10],   // row 2: low
+        vec![100.0; 10], // row 3: high
+        vec![50.0; 10],  // row 4: mid
+        vec![50.0; 10],  // row 5: mid
+    ];
+    tb.render(|ui| {
+        ui.heatmap_halfblock(
+            &data,
+            10,
+            3,
+            slt::Color::Rgb(0, 0, 0),
+            slt::Color::Rgb(255, 255, 255),
+        );
+    });
+    // Cell (0,0) should have fg (upper=row0=dark) and bg (lower=row1=bright)
+    let cell = tb.buffer().get(0, 0);
+    assert!(cell.style.fg.is_some(), "halfblock should set fg");
+    assert!(cell.style.bg.is_some(), "halfblock should set bg");
+}
+
+#[test]
+fn heatmap_halfblock_empty_data() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        ui.heatmap_halfblock(
+            &[],
+            20,
+            5,
+            slt::Color::Rgb(0, 0, 0),
+            slt::Color::Rgb(255, 255, 255),
+        );
+    });
+    // Should not panic
+}
+
+// ── Candlestick HD ──────────────────────────────────────────────
+
+#[test]
+fn candlestick_hd_renders() {
+    let mut tb = TestBackend::new(60, 15);
+    let candles = vec![
+        slt::Candle {
+            open: 100.0,
+            high: 110.0,
+            low: 95.0,
+            close: 108.0,
+        },
+        slt::Candle {
+            open: 108.0,
+            high: 115.0,
+            low: 102.0,
+            close: 105.0,
+        },
+        slt::Candle {
+            open: 105.0,
+            high: 112.0,
+            low: 100.0,
+            close: 110.0,
+        },
+    ];
+    tb.render(|ui| {
+        ui.candlestick_hd(
+            &candles,
+            slt::Color::Rgb(38, 166, 91),
+            slt::Color::Rgb(234, 57, 67),
+        );
+    });
+    let output = tb.to_string();
+    // Should contain heavy wick character and block body
+    assert!(
+        output.contains('┃'),
+        "candlestick_hd should use heavy wick ┃"
+    );
+    assert!(
+        output.contains('█'),
+        "candlestick_hd should use block body █"
+    );
+}
+
+#[test]
+fn candlestick_hd_empty() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.candlestick_hd(&[], slt::Color::Green, slt::Color::Red);
+    });
+    // Should not panic
+}
+
+#[test]
+fn candlestick_hd_single_candle() {
+    let mut tb = TestBackend::new(20, 8);
+    let candles = vec![slt::Candle {
+        open: 100.0,
+        high: 110.0,
+        low: 90.0,
+        close: 105.0,
+    }];
+    tb.render(|ui| {
+        ui.candlestick_hd(&candles, slt::Color::Green, slt::Color::Red);
+    });
+    let output = tb.to_string();
+    assert!(output.contains('┃') || output.contains('█'));
+}
+
+// ── Stacked Bar Chart ───────────────────────────────────────────
+
+#[test]
+fn bar_chart_stacked_renders() {
+    let mut tb = TestBackend::new(40, 15);
+    let groups = vec![
+        slt::BarGroup::new(
+            "Q1",
+            vec![
+                slt::Bar::new("A", 30.0).color(slt::Color::Cyan),
+                slt::Bar::new("B", 20.0).color(slt::Color::Yellow),
+            ],
+        ),
+        slt::BarGroup::new(
+            "Q2",
+            vec![
+                slt::Bar::new("A", 40.0).color(slt::Color::Cyan),
+                slt::Bar::new("B", 25.0).color(slt::Color::Yellow),
+            ],
+        ),
+    ];
+    tb.render(|ui| {
+        ui.bar_chart_stacked(&groups, 12);
+    });
+    tb.assert_contains("Q1");
+    tb.assert_contains("Q2");
+}
+
+#[test]
+fn bar_chart_stacked_with_custom_width() {
+    let mut tb = TestBackend::new(50, 15);
+    let groups = vec![slt::BarGroup::new(
+        "G1",
+        vec![
+            slt::Bar::new("X", 50.0).color(slt::Color::Red),
+            slt::Bar::new("Y", 30.0).color(slt::Color::Blue),
+        ],
+    )];
+    tb.render(|ui| {
+        ui.bar_chart_stacked_with(
+            &groups,
+            |c| {
+                c.bar_width(7).bar_gap(2);
+            },
+            10,
+        );
+    });
+    tb.assert_contains("G1");
+}
+
+#[test]
+fn bar_chart_stacked_empty() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        ui.bar_chart_stacked(&[], 10);
+    });
+    // Should not panic
+}
+
+// ── Existing viz widgets that lacked tests ──────────────────────
+
+#[test]
+fn bar_chart_basic_renders() {
+    let mut tb = TestBackend::new(40, 8);
+    let data = [("Sales", 100.0), ("Revenue", 80.0), ("Costs", 50.0)];
+    tb.render(|ui| {
+        ui.bar_chart(&data, 20);
+    });
+    tb.assert_contains("Sales");
+    tb.assert_contains("Revenue");
+    tb.assert_contains("Costs");
+}
+
+#[test]
+fn sparkline_basic_renders() {
+    let mut tb = TestBackend::new(30, 3);
+    let data = [10.0, 20.0, 15.0, 25.0, 30.0, 18.0];
+    tb.render(|ui| {
+        ui.sparkline(&data, 20);
+    });
+    let output = tb.to_string();
+    // Sparkline uses block chars
+    let has_block = output.chars().any(|c| "▁▂▃▄▅▆▇█".contains(c));
+    assert!(has_block, "sparkline should render block characters");
+}
+
+#[test]
+fn heatmap_standard_renders() {
+    let mut tb = TestBackend::new(20, 5);
+    let data: Vec<Vec<f64>> = (0..5)
+        .map(|r| (0..20).map(|c| (r * c) as f64).collect())
+        .collect();
+    tb.render(|ui| {
+        ui.heatmap(
+            &data,
+            20,
+            5,
+            slt::Color::Rgb(0, 0, 50),
+            slt::Color::Rgb(255, 100, 0),
+        );
+    });
+    let output = tb.to_string();
+    assert!(output.contains('█'), "heatmap should render block chars");
+}
+
+#[test]
+fn candlestick_standard_renders() {
+    let mut tb = TestBackend::new(40, 10);
+    let candles = vec![
+        slt::Candle {
+            open: 100.0,
+            high: 110.0,
+            low: 95.0,
+            close: 105.0,
+        },
+        slt::Candle {
+            open: 105.0,
+            high: 112.0,
+            low: 98.0,
+            close: 102.0,
+        },
+    ];
+    tb.render(|ui| {
+        ui.candlestick(&candles, slt::Color::Green, slt::Color::Red);
+    });
+    let output = tb.to_string();
+    assert!(
+        output.contains('│') || output.contains('█'),
+        "candlestick should render wick or body"
+    );
 }
