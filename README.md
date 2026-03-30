@@ -36,6 +36,9 @@ That makes it work equally well for humans prototyping a tool and for coding age
     <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
     <td align="center"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — text reflows around the mouse cursor in real time<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+  </tr>
 </table>
 
 ## Quick Start
