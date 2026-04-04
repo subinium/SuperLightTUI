@@ -5,7 +5,7 @@ use crate::layout::{Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
     Align, Border, BorderSides, Breakpoint, Color, Constraints, ContainerStyle, Justify, Margin,
-    Modifiers, Padding, Style, Theme, WidgetColors,
+    Modifiers, Padding, Spacing, Style, Theme, ThemeColor, WidgetColors, WidgetTheme,
 };
 use crate::widgets::{
     ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,

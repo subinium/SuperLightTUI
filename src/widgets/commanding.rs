@@ -266,10 +266,27 @@ impl Default for StreamingMarkdownState {
 /// Navigation stack state for multi-screen apps.
 ///
 /// Tracks screen names in a push/pop stack while preserving the root screen.
-/// Pass this state through your render closure and branch on [`ScreenState::current`].
+/// Each screen gets isolated focus and hook state when used with
+/// [`Context::screen`].
+///
+/// # Example
+///
+/// ```no_run
+/// let mut screens = slt::ScreenState::new("main");
+///
+/// slt::run(|ui| {
+///     ui.screen("main", &mut screens, |ui| {
+///         if ui.button("Settings").clicked { screens.push("settings"); }
+///     });
+///     ui.screen("settings", &mut screens, |ui| {
+///         if ui.button("Back").clicked { screens.pop(); }
+///     });
+/// });
+/// ```
 #[derive(Debug, Clone)]
 pub struct ScreenState {
     stack: Vec<String>,
+    focus_state: std::collections::HashMap<String, (usize, usize)>,
 }
 
 impl ScreenState {
@@ -277,6 +294,7 @@ impl ScreenState {
     pub fn new(initial: impl Into<String>) -> Self {
         Self {
             stack: vec![initial.into()],
+            focus_state: std::collections::HashMap::new(),
         }
     }
 
@@ -313,6 +331,92 @@ impl ScreenState {
     /// Reset to only the root screen.
     pub fn reset(&mut self) {
         self.stack.truncate(1);
+    }
+
+    pub(crate) fn save_focus(&mut self, name: &str, focus_index: usize, focus_count: usize) {
+        self.focus_state
+            .insert(name.to_string(), (focus_index, focus_count));
+    }
+
+    pub(crate) fn restore_focus(&self, name: &str) -> (usize, usize) {
+        self.focus_state.get(name).copied().unwrap_or((0, 0))
+    }
+}
+
+/// Named mode system with independent screen stacks.
+///
+/// Each mode contains its own [`ScreenState`]. Switching modes preserves
+/// the previous mode's screen stack, focus, and hook state.
+///
+/// # Example
+///
+/// ```no_run
+/// let mut modes = slt::ModeState::new("app", "home");
+/// modes.add_mode("settings", "general");
+///
+/// slt::run(|ui| {
+///     let active = modes.active_mode().to_string();
+///     ui.screen("home", modes.screens_mut(), |ui| {
+///         ui.text("Home screen");
+///     });
+/// });
+/// ```
+#[derive(Debug, Clone)]
+pub struct ModeState {
+    modes: std::collections::HashMap<String, ScreenState>,
+    active: String,
+}
+
+impl ModeState {
+    /// Create a mode system with an initial mode and screen.
+    pub fn new(mode: impl Into<String>, screen: impl Into<String>) -> Self {
+        let mode = mode.into();
+        let mut modes = std::collections::HashMap::new();
+        modes.insert(mode.clone(), ScreenState::new(screen));
+        Self {
+            modes,
+            active: mode,
+        }
+    }
+
+    /// Add a new mode with an initial screen.
+    pub fn add_mode(&mut self, mode: impl Into<String>, screen: impl Into<String>) {
+        let mode = mode.into();
+        self.modes
+            .entry(mode)
+            .or_insert_with(|| ScreenState::new(screen));
+    }
+
+    /// Switch to a different mode. The mode must have been added with [`Self::add_mode`].
+    ///
+    /// Panics if the mode does not exist.
+    pub fn switch_mode(&mut self, mode: impl Into<String>) {
+        let mode = mode.into();
+        assert!(
+            self.modes.contains_key(&mode),
+            "mode '{}' not found",
+            mode
+        );
+        self.active = mode;
+    }
+
+    /// Return the active mode name.
+    pub fn active_mode(&self) -> &str {
+        &self.active
+    }
+
+    /// Get a reference to the active mode's screen state.
+    pub fn screens(&self) -> &ScreenState {
+        self.modes
+            .get(&self.active)
+            .expect("active mode must exist")
+    }
+
+    /// Get a mutable reference to the active mode's screen state.
+    pub fn screens_mut(&mut self) -> &mut ScreenState {
+        self.modes
+            .get_mut(&self.active)
+            .expect("active mode must exist")
     }
 }
 

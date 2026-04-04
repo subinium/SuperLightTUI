@@ -9,6 +9,7 @@ impl Context {
         theme: Theme,
     ) -> Self {
         let hook_states = &mut state.hook_states;
+        let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         let layout_feedback = &mut state.layout_feedback;
         let diagnostics = &mut state.diagnostics;
@@ -86,6 +87,8 @@ impl Context {
                 text_color_stack: Vec::new(),
             },
             scroll_lines_per_event: 1,
+            screen_hook_map,
+            widget_theme: WidgetTheme::new(),
         }
     }
 

@@ -4,7 +4,7 @@ SLT's theming system flows a `Theme` through all widgets automatically. Set a th
 
 ## Preset Themes
 
-SLT ships with 7 built-in themes:
+SLT ships with 10 built-in themes:
 
 | Theme | Constructor | Style | Primary color |
 |-------|-------------|-------|---------------|
@@ -14,7 +14,10 @@ SLT ships with 7 built-in themes:
 | **Catppuccin** (Mocha) | `Theme::catppuccin()` | Dark | Lavender |
 | **Nord** | `Theme::nord()` | Dark | Frost blue |
 | **Solarized Dark** | `Theme::solarized_dark()` | Dark | Blue |
+| **Solarized Light** | `Theme::solarized_light()` | Light | Blue |
 | **Tokyo Night** | `Theme::tokyo_night()` | Dark | Blue |
+| **Gruvbox Dark** | `Theme::gruvbox_dark()` | Dark | Orange |
+| **One Dark** | `Theme::one_dark()` | Dark | Blue |
 
 ### Usage with RunConfig
 
@@ -46,7 +49,7 @@ let theme = Theme::builder()
     .build();
 ```
 
-### All 16 theme fields
+### All 17 theme fields
 
 | Field | Purpose |
 |-------|---------|
@@ -66,6 +69,77 @@ let theme = Theme::builder()
 | `surface_hover` | Hover/active surface, one step brighter than `surface` |
 | `surface_text` | Text color readable on `surface` backgrounds |
 | `is_dark` | Whether this theme is dark mode |
+| `spacing` | `Spacing` struct for consistent padding/margin/gap scale |
+
+> **Note (v0.17.0)**: `Theme` is now `#[non_exhaustive]`. Use `Theme::builder()` or preset constructors instead of struct literal syntax.
+
+## Spacing Tokens
+
+The `Spacing` struct provides a consistent spacing scale based on a configurable base unit (default: 1 cell).
+
+```rust
+let sp = ui.spacing();
+ui.col_gap(sp.md(), |ui| {
+    ui.container().p(sp.sm()).col(|ui| {
+        ui.text("Consistent spacing");
+    });
+});
+```
+
+| Method | Value (base=1) |
+|--------|----------------|
+| `none()` | 0 |
+| `xs()` | 1 |
+| `sm()` | 2 |
+| `md()` | 3 |
+| `lg()` | 4 |
+| `xl()` | 6 |
+| `xxl()` | 8 |
+
+Custom base: `Spacing::new(2)` doubles all values.
+
+## ThemeColor (Semantic Tokens)
+
+`ThemeColor` lets styles reference theme colors by name. Colors resolve automatically when the theme changes.
+
+```rust
+use slt::{ContainerStyle, ThemeColor, Border};
+
+const CARD: ContainerStyle = ContainerStyle::new()
+    .border(Border::Rounded)
+    .p(1)
+    .theme_bg(ThemeColor::Surface);        // adapts to any theme
+    // .theme_border_fg(ThemeColor::Primary) // optional
+
+// Resolve in code:
+let primary = ui.color(ThemeColor::Primary);
+let surface = ui.theme().resolve(ThemeColor::Surface);
+```
+
+| Variant | Resolves to |
+|---------|-------------|
+| `Primary`, `Secondary`, `Accent`, `Text`, `TextDim`, `Border`, `Bg` | Corresponding theme field |
+| `Success`, `Warning`, `Error` | Feedback colors |
+| `SelectedBg`, `SelectedFg` | Selection colors |
+| `Surface`, `SurfaceHover`, `SurfaceText` | Surface colors |
+| `Info`, `Link`, `FocusRing` | Aliases for `primary` (future-extensible) |
+| `Custom(Color)` | Literal passthrough |
+
+## Contrast Helpers
+
+```rust
+use slt::Color;
+
+// WCAG 2.1 contrast ratio (>= 4.5 for AA normal text)
+let ratio = Color::contrast_ratio(fg, bg);
+let ok = Color::meets_contrast_aa(fg, bg);
+
+// Auto-select readable text color for any background
+let fg = ui.theme().contrast_text_on(bg_color);
+
+// Blend color against theme background
+let overlay = ui.theme().overlay(color, 0.5);
+```
 
 ## Runtime Theme Switching
 
@@ -120,14 +194,39 @@ ui.table_colored(&mut table_state, &custom);
 
 ### WidgetColors fields
 
-| Field | Purpose |
-|-------|---------|
-| `fg` | Foreground color override |
-| `bg` | Background color override |
-| `border` | Border color override |
-| `accent` | Accent/highlight color override |
+| Field | Type | Purpose |
+|-------|------|---------|
+| `fg` | `Option<Color>` | Foreground color override |
+| `bg` | `Option<Color>` | Background color override |
+| `border` | `Option<Color>` | Border color override |
+| `accent` | `Option<Color>` | Accent/highlight color override |
+| `theme_fg` | `Option<ThemeColor>` | Theme-aware foreground (takes precedence over `fg`) |
+| `theme_bg` | `Option<ThemeColor>` | Theme-aware background (takes precedence over `bg`) |
+| `theme_border` | `Option<ThemeColor>` | Theme-aware border (takes precedence over `border`) |
+| `theme_accent` | `Option<ThemeColor>` | Theme-aware accent (takes precedence over `accent`) |
 
-All fields are `Option<Color>` -- unset fields fall back to the active theme.
+Resolution order: `theme_*` > literal field > theme default. Use `resolve_fg(&theme, fallback)` etc. for resolution.
+
+## WidgetTheme (Global Widget Defaults)
+
+Set default colors for all instances of a widget type via `RunConfig`:
+
+```rust
+use slt::{RunConfig, WidgetTheme, WidgetColors, Color};
+
+let config = RunConfig::default()
+    .widget_theme(
+        WidgetTheme::new()
+            .button(WidgetColors::new().accent(Color::Cyan))
+            .table(WidgetColors::new().border(Color::Magenta))
+    );
+
+slt::run_with(config, |ui| {
+    ui.button("All cyan");  // uses WidgetTheme.button defaults
+})
+```
+
+Per-callsite `_colored()` overrides still take precedence over `WidgetTheme` defaults.
 
 ### Widgets with `_colored` variants
 
@@ -378,11 +477,26 @@ slt::run(|ui| {
 })
 ```
 
+### Style inheritance with `extending()`
+
+Define derived styles without duplicating fields:
+
+```rust
+use slt::{ContainerStyle, Border, ThemeColor};
+
+const BUTTON: ContainerStyle = ContainerStyle::new()
+    .border(Border::Rounded)
+    .p(1);
+
+const BUTTON_DANGER: ContainerStyle = ContainerStyle::extending(&BUTTON)
+    .theme_bg(ThemeColor::Error);  // inherits border + padding from BUTTON
+```
+
 ### ContainerStyle fields
 
-`border`, `border_sides`, `border_style`, `bg`, `text_color`, `dark_bg`, `dark_border_style`, `padding`, `margin`, `gap`, `row_gap`, `col_gap`, `grow`, `align`, `align_self`, `justify`, `w`, `h`, `min_w`, `max_w`, `min_h`, `max_h`, `w_pct`, `h_pct`
+`border`, `border_sides`, `border_style`, `bg`, `text_color`, `dark_bg`, `dark_border_style`, `padding`, `margin`, `gap`, `row_gap`, `col_gap`, `grow`, `align`, `align_self`, `justify`, `w`, `h`, `min_w`, `max_w`, `min_h`, `max_h`, `w_pct`, `h_pct`, `theme_bg`, `theme_text_color`, `theme_border_fg`, `extends`
 
-All fields are `Option` -- unset fields leave the builder's current value unchanged.
+All fields are `Option` -- unset fields leave the builder's current value unchanged. `theme_*` fields take precedence over their literal counterparts.
 
 ## Dark Mode Patterns
 

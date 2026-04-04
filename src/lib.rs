@@ -37,7 +37,7 @@
 //! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
 //! - **Mouse** — click, hover, drag-to-scroll
 //! - **Focus** — automatic Tab/Shift+Tab cycling
-//! - **Theming** — dark/light presets or custom
+//! - **Theming** — 10 presets, semantic tokens (`ThemeColor`), spacing scale, contrast helpers
 //! - **Animation** — tween and spring primitives with 9 easing functions
 //! - **Inline mode** — render below your prompt, no alternate screen
 //! - **Async** — optional tokio integration via `async` feature
@@ -130,11 +130,12 @@ pub use palette::Palette;
 pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    Justify, Margin, Modifiers, Padding, Style, Theme, ThemeBuilder, WidgetColors,
+    Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder, ThemeColor,
+    WidgetColors, WidgetTheme,
 };
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
-    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, ListState,
+    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, ListState, ModeState,
     MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
     ScrollState, SelectState, SpinnerState, StaticOutput, StreamingMarkdownState,
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
@@ -402,6 +403,11 @@ pub struct RunConfig {
     pub scroll_speed: u32,
     /// Optional terminal window title (set via OSC 2).
     pub title: Option<String>,
+    /// Default colors applied to all instances of each widget type.
+    ///
+    /// Per-callsite `_colored()` overrides still take precedence.
+    /// Defaults to all-`None` (use theme colors).
+    pub widget_theme: style::WidgetTheme,
 }
 
 impl Default for RunConfig {
@@ -415,6 +421,7 @@ impl Default for RunConfig {
             max_fps: Some(60),
             scroll_speed: 1,
             title: None,
+            widget_theme: style::WidgetTheme::new(),
         }
     }
 }
@@ -467,6 +474,12 @@ impl RunConfig {
         self.title = Some(title.into());
         self
     }
+
+    /// Set default widget colors for all widget types.
+    pub fn widget_theme(mut self, widget_theme: style::WidgetTheme) -> Self {
+        self.widget_theme = widget_theme;
+        self
+    }
 }
 
 #[derive(Default)]
@@ -501,6 +514,7 @@ pub(crate) struct DiagnosticsState {
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
+    pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
     pub diagnostics: DiagnosticsState,
@@ -956,6 +970,7 @@ pub(crate) fn run_frame_kernel(
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
     ctx.set_scroll_speed(config.scroll_speed);
+    ctx.widget_theme = config.widget_theme;
 
     f(&mut ctx);
     ctx.process_focus_keys();
@@ -985,6 +1000,7 @@ pub(crate) fn run_frame_kernel(
 
     if ctx.should_quit {
         state.hook_states = ctx.hook_states;
+        state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
@@ -1072,6 +1088,7 @@ pub(crate) fn run_frame_kernel(
         }
     }
     state.hook_states = ctx.hook_states;
+    state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
 
     let frame_time = frame_start.elapsed();

@@ -1890,45 +1890,53 @@ fn render_v0132(
         ))
         .fg(theme.surface_text);
 
-        let screens_view = screens.clone();
-        ui.screen("main", &screens_view, |ui| {
+        let mut nav_action: Option<&str> = None;
+        let current = screens.current().to_string();
+
+        if current == "main" {
             ui.text("This is the main screen").fg(theme.surface_text);
             let _ = ui.row(|ui| {
                 if ui.button("-> Settings").clicked {
-                    screens.push("settings");
+                    nav_action = Some("settings");
                 }
                 if ui.button("-> Profile").clicked {
-                    screens.push("profile");
+                    nav_action = Some("profile");
                 }
             });
-        });
+        }
 
-        ui.screen("settings", &screens_view, |ui| {
+        if current == "settings" {
             ui.text("Settings screen").fg(theme.surface_text);
             if ui.button("<- Back").clicked {
-                screens.pop();
+                nav_action = Some("<back>");
             }
-        });
+        }
 
-        ui.screen("profile", &screens_view, |ui| {
+        if current == "profile" {
             ui.text("Profile screen").fg(theme.surface_text);
             let _ = ui.row(|ui| {
                 if ui.button("<- Back").clicked {
-                    screens.pop();
+                    nav_action = Some("<back>");
                 }
                 if ui.button("-> Edit Profile").clicked {
-                    screens.push("edit_profile");
+                    nav_action = Some("edit_profile");
                 }
             });
-        });
+        }
 
-        ui.screen("edit_profile", &screens_view, |ui| {
+        if current == "edit_profile" {
             ui.text("Edit Profile (nested screen)")
                 .fg(theme.surface_text);
             if ui.button("<- Back to Profile").clicked {
-                screens.pop();
+                nav_action = Some("<back>");
             }
-        });
+        }
+
+        match nav_action {
+            Some("<back>") => screens.pop(),
+            Some(target) => screens.push(target),
+            None => {}
+        }
     });
 
     let _ = ui.row(|ui| {

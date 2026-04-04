@@ -165,6 +165,35 @@ impl Color {
         Color::Rgb(0, 0, 0).blend(self, 1.0 - amount.clamp(0.0, 1.0))
     }
 
+    /// Compute the WCAG 2.1 contrast ratio between two colors.
+    ///
+    /// Returns a value >= 1.0. A ratio >= 4.5 meets WCAG AA for normal text;
+    /// >= 3.0 meets AA for large text.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// let ratio = Color::contrast_ratio(Color::White, Color::Black);
+    /// assert!(ratio > 20.0);
+    /// ```
+    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
+        let la = a.luminance() + 0.05;
+        let lb = b.luminance() + 0.05;
+        if la > lb {
+            la / lb
+        } else {
+            lb / la
+        }
+    }
+
+    /// Returns `true` if the contrast ratio between two colors meets WCAG AA
+    /// for normal text (ratio >= 4.5).
+    pub fn meets_contrast_aa(fg: Color, bg: Color) -> bool {
+        Self::contrast_ratio(fg, bg) >= 4.5
+    }
+
     /// Downsample this color to fit the given color depth.
     ///
     /// - `TrueColor`: returns self unchanged.
@@ -348,5 +377,30 @@ mod tests {
             Color::Rgb(255, 255, 255).blend(Color::Rgb(0, 0, 0), 0.5),
             Color::Rgb(128, 128, 128)
         );
+    }
+
+    #[test]
+    fn contrast_ratio_white_on_black_is_high() {
+        let ratio = Color::contrast_ratio(Color::White, Color::Black);
+        assert!(ratio > 15.0);
+    }
+
+    #[test]
+    fn contrast_ratio_same_color_is_one() {
+        let ratio = Color::contrast_ratio(Color::Rgb(100, 100, 100), Color::Rgb(100, 100, 100));
+        assert!((ratio - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn meets_contrast_aa_white_on_black() {
+        assert!(Color::meets_contrast_aa(Color::White, Color::Black));
+    }
+
+    #[test]
+    fn meets_contrast_aa_low_contrast_fails() {
+        assert!(!Color::meets_contrast_aa(
+            Color::Rgb(180, 180, 180),
+            Color::Rgb(200, 200, 200)
+        ));
     }
 }

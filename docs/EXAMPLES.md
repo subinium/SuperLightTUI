@@ -21,6 +21,8 @@ Use this index to find the smallest example that matches what you want to build.
 | `demo_table` | `cargo run --example demo_table` | — | Table widget focus |
 | `demo_wiki` | `cargo run --example demo_wiki` | — | Text-heavy layout and markdown |
 | `demo_website` | `cargo run --example demo_website` | — | Website-style terminal layout |
+| `demo_design_system` | `cargo run --example demo_design_system` | — | Design tokens, ThemeColor, extends, WidgetTheme |
+| `demo_pretext` | `cargo run --example demo_pretext` | — | Pretext-inspired text reflow |
 
 ## Data and visualization
 

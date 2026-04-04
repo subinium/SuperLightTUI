@@ -17,7 +17,8 @@ impl Context {
     /// # });
     /// ```
     pub fn text_input(&mut self, state: &mut TextInputState) -> Response {
-        self.text_input_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.text_input;
+        self.text_input_colored(state, &colors)
     }
 
     /// Render a text input with custom widget colors.

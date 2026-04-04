@@ -133,7 +133,8 @@ impl Context {
     /// list is empty, nothing is rendered.
     /// Render a navigable list widget.
     pub fn list(&mut self, state: &mut ListState) -> Response {
-        self.list_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.list;
+        self.list_colored(state, &colors)
     }
 
     /// Render a navigable list with custom widget colors.

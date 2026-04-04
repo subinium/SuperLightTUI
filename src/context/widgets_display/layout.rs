@@ -2,9 +2,61 @@ use super::*;
 
 impl Context {
     /// Conditionally render content when the named screen is active.
-    pub fn screen(&mut self, name: &str, screens: &ScreenState, f: impl FnOnce(&mut Context)) {
-        if screens.current() == name {
+    ///
+    /// Each screen gets an isolated hook segment — `use_state` / `use_memo`
+    /// calls inside one screen do not interfere with another screen's hooks,
+    /// even when you switch between screens across frames.
+    ///
+    /// Focus state is saved and restored per screen automatically.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let mut screens = slt::ScreenState::new("main");
+    /// # slt::run(|ui| {
+    /// ui.screen("main", &mut screens, |ui| {
+    ///     ui.text("Main screen");
+    /// });
+    /// # });
+    /// ```
+    pub fn screen(&mut self, name: &str, screens: &mut ScreenState, f: impl FnOnce(&mut Context)) {
+        // Look up (or create) this screen's reserved hook segment
+        let (seg_start, seg_count) = *self
+            .screen_hook_map
+            .entry(name.to_string())
+            .or_insert((self.hook_states.len(), 0));
+
+        let is_active = screens.current() == name;
+
+        if is_active {
+            // Save outer focus, restore this screen's focus
+            let outer_focus_index = self.focus_index;
+            let (saved_focus_idx, _saved_focus_count) = screens.restore_focus(name);
+            self.focus_index = saved_focus_idx;
+
+            // Set hook cursor to this screen's segment start
+            self.rollback.hook_cursor = seg_start;
+            let focus_count_before = self.rollback.focus_count;
+
+            // Execute the screen's closure
             f(self);
+
+            // Record the hook count for this screen
+            let hooks_used = self.rollback.hook_cursor - seg_start;
+            self.screen_hook_map
+                .insert(name.to_string(), (seg_start, hooks_used));
+
+            // Save this screen's focus state
+            let screen_focus_count = self.rollback.focus_count - focus_count_before;
+            screens.save_focus(name, self.focus_index, screen_focus_count);
+
+            // Restore outer focus
+            self.focus_index = outer_focus_index;
+        } else {
+            // Skip: advance hook cursor past the reserved segment
+            if seg_count > 0 && seg_start >= self.rollback.hook_cursor {
+                self.rollback.hook_cursor = seg_start + seg_count;
+            }
         }
     }
 

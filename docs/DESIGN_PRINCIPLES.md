@@ -194,7 +194,7 @@ SLT follows [Semantic Versioning](https://semver.org/).
 
 | Version range | Compatibility promise |
 |---------------|----------------------|
-| 0.15.x (patch) | Backward compatible — no breaking changes |
+| 0.x.y (patch) | Backward compatible — no breaking changes |
 | 0.x → 0.y (minor) | May contain breaking changes (pre-1.0) |
 | 1.x (post-1.0) | Strict semver — breaking changes only in major versions |
 

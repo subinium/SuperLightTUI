@@ -6,7 +6,7 @@
 mod color;
 mod theme;
 pub use color::{Color, ColorDepth};
-pub use theme::{Theme, ThemeBuilder};
+pub use theme::{Spacing, Theme, ThemeBuilder, ThemeColor};
 
 /// Terminal size breakpoint for responsive layouts.
 ///
@@ -624,6 +624,18 @@ pub struct ContainerStyle {
     pub w_pct: Option<u8>,
     /// Height as percentage of parent.
     pub h_pct: Option<u8>,
+    /// Theme-aware background color. Takes precedence over [`Self::bg`] when set.
+    pub theme_bg: Option<ThemeColor>,
+    /// Theme-aware text color. Takes precedence over [`Self::text_color`] when set.
+    pub theme_text_color: Option<ThemeColor>,
+    /// Theme-aware border foreground color. Takes precedence over
+    /// [`Self::border_style`]'s foreground when set.
+    pub theme_border_fg: Option<ThemeColor>,
+    /// Base style to inherit from. Fields in the base are applied first,
+    /// then overridden by any `Some` fields in this style.
+    ///
+    /// Use [`ContainerStyle::extending`] to create a style that inherits.
+    pub extends: Option<&'static ContainerStyle>,
 }
 
 impl ContainerStyle {
@@ -654,7 +666,34 @@ impl ContainerStyle {
             max_h: None,
             w_pct: None,
             h_pct: None,
+            theme_bg: None,
+            theme_text_color: None,
+            theme_border_fg: None,
+            extends: None,
         }
+    }
+
+    /// Create a style that inherits all fields from a base style.
+    ///
+    /// Only the fields you set on the returned style will override the base.
+    /// The base must be a `&'static ContainerStyle` (typically a `const`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use slt::{ContainerStyle, Border, ThemeColor};
+    ///
+    /// const BUTTON: ContainerStyle = ContainerStyle::new()
+    ///     .border(Border::Rounded)
+    ///     .p(1);
+    ///
+    /// const BUTTON_DANGER: ContainerStyle = ContainerStyle::extending(&BUTTON)
+    ///     .theme_bg(ThemeColor::Error);
+    /// ```
+    pub const fn extending(base: &'static ContainerStyle) -> Self {
+        let mut s = Self::new();
+        s.extends = Some(base);
+        s
     }
 
     /// Set the border style.
@@ -836,11 +875,39 @@ impl ContainerStyle {
         self.h_pct = Some(value);
         self
     }
+
+    /// Set a theme-aware background color that resolves at apply time.
+    ///
+    /// Takes precedence over [`Self::bg`] when set. The color is resolved
+    /// against the active theme when [`crate::ContainerBuilder::apply`] is called.
+    pub const fn theme_bg(mut self, color: ThemeColor) -> Self {
+        self.theme_bg = Some(color);
+        self
+    }
+
+    /// Set a theme-aware text color that resolves at apply time.
+    ///
+    /// Takes precedence over [`Self::text_color`] when set.
+    pub const fn theme_text_color(mut self, color: ThemeColor) -> Self {
+        self.theme_text_color = Some(color);
+        self
+    }
+
+    /// Set a theme-aware border foreground color that resolves at apply time.
+    ///
+    /// Takes precedence over [`Self::border_style`]'s foreground when set.
+    pub const fn theme_border_fg(mut self, color: ThemeColor) -> Self {
+        self.theme_border_fg = Some(color);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// Per-widget color overrides that fall back to the active theme.
+///
+/// Literal [`Color`] fields and [`ThemeColor`] fields can be set independently.
+/// Resolution order: `theme_*` field > literal field > theme default.
 pub struct WidgetColors {
     /// Foreground color override.
     pub fg: Option<Color>,
@@ -850,6 +917,14 @@ pub struct WidgetColors {
     pub border: Option<Color>,
     /// Accent color override.
     pub accent: Option<Color>,
+    /// Theme-aware foreground (takes precedence over [`Self::fg`]).
+    pub theme_fg: Option<ThemeColor>,
+    /// Theme-aware background (takes precedence over [`Self::bg`]).
+    pub theme_bg: Option<ThemeColor>,
+    /// Theme-aware border (takes precedence over [`Self::border`]).
+    pub theme_border: Option<ThemeColor>,
+    /// Theme-aware accent (takes precedence over [`Self::accent`]).
+    pub theme_accent: Option<ThemeColor>,
 }
 
 impl WidgetColors {
@@ -860,6 +935,10 @@ impl WidgetColors {
             bg: None,
             border: None,
             accent: None,
+            theme_fg: None,
+            theme_bg: None,
+            theme_border: None,
+            theme_accent: None,
         }
     }
 
@@ -884,6 +963,169 @@ impl WidgetColors {
     /// Set the accent color override.
     pub const fn accent(mut self, color: Color) -> Self {
         self.accent = Some(color);
+        self
+    }
+
+    /// Set a theme-aware foreground color.
+    pub const fn theme_fg(mut self, color: ThemeColor) -> Self {
+        self.theme_fg = Some(color);
+        self
+    }
+
+    /// Set a theme-aware background color.
+    pub const fn theme_bg(mut self, color: ThemeColor) -> Self {
+        self.theme_bg = Some(color);
+        self
+    }
+
+    /// Set a theme-aware border color.
+    pub const fn theme_border(mut self, color: ThemeColor) -> Self {
+        self.theme_border = Some(color);
+        self
+    }
+
+    /// Set a theme-aware accent color.
+    pub const fn theme_accent(mut self, color: ThemeColor) -> Self {
+        self.theme_accent = Some(color);
+        self
+    }
+
+    /// Resolve the foreground color, preferring theme color, then literal, then fallback.
+    pub fn resolve_fg(&self, theme: &Theme, fallback: Color) -> Color {
+        self.theme_fg
+            .map(|tc| theme.resolve(tc))
+            .or(self.fg)
+            .unwrap_or(fallback)
+    }
+
+    /// Resolve the background color, preferring theme color, then literal, then fallback.
+    pub fn resolve_bg(&self, theme: &Theme, fallback: Color) -> Color {
+        self.theme_bg
+            .map(|tc| theme.resolve(tc))
+            .or(self.bg)
+            .unwrap_or(fallback)
+    }
+
+    /// Resolve the border color, preferring theme color, then literal, then fallback.
+    pub fn resolve_border(&self, theme: &Theme, fallback: Color) -> Color {
+        self.theme_border
+            .map(|tc| theme.resolve(tc))
+            .or(self.border)
+            .unwrap_or(fallback)
+    }
+
+    /// Resolve the accent color, preferring theme color, then literal, then fallback.
+    pub fn resolve_accent(&self, theme: &Theme, fallback: Color) -> Color {
+        self.theme_accent
+            .map(|tc| theme.resolve(tc))
+            .or(self.accent)
+            .unwrap_or(fallback)
+    }
+}
+
+/// Default widget colors applied to all instances of a widget type.
+///
+/// Set via [`crate::RunConfig::widget_theme`]. Each widget type reads its
+/// defaults from this struct, then falls back to the active [`Theme`].
+/// Per-callsite `_colored()` overrides still take precedence.
+///
+/// # Example
+///
+/// ```
+/// use slt::{WidgetTheme, WidgetColors, Color};
+///
+/// let wt = WidgetTheme::new()
+///     .button(WidgetColors::new().fg(Color::Cyan));
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WidgetTheme {
+    /// Default colors for buttons.
+    pub button: WidgetColors,
+    /// Default colors for tables.
+    pub table: WidgetColors,
+    /// Default colors for lists.
+    pub list: WidgetColors,
+    /// Default colors for tabs.
+    pub tabs: WidgetColors,
+    /// Default colors for select dropdowns.
+    pub select: WidgetColors,
+    /// Default colors for radio groups.
+    pub radio: WidgetColors,
+    /// Default colors for checkboxes.
+    pub checkbox: WidgetColors,
+    /// Default colors for toggles.
+    pub toggle: WidgetColors,
+    /// Default colors for text inputs.
+    pub text_input: WidgetColors,
+}
+
+impl WidgetTheme {
+    /// Create a WidgetTheme with all defaults (no overrides).
+    pub const fn new() -> Self {
+        Self {
+            button: WidgetColors::new(),
+            table: WidgetColors::new(),
+            list: WidgetColors::new(),
+            tabs: WidgetColors::new(),
+            select: WidgetColors::new(),
+            radio: WidgetColors::new(),
+            checkbox: WidgetColors::new(),
+            toggle: WidgetColors::new(),
+            text_input: WidgetColors::new(),
+        }
+    }
+
+    /// Set default button colors.
+    pub const fn button(mut self, colors: WidgetColors) -> Self {
+        self.button = colors;
+        self
+    }
+
+    /// Set default table colors.
+    pub const fn table(mut self, colors: WidgetColors) -> Self {
+        self.table = colors;
+        self
+    }
+
+    /// Set default list colors.
+    pub const fn list(mut self, colors: WidgetColors) -> Self {
+        self.list = colors;
+        self
+    }
+
+    /// Set default tabs colors.
+    pub const fn tabs(mut self, colors: WidgetColors) -> Self {
+        self.tabs = colors;
+        self
+    }
+
+    /// Set default select colors.
+    pub const fn select(mut self, colors: WidgetColors) -> Self {
+        self.select = colors;
+        self
+    }
+
+    /// Set default radio colors.
+    pub const fn radio(mut self, colors: WidgetColors) -> Self {
+        self.radio = colors;
+        self
+    }
+
+    /// Set default checkbox colors.
+    pub const fn checkbox(mut self, colors: WidgetColors) -> Self {
+        self.checkbox = colors;
+        self
+    }
+
+    /// Set default toggle colors.
+    pub const fn toggle(mut self, colors: WidgetColors) -> Self {
+        self.toggle = colors;
+        self
+    }
+
+    /// Set default text input colors.
+    pub const fn text_input(mut self, colors: WidgetColors) -> Self {
+        self.text_input = colors;
         self
     }
 }

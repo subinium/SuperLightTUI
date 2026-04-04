@@ -313,13 +313,13 @@ fn modal_focus_trap_shift_tab_wraps_within_modal_scope() {
 #[test]
 fn screen_helper_renders_only_current_screen() {
     let mut backend = TestBackend::new(24, 3);
-    let screens = ScreenState::new("settings");
+    let mut screens = ScreenState::new("settings");
 
     backend.render(|ui| {
-        ui.screen("home", &screens, |ui| {
+        ui.screen("home", &mut screens, |ui| {
             ui.text("Home Screen");
         });
-        ui.screen("settings", &screens, |ui| {
+        ui.screen("settings", &mut screens, |ui| {
             ui.text("Settings Screen");
         });
     });
