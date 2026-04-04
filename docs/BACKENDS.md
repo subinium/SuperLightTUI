@@ -89,7 +89,7 @@ Important details:
 - `max_fps` caps the render rate after work is done
 - `mouse(true)` enables clicks, hovers, and wheel input
 - `kitty_keyboard(true)` requests richer key events on supported terminals
-- `RunConfig` is `#[non_exhaustive]`, so prefer builder methods over struct literals
+- `RunConfig` and `Theme` are both `#[non_exhaustive]`, so prefer builder methods over struct literals
 
 ## Driving `frame()` yourself
 

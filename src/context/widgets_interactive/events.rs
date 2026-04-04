@@ -407,6 +407,16 @@ impl Context {
         &self.theme
     }
 
+    /// Resolve a [`ThemeColor`] token against the current theme.
+    pub fn color(&self, token: ThemeColor) -> Color {
+        self.theme.resolve(token)
+    }
+
+    /// Get the current spacing scale from the theme.
+    pub fn spacing(&self) -> Spacing {
+        self.theme.spacing
+    }
+
     /// Change the theme for subsequent rendering.
     ///
     /// All widgets rendered after this call will use the new theme's colors.

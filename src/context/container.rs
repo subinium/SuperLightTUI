@@ -550,7 +550,17 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Apply a reusable [`ContainerStyle`] recipe. Only set fields override
     /// the builder's current values. Chain multiple `.apply()` calls to compose.
+    ///
+    /// If the style has an [`ContainerStyle::extends`] base, the base is applied
+    /// first, then the style's own fields override.
+    ///
+    /// [`ThemeColor`] fields (`theme_bg`, `theme_text_color`, `theme_border_fg`)
+    /// are resolved against the active theme at apply time.
     pub fn apply(mut self, style: &ContainerStyle) -> Self {
+        // Apply base style first if this style extends another
+        if let Some(base) = style.extends {
+            self = self.apply(base);
+        }
         if let Some(v) = style.border {
             self.border = Some(v);
         }
@@ -624,6 +634,17 @@ impl<'a> ContainerBuilder<'a> {
         }
         if let Some(v) = style.h_pct {
             self.constraints.height_pct = Some(v);
+        }
+        // Resolve ThemeColor fields against the active theme (overrides literal colors)
+        if let Some(tc) = style.theme_bg {
+            self.bg = Some(self.ctx.theme.resolve(tc));
+        }
+        if let Some(tc) = style.theme_text_color {
+            self.text_color = Some(self.ctx.theme.resolve(tc));
+        }
+        if let Some(tc) = style.theme_border_fg {
+            let color = self.ctx.theme.resolve(tc);
+            self.border_style = Style::new().fg(color);
         }
         self
     }

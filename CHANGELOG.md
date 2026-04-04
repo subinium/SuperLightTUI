@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-04-04
+
+### Breaking Changes
+
+- **`Theme` is now `#[non_exhaustive]`** — use `Theme::builder()` or preset constructors instead of struct literal syntax (`Theme { ... ..Theme::dark() }`)
+- **`screen()` takes `&mut ScreenState`** — the old `&ScreenState` signature is removed. Each screen now gets isolated hook and focus state.
+
+### Features
+
+- **Design Token System**
+  - `Spacing` struct — consistent spacing scale (`xs/sm/md/lg/xl/xxl`) accessible via `ui.spacing()`
+  - `ThemeColor` enum — semantic color tokens resolved via `theme.resolve(ThemeColor::Primary)` or `ui.color(ThemeColor::Surface)`
+  - `Theme::contrast_text_on(bg)` — auto-select readable text color for any background
+  - `Color::contrast_ratio(a, b)` — WCAG 2.1 contrast ratio computation
+  - `Color::meets_contrast_aa(fg, bg)` — WCAG AA compliance check (ratio >= 4.5)
+  - `Theme::overlay(color, alpha)` — blend color against theme background
+
+- **Screen/Mode System**
+  - Hook segment isolation — each `screen()` reserves an independent hook range, preventing `use_state` index collisions across screens
+  - Per-screen focus preservation — focus index is saved/restored when switching screens
+  - `ModeState` — named modes with independent screen stacks (`switch_mode()`, `screens()`, `screens_mut()`)
+
+- **StyleSheet Evolution**
+  - `ContainerStyle::extending(&BASE)` — inherit fields from a base style, override only what you need
+  - `theme_bg(ThemeColor)`, `theme_text_color(ThemeColor)`, `theme_border_fg(ThemeColor)` on `ContainerStyle` — theme-aware colors resolved at `apply()` time
+  - `WidgetTheme` — global default colors per widget type, set via `RunConfig::widget_theme()`
+  - `theme_fg/theme_bg/theme_border/theme_accent` on `WidgetColors` — semantic color overrides with `resolve_*()` helpers
+
+- **New theme presets**: `Theme::gruvbox_dark()`, `Theme::one_dark()`, `Theme::solarized_light()`
+
+### Tests
+
+- Added 11 new tests (213 → 224 target): Spacing scale, ThemeColor resolve, contrast ratio, new presets, ThemeBuilder spacing, contrast helpers.
+
 ## [0.16.1] — 2026-03-24
 
 ### Features

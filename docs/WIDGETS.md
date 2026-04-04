@@ -122,7 +122,7 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 | `overlay(f)` | `Response` | Floating overlay (no dimming) |
 | `tooltip(text)` | `()` | Hover tooltip near cursor |
 | `group(name)` | `ContainerBuilder` | Named group for shared hover/focus styling |
-| `screen(name, screens, f)` | `()` | Conditional rendering when named screen is active. `ScreenState` |
+| `screen(name, &mut screens, f)` | `()` | Conditional rendering when named screen is active. Hook-isolated. `ScreenState` |
 | `form(state, f)` | `&mut Self` | Form container. `FormState` |
 | `form_field(field)` | `&mut Self` | Single form field. `FormField` |
 | `form_submit(label)` | `Response` | Form submit button |
@@ -310,6 +310,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | Method | Returns | Description |
 |---|---|---|
 | `theme()` | `&Theme` | Current theme |
+| `color(ThemeColor)` | `Color` | Resolve a semantic color token |
+| `spacing()` | `Spacing` | Current spacing scale |
 | `set_theme(theme)` | — | Change theme |
 | `is_dark_mode()` | `bool` | Terminal dark mode state |
 | `set_dark_mode(dark)` | — | Override dark mode |
@@ -346,7 +348,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `toast` | `ToastState` | `.push(msg, level)`, `.messages`, `.cleanup(tick)` |
 | `form` | `FormState` | `.fields: Vec<FormField>`, `.submit_label` |
 | `form_field` | `FormField` | `.label`, `.value`, `.placeholder`, `.validator`, `.error` |
-| `screen` | `ScreenState` | `.current()`, `.set(name)`, `::new(initial)` |
+| `screen` | `ScreenState` | `.current()`, `.push(name)`, `.pop()`, `::new(initial)` |
+| (modes) | `ModeState` | `.active_mode()`, `.switch_mode(name)`, `.screens_mut()`, `::new(mode, screen)` |
 | `streaming_text` | `StreamingTextState` | `.push(text)`, `.text()`, `.done` |
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.done` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: Option<ApprovalAction>` |

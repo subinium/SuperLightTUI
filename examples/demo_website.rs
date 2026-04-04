@@ -6,14 +6,17 @@ use slt::{
 fn main() -> std::io::Result<()> {
     let mut nav = TabsState::new(vec!["Home", "Docs", "Blog", "Pricing", "Contact"]);
     let mut scroll = ScrollState::new();
-    let themes: [fn() -> Theme; 7] = [
+    let themes: [fn() -> Theme; 10] = [
         Theme::dark,
         Theme::light,
         Theme::dracula,
         Theme::catppuccin,
         Theme::nord,
         Theme::solarized_dark,
+        Theme::solarized_light,
         Theme::tokyo_night,
+        Theme::gruvbox_dark,
+        Theme::one_dark,
     ];
     let theme_names = [
         "Dark",
@@ -21,8 +24,11 @@ fn main() -> std::io::Result<()> {
         "Dracula",
         "Catppuccin",
         "Nord",
-        "Solarized",
+        "Solarized Dark",
+        "Solarized Light",
         "Tokyo Night",
+        "Gruvbox",
+        "One Dark",
     ];
     let mut theme_idx: usize = 0;
     let mut email = slt::TextInputState::with_placeholder("you@example.com");
@@ -547,12 +553,11 @@ fn render_docs(ui: &mut Context) {
              ui.set_theme(Theme::dark());   // or Theme::light()\n\
              \n\
              // Custom theme:\n\
-             let my_theme = Theme {\n\
-             \x20   bg: theme.bg,\n\
-             \x20   text: theme.text,\n\
-             \x20   accent: theme.accent,\n\
-             \x20   ..Theme::dark()\n\
-             };",
+             let my_theme = Theme::builder()\n\
+             \x20   .bg(theme.bg)\n\
+             \x20   .text(theme.text)\n\
+             \x20   .accent(theme.accent)\n\
+             \x20   .build();",
         );
 
         md_hr(ui);

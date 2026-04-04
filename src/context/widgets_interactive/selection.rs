@@ -7,7 +7,8 @@ impl Context {
     /// The selected row is highlighted with the theme's selection colors.
     /// Render a data table with sortable columns and row selection.
     pub fn table(&mut self, state: &mut TableState) -> Response {
-        self.table_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.table;
+        self.table_colored(state, &colors)
     }
 
     /// Render a data table with custom widget colors.
@@ -280,7 +281,8 @@ impl Context {
     /// list is empty, nothing is rendered.
     /// Render a horizontal tab bar.
     pub fn tabs(&mut self, state: &mut TabsState) -> Response {
-        self.tabs_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.tabs;
+        self.tabs_colored(state, &colors)
     }
 
     /// Render a horizontal tab bar with custom widget colors.
@@ -386,7 +388,8 @@ impl Context {
     /// accent color when hovered.
     /// Render a clickable button.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
-        self.button_colored(label, &WidgetColors::new())
+        let colors = self.widget_theme.button;
+        self.button_colored(label, &colors)
     }
 
     /// Render a clickable button with custom widget colors.
@@ -569,7 +572,8 @@ impl Context {
     /// a `▸` prefix is added.
     /// Render a checkbox toggle.
     pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> Response {
-        self.checkbox_colored(label, checked, &WidgetColors::new())
+        let colors = self.widget_theme.checkbox;
+        self.checkbox_colored(label, checked, &colors)
     }
 
     /// Render a checkbox toggle with custom widget colors.
@@ -649,7 +653,8 @@ impl Context {
     /// dim color respectively.
     /// Render an on/off toggle switch.
     pub fn toggle(&mut self, label: impl Into<String>, on: &mut bool) -> Response {
-        self.toggle_colored(label, on, &WidgetColors::new())
+        let colors = self.widget_theme.toggle;
+        self.toggle_colored(label, on, &colors)
     }
 
     /// Render an on/off toggle switch with custom widget colors.
@@ -729,7 +734,8 @@ impl Context {
     /// Returns `true` when the selection changed this frame.
     /// Render a dropdown select widget.
     pub fn select(&mut self, state: &mut SelectState) -> Response {
-        self.select_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.select;
+        self.select_colored(state, &colors)
     }
 
     /// Render a dropdown select widget with custom widget colors.
@@ -901,7 +907,8 @@ impl Context {
     /// Render a radio button group. Returns `true` when selection changed.
     /// Render a radio button group.
     pub fn radio(&mut self, state: &mut RadioState) -> Response {
-        self.radio_colored(state, &WidgetColors::new())
+        let colors = self.widget_theme.radio;
+        self.radio_colored(state, &colors)
     }
 
     /// Render a radio button group with custom widget colors.

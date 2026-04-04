@@ -44,6 +44,8 @@ pub struct Context {
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) rollback: ContextRollbackState,
     pub(crate) scroll_lines_per_event: u32,
+    pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
+    pub(crate) widget_theme: WidgetTheme,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;

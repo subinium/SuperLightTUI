@@ -1,10 +1,151 @@
 use super::*;
 
+/// Spacing scale for consistent padding, margin, and gap values.
+///
+/// All values are in terminal cells. The scale is relative to [`Spacing::base`],
+/// which defaults to 1 cell. Use [`Theme::spacing`] to access the active scale,
+/// or [`crate::Context::spacing`] for convenience.
+///
+/// # Example
+///
+/// ```
+/// use slt::Spacing;
+///
+/// let sp = Spacing::new(1);
+/// assert_eq!(sp.sm(), 2);
+/// assert_eq!(sp.md(), 3);
+/// assert_eq!(sp.xl(), 6);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Spacing {
+    /// Base unit in terminal cells. Defaults to 1.
+    pub base: u32,
+}
+
+impl Spacing {
+    /// Create a spacing scale with the given base unit.
+    pub const fn new(base: u32) -> Self {
+        Self { base }
+    }
+
+    /// Zero spacing.
+    pub const fn none(&self) -> u32 {
+        0
+    }
+
+    /// Extra-small spacing (1× base).
+    pub const fn xs(&self) -> u32 {
+        self.base
+    }
+
+    /// Small spacing (2× base).
+    pub const fn sm(&self) -> u32 {
+        self.base * 2
+    }
+
+    /// Medium spacing (3× base).
+    pub const fn md(&self) -> u32 {
+        self.base * 3
+    }
+
+    /// Large spacing (4× base).
+    pub const fn lg(&self) -> u32 {
+        self.base * 4
+    }
+
+    /// Extra-large spacing (6× base).
+    pub const fn xl(&self) -> u32 {
+        self.base * 6
+    }
+
+    /// Double extra-large spacing (8× base).
+    pub const fn xxl(&self) -> u32 {
+        self.base * 8
+    }
+}
+
+impl Default for Spacing {
+    fn default() -> Self {
+        Self { base: 1 }
+    }
+}
+
+/// Semantic color token that resolves against the active [`Theme`].
+///
+/// Use this when you want colors to automatically follow theme changes
+/// without hardcoding specific [`Color`] values. Resolve with
+/// [`Theme::resolve`] or [`crate::Context::color`].
+///
+/// # Example
+///
+/// ```
+/// use slt::{Theme, ThemeColor};
+///
+/// let theme = Theme::dark();
+/// let color = theme.resolve(ThemeColor::Primary);
+/// assert_eq!(color, theme.primary);
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ThemeColor {
+    /// Primary accent color.
+    Primary,
+    /// Secondary accent color.
+    Secondary,
+    /// Decorative accent color.
+    Accent,
+    /// Default text color.
+    Text,
+    /// Dimmed text color.
+    TextDim,
+    /// Border color for unfocused containers.
+    Border,
+    /// Background color.
+    Bg,
+    /// Success indicator color.
+    Success,
+    /// Warning indicator color.
+    Warning,
+    /// Error indicator color.
+    Error,
+    /// Selected item background.
+    SelectedBg,
+    /// Selected item foreground.
+    SelectedFg,
+    /// Surface background for elevated containers.
+    Surface,
+    /// Surface hover state.
+    SurfaceHover,
+    /// Text color readable on surface backgrounds.
+    SurfaceText,
+    /// Informational indicator (resolves to primary).
+    Info,
+    /// Hyperlink color (resolves to primary).
+    Link,
+    /// Focus ring outline color (resolves to primary).
+    FocusRing,
+    /// A literal color value, not resolved from the theme.
+    Custom(Color),
+}
+
 /// A color theme that flows through all widgets automatically.
 ///
-/// Construct with [`Theme::dark()`] or [`Theme::light()`], or build a custom
-/// theme by filling in the fields directly. Pass the theme via [`crate::RunConfig`]
-/// and every widget will pick up the colors without any extra wiring.
+/// Construct with [`Theme::dark()`] or [`Theme::light()`], or use
+/// [`Theme::builder()`] for custom themes. Pass via [`crate::RunConfig`]
+/// and every widget picks up the colors without any extra wiring.
+///
+/// # Example
+///
+/// ```
+/// use slt::{Color, Theme};
+///
+/// let theme = Theme::builder()
+///     .primary(Color::Rgb(255, 107, 107))
+///     .build();
+/// ```
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Theme {
@@ -47,9 +188,48 @@ pub struct Theme {
     pub surface_text: Color,
     /// Whether this theme is a dark theme. Used to initialize dark mode in Context.
     pub is_dark: bool,
+    /// Spacing scale for consistent padding, margin, and gap values.
+    pub spacing: Spacing,
 }
 
 impl Theme {
+    /// Resolve a [`ThemeColor`] token to a concrete [`Color`].
+    pub fn resolve(&self, token: ThemeColor) -> Color {
+        match token {
+            ThemeColor::Primary => self.primary,
+            ThemeColor::Secondary => self.secondary,
+            ThemeColor::Accent => self.accent,
+            ThemeColor::Text => self.text,
+            ThemeColor::TextDim => self.text_dim,
+            ThemeColor::Border => self.border,
+            ThemeColor::Bg => self.bg,
+            ThemeColor::Success => self.success,
+            ThemeColor::Warning => self.warning,
+            ThemeColor::Error => self.error,
+            ThemeColor::SelectedBg => self.selected_bg,
+            ThemeColor::SelectedFg => self.selected_fg,
+            ThemeColor::Surface => self.surface,
+            ThemeColor::SurfaceHover => self.surface_hover,
+            ThemeColor::SurfaceText => self.surface_text,
+            ThemeColor::Info | ThemeColor::Link | ThemeColor::FocusRing => self.primary,
+            ThemeColor::Custom(c) => c,
+        }
+    }
+
+    /// Return a text color with guaranteed contrast against the given background.
+    ///
+    /// Delegates to [`Color::contrast_fg`].
+    pub fn contrast_text_on(&self, bg: Color) -> Color {
+        Color::contrast_fg(bg)
+    }
+
+    /// Blend a color with the theme's background at the given alpha.
+    ///
+    /// `alpha = 0.0` returns `self.bg`, `alpha = 1.0` returns `color` unchanged.
+    pub fn overlay(&self, color: Color, alpha: f32) -> Color {
+        color.blend(self.bg, alpha)
+    }
+
     /// Create a dark theme with cyan primary and white text.
     pub fn dark() -> Self {
         Self {
@@ -69,6 +249,7 @@ impl Theme {
             surface_hover: Color::Indexed(238),
             surface_text: Color::Indexed(250),
             is_dark: true,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -91,6 +272,7 @@ impl Theme {
             surface_hover: Color::Rgb(226, 232, 240),
             surface_text: Color::Rgb(51, 65, 85),
             is_dark: false,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -124,6 +306,7 @@ impl Theme {
             surface_hover: None,
             surface_text: None,
             is_dark: None,
+            spacing: None,
         }
     }
 
@@ -146,6 +329,7 @@ impl Theme {
             surface_hover: Color::Rgb(98, 100, 120),
             surface_text: Color::Rgb(191, 194, 210),
             is_dark: true,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -168,6 +352,7 @@ impl Theme {
             surface_hover: Color::Rgb(69, 71, 90),
             surface_text: Color::Rgb(166, 173, 200),
             is_dark: true,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -190,6 +375,7 @@ impl Theme {
             surface_hover: Color::Rgb(67, 76, 94),
             surface_text: Color::Rgb(216, 222, 233),
             is_dark: true,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -212,6 +398,30 @@ impl Theme {
             surface_hover: Color::Rgb(23, 72, 85),
             surface_text: Color::Rgb(147, 161, 161),
             is_dark: true,
+            spacing: Spacing::new(1),
+        }
+    }
+
+    /// Solarized Light theme — warm ochre primary on light base.
+    pub fn solarized_light() -> Self {
+        Self {
+            primary: Color::Rgb(38, 139, 210),
+            secondary: Color::Rgb(42, 161, 152),
+            accent: Color::Rgb(211, 54, 130),
+            text: Color::Rgb(101, 123, 131),
+            text_dim: Color::Rgb(147, 161, 161),
+            border: Color::Rgb(147, 161, 161),
+            bg: Color::Rgb(253, 246, 227),
+            success: Color::Rgb(133, 153, 0),
+            warning: Color::Rgb(181, 137, 0),
+            error: Color::Rgb(220, 50, 47),
+            selected_bg: Color::Rgb(38, 139, 210),
+            selected_fg: Color::Rgb(253, 246, 227),
+            surface: Color::Rgb(238, 232, 213),
+            surface_hover: Color::Rgb(227, 221, 201),
+            surface_text: Color::Rgb(88, 110, 117),
+            is_dark: false,
+            spacing: Spacing::new(1),
         }
     }
 
@@ -234,6 +444,53 @@ impl Theme {
             surface_hover: Color::Rgb(41, 46, 66),
             surface_text: Color::Rgb(192, 202, 245),
             is_dark: true,
+            spacing: Spacing::new(1),
+        }
+    }
+
+    /// Gruvbox Dark theme — warm, retro tones on dark background.
+    pub fn gruvbox_dark() -> Self {
+        Self {
+            primary: Color::Rgb(215, 153, 33),
+            secondary: Color::Rgb(69, 133, 136),
+            accent: Color::Rgb(177, 98, 134),
+            text: Color::Rgb(235, 219, 178),
+            text_dim: Color::Rgb(146, 131, 116),
+            border: Color::Rgb(80, 73, 69),
+            bg: Color::Rgb(40, 40, 40),
+            success: Color::Rgb(152, 151, 26),
+            warning: Color::Rgb(250, 189, 47),
+            error: Color::Rgb(204, 36, 29),
+            selected_bg: Color::Rgb(215, 153, 33),
+            selected_fg: Color::Rgb(40, 40, 40),
+            surface: Color::Rgb(60, 56, 54),
+            surface_hover: Color::Rgb(80, 73, 69),
+            surface_text: Color::Rgb(189, 174, 147),
+            is_dark: true,
+            spacing: Spacing::new(1),
+        }
+    }
+
+    /// One Dark theme (Atom) — cool blues and purples on dark gray.
+    pub fn one_dark() -> Self {
+        Self {
+            primary: Color::Rgb(97, 175, 239),
+            secondary: Color::Rgb(86, 182, 194),
+            accent: Color::Rgb(198, 120, 221),
+            text: Color::Rgb(171, 178, 191),
+            text_dim: Color::Rgb(92, 99, 112),
+            border: Color::Rgb(62, 68, 81),
+            bg: Color::Rgb(40, 44, 52),
+            success: Color::Rgb(152, 195, 121),
+            warning: Color::Rgb(229, 192, 123),
+            error: Color::Rgb(224, 108, 117),
+            selected_bg: Color::Rgb(97, 175, 239),
+            selected_fg: Color::Rgb(40, 44, 52),
+            surface: Color::Rgb(50, 55, 65),
+            surface_hover: Color::Rgb(62, 68, 81),
+            surface_text: Color::Rgb(152, 159, 172),
+            is_dark: true,
+            spacing: Spacing::new(1),
         }
     }
 }
@@ -256,6 +513,7 @@ pub struct ThemeBuilder {
     surface_hover: Option<Color>,
     surface_text: Option<Color>,
     is_dark: Option<bool>,
+    spacing: Option<Spacing>,
 }
 
 impl ThemeBuilder {
@@ -355,6 +613,12 @@ impl ThemeBuilder {
         self
     }
 
+    /// Set the spacing scale.
+    pub fn spacing(mut self, spacing: Spacing) -> Self {
+        self.spacing = Some(spacing);
+        self
+    }
+
     /// Build the theme. Unfilled fields use [`Theme::dark()`] defaults.
     pub fn build(self) -> Theme {
         let defaults = Theme::dark();
@@ -375,6 +639,7 @@ impl ThemeBuilder {
             surface_hover: self.surface_hover.unwrap_or(defaults.surface_hover),
             surface_text: self.surface_text.unwrap_or(defaults.surface_text),
             is_dark: self.is_dark.unwrap_or(defaults.is_dark),
+            spacing: self.spacing.unwrap_or(defaults.spacing),
         }
     }
 }
@@ -476,5 +741,102 @@ mod tests {
         assert_eq!(default_theme.primary, dark.primary);
         assert_eq!(default_theme.bg, dark.bg);
         assert_eq!(default_theme.is_dark, dark.is_dark);
+    }
+
+    #[test]
+    fn theme_solarized_light_preset_builds() {
+        let t = Theme::solarized_light();
+        assert_eq!(t.bg, Color::Rgb(253, 246, 227));
+        assert!(!t.is_dark);
+    }
+
+    #[test]
+    fn theme_gruvbox_dark_preset_builds() {
+        let t = Theme::gruvbox_dark();
+        assert_eq!(t.bg, Color::Rgb(40, 40, 40));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn theme_one_dark_preset_builds() {
+        let t = Theme::one_dark();
+        assert_eq!(t.bg, Color::Rgb(40, 44, 52));
+        assert!(t.is_dark);
+    }
+
+    #[test]
+    fn spacing_scale_values() {
+        let sp = Spacing::new(1);
+        assert_eq!(sp.none(), 0);
+        assert_eq!(sp.xs(), 1);
+        assert_eq!(sp.sm(), 2);
+        assert_eq!(sp.md(), 3);
+        assert_eq!(sp.lg(), 4);
+        assert_eq!(sp.xl(), 6);
+        assert_eq!(sp.xxl(), 8);
+    }
+
+    #[test]
+    fn spacing_custom_base() {
+        let sp = Spacing::new(2);
+        assert_eq!(sp.xs(), 2);
+        assert_eq!(sp.sm(), 4);
+        assert_eq!(sp.md(), 6);
+    }
+
+    #[test]
+    fn theme_color_resolve_maps_correctly() {
+        let t = Theme::dark();
+        assert_eq!(t.resolve(ThemeColor::Primary), t.primary);
+        assert_eq!(t.resolve(ThemeColor::Secondary), t.secondary);
+        assert_eq!(t.resolve(ThemeColor::Accent), t.accent);
+        assert_eq!(t.resolve(ThemeColor::Text), t.text);
+        assert_eq!(t.resolve(ThemeColor::TextDim), t.text_dim);
+        assert_eq!(t.resolve(ThemeColor::Border), t.border);
+        assert_eq!(t.resolve(ThemeColor::Bg), t.bg);
+        assert_eq!(t.resolve(ThemeColor::Success), t.success);
+        assert_eq!(t.resolve(ThemeColor::Warning), t.warning);
+        assert_eq!(t.resolve(ThemeColor::Error), t.error);
+        assert_eq!(t.resolve(ThemeColor::SelectedBg), t.selected_bg);
+        assert_eq!(t.resolve(ThemeColor::SelectedFg), t.selected_fg);
+        assert_eq!(t.resolve(ThemeColor::Surface), t.surface);
+        assert_eq!(t.resolve(ThemeColor::SurfaceHover), t.surface_hover);
+        assert_eq!(t.resolve(ThemeColor::SurfaceText), t.surface_text);
+    }
+
+    #[test]
+    fn theme_color_aliases_resolve_to_primary() {
+        let t = Theme::dark();
+        assert_eq!(t.resolve(ThemeColor::Info), t.primary);
+        assert_eq!(t.resolve(ThemeColor::Link), t.primary);
+        assert_eq!(t.resolve(ThemeColor::FocusRing), t.primary);
+    }
+
+    #[test]
+    fn theme_color_custom_passes_through() {
+        let t = Theme::dark();
+        let custom = Color::Rgb(42, 42, 42);
+        assert_eq!(t.resolve(ThemeColor::Custom(custom)), custom);
+    }
+
+    #[test]
+    fn theme_builder_spacing() {
+        let sp = Spacing::new(3);
+        let theme = Theme::builder().spacing(sp).build();
+        assert_eq!(theme.spacing, sp);
+    }
+
+    #[test]
+    fn theme_contrast_text_on_dark_bg() {
+        let t = Theme::dark();
+        let fg = t.contrast_text_on(Color::Rgb(0, 0, 0));
+        assert_eq!(fg, Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn theme_contrast_text_on_light_bg() {
+        let t = Theme::dark();
+        let fg = t.contrast_text_on(Color::Rgb(255, 255, 255));
+        assert_eq!(fg, Color::Rgb(0, 0, 0));
     }
 }

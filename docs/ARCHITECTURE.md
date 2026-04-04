@@ -68,7 +68,7 @@ src/
 ├── style.rs                    # Style struct, Border, Padding, Margin, Constraints, Modifiers, Align, Justify
 ├── style/
 │   ├── color.rs                # Color enum (Named, Indexed, Rgb), ColorDepth, color blending
-│   └── theme.rs                # Theme struct, 7 presets (dark, light, dracula, catppuccin, nord, solarized, tokyo_night), ThemeBuilder
+│   └── theme.rs                # Theme struct, Spacing, ThemeColor, 10 presets, ThemeBuilder, contrast helpers
 │
 ├── terminal.rs                 # Terminal backend
 │   ├── Terminal                # Full-screen mode — alternate screen, raw mode, mouse capture

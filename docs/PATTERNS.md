@@ -176,28 +176,28 @@ Use `raw_*` shortcuts for keys that must work regardless of modal or overlay sta
 ## Screen helpers and navigation
 
 ```rust
-ui.screen("home", &screens, |ui| {
+ui.screen("home", &mut screens, |ui| {
     ui.text("Home").bold();
 });
 
-ui.screen("settings", &screens, |ui| {
+ui.screen("settings", &mut screens, |ui| {
     ui.text("Settings");
 });
 ```
 
-Use `screen(name, &screens, ...)` when you want declarative rendering that only runs for the active screen.
+Use `screen(name, &mut screens, ...)` when you want declarative rendering that only runs for the active screen. Each screen gets isolated hook state and focus.
 Use manual `push()` / `pop()` logic on `ScreenState` when you need explicit navigation transitions.
 
 ## Modal, overlay, and screen composition
 
 ```rust
-ui.screen("home", &screens, |ui| {
+ui.screen("home", &mut screens, |ui| {
     if ui.button("Settings").clicked {
         screens.push("settings");
     }
 });
 
-ui.screen("settings", &screens, |ui| {
+ui.screen("settings", &mut screens, |ui| {
     if ui.button("Back").clicked {
         screens.pop();
     }

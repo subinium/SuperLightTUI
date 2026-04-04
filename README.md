@@ -199,6 +199,7 @@ For composition advice, see [Patterns Guide].
 | `demo_cli` | `cargo run --example demo_cli` | CLI tool layout |
 | `demo_infoviz` | `cargo run --example demo_infoviz` | Charts and data viz |
 | `demo_game` | `cargo run --example demo_game` | Immediate-mode interaction |
+| `demo_design_system` | `cargo run --example demo_design_system` | Design tokens, theming, style inheritance |
 | `inline` | `cargo run --example inline` | Inline rendering below a normal prompt |
 | `async_demo` | `cargo run --example async_demo --features async` | Background messages |
 

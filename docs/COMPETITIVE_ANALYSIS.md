@@ -1,6 +1,6 @@
 # SLT Competitive Analysis & Roadmap
 
-**Date**: 2026-03-23 (v0.16.0)
+**Date**: 2026-04-04 (v0.17.0)
 **Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
 
 ---
@@ -31,7 +31,7 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 | **Responsive Breakpoints** | 5 tiers (xs/sm/md/lg/xl) × 35 properties | None — equivalent to CSS media queries for TUI |
 | **3-Line Start** | `slt::run(\|ui\| { ui.text("hello"); })` | Ratatui: ~20 lines, Textual: ~10 lines |
 | **Error Boundaries** | `error_boundary()` catches panics, app continues | Only React (Ink) has this; no other Rust TUI does |
-| **Theme Presets** | 7 built-in + builder + runtime switching | Ratatui: no theme concept, manual styling only |
+| **Theme Presets** | 10 built-in + builder + runtime switching + semantic tokens (ThemeColor) + contrast helpers | Ratatui: no theme concept, manual styling only |
 | **Chart Widgets** | 8 types (bar, line, area, scatter, histogram, candlestick, heatmap, sparkline) | Ratatui: 3 types, others: 0-1 |
 | **Image Protocols** | 3 built-in (HalfBlock, Kitty, Sixel) | Ratatui: via ratatui-image (3rd party) |
 | **Syntax Highlighting** | Tree-sitter AST-accurate, 15 languages built-in | Textual: tree-sitter. Ratatui/Ink/Bubbletea: none built-in |
