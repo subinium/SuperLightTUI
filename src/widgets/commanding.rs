@@ -275,12 +275,13 @@ impl Default for StreamingMarkdownState {
 /// let mut screens = slt::ScreenState::new("main");
 ///
 /// slt::run(|ui| {
-///     ui.screen("main", &mut screens, |ui| {
+///     let current = screens.current().to_string();
+///     if current == "main" {
 ///         if ui.button("Settings").clicked { screens.push("settings"); }
-///     });
-///     ui.screen("settings", &mut screens, |ui| {
+///     }
+///     if current == "settings" {
 ///         if ui.button("Back").clicked { screens.pop(); }
-///     });
+///     }
 /// });
 /// ```
 #[derive(Debug, Clone)]
@@ -355,10 +356,10 @@ impl ScreenState {
 /// modes.add_mode("settings", "general");
 ///
 /// slt::run(|ui| {
-///     let active = modes.active_mode().to_string();
-///     ui.screen("home", modes.screens_mut(), |ui| {
-///         ui.text("Home screen");
-///     });
+///     if ui.key('1') { modes.switch_mode("app"); }
+///     if ui.key('2') { modes.switch_mode("settings"); }
+///     let mode = modes.active_mode().to_string();
+///     ui.text(format!("Mode: {}", mode));
 /// });
 /// ```
 #[derive(Debug, Clone)]

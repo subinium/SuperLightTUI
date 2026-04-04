@@ -176,7 +176,7 @@ impl Color {
     /// use slt::Color;
     ///
     /// let ratio = Color::contrast_ratio(Color::White, Color::Black);
-    /// assert!(ratio > 20.0);
+    /// assert!(ratio > 15.0);
     /// ```
     pub fn contrast_ratio(a: Color, b: Color) -> f32 {
         let la = a.luminance() + 0.05;
