@@ -135,9 +135,9 @@ pub use style::{
 };
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
-    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, ListState, ModeState,
-    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
-    ScrollState, SelectState, SpinnerState, StaticOutput, StreamingMarkdownState,
+    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GridColumn, ListState,
+    ModeState, MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState,
+    ScreenState, ScrollState, SelectState, SpinnerState, StaticOutput, StreamingMarkdownState,
     StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
     ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
 };

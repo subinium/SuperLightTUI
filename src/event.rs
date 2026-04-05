@@ -98,6 +98,30 @@ impl Event {
         })
     }
 
+    /// Create a left mouse drag event at (x, y).
+    pub fn mouse_drag(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::Drag(MouseButton::Left),
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        })
+    }
+
+    /// Create a left mouse button release event at (x, y).
+    pub fn mouse_up(x: u32, y: u32) -> Self {
+        Event::Mouse(MouseEvent {
+            kind: MouseKind::Up(MouseButton::Left),
+            x,
+            y,
+            modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        })
+    }
+
     /// Create a scroll up event at the given position.
     pub fn scroll_up(x: u32, y: u32) -> Self {
         Event::Mouse(MouseEvent {

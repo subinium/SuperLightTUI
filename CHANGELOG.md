@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-04-05
+
+### Features
+
+- **Raw event access** (#56)
+  - `events()` — iterate unconsumed events with modal guard
+  - `raw_events()` — iterate unconsumed events bypassing modal guard
+
+- **Mouse drag/up convenience methods** (#54)
+  - `mouse_drag()`, `mouse_up()` — left-button drag and release position
+  - `mouse_down_button()`, `mouse_drag_button()`, `mouse_up_button()` — any button variant
+  - `Event::mouse_drag()`, `Event::mouse_up()` — test event constructors
+
+- **Per-column grid widths** (#55)
+  - `GridColumn` enum — `Auto`, `Fixed(u32)`, `Grow(u16)`, `Percent(u8)`
+  - `grid_with(&[GridColumn], f)` — grid layout with per-column width control
+
+- **Clickable custom-drawn regions** (#52)
+  - `draw_interactive()` — like `draw()` but returns `Response` with `clicked`/`hovered`
+  - RawDraw nodes now correctly consume pending interaction IDs in the layout tree
+
+### Bug Fixes
+
+- **grid() InteractionMarker preservation** — interactive widgets (buttons, links) inside `grid()` and `grid_with()` now correctly retain their interaction markers instead of detaching them into separate cells
+
+### Tests
+
+- Added 9 new tests (222 total): mouse_drag, mouse_up, right-click detection, consumed flag filtering, events modal guard, draw_interactive hit-testing, draw backward compat, grid_with constraints
+
 ## [0.17.0] — 2026-04-04
 
 ### Breaking Changes

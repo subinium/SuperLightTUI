@@ -329,6 +329,177 @@ fn screen_helper_renders_only_current_screen() {
     assert!(!rendered.contains("Home Screen"));
 }
 
+// === Issue #54: mouse_drag / mouse_up convenience methods ===
+
+#[test]
+fn mouse_drag_returns_drag_position() {
+    let events = vec![Event::mouse_drag(5, 3)];
+    let mut state = FrameState::default();
+    let ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+
+    assert_eq!(ctx.mouse_drag(), Some((5, 3)));
+    assert_eq!(ctx.mouse_up(), None);
+    assert_eq!(ctx.mouse_down(), None);
+}
+
+#[test]
+fn mouse_up_returns_release_position() {
+    let events = vec![Event::mouse_up(7, 2)];
+    let mut state = FrameState::default();
+    let ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+
+    assert_eq!(ctx.mouse_up(), Some((7, 2)));
+    assert_eq!(ctx.mouse_drag(), None);
+}
+
+#[test]
+fn mouse_down_button_detects_right_click() {
+    let events = vec![Event::Mouse(crate::event::MouseEvent {
+        kind: MouseKind::Down(MouseButton::Right),
+        x: 3,
+        y: 4,
+        modifiers: KeyModifiers::NONE,
+        pixel_x: None,
+        pixel_y: None,
+    })];
+    let mut state = FrameState::default();
+    let ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+
+    assert_eq!(ctx.mouse_down_button(MouseButton::Right), Some((3, 4)));
+    assert_eq!(ctx.mouse_down_button(MouseButton::Left), None);
+    assert_eq!(ctx.mouse_down(), None); // mouse_down is Left-only
+}
+
+#[test]
+fn mouse_drag_respects_consumed_flag() {
+    let events = vec![Event::mouse_drag(5, 3)];
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+    ctx.consumed[0] = true;
+
+    assert_eq!(ctx.mouse_drag(), None);
+}
+
+// === Issue #56: events() / raw_events() ===
+
+#[test]
+fn events_filters_consumed() {
+    let events = vec![
+        Event::key_char('a'),
+        Event::key_char('b'),
+        Event::key_char('c'),
+    ];
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+    ctx.consumed[1] = true;
+
+    let visible: Vec<_> = ctx.events().collect();
+    assert_eq!(visible.len(), 2);
+    assert_eq!(visible[0], &Event::key_char('a'));
+    assert_eq!(visible[1], &Event::key_char('c'));
+}
+
+#[test]
+fn events_blocked_by_modal_guard() {
+    let events = vec![Event::key_char('x')];
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(events, 20, 10, &mut state, Theme::dark());
+    ctx.rollback.modal_active = true;
+    ctx.rollback.overlay_depth = 0;
+
+    assert_eq!(ctx.events().count(), 0);
+    // raw_events bypasses modal guard
+    assert_eq!(ctx.raw_events().count(), 1);
+}
+
+// === Issue #52: draw_interactive ===
+
+#[test]
+fn draw_interactive_emits_interaction_marker_and_raw_draw() {
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 40, 20, &mut state, Theme::dark());
+    ctx.prev_hit_map = vec![crate::rect::Rect::new(0, 0, 40, 20)];
+    ctx.click_pos = Some((5, 5));
+
+    let resp = ctx
+        .container()
+        .w(40)
+        .h(20)
+        .draw_interactive(|_buf, _rect| {});
+
+    assert!(resp.clicked);
+
+    // Should have emitted an InteractionMarker before RawDraw
+    let has_marker = ctx
+        .commands
+        .iter()
+        .any(|c| matches!(c, Command::InteractionMarker(0)));
+    assert!(has_marker, "draw_interactive must emit InteractionMarker");
+    let has_raw = ctx
+        .commands
+        .iter()
+        .any(|c| matches!(c, Command::RawDraw { .. }));
+    assert!(has_raw, "draw_interactive must emit RawDraw command");
+}
+
+#[test]
+fn draw_does_not_emit_interaction_marker() {
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 40, 20, &mut state, Theme::dark());
+
+    ctx.container().w(40).h(20).draw(|_buf, _rect| {});
+
+    let has_marker = ctx
+        .commands
+        .iter()
+        .any(|c| matches!(c, Command::InteractionMarker(_)));
+    assert!(
+        !has_marker,
+        "draw() should NOT emit InteractionMarker (backward compat)"
+    );
+}
+
+// === Issue #55: grid_with ===
+
+#[test]
+fn grid_with_fixed_columns_emit_constraints() {
+    use crate::widgets::GridColumn;
+
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 80, 24, &mut state, Theme::dark());
+
+    ctx.grid_with(
+        &[GridColumn::Fixed(10), GridColumn::Grow(2), GridColumn::Auto],
+        |ui| {
+            ui.text("A");
+            ui.text("B");
+            ui.text("C");
+        },
+    );
+
+    // Verify that fixed column got min_w == max_w == 10 and grow: 0
+    let fixed_container = ctx.commands.iter().find(|c| {
+        matches!(c, Command::BeginContainer { constraints, grow, .. }
+            if constraints.min_width == Some(10)
+                && constraints.max_width == Some(10)
+                && *grow == 0)
+    });
+    assert!(
+        fixed_container.is_some(),
+        "Fixed(10) column should produce min_w=max_w=10, grow=0"
+    );
+
+    // Verify that Grow(2) column exists
+    let grow_container = ctx.commands.iter().find(|c| {
+        matches!(c, Command::BeginContainer { grow: 2, constraints, .. }
+            if constraints.min_width.is_none() && constraints.max_width.is_none())
+    });
+    assert!(
+        grow_container.is_some(),
+        "Grow(2) column should produce grow=2, no width constraints"
+    );
+}
+
 fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = panic.downcast_ref::<String>() {
         s.clone()

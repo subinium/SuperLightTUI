@@ -46,11 +46,16 @@ impl Context {
 
         let mut elements: Vec<Vec<Command>> = Vec::new();
         let mut iter = child_commands.into_iter().peekable();
+        let mut pending_markers: Vec<Command> = Vec::new();
         while let Some(cmd) = iter.next() {
             match cmd {
+                Command::InteractionMarker(_) => {
+                    pending_markers.push(cmd);
+                }
                 Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
                     let mut depth = 1_u32;
-                    let mut element = vec![cmd];
+                    let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
+                    element.push(cmd);
                     for next in iter.by_ref() {
                         match next {
                             Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
@@ -70,8 +75,16 @@ impl Context {
                     elements.push(element);
                 }
                 Command::EndContainer => {}
-                _ => elements.push(vec![cmd]),
+                _ => {
+                    let mut element = std::mem::take(&mut pending_markers);
+                    element.push(cmd);
+                    elements.push(element);
+                }
             }
+        }
+        // Flush any trailing markers (edge case: marker with no following command)
+        if !pending_markers.is_empty() {
+            elements.push(pending_markers);
         }
 
         let cols = cols.max(1) as usize;
@@ -112,6 +125,178 @@ impl Context {
                     constraints: Constraints::default(),
                     title: None,
                     grow: 1,
+                    group_name: None,
+                });
+                self.commands.extend(element.iter().cloned());
+                self.commands.push(Command::EndContainer);
+            }
+
+            self.commands.push(Command::EndContainer);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        self.response_for(interaction_id)
+    }
+
+    /// Render children in a grid with per-column width specifications.
+    ///
+    /// The number of columns is determined by the length of `columns`. Children
+    /// are placed left-to-right, top-to-bottom, wrapping into rows
+    /// automatically.
+    ///
+    /// # Column specifications
+    ///
+    /// - [`GridColumn::Auto`] — equal-width flex column (same as `grid()`)
+    /// - [`GridColumn::Fixed(n)`](GridColumn::Fixed) — exactly `n` character cells wide
+    /// - [`GridColumn::Grow(w)`](GridColumn::Grow) — flexible with grow weight `w`
+    /// - [`GridColumn::Percent(p)`](GridColumn::Percent) — `p`% of the grid width
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::GridColumn;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.grid_with(&[
+    ///     GridColumn::Fixed(8),
+    ///     GridColumn::Grow(1),
+    ///     GridColumn::Grow(1),
+    ///     GridColumn::Fixed(4),
+    /// ], |ui| {
+    ///     for i in 0..8 {
+    ///         ui.text(format!("Cell {i}"));
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn grid_with(&mut self, columns: &[GridColumn], f: impl FnOnce(&mut Context)) -> Response {
+        let cols = columns.len().max(1);
+        let interaction_id = self.next_interaction_id();
+        let border = self.theme.border;
+
+        self.commands.push(Command::BeginContainer {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new().fg(border),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        });
+
+        let children_start = self.commands.len();
+        f(self);
+        let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
+
+        let mut elements: Vec<Vec<Command>> = Vec::new();
+        let mut iter = child_commands.into_iter().peekable();
+        let mut pending_markers: Vec<Command> = Vec::new();
+        while let Some(cmd) = iter.next() {
+            match cmd {
+                Command::InteractionMarker(_) => {
+                    pending_markers.push(cmd);
+                }
+                Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                    let mut depth = 1_u32;
+                    let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
+                    element.push(cmd);
+                    for next in iter.by_ref() {
+                        match next {
+                            Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                                depth += 1;
+                            }
+                            Command::EndContainer => {
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                        let at_end = matches!(next, Command::EndContainer) && depth == 0;
+                        element.push(next);
+                        if at_end {
+                            break;
+                        }
+                    }
+                    elements.push(element);
+                }
+                Command::EndContainer => {}
+                _ => {
+                    let mut element = std::mem::take(&mut pending_markers);
+                    element.push(cmd);
+                    elements.push(element);
+                }
+            }
+        }
+        if !pending_markers.is_empty() {
+            elements.push(pending_markers);
+        }
+
+        for row in elements.chunks(cols) {
+            self.skip_interaction_slot();
+            self.commands.push(Command::BeginContainer {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            });
+
+            for (col_idx, element) in row.iter().enumerate() {
+                let spec = columns.get(col_idx).copied().unwrap_or(GridColumn::Auto);
+                let (grow, constraints) = match spec {
+                    GridColumn::Auto => (1, Constraints::default()),
+                    GridColumn::Fixed(w) => (
+                        0,
+                        Constraints {
+                            min_width: Some(w),
+                            max_width: Some(w),
+                            ..Constraints::default()
+                        },
+                    ),
+                    GridColumn::Grow(g) => (g, Constraints::default()),
+                    GridColumn::Percent(p) => (
+                        0,
+                        Constraints {
+                            width_pct: Some(p),
+                            ..Constraints::default()
+                        },
+                    ),
+                };
+
+                self.skip_interaction_slot();
+                self.commands.push(Command::BeginContainer {
+                    direction: Direction::Column,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints,
+                    title: None,
+                    grow,
                     group_name: None,
                 });
                 self.commands.extend(element.iter().cloned());

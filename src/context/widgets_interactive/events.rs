@@ -308,6 +308,114 @@ impl Context {
         })
     }
 
+    /// Return the position of a left mouse button drag event this frame, if any.
+    ///
+    /// Returns `None` if no unconsumed drag event occurred. Drag events fire
+    /// while the left button is held and the cursor moves.
+    pub fn mouse_drag(&self) -> Option<(u32, u32)> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Mouse(mouse) = event {
+                if matches!(mouse.kind, MouseKind::Drag(MouseButton::Left)) {
+                    return Some((mouse.x, mouse.y));
+                }
+            }
+            None
+        })
+    }
+
+    /// Return the position of a left mouse button release event this frame, if any.
+    ///
+    /// Returns `None` if no unconsumed mouse-up event occurred.
+    pub fn mouse_up(&self) -> Option<(u32, u32)> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Mouse(mouse) = event {
+                if matches!(mouse.kind, MouseKind::Up(MouseButton::Left)) {
+                    return Some((mouse.x, mouse.y));
+                }
+            }
+            None
+        })
+    }
+
+    /// Return the position of a mouse button down event for the specified button.
+    ///
+    /// This is a generalized version of [`mouse_down`](Self::mouse_down) that
+    /// accepts any [`MouseButton`].
+    pub fn mouse_down_button(&self, button: MouseButton) -> Option<(u32, u32)> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Mouse(mouse) = event {
+                if matches!(&mouse.kind, MouseKind::Down(b) if *b == button) {
+                    return Some((mouse.x, mouse.y));
+                }
+            }
+            None
+        })
+    }
+
+    /// Return the position of a mouse drag event for the specified button.
+    pub fn mouse_drag_button(&self, button: MouseButton) -> Option<(u32, u32)> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Mouse(mouse) = event {
+                if matches!(&mouse.kind, MouseKind::Drag(b) if *b == button) {
+                    return Some((mouse.x, mouse.y));
+                }
+            }
+            None
+        })
+    }
+
+    /// Return the position of a mouse button release event for the specified button.
+    pub fn mouse_up_button(&self, button: MouseButton) -> Option<(u32, u32)> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.events.iter().enumerate().find_map(|(i, event)| {
+            if self.consumed[i] {
+                return None;
+            }
+            if let Event::Mouse(mouse) = event {
+                if matches!(&mouse.kind, MouseKind::Up(b) if *b == button) {
+                    return Some((mouse.x, mouse.y));
+                }
+            }
+            None
+        })
+    }
+
     /// Return the current mouse cursor position, if known.
     ///
     /// The position is updated on every mouse move or click event. Returns
@@ -384,6 +492,48 @@ impl Context {
             !self.consumed[i]
                 && matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseKind::ScrollRight))
         })
+    }
+
+    /// Iterate over unconsumed events this frame, respecting the modal guard.
+    ///
+    /// Returns an empty iterator when a modal is active and the caller is not
+    /// inside an overlay. Use [`raw_events`](Self::raw_events) to bypass the
+    /// modal guard (e.g., for global hotkeys).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// for event in ui.events() {
+    ///     if let slt::Event::Mouse(mouse) = event {
+    ///         if matches!(mouse.kind, slt::MouseKind::Down(slt::MouseButton::Right)) {
+    ///             // handle right-click
+    ///         }
+    ///     }
+    /// }
+    /// # });
+    /// ```
+    pub fn events(&self) -> impl Iterator<Item = &Event> {
+        let blocked = (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0;
+        self.events.iter().enumerate().filter_map(move |(i, e)| {
+            if blocked || self.consumed[i] {
+                None
+            } else {
+                Some(e)
+            }
+        })
+    }
+
+    /// Iterate over all unconsumed events, bypassing the modal guard.
+    ///
+    /// Use this for global shortcuts that must work even when a modal or
+    /// overlay is active. Prefer [`events`](Self::events) for normal use.
+    pub fn raw_events(&self) -> impl Iterator<Item = &Event> + '_ {
+        self.events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| if self.consumed[i] { None } else { Some(e) })
     }
 
     /// Signal the run loop to exit after this frame.

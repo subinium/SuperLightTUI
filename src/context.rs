@@ -9,8 +9,8 @@ use crate::style::{
 };
 use crate::widgets::{
     ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
-    FilePickerState, FormField, FormState, ListState, MultiSelectState, RadioState, ScreenState,
-    ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
+    FilePickerState, FormField, FormState, GridColumn, ListState, MultiSelectState, RadioState,
+    ScreenState, ScrollState, SelectState, SpinnerState, StreamingTextState, TableState, TabsState,
     TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
 };
 use crate::FrameState;
