@@ -1192,6 +1192,42 @@ impl<'a> ContainerBuilder<'a> {
         });
     }
 
+    /// Custom drawing with click and hover detection.
+    ///
+    /// Like [`draw`](Self::draw), but the returned [`Response`] reports
+    /// `clicked` and `hovered` based on the laid-out region — exactly like
+    /// `.col()` or `.row()`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let resp = ui.container()
+    ///     .w(40).h(10)
+    ///     .draw_interactive(|buf, rect| {
+    ///         buf.set_string(rect.x, rect.y, "Click me!", slt::Style::new());
+    ///     });
+    /// if resp.clicked {
+    ///     // handle click
+    /// }
+    /// # });
+    /// ```
+    pub fn draw_interactive(
+        self,
+        f: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static,
+    ) -> Response {
+        let draw_id = self.ctx.deferred_draws.len();
+        self.ctx.deferred_draws.push(Some(Box::new(f)));
+        let interaction_id = self.ctx.next_interaction_id();
+        self.ctx.commands.push(Command::RawDraw {
+            draw_id,
+            constraints: self.constraints,
+            grow: self.grow,
+            margin: self.margin,
+        });
+        self.ctx.response_for(interaction_id)
+    }
+
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
         let resolved_gap = match direction {

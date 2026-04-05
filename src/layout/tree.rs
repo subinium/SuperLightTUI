@@ -840,7 +840,7 @@ fn build_children(
                     segments: None,
                     cached_wrapped_segments: None,
                     focus_id: pending_focus_id.take(),
-                    interaction_id: None,
+                    interaction_id: pending_interaction_id.take(),
                     link_url: None,
                     group_name: None,
                     overlays: Vec::new(),

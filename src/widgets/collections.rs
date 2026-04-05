@@ -621,3 +621,35 @@ impl Default for ScrollState {
         Self::new()
     }
 }
+
+/// Column specification for [`Context::grid_with()`].
+///
+/// Controls the width allocation of individual columns in a grid layout.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::GridColumn;
+/// # slt::run(|ui: &mut slt::Context| {
+/// ui.grid_with(&[
+///     GridColumn::Fixed(8),   // label column: exactly 8 chars
+///     GridColumn::Grow(1),    // flexible column
+///     GridColumn::Grow(1),    // flexible column
+///     GridColumn::Fixed(4),   // status column: exactly 4 chars
+/// ], |ui| {
+///     // children placed left-to-right, wrapping to next row
+/// });
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GridColumn {
+    /// Equal-width column with grow weight 1 (default `grid()` behavior).
+    Auto,
+    /// Fixed-width column in character cells. Does not grow or shrink.
+    Fixed(u32),
+    /// Flexible column with a custom grow weight. Higher values take
+    /// proportionally more space.
+    Grow(u16),
+    /// Column sized as a percentage (1–100) of the grid width.
+    Percent(u8),
+}
