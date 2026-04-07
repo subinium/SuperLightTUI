@@ -36,6 +36,9 @@ Eso hace que encaje igual de bien para personas que prototipan una herramienta y
     <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — el texto se reorganiza alrededor del cursor del ratón en tiempo real<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+  </tr>
 </table>
 
 ## Inicio rápido
@@ -124,6 +127,36 @@ Para flujos asistidos por AI, significa que la gramática pública se infiere co
 SLT encaja especialmente bien si quieres construir apps de terminal rápido sin renunciar a la seguridad de tipos de Rust ni a escape hatches de backend.
 Si buscas un árbol de componentes retained o un toolkit GUI-first, otra biblioteca puede ser mejor opción.
 
+## Cómo renderiza
+
+El pipeline de renderizado de SLT es la razón por la que la gramática se mantiene pequeña.
+Tu código solo toca la primera etapa — el motor se encarga del resto.
+
+```mermaid
+graph LR
+    subgraph your_code ["Your Code"]
+        A["Closure"]
+    end
+    subgraph engine ["SLT Engine"]
+        B[Commands] --> C[Build Tree] --> D[Flexbox] --> E[Collect] --> F[Render] --> G["Diff + Flush"]
+    end
+    A -->|"records intent"| B
+    G -.->|"prev-frame feedback"| A
+```
+
+Cada llamada a `ui.*()` registra un comando en una lista plana — sin construir árboles, sin cálculo de layout.
+El motor pasa esos comandos por un pipeline: construir un árbol de layout, calcular flexbox, recoger hit areas y grupos de foco en un solo DFS, renderizar celdas al back buffer, hacer diff contra el frame anterior y flush solo lo que cambió.
+
+Esta arquitectura es lo que hace posible la gramática simple:
+
+- **Sin ceremonia.** Immediate-mode significa que no hay trait `App`, ni `Model`/`Message`/`Update`/`View`. Tu closure es toda la UI. El estado son variables normales de Rust. El flujo de control es `if`/`for`.
+- **Layout invisible.** `ui.col(|ui| { ... })` registra un comando "abrir columna". El motor construye el árbol y ejecuta flexbox — nunca ves `LayoutNode`.
+- **Rendimiento automático.** El doble buffer compara celdas entre frames y solo emite los atributos ANSI que cambiaron. Redibujas todo cada frame; el motor lo hace rápido. Sin dirty tracking manual.
+- **Interacción auto-cableada.** `ui.button("Save")` te da hover, click y foco gratis. `collect_all()` recoge todos los datos de interacción en un solo DFS — reemplazando siete recorridos separados del árbol.
+- **Feedback síncrono.** La interacción usa las posiciones de layout del frame anterior (imperceptible a 60 FPS). Sin callbacks, sin queries de layout async — tu código se mantiene lineal.
+
+Para el ciclo de vida completo de ocho etapas, consulta la [Arquitectura].
+
 ## Superficie común de API
 
 ```rust
@@ -196,6 +229,7 @@ Para la lista categorizada de widgets, consulta la [Guía de Widgets]. Para comp
 | `demo_cli` | `cargo run --example demo_cli` | Layout de herramienta CLI |
 | `demo_infoviz` | `cargo run --example demo_infoviz` | Gráficos y visualización de datos |
 | `demo_game` | `cargo run --example demo_game` | Interacción immediate-mode |
+| `demo_design_system` | `cargo run --example demo_design_system` | Design tokens, temas, herencia de estilos |
 | `inline` | `cargo run --example inline` | Render inline bajo un prompt normal |
 | `async_demo` | `cargo run --example async_demo --features async` | Mensajes en segundo plano |
 

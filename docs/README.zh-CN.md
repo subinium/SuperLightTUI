@@ -36,6 +36,9 @@ SuperLightTUI 是一个为 Rust 提供的 immediate-mode TUI 库，并且有意�
     <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 文本围绕鼠标光标实时重排<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+  </tr>
 </table>
 
 ## 快速开始
@@ -124,6 +127,36 @@ fn main() -> std::io::Result<()> {
 如果你想快速做出终端应用，同时保留 Rust 的类型安全和后端 escape hatch，SLT 很合适。
 如果你更需要 retained component tree，或者更偏 GUI-first 的工具包，那么别的库可能更适合。
 
+## 渲染管线
+
+SLT 的渲染管线是语法能保持简洁的原因。
+你的代码只接触第一个阶段 — 其余由引擎处理。
+
+```mermaid
+graph LR
+    subgraph your_code ["Your Code"]
+        A["Closure"]
+    end
+    subgraph engine ["SLT Engine"]
+        B[Commands] --> C[Build Tree] --> D[Flexbox] --> E[Collect] --> F[Render] --> G["Diff + Flush"]
+    end
+    A -->|"records intent"| B
+    G -.->|"prev-frame feedback"| A
+```
+
+每次 `ui.*()` 调用只是往一个扁平列表中记录命令 — 不构建树，不计算布局。
+引擎随后将这些命令通过管线处理：构建布局树、计算 flexbox、单次 DFS 收集命中区域和焦点组、渲染单元格到后缓冲区、与前一帧做 diff，只 flush 变更的部分。
+
+这个架构正是简洁语法的来源：
+
+- **零仪式。** Immediate-mode 意味着不需要 `App` trait、`Model`/`Message`/`Update`/`View`。你的闭包就是整个 UI。状态是普通 Rust 变量，控制流就是 `if`/`for`。
+- **布局不可见。** `ui.col(|ui| { ... })` 只是记录一条"打开列"的命令。引擎负责构建树和运行 flexbox — 你永远不会看到 `LayoutNode`。
+- **性能是自动的。** 双缓冲在帧间对比每个单元格，只输出变化的 ANSI 属性。你在概念上每帧全部重绘，引擎让它变快。无需手动 dirty tracking。
+- **交互自动接线。** `ui.button("Save")` 免费提供 hover、click 和 focus。`collect_all()` 在单次 DFS 中收集所有交互数据 — 替代了 7 次独立的树遍历。
+- **同步反馈。** 交互使用前一帧的布局位置（60 FPS 下不可察觉）。无回调、无 async 布局查询 — 代码保持线性。
+
+完整的八阶段生命周期请见[架构指南]。
+
 ## 常用 API 概览
 
 ```rust
@@ -196,6 +229,7 @@ ui.canvas(40, 10, |cv| {
 | `demo_cli` | `cargo run --example demo_cli` | CLI 工具布局 |
 | `demo_infoviz` | `cargo run --example demo_infoviz` | 图表和数据可视化 |
 | `demo_game` | `cargo run --example demo_game` | immediate-mode 交互 |
+| `demo_design_system` | `cargo run --example demo_design_system` | 设计令牌、主题、样式继承 |
 | `inline` | `cargo run --example inline` | 在普通提示符下方做 inline 渲染 |
 | `async_demo` | `cargo run --example async_demo --features async` | 后台消息 |
 

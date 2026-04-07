@@ -1,6 +1,6 @@
 # SLT Competitive Analysis & Roadmap
 
-**Date**: 2026-04-04 (v0.17.0)
+**Date**: 2026-04-07 (v0.17.1)
 **Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
 
 ---
@@ -14,7 +14,7 @@
 | Rendering Model | Immediate (closure) | Immediate (Widget trait) | Retained (Event + CSS) | Component (React) | Elm (MVU) |
 | Built-in Widgets | Broad built-in catalog | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
 | Ecosystem | Small | **2,928 deps, 50+ widget crates** | Moderate | **3.9K deps** | **25K deps** |
-| Dependencies | 2 (crossterm optional, unicode-width) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
+| Dependencies | 2 (unicode-width, compact_str; crossterm optional) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
 
 ---
 
@@ -32,7 +32,7 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 | **3-Line Start** | `slt::run(\|ui\| { ui.text("hello"); })` | Ratatui: ~20 lines, Textual: ~10 lines |
 | **Error Boundaries** | `error_boundary()` catches panics, app continues | Only React (Ink) has this; no other Rust TUI does |
 | **Theme Presets** | 10 built-in + builder + runtime switching + semantic tokens (ThemeColor) + contrast helpers | Ratatui: no theme concept, manual styling only |
-| **Chart Widgets** | 8 types (bar, line, area, scatter, histogram, candlestick, heatmap, sparkline) | Ratatui: 3 types, others: 0-1 |
+| **Chart Widgets** | 10+ types (bar, stacked bar, line, area, scatter, histogram, candlestick, heatmap, sparkline, treemap) | Ratatui: 3 types, others: 0-1 |
 | **Image Protocols** | 3 built-in (HalfBlock, Kitty, Sixel) | Ratatui: via ratatui-image (3rd party) |
 | **Syntax Highlighting** | Tree-sitter AST-accurate, 15 languages built-in | Textual: tree-sitter. Ratatui/Ink/Bubbletea: none built-in |
 | **Testing Suite** | TestBackend + EventBuilder + proptest + criterion + insta | Most comprehensive among all TUI frameworks |

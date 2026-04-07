@@ -225,7 +225,8 @@ SLT follows [Semantic Versioning](https://semver.org/).
 | `serde` | Serialization | Optional (`serde` feature) |
 | `image` | Image loading | Optional (`image` feature) |
 | `qrcode` | QR code widget support | Optional (`qrcode` feature) |
-| `syntax` / `syntax-*` | Tree-sitter syntax highlighting | Optional |
+| `syntax-*` | Per-language tree-sitter grammar (e.g. `syntax-rust`) | Optional |
+| `syntax` | Convenience: enables all `syntax-*` bundles | Optional |
 | `kitty-compress` | Compressed Kitty image uploads | Optional |
 
 ### Rules

@@ -127,6 +127,36 @@ For AI-assisted workflows, it means the public grammar is easy to infer from doc
 SLT fits best when you want to build terminal apps quickly without giving up Rust type safety or backend escape hatches.
 If you want a retained component tree or a GUI-first toolkit, another library may be a better fit.
 
+## How It Renders
+
+SLT's rendering pipeline is why the grammar stays small.
+Your code only touches the first stage — the engine handles the rest.
+
+```mermaid
+graph LR
+    subgraph your_code ["Your Code"]
+        A["Closure"]
+    end
+    subgraph engine ["SLT Engine"]
+        B[Commands] --> C[Build Tree] --> D[Flexbox] --> E[Collect] --> F[Render] --> G["Diff + Flush"]
+    end
+    A -->|"records intent"| B
+    G -.->|"prev-frame feedback"| A
+```
+
+Every `ui.*()` call records a command to a flat list — no tree construction, no layout math.
+The engine replays those commands through a pipeline: build a layout tree, compute flexbox, collect hit areas and focus groups in a single DFS pass, render cells to a back buffer, then diff against the previous frame and flush only what changed.
+
+This architecture is what makes the simple grammar possible:
+
+- **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
+- **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
+- **Automatic performance.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine makes it fast. No manual dirty tracking.
+- **Auto-wired interaction.** `ui.button("Save")` gives you hover, click, and focus for free. `collect_all()` gathers all interaction data in one DFS pass — replacing seven separate tree traversals.
+- **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
+
+For the full eight-stage lifecycle, see [Architecture Guide].
+
 ## Common API Surface
 
 ```rust

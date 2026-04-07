@@ -331,29 +331,29 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | Widget | State type | Key fields / methods |
 |---|---|---|
 | `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
-| `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.word_wrap`, `.max_length` |
-| `select` | `SelectState` | `.options: Vec<String>`, `.selected: usize`, `.open: bool` |
-| `radio` | `RadioState` | `.options: Vec<String>`, `.selected: usize` |
-| `multi_select` | `MultiSelectState` | `.options: Vec<String>`, `.selected: HashSet<usize>` |
-| `tabs` | `TabsState` | `.labels: Vec<String>`, `.active: usize`, `::new(labels)` |
-| `list` | `ListState` | `.items: Vec<String>`, `.selected: usize`, `.scroll_offset` |
+| `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length` |
+| `select` | `SelectState` | `.items: Vec<String>`, `.selected: usize`, `.open: bool` |
+| `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
+| `multi_select` | `MultiSelectState` | `.items: Vec<String>`, `.selected: HashSet<usize>` |
+| `tabs` | `TabsState` | `.labels: Vec<String>`, `.selected: usize`, `::new(labels)` |
+| `list` | `ListState` | `.items: Vec<String>`, `.selected: usize`, `.filter` |
 | `table` | `TableState` | `.headers`, `.rows`, `.selected`, `.sort_column`, `.sort_ascending`, `.page`, `.page_size`, `.filter`, `::new(headers, rows)` |
 | `tree` | `TreeState` | `.nodes`, `.selected`, `.expanded: HashSet` |
 | `directory_tree` | `DirectoryTreeState` | `.root: PathBuf`, `.selected_path()` |
 | `calendar` | `CalendarState` | `.year`, `.month`, `.cursor_day`, `.selected_date()` |
 | `file_picker` | `FilePickerState` | `.current_dir`, `.selected_path()` |
-| `command_palette` | `CommandPaletteState` | `.commands: Vec<CommandItem>`, `.open`, `.input`, `.selected()` |
+| `command_palette` | `CommandPaletteState` | `.commands: Vec<PaletteCommand>`, `.open`, `.input`, `.last_selected` |
 | `scroll` | `ScrollState` | `.offset`, `.content_height`, `.viewport_height` |
 | `spinner` | `SpinnerState` | `::dots()`, `::line()`, `.frame(tick)` |
 | `toast` | `ToastState` | `.push(msg, level)`, `.messages`, `.cleanup(tick)` |
-| `form` | `FormState` | `.fields: Vec<FormField>`, `.submit_label` |
-| `form_field` | `FormField` | `.label`, `.value`, `.placeholder`, `.validator`, `.error` |
+| `form` | `FormState` | `.fields: Vec<FormField>`, `.submitted: bool` |
+| `form_field` | `FormField` | `.label`, `.input: TextInputState`, `.error` |
 | `screen` | `ScreenState` | `.current()`, `.push(name)`, `.pop()`, `::new(initial)` |
 | (modes) | `ModeState` | `.active_mode()`, `.switch_mode(name)`, `.screens_mut()`, `::new(mode, screen)` |
-| `streaming_text` | `StreamingTextState` | `.push(text)`, `.text()`, `.done` |
-| `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.done` |
-| `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: Option<ApprovalAction>` |
-| `rich_log` | `RichLogState` | `.push(line, style)`, `.lines`, `.scroll` |
+| `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
+| `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
+| `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
+| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries`, `.auto_scroll` |
 | `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
 
 ---

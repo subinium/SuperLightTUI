@@ -36,6 +36,9 @@ SuperLightTUI는 Rust를 위한 immediate-mode TUI 라이브러리로, public gr
     <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 마우스 커서 주변으로 텍스트가 실시간 재배치됩니다<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+  </tr>
 </table>
 
 ## 빠른 시작
@@ -124,6 +127,36 @@ AI 보조 워크플로에서는 문서와 예제만으로도 public grammar를 �
 SLT는 Rust의 타입 안정성을 유지하면서 빠르게 터미널 앱을 만들고 싶을 때 특히 잘 맞습니다.
 반대로 retained component tree가 중심이거나 GUI-first 툴킷이 필요하다면 다른 선택지가 더 잘 맞을 수 있습니다.
 
+## 렌더링 파이프라인
+
+SLT의 렌더링 파이프라인 덕분에 문법이 작게 유지됩니다.
+여러분의 코드는 첫 단계만 담당하고, 나머지는 엔진이 처리합니다.
+
+```mermaid
+graph LR
+    subgraph your_code ["Your Code"]
+        A["Closure"]
+    end
+    subgraph engine ["SLT Engine"]
+        B[Commands] --> C[Build Tree] --> D[Flexbox] --> E[Collect] --> F[Render] --> G["Diff + Flush"]
+    end
+    A -->|"records intent"| B
+    G -.->|"prev-frame feedback"| A
+```
+
+`ui.*()` 호출은 커맨드를 flat list에 기록합니다 — 트리 구성도, 레이아웃 계산도 없습니다.
+엔진이 이 커맨드를 파이프라인에 통과시킵니다: 레이아웃 트리 생성, flexbox 계산, 히트 영역과 포커스 그룹을 단일 DFS로 수집, back buffer에 셀 렌더링, 이전 프레임과 diff 후 변경분만 flush.
+
+이 아키텍처가 문법을 단순하게 만드는 이유입니다:
+
+- **의식 절차가 없습니다.** Immediate-mode이므로 `App` 트레이트, `Model`/`Message`/`Update`/`View`가 필요 없습니다. 클로저가 전체 UI이고, 상태는 일반 Rust 변수, 제어 흐름은 `if`/`for`입니다.
+- **레이아웃이 보이지 않습니다.** `ui.col(|ui| { ... })`는 "open column" 커맨드를 기록합니다. 엔진이 트리를 빌드하고 flexbox를 실행합니다 — `LayoutNode`는 노출되지 않습니다.
+- **성능이 자동입니다.** 더블 버퍼가 프레임 간 셀을 비교하고 변경된 ANSI 속성만 출력합니다. 매 프레임 전체를 다시 그리지만 엔진이 빠르게 처리합니다. 수동 dirty tracking이 필요 없습니다.
+- **상호작용이 자동 연결됩니다.** `ui.button("Save")`만으로 hover, click, focus가 제공됩니다. `collect_all()`이 단일 DFS로 모든 상호작용 데이터를 수집하며, 기존 7개 트리 순회를 대체합니다.
+- **동기적 피드백.** 상호작용은 이전 프레임의 레이아웃 위치를 사용합니다(60 FPS에서 감지 불가). 콜백도 async 레이아웃 쿼리도 없이 코드가 선형으로 유지됩니다.
+
+전체 8단계 라이프사이클은 [아키텍처 가이드]를 참고하세요.
+
 ## 자주 쓰는 API
 
 ```rust
@@ -196,6 +229,7 @@ ui.canvas(40, 10, |cv| {
 | `demo_cli` | `cargo run --example demo_cli` | CLI 도구 레이아웃 |
 | `demo_infoviz` | `cargo run --example demo_infoviz` | 차트와 데이터 시각화 |
 | `demo_game` | `cargo run --example demo_game` | immediate-mode 상호작용 |
+| `demo_design_system` | `cargo run --example demo_design_system` | 디자인 토큰, 테마, 스타일 상속 |
 | `inline` | `cargo run --example inline` | 일반 프롬프트 아래 inline 렌더링 |
 | `async_demo` | `cargo run --example async_demo --features async` | 백그라운드 메시지 |
 

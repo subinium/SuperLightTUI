@@ -20,7 +20,7 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
 | `serde` | Serialize/Deserialize for style, theme, and layout-related public types |
 | `image` | Image loading helpers for terminal image widgets |
 | `qrcode` | `ui.qr_code(...)` |
-| `syntax` | Tree-sitter syntax highlighting support |
+| `syntax` | Convenience: enables all per-language `syntax-*` bundles below |
 | `syntax-*` | Per-language syntax bundles such as `syntax-rust`, `syntax-python`, `syntax-typescript` |
 | `kitty-compress` | zlib compression for Kitty image protocol uploads |
 | `full` | Convenience bundle: enables `crossterm`, `async`, `serde`, `image`, `qrcode`, and `kitty-compress` (does **not** include `syntax` — add language bundles separately) |

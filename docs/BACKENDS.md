@@ -211,8 +211,8 @@ Use it when the TUI is a helper surface rather than the whole app.
 use slt::StaticOutput;
 
 let mut output = StaticOutput::new();
-output.push("Build started...");
-output.push("Fetching data...");
+output.println("Build started...");
+output.println("Fetching data...");
 ```
 
 Use it when you want:

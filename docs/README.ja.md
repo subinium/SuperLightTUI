@@ -36,6 +36,9 @@ SuperLightTUI は、公開される文法を意図的に小さく保った Rust 
     <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — マウスカーソルの周りでテキストがリアルタイムに再配置されます<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+  </tr>
 </table>
 
 ## クイックスタート
@@ -124,6 +127,36 @@ AI 支援ワークフローにとっては、ドキュメントとサンプル�
 SLT は、Rust の型安全性やバックエンドの escape hatch を保ったまま、ターミナルアプリを素早く作りたいときに特に向いています。
 一方で、retained component tree を主軸にしたい場合や GUI-first のツールキットが欲しい場合は、別のライブラリのほうが適しているかもしれません。
 
+## レンダリングの仕組み
+
+SLT のレンダリングパイプラインが、文法を小さく保てる理由です。
+あなたのコードが触れるのは最初のステージだけ — 残りはエンジンが処理します。
+
+```mermaid
+graph LR
+    subgraph your_code ["Your Code"]
+        A["Closure"]
+    end
+    subgraph engine ["SLT Engine"]
+        B[Commands] --> C[Build Tree] --> D[Flexbox] --> E[Collect] --> F[Render] --> G["Diff + Flush"]
+    end
+    A -->|"records intent"| B
+    G -.->|"prev-frame feedback"| A
+```
+
+`ui.*()` の呼び出しはコマンドをフラットリストに記録するだけ — ツリー構築もレイアウト計算もしません。
+エンジンがそれらのコマンドをパイプラインに通します: レイアウトツリー構築、flexbox 計算、ヒット領域とフォーカスグループを単一 DFS で収集、バックバッファへのセル描画、前フレームとの diff、変更分だけ flush。
+
+このアーキテクチャが文法をシンプルにできる理由です:
+
+- **儀式がありません。** Immediate-mode なので `App` トレイト、`Model`/`Message`/`Update`/`View` は不要です。クロージャが UI そのもの。状態は普通の Rust 変数、制御フローは `if`/`for` です。
+- **レイアウトが見えません。** `ui.col(|ui| { ... })` は「カラムを開く」コマンドを記録します。エンジンがツリーを構築し flexbox を実行 — `LayoutNode` は露出しません。
+- **パフォーマンスが自動です。** ダブルバッファがフレーム間でセルを比較し、変更された ANSI 属性だけを出力します。毎フレーム全体を再描画しても、エンジンが高速に処理します。手動の dirty tracking は不要です。
+- **インタラクションが自動接続されます。** `ui.button("Save")` だけで hover、click、focus が無料で得られます。`collect_all()` が単一 DFS ですべてのインタラクションデータを収集し、7 つの個別ツリー走査を置き換えました。
+- **同期的フィードバック。** インタラクションは前フレームのレイアウト位置を使います（60 FPS では知覚不可能）。コールバックも async レイアウトクエリも不要 — コードはリニアなままです。
+
+完全な 8 ステージのライフサイクルは [アーキテクチャ] を参照してください。
+
 ## よく使う API
 
 ```rust
@@ -196,6 +229,7 @@ ui.canvas(40, 10, |cv| {
 | `demo_cli` | `cargo run --example demo_cli` | CLI ツールのレイアウト |
 | `demo_infoviz` | `cargo run --example demo_infoviz` | チャートとデータ可視化 |
 | `demo_game` | `cargo run --example demo_game` | immediate-mode のインタラクション |
+| `demo_design_system` | `cargo run --example demo_design_system` | デザイントークン、テーマ、スタイル継承 |
 | `inline` | `cargo run --example inline` | 通常のプロンプトの下に inline 描画 |
 | `async_demo` | `cargo run --example async_demo --features async` | バックグラウンドメッセージ |
 

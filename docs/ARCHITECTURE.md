@@ -50,11 +50,11 @@ src/
 │
 ├── widgets.rs                  # Facade for widget state types
 ├── widgets/
-│   ├── input.rs                # StaticOutput, TextInputState, FormField, FormState, TextareaState, SpinnerState
+│   ├── input.rs                # StaticOutput, TextInputState, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState
 │   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, ScrollState
-│   ├── feedback.rs             # RichLogState, CalendarState, Toast types, ButtonVariant, Trend
+│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend
 │   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
-│   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, tool approval types, ContextItem
+│   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
 │
 ├── layout.rs                   # Thin facade re-exporting layout kernels
 ├── layout/
@@ -62,7 +62,7 @@ src/
 │   ├── tree.rs                 # LayoutNode, NodeKind, build_tree(), wrap helpers
 │   ├── collect.rs              # collect_all(), FrameData, raw-draw collection helpers
 │   ├── flexbox.rs              # compute(), layout_row(), layout_column(), gap/grow/shrink resolution
-│   ├── render.rs               # render(), render_inner(), render_border(), clipping, viewport culling
+│   ├── render.rs               # render(), render_inner(), render_container_border(), clipping, viewport culling
 │   └── tests.rs                # Layout-focused kernel tests
 │
 ├── style.rs                    # Style struct, Border, Padding, Margin, Constraints, Modifiers, Align, Justify
@@ -87,8 +87,8 @@ src/
 │
 ├── chart.rs                    # ChartBuilder, ChartConfig, Dataset, Marker
 ├── chart/
-│   ├── render.rs               # Chart rendering, histogram
-│   ├── axis.rs                 # Axis struct, label formatting
+│   ├── render.rs               # Chart rendering
+│   ├── axis.rs                 # TickSpec, tick generation and formatting helpers
 │   ├── bar.rs                  # Bar chart rendering
 │   ├── grid.rs                 # Grid lines
 │   └── braille.rs              # Braille dot patterns for line/scatter charts
@@ -143,7 +143,7 @@ Every frame follows this exact sequence:
    └── This single pass replaced multiple feedback traversals
 
 7. RENDER + DEFERRED DRAW
-   └── render() → render_inner() → render_border()
+   └── render() → render_inner() → render_container_border()
    └── Writes Cell values to the back buffer
    └── Clip stack ensures children don't overflow parent bounds
    └── Viewport culling: nodes fully outside the viewport are skipped

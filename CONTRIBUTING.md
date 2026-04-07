@@ -133,6 +133,6 @@ The release workflow (`.github/workflows/release.yml`) will:
 
 ## Dependencies
 
-Core: `unicode-width`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, tree-sitter syntax features.
+Core: `unicode-width`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, `flate2` (kitty-compress), tree-sitter syntax features.
 
 Do not add new dependencies without discussion. See [`docs/DESIGN_PRINCIPLES.md` — Dependencies](docs/DESIGN_PRINCIPLES.md#9-dependencies).
