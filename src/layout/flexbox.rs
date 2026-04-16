@@ -207,11 +207,9 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
     let mut child_widths: Vec<u32> = Vec::with_capacity(node.children.len());
     for (i, child) in node.children.iter().enumerate() {
         let w = if child.grow > 0 && total_grow > 0 {
-            let share = if remaining_grow == 0 {
-                0
-            } else {
-                flex_space * child.grow as u32 / remaining_grow
-            };
+            let share = (flex_space * child.grow as u32)
+                .checked_div(remaining_grow)
+                .unwrap_or(0);
             flex_space = flex_space.saturating_sub(share);
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
@@ -294,11 +292,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let mut child_heights: Vec<u32> = Vec::with_capacity(node.children.len());
     for (i, child) in node.children.iter().enumerate() {
         let h = if child.grow > 0 && total_grow > 0 {
-            let share = if remaining_grow == 0 {
-                0
-            } else {
-                flex_space * child.grow as u32 / remaining_grow
-            };
+            let share = (flex_space * child.grow as u32)
+                .checked_div(remaining_grow)
+                .unwrap_or(0);
             flex_space = flex_space.saturating_sub(share);
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share

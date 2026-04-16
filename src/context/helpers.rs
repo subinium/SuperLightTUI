@@ -59,21 +59,13 @@ pub(crate) fn handle_vertical_nav(
     key_code: KeyCode,
 ) -> bool {
     match key_code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if *selected > 0 {
-                *selected -= 1;
-                true
-            } else {
-                false
-            }
+        KeyCode::Up | KeyCode::Char('k') if *selected > 0 => {
+            *selected -= 1;
+            true
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if *selected < max_index {
-                *selected += 1;
-                true
-            } else {
-                false
-            }
+        KeyCode::Down | KeyCode::Char('j') if *selected < max_index => {
+            *selected += 1;
+            true
         }
         _ => false,
     }
