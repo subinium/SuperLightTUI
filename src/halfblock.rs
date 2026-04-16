@@ -33,12 +33,23 @@ impl HalfBlockImage {
     /// The image is resized to `width x (height * 2)` pixels using Lanczos3
     /// filtering, then each pair of vertically adjacent pixels is packed
     /// into one terminal cell.
+    ///
+    /// If `width * height * 2` would overflow or exceed the crate-internal
+    /// image pixel cap (~16M pixels), returns an empty image rather than
+    /// panicking or allocating gigabytes. Legitimate terminal-scale inputs
+    /// are far below this cap.
     pub fn from_dynamic(img: &DynamicImage, width: u32, height: u32) -> Self {
-        let pixel_height = height * 2;
+        let Some(pixel_height) = height.checked_mul(2) else {
+            return Self::empty(width, height);
+        };
+        let pixels_total = u64::from(width).saturating_mul(u64::from(pixel_height));
+        if pixels_total == 0 || pixels_total > crate::buffer::MAX_IMAGE_PIXELS {
+            return Self::empty(width, height);
+        }
         let resized = img.resize_exact(width, pixel_height, image::imageops::FilterType::Lanczos3);
         let rgba = resized.to_rgba8();
 
-        let mut pixels = Vec::with_capacity((width * height) as usize);
+        let mut pixels = Vec::with_capacity((width as usize) * (height as usize));
         for row in 0..height {
             for col in 0..width {
                 let upper_y = row * 2;
@@ -65,11 +76,21 @@ impl HalfBlockImage {
     /// Create a half-block image from raw RGB pixel data.
     ///
     /// `rgb_data` must contain `width x pixel_height x 3` bytes in row-major
-    /// RGB order, where `pixel_height = height * 2`.
+    /// RGB order, where `pixel_height = height * 2`. Oversized inputs that
+    /// would overflow or exceed the crate-internal image pixel cap are
+    /// returned as an empty image instead of allocating.
     pub fn from_rgb(rgb_data: &[u8], width: u32, height: u32) -> Self {
-        let pixel_height = height * 2;
-        let stride = (width * 3) as usize;
-        let mut pixels = Vec::with_capacity((width * height) as usize);
+        let Some(pixel_height) = height.checked_mul(2) else {
+            return Self::empty(width, height);
+        };
+        let pixels_total = u64::from(width).saturating_mul(u64::from(pixel_height));
+        if pixels_total == 0 || pixels_total > crate::buffer::MAX_IMAGE_PIXELS {
+            return Self::empty(width, height);
+        }
+        let Some(stride) = (width as usize).checked_mul(3) else {
+            return Self::empty(width, height);
+        };
+        let mut pixels = Vec::with_capacity((width as usize) * (height as usize));
 
         for row in 0..height {
             for col in 0..width {
@@ -108,5 +129,32 @@ impl HalfBlockImage {
             height,
             pixels,
         }
+    }
+
+    fn empty(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            pixels: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_rgb_rejects_oversized_dimensions() {
+        // 10_000 × 10_000 × 2 = 2×10^8 pixels — well above MAX_IMAGE_PIXELS.
+        // Must not allocate gigabytes; must return an empty image.
+        let img = HalfBlockImage::from_rgb(&[], 10_000, 10_000);
+        assert!(img.pixels.is_empty());
+    }
+
+    #[test]
+    fn from_rgb_rejects_overflowing_height() {
+        let img = HalfBlockImage::from_rgb(&[], 1, u32::MAX);
+        assert!(img.pixels.is_empty());
     }
 }

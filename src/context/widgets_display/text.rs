@@ -81,38 +81,6 @@ impl Context {
         self
     }
 
-    /// Render a text element with word-boundary wrapping.
-    ///
-    /// Long lines are broken at word boundaries to fit the container width.
-    /// Style chaining works the same as [`Context::text`].
-    ///
-    /// **Prefer** `ui.text("...").wrap()` — this method exists for convenience
-    /// but the chaining form is more consistent with the rest of the API.
-    #[deprecated(since = "0.15.4", note = "use ui.text(s).wrap() instead")]
-    pub fn text_wrap(&mut self, s: impl Into<String>) -> &mut Self {
-        let content = s.into();
-        let default_fg = self
-            .rollback
-            .text_color_stack
-            .iter()
-            .rev()
-            .find_map(|c| *c)
-            .unwrap_or(self.theme.text);
-        self.commands.push(Command::Text {
-            content,
-            cursor_offset: None,
-            style: Style::new().fg(default_fg),
-            grow: 0,
-            align: Align::Start,
-            wrap: true,
-            truncate: false,
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-        });
-        self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
-    }
-
     /// Render an elapsed time display.
     ///
     /// Formats as `HH:MM:SS.CC` when hours are non-zero, otherwise `MM:SS.CC`.

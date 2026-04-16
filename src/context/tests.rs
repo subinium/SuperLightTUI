@@ -468,7 +468,7 @@ fn grid_with_fixed_columns_emit_constraints() {
     let mut state = FrameState::default();
     let mut ctx = Context::new(Vec::new(), 80, 24, &mut state, Theme::dark());
 
-    ctx.grid_with(
+    let _ = ctx.grid_with(
         &[GridColumn::Fixed(10), GridColumn::Grow(2), GridColumn::Auto],
         |ui| {
             ui.text("A");

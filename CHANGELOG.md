@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-04-17
+
+### Security
+
+- **Terminal escape injection prevention** — `Buffer::set_string` / `set_string_linked` now replace C0 (`0x00–0x1F`), DEL (`0x7F`), and C1 (`0x80–0x9F`) control bytes with `U+FFFD` before writing into cells. Previously a zero-width control character pushed into `cell.symbol` was emitted verbatim at flush time, letting attacker-controlled strings (chat logs, file names, paste buffers) break out of their cells and execute arbitrary terminal commands — cursor moves, OSC 52 clipboard hijack, title spoof, OSC 8 link spoof. CVE-2003-0063-class bug closed.
+- **OSC 8 hyperlink URL sanitization** — `sanitize_osc8_url()` rejects URLs containing control bytes, BEL, ESC, or exceeding 2 KiB. Applied at write time (`set_string_linked`) and at flush time (defense in depth for direct `Cell::hyperlink` writes). Prevents URL-borne OSC injection (`https://example.com\x07` trailer attacks).
+- **Bracketed-paste DoS hardening** — paste payloads are capped at 1 MiB at `Event::Paste` construction; over-long payloads are truncated on a char boundary with an ellipsis. `TextInputState` insert loop is now O(n) (cached `char_count`) instead of O(n²) (`chars().count()` per inserted character) — a 1 GB paste previously hung for minutes. Pastes into text inputs also strip control bytes to preserve the no-newline invariant.
+- **Image dimension bounds** — `HalfBlockImage::{from_dynamic, from_rgb}`, `normalize_rgba`, and `encode_sixel` reject inputs whose `width × height` exceeds `MAX_IMAGE_PIXELS` (16_777_216, ≈ 4096×4096). Prevents multi-GiB allocations from hostile inputs and fixes 32-bit overflow on WASM targets.
+- **Cell symbol byte cap** — zero-width combining append into a cell's `symbol` now caps at `MAX_CELL_SYMBOL_BYTES` (32). Blocks the "a million combining marks balloon one cell" pattern.
+
+### Features
+
+- **`ColorDepth::NoColor`** — new variant respecting [`NO_COLOR`](https://no-color.org). `ColorDepth::detect()` returns `NoColor` when the `NO_COLOR` env var is set to any non-empty value; every color downsamples to `Color::Reset` and no SGR color codes are emitted.
+- **Focus-change events independent of mouse** — `FocusGained` / `FocusLost` are enabled on every terminal session, not only when `RunConfig::mouse(true)`. Keyboard-only apps that pause animations or clear hover state on window blur get those events for free. Matches modern convention (zellij, helix, yazi).
+- **`Buffer::try_get` / `try_get_mut`** — non-panicking counterparts to `get` / `get_mut`, returning `Option<&Cell>`. Use inside `draw()` closures where coordinates may come from mouse input or scroll offsets.
+- **`ModeState::try_switch_mode`** — returns `bool` instead of panicking when the mode has not been registered. Panicking `switch_mode` stays for ergonomic use cases.
+- **`ui.scroll_col` / `ui.scroll_row`** — shortcut for the `scrollable(state).grow(1).col(f)` pattern that appeared verbatim in 6+ examples.
+- **`ContainerBuilder::draw_with<D: 'static>`** — passes owned per-frame data through to the deferred raw-draw closure as a borrow. Cleaner than manually `move`ing a snapshot binding into `draw()`.
+- **`form_submit` rendered as `ButtonVariant::Primary`** — distinguishes the submit affordance from incidental buttons in the same form.
+- **Snapshot testing docs** — `docs/TESTING.md` now has a dedicated "Snapshot testing with `insta`" section pointing at `tests/snapshots.rs` for ~10 live examples.
+
+### Performance
+
+- `TextInputState` paste path is O(n) instead of O(n²). At 1 MiB paste length this is the difference between an instant update and a multi-second hang.
+- Paste memory cap (1 MiB) bounds the event queue under hostile paste floods.
+
+### Breaking Changes
+
+- **`Context::text_wrap()` removed** — deprecated since 0.15.4. Use `ui.text(s).wrap()`.
+- **`Context::bar_chart_styled()` removed** — deprecated since 0.16.1. Use `ui.bar_chart_with(...)`.
+- **Thinner crate-root re-exports** — the following are no longer at `slt::*`; import from `slt::anim::*` / `slt::chart::*` instead:
+  - Easing: `ease_in_cubic`, `ease_in_out_cubic`, `ease_in_out_quad`, `ease_in_quad`, `ease_linear`, `ease_out_bounce`, `ease_out_cubic`, `ease_out_elastic`, `ease_out_quad`, `lerp`
+  - Chart internals: `ChartRenderer`, `RenderedLine`, `ColorSpan`, `DatasetEntry`, `HistogramBuilder`, `GraphType`, `Axis`
+  - All in-tree examples and docs already used the namespaced paths.
+- `ColorDepth` gained a new variant (`NoColor`). Because the enum is `#[non_exhaustive]`, external pattern-matches already required a wildcard arm and should not break.
+
+### Cleanup
+
+- Removed dead debug markers `draw_debug_padding_markers` / `draw_debug_margin_markers` (`#[allow(dead_code)]` with zero call sites).
+- Removed stale `bar_chart_styled` doc references in `docs/WIDGETS.md` and `widgets_viz.rs`.
+
+### Tests
+
+- Added 8 targeted security and API tests: control-char replacement in `set_string`, zero-width BEL rejection, OSC 8 URL validation, combining-char byte cap, `Buffer::try_get` bounds, `ModeState::try_switch_mode` behavior, image dimension rejection in `HalfBlockImage::from_rgb` and `encode_sixel`, `NoColor` downsampling. 232 lib tests + 252 snapshot tests + doctests all green.
+
 ## [0.17.1] — 2026-04-05
 
 ### Features

@@ -197,7 +197,7 @@ All return `Response`.
 
 | Method | Description |
 |---|---|
-| `bar_chart(data, max_width)` | Horizontal bar chart from `&[(&str, f64)]`. Variants: `bar_chart_styled(bars, max_width, direction)`, `bar_chart_with(bars, configure, max_size)` |
+| `bar_chart(data, max_width)` | Horizontal bar chart from `&[(&str, f64)]`. Variant: `bar_chart_with(bars, configure, max_size)` for per-bar colors and layout options |
 | `bar_chart_grouped(groups, max_width)` | Grouped bar chart from `&[BarGroup]`. Variant: `bar_chart_grouped_with(groups, configure, max_size)` |
 | `sparkline(data, width)` | Inline sparkline from `&[f64]`. Variant: `sparkline_styled(data, width)` with per-point `Option<Color>` |
 | `line_chart(data, width, height)` | Line chart. Variant: `line_chart_colored(...)` |
@@ -473,7 +473,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets_interactive/tree_widgets.rs` | `tree`, `directory_tree` |
 | `src/context/widgets_interactive/rich_markdown.rs` | `markdown`, `virtual_list`, `command_palette`, `rich_log`, `key_seq` |
 | `src/context/widgets_interactive/events.rs` | Key/mouse input, clipboard, theme, environment queries, `help`, `help_colored` |
-| `src/context/widgets_viz.rs` | `bar_chart`, `bar_chart_styled`, `bar_chart_with`, `bar_chart_grouped`, `bar_chart_stacked`, `sparkline`, `candlestick`, `candlestick_hd`, `heatmap`, `heatmap_halfblock`, `treemap`, `histogram`, `chart`, `scatter`, `canvas`, `qr_code` |
+| `src/context/widgets_viz.rs` | `bar_chart`, `bar_chart_with`, `bar_chart_grouped`, `bar_chart_stacked`, `sparkline`, `candlestick`, `candlestick_hd`, `heatmap`, `heatmap_halfblock`, `treemap`, `histogram`, `chart`, `scatter`, `canvas`, `qr_code` |
 | `src/context/runtime.rs` | `use_state`, `use_memo`, `register_focusable`, `widget`, `error_boundary`, `notify`, `light_dark`, focus/scroll management |
 | `src/context/container.rs` | `ContainerBuilder`, `CanvasContext` |
 | `src/context/state.rs` | `Response`, `State<T>` |

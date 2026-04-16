@@ -438,6 +438,48 @@ impl Context {
         self.container().scroll_offset(state.offset as u32)
     }
 
+    /// Scrollable column container — shortcut for
+    /// `scrollable(state).grow(1).col(f)`.
+    ///
+    /// This is the form used by nearly every scrollable view: a vertical
+    /// list that fills its parent and wheels through its own content. Use
+    /// the explicit [`Context::scrollable`] builder when you need custom
+    /// `grow`, borders, padding, or a scrollbar alongside.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ScrollState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut scroll = ScrollState::new();
+    /// ui.scroll_col(&mut scroll, |ui| {
+    ///     for i in 0..100 {
+    ///         ui.text(format!("Line {i}"));
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn scroll_col(
+        &mut self,
+        state: &mut ScrollState,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
+        self.scrollable(state).grow(1).col(f)
+    }
+
+    /// Scrollable row container — shortcut for
+    /// `scrollable(state).grow(1).row(f)`.
+    ///
+    /// Useful for horizontally-scrolling timelines, kanban boards, and
+    /// similar wide layouts.
+    pub fn scroll_row(
+        &mut self,
+        state: &mut ScrollState,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
+        self.scrollable(state).grow(1).row(f)
+    }
+
     /// Render a scrollbar track for a [`ScrollState`].
     ///
     /// Displays a track (`│`) with a proportional thumb (`█`). The thumb size
@@ -629,7 +671,12 @@ impl Context {
 
     /// Render a form that groups input fields vertically.
     ///
-    /// Use [`Context::form_field`] inside the closure to render each field.
+    /// Wraps the fields in a column container and forwards the form state
+    /// to the closure. Use [`Context::form_field`] inside the closure to
+    /// render each field with label + input + error display.
+    ///
+    /// Submission is driven by [`Context::form_submit`]; validation is
+    /// triggered explicitly via [`FormState::validate`].
     pub fn form(
         &mut self,
         state: &mut FormState,
@@ -655,10 +702,15 @@ impl Context {
         self
     }
 
-    /// Render a submit button.
+    /// Render a primary-styled submit button.
     ///
-    /// Returns `true` when the button is clicked or activated.
+    /// Distinguishes the submit affordance from incidental buttons in the
+    /// same form by rendering in the theme's primary color (via
+    /// [`ButtonVariant::Primary`]). Returns `true` in `.clicked` when the
+    /// user clicks it, presses Enter while focused, or activates it with
+    /// Space. Pair with [`FormState::validate`] to gate submission on
+    /// all fields being valid.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
-        self.button(label)
+        self.button_with(label, ButtonVariant::Primary)
     }
 }

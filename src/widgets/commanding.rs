@@ -390,7 +390,8 @@ impl ModeState {
 
     /// Switch to a different mode. The mode must have been added with [`Self::add_mode`].
     ///
-    /// Panics if the mode does not exist.
+    /// Panics if the mode does not exist. For a non-panicking variant that
+    /// reports success, use [`Self::try_switch_mode`].
     pub fn switch_mode(&mut self, mode: impl Into<String>) {
         let mode = mode.into();
         assert!(
@@ -399,6 +400,22 @@ impl ModeState {
             mode
         );
         self.active = mode;
+    }
+
+    /// Switch modes, returning `true` when the mode exists and the switch
+    /// happened, or `false` when the mode has not been registered via
+    /// [`Self::add_mode`].
+    ///
+    /// Prefer this over [`Self::switch_mode`] when the mode name comes from
+    /// user input, key bindings, or anywhere the value could be unexpected
+    /// at runtime — an unknown mode should not crash the host application.
+    pub fn try_switch_mode(&mut self, mode: impl Into<String>) -> bool {
+        let mode = mode.into();
+        if !self.modes.contains_key(&mode) {
+            return false;
+        }
+        self.active = mode;
+        true
     }
 
     /// Return the active mode name.
@@ -418,6 +435,22 @@ impl ModeState {
         self.modes
             .get_mut(&self.active)
             .expect("active mode must exist")
+    }
+}
+
+#[cfg(test)]
+mod mode_state_tests {
+    use super::ModeState;
+
+    #[test]
+    fn try_switch_mode_returns_false_for_unknown_mode() {
+        let mut modes = ModeState::new("app", "home");
+        modes.add_mode("settings", "general");
+        assert!(modes.try_switch_mode("settings"));
+        assert_eq!(modes.active_mode(), "settings");
+        assert!(!modes.try_switch_mode("nonexistent"));
+        // Active mode must not change when the switch is rejected.
+        assert_eq!(modes.active_mode(), "settings");
     }
 }
 

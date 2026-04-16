@@ -404,7 +404,16 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
 }
 
 fn normalize_rgba(data: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let expected = (width as usize) * (height as usize) * 4;
+    // Guard against overflow and resource exhaustion from attacker-controlled
+    // dimensions. Returns an empty buffer for out-of-range inputs; the image
+    // widgets treat an empty buffer as a no-op.
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if pixels == 0 || pixels > crate::buffer::MAX_IMAGE_PIXELS {
+        return Vec::new();
+    }
+    let Some(expected) = (pixels as usize).checked_mul(4) else {
+        return Vec::new();
+    };
     if data.len() >= expected {
         return data[..expected].to_vec();
     }

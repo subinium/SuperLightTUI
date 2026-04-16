@@ -1192,6 +1192,47 @@ impl<'a> ContainerBuilder<'a> {
         });
     }
 
+    /// Like [`draw`](Self::draw), but carries owned per-frame `data` through
+    /// to the deferred closure as a borrow.
+    ///
+    /// Raw-draw closures must be `'static` because they run after layout is
+    /// computed — which normally forces callers to snapshot any borrowed
+    /// state into an owned value before passing it in. `draw_with` makes
+    /// that explicit: hand the snapshot over, borrow it inside the closure.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::{Buffer, Rect, Style};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let points: Vec<(u32, u32)> = (0..20).map(|i| (i, i * 2)).collect();
+    /// ui.container().w(40).h(20).draw_with(points, |buf, rect, points| {
+    ///     for (x, y) in points {
+    ///         if rect.contains(*x, *y) {
+    ///             buf.set_char(*x, *y, '●', Style::new());
+    ///         }
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn draw_with<D: 'static>(
+        self,
+        data: D,
+        f: impl FnOnce(&mut crate::buffer::Buffer, Rect, &D) + 'static,
+    ) {
+        let draw_id = self.ctx.deferred_draws.len();
+        self.ctx
+            .deferred_draws
+            .push(Some(Box::new(move |buf, rect| f(buf, rect, &data))));
+        self.ctx.skip_interaction_slot();
+        self.ctx.commands.push(Command::RawDraw {
+            draw_id,
+            constraints: self.constraints,
+            grow: self.grow,
+            margin: self.margin,
+        });
+    }
+
     /// Custom drawing with click and hover detection.
     ///
     /// Like [`draw`](Self::draw), but the returned [`Response`] reports

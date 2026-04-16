@@ -533,7 +533,22 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
             }))
         }
         crossterm_event::Event::Resize(cols, rows) => Some(Event::Resize(cols as u32, rows as u32)),
-        crossterm_event::Event::Paste(s) => Some(Event::Paste(s)),
+        crossterm_event::Event::Paste(mut s) => {
+            // Defense-in-depth: cap bracketed-paste payload to bound memory and
+            // prevent O(n²) handling in text widgets. 1 MiB is far more than any
+            // reasonable interactive paste; larger payloads are truncated on a
+            // char boundary with an ellipsis so the user sees that it was cut.
+            const MAX_PASTE_BYTES: usize = 1 << 20;
+            if s.len() > MAX_PASTE_BYTES {
+                let mut end = MAX_PASTE_BYTES;
+                while end > 0 && !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                s.truncate(end);
+                s.push('…');
+            }
+            Some(Event::Paste(s))
+        }
         crossterm_event::Event::FocusGained => Some(Event::FocusGained),
         crossterm_event::Event::FocusLost => Some(Event::FocusLost),
     }
