@@ -105,17 +105,17 @@ pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, TestBackend};
-pub use anim::{
-    ease_in_cubic, ease_in_out_cubic, ease_in_out_quad, ease_in_quad, ease_linear, ease_out_bounce,
-    ease_out_cubic, ease_out_elastic, ease_out_quad, lerp, Keyframes, LoopMode, Sequence, Spring,
-    Stagger, Tween,
-};
+// Animation primitives (builder types) are re-exported at crate root for
+// ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
+// live under `slt::anim::*` — they are rarely imported in isolation and
+// keeping them out of the root shrinks the top-level surface.
+pub use anim::{Keyframes, LoopMode, Sequence, Spring, Stagger, Tween};
 pub use buffer::Buffer;
 pub use cell::Cell;
-pub use chart::{
-    Axis, Candle, ChartBuilder, ChartConfig, ChartRenderer, ColorSpan, Dataset, DatasetEntry,
-    GraphType, HistogramBuilder, LegendPosition, Marker, RenderedLine,
-};
+// Chart user-facing types at crate root; internals (`ChartRenderer`,
+// `RenderedLine`, `ColorSpan`, `DatasetEntry`, `HistogramBuilder`,
+// `GraphType`, `Axis`) live under `slt::chart::*`.
+pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
     Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
     Response, State, TreemapItem, Widget,

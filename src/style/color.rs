@@ -199,8 +199,10 @@ impl Color {
     /// - `TrueColor`: returns self unchanged.
     /// - `EightBit`: converts `Rgb` to the nearest `Indexed` color.
     /// - `Basic`: converts `Rgb` and `Indexed` to the nearest named color.
+    /// - `NoColor`: returns [`Color::Reset`] — emit no ANSI color at all.
     ///
-    /// Named colors (`Red`, `Green`, etc.) and `Reset` pass through all depths.
+    /// Named colors (`Red`, `Green`, etc.) and `Reset` pass through at
+    /// depths other than `NoColor`.
     pub fn downsampled(self, depth: ColorDepth) -> Color {
         match depth {
             ColorDepth::TrueColor => self,
@@ -216,6 +218,7 @@ impl Color {
                 }
                 other => other,
             },
+            ColorDepth::NoColor => Color::Reset,
         }
     }
 }
@@ -235,14 +238,47 @@ pub enum ColorDepth {
     EightBit,
     /// 16 basic ANSI colors.
     Basic,
+    /// No color output — every color is downsampled to [`Color::Reset`] and
+    /// the terminal emits no SGR color codes. Selected automatically by
+    /// [`ColorDepth::detect`] when the `NO_COLOR` environment variable is
+    /// set to any non-empty value, per <https://no-color.org>.
+    NoColor,
+}
+
+#[cfg(test)]
+mod color_depth_tests {
+    use super::{Color, ColorDepth};
+
+    #[test]
+    fn no_color_downsamples_everything_to_reset() {
+        assert_eq!(Color::Red.downsampled(ColorDepth::NoColor), Color::Reset);
+        assert_eq!(
+            Color::Rgb(10, 20, 30).downsampled(ColorDepth::NoColor),
+            Color::Reset
+        );
+        assert_eq!(
+            Color::Indexed(44).downsampled(ColorDepth::NoColor),
+            Color::Reset
+        );
+    }
 }
 
 impl ColorDepth {
     /// Detect the terminal's color depth from environment variables.
     ///
-    /// Checks `$COLORTERM` for `truecolor`/`24bit`, then `$TERM` for
-    /// `256color`. Falls back to `Basic` (16 colors) if neither is set.
+    /// Order of precedence:
+    /// 1. `NO_COLOR` (any non-empty value) → [`ColorDepth::NoColor`]
+    /// 2. `COLORTERM=truecolor|24bit` → [`ColorDepth::TrueColor`]
+    /// 3. `TERM` contains `256color` → [`ColorDepth::EightBit`]
+    /// 4. Fallback → [`ColorDepth::Basic`] (16 colors)
     pub fn detect() -> Self {
+        // https://no-color.org — ANY non-empty value disables color.
+        if std::env::var("NO_COLOR")
+            .ok()
+            .is_some_and(|v| !v.is_empty())
+        {
+            return Self::NoColor;
+        }
         if let Ok(ct) = std::env::var("COLORTERM") {
             let ct = ct.to_lowercase();
             if ct == "truecolor" || ct == "24bit" {

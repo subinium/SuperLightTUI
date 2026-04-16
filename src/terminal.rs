@@ -313,8 +313,9 @@ impl TerminalSessionGuard {
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         }
         if self.mouse_enabled {
-            let _ = execute!(stdout, DisableMouseCapture, DisableFocusChange);
+            let _ = execute!(stdout, DisableMouseCapture);
         }
+        let _ = execute!(stdout, DisableFocusChange);
         let _ = write_session_cleanup(stdout, self.mode, inline_reserved);
         let _ = terminal::disable_raw_mode();
     }
@@ -840,7 +841,14 @@ fn flush_buffer_diff(
                 last_style = cell.style;
             }
 
-            let cell_link = cell.hyperlink.as_deref();
+            // Defense-in-depth: `Cell::hyperlink` is a public field that can
+            // be written directly. `set_string_linked` pre-sanitizes, but a
+            // direct write could still smuggle control bytes into the OSC 8
+            // payload. Validate here before flushing to stdout.
+            let cell_link = cell
+                .hyperlink
+                .as_deref()
+                .filter(|u| crate::buffer::sanitize_osc8_url(u).is_some());
             if cell_link != active_link {
                 if let Some(url) = cell_link {
                     queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
@@ -1062,8 +1070,14 @@ fn write_session_enter(stdout: &mut impl Write, session: &TerminalSessionGuard) 
         }
     }
 
+    // Focus-change reporting is independent of mouse capture — callers
+    // routinely pause animations or clear hover state on focus loss even
+    // without mouse support. Enabling it unconditionally matches modern
+    // TUI conventions (zellij, helix, yazi) and the cost is one extra SGR
+    // per session.
+    execute!(stdout, EnableFocusChange)?;
     if session.mouse_enabled {
-        execute!(stdout, EnableMouseCapture, EnableFocusChange)?;
+        execute!(stdout, EnableMouseCapture)?;
     }
     if session.kitty_keyboard {
         use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};

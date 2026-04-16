@@ -12,6 +12,37 @@ use crate::rect::Rect;
 use crate::style::Style;
 use unicode_width::UnicodeWidthChar;
 
+/// Maximum bytes allowed in a single cell's `symbol` field.
+///
+/// A grapheme cluster rarely exceeds ~16 bytes in the wild; anything
+/// longer is typically an attempt to weaponize zero-width combining chars.
+/// This cap bounds the worst case flush cost per cell.
+const MAX_CELL_SYMBOL_BYTES: usize = 32;
+
+/// Hard cap on pixel count processed by image decode/encode paths.
+///
+/// 16_777_216 ≈ 4096×4096 — well above any sane terminal image payload,
+/// but guards 32-bit targets (WASM) from overflow and prevents a
+/// hostile `width`/`height` pair from triggering multi-GiB allocations.
+pub(crate) const MAX_IMAGE_PIXELS: u64 = 16_777_216;
+
+/// Replace terminal-dangerous control characters with `U+FFFD`.
+///
+/// Unfiltered C0 (0x00–0x1F), DEL (0x7F), or C1 (0x80–0x9F) bytes can
+/// break out of cell rendering and inject arbitrary escape sequences
+/// (cursor moves, OSC 52 clipboard, title spoof, etc.) when flushed.
+/// Replacing with the replacement character keeps byte counts sane and
+/// makes the tampering visible.
+#[inline]
+fn sanitize_cell_char(ch: char) -> char {
+    let c = ch as u32;
+    if c < 0x20 || c == 0x7f || (0x80..=0x9f).contains(&c) {
+        '\u{FFFD}'
+    } else {
+        ch
+    }
+}
+
 /// Structured Kitty graphics protocol image placement.
 ///
 /// Stored separately from raw escape sequences so the terminal can manage
@@ -188,7 +219,8 @@ impl Buffer {
 
     /// Return a reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds.
+    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get`] when the
+    /// coordinates may come from untrusted input.
     #[inline]
     pub fn get(&self, x: u32, y: u32) -> &Cell {
         assert!(
@@ -201,7 +233,8 @@ impl Buffer {
 
     /// Return a mutable reference to the cell at `(x, y)`.
     ///
-    /// Panics if `(x, y)` is out of bounds.
+    /// Panics if `(x, y)` is out of bounds. Use [`Buffer::try_get_mut`] when
+    /// the coordinates may come from untrusted input.
     #[inline]
     pub fn get_mut(&mut self, x: u32, y: u32) -> &mut Cell {
         assert!(
@@ -211,6 +244,34 @@ impl Buffer {
         );
         let idx = self.index_of(x, y);
         &mut self.content[idx]
+    }
+
+    /// Return a reference to the cell at `(x, y)`, or `None` if out of bounds.
+    ///
+    /// Non-panicking counterpart to [`Buffer::get`]. Prefer this inside
+    /// `draw()` closures when coordinates are computed from mouse input,
+    /// scroll offsets, or other sources that could land outside the buffer.
+    #[inline]
+    pub fn try_get(&self, x: u32, y: u32) -> Option<&Cell> {
+        if self.in_bounds(x, y) {
+            Some(&self.content[self.index_of(x, y)])
+        } else {
+            None
+        }
+    }
+
+    /// Return a mutable reference to the cell at `(x, y)`, or `None` if out
+    /// of bounds.
+    ///
+    /// Non-panicking counterpart to [`Buffer::get_mut`].
+    #[inline]
+    pub fn try_get_mut(&mut self, x: u32, y: u32) -> Option<&mut Cell> {
+        if self.in_bounds(x, y) {
+            let idx = self.index_of(x, y);
+            Some(&mut self.content[idx])
+        } else {
+            None
+        }
     }
 
     /// Write a string into the buffer starting at `(x, y)`.
@@ -228,6 +289,7 @@ impl Buffer {
             if x >= self.area.right() {
                 break;
             }
+            let ch = sanitize_cell_char(ch);
             let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
             if char_width == 0 {
                 // Append zero-width char (combining mark, ZWJ, variation selector)
@@ -240,7 +302,10 @@ impl Buffer {
                             && y < clip.bottom()
                     });
                     if prev_in_clip {
-                        self.get_mut(x - 1, y).symbol.push(ch);
+                        let prev = self.get_mut(x - 1, y);
+                        if prev.symbol.len() + ch.len_utf8() <= MAX_CELL_SYMBOL_BYTES {
+                            prev.symbol.push(ch);
+                        }
                     }
                 }
                 continue;
@@ -282,11 +347,13 @@ impl Buffer {
             return;
         }
         let clip = self.effective_clip().copied();
-        let link = Some(compact_str::CompactString::new(url));
+        let sanitized_url = sanitize_osc8_url(url);
+        let link = sanitized_url.map(compact_str::CompactString::new);
         for ch in s.chars() {
             if x >= self.area.right() {
                 break;
             }
+            let ch = sanitize_cell_char(ch);
             let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
             if char_width == 0 {
                 if x > self.area.x {
@@ -297,7 +364,10 @@ impl Buffer {
                             && y < clip.bottom()
                     });
                     if prev_in_clip {
-                        self.get_mut(x - 1, y).symbol.push(ch);
+                        let prev = self.get_mut(x - 1, y);
+                        if prev.symbol.len() + ch.len_utf8() <= MAX_CELL_SYMBOL_BYTES {
+                            prev.symbol.push(ch);
+                        }
                     }
                 }
                 continue;
@@ -402,6 +472,36 @@ impl Buffer {
     }
 }
 
+/// Validate an OSC 8 hyperlink URL, returning `Some(url)` if safe to emit.
+///
+/// Rejects URLs containing control bytes, the BEL terminator, or an
+/// embedded ST (`ESC \`). Those would let an attacker-controlled URL
+/// prematurely close the OSC 8 sequence and inject arbitrary follow-up
+/// commands (e.g., OSC 52 clipboard writes). Also caps length at 2048
+/// bytes — longer than any legitimate URL and enough to prevent DoS via
+/// balloon-sized hyperlinks.
+pub(crate) fn sanitize_osc8_url(url: &str) -> Option<String> {
+    const MAX_URL_BYTES: usize = 2048;
+    if url.is_empty() || url.len() > MAX_URL_BYTES {
+        return None;
+    }
+    let bytes = url.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        // Reject all C0 controls (incl. BEL, ESC), DEL, and C1 control range.
+        if b < 0x20 || b == 0x7f {
+            return None;
+        }
+        // Reject raw ESC \ (ST terminator) just in case something sneaked through.
+        if b == 0x1b {
+            return None;
+        }
+        i += 1;
+    }
+    Some(url.to_string())
+}
+
 fn intersect_rects(a: Rect, b: Rect) -> Rect {
     let x = a.x.max(b.x);
     let y = a.y.max(b.y);
@@ -461,5 +561,66 @@ mod tests {
         buf.set_char(0, 0, 'z', Style::new());
 
         assert_eq!(buf.get(0, 0).symbol, "z");
+    }
+
+    #[test]
+    fn set_string_replaces_control_chars_with_replacement() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        // ESC must never land in a cell — a flushed ESC would let the
+        // string escape its cell and execute as a real terminal command.
+        buf.set_string(0, 0, "a\x1bbc", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "a");
+        assert_eq!(buf.get(1, 0).symbol, "\u{FFFD}");
+        assert_eq!(buf.get(2, 0).symbol, "b");
+        assert_eq!(buf.get(3, 0).symbol, "c");
+    }
+
+    #[test]
+    fn zero_width_combining_does_not_append_control_bytes() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_char(0, 0, 'a', Style::new());
+        // BEL is zero-width per unicode_width; the pre-fix code would have
+        // pushed it onto cell(0,0).symbol. After sanitize_cell_char it is
+        // replaced with U+FFFD and then appended (width 1, still fits).
+        buf.set_string(1, 0, "\x07", Style::new());
+        let symbol = buf.get(1, 0).symbol.as_str();
+        assert!(!symbol.contains('\x07'), "BEL leaked into cell symbol");
+    }
+
+    #[test]
+    fn set_string_caps_combining_overflow() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 1));
+        buf.set_char(0, 0, 'a', Style::new());
+        // 200 copies of an ASCII-printable zero-width-ish char would bypass
+        // the byte cap. Use a legitimate zero-width combining character —
+        // U+0301 (combining acute accent) — and confirm the cap kicks in.
+        let combining: String = "\u{0301}".repeat(200);
+        buf.set_string(1, 0, &combining, Style::new());
+        assert!(
+            buf.get(0, 0).symbol.len() <= MAX_CELL_SYMBOL_BYTES,
+            "cell symbol exceeded MAX_CELL_SYMBOL_BYTES cap"
+        );
+    }
+
+    #[test]
+    fn sanitize_osc8_url_rejects_control_chars_and_esc() {
+        assert!(sanitize_osc8_url("https://example.com").is_some());
+        assert!(sanitize_osc8_url("https://example.com?q=1&r=2").is_some());
+        // BEL — terminates OSC, would let follow-up text be interpreted.
+        assert!(sanitize_osc8_url("https://example.com\x07attack").is_none());
+        // ESC — can open ST (ESC \) or another OSC.
+        assert!(sanitize_osc8_url("https://example.com\x1b]52;c;hi\x1b\\").is_none());
+        // Empty / oversize.
+        assert!(sanitize_osc8_url("").is_none());
+        assert!(sanitize_osc8_url(&"a".repeat(2049)).is_none());
+    }
+
+    #[test]
+    fn try_get_out_of_bounds_returns_none() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
+        assert!(buf.try_get(0, 0).is_some());
+        assert!(buf.try_get(2, 0).is_none());
+        assert!(buf.try_get(0, 2).is_none());
+        assert!(buf.try_get_mut(5, 5).is_none());
     }
 }

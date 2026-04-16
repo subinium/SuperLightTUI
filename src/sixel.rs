@@ -6,9 +6,20 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
         return String::new();
     }
 
+    // Guard against oversized or attacker-controlled dimensions: `vec![None;
+    // pixel_count]` at `width=height=65535` would saturate at ~4 GiB. Reject
+    // anything beyond the image pixel cap and let the caller fall back to a
+    // placeholder.
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if pixels == 0 || pixels > crate::buffer::MAX_IMAGE_PIXELS {
+        return String::new();
+    }
+
     let width_usize = width as usize;
     let height_usize = height as usize;
-    let pixel_count = width_usize.saturating_mul(height_usize);
+    let Some(pixel_count) = width_usize.checked_mul(height_usize) else {
+        return String::new();
+    };
     if pixel_count == 0 {
         return String::new();
     }
@@ -266,5 +277,14 @@ mod tests {
         tb.render(|ui| {
             let _ = ui.sixel_image(&rgba, 2, 2, 20, 2);
         });
+    }
+
+    #[test]
+    fn encode_sixel_rejects_oversized_dimensions() {
+        // Would request ~65k × 65k × 1 byte-of-pixel-slot ≈ 4 GiB pre-fix.
+        // After the MAX_IMAGE_PIXELS gate, must return empty without
+        // allocating.
+        let sixel = encode_sixel(&[0u8], 65_535, 65_535, 256);
+        assert!(sixel.is_empty());
     }
 }

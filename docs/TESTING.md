@@ -130,6 +130,50 @@ The most robust pattern is:
 
 Avoid asserting giant whole-screen strings unless the UI is intentionally snapshot-tested.
 
+## Snapshot testing with `insta`
+
+`TestBackend::to_string_trimmed()` returns a deterministic multi-line string
+suitable for snapshot testing with the [`insta`](https://insta.rs) crate.
+SLT itself does not require `insta`, but the in-tree test suite uses it —
+see `tests/snapshots.rs` for ~10 live examples covering text, rows, tables,
+tabs, calendars, lists, and separators.
+
+Add `insta` to your own project's dev-dependencies:
+
+```toml
+[dev-dependencies]
+superlighttui = "0.18"
+insta = "1"
+```
+
+Compare the full buffer against a checked-in snapshot:
+
+```rust,ignore
+use slt::TestBackend;
+
+#[test]
+fn dashboard_snapshot() {
+    let mut tb = TestBackend::new(40, 10);
+    tb.render(|ui| {
+        let _ = ui.container().border(slt::Border::Rounded).p(1).col(|ui| {
+            ui.text("Dashboard").bold();
+            ui.text("42 events");
+        });
+    });
+    insta::assert_snapshot!(tb.to_string_trimmed());
+}
+```
+
+Accept or reject candidate snapshots with `cargo insta review`. Inline
+snapshots (`insta::assert_snapshot!(tb.to_string_trimmed(), @r"...")`) are
+preferred for small fixtures — they keep the expected output next to the
+test and never drift from external `.snap` files.
+
+Snapshot tests pair well with `EventBuilder` for interaction journeys, and
+with focused `assert_contains` / `assert_line` for narrow invariants.
+Prefer small snapshots — one widget or one panel — over full-screen dumps
+that churn on every theme or layout tweak.
+
 ## Testing custom widgets
 
 For custom widgets:

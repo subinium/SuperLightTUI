@@ -7,6 +7,8 @@
 "hel" = "hel"
 "PnL" = "PnL"
 "Pn" = "Pn"
+"flate" = "flate"
+"flate2" = "flate2"
 
 [files]
 extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md", "docs/README.*.md"]

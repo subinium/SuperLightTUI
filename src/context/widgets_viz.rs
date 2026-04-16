@@ -28,7 +28,7 @@ impl Context {
     /// # });
     /// ```
     ///
-    /// For styled bars with per-bar colors, see [`bar_chart_styled`](Self::bar_chart_styled).
+    /// For styled bars with per-bar colors, see [`bar_chart_with`](Self::bar_chart_with).
     pub fn bar_chart(&mut self, data: &[(&str, f64)], max_width: u32) -> Response {
         if data.is_empty() {
             return Response::none();
@@ -105,37 +105,6 @@ impl Context {
         self.rollback.last_text_idx = None;
 
         Response::none()
-    }
-
-    /// Render a styled bar chart with per-bar colors, grouping, and direction control.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::{Bar, Color};
-    /// let bars = vec![
-    ///     Bar::new("Q1", 32.0).color(Color::Cyan),
-    ///     Bar::new("Q2", 46.0).color(Color::Green),
-    ///     Bar::new("Q3", 28.0).color(Color::Yellow),
-    ///     Bar::new("Q4", 54.0).color(Color::Red),
-    /// ];
-    /// ui.bar_chart_styled(&bars, 30, slt::BarDirection::Horizontal);
-    /// # });
-    /// ```
-    #[deprecated(since = "0.16.1", note = "use `bar_chart_with` instead")]
-    pub fn bar_chart_styled(
-        &mut self,
-        bars: &[Bar],
-        max_width: u32,
-        direction: BarDirection,
-    ) -> Response {
-        self.bar_chart_with(
-            bars,
-            |config| {
-                config.direction(direction);
-            },
-            max_width,
-        )
     }
 
     /// Render a bar chart with custom configuration.

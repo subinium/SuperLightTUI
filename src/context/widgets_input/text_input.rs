@@ -141,15 +141,26 @@ impl Context {
                 }
             }
             for (i, text) in self.available_pastes() {
+                // Cache char count once and update incrementally — insert is
+                // O(1) amortized per char, so recomputing via `chars().count()`
+                // inside the loop would be O(n²) on large pastes.
+                let mut char_count = state.value.chars().count();
                 for ch in text.chars() {
+                    // text_input is single-line; drop newlines, tabs, control
+                    // chars, and other bytes that would corrupt rendering or
+                    // trip the no-newline invariant upstream.
+                    if (ch as u32) < 0x20 || ch == '\u{7f}' {
+                        continue;
+                    }
                     if let Some(max) = state.max_length {
-                        if state.value.chars().count() >= max {
+                        if char_count >= max {
                             break;
                         }
                     }
                     let index = byte_index_for_char(&state.value, state.cursor);
                     state.value.insert(index, ch);
                     state.cursor += 1;
+                    char_count += 1;
                 }
                 if !state.suggestions.is_empty() {
                     state.show_suggestions = true;
