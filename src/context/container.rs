@@ -1128,6 +1128,62 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    // ── conditional / grouped builder helpers ───────────────────────
+
+    /// Apply `f` only if `cond` is true. Returns the builder for chaining.
+    ///
+    /// Use this to attach a block of builder modifiers without breaking the
+    /// fluent chain. The closure takes the builder by value and must return
+    /// it (matching the rest of `ContainerBuilder`'s by-value API), so any
+    /// builder method (`.border()`, `.title()`, `.bg()`, etc.) can be chained
+    /// inside.
+    ///
+    /// Zero allocation: the closure is inlined and skipped entirely when
+    /// `cond` is `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Border;
+    /// let highlighted = true;
+    /// ui.container()
+    ///     .pad(1)
+    ///     .with_if(highlighted, |c| c.border(Border::Single).title("Active"))
+    ///     .col(|ui| {
+    ///         ui.text("body");
+    ///     });
+    /// # });
+    /// ```
+    pub fn with_if(self, cond: bool, f: impl FnOnce(Self) -> Self) -> Self {
+        if cond {
+            f(self)
+        } else {
+            self
+        }
+    }
+
+    /// Apply `f` unconditionally. Useful for factoring out a block of builder
+    /// modifier calls while keeping the fluent chain intact.
+    ///
+    /// The closure takes the builder by value and must return it.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Border;
+    /// ui.container()
+    ///     .with(|c| c.border(Border::Rounded).pad(1))
+    ///     .col(|ui| {
+    ///         ui.text("body");
+    ///     });
+    /// # });
+    /// ```
+    pub fn with(self, f: impl FnOnce(Self) -> Self) -> Self {
+        f(self)
+    }
+
     // ── internal ─────────────────────────────────────────────────────
 
     /// Set the vertical scroll offset in rows. Used internally by [`Context::scrollable`].

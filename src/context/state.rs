@@ -1,44 +1,100 @@
 use super::*;
 
+/// Internal discriminator for [`State<T>`] handles.
+///
+/// `Indexed` refers to a slot in `Context::hook_states` (positional, used by
+/// [`Context::use_state`] / [`Context::use_memo`]). `Named` refers to a key in
+/// `Context::named_states` (used by [`Context::use_state_named`]).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum StateKey {
+    Indexed(usize),
+    Named(&'static str),
+}
+
 /// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct State<T> {
-    idx: usize,
+    key: StateKey,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T: 'static> State<T> {
     pub(crate) fn from_idx(idx: usize) -> Self {
         Self {
-            idx,
+            key: StateKey::Indexed(idx),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub(crate) fn from_named(id: &'static str) -> Self {
+        Self {
+            key: StateKey::Named(id),
             _marker: std::marker::PhantomData,
         }
     }
 
     /// Read the current value.
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
-        ui.hook_states[self.idx]
-            .downcast_ref::<T>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "use_state type mismatch at hook index {} — expected {}",
-                    self.idx,
-                    std::any::type_name::<T>()
-                )
-            })
+        match self.key {
+            StateKey::Indexed(idx) => {
+                ui.hook_states[idx].downcast_ref::<T>().unwrap_or_else(|| {
+                    panic!(
+                        "use_state type mismatch at hook index {} — expected {}",
+                        idx,
+                        std::any::type_name::<T>()
+                    )
+                })
+            }
+            StateKey::Named(id) => ui
+                .named_states
+                .get(id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_named: no entry for id {:?} — was use_state_named called?",
+                        id
+                    )
+                })
+                .downcast_ref::<T>()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_named type mismatch for id {:?} — expected {}",
+                        id,
+                        std::any::type_name::<T>()
+                    )
+                }),
+        }
     }
 
     /// Mutably access the current value.
     pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
-        ui.hook_states[self.idx]
-            .downcast_mut::<T>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "use_state type mismatch at hook index {} — expected {}",
-                    self.idx,
-                    std::any::type_name::<T>()
-                )
-            })
+        match self.key {
+            StateKey::Indexed(idx) => {
+                ui.hook_states[idx].downcast_mut::<T>().unwrap_or_else(|| {
+                    panic!(
+                        "use_state type mismatch at hook index {} — expected {}",
+                        idx,
+                        std::any::type_name::<T>()
+                    )
+                })
+            }
+            StateKey::Named(id) => ui
+                .named_states
+                .get_mut(id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_named: no entry for id {:?} — was use_state_named called?",
+                        id
+                    )
+                })
+                .downcast_mut::<T>()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_named type mismatch for id {:?} — expected {}",
+                        id,
+                        std::any::type_name::<T>()
+                    )
+                }),
+        }
     }
 }
 

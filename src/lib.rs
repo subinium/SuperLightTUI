@@ -517,6 +517,7 @@ pub(crate) struct DiagnosticsState {
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
+    pub named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1003,6 +1004,7 @@ pub(crate) fn run_frame_kernel(
 
     if ctx.should_quit {
         state.hook_states = ctx.hook_states;
+        state.named_states = ctx.named_states;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         #[cfg(feature = "crossterm")]
@@ -1112,6 +1114,7 @@ pub(crate) fn run_frame_kernel(
         "kitty_clip_info_stack must be empty at end of frame"
     );
     state.hook_states = ctx.hook_states;
+    state.named_states = ctx.named_states;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
 

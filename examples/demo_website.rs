@@ -1,7 +1,31 @@
+//! demo_website — showcase example.
+//!
+//! Refactored in v0.19.0 to demonstrate:
+//!   - `ui.provide` / `ui.use_context::<T>()` for app-wide state injection
+//!   - `.with_if(cond, modifier)` for fluent conditional styling
+//!
+//! Mutation-heavy sections still receive explicit `&mut` params for clarity
+//! (hybrid approach): context for reads (`theme`, `tick`), explicit params
+//! for writes (toasts, form state, navigation intents, modal flags).
+
 use slt::{
     Border, ButtonVariant, Color, Context, FormField, FormState, KeyCode, Padding, ScrollState,
     Style, TabsState, Theme, ToastState,
 };
+
+/// App-wide read-only state provided at the root of every frame.
+///
+/// Any helper or `render_*` function can pull these values with
+/// `ui.use_context::<AppState>()`, so they no longer need to thread
+/// `theme: &Theme` / `tick: u64` through their parameter lists.
+///
+/// Both fields are `Copy`, so callers snapshot them into locals before
+/// reaching for `&mut Context` again.
+#[derive(Clone, Copy)]
+struct AppState {
+    theme: Theme,
+    tick: u64,
+}
 
 fn main() -> std::io::Result<()> {
     let mut nav = TabsState::new(vec!["Home", "Docs", "Blog", "Pricing", "Contact"]);
@@ -68,95 +92,115 @@ fn main() -> std::io::Result<()> {
             scroll = ScrollState::new();
         }
 
-        let _ = ui.container().grow(1).col(|ui| {
-            let theme = *ui.theme();
+        // Inject AppState for the rest of the frame. Every render_* helper
+        // below reads `theme`/`tick` via `ui.use_context::<AppState>()`.
+        let app = AppState {
+            theme: *ui.theme(),
+            tick,
+        };
+        ui.provide(app, |ui| {
+            let theme = app.theme;
 
-            // ── navbar ──
-            let _ = ui
-                .container()
-                .bg(theme.surface)
-                .padding(Padding::xy(2, 0))
-                .col(|ui| {
-                    let _ = ui.row(|ui| {
-                        ui.text("SLT").bold().fg(theme.primary);
-                        ui.text(" ").fg(theme.text_dim);
-                        ui.spacer();
-                        let _ = ui.tabs(&mut nav);
-                        ui.styled(
-                            format!(" {} ", theme_names[theme_idx]),
-                            Style::new().fg(theme.text).bg(theme.surface_hover),
-                        );
-                    });
-                });
-
-            let selected = nav.selected;
-            let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
-                match selected {
-                    0 => render_home(
-                        ui,
-                        &mut email,
-                        &mut nav_target,
-                        &mut toasts,
-                        &mut subscribed,
-                        tick,
-                    ),
-                    1 => render_docs(ui),
-                    2 => render_blog(ui, &mut blog_view),
-                    3 => render_pricing(ui, &mut toasts, tick, &mut show_modal, &mut selected_plan),
-                    _ => render_contact(ui, &mut nav_target, &mut contact_form, &mut toasts, tick),
-                }
-
-                // ── footer ──
+            let _ = ui.container().grow(1).col(|ui| {
+                // ── navbar ──
                 let _ = ui
                     .container()
                     .bg(theme.surface)
-                    .padding(Padding::xy(2, 1))
+                    .padding(Padding::xy(2, 0))
                     .col(|ui| {
                         let _ = ui.row(|ui| {
                             ui.text("SLT").bold().fg(theme.primary);
-                            ui.text("Framework").fg(theme.surface_text);
+                            ui.text(" ").fg(theme.text_dim);
                             ui.spacer();
-                            ui.text("MIT License").fg(theme.surface_text);
-                        });
-                        ui.text("");
-                        let _ = ui.row(|ui| {
-                            ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
-                            ui.link("Docs", "https://docs.rs/superlighttui");
-                            ui.link("Discord", "https://discord.gg/slt");
-                            ui.spacer();
-                            ui.text("v0.5.0").fg(theme.surface_text);
+                            let _ = ui.tabs(&mut nav);
+                            ui.styled(
+                                format!(" {} ", theme_names[theme_idx]),
+                                Style::new().fg(theme.text).bg(theme.surface_hover),
+                            );
                         });
                     });
+
+                let selected = nav.selected;
+                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                    match selected {
+                        0 => render_home(
+                            ui,
+                            &mut email,
+                            &mut nav_target,
+                            &mut toasts,
+                            &mut subscribed,
+                        ),
+                        1 => render_docs(ui),
+                        2 => render_blog(ui, &mut blog_view),
+                        3 => render_pricing(ui, &mut toasts, &mut show_modal, &mut selected_plan),
+                        _ => render_contact(ui, &mut nav_target, &mut contact_form, &mut toasts),
+                    }
+
+                    // ── footer ──
+                    let _ = ui
+                        .container()
+                        .bg(theme.surface)
+                        .padding(Padding::xy(2, 1))
+                        .col(|ui| {
+                            let _ = ui.row(|ui| {
+                                ui.text("SLT").bold().fg(theme.primary);
+                                ui.text("Framework").fg(theme.surface_text);
+                                ui.spacer();
+                                ui.text("MIT License").fg(theme.surface_text);
+                            });
+                            ui.text("");
+                            let _ = ui.row(|ui| {
+                                ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
+                                ui.link("Docs", "https://docs.rs/superlighttui");
+                                ui.link("Discord", "https://discord.gg/slt");
+                                ui.spacer();
+                                ui.text("v0.5.0").fg(theme.surface_text);
+                            });
+                        });
+                });
+
+                ui.toast(&mut toasts);
+
+                let _ = ui.help(&[
+                    ("Ctrl+Q", "quit"),
+                    ("Ctrl+T", "theme"),
+                    ("1-5", "tabs"),
+                    ("Esc", "back"),
+                    ("Tab", "focus"),
+                ]);
             });
-
-            ui.toast(&mut toasts);
-
-            let _ = ui.help(&[
-                ("Ctrl+Q", "quit"),
-                ("Ctrl+T", "theme"),
-                ("1-5", "tabs"),
-                ("Esc", "back"),
-                ("Tab", "focus"),
-            ]);
         });
     })
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Markdown-like rendering helpers
+//
+// All of these used to take `theme: &Theme` as a parameter. In v0.19.0 we
+// pull it from the ambient `AppState` instead, so callers stay terse.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn md_h1(ui: &mut Context, theme: &Theme, text: &str) {
+/// Snapshot the currently provided `AppState`. Both fields are `Copy`, so
+/// the returned value is owned and can coexist with subsequent `&mut ui`
+/// calls without fighting the borrow checker.
+fn app(ui: &Context) -> AppState {
+    *ui.use_context::<AppState>()
+}
+
+fn md_h1(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     ui.text(text).bold().fg(theme.primary);
     ui.text("");
 }
 
-fn md_h2(ui: &mut Context, theme: &Theme, text: &str) {
+fn md_h2(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     ui.text(text).bold().fg(theme.primary);
     ui.text("");
 }
 
-fn md_h3(ui: &mut Context, theme: &Theme, text: &str) {
+fn md_h3(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     ui.text(text).bold().fg(theme.secondary);
     ui.text("");
 }
@@ -165,11 +209,13 @@ fn md_p(ui: &mut Context, text: &str) {
     ui.text(text).wrap();
 }
 
-fn md_p_dim(ui: &mut Context, theme: &Theme, text: &str) {
+fn md_p_dim(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     ui.text(text).fg(theme.text_dim).wrap();
 }
 
-fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
+fn md_blockquote(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     for line in text.lines() {
         let _ = ui.row(|ui| {
             ui.text(" ▎ ").fg(theme.primary);
@@ -179,7 +225,8 @@ fn md_blockquote(ui: &mut Context, theme: &Theme, text: &str) {
     ui.text("");
 }
 
-fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
+fn md_bullet(ui: &mut Context, items: &[&str]) {
+    let theme = app(ui).theme;
     for item in items {
         let _ = ui.row(|ui| {
             ui.text("  • ").fg(theme.primary);
@@ -189,7 +236,8 @@ fn md_bullet(ui: &mut Context, theme: &Theme, items: &[&str]) {
     ui.text("");
 }
 
-fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
+fn md_numbered(ui: &mut Context, items: &[&str]) {
+    let theme = app(ui).theme;
     for (i, item) in items.iter().enumerate() {
         let _ = ui.row(|ui| {
             ui.styled(
@@ -202,7 +250,8 @@ fn md_numbered(ui: &mut Context, theme: &Theme, items: &[&str]) {
     ui.text("");
 }
 
-fn md_code_block(ui: &mut Context, theme: &Theme, lang: &str, code: &str) {
+fn md_code_block(ui: &mut Context, lang: &str, code: &str) {
+    let theme = app(ui).theme;
     let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
         ui.text(lang).fg(theme.surface_text);
         for line in code.lines() {
@@ -212,7 +261,8 @@ fn md_code_block(ui: &mut Context, theme: &Theme, lang: &str, code: &str) {
     ui.text("");
 }
 
-fn md_inline_code(ui: &mut Context, theme: &Theme, text: &str) {
+fn md_inline_code(ui: &mut Context, text: &str) {
+    let theme = app(ui).theme;
     ui.styled(
         format!(" {text} "),
         Style::new().fg(theme.warning).bg(theme.surface),
@@ -228,14 +278,16 @@ fn md_hr(ui: &mut Context) {
     ui.text("");
 }
 
-fn md_tag(ui: &mut Context, theme: &Theme, tag: &str, color: Color) {
+fn md_tag(ui: &mut Context, tag: &str, color: Color) {
+    let theme = app(ui).theme;
     ui.styled(
         format!(" {tag} "),
         Style::new().fg(color).bg(theme.surface).bold(),
     );
 }
 
-fn md_meta(ui: &mut Context, theme: &Theme, date: &str, reading_time: &str) {
+fn md_meta(ui: &mut Context, date: &str, reading_time: &str) {
+    let theme = app(ui).theme;
     let _ = ui.row(|ui| {
         ui.text(date).fg(theme.text_dim);
         ui.text(" · ").fg(theme.text_dim);
@@ -253,9 +305,8 @@ fn render_home(
     nav_target: &mut Option<usize>,
     toasts: &mut ToastState,
     subscribed: &mut bool,
-    tick: u64,
 ) {
-    let theme = *ui.theme();
+    let AppState { theme, tick } = app(ui);
 
     let _ = ui.container().px(2).py(1).col(|ui| {
         let art = [
@@ -274,7 +325,7 @@ fn render_home(
             .fg(theme.text_dim);
         ui.text("");
         let _ = ui.row(|ui| {
-            md_inline_code(ui, &theme, "cargo add superlighttui");
+            md_inline_code(ui, "cargo add superlighttui");
         });
         ui.text("");
         let _ = ui.row(|ui| {
@@ -316,7 +367,7 @@ fn render_home(
 
     // quick start guide
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h2(ui, &theme, "Quick Start");
+        md_h2(ui, "Quick Start");
 
         md_p(
             ui,
@@ -326,7 +377,6 @@ fn render_home(
 
         md_code_block(
             ui,
-            &theme,
             "rust",
             "fn main() -> std::io::Result<()> {\n\
              \x20   slt::run(|ui: &mut slt::Context| {\n\
@@ -346,7 +396,7 @@ fn render_home(
 
     // why SLT
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h2(ui, &theme, "Why SLT?");
+        md_h2(ui, "Why SLT?");
 
         md_p(
             ui,
@@ -359,13 +409,11 @@ fn render_home(
         let _ = ui.row(|ui| {
             feature_card(
                 ui,
-                &theme,
                 "Immediate Mode",
                 "No retained state. Your closure IS the UI. Like egui, but for terminals.",
             );
             feature_card(
                 ui,
-                &theme,
                 "Flexbox Layout",
                 "row() and col() with gap, grow, align. CSS Flexbox semantics without the CSS.",
             );
@@ -373,13 +421,11 @@ fn render_home(
         let _ = ui.row(|ui| {
             feature_card(
                 ui,
-                &theme,
                 "Auto Everything",
                 "Focus cycling, scroll, hit testing, event consumption. Zero boilerplate.",
             );
             feature_card(
                 ui,
-                &theme,
                 "Two Dependencies",
                 "crossterm + unicode-width. No OpenSSL, no system libs, compiles everywhere.",
             );
@@ -390,18 +436,13 @@ fn render_home(
 
     // newsletter
     let _ = ui.container().px(2).py(1).col(|ui| {
-        md_h2(ui, &theme, "Stay Updated");
+        md_h2(ui, "Stay Updated");
         if *subscribed {
             ui.text("Subscribed!").bold().fg(theme.success);
-            md_p_dim(
-                ui,
-                &theme,
-                "You'll receive updates at the address you provided.",
-            );
+            md_p_dim(ui, "You'll receive updates at the address you provided.");
         } else {
             md_p_dim(
                 ui,
-                &theme,
                 "Get notified about new releases, tutorials, and community highlights.",
             );
             let _ = ui.row(|ui| {
@@ -431,39 +472,36 @@ fn render_home(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn render_docs(ui: &mut Context) {
-    let theme = *ui.theme();
-
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, &theme, "Documentation");
+        md_h1(ui, "Documentation");
 
         // ── Getting Started ──
-        md_h2(ui, &theme, "Getting Started");
+        md_h2(ui, "Getting Started");
         md_p(ui, "Add SLT to your project:");
-        md_code_block(ui, &theme, "sh", "cargo add superlighttui");
+        md_code_block(ui, "sh", "cargo add superlighttui");
         md_p(
             ui,
             "The crate re-exports everything under `slt`, so you can write:",
         );
-        md_code_block(ui, &theme, "rust", "use slt::*;");
+        md_code_block(ui, "rust", "use slt::*;");
 
         md_hr(ui);
 
         // ── Layout System ──
-        md_h2(ui, &theme, "Layout System");
+        md_h2(ui, "Layout System");
         md_p(
             ui,
             "SLT uses a flexbox-inspired layout. Every container is either a column (vertical) \
                    or a row (horizontal). Children are placed in order along the main axis.",
         );
 
-        md_h3(ui, &theme, "Columns and Rows");
+        md_h3(ui, "Columns and Rows");
         md_p(
             ui,
             "Use `col()` for vertical stacking and `row()` for horizontal placement:",
         );
         md_code_block(
             ui,
-            &theme,
             "rust",
             "ui.col(|ui| {\n\
              \x20   ui.text(\"top\");\n\
@@ -476,14 +514,13 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, &theme, "Growing and Spacing");
+        md_h3(ui, "Growing and Spacing");
         md_p(
             ui,
             "Use `grow()` to distribute remaining space. `spacer()` pushes siblings apart:",
         );
         md_code_block(
             ui,
-            &theme,
             "rust",
             "ui.row(|ui| {\n\
              \x20   ui.text(\"left\");\n\
@@ -496,11 +533,10 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, &theme, "Gap, Padding, Margin");
+        md_h3(ui, "Gap, Padding, Margin");
         md_p(ui, "Chain layout modifiers on containers:");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "ui.container()\n\
              \x20   .gap(1)                // space between children\n\
@@ -513,14 +549,13 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Styling ──
-        md_h2(ui, &theme, "Styling");
+        md_h2(ui, "Styling");
         md_p(
             ui,
             "Style text by chaining methods. Colors support named, 256-indexed, and RGB:",
         );
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let theme = *ui.theme();\n\
              ui.text(\"Primary\").bold().fg(theme.primary);\n\
@@ -529,11 +564,10 @@ fn render_docs(ui: &mut Context) {
              ui.text(\"Accent\").fg(theme.accent);",
         );
 
-        md_h3(ui, &theme, "Borders and Titles");
+        md_h3(ui, "Borders and Titles");
         md_p(ui, "Containers can have borders with optional titles:");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "ui.bordered(Border::Rounded)\n\
              \x20   .title(\"My Section\")\n\
@@ -543,11 +577,10 @@ fn render_docs(ui: &mut Context) {
              \x20   });",
         );
 
-        md_h3(ui, &theme, "Themes");
+        md_h3(ui, "Themes");
         md_p(ui, "Switch the entire color scheme in one call:");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "// In your run loop:\n\
              ui.set_theme(Theme::dark());   // or Theme::light()\n\
@@ -563,56 +596,51 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Widgets Reference ──
-        md_h2(ui, &theme, "Widget Reference");
+        md_h2(ui, "Widget Reference");
         md_p(
             ui,
             "SLT ships 14 widgets. All handle their own keyboard/mouse events. \
                    Focus cycling via Tab/Shift+Tab is automatic.",
         );
 
-        md_h3(ui, &theme, "Text Input");
+        md_h3(ui, "Text Input");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut state = TextInputState::with_placeholder(\"Email...\");\n\
              ui.text_input(&mut state);\n\
              // state.value() returns the current text",
         );
 
-        md_h3(ui, &theme, "Textarea");
+        md_h3(ui, "Textarea");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut state = TextareaState::new();\n\
              ui.textarea(&mut state, 5);  // 5 visible rows",
         );
 
-        md_h3(ui, &theme, "Button");
+        md_h3(ui, "Button");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "if ui.button(\"Submit\").clicked {\n\
              \x20   // clicked!\n\
              }",
         );
 
-        md_h3(ui, &theme, "Checkbox & Toggle");
+        md_h3(ui, "Checkbox & Toggle");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut dark = true;\n\
              ui.checkbox(\"Dark mode\", &mut dark);\n\
              ui.toggle(\"Notifications\", &mut enabled);",
         );
 
-        md_h3(ui, &theme, "Tabs");
+        md_h3(ui, "Tabs");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut tabs = TabsState::new(vec![\"Home\", \"Settings\"]);\n\
              ui.tabs(&mut tabs);\n\
@@ -622,10 +650,9 @@ fn render_docs(ui: &mut Context) {
              }",
         );
 
-        md_h3(ui, &theme, "List & Table");
+        md_h3(ui, "List & Table");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut list = ListState::new(vec![\"Alpha\", \"Beta\"]);\n\
              ui.list(&mut list);\n\
@@ -637,14 +664,13 @@ fn render_docs(ui: &mut Context) {
              ui.table(&mut table);",
         );
 
-        md_h3(ui, &theme, "Scrollable");
+        md_h3(ui, "Scrollable");
         md_p(
             ui,
             "Wraps any content in a scrollable viewport. Handles mouse wheel and drag-to-scroll:",
         );
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut scroll = ScrollState::new();\n\
              ui.scrollable(&mut scroll).grow(1).col(|ui| {\n\
@@ -654,10 +680,9 @@ fn render_docs(ui: &mut Context) {
              });",
         );
 
-        md_h3(ui, &theme, "Spinner, Progress, Toast");
+        md_h3(ui, "Spinner, Progress, Toast");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let spinner = SpinnerState::dots();\n\
              ui.spinner(&spinner);\n\
@@ -671,7 +696,7 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Events ──
-        md_h2(ui, &theme, "Event Handling");
+        md_h2(ui, "Event Handling");
         md_p(
             ui,
             "Events are checked per-frame. Widgets auto-consume their events so you \
@@ -680,7 +705,6 @@ fn render_docs(ui: &mut Context) {
 
         md_code_block(
             ui,
-            &theme,
             "rust",
             "if ui.key('q') { ui.quit(); }\n\
              if ui.key('j') { scroll_down(); }\n\
@@ -691,13 +715,12 @@ fn render_docs(ui: &mut Context) {
         md_hr(ui);
 
         // ── Advanced ──
-        md_h2(ui, &theme, "Advanced Topics");
+        md_h2(ui, "Advanced Topics");
 
-        md_h3(ui, &theme, "Animation");
+        md_h3(ui, "Animation");
         md_p(ui, "Tween and Spring primitives for smooth transitions:");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let mut tween = Tween::new(0.0, 100.0, 60);\n\
              let value = tween.value(ui.tick());\n\
@@ -706,36 +729,30 @@ fn render_docs(ui: &mut Context) {
              spring.set_target(50.0);",
         );
 
-        md_h3(ui, &theme, "Inline Mode");
+        md_h3(ui, "Inline Mode");
         md_p(
             ui,
             "Render below the prompt without entering the alternate screen:",
         );
         md_code_block(
             ui,
-            &theme,
             "rust",
             "slt::run_inline(3, |ui| {\n\
              \x20   ui.text(\"No alt screen!\");\n\
              });",
         );
 
-        md_h3(ui, &theme, "Async");
+        md_h3(ui, "Async");
         md_p(ui, "Optional tokio integration for background data:");
         md_code_block(
             ui,
-            &theme,
             "rust",
             "let tx = slt::run_async(|ui, msgs: &mut Vec<String>| {\n\
              \x20   for m in msgs.drain(..) { ui.text(m); }\n\
              })?;\n\
              tx.send(\"hello\".into()).await?;",
         );
-        md_p_dim(
-            ui,
-            &theme,
-            "Requires: cargo add superlighttui --features async",
-        );
+        md_p_dim(ui, "Requires: cargo add superlighttui --features async");
     });
 }
 
@@ -749,7 +766,7 @@ struct BlogPost {
     reading_time: &'static str,
     tags: &'static [(&'static str, TagTone)],
     excerpt: &'static str,
-    render: fn(&mut Context, &Theme),
+    render: fn(&mut Context),
 }
 
 #[derive(Clone, Copy)]
@@ -817,7 +834,7 @@ const BLOG_POSTS: &[BlogPost] = &[
 ];
 
 fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
-    let theme = *ui.theme();
+    let theme = app(ui).theme;
 
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
         if let Some(idx) = *blog_view {
@@ -833,14 +850,13 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
                     ui.spacer();
                 });
                 ui.text("");
-                (post.render)(ui, &theme);
+                (post.render)(ui);
             }
         } else {
             // ── Blog listing ──
-            md_h1(ui, &theme, "Blog");
+            md_h1(ui, "Blog");
             md_p_dim(
                 ui,
-                &theme,
                 "Thoughts on terminal UI design, Rust patterns, and building tools that developers actually enjoy using.",
             );
 
@@ -855,7 +871,7 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
                     let _ = ui.row(|ui| {
                         for (tag, tone) in post.tags {
                             let color = tag_tone_color(&theme, *tone);
-                            md_tag(ui, &theme, tag, color);
+                            md_tag(ui, tag, color);
                             ui.text(" ");
                         }
                     });
@@ -875,9 +891,9 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
 
 // ── Blog Post: Announcing SLT v0.1.0 ──
 
-fn render_post_announcement(ui: &mut Context, theme: &Theme) {
-    md_h1(ui, theme, "Announcing SLT v0.1.0");
-    md_meta(ui, theme, "2025-03-10", "5 min read");
+fn render_post_announcement(ui: &mut Context) {
+    md_h1(ui, "Announcing SLT v0.1.0");
+    md_meta(ui, "2025-03-10", "5 min read");
     ui.text("");
 
     md_p(
@@ -887,7 +903,7 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
               we're headed.",
     );
 
-    md_h2(ui, theme, "What is SLT?");
+    md_h2(ui, "What is SLT?");
     md_p(
         ui,
         "SLT is an immediate-mode terminal UI framework for Rust. If you've used egui for \
@@ -898,14 +914,12 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
 
     md_blockquote(
         ui,
-        theme,
         "The name is longer than your hello world.\nThat's the point.",
     );
 
-    md_h2(ui, theme, "Design Principles");
+    md_h2(ui, "Design Principles");
     md_numbered(
         ui,
-        theme,
         &[
             "Minimal API surface: learn 5 methods, build anything.",
             "Zero boilerplate: no App struct, no Model/Update/View, no trait impls.",
@@ -915,11 +929,10 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
         ],
     );
 
-    md_h2(ui, theme, "Hello World");
+    md_h2(ui, "Hello World");
     md_p(ui, "The smallest SLT program is genuinely 5 lines:");
     md_code_block(
         ui,
-        theme,
         "rust",
         "fn main() -> std::io::Result<()> {\n\
          \x20   slt::run(|ui: &mut slt::Context| {\n\
@@ -933,8 +946,8 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
               State lives in your closure's scope as regular Rust variables.",
     );
 
-    md_h2(ui, theme, "What's Included in v0.1.0");
-    md_bullet(ui, theme, &[
+    md_h2(ui, "What's Included in v0.1.0");
+    md_bullet(ui, &[
         "14 widgets: TextInput, Textarea, Button, Checkbox, Toggle, Tabs, List, Table, Spinner, Progress, Scrollable, Toast, Separator, HelpBar",
         "Flexbox layout engine with row/col, gap, grow, shrink, alignment",
         "Double-buffer diff rendering (only changed cells hit the terminal)",
@@ -947,11 +960,10 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
         "Layout debugger (F12)",
     ]);
 
-    md_h2(ui, theme, "What's Next");
+    md_h2(ui, "What's Next");
     md_p(ui, "v0.2.0 will focus on:");
     md_bullet(
         ui,
-        theme,
         &[
             "Custom widget API for third-party extensions",
             "Color palette presets (Catppuccin, Dracula, Nord, etc.)",
@@ -966,7 +978,6 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
     );
     md_code_block(
         ui,
-        theme,
         "sh",
         "cargo add superlighttui\ncargo run --example demo",
     );
@@ -974,9 +985,9 @@ fn render_post_announcement(ui: &mut Context, theme: &Theme) {
 
 // ── Blog Post: Why Immediate Mode? ──
 
-fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
-    md_h1(ui, theme, "Why Immediate Mode for TUIs?");
-    md_meta(ui, theme, "2025-03-08", "8 min read");
+fn render_post_immediate_mode(ui: &mut Context) {
+    md_h1(ui, "Why Immediate Mode for TUIs?");
+    md_meta(ui, "2025-03-08", "8 min read");
     ui.text("");
 
     md_p(
@@ -993,7 +1004,7 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
               You simply describe what should be on screen right now.",
     );
 
-    md_h2(ui, theme, "The Problem with Retained Mode");
+    md_h2(ui, "The Problem with Retained Mode");
     md_p(
         ui,
         "Retained-mode TUI frameworks inherit a problem from GUI frameworks: state \
@@ -1004,7 +1015,6 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "// Retained mode: state lives in two places\n\
          struct App {\n\
@@ -1030,7 +1040,7 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
               The entire Elm/MVU architecture exists to manage this complexity.",
     );
 
-    md_h2(ui, theme, "Immediate Mode: No Sync Required");
+    md_h2(ui, "Immediate Mode: No Sync Required");
     md_p(
         ui,
         "In immediate mode, there is no framework state to sync. Your closure runs \
@@ -1039,7 +1049,6 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "// Immediate mode: state lives in one place\n\
          let mut items = vec![\"alpha\", \"beta\"];\n\
@@ -1057,11 +1066,10 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
 
     md_blockquote(
         ui,
-        theme,
         "Your UI is always a pure function of your state.\nThere is nothing to get out of sync.",
     );
 
-    md_h2(ui, theme, "Performance Concerns");
+    md_h2(ui, "Performance Concerns");
     md_p(
         ui,
         "The common objection: doesn't re-describing the entire UI every frame waste \
@@ -1078,11 +1086,10 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
               full redraws, which is what most TUI frameworks actually do.",
     );
 
-    md_h2(ui, theme, "When Retained Mode Wins");
+    md_h2(ui, "When Retained Mode Wins");
     md_p(ui, "Retained mode is better when:");
     md_bullet(
         ui,
-        theme,
         &[
             "You have thousands of widgets (terminal UIs rarely do)",
             "Widget construction is expensive (network calls, etc.)",
@@ -1099,9 +1106,9 @@ fn render_post_immediate_mode(ui: &mut Context, theme: &Theme) {
 
 // ── Blog Post: Dashboard Tutorial ──
 
-fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
-    md_h1(ui, theme, "Building a Dashboard in 50 Lines");
-    md_meta(ui, theme, "2025-03-05", "4 min read");
+fn render_post_dashboard_tutorial(ui: &mut Context) {
+    md_h1(ui, "Building a Dashboard in 50 Lines");
+    md_meta(ui, "2025-03-05", "4 min read");
     ui.text("");
 
     md_p(
@@ -1110,7 +1117,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
               memory, a process table, and a log stream. The whole thing fits in 50 lines.",
     );
 
-    md_h2(ui, theme, "Step 1: Scaffold");
+    md_h2(ui, "Step 1: Scaffold");
     md_p(
         ui,
         "Start with the standard SLT boilerplate. We need mouse support for our table:",
@@ -1118,7 +1125,6 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "use slt::*;\n\
          \n\
@@ -1135,7 +1141,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
          }",
     );
 
-    md_h2(ui, theme, "Step 2: Metrics Row");
+    md_h2(ui, "Step 2: Metrics Row");
     md_p(
         ui,
         "Use `row()` with `grow(1)` containers to create evenly spaced metric cards:",
@@ -1143,7 +1149,6 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "ui.row(|ui| {\n\
          \x20   ui.bordered(Border::Rounded).grow(1).pad(1).col(|ui| {\n\
@@ -1159,7 +1164,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
          });",
     );
 
-    md_h2(ui, theme, "Step 3: Process Table");
+    md_h2(ui, "Step 3: Process Table");
     md_p(
         ui,
         "SLT's Table widget handles headers, selection, and column sizing:",
@@ -1167,7 +1172,6 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "let mut table = TableState::new(\n\
          \x20   vec![\"PID\", \"Name\", \"CPU\", \"Memory\"],\n\
@@ -1179,7 +1183,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
          ui.table(&mut table);",
     );
 
-    md_h2(ui, theme, "Step 4: Log Stream");
+    md_h2(ui, "Step 4: Log Stream");
     md_p(
         ui,
         "Wrap logs in a scrollable container. New entries push older ones up:",
@@ -1187,7 +1191,6 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "ui.scrollable(&mut scroll).max_height(10).col(|ui| {\n\
          \x20   for log in &logs {\n\
@@ -1204,16 +1207,15 @@ fn render_post_dashboard_tutorial(ui: &mut Context, theme: &Theme) {
 
     md_blockquote(
         ui,
-        theme,
         "The full example is 120 lines including simulated data.\n50 lines is just the UI code.",
     );
 }
 
 // ── Blog Post: u32 Coordinates ──
 
-fn render_post_u32(ui: &mut Context, theme: &Theme) {
-    md_h1(ui, theme, "The Case for u32 Coordinates");
-    md_meta(ui, theme, "2025-03-01", "3 min read");
+fn render_post_u32(ui: &mut Context) {
+    md_h1(ui, "The Case for u32 Coordinates");
+    md_meta(ui, "2025-03-01", "3 min read");
     ui.text("");
 
     md_p(
@@ -1223,7 +1225,7 @@ fn render_post_u32(ui: &mut Context, theme: &Theme) {
               like more than enough — no terminal is 65K columns wide. So why does SLT use u32?",
     );
 
-    md_h2(ui, theme, "The Overflow Bug");
+    md_h2(ui, "The Overflow Bug");
     md_p(
         ui,
         "The problem isn't the terminal size. It's arithmetic. When you compute layouts, \
@@ -1233,7 +1235,6 @@ fn render_post_u32(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "// Ratatui-style u16 arithmetic:\n\
          let total_width: u16 = col_count * col_width + (col_count - 1) * gap;\n\
@@ -1244,11 +1245,10 @@ fn render_post_u32(ui: &mut Context, theme: &Theme) {
          let total_width: u32 = col_count * col_width + (col_count - 1) * gap;",
     );
 
-    md_h2(ui, theme, "Real-World Triggers");
+    md_h2(ui, "Real-World Triggers");
     md_p(ui, "This isn't theoretical. It triggers in practice:");
     md_bullet(
         ui,
-        theme,
         &[
             "Scrollable containers with large content (1000+ rows)",
             "Tables with many columns and wide data",
@@ -1257,9 +1257,9 @@ fn render_post_u32(ui: &mut Context, theme: &Theme) {
         ],
     );
 
-    md_h2(ui, theme, "Why Not Just Use i32 or usize?");
+    md_h2(ui, "Why Not Just Use i32 or usize?");
     md_p(ui, "We considered all options:");
-    md_bullet(ui, theme, &[
+    md_bullet(ui, &[
         "i32: Negative coordinates are meaningless for layout. Wastes a sign bit and allows invalid states.",
         "usize: 64-bit on most platforms. Wastes memory in the character buffer (millions of cells).",
         "u32: 4 billion max. More than enough for intermediate arithmetic. Same size as u16 after padding on most structs.",
@@ -1274,9 +1274,11 @@ fn render_post_u32(ui: &mut Context, theme: &Theme) {
 
 // ── Blog Post: Flexbox for Terminals ──
 
-fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
-    md_h1(ui, theme, "Flexbox for Terminals");
-    md_meta(ui, theme, "2025-02-25", "6 min read");
+fn render_post_flexbox(ui: &mut Context) {
+    let theme = app(ui).theme;
+
+    md_h1(ui, "Flexbox for Terminals");
+    md_meta(ui, "2025-02-25", "6 min read");
     ui.text("");
 
     md_p(
@@ -1286,7 +1288,7 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
               SLT layout works. This post maps CSS concepts to SLT API calls.",
     );
 
-    md_h2(ui, theme, "The Mapping");
+    md_h2(ui, "The Mapping");
 
     let _ = ui.bordered(Border::Rounded).pad(1).col(|ui| {
         let _ = ui.row(|ui| {
@@ -1324,15 +1326,15 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
     });
     ui.text("");
 
-    md_h2(ui, theme, "How Layout Works Internally");
+    md_h2(ui, "How Layout Works Internally");
     md_p(ui, "SLT's layout algorithm runs in two passes:");
 
-    md_numbered(ui, theme, &[
+    md_numbered(ui, &[
         "Measure pass: each node computes its minimum size. Text measures its string width. Containers sum their children (column = sum heights, row = sum widths).",
         "Layout pass: starting from the root (terminal size), each container distributes space to children. Fixed-size children get their minimum. Remaining space goes to children with grow > 0, proportional to their grow factor.",
     ]);
 
-    md_h2(ui, theme, "Where We Diverge from CSS");
+    md_h2(ui, "Where We Diverge from CSS");
     md_p(
         ui,
         "SLT intentionally simplifies Flexbox in places that don't matter for terminals:",
@@ -1340,7 +1342,6 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
 
     md_bullet(
         ui,
-        theme,
         &[
             "No flex-wrap: terminal rows don't wrap. Use nested row/col instead.",
             "No order property: children render in declaration order. Always.",
@@ -1355,7 +1356,7 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
               covering 95% of real-world terminal layouts.",
     );
 
-    md_h2(ui, theme, "A Complete Example");
+    md_h2(ui, "A Complete Example");
     md_p(
         ui,
         "Here's a typical dashboard layout using the flexbox primitives:",
@@ -1363,7 +1364,6 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
 
     md_code_block(
         ui,
-        theme,
         "rust",
         "ui.col(|ui| {\n\
          \x20   // Top bar: logo left, nav right\n\
@@ -1401,17 +1401,15 @@ fn render_post_flexbox(ui: &mut Context, theme: &Theme) {
 fn render_pricing(
     ui: &mut Context,
     toasts: &mut ToastState,
-    tick: u64,
     show_modal: &mut bool,
     selected_plan: &mut String,
 ) {
-    let theme = *ui.theme();
+    let AppState { theme, tick } = app(ui);
 
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, &theme, "Pricing");
+        md_h1(ui, "Pricing");
         md_p_dim(
             ui,
-            &theme,
             "SLT is free and open source forever. Sponsorship helps us ship faster.",
         );
 
@@ -1438,7 +1436,6 @@ fn render_pricing(
                 ],
                 theme.success,
                 false,
-                &theme,
                 show_modal,
                 selected_plan,
             );
@@ -1461,7 +1458,6 @@ fn render_pricing(
                     ],
                     theme.primary,
                     true,
-                    &theme,
                     show_modal,
                     selected_plan,
                 );
@@ -1481,7 +1477,6 @@ fn render_pricing(
                 ],
                 theme.accent,
                 false,
-                &theme,
                 show_modal,
                 selected_plan,
             );
@@ -1489,23 +1484,20 @@ fn render_pricing(
 
         ui.text("");
 
-        md_h2(ui, &theme, "FAQ");
+        md_h2(ui, "FAQ");
         faq_item(
             ui,
-            &theme,
             "Is SLT really free?",
             "Yes. MIT licensed. Use it in commercial products, modify it, redistribute it. No strings.",
         );
         faq_item(
             ui,
-            &theme,
             "What does sponsorship fund?",
             "Full-time development, CI infrastructure, documentation, and community management. \
              Every dollar goes directly into making SLT better.",
         );
         faq_item(
             ui,
-            &theme,
             "Can I use SLT in production?",
             "Yes. The API is pre-1.0 so breaking changes may happen, but the core is stable \
              and well-tested. Pin your version and you'll be fine.",
@@ -1620,19 +1612,17 @@ fn render_contact(
     nav_target: &mut Option<usize>,
     contact_form: &mut FormState,
     toasts: &mut ToastState,
-    tick: u64,
 ) {
-    let theme = *ui.theme();
+    let AppState { theme, tick } = app(ui);
 
     let _ = ui.container().padding(Padding::xy(2, 1)).col(|ui| {
-        md_h1(ui, &theme, "Contact & Community");
+        md_h1(ui, "Contact & Community");
 
         md_p(ui, "SLT is built in the open. Here's how to get involved:");
 
-        md_h2(ui, &theme, "Get Help");
+        md_h2(ui, "Get Help");
         md_bullet(
             ui,
-            &theme,
             &[
                 "GitHub Issues — Bug reports and feature requests",
                 "GitHub Discussions — Questions and community help",
@@ -1640,7 +1630,7 @@ fn render_contact(
             ],
         );
 
-        md_h2(ui, &theme, "Links");
+        md_h2(ui, "Links");
         md_link(
             ui,
             "GitHub Repository",
@@ -1663,7 +1653,7 @@ fn render_contact(
         });
 
         ui.text("");
-        md_h2(ui, &theme, "Send a Message");
+        md_h2(ui, "Send a Message");
         ui.form(contact_form, |ui, form| {
             for field in form.fields.iter_mut() {
                 ui.form_field(field);
@@ -1677,12 +1667,15 @@ fn render_contact(
                 toasts.error("Please fix the form errors", tick);
             }
         }
-        if contact_form.submitted {
-            ui.text("Message received.").fg(theme.success).bold();
-        }
+        // Demonstrate `.with_if`: conditional style attached to the last text
+        // chain without an `if { ... }` wrapper.
+        ui.text("Message received.")
+            .with_if(contact_form.submitted, |t| {
+                t.fg(theme.success).bold();
+            });
 
         ui.text("");
-        md_h2(ui, &theme, "Contributing");
+        md_h2(ui, "Contributing");
         md_p(
             ui,
             "We welcome contributions of all kinds: bug fixes, new widgets, documentation \
@@ -1691,7 +1684,6 @@ fn render_contact(
 
         md_numbered(
             ui,
-            &theme,
             &[
                 "Fork the repository on GitHub",
                 "Create a feature branch: git checkout -b feat/my-widget",
@@ -1701,14 +1693,14 @@ fn render_contact(
             ],
         );
 
-        md_h2(ui, &theme, "Code of Conduct");
+        md_h2(ui, "Code of Conduct");
         md_p(
             ui,
             "We follow the Rust community's Code of Conduct. Be kind, be constructive, \
                    and assume good intent. We're all here to build great terminal UIs.",
         );
 
-        md_h2(ui, &theme, "Maintainers");
+        md_h2(ui, "Maintainers");
         let _ = ui.container().bg(theme.surface).p(1).col(|ui| {
             let _ = ui.row(|ui| {
                 ui.text("@subinium").bold().fg(theme.primary);
@@ -1718,11 +1710,10 @@ fn render_contact(
         });
 
         ui.text("");
-        md_h2(ui, &theme, "Acknowledgements");
+        md_h2(ui, "Acknowledgements");
         md_p(ui, "SLT wouldn't exist without the Rust TUI ecosystem:");
         md_bullet(
             ui,
-            &theme,
             &[
                 "crossterm — The rock-solid terminal abstraction we build on",
                 "ratatui — Proved that Rust TUIs can be production-quality",
@@ -1738,7 +1729,8 @@ fn render_contact(
 // Shared Components
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn feature_card(ui: &mut Context, theme: &Theme, title: &str, desc: &str) {
+fn feature_card(ui: &mut Context, title: &str, desc: &str) {
+    let theme = app(ui).theme;
     let _ = ui.container().bg(theme.surface).p(1).grow(1).col(|ui| {
         ui.text(format!("◆ {title}")).bold().fg(theme.primary);
         ui.text(desc).fg(theme.surface_text).wrap();
@@ -1754,10 +1746,10 @@ fn price_card(
     features: &[&str],
     color: Color,
     highlight: bool,
-    theme: &Theme,
     show_modal: &mut bool,
     selected_plan: &mut String,
 ) {
+    let theme = app(ui).theme;
     let cta_label = if highlight {
         "Get Sponsor"
     } else if tier == "Enterprise" {
@@ -1770,45 +1762,41 @@ fn price_card(
     } else {
         ButtonVariant::Outline
     };
-    let mut card_content = |ui: &mut Context| {
-        ui.text(tier).bold().fg(color);
-        ui.text("");
-        let _ = ui.row(|ui| {
-            ui.text(price).bold().fg(color);
-            ui.text(format!(" {period}")).fg(theme.surface_text);
-        });
-        ui.separator();
-        ui.text("");
-        for feat in features {
-            let _ = ui.row(|ui| {
-                ui.text("✓ ").fg(theme.success);
-                ui.text(*feat).fg(theme.text);
-            });
-        }
-        ui.text("");
-        if ui.button_with(cta_label, cta_variant).clicked {
-            *show_modal = true;
-            *selected_plan = tier.to_string();
-        }
-    };
 
-    if highlight {
-        let _ = ui
-            .bordered(Border::Rounded)
-            .bg(theme.surface)
-            .pad(1)
-            .grow(1)
-            .col(|ui| {
-                card_content(ui);
+    // `.with_if` collapses the `if highlight { bordered } else { container }`
+    // fork into a single fluent chain. The closure only runs when `highlight`
+    // is true, adding a rounded border to an otherwise-identical card.
+    let _ = ui
+        .container()
+        .with_if(highlight, |c| c.border(Border::Rounded))
+        .bg(theme.surface)
+        .pad(1)
+        .grow(1)
+        .col(|ui| {
+            ui.text(tier).bold().fg(color);
+            ui.text("");
+            let _ = ui.row(|ui| {
+                ui.text(price).bold().fg(color);
+                ui.text(format!(" {period}")).fg(theme.surface_text);
             });
-    } else {
-        let _ = ui.container().bg(theme.surface).pad(1).grow(1).col(|ui| {
-            card_content(ui);
+            ui.separator();
+            ui.text("");
+            for feat in features {
+                let _ = ui.row(|ui| {
+                    ui.text("✓ ").fg(theme.success);
+                    ui.text(*feat).fg(theme.text);
+                });
+            }
+            ui.text("");
+            if ui.button_with(cta_label, cta_variant).clicked {
+                *show_modal = true;
+                *selected_plan = tier.to_string();
+            }
         });
-    }
 }
 
-fn faq_item(ui: &mut Context, theme: &Theme, question: &str, answer: &str) {
+fn faq_item(ui: &mut Context, question: &str, answer: &str) {
+    let theme = app(ui).theme;
     let _ = ui.container().padding(Padding::xy(1, 0)).col(|ui| {
         ui.text(question).bold().fg(theme.primary);
         let _ = ui.container().padding(Padding::xy(2, 0)).col(|ui| {

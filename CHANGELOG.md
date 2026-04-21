@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-04-21
+
+### Features
+
+- **`ui.provide(value, |ui| ...)` + `ui.use_context::<T>()` + `ui.try_use_context::<T>()`** — scoped context injection for values that cross 3+ scope levels (theme, user, feature flags). No more threading `&Theme`, `&mut ToastState`, `tick` through every `render_*` parameter. Nested `provide` of the same type shadows outer (LIFO). Panic-safe pop via `std::panic::catch_unwind` + `AssertUnwindSafe`; `ContextCheckpoint` also tracks `context_stack_len` so `error_boundary` correctly unwinds partially-pushed context values. Closes #66.
+- **`ui.use_state_named(id)` + `ui.use_state_named_with(id, init)`** — component-local state keyed by a stable `&'static str` id. Safe inside conditional rendering (unlike order-based `use_state`). Reusable component functions can now own internal state (expand/collapse, pagination cursor, filter mode) without requiring the caller to allocate a state struct. State handle is the existing `State<T>` type via an internal `StateKey::Named(&'static str)` discriminant — no new public type. Closes #71.
+- **`.with_if(cond, modifier)` + `.with(modifier)`** — fluent conditional styling on text and `ContainerBuilder`. Compresses the 8-line `if cond { t.bold(); t.fg(Color::Red); }` pattern into one chained call. Two signatures: text uses `FnOnce(&mut Self)` (mutable-handle style to match existing text modifiers), container uses `FnOnce(Self) -> Self` (by-value to match existing builder idiom). Closes #68.
+
+### Documentation
+
+- **`docs/PATTERNS.md`** — new `## Components` section (~250 lines) covering "Components as Functions" (canonical pattern), "Component-local State with `use_state_named`", "Context Injection with `ui.provide` / `ui.use_context`", "Conditional Styling with `.with_if`", plus a `When to use which` comparison table and an `Anti-patterns` closer. Cross-links to COOKBOOK.md, STATE_APIS.md, COMPLETE_REFERENCE.md. Closes #72.
+- **`examples/demo_website.rs`** — refactored to showcase the new APIs. Root closure calls `ui.provide(AppState { theme, tick }, |ui| ...)`; `render_home` / `render_docs` / etc. read theme and tick via `ui.use_context::<AppState>()` instead of receiving them as parameters. Mutation-heavy sections retain explicit `&mut` params for clarity (context for reads, explicit params for writes). Closes #75.
+
+### Tests
+
+- `tests/context_provider.rs` (8 tests) — round-trip, nested same-type shadowing, two different types coexisting, `try_use_context` None/Some, `use_context` panics when missing, stack pops after closure returns, `provide` returns body's value.
+- `tests/use_state_named.rs` (6 tests) — persistence across frames, independent state for different ids, same-id sharing semantics, `Default::default()` init path, type-mismatch panic, safe inside conditional rendering.
+- `tests/with_if.rs` (8 tests) — true/false branches on text and container, chained composition, `.with` unconditional variant.
+- `tests/v0_19_api_integration.rs` (10 tests) — end-to-end combinations of all three APIs together.
+
+### Semver
+
+Additive only; no breaking changes. `cargo-semver-checks` verifies compatibility.
+
 ## [0.18.2] — 2026-04-21
 
 ### Performance

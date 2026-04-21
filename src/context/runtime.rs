@@ -9,6 +9,7 @@ impl Context {
         theme: Theme,
     ) -> Self {
         let hook_states = &mut state.hook_states;
+        let named_states = std::mem::take(&mut state.named_states);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         let layout_feedback = &mut state.layout_feedback;
@@ -52,6 +53,8 @@ impl Context {
             tick: diagnostics.tick,
             focus_index,
             hook_states: std::mem::take(hook_states),
+            named_states,
+            context_stack: Vec::new(),
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,
             prev_modal_focus_count: focus.prev_modal_focus_count,
@@ -484,6 +487,122 @@ impl Context {
         }
 
         State::from_idx(idx)
+    }
+
+    /// Component-local persistent state keyed by a stable id.
+    ///
+    /// Unlike [`use_state`](Self::use_state), this is **not order-dependent** —
+    /// the value is looked up by `id` instead of call position. Safe to call
+    /// inside conditional branches or reusable component functions.
+    ///
+    /// Returns a `State<T>` handle. Access with `state.get(ui)` /
+    /// `state.get_mut(ui)`. Persists across frames.
+    ///
+    /// # Scoping
+    ///
+    /// Keys are `&'static str` and live in a single global namespace per
+    /// `Context` (no automatic per-component scoping). Two calls with the same
+    /// `id` in the same frame share the same value, regardless of where they
+    /// occur in the tree. Pick unique ids — for example, prefix with a
+    /// component name (`"counter::value"`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn counter(ui: &mut slt::Context) {
+    ///     let count = ui.use_state_named_with("counter::value", || 0i32);
+    ///     ui.text(format!("Count: {}", count.get(ui)));
+    ///     if ui.button("+1").clicked {
+    ///         *count.get_mut(ui) += 1;
+    ///     }
+    /// }
+    /// ```
+    pub fn use_state_named_with<T: 'static>(
+        &mut self,
+        id: &'static str,
+        init: impl FnOnce() -> T,
+    ) -> State<T> {
+        if !self.named_states.contains_key(id) {
+            self.named_states.insert(id, Box::new(init()));
+        }
+        State::from_named(id)
+    }
+
+    /// Like [`use_state_named_with`](Self::use_state_named_with), but uses
+    /// [`Default::default()`] to initialize the value on first call.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let value = ui.use_state_named::<i32>("counter::value");
+    /// ```
+    pub fn use_state_named<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
+        self.use_state_named_with(id, T::default)
+    }
+
+    /// Push a value onto the context stack for the duration of `body`.
+    ///
+    /// Inside `body`, child widgets can call
+    /// [`use_context::<T>()`](Self::use_context) or
+    /// [`try_use_context::<T>()`](Self::try_use_context) to look up the
+    /// nearest provided value of type `T`. Provides cascade in LIFO order:
+    /// nested calls with the same `T` shadow outer ones.
+    ///
+    /// The value is automatically popped when `body` returns — including on
+    /// panic, so the context stack is always restored.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// struct Theme { accent: slt::Color }
+    /// ui.provide(Theme { accent: slt::Color::Red }, |ui| {
+    ///     // Any widget here can `let theme = ui.use_context::<Theme>();`
+    ///     render_button(ui);
+    /// });
+    /// ```
+    pub fn provide<T: 'static, R>(&mut self, value: T, body: impl FnOnce(&mut Context) -> R) -> R {
+        self.context_stack
+            .push(Box::new(value) as Box<dyn std::any::Any>);
+
+        // catch_unwind ensures the entry is popped even if `body` panics, so
+        // the context stack is never left with leaked frames. We re-panic
+        // afterwards so the panic propagates normally to outer scopes.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(self)));
+
+        // Pop in both success and panic paths.
+        self.context_stack.pop();
+
+        match result {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    /// Look up the nearest provided value of type `T` on the context stack.
+    ///
+    /// Searches from the top of the stack (most-recent
+    /// [`provide`](Self::provide)) downward. Returns the first match.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no value of type `T` is currently provided. Use
+    /// [`try_use_context`](Self::try_use_context) for a non-panicking variant.
+    pub fn use_context<T: 'static>(&self) -> &T {
+        self.try_use_context::<T>().unwrap_or_else(|| {
+            panic!(
+                "no context of type {} was provided; use ui.provide(value, |ui| ...) in a parent scope",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Like [`use_context`](Self::use_context), but returns `None` instead of
+    /// panicking when no value of type `T` is on the stack.
+    pub fn try_use_context<T: 'static>(&self) -> Option<&T> {
+        self.context_stack
+            .iter()
+            .rev()
+            .find_map(|entry| entry.downcast_ref::<T>())
     }
 
     /// Memoize a computed value. Recomputes only when `deps` changes.
