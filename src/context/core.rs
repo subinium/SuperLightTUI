@@ -25,6 +25,8 @@ pub struct Context {
     pub(crate) tick: u64,
     pub(crate) focus_index: usize,
     pub(crate) hook_states: Vec<Box<dyn std::any::Any>>,
+    pub(crate) named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
+    pub(crate) context_stack: Vec<Box<dyn std::any::Any>>,
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,
     pub(crate) prev_modal_focus_count: usize,
@@ -79,6 +81,7 @@ pub(super) struct ContextCheckpoint {
     commands_len: usize,
     hook_states_len: usize,
     deferred_draws_len: usize,
+    context_stack_len: usize,
     rollback: ContextRollbackState,
 }
 
@@ -88,6 +91,7 @@ impl ContextCheckpoint {
             commands_len: ctx.commands.len(),
             hook_states_len: ctx.hook_states.len(),
             deferred_draws_len: ctx.deferred_draws.len(),
+            context_stack_len: ctx.context_stack.len(),
             rollback: ctx.rollback.clone(),
         }
     }
@@ -96,6 +100,7 @@ impl ContextCheckpoint {
         ctx.commands.truncate(self.commands_len);
         ctx.hook_states.truncate(self.hook_states_len);
         ctx.deferred_draws.truncate(self.deferred_draws_len);
+        ctx.context_stack.truncate(self.context_stack_len);
         ctx.rollback = self.rollback.clone();
     }
 }

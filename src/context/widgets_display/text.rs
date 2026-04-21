@@ -481,4 +481,57 @@ impl Context {
         self.rollback.last_text_idx = None;
         self
     }
+
+    // ── conditional / grouped style helpers ─────────────────────────
+
+    /// Apply `f` only if `cond` is true. Returns `self` so chaining continues.
+    ///
+    /// Use this to attach a block of style modifiers to the last rendered text
+    /// without breaking the fluent chain. The closure receives the same
+    /// `&mut Context`, so any style-chain method (`.bold()`, `.fg()`, etc.)
+    /// applies to the most recent text element.
+    ///
+    /// Zero allocation: the closure is inlined and skipped entirely when
+    /// `cond` is `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// let is_error = true;
+    /// let is_selected = false;
+    /// ui.text("Status")
+    ///     .with_if(is_error, |t| {
+    ///         t.bold().fg(Color::Red);
+    ///     })
+    ///     .with_if(is_selected, |t| {
+    ///         t.bg(Color::DarkGray);
+    ///     });
+    /// # });
+    /// ```
+    pub fn with_if(&mut self, cond: bool, f: impl FnOnce(&mut Self)) -> &mut Self {
+        if cond {
+            f(self);
+        }
+        self
+    }
+
+    /// Apply `f` unconditionally. Useful for factoring out a block of modifier
+    /// calls that should always run, while keeping the fluent chain intact.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// ui.text("hi").with(|t| {
+    ///     t.bold().fg(Color::Cyan);
+    /// });
+    /// # });
+    /// ```
+    pub fn with(&mut self, f: impl FnOnce(&mut Self)) -> &mut Self {
+        f(self);
+        self
+    }
 }

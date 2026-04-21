@@ -119,6 +119,261 @@ fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
 
 This keeps the chaining style but moves the repetition out of the screen body.
 
+## Components
+
+A "component" in SLT is not a framework concept. There is no `Component` trait, no virtual DOM, no lifecycle hooks beyond the few state primitives you already know. A component is whatever helper function you find yourself extracting when the same shape repeats.
+
+This section walks the four building blocks that make components ergonomic:
+
+1. Functions for the shape itself
+2. `use_state_named` for state that survives across frames inside the component
+3. `provide` / `use_context` for values that propagate through deep trees
+4. `.with` / `.with_if` for conditional styling
+
+The order matters. Reach for the simpler tool first.
+
+### Components as Functions (the canonical pattern)
+
+The simplest reusable component is a free function that takes `&mut Context` and any explicit state it needs. No framework magic, no registration step.
+
+```rust
+use slt::{Border, Context, Trend};
+
+fn metric_card(ui: &mut Context, label: &str, value: f64, trend: Trend) {
+    let _ = ui.bordered(Border::Single).pad(1).col(|ui| {
+        ui.text(label).dim();
+        ui.text(format!("{:.1}", value)).bold();
+        let arrow = match trend {
+            Trend::Up => "▲",
+            Trend::Down => "▼",
+            Trend::Flat => "—",
+        };
+        ui.text(arrow);
+    });
+}
+```
+
+Usage from a screen:
+
+```rust
+fn render_dashboard(ui: &mut Context, app: &App) {
+    ui.row(|ui| {
+        metric_card(ui, "Revenue", app.revenue, Trend::Up);
+        metric_card(ui, "Latency p99", app.p99_ms, Trend::Down);
+        metric_card(ui, "Active users", app.users, Trend::Flat);
+    });
+}
+```
+
+Trade-offs:
+
+- Fully explicit. Rust's ownership tells you exactly who reads and who mutates what.
+- Type-safe. The compiler enforces parameter shapes at every call site.
+- No hidden state. The function only renders; it does not remember anything between frames.
+
+The cost is parameter count. When a component grows past four or five arguments, group related values into a small struct and pass `&Props` instead of repeating five-arg signatures across the codebase.
+
+```rust
+struct MetricCardProps<'a> {
+    label: &'a str,
+    value: f64,
+    trend: Trend,
+    accent: Color,
+}
+
+fn metric_card(ui: &mut Context, p: &MetricCardProps<'_>) {
+    // ...
+}
+```
+
+This is still "just a function." No ceremony.
+
+### Component-local State with `use_state_named`
+
+Sometimes a component needs state that must survive across frames but does not belong to the caller. A collapsible panel knows whether it is expanded. A pagination control knows the current page. Threading those values up through every call site pollutes the caller's API.
+
+`use_state_named` is the answer. It is `use_state`, but keyed by an explicit `&'static str` instead of by hook call order:
+
+```rust
+use slt::{Border, Context};
+
+fn expandable_card(
+    ui: &mut Context,
+    id: &'static str,
+    title: &str,
+    body: impl FnOnce(&mut Context),
+) {
+    let expanded = ui.use_state_named::<bool>(id);
+    let _ = ui.bordered(Border::Single).col(|ui| {
+        let label = if *expanded.get(ui) { "▼" } else { "▶" };
+        if ui.button(label).clicked {
+            let v = *expanded.get(ui);
+            *expanded.get_mut(ui) = !v;
+        }
+        ui.text(title).bold();
+        if *expanded.get(ui) {
+            body(ui);
+        }
+    });
+}
+```
+
+Usage:
+
+```rust
+expandable_card(ui, "card.networking", "Networking", |ui| {
+    ui.text("eth0  192.168.1.42");
+    ui.text("wlan0 10.0.0.7");
+});
+
+expandable_card(ui, "card.disks", "Disks", |ui| {
+    ui.text("nvme0n1  931 GiB");
+});
+```
+
+When you need a default different from `Default::default()`, use `use_state_named_with`:
+
+```rust
+let page = ui.use_state_named_with::<usize>("pager", || 1);
+```
+
+Rules of the road:
+
+- IDs are `&'static str`. Pick something descriptive — `"card.networking"`, `"pager.users"`, not `"x"`.
+- Two calls with the same id at the same scope share state. This is sometimes what you want (siblings agreeing on a value) and sometimes a bug (two unrelated cards collapsing together). When in doubt, suffix with the data key: `"card.disks"` vs `"card.networking"`.
+- Unlike positional `use_state`, named state does not depend on call order. You can branch around a named-state read without losing the value next frame.
+- For the full method surface on the returned `State<T>`, see `STATE_APIS.md`.
+
+### Context Injection with `ui.provide` / `ui.use_context`
+
+Some values want to propagate through a deep tree without being passed to every function. The classic examples are theme, the current user, and feature flags. Threading them through ten render helpers is parameter-drilling, and it makes refactoring painful.
+
+`provide` makes a value available inside a closure. Anything inside that closure can read it via `use_context`:
+
+```rust
+use slt::{Color, Context};
+
+struct AppContext {
+    username: String,
+    show_debug: bool,
+}
+
+fn main() -> std::io::Result<()> {
+    slt::run(|ui| {
+        let app = AppContext {
+            username: "sb".into(),
+            show_debug: true,
+        };
+        ui.provide(app, |ui| {
+            render_home(ui);
+        });
+    })
+}
+
+fn render_home(ui: &mut Context) {
+    let app = ui.use_context::<AppContext>();
+    ui.text(format!("Hello, {}", app.username));
+    if app.show_debug {
+        ui.text("debug mode on").dim();
+    }
+}
+```
+
+How it behaves:
+
+- **Scoped.** The value is alive only inside the body closure passed to `provide`. Outside that closure, `use_context::<AppContext>()` panics — there is no value.
+- **Shadowing.** Nested `provide` calls of the same type shadow the outer one for the duration of the inner closure. Think of it as a LIFO stack, one stack per `TypeId`.
+- **Optional reads.** `try_use_context::<T>() -> Option<&T>` returns `None` instead of panicking. Use it when a component should work both inside and outside the provider.
+
+```rust
+fn render_footer(ui: &mut Context) {
+    if let Some(app) = ui.try_use_context::<AppContext>() {
+        ui.text(format!("logged in as {}", app.username)).dim();
+    } else {
+        ui.text("anonymous").dim();
+    }
+}
+```
+
+When *not* to use context:
+
+- The value lives in your top-level app struct and you already pass `&mut App` around. Do not duplicate it into context.
+- The value is needed by exactly one render helper that is two scope levels away. A parameter is clearer.
+
+A good heuristic: reach for `provide` when the same value is needed by three or more render helpers across two or more scope levels.
+
+### Conditional Styling with `.with_if`
+
+Conditional styling is everywhere — a row that highlights when selected, a label that turns red when invalid, a button that dims when disabled. Without help, this clutters the call site:
+
+```rust
+let mut t = ui.text("Status");
+if is_error {
+    t = t.bold().fg(Color::Red);
+}
+if is_selected {
+    t = t.bg(Color::DarkGray);
+}
+```
+
+`.with_if(cond, modifier)` compresses that into a chain that reads top-to-bottom:
+
+```rust
+ui.text("Status")
+    .with_if(is_error, |t| {
+        t.bold().fg(Color::Red);
+    })
+    .with_if(is_selected, |t| {
+        t.bg(Color::DarkGray);
+    });
+```
+
+The closure runs only when the condition is true. The modifier receives a mutable handle to the same builder, so you can chain any styling method inside.
+
+For unconditional grouping — factoring shared modifier blocks out of multiple call sites — use `.with(modifier)`:
+
+```rust
+fn dim_label(t: &mut TextBuilder<'_>) {
+    t.dim().italic();
+}
+
+ui.text("uptime: 3d 4h").with(dim_label);
+ui.text("region: us-west-2").with(dim_label);
+```
+
+Both `.with` and `.with_if` are available on text and on container builders, so the same idiom works for `bordered`, `row`, `col`, etc.:
+
+```rust
+ui.bordered(Border::Single)
+    .with_if(panel_focused, |c| {
+        c.title("(focused)").pad(2);
+    })
+    .col(|ui| {
+        // ...
+    });
+```
+
+### When to use which
+
+| Pattern | Use when | Example scenarios |
+|---|---|---|
+| Function + explicit args | Small components, fewer than 3-4 params | `metric_card`, `header_row`, `kv_pair` |
+| `use_state_named` | Component has LOCAL state that should survive across frames | collapsible panel, pagination cursor, sort direction |
+| `provide` / `use_context` | Values cross 3+ scope levels | theme, logged-in user, feature flags, request id |
+| `.with_if` | Styling depends on a runtime condition | selected row, error text, disabled state, focused panel |
+| `.with` | Factor shared style blocks out of multiple call sites | "dim label", "code-style text", "subtle border" |
+
+### Anti-patterns
+
+These look tempting but make code harder, not easier:
+
+- **Reaching for context when a parameter is clearer.** If a value is used in one helper, just pass it. Context is for values that propagate, not for "I do not feel like typing the parameter."
+- **Using `use_state_named` for app-level state.** Page-level state, selected tab, current user — these belong in your top-level `App` struct so that tests, persistence, and refactors stay sane. Named state is for state that is genuinely local to a component instance.
+- **Reusing the same id by accident.** `expandable_card(ui, "card", ...)` called five times shares one boolean across all five cards. Pick ids that name the *instance*, not the *kind*.
+- **Nesting `provide` purely to "override defaults."** If you find yourself wrapping every render helper in a fresh `provide`, the value should probably be a parameter or a method argument instead.
+
+For full working apps that combine these patterns, see `COOKBOOK.md`. For the per-method reference on `State<T>` and friends, see `STATE_APIS.md`. For the single-file AI-oriented reference, see `COMPLETE_REFERENCE.md`.
+
 ## Split big screens into render helpers
 
 ```rust
