@@ -400,127 +400,207 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         return vec![text.to_string()];
     }
 
-    fn split_long_word(word: &str, max_width: u32) -> Vec<(String, u32)> {
-        let mut chunks: Vec<(String, u32)> = Vec::new();
-        let mut chunk = String::new();
-        let mut chunk_width = 0_u32;
+    // Words and chunks are referred to by byte ranges `(start, end)` into `text`,
+    // avoiding any intermediate `String` allocations per word. The final `String`
+    // for each line is built exactly once at line-flush time.
+    //
+    // Fills `chunk_buf` with `((start, end), width)` pairs covering the word at
+    // `word_start..word_end` when that word is wider than `max_width`.
+    fn split_long_word(
+        text: &str,
+        word_start: usize,
+        word_end: usize,
+        max_width: u32,
+        out: &mut Vec<((usize, usize), u32)>,
+    ) {
+        out.clear();
+        let slice = &text[word_start..word_end];
+        let mut chunk_start = word_start;
+        let mut chunk_end = word_start;
+        let mut chunk_width: u32 = 0;
 
-        for ch in word.chars() {
+        for (rel_i, ch) in slice.char_indices() {
+            let abs_i = word_start + rel_i;
             let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            if chunk.is_empty() {
+            let ch_len = ch.len_utf8();
+
+            if chunk_end == chunk_start {
                 if ch_width > max_width {
-                    chunks.push((ch.to_string(), ch_width));
+                    out.push(((abs_i, abs_i + ch_len), ch_width));
+                    chunk_start = abs_i + ch_len;
+                    chunk_end = abs_i + ch_len;
+                    chunk_width = 0;
                 } else {
-                    chunk.push(ch);
+                    chunk_start = abs_i;
+                    chunk_end = abs_i + ch_len;
                     chunk_width = ch_width;
                 }
                 continue;
             }
 
             if chunk_width + ch_width > max_width {
-                chunks.push((std::mem::take(&mut chunk), chunk_width));
+                out.push(((chunk_start, chunk_end), chunk_width));
                 if ch_width > max_width {
-                    chunks.push((ch.to_string(), ch_width));
+                    out.push(((abs_i, abs_i + ch_len), ch_width));
+                    chunk_start = abs_i + ch_len;
+                    chunk_end = abs_i + ch_len;
                     chunk_width = 0;
                 } else {
-                    chunk.push(ch);
+                    chunk_start = abs_i;
+                    chunk_end = abs_i + ch_len;
                     chunk_width = ch_width;
                 }
             } else {
-                chunk.push(ch);
+                chunk_end = abs_i + ch_len;
                 chunk_width += ch_width;
             }
         }
 
-        if !chunk.is_empty() {
-            chunks.push((chunk, chunk_width));
+        if chunk_end > chunk_start {
+            out.push(((chunk_start, chunk_end), chunk_width));
         }
-
-        chunks
     }
 
-    fn push_word_into_line(
+    // Materialize the current line's word ranges into a single `String`,
+    // allocated once at the right capacity, then push it to `lines`.
+    fn flush_line(
+        text: &str,
         lines: &mut Vec<String>,
-        current_line: &mut String,
+        current_line_words: &mut Vec<(usize, usize)>,
+    ) {
+        if current_line_words.is_empty() {
+            return;
+        }
+        let n = current_line_words.len();
+        let mut total_bytes = n - 1; // single-space separators
+        for &(start, end) in current_line_words.iter() {
+            total_bytes += end - start;
+        }
+        let mut s = String::with_capacity(total_bytes);
+        for (i, &(start, end)) in current_line_words.iter().enumerate() {
+            if i > 0 {
+                s.push(' ');
+            }
+            s.push_str(&text[start..end]);
+        }
+        lines.push(s);
+        current_line_words.clear();
+    }
+
+    // Append a word that is known to fit within `max_width` to the current line,
+    // flushing the line first if the word would overflow.
+    #[allow(clippy::too_many_arguments)]
+    fn append_fitting_word(
+        text: &str,
+        lines: &mut Vec<String>,
+        current_line_words: &mut Vec<(usize, usize)>,
         current_width: &mut u32,
-        word: &str,
+        word_start: usize,
+        word_end: usize,
         word_width: u32,
         max_width: u32,
     ) {
-        if word.is_empty() {
+        if current_line_words.is_empty() {
+            current_line_words.push((word_start, word_end));
+            *current_width = word_width;
+        } else if *current_width + 1 + word_width <= max_width {
+            current_line_words.push((word_start, word_end));
+            *current_width += 1 + word_width;
+        } else {
+            flush_line(text, lines, current_line_words);
+            current_line_words.push((word_start, word_end));
+            *current_width = word_width;
+        }
+    }
+
+    // Handle a completed word (skipping empty ranges). Words wider than
+    // `max_width` are split into sub-chunks via `split_long_word`.
+    #[allow(clippy::too_many_arguments)]
+    fn push_word(
+        text: &str,
+        lines: &mut Vec<String>,
+        current_line_words: &mut Vec<(usize, usize)>,
+        current_width: &mut u32,
+        chunk_buf: &mut Vec<((usize, usize), u32)>,
+        word_start: usize,
+        word_end: usize,
+        word_width: u32,
+        max_width: u32,
+    ) {
+        if word_start == word_end {
             return;
         }
-
         if word_width > max_width {
-            let chunks = split_long_word(word, max_width);
-            for (chunk, chunk_width) in chunks {
-                if current_line.is_empty() {
-                    *current_line = chunk;
-                    *current_width = chunk_width;
-                } else if *current_width + 1 + chunk_width <= max_width {
-                    current_line.push(' ');
-                    current_line.push_str(&chunk);
-                    *current_width += 1 + chunk_width;
-                } else {
-                    lines.push(std::mem::take(current_line));
-                    *current_line = chunk;
-                    *current_width = chunk_width;
-                }
+            split_long_word(text, word_start, word_end, max_width, chunk_buf);
+            // Copy each chunk descriptor out before calling into the appender so
+            // nothing aliases `chunk_buf` across calls.
+            for &((cs, ce), cw) in chunk_buf.iter() {
+                append_fitting_word(
+                    text,
+                    lines,
+                    current_line_words,
+                    current_width,
+                    cs,
+                    ce,
+                    cw,
+                    max_width,
+                );
             }
             return;
         }
-
-        if current_line.is_empty() {
-            *current_line = word.to_string();
-            *current_width = word_width;
-        } else if *current_width + 1 + word_width <= max_width {
-            current_line.push(' ');
-            current_line.push_str(word);
-            *current_width += 1 + word_width;
-        } else {
-            lines.push(std::mem::take(current_line));
-            *current_line = word.to_string();
-            *current_width = word_width;
-        }
+        append_fitting_word(
+            text,
+            lines,
+            current_line_words,
+            current_width,
+            word_start,
+            word_end,
+            word_width,
+            max_width,
+        );
     }
 
     let mut lines: Vec<String> = Vec::new();
-    let mut current_line = String::new();
+    let mut current_line_words: Vec<(usize, usize)> = Vec::new();
     let mut current_width: u32 = 0;
-    let mut current_word = String::new();
+    let mut chunk_buf: Vec<((usize, usize), u32)> = Vec::new();
+
+    let mut word_start: usize = 0;
     let mut word_width: u32 = 0;
 
-    for ch in text.chars() {
+    for (i, ch) in text.char_indices() {
         if ch == ' ' {
-            push_word_into_line(
+            push_word(
+                text,
                 &mut lines,
-                &mut current_line,
+                &mut current_line_words,
                 &mut current_width,
-                &current_word,
+                &mut chunk_buf,
+                word_start,
+                i,
                 word_width,
                 max_width,
             );
-            current_word.clear();
+            word_start = i + 1; // ASCII space is 1 byte
             word_width = 0;
             continue;
         }
-
-        current_word.push(ch);
         word_width += UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
     }
 
-    push_word_into_line(
+    push_word(
+        text,
         &mut lines,
-        &mut current_line,
+        &mut current_line_words,
         &mut current_width,
-        &current_word,
+        &mut chunk_buf,
+        word_start,
+        text.len(),
         word_width,
         max_width,
     );
 
-    if !current_line.is_empty() {
-        lines.push(current_line);
-    }
+    flush_line(text, &mut lines, &mut current_line_words);
 
     if lines.is_empty() {
         vec![String::new()]
@@ -536,79 +616,136 @@ pub(crate) fn wrap_segments(
     if max_width == 0 || segments.is_empty() {
         return vec![vec![]];
     }
-    let mut chars: Vec<(char, Style)> = Vec::new();
-    for (text, style) in segments {
-        for ch in text.chars() {
-            chars.push((ch, *style));
-        }
-    }
-    if chars.is_empty() {
+
+    // Fast bail-out: if every segment is empty there's no content to wrap.
+    if !segments.iter().any(|(seg_text, _)| !seg_text.is_empty()) {
         return vec![vec![]];
     }
 
-    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let mut line_chars: Vec<(char, Style)> = Vec::new();
-        let mut line_width: u32 = 0;
-
-        if !lines.is_empty() {
-            while i < chars.len() && chars[i].0 == ' ' {
-                i += 1;
-            }
+    // Advance the cursor past any fully-consumed / empty segments.
+    fn advance_past_empty(segments: &[(String, Style)], cur_seg: &mut usize, cur_off: &mut usize) {
+        while *cur_seg < segments.len() && *cur_off >= segments[*cur_seg].0.len() {
+            *cur_seg += 1;
+            *cur_off = 0;
         }
+    }
 
-        while i < chars.len() {
-            let (ch, st) = chars[i];
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            if line_width + ch_width > max_width && line_width > 0 {
-                if let Some(bp) = line_chars.iter().rposition(|(c, _)| *c == ' ') {
-                    let rewind = line_chars.len() - bp - 1;
-                    i -= rewind;
-                    line_chars.truncate(bp);
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+
+    // Iterator state into `segments`: (segment index, byte offset within segment).
+    let mut cur_seg: usize = 0;
+    let mut cur_off: usize = 0;
+    advance_past_empty(segments, &mut cur_seg, &mut cur_off);
+
+    while cur_seg < segments.len() {
+        // For non-first lines, skip any leading spaces (matching the original).
+        if !lines.is_empty() {
+            loop {
+                advance_past_empty(segments, &mut cur_seg, &mut cur_off);
+                if cur_seg >= segments.len() {
+                    break;
+                }
+                let s = segments[cur_seg].0.as_str();
+                let ch = s[cur_off..]
+                    .chars()
+                    .next()
+                    .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
+                if ch == ' ' {
+                    cur_off += 1; // ASCII space is 1 byte
+                    continue;
                 }
                 break;
             }
-            line_chars.push((ch, st));
-            line_width += ch_width;
-            i += 1;
+            if cur_seg >= segments.len() {
+                break;
+            }
         }
 
         let mut line_segs: Vec<(String, Style)> = Vec::new();
-        let mut cur = String::new();
-        let mut cur_style: Option<Style> = None;
-        for (ch, st) in &line_chars {
-            if cur_style == Some(*st) {
-                cur.push(*ch);
-            } else {
-                if let Some(s) = cur_style {
-                    if !cur.is_empty() {
-                        line_segs.push((std::mem::take(&mut cur), s));
-                    }
-                }
-                cur_style = Some(*st);
-                cur.push(*ch);
+        let mut line_width: u32 = 0;
+        // Snapshot of the most recent space boundary on the current line:
+        // (line_segs.len(), last seg's byte-length, line_width, space_seg_idx, space_byte_off).
+        let mut last_space_break: Option<(usize, usize, u32, usize, usize)> = None;
+
+        loop {
+            advance_past_empty(segments, &mut cur_seg, &mut cur_off);
+            if cur_seg >= segments.len() {
+                break;
             }
-        }
-        if let Some(s) = cur_style {
-            if !cur.is_empty() {
-                let trimmed = cur.trim_end().to_string();
-                if !trimmed.is_empty() {
-                    line_segs.push((trimmed, s));
-                } else if !line_segs.is_empty() {
+            let s = segments[cur_seg].0.as_str();
+            let style = segments[cur_seg].1;
+            let ch = s[cur_off..]
+                .chars()
+                .next()
+                .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
+            let ch_len = ch.len_utf8();
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+
+            if line_width + ch_width > max_width && line_width > 0 {
+                if let Some((segs_len, last_byte_len, _w, sp_seg, sp_off)) = last_space_break {
+                    line_segs.truncate(segs_len);
                     if let Some(last) = line_segs.last_mut() {
-                        let t = last.0.trim_end().to_string();
-                        if t.is_empty() {
-                            line_segs.pop();
-                        } else {
-                            last.0 = t;
-                        }
+                        last.0.truncate(last_byte_len);
                     }
+                    // `line_width` is not read after this break — it is reset at the top of the outer loop.
+                    cur_seg = sp_seg;
+                    cur_off = sp_off + 1; // skip the space itself
+                }
+                break;
+            }
+
+            // Snapshot BEFORE pushing the space so we can roll back to a pre-space state.
+            if ch == ' ' {
+                let segs_len = line_segs.len();
+                let last_byte_len = line_segs.last().map(|(text, _)| text.len()).unwrap_or(0);
+                last_space_break = Some((segs_len, last_byte_len, line_width, cur_seg, cur_off));
+            }
+
+            // Extend the last run if the style matches, otherwise start a new run.
+            if let Some(last) = line_segs.last_mut() {
+                if last.1 == style {
+                    last.0.push(ch);
+                } else {
+                    let mut nw = String::new();
+                    nw.push(ch);
+                    line_segs.push((nw, style));
+                }
+            } else {
+                let mut nw = String::new();
+                nw.push(ch);
+                line_segs.push((nw, style));
+            }
+            line_width += ch_width;
+            cur_off += ch_len;
+        }
+
+        // End-of-line trim: match the original's single-level cascading trim.
+        let cascade = if let Some(last) = line_segs.last_mut() {
+            let trimmed_len = last.0.trim_end().len();
+            if trimmed_len == 0 {
+                true
+            } else {
+                last.0.truncate(trimmed_len);
+                false
+            }
+        } else {
+            false
+        };
+        if cascade {
+            line_segs.pop();
+            if let Some(last) = line_segs.last_mut() {
+                let trimmed_len = last.0.trim_end().len();
+                if trimmed_len == 0 {
+                    line_segs.pop();
+                } else {
+                    last.0.truncate(trimmed_len);
                 }
             }
         }
+
         lines.push(line_segs);
     }
+
     if lines.is_empty() {
         vec![vec![]]
     } else {

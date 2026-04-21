@@ -496,10 +496,10 @@ pub(crate) struct LayoutFeedbackState {
     pub prev_scroll_infos: Vec<(u32, u32)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
-    pub prev_group_rects: Vec<(String, rect::Rect)>,
+    pub prev_group_rects: Vec<(std::sync::Arc<str>, rect::Rect)>,
     pub prev_content_map: Vec<(rect::Rect, rect::Rect)>,
     pub prev_focus_rects: Vec<(usize, rect::Rect)>,
-    pub prev_focus_groups: Vec<Option<String>>,
+    pub prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub last_mouse_pos: Option<(u32, u32)>,
 }
 
@@ -1071,6 +1071,15 @@ pub(crate) fn run_frame_kernel(
     state.layout_feedback.prev_focus_groups = fd.focus_groups;
     layout::render(&tree, buffer);
     let raw_rects = fd.raw_draw_rects;
+    // RAII guard ensuring the kitty clip frame is popped even if a raw-draw
+    // callback panics — prevents stale scroll-clip state leaking into the
+    // next region or subsequent frames.
+    struct KittyClipGuard<'a>(&'a mut crate::buffer::Buffer);
+    impl Drop for KittyClipGuard<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.pop_kitty_clip();
+        }
+    }
     for rdr in raw_rects {
         if rdr.rect.width == 0 || rdr.rect.height == 0 {
             continue;
@@ -1081,12 +1090,24 @@ pub(crate) fn run_frame_kernel(
             .and_then(|c| c.take())
         {
             buffer.push_clip(rdr.rect);
-            buffer.kitty_clip_info = Some((rdr.top_clip_rows, rdr.original_height));
-            cb(buffer, rdr.rect);
-            buffer.kitty_clip_info = None;
+            buffer.push_kitty_clip(crate::buffer::KittyClipInfo {
+                top_clip_rows: rdr.top_clip_rows,
+                original_height: rdr.original_height,
+            });
+            {
+                let guard = KittyClipGuard(buffer);
+                // Explicit reborrow so the guard keeps ownership of the
+                // outer `&mut Buffer` and pops on drop.
+                cb(&mut *guard.0, rdr.rect);
+                // Guard pops on drop at end of this scope.
+            }
             buffer.pop_clip();
         }
     }
+    debug_assert!(
+        buffer.kitty_clip_info_stack.is_empty(),
+        "kitty_clip_info_stack must be empty at end of frame"
+    );
     state.hook_states = ctx.hook_states;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;

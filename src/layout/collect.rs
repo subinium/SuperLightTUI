@@ -1,15 +1,16 @@
 use super::flexbox::inner_area;
 use super::*;
+use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct FrameData {
     pub scroll_infos: Vec<(u32, u32)>,
     pub scroll_rects: Vec<Rect>,
     pub hit_areas: Vec<Rect>,
-    pub group_rects: Vec<(String, Rect)>,
+    pub group_rects: Vec<(Arc<str>, Rect)>,
     pub content_areas: Vec<(Rect, Rect)>,
     pub focus_rects: Vec<(usize, Rect)>,
-    pub focus_groups: Vec<Option<String>>,
+    pub focus_groups: Vec<Option<Arc<str>>>,
     pub raw_draw_rects: Vec<RawDrawRect>,
 }
 
@@ -77,7 +78,7 @@ fn collect_all_inner(
     node: &LayoutNode,
     data: &mut FrameData,
     y_offset: u32,
-    active_group: Option<&str>,
+    active_group: Option<&Arc<str>>,
     viewport: Option<Rect>,
 ) {
     if node.is_scrollable {
@@ -143,10 +144,15 @@ fn collect_all_inner(
         }
     }
 
-    if let Some(name) = &node.group_name {
+    // Materialize this node's group name as an Arc<str> once (if present).
+    // Downstream siblings/descendants inherit the Arc via pointer bumps
+    // (`Arc::clone`) instead of re-allocating a fresh String per focus hit.
+    let node_group_arc: Option<Arc<str>> = node.group_name.as_deref().map(Arc::<str>::from);
+
+    if let Some(name) = &node_group_arc {
         if node.pos.1 + node.size.1 > y_offset {
             data.group_rects.push((
-                name.clone(),
+                Arc::clone(name),
                 Rect::new(
                     node.pos.0,
                     node.pos.1.saturating_sub(y_offset),
@@ -182,12 +188,13 @@ fn collect_all_inner(
         }
     }
 
-    let current_group = node.group_name.as_deref().or(active_group);
+    let current_group = node_group_arc.as_ref().or(active_group);
     if let Some(id) = node.focus_id {
         if id >= data.focus_groups.len() {
             data.focus_groups.resize(id + 1, None);
         }
-        data.focus_groups[id] = current_group.map(ToString::to_string);
+        // Arc<str> clone is a pointer bump, not a heap allocation.
+        data.focus_groups[id] = current_group.cloned();
     }
 
     let (child_offset, child_viewport) = if node.is_scrollable {

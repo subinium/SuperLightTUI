@@ -645,7 +645,7 @@ impl Context {
     pub fn is_group_hovered(&self, name: &str) -> bool {
         if let Some(pos) = self.mouse_pos {
             self.prev_group_rects.iter().any(|(n, rect)| {
-                n == name
+                n.as_ref() == name
                     && pos.0 >= rect.x
                     && pos.0 < rect.x + rect.width
                     && pos.1 >= rect.y

@@ -90,6 +90,19 @@ impl PartialEq for KittyPlacement {
     }
 }
 
+/// Scroll clip information applied to Kitty image placements emitted inside a
+/// raw-draw callback.
+///
+/// Stored on a stack so that nested raw-draw regions restore the outer clip
+/// info on pop, rather than silently clobbering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KittyClipInfo {
+    /// Rows of the source region already scrolled off the top.
+    pub top_clip_rows: u32,
+    /// Original total row count of the scrollable content.
+    pub original_height: u32,
+}
+
 /// A 2D grid of [`Cell`]s backing the terminal display.
 ///
 /// Two buffers are kept (current + previous); only the diff is flushed to the
@@ -107,9 +120,10 @@ pub struct Buffer {
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
     pub(crate) kitty_placements: Vec<KittyPlacement>,
     pub(crate) cursor_pos: Option<(u32, u32)>,
-    /// Scroll clip info set by the run loop before invoking draw closures:
-    /// `(top_clip_rows, original_total_rows)`.
-    pub(crate) kitty_clip_info: Option<(u32, u32)>,
+    /// Stack of scroll clip infos set by the run loop before invoking draw
+    /// closures. The top entry is the active clip; nested raw-draw regions
+    /// push and pop without losing the outer clip.
+    pub(crate) kitty_clip_info_stack: Vec<KittyClipInfo>,
 }
 
 impl Buffer {
@@ -123,8 +137,23 @@ impl Buffer {
             raw_sequences: Vec::new(),
             kitty_placements: Vec::new(),
             cursor_pos: None,
-            kitty_clip_info: None,
+            kitty_clip_info_stack: Vec::new(),
         }
+    }
+
+    /// Push a scroll clip info frame. Paired with [`Buffer::pop_kitty_clip`].
+    pub(crate) fn push_kitty_clip(&mut self, info: KittyClipInfo) {
+        self.kitty_clip_info_stack.push(info);
+    }
+
+    /// Pop the most recently pushed scroll clip info frame.
+    pub(crate) fn pop_kitty_clip(&mut self) -> Option<KittyClipInfo> {
+        self.kitty_clip_info_stack.pop()
+    }
+
+    /// Peek the currently active scroll clip info, if any.
+    pub(crate) fn current_kitty_clip(&self) -> Option<&KittyClipInfo> {
+        self.kitty_clip_info_stack.last()
     }
 
     pub(crate) fn set_cursor_pos(&mut self, x: u32, y: u32) {
@@ -153,7 +182,8 @@ impl Buffer {
     ///
     /// Unlike `raw_sequence`, Kitty placements are managed with image IDs,
     /// compression, and placement lifecycle by the terminal flush code.
-    /// Scroll crop info is automatically applied from `kitty_clip_info`.
+    /// Scroll crop info is automatically applied from the top of the
+    /// `kitty_clip_info_stack` (set via [`Buffer::push_kitty_clip`]).
     pub(crate) fn kitty_place(&mut self, mut p: KittyPlacement) {
         // Apply clip check
         if let Some(clip) = self.effective_clip() {
@@ -166,8 +196,10 @@ impl Buffer {
             }
         }
 
-        // Apply scroll crop info if set
-        if let Some((top_clip_rows, original_height)) = self.kitty_clip_info {
+        // Apply scroll crop info if any frame is active
+        if let Some(info) = self.current_kitty_clip() {
+            let top_clip_rows = info.top_clip_rows;
+            let original_height = info.original_height;
             if original_height > 0 && (top_clip_rows > 0 || p.rows < original_height) {
                 let ratio = p.src_height as f64 / original_height as f64;
                 p.crop_y = (top_clip_rows as f64 * ratio) as u32;
@@ -444,7 +476,7 @@ impl Buffer {
         self.raw_sequences.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
-        self.kitty_clip_info = None;
+        self.kitty_clip_info_stack.clear();
     }
 
     /// Reset every cell and apply a background color to all cells.
@@ -457,7 +489,7 @@ impl Buffer {
         self.raw_sequences.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
-        self.kitty_clip_info = None;
+        self.kitty_clip_info_stack.clear();
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
@@ -622,5 +654,59 @@ mod tests {
         assert!(buf.try_get(2, 0).is_none());
         assert!(buf.try_get(0, 2).is_none());
         assert!(buf.try_get_mut(5, 5).is_none());
+    }
+
+    #[test]
+    fn kitty_clip_stack_restores_outer_on_pop() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 4));
+        assert!(buf.current_kitty_clip().is_none());
+
+        let outer = KittyClipInfo {
+            top_clip_rows: 2,
+            original_height: 10,
+        };
+        let inner = KittyClipInfo {
+            top_clip_rows: 5,
+            original_height: 20,
+        };
+
+        buf.push_kitty_clip(outer);
+        assert_eq!(buf.current_kitty_clip(), Some(&outer));
+
+        // Nested region pushes its own frame.
+        buf.push_kitty_clip(inner);
+        assert_eq!(buf.current_kitty_clip(), Some(&inner));
+
+        // After inner pops, outer MUST still be active — the bug this
+        // refactor fixes is exactly that the outer was previously clobbered.
+        let popped_inner = buf.pop_kitty_clip();
+        assert_eq!(popped_inner, Some(inner));
+        assert_eq!(buf.current_kitty_clip(), Some(&outer));
+
+        let popped_outer = buf.pop_kitty_clip();
+        assert_eq!(popped_outer, Some(outer));
+        assert!(buf.current_kitty_clip().is_none());
+    }
+
+    #[test]
+    fn kitty_clip_stack_cleared_on_reset() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
+        buf.push_kitty_clip(KittyClipInfo {
+            top_clip_rows: 1,
+            original_height: 2,
+        });
+        buf.push_kitty_clip(KittyClipInfo {
+            top_clip_rows: 3,
+            original_height: 4,
+        });
+        buf.reset();
+        assert!(buf.kitty_clip_info_stack.is_empty());
+        assert!(buf.current_kitty_clip().is_none());
+    }
+
+    #[test]
+    fn kitty_clip_pop_on_empty_stack_is_none() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
+        assert!(buf.pop_kitty_clip().is_none());
     }
 }

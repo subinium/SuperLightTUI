@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -144,6 +144,26 @@ path = "examples/demo_infoviz.rs"
 [[example]]
 name = "demo_wiki"
 path = "examples/demo_wiki.rs"
+
+[[example]]
+name = "cookbook_dashboard"
+path = "examples/cookbook_dashboard.rs"
+
+[[example]]
+name = "cookbook_file_picker"
+path = "examples/cookbook_file_picker.rs"
+
+[[example]]
+name = "cookbook_login"
+path = "examples/cookbook_login.rs"
+
+[[example]]
+name = "cookbook_modal_toast"
+path = "examples/cookbook_modal_toast.rs"
+
+[[example]]
+name = "cookbook_table"
+path = "examples/cookbook_table.rs"
 
 [[example]]
 name = "demo_fire"

@@ -42,6 +42,7 @@ The idea is simple:
 - [AI_GUIDE.md](AI_GUIDE.md) - fastest path for AI-assisted builders and coding agents
 - [ANIMATION.md](ANIMATION.md) - tween, spring, keyframes, sequence, stagger
 - [BACKENDS.md](BACKENDS.md) - custom backends, inline mode, static output, `frame()`
+- [COOKBOOK.md](COOKBOOK.md) - copy-paste recipes for five common TUI apps
 - [DEBUGGING.md](DEBUGGING.md) - F12 overlay, clipping, focus, previous-frame behavior
 - [FEATURES.md](FEATURES.md) - feature flags and runtime capability matrix
 - [TESTING.md](TESTING.md) - `TestBackend`, `EventBuilder`, input simulation, snapshots

@@ -1,0 +1,44 @@
+# SuperLightTUI
+
+> Immediate-mode TUI library for Rust. One closure runs every frame; the library handles layout, diffing, and rendering. Designed for fast iteration and AI-assisted TUI code generation.
+
+## Reading order for coding agents
+
+- [Complete reference (single-file)](COMPLETE_REFERENCE.md): condensed full API. Start here for most tasks.
+- [Quick start](QUICK_START.md): install, first app, closure mental model
+- [AI guide](AI_GUIDE.md): common questions agents get wrong, implementation rules
+- [Widgets](WIDGETS.md): categorized API catalog (50+ widgets, state types, runtime methods)
+- [Patterns](PATTERNS.md): composition patterns, state ownership, screens, forms
+- [Examples guide](EXAMPLES.md): 25+ runnable examples grouped by product shape
+- [Architecture](ARCHITECTURE.md): module map, frame lifecycle, layout pipeline
+- [Design principles](DESIGN_PRINCIPLES.md): API philosophy, immediate-mode rationale
+
+## Core concepts
+
+- [Run loop](ARCHITECTURE.md#frame-lifecycle): 8-stage per-frame pipeline
+- [Immediate mode](DESIGN_PRINCIPLES.md): no App trait, no Model/Update/View
+- [Previous-frame feedback](ARCHITECTURE.md#one-frame-delay-feedback): why Response.rect is valid from frame 2
+- [State ownership](PATTERNS.md): app state vs hooks vs widget state
+
+## API surface
+
+- [Crate root re-exports](../src/lib.rs): authoritative public API
+- [Context runtime methods](../src/context/runtime.rs): use_state, use_memo, focus, interaction, error_boundary
+
+## Specialized topics
+
+- [Theming](THEMING.md): 10 preset themes, ThemeColor semantic tokens, WidgetColors overrides, Tailwind palette
+- [Animation](ANIMATION.md): Tween, Spring, Keyframes, Sequence, Stagger
+- [Backends](BACKENDS.md): custom backends, Backend trait, AppState, frame()
+- [Testing](TESTING.md): TestBackend, EventBuilder
+- [Debugging](DEBUGGING.md): F12 overlay, clipping issues, focus surprises
+- [Features](FEATURES.md): feature flags (crossterm, async, serde, image, qrcode, syntax)
+
+## Examples
+
+- [examples/hello.rs](../examples/hello.rs): smallest app
+- [examples/counter.rs](../examples/counter.rs): state plus keyboard
+- [examples/demo.rs](../examples/demo.rs): broad widget tour
+- [examples/demo_dashboard.rs](../examples/demo_dashboard.rs): dashboard composition
+- [examples/demo_cli.rs](../examples/demo_cli.rs): CLI-style layout
+- [examples/demo_infoviz.rs](../examples/demo_infoviz.rs): charts and visualizations
