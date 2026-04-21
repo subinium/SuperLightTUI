@@ -30,7 +30,7 @@ fn line_wrap_with_links_keeps_interactive_commands() {
 
     assert!(matches!(
         ctx.commands.first(),
-        Some(Command::BeginContainer { .. })
+        Some(Command::BeginContainer(_))
     ));
     assert!(ctx
         .commands

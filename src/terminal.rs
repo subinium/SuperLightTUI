@@ -802,6 +802,8 @@ fn base64_decode(input: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(unused_assignments)]
 fn flush_buffer_diff(
     stdout: &mut impl Write,
     current: &Buffer,
@@ -809,38 +811,61 @@ fn flush_buffer_diff(
     color_depth: ColorDepth,
     row_offset: u32,
 ) -> io::Result<()> {
+    // Run-coalescing: consecutive changed cells in the same row that share
+    // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
+    // `Print(run)` after one cursor move and one style delta. This cuts the
+    // number of `queue!` calls on a full redraw from O(cells) to
+    // O(style-change boundaries), which is the dominant stdout write cost.
+    //
+    // A run is broken whenever:
+    //   * style, hyperlink, or row changes,
+    //   * the next cell is not at the expected next column (gap from skipped
+    //     cells — unchanged, empty wide-char trailer, or end of row),
+    //   * end-of-row (always flushed before descending to the next row).
     let mut last_style = Style::new();
     let mut first_style = true;
-    let mut last_pos: Option<(u32, u32)> = None;
     let mut active_link: Option<&str> = None;
     let mut has_updates = false;
+    // Where we believe the cursor currently sits — lets us skip a redundant
+    // `MoveTo` when a new run starts exactly where the previous one ended
+    // (e.g. split only by a style change on otherwise contiguous columns).
+    let mut last_cursor: Option<(u32, u32)> = None;
+
+    // Active run state. `run_next_col` is the column the next cell must
+    // occupy to extend the run; `run_open` guards the rest of the fields.
+    let mut run_buf = String::new();
+    let mut run_abs_y: u32 = 0;
+    let mut run_style: Style = Style::new();
+    let mut run_link: Option<&str> = None;
+    let mut run_next_col: u32 = 0;
+    let mut run_open = false;
+
+    // Helper: flush the currently open run, if any. Emits a single `Print`
+    // for the entire accumulated buffer; positioning, style, and OSC 8 were
+    // already written when the run opened. Updates `last_cursor` to reflect
+    // where the cursor ends up after the Print.
+    macro_rules! flush_run {
+        ($stdout:expr) => {
+            if run_open {
+                queue!($stdout, Print(&run_buf))?;
+                last_cursor = Some((run_next_col, run_abs_y));
+                run_buf.clear();
+                run_open = false;
+            }
+        };
+    }
 
     for y in current.area.y..current.area.bottom() {
         for x in current.area.x..current.area.right() {
             let cell = current.get(x, y);
             let prev = previous.get(x, y);
             if cell == prev || cell.symbol.is_empty() {
+                // Gap — any open run on this row must be flushed.
+                flush_run!(stdout);
                 continue;
             }
-            has_updates = true;
 
             let abs_y = row_offset + y;
-            let need_move = last_pos.map_or(true, |(lx, ly)| ly != abs_y || lx != x);
-            if need_move {
-                queue!(stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
-            }
-
-            if cell.style != last_style {
-                if first_style {
-                    queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
-                    apply_style(stdout, &cell.style, color_depth)?;
-                    first_style = false;
-                } else {
-                    apply_style_delta(stdout, &last_style, &cell.style, color_depth)?;
-                }
-                last_style = cell.style;
-            }
-
             // Defense-in-depth: `Cell::hyperlink` is a public field that can
             // be written directly. `set_string_linked` pre-sanitizes, but a
             // direct write could still smuggle control bytes into the OSC 8
@@ -849,22 +874,69 @@ fn flush_buffer_diff(
                 .hyperlink
                 .as_deref()
                 .filter(|u| crate::buffer::sanitize_osc8_url(u).is_some());
-            if cell_link != active_link {
-                if let Some(url) = cell_link {
-                    queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
-                } else {
-                    queue!(stdout, Print("\x1b]8;;\x07"))?;
+
+            // Decide whether this cell extends the open run or starts a new one.
+            let extends = run_open
+                && run_abs_y == abs_y
+                && run_next_col == x
+                && run_style == cell.style
+                && run_link == cell_link;
+
+            if !extends {
+                flush_run!(stdout);
+
+                // Begin a new run. Emit positioning + style + OSC 8 header now
+                // (before the Print bytes) so the resulting stream is a valid
+                // SGR sequence exactly matching the per-cell flush.
+                has_updates = true;
+
+                let need_move = last_cursor.map_or(true, |(lx, ly)| lx != x || ly != abs_y);
+                if need_move {
+                    queue!(stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
                 }
-                active_link = cell_link;
+
+                if cell.style != last_style {
+                    if first_style {
+                        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                        apply_style(stdout, &cell.style, color_depth)?;
+                        first_style = false;
+                    } else {
+                        apply_style_delta(stdout, &last_style, &cell.style, color_depth)?;
+                    }
+                    last_style = cell.style;
+                }
+
+                if cell_link != active_link {
+                    if let Some(url) = cell_link {
+                        queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                    } else {
+                        queue!(stdout, Print("\x1b]8;;\x07"))?;
+                    }
+                    active_link = cell_link;
+                }
+
+                run_open = true;
+                run_abs_y = abs_y;
+                run_style = cell.style;
+                run_link = cell_link;
             }
 
-            queue!(stdout, Print(&cell.symbol))?;
+            // Append the cell's grapheme cluster (possibly multi-char when it
+            // carries combining marks). Wide chars advance by their column
+            // width so subsequent cells line up.
+            run_buf.push_str(&cell.symbol);
             let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
             if char_width > 1 && cell.symbol.chars().any(|c| c == '\u{FE0F}') {
-                queue!(stdout, Print(" "))?;
+                // Emoji variation selector — terminal renders 2 cols but the
+                // glyph often measures as 1; pad so the cursor ends up where
+                // the next cell is drawn.
+                run_buf.push(' ');
             }
-            last_pos = Some((x + char_width, abs_y));
+            run_next_col = x + char_width;
         }
+
+        // End of row: flush whatever is buffered before moving to the next row.
+        flush_run!(stdout);
     }
 
     if has_updates {
@@ -875,6 +947,25 @@ fn flush_buffer_diff(
     }
 
     Ok(())
+}
+
+/// Benchmark-only entry point for the per-frame buffer flush.
+///
+/// Exposed so criterion benches under `benches/` (an external crate) can
+/// measure the stdout-emit cost of the per-frame flush against a hermetic
+/// `Vec<u8>` (or any `Write`) sink, without constructing a real terminal.
+///
+/// Not part of the stable API. Do not depend on this in application code —
+/// prefer the real terminal backend ([`crate::run`]) or
+/// [`TestBackend`](crate::TestBackend).
+#[doc(hidden)]
+pub fn __bench_flush_buffer_diff<W: Write>(
+    w: &mut W,
+    current: &Buffer,
+    previous: &Buffer,
+    color_depth: ColorDepth,
+) -> io::Result<()> {
+    flush_buffer_diff(w, current, previous, color_depth, 0)
 }
 
 fn flush_raw_sequences(
@@ -1561,5 +1652,128 @@ mod tests {
         assert!(s.starts_with("\x1b]52;c;"));
         assert!(s.ends_with("\x1b\\"));
         assert!(s.contains(&base64_encode(b"test")));
+    }
+
+    // Count occurrences of CSI cursor-move (`ESC [ ... H`) in flush output.
+    fn count_move_tos(s: &str) -> usize {
+        let bytes = s.as_bytes();
+        let mut count = 0;
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == 0x1b && bytes[i + 1] == b'[' {
+                // Scan to the terminator — final byte in 0x40..=0x7e.
+                let mut j = i + 2;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'H' {
+                    count += 1;
+                }
+                i = j + 1;
+            } else {
+                i += 1;
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn flush_coalesces_consecutive_same_style_cells_into_one_run() {
+        // 10 cells, identical Style, contiguous columns -> 1 MoveTo + 1 Print.
+        let area = Rect::new(0, 0, 20, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let style = Style::new().fg(Color::Red);
+        for x in 0..10u32 {
+            let cell = current.get_mut(x, 0);
+            cell.set_char('X');
+            cell.set_style(style);
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+
+        // Exactly one cursor move for the whole run.
+        assert_eq!(
+            count_move_tos(&s),
+            1,
+            "expected 1 MoveTo for a coalesced run, got {} in {:?}",
+            count_move_tos(&s),
+            s
+        );
+        // The 10 glyphs are emitted contiguously as a single run.
+        assert!(
+            s.contains("XXXXXXXXXX"),
+            "expected contiguous run 'XXXXXXXXXX' in {:?}",
+            s
+        );
+    }
+
+    #[test]
+    fn flush_breaks_run_on_style_change() {
+        // 5 red cells + 5 blue cells in the same row -> 2 MoveTo calls not 10.
+        let area = Rect::new(0, 0, 20, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let red = Style::new().fg(Color::Red);
+        let blue = Style::new().fg(Color::Blue);
+        for x in 0..5u32 {
+            let cell = current.get_mut(x, 0);
+            cell.set_char('R');
+            cell.set_style(red);
+        }
+        for x in 5..10u32 {
+            let cell = current.get_mut(x, 0);
+            cell.set_char('B');
+            cell.set_style(blue);
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+
+        // First run needs a MoveTo; the second run starts exactly where the
+        // cursor already is, so `last_cursor` suppresses a redundant MoveTo.
+        // Either way, we should see at most 2 MoveTos and far fewer than 10.
+        let moves = count_move_tos(&s);
+        assert!(
+            moves <= 2,
+            "expected at most 2 MoveTos across a style boundary, got {} in {:?}",
+            moves,
+            s
+        );
+        assert!(s.contains("RRRRR"), "missing 'RRRRR' run in {:?}", s);
+        assert!(s.contains("BBBBB"), "missing 'BBBBB' run in {:?}", s);
+    }
+
+    #[test]
+    fn flush_breaks_run_on_column_gap() {
+        // Cells at x=0..3 and x=6..9; gap at x=3,4,5 must split runs.
+        let area = Rect::new(0, 0, 20, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let style = Style::new().fg(Color::Green);
+        for x in 0..3u32 {
+            current.get_mut(x, 0).set_char('A').set_style(style);
+        }
+        for x in 6..9u32 {
+            current.get_mut(x, 0).set_char('B').set_style(style);
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+
+        // Two separate runs means two MoveTo commands.
+        assert_eq!(
+            count_move_tos(&s),
+            2,
+            "expected 2 MoveTos across a column gap, got {} in {:?}",
+            count_move_tos(&s),
+            s
+        );
+        assert!(s.contains("AAA"), "missing 'AAA' run in {:?}", s);
+        assert!(s.contains("BBB"), "missing 'BBB' run in {:?}", s);
     }
 }

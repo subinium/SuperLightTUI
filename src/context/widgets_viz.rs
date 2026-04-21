@@ -46,34 +46,10 @@ impl Context {
         let denom = if max_value > 0.0 { max_value } else { 1.0 };
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
-
-        for (label, value) in data {
-            let label_width = UnicodeWidthStr::width(*label);
-            let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-            let normalized = (*value / denom).clamp(0.0, 1.0);
-            let bar = Self::horizontal_bar_text(normalized, max_width);
-
-            self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 1,
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -87,7 +63,33 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            });
+            })));
+
+        for (label, value) in data {
+            let label_width = UnicodeWidthStr::width(*label);
+            let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+            let normalized = (*value / denom).clamp(0.0, 1.0);
+            let bar = Self::horizontal_bar_text(normalized, max_width);
+
+            self.skip_interaction_slot();
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 1,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
             let mut label_text = String::with_capacity(label.len() + label_padding.len());
             label_text.push_str(label);
             label_text.push_str(&label_padding);
@@ -177,23 +179,24 @@ impl Context {
             .unwrap_or(0);
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: bar_gap as u32,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: bar_gap as u32,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for bar in bars {
             self.render_horizontal_styled_bar_row(bar, max_label_width, max_width, denom);
@@ -217,23 +220,24 @@ impl Context {
         let color = bar.color.unwrap_or(self.theme.primary);
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         let mut label_text = String::with_capacity(bar.label.len() + label_padding.len());
         label_text.push_str(&bar.label);
         label_text.push_str(&label_padding);
@@ -259,23 +263,24 @@ impl Context {
         let layout = self.compute_vertical_bar_layout(bars, max_height, denom, bar_width);
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         self.render_vertical_bar_body(
             bars,
@@ -356,23 +361,24 @@ impl Context {
 
         for row in (0..chart_height).rev() {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: bar_gap as u32,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: bar_gap as u32,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
 
             let row_base = row * 8;
             for (i, (bar, units)) in bars.iter().zip(bar_units.iter()).enumerate() {
@@ -422,23 +428,24 @@ impl Context {
 
     fn render_vertical_bar_labels(&mut self, bars: &[Bar], col_width: usize, bar_gap: u16) {
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: bar_gap as u32,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: bar_gap as u32,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         for bar in bars {
             self.styled(
                 Self::center_and_truncate_text(&bar.label, col_width),
@@ -522,29 +529,10 @@ impl Context {
             .unwrap_or(0);
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: config.group_gap as u32,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
-
-        for group in groups {
-            self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Column,
-                gap: config.bar_gap as u32,
+                gap: config.group_gap as u32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -558,20 +546,14 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            });
+            })));
 
-            self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
-
-            for bar in &group.bars {
-                let label_width = UnicodeWidthStr::width(bar.label.as_str());
-                let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-                let normalized = (bar.value / denom).clamp(0.0, 1.0);
-                let bar_text = Self::horizontal_bar_text(normalized, max_width);
-
-                self.skip_interaction_slot();
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Row,
-                    gap: 1,
+        for group in groups {
+            self.skip_interaction_slot();
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Column,
+                    gap: config.bar_gap as u32,
                     align: Align::Start,
                     align_self: None,
                     justify: Justify::Start,
@@ -585,7 +567,35 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                });
+                })));
+
+            self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
+
+            for bar in &group.bars {
+                let label_width = UnicodeWidthStr::width(bar.label.as_str());
+                let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
+                let normalized = (bar.value / denom).clamp(0.0, 1.0);
+                let bar_text = Self::horizontal_bar_text(normalized, max_width);
+
+                self.skip_interaction_slot();
+                self.commands
+                    .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                        direction: Direction::Row,
+                        gap: 1,
+                        align: Align::Start,
+                        align_self: None,
+                        justify: Justify::Start,
+                        border: None,
+                        border_sides: BorderSides::all(),
+                        border_style: Style::new().fg(self.theme.border),
+                        bg_color: None,
+                        padding: Padding::default(),
+                        margin: Margin::default(),
+                        constraints: Constraints::default(),
+                        title: None,
+                        grow: 0,
+                        group_name: None,
+                    })));
                 let mut label_text =
                     String::with_capacity(2 + bar.label.len() + label_padding.len());
                 label_text.push_str("  ");
@@ -621,23 +631,24 @@ impl Context {
         config: &BarChartConfig,
     ) {
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: config.group_gap as u32,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: config.group_gap as u32,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for group in groups {
             self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
@@ -844,23 +855,24 @@ impl Context {
         }
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         if cells.is_empty() {
             self.commands.push(Command::EndContainer);
@@ -1209,23 +1221,24 @@ impl Context {
             let source_cols = source_row.len();
 
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
 
             let mut segment = String::new();
             let mut segment_color: Option<Color> = None;
@@ -1306,23 +1319,24 @@ impl Context {
 
         for segments in canvas.render() {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new(),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new(),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
             for (text, color) in segments {
                 let c = if color == Color::Reset {
                     self.theme.primary
@@ -1362,23 +1376,24 @@ impl Context {
 
         for row in rows {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
             for (text, style) in row.segments {
                 self.styled(text, style);
             }
@@ -1428,23 +1443,24 @@ impl Context {
 
         for row in rows {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
             for (text, style) in row.segments {
                 self.styled(text, style);
             }
@@ -1957,23 +1973,24 @@ impl Context {
         const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         // Compute stacked units per group
         struct StackedSegment {
@@ -2001,23 +2018,24 @@ impl Context {
         // Render rows top to bottom
         for row in (0..chart_height).rev() {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
 
             let row_base = row * 8;
 
@@ -2074,23 +2092,24 @@ impl Context {
 
         // Labels row
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         for (label, _) in &stacked_groups {
             self.styled(
                 Self::center_and_truncate_text(label, bar_width),

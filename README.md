@@ -145,14 +145,14 @@ graph LR
 ```
 
 Every `ui.*()` call records a command to a flat list — no tree construction, no layout math.
-The engine replays those commands through a pipeline: build a layout tree, compute flexbox, collect hit areas and focus groups in a single DFS pass, render cells to a back buffer, then diff against the previous frame and flush only what changed.
+The engine replays those commands through a **four-stage DFS pipeline** — each stage specializes: build the layout tree, compute flexbox, collect interaction and feedback data, render cells to a back buffer — then diffs against the previous frame and flushes only what changed.
 
 This architecture is what makes the simple grammar possible:
 
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
 - **Automatic performance.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine makes it fast. No manual dirty tracking.
-- **Auto-wired interaction.** `ui.button("Save")` gives you hover, click, and focus for free. `collect_all()` gathers all interaction data in one DFS pass — replacing seven separate tree traversals.
+- **Auto-wired interaction.** `ui.button("Save")` gives you hover, click, and focus for free. The collect stage fused seven independent sub-walks (hit areas, focus rects, scroll regions, group rects, content rects, focus groups, raw-draw rects) into one DFS — so the top-level pipeline is four passes, not ten.
 - **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
 For the full eight-stage lifecycle, see [Architecture Guide].

@@ -1474,15 +1474,22 @@ Use `ui.sparkline(data, width)` for a single inline trend. `ui.histogram(data, w
 
 ## 17. Rendering internals (when debugging)
 
+The engine runs **four top-level DFS traversals** of the layout tree per frame (steps 4, 5, 6, 7 below). The F12 debug overlay adds one or two more when enabled.
+
 ```
 Frame N:
   1. poll events (non-blocking tick_rate poll)
   2. your closure runs — every ui.*() records a Command
   3. post-closure normalization: focus keys, notifications, tooltips
-  4. build_tree: commands -> LayoutNode tree
-  5. flexbox: compute() walks the tree and resolves sizes
-  6. collect_all: single DFS gathers scroll/hit/focus/group/content data
-  7. render: write cells to back buffer (with clip stack + viewport culling)
+  4. build_tree:   commands -> LayoutNode tree                 [DFS 1/4]
+  5. flexbox:      compute() walks the tree and resolves sizes [DFS 2/4]
+  6. collect_all:  one DFS gathers scroll/hit/focus/group/
+                   content/raw-draw data into FrameData        [DFS 3/4]
+                   — this single walk replaced 7 separate
+                     collect_* sub-walks; the top-level
+                     pipeline is still four passes
+  7. render:       write cells to back buffer (clip stack +
+                   viewport culling)                           [DFS 4/4]
   8. deferred .draw()/.draw_with() callbacks replay into their rects
   9. diff back vs front buffer, apply_style_delta on changed cells, flush
  10. swap buffers, tick += 1

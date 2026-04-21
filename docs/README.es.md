@@ -145,14 +145,14 @@ graph LR
 ```
 
 Cada llamada a `ui.*()` registra un comando en una lista plana — sin construir árboles, sin cálculo de layout.
-El motor pasa esos comandos por un pipeline: construir un árbol de layout, calcular flexbox, recoger hit areas y grupos de foco en un solo DFS, renderizar celdas al back buffer, hacer diff contra el frame anterior y flush solo lo que cambió.
+El motor pasa esos comandos por un **pipeline DFS de cuatro etapas** — cada etapa se especializa: construir el árbol de layout, calcular flexbox, recoger datos de interacción y feedback, renderizar celdas al back buffer — luego hace diff contra el frame anterior y flush solo lo que cambió.
 
 Esta arquitectura es lo que hace posible la gramática simple:
 
 - **Sin ceremonia.** Immediate-mode significa que no hay trait `App`, ni `Model`/`Message`/`Update`/`View`. Tu closure es toda la UI. El estado son variables normales de Rust. El flujo de control es `if`/`for`.
 - **Layout invisible.** `ui.col(|ui| { ... })` registra un comando "abrir columna". El motor construye el árbol y ejecuta flexbox — nunca ves `LayoutNode`.
 - **Rendimiento automático.** El doble buffer compara celdas entre frames y solo emite los atributos ANSI que cambiaron. Redibujas todo cada frame; el motor lo hace rápido. Sin dirty tracking manual.
-- **Interacción auto-cableada.** `ui.button("Save")` te da hover, click y foco gratis. `collect_all()` recoge todos los datos de interacción en un solo DFS — reemplazando siete recorridos separados del árbol.
+- **Interacción auto-cableada.** `ui.button("Save")` te da hover, click y foco gratis. La etapa de recolección fusionó siete sub-recorridos independientes (hit areas, focus rects, scroll regions, group rects, content rects, focus groups, raw-draw rects) en un solo DFS — así el pipeline de nivel superior son cuatro pasadas, no diez.
 - **Feedback síncrono.** La interacción usa las posiciones de layout del frame anterior (imperceptible a 60 FPS). Sin callbacks, sin queries de layout async — tu código se mantiene lineal.
 
 Para el ciclo de vida completo de ocho etapas, consulta la [Arquitectura].

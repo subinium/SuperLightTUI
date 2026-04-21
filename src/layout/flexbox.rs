@@ -1,5 +1,104 @@
 use super::*;
 
+/// Inline capacity for per-call layout scratch buffers.
+///
+/// Most flex containers have a small number of children. When the child count
+/// is `<= INLINE_CAP`, the scratch values live in the stack-allocated array
+/// and no heap allocation occurs. Larger containers fall back to a `Vec` on
+/// the overflow path, which keeps worst-case behavior identical to the old
+/// `Vec::with_capacity(n)` path.
+const INLINE_CAP: usize = 16;
+
+/// Small-vec–style `u32` scratch used by `layout_row` / `layout_column`.
+///
+/// Each call to these functions creates four of these on the stack (min sizes
+/// and allocated sizes for the main axis — plus an extra pair when a column
+/// is scrollable). When a container has `<= INLINE_CAP` children the entire
+/// scratch lives on the stack; otherwise the overflow spills to the heap.
+///
+/// Because every buffer is created inside a single function body and read
+/// within that same body (before any recursive `compute` call for child nodes
+/// happens on a *child*, not a peer), recursion does not reuse scratch
+/// storage — each recursion frame has its own independent `U32Stack` values.
+struct U32Stack {
+    inline: [u32; INLINE_CAP],
+    len: usize,
+    overflow: Option<Vec<u32>>,
+}
+
+impl U32Stack {
+    #[inline]
+    fn with_capacity(n: usize) -> Self {
+        Self {
+            inline: [0; INLINE_CAP],
+            len: 0,
+            overflow: if n > INLINE_CAP {
+                Some(Vec::with_capacity(n))
+            } else {
+                None
+            },
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, v: u32) {
+        match &mut self.overflow {
+            Some(over) => over.push(v),
+            None => {
+                if self.len < INLINE_CAP {
+                    self.inline[self.len] = v;
+                    self.len += 1;
+                } else {
+                    // Promotion: spill inline values + this one into a fresh Vec.
+                    let mut heap = Vec::with_capacity(self.len + 1);
+                    heap.extend_from_slice(&self.inline[..self.len]);
+                    heap.push(v);
+                    self.overflow = Some(heap);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> u32 {
+        match &self.overflow {
+            Some(over) => over[i],
+            None => self.inline[i],
+        }
+    }
+
+    #[inline]
+    fn iter(&self) -> U32StackIter<'_> {
+        U32StackIter {
+            stack: self,
+            idx: 0,
+            len: match &self.overflow {
+                Some(over) => over.len(),
+                None => self.len,
+            },
+        }
+    }
+}
+
+struct U32StackIter<'a> {
+    stack: &'a U32Stack,
+    idx: usize,
+    len: usize,
+}
+
+impl Iterator for U32StackIter<'_> {
+    type Item = u32;
+    #[inline]
+    fn next(&mut self) -> Option<u32> {
+        if self.idx >= self.len {
+            return None;
+        }
+        let v = self.stack.get(self.idx);
+        self.idx += 1;
+        Some(v)
+    }
+}
+
 pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     if let Some(pct) = node.constraints.width_pct {
         let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
@@ -53,7 +152,23 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                 Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
             );
             if node.is_scrollable {
-                let saved_grows: Vec<u16> = node.children.iter().map(|c| c.grow).collect();
+                // Inline-first scratch for saving `grow` values per child. Most
+                // scrollable containers have few children; fall back to a Vec
+                // only for wide ones. This avoids the per-frame allocation.
+                let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
+                let mut saved_overflow: Option<Vec<u16>> = None;
+                let child_count = node.children.len();
+                if child_count > INLINE_CAP {
+                    let mut v = Vec::with_capacity(child_count);
+                    for c in &node.children {
+                        v.push(c.grow);
+                    }
+                    saved_overflow = Some(v);
+                } else {
+                    for (i, c) in node.children.iter().enumerate() {
+                        saved_inline[i] = c.grow;
+                    }
+                }
                 for child in &mut node.children {
                     child.grow = 0;
                 }
@@ -78,8 +193,17 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                     );
                     layout_column(node, virtual_area);
                 } else {
-                    for (child, &grow) in node.children.iter_mut().zip(saved_grows.iter()) {
-                        child.grow = grow;
+                    match &saved_overflow {
+                        Some(over) => {
+                            for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
+                                child.grow = grow;
+                            }
+                        }
+                        None => {
+                            for (i, child) in node.children.iter_mut().enumerate() {
+                                child.grow = saved_inline[i];
+                            }
+                        }
                     }
                     layout_column(node, viewport_area);
                 }
@@ -185,15 +309,15 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
     let n = node.children.len() as u32;
     let total_gaps = (n - 1) * node.gap;
     let available = area.width.saturating_sub(total_gaps);
-    let min_widths: Vec<u32> = node
-        .children
-        .iter()
-        .map(|child| child.min_width())
-        .collect();
+    let child_count = node.children.len();
+    let mut min_widths = U32Stack::with_capacity(child_count);
+    for child in &node.children {
+        min_widths.push(child.min_width());
+    }
 
     let mut total_grow: u32 = 0;
     let mut fixed_width: u32 = 0;
-    for (child, &min_width) in node.children.iter().zip(min_widths.iter()) {
+    for (child, min_width) in node.children.iter().zip(min_widths.iter()) {
         if child.grow > 0 {
             total_grow += child.grow as u32;
         } else {
@@ -204,7 +328,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
     let mut flex_space = available.saturating_sub(fixed_width);
     let mut remaining_grow = total_grow;
 
-    let mut child_widths: Vec<u32> = Vec::with_capacity(node.children.len());
+    let mut child_widths = U32Stack::with_capacity(child_count);
     for (i, child) in node.children.iter().enumerate() {
         let w = if child.grow > 0 && total_grow > 0 {
             let share = (flex_space * child.grow as u32)
@@ -214,7 +338,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_widths[i].min(available)
+            min_widths.get(i).min(available)
         };
         child_widths.push(w);
     }
@@ -225,7 +349,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
 
     let mut x = area.x + start_offset;
     for (i, child) in node.children.iter_mut().enumerate() {
-        let w = child_widths[i];
+        let w = child_widths.get(i);
         let child_cross_align = child.align_self.unwrap_or(node.align);
         let child_outer_h = match child_cross_align {
             Align::Start => area.height,
@@ -270,15 +394,15 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let n = node.children.len() as u32;
     let total_gaps = (n - 1) * node.gap;
     let available = area.height.saturating_sub(total_gaps);
-    let min_heights: Vec<u32> = node
-        .children
-        .iter_mut()
-        .map(|child| child.min_height_for_width(area.width))
-        .collect();
+    let child_count = node.children.len();
+    let mut min_heights = U32Stack::with_capacity(child_count);
+    for child in &mut node.children {
+        min_heights.push(child.min_height_for_width(area.width));
+    }
 
     let mut total_grow: u32 = 0;
     let mut fixed_height: u32 = 0;
-    for (child, &min_height) in node.children.iter().zip(min_heights.iter()) {
+    for (child, min_height) in node.children.iter().zip(min_heights.iter()) {
         if child.grow > 0 {
             total_grow += child.grow as u32;
         } else {
@@ -289,7 +413,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
     let mut flex_space = available.saturating_sub(fixed_height);
     let mut remaining_grow = total_grow;
 
-    let mut child_heights: Vec<u32> = Vec::with_capacity(node.children.len());
+    let mut child_heights = U32Stack::with_capacity(child_count);
     for (i, child) in node.children.iter().enumerate() {
         let h = if child.grow > 0 && total_grow > 0 {
             let share = (flex_space * child.grow as u32)
@@ -299,7 +423,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_heights[i].min(available)
+            min_heights.get(i).min(available)
         };
         child_heights.push(h);
     }
@@ -310,7 +434,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
 
     let mut y = area.y + start_offset;
     for (i, child) in node.children.iter_mut().enumerate() {
-        let h = child_heights[i];
+        let h = child_heights.get(i);
         let child_cross_align = child.align_self.unwrap_or(node.align);
         let child_outer_w = match child_cross_align {
             Align::Start => area.width,

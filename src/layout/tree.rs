@@ -849,23 +849,24 @@ fn build_children(
                 node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);
             }
-            Command::BeginContainer {
-                direction,
-                gap,
-                align,
-                align_self,
-                justify,
-                border,
-                border_sides,
-                border_style,
-                bg_color,
-                padding,
-                margin,
-                constraints,
-                title,
-                grow,
-                group_name,
-            } => {
+            Command::BeginContainer(args) => {
+                let BeginContainerArgs {
+                    direction,
+                    gap,
+                    align,
+                    align_self,
+                    justify,
+                    border,
+                    border_sides,
+                    border_style,
+                    bg_color,
+                    padding,
+                    margin,
+                    constraints,
+                    title,
+                    grow,
+                    group_name,
+                } = *args;
                 let mut node = LayoutNode::container(
                     direction,
                     ContainerConfig {
@@ -890,17 +891,18 @@ fn build_children(
                 build_children(&mut node, commands, overlays, false);
                 parent.children.push(node);
             }
-            Command::BeginScrollable {
-                grow,
-                border,
-                border_sides,
-                border_style,
-                padding,
-                margin,
-                constraints,
-                title,
-                scroll_offset,
-            } => {
+            Command::BeginScrollable(args) => {
+                let BeginScrollableArgs {
+                    grow,
+                    border,
+                    border_sides,
+                    border_style,
+                    padding,
+                    margin,
+                    constraints,
+                    title,
+                    scroll_offset,
+                } = *args;
                 let mut node = LayoutNode::container(
                     Direction::Column,
                     ContainerConfig {

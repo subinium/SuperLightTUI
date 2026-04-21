@@ -91,23 +91,24 @@ impl Context {
             .min(state.entries.len().saturating_sub(visible_rows));
         let end = (start + visible_rows).min(state.entries.len());
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: Some(Border::Single),
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Single),
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for entry in state
             .entries
@@ -204,23 +205,24 @@ impl Context {
         };
         let end = (start + vh).min(state.items.len());
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         if start > 0 {
             let hidden = start.to_string();
@@ -402,23 +404,24 @@ impl Context {
     /// (`![alt](url)`), code blocks with syntax highlighting, and GFM-style
     /// pipe tables. Paragraph text auto-wraps to container width.
     pub fn markdown(&mut self, text: &str) -> Response {
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         self.skip_interaction_slot();
 
         let text_style = Style::new().fg(self.theme.text);

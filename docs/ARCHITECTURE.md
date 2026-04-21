@@ -109,7 +109,7 @@ src/
 
 ## Frame Lifecycle
 
-Every frame follows this exact sequence:
+Every frame follows this exact sequence. The engine performs **four top-level DFS traversals** of the layout tree per frame (build → layout → collect → render), plus optional passes for the debug overlay.
 
 ```
 1. EVENT POLL
@@ -127,22 +127,22 @@ Every frame follows this exact sequence:
    └── emit_pending_tooltips()
    └── Scoped stacks settle before layout; quit can short-circuit here
 
-4. BUILD TREE — build_tree()
+4. BUILD TREE — build_tree()                         [DFS pass 1 of 4]
    └── Flat Command list → nested LayoutNode tree
    └── Parent-child relationships resolved from open/close markers
 
-5. FLEXBOX LAYOUT
-   └── layout_row() / layout_column()
+5. FLEXBOX LAYOUT — flexbox::compute()               [DFS pass 2 of 4]
+   └── layout_row() / layout_column() walk the tree
    └── Resolves: sizes, gaps, grow factors, min/max constraints
    └── Breakpoint-conditional styles evaluated against terminal width
 
-6. COLLECT ALL — collect_all()
-   └── Single DFS traversal of the laid-out LayoutNode tree
-   └── Collects: scroll regions, hit areas, group rects, content rects,
-       focus rects/groups, raw-draw viewport rects
-   └── This single pass replaced multiple feedback traversals
+6. COLLECT ALL — collect_all()                       [DFS pass 3 of 4]
+   └── One DFS over the laid-out tree; returns a FrameData bundle
+   └── Gathers, in a single walk: scroll regions, hit areas, group rects,
+       content rects, focus rects/groups, raw-draw viewport rects
+   └── See "The collect_all consolidation" below for what this replaced
 
-7. RENDER + DEFERRED DRAW
+7. RENDER + DEFERRED DRAW — layout::render()         [DFS pass 4 of 4]
    └── render() → render_inner() → render_container_border()
    └── Writes Cell values to the back buffer
    └── Clip stack ensures children don't overflow parent bounds
@@ -154,10 +154,22 @@ Every frame follows this exact sequence:
    └── apply_style_delta() — only emit ANSI attributes that changed
    └── Synchronized output (DECSET 2026) prevents tearing on supported terminals
    └── Swap front ↔ back buffers
+
+9. DEBUG OVERLAY (optional, F12)
+   └── render_debug_overlay() adds 1–2 extra DFS passes when enabled
+   └── Off by default; pure diagnostic path
 ```
 
 For the custom-backend entry point that drives this lifecycle manually, see `docs/BACKENDS.md`.
 Terminal-owned run loops add selection overlay and clipboard handling around the shared kernel before the final flush.
+
+### The `collect_all` consolidation
+
+The per-frame DFS count used to be higher. Before consolidation, the collect phase performed seven independent tree walks — one each for scroll regions, hit areas, group rects, content rects, focus rects, focus groups, and raw-draw viewport rects. That was 7 DFS traversals stacked on top of the build, layout, and render walks — 10 traversals per frame in total.
+
+`collect_all()` folds those seven collect-phase walks into **one** DFS that produces a single `FrameData` struct holding every vector the runtime needs for the next frame's hit-testing and scroll feedback. The top-level pipeline is still four DFS passes (build, layout, collect, render) — `collect_all` did not fuse the phases, it fused the sub-walks inside one phase.
+
+Net effect: **10 traversals per frame → 4**. That is the real story; the marketing line "single DFS" was shorthand for "collect no longer does seven walks" and understated what is actually a four-stage pipeline.
 
 ---
 

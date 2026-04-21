@@ -1326,35 +1326,39 @@ impl<'a> ContainerBuilder<'a> {
         let is_group_container = group_name.is_some();
 
         if let Some(scroll_offset) = self.scroll_offset {
-            self.ctx.commands.push(Command::BeginScrollable {
-                grow: self.grow,
-                border: self.border,
-                border_sides: self.border_sides,
-                border_style,
-                padding: self.padding,
-                margin: self.margin,
-                constraints: self.constraints,
-                title: self.title,
-                scroll_offset,
-            });
+            self.ctx
+                .commands
+                .push(Command::BeginScrollable(Box::new(BeginScrollableArgs {
+                    grow: self.grow,
+                    border: self.border,
+                    border_sides: self.border_sides,
+                    border_style,
+                    padding: self.padding,
+                    margin: self.margin,
+                    constraints: self.constraints,
+                    title: self.title,
+                    scroll_offset,
+                })));
         } else {
-            self.ctx.commands.push(Command::BeginContainer {
-                direction,
-                gap: resolved_gap,
-                align: self.align,
-                align_self: self.align_self_value,
-                justify: self.justify,
-                border: self.border,
-                border_sides: self.border_sides,
-                border_style,
-                bg_color,
-                padding: self.padding,
-                margin: self.margin,
-                constraints: self.constraints,
-                title: self.title,
-                grow: self.grow,
-                group_name,
-            });
+            self.ctx
+                .commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction,
+                    gap: resolved_gap,
+                    align: self.align,
+                    align_self: self.align_self_value,
+                    justify: self.justify,
+                    border: self.border,
+                    border_sides: self.border_sides,
+                    border_style,
+                    bg_color,
+                    padding: self.padding,
+                    margin: self.margin,
+                    constraints: self.constraints,
+                    title: self.title,
+                    grow: self.grow,
+                    group_name,
+                })));
         }
         self.ctx.rollback.text_color_stack.push(self.text_color);
         f(self.ctx);

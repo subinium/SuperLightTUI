@@ -22,23 +22,24 @@ impl Context {
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         let children_start = self.commands.len();
         f(self);
@@ -52,13 +53,13 @@ impl Context {
                 Command::InteractionMarker(_) => {
                     pending_markers.push(cmd);
                 }
-                Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                Command::BeginContainer(_) | Command::BeginScrollable(_) => {
                     let mut depth = 1_u32;
                     let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
                     element.push(cmd);
                     for next in iter.by_ref() {
                         match next {
-                            Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                            Command::BeginContainer(_) | Command::BeginScrollable(_) => {
                                 depth += 1;
                             }
                             Command::EndContainer => {
@@ -90,28 +91,9 @@ impl Context {
         let cols = cols.max(1) as usize;
         for row in elements.chunks(cols) {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
-
-            for element in row {
-                self.skip_interaction_slot();
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Column,
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
                     align_self: None,
@@ -124,9 +106,30 @@ impl Context {
                     margin: Margin::default(),
                     constraints: Constraints::default(),
                     title: None,
-                    grow: 1,
+                    grow: 0,
                     group_name: None,
-                });
+                })));
+
+            for element in row {
+                self.skip_interaction_slot();
+                self.commands
+                    .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                        direction: Direction::Column,
+                        gap: 0,
+                        align: Align::Start,
+                        align_self: None,
+                        justify: Justify::Start,
+                        border: None,
+                        border_sides: BorderSides::all(),
+                        border_style: Style::new().fg(border),
+                        bg_color: None,
+                        padding: Padding::default(),
+                        margin: Margin::default(),
+                        constraints: Constraints::default(),
+                        title: None,
+                        grow: 1,
+                        group_name: None,
+                    })));
                 self.commands.extend(element.iter().cloned());
                 self.commands.push(Command::EndContainer);
             }
@@ -175,23 +178,24 @@ impl Context {
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         let children_start = self.commands.len();
         f(self);
@@ -205,13 +209,13 @@ impl Context {
                 Command::InteractionMarker(_) => {
                     pending_markers.push(cmd);
                 }
-                Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                Command::BeginContainer(_) | Command::BeginScrollable(_) => {
                     let mut depth = 1_u32;
                     let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
                     element.push(cmd);
                     for next in iter.by_ref() {
                         match next {
-                            Command::BeginContainer { .. } | Command::BeginScrollable { .. } => {
+                            Command::BeginContainer(_) | Command::BeginScrollable(_) => {
                                 depth += 1;
                             }
                             Command::EndContainer => {
@@ -241,23 +245,24 @@ impl Context {
 
         for row in elements.chunks(cols) {
             self.skip_interaction_slot();
-            self.commands.push(Command::BeginContainer {
-                direction: Direction::Row,
-                gap: 0,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            });
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
 
             for (col_idx, element) in row.iter().enumerate() {
                 let spec = columns.get(col_idx).copied().unwrap_or(GridColumn::Auto);
@@ -282,23 +287,24 @@ impl Context {
                 };
 
                 self.skip_interaction_slot();
-                self.commands.push(Command::BeginContainer {
-                    direction: Direction::Column,
-                    gap: 0,
-                    align: Align::Start,
-                    align_self: None,
-                    justify: Justify::Start,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new().fg(border),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin: Margin::default(),
-                    constraints,
-                    title: None,
-                    grow,
-                    group_name: None,
-                });
+                self.commands
+                    .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                        direction: Direction::Column,
+                        gap: 0,
+                        align: Align::Start,
+                        align_self: None,
+                        justify: Justify::Start,
+                        border: None,
+                        border_sides: BorderSides::all(),
+                        border_style: Style::new().fg(border),
+                        bg_color: None,
+                        padding: Padding::default(),
+                        margin: Margin::default(),
+                        constraints,
+                        title: None,
+                        grow,
+                        group_name: None,
+                    })));
                 self.commands.extend(element.iter().cloned());
                 self.commands.push(Command::EndContainer);
             }
@@ -368,23 +374,24 @@ impl Context {
             self.consume_indices(consumed);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for (view_idx, &item_idx) in visible.iter().enumerate() {
             let item = &state.items[item_idx];
@@ -517,75 +524,50 @@ impl Context {
             s
         };
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         self.styled("◀", Style::new().fg(self.theme.text));
         self.styled(title, Style::new().bold().fg(self.theme.text));
         self.styled("▶", Style::new().fg(self.theme.text));
         self.commands.push(Command::EndContainer);
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
-        for wd in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
-            self.styled(
-                format!("{wd:>2} "),
-                Style::new().fg(self.theme.text_dim).bold(),
-            );
-        }
-        self.commands.push(Command::EndContainer);
-
-        let first = CalendarState::first_weekday(state.year, state.month);
-        let days = CalendarState::days_in_month(state.year, state.month);
-        for week in 0..6_u32 {
-            self.commands.push(Command::BeginContainer {
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -601,7 +583,36 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            });
+            })));
+        for wd in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
+            self.styled(
+                format!("{wd:>2} "),
+                Style::new().fg(self.theme.text_dim).bold(),
+            );
+        }
+        self.commands.push(Command::EndContainer);
+
+        let first = CalendarState::first_weekday(state.year, state.month);
+        let days = CalendarState::days_in_month(state.year, state.month);
+        for week in 0..6_u32 {
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new().fg(self.theme.border),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
 
             for col in 0..7_u32 {
                 let idx = week * 7 + col;
@@ -702,23 +713,24 @@ impl Context {
             state.refresh();
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         let dir_text = {
             let dir = state.current_dir.display().to_string();

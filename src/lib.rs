@@ -100,6 +100,9 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "crossterm")]
+#[doc(hidden)]
+pub use terminal::__bench_flush_buffer_diff;
+#[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};

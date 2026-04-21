@@ -371,7 +371,7 @@ fn focus_marker_tags_container() {
 
     let commands = vec![
         Command::FocusMarker(0),
-        Command::BeginContainer {
+        Command::BeginContainer(Box::new(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -387,7 +387,7 @@ fn focus_marker_tags_container() {
             title: None,
             grow: 0,
             group_name: None,
-        },
+        })),
         Command::Text {
             content: "inside".into(),
             cursor_offset: None,
@@ -508,7 +508,7 @@ fn group_names_share_arc_across_focus_descendants() {
     let mut commands: Vec<Command> = Vec::new();
     let mut focus_id = 0usize;
     for i in 0..N_GROUPS {
-        commands.push(Command::BeginContainer {
+        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -524,7 +524,7 @@ fn group_names_share_arc_across_focus_descendants() {
             title: None,
             grow: 0,
             group_name: Some(format!("group-{i}")),
-        });
+        })));
         for _ in 0..FOCUSES_PER_GROUP {
             commands.push(Command::FocusMarker(focus_id));
             commands.push(Command::Text {
@@ -581,4 +581,111 @@ fn group_names_share_arc_across_focus_descendants() {
             );
         }
     }
+}
+
+#[test]
+fn flexbox_row_many_children_overflow_scratch() {
+    // Row with 32 text children (> INLINE_CAP=16) must still lay out correctly,
+    // exercising the U32Stack heap-overflow path in layout_row. Semantic equivalence
+    // check: positions are strictly increasing and non-overlapping.
+    const N: usize = 32;
+    let mut commands: Vec<Command> = Vec::new();
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Row,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    for i in 0..N {
+        commands.push(Command::Text {
+            content: format!("c{i}"),
+            cursor_offset: None,
+            style: Style::new(),
+            grow: 1,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Default::default(),
+            constraints: Default::default(),
+        });
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(commands);
+    compute(&mut tree, crate::rect::Rect::new(0, 0, 200, 4));
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), N);
+    // Monotonically increasing x positions, non-overlapping, total width bounded by area.
+    let mut prev_end = 0u32;
+    for child in &row.children {
+        assert!(child.pos.0 >= prev_end, "children must not overlap");
+        prev_end = child.pos.0 + child.size.0;
+    }
+    assert!(prev_end <= 200);
+}
+
+#[test]
+fn flexbox_column_many_children_overflow_scratch() {
+    // Column with 20 fixed-height children exercises layout_column's heap-overflow
+    // path in the U32Stack scratch (> INLINE_CAP=16).
+    const N: usize = 20;
+    let mut commands: Vec<Command> = Vec::new();
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Column,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    for i in 0..N {
+        commands.push(Command::Text {
+            content: format!("row{i}"),
+            cursor_offset: None,
+            style: Style::new(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Default::default(),
+            constraints: Default::default(),
+        });
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(commands);
+    compute(&mut tree, crate::rect::Rect::new(0, 0, 20, 50));
+
+    let col = &tree.children[0];
+    assert_eq!(col.children.len(), N);
+    let mut prev_end = 0u32;
+    for child in &col.children {
+        assert!(
+            child.pos.1 >= prev_end,
+            "children must not overlap vertically"
+        );
+        prev_end = child.pos.1 + child.size.1;
+    }
+    assert!(prev_end <= 50);
 }
