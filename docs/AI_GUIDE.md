@@ -72,6 +72,7 @@ No. Built-in interactive widgets usually do. Custom widgets can return `()`, `bo
 ### "Why is hover/focus data weird on the first frame?"
 
 Because layout feedback often uses previous-frame data in immediate-mode UI.
+For the frame timeline and prev-frame rect rules, see [Previous Frame Guide](PREVIOUS_FRAME_GUIDE.md).
 
 ## Implementation rules for agents
 

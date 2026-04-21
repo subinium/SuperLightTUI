@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-04-21
+
+### Documentation
+
+- **`docs/COOKBOOK.md`** — five copy-paste app recipes (login form with validation, data table with search + sort, modal + toast confirmation, real-time dashboard with charts, file picker with preview). Each recipe has a matching runnable example at `examples/cookbook_<name>.rs`. Closes #59.
+- **`docs/PREVIOUS_FRAME_GUIDE.md`** — Frame N vs N+1 timeline, when `Response.rect` is valid, `if ui.tick() > 0` idiom, common pitfalls (flicker, focus, animation target). Closes #60.
+- **`docs/STATE_APIS.md`** — every public `*State` type with full field + method reference (1028 lines). Previously WIDGETS.md only listed fields; AI agents couldn't discover methods like `.validate()`, `.toggle_sort()`, `.set_filter()`. Closes #61.
+- **`docs/llms.txt`** + **`docs/COMPLETE_REFERENCE.md`** — llms.txt manifest and single-file ~1500-line condensed reference optimized for LLM context windows. Closes #63.
+- **`.claude/skills/slt/`** — Claude Code skill embedded in the repo. Provides `/slt` authoring guidance when Claude Code runs inside this project. Closes #65.
+
+### Safety
+
+- **`Buffer::kitty_clip_info_stack`** — replaced `Option<(u32, u32)>` with a push/pop `Vec<KittyClipInfo>`. Nested raw-draw callbacks no longer silently clobber outer clip state. Callback invocation wraps a `KittyClipGuard` (RAII `Drop`) so the stack pops even on panic. A `debug_assert!` enforces empty-stack-at-end-of-frame. Closes #69.
+
+### Performance
+
+- **`wrap_lines` / `wrap_segments`** — rewritten as single-pass scans over byte-index ranges. Eliminates per-word `String` reallocation via `mem::take`, eliminates the intermediate `Vec<(char, Style)>` in `wrap_segments`. Allocation count drops from roughly O(words) to O(lines). No signature change; 14 new regression tests added. Closes #74.
+- **`collect_all` group names** — `FrameData.group_rects` and `FrameData.focus_groups` switched from `String` to `Arc<str>`. Group names are materialized once per group container; descendant focus registrations inherit via pointer-bump `Arc::clone` instead of per-hit `String` allocation. `Context`/`LayoutFeedbackState` `prev_*` mirrors bumped to match. Closes #76.
+
+### Infrastructure
+
+- **`CLAUDE.md`** — prominent top-level release-workflow checklist (8 steps: local PRE-CI → branch → PR → wait CI → merge → tag → verify release → announce). Codifies the hard-won lesson that every step is mandatory, no "probably fine" shortcuts.
+
+### Not planned
+
+- **`render_inner` unicode-width cache** — investigation (#77) found the proposed optimization invalid. `LayoutNode.size.0` is the allocated box width from flexbox, not the text's unicode width; replacing `UnicodeWidthStr::width(text)` with `node.size.0` would break alignment (offset always 0) and truncation (`size.0 > size.0` always false). Closed as wontfix. A separate `text_pixel_width` field on `LayoutNode` would be the correct fix if CJK render cost becomes measurable.
+
 ## [0.18.0] — 2026-04-17
 
 ### Security
