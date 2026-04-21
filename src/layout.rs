@@ -16,8 +16,8 @@ mod render;
 mod tree;
 
 pub(crate) use collect::collect_all;
-pub(crate) use command::Command;
 pub use command::Direction;
+pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
 pub(crate) use render::{render, render_debug_overlay};
 pub(crate) use tree::{build_tree, wrap_lines, wrap_segments, LayoutNode, NodeKind};

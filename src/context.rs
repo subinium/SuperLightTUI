@@ -1,7 +1,7 @@
 use crate::chart::{build_histogram_config, render_chart, Candle, ChartBuilder, HistogramBuilder};
 use crate::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseKind};
 use crate::halfblock::HalfBlockImage;
-use crate::layout::{Command, Direction};
+use crate::layout::{BeginContainerArgs, BeginScrollableArgs, Command, Direction};
 use crate::rect::Rect;
 use crate::style::{
     Align, Border, BorderSides, Breakpoint, Color, Constraints, ContainerStyle, Justify, Margin,

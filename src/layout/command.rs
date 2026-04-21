@@ -10,6 +10,47 @@ pub enum Direction {
     Column,
 }
 
+/// Arguments for [`Command::BeginContainer`].
+///
+/// Boxed inside the variant so that the surrounding `Command` enum stays
+/// small — a frame may contain hundreds of commands, and most variants
+/// (for example `EndContainer`) carry no payload.
+#[derive(Debug, Clone)]
+pub(crate) struct BeginContainerArgs {
+    pub direction: Direction,
+    pub gap: u32,
+    pub align: Align,
+    pub align_self: Option<Align>,
+    pub justify: Justify,
+    pub border: Option<Border>,
+    pub border_sides: BorderSides,
+    pub border_style: Style,
+    pub bg_color: Option<Color>,
+    pub padding: Padding,
+    pub margin: Margin,
+    pub constraints: Constraints,
+    pub title: Option<(String, Style)>,
+    pub grow: u16,
+    pub group_name: Option<String>,
+}
+
+/// Arguments for [`Command::BeginScrollable`].
+///
+/// Boxed for the same reason as [`BeginContainerArgs`] — keeps the
+/// `Command` enum from being dragged up to the width of this payload.
+#[derive(Debug, Clone)]
+pub(crate) struct BeginScrollableArgs {
+    pub grow: u16,
+    pub border: Option<Border>,
+    pub border_sides: BorderSides,
+    pub border_style: Style,
+    pub padding: Padding,
+    pub margin: Margin,
+    pub constraints: Constraints,
+    pub title: Option<(String, Style)>,
+    pub scroll_offset: u32,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Command {
     Text {
@@ -23,34 +64,8 @@ pub(crate) enum Command {
         margin: Margin,
         constraints: Constraints,
     },
-    BeginContainer {
-        direction: Direction,
-        gap: u32,
-        align: Align,
-        align_self: Option<Align>,
-        justify: Justify,
-        border: Option<Border>,
-        border_sides: BorderSides,
-        border_style: Style,
-        bg_color: Option<Color>,
-        padding: Padding,
-        margin: Margin,
-        constraints: Constraints,
-        title: Option<(String, Style)>,
-        grow: u16,
-        group_name: Option<String>,
-    },
-    BeginScrollable {
-        grow: u16,
-        border: Option<Border>,
-        border_sides: BorderSides,
-        border_style: Style,
-        padding: Padding,
-        margin: Margin,
-        constraints: Constraints,
-        title: Option<(String, Style)>,
-        scroll_offset: u32,
-    },
+    BeginContainer(Box<BeginContainerArgs>),
+    BeginScrollable(Box<BeginScrollableArgs>),
     Link {
         text: String,
         url: String,
@@ -81,4 +96,31 @@ pub(crate) enum Command {
         grow: u16,
         margin: Margin,
     },
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::Command;
+
+    /// Regression guard for the `Command` enum size.
+    ///
+    /// A frame may push hundreds of `Command` values into a single `Vec`,
+    /// so every byte in the enum variant-union multiplies across the frame.
+    /// Fat variants (`BeginContainer`, `BeginScrollable`) are boxed to keep
+    /// the common 0-payload variants (e.g. `EndContainer`) cheap.
+    ///
+    /// The current ceiling reflects the largest remaining inline variant
+    /// (`Text`, which carries a `String` + `Constraints` + `Style` + small
+    /// scalars). If this test fires after a refactor, either box the new
+    /// fat variant or bump this bound with justification.
+    #[test]
+    fn command_enum_size_is_bounded() {
+        const MAX_BYTES: usize = 128;
+        let actual = std::mem::size_of::<Command>();
+        assert!(
+            actual <= MAX_BYTES,
+            "Command enum grew to {actual} bytes (limit {MAX_BYTES}); \
+             consider boxing the new fat variant"
+        );
+    }
 }

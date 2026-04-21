@@ -23,23 +23,24 @@ impl Context {
         }
 
         self.skip_interaction_slot();
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         for message in state.messages.iter().rev() {
             let color = match message.level {
                 ToastLevel::Info => self.theme.primary,

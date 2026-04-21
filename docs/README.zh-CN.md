@@ -145,14 +145,14 @@ graph LR
 ```
 
 每次 `ui.*()` 调用只是往一个扁平列表中记录命令 — 不构建树，不计算布局。
-引擎随后将这些命令通过管线处理：构建布局树、计算 flexbox、单次 DFS 收集命中区域和焦点组、渲染单元格到后缓冲区、与前一帧做 diff，只 flush 变更的部分。
+引擎随后将这些命令通过一条**四阶段 DFS 管线**处理 — 每个阶段各司其职：构建布局树、计算 flexbox、收集交互与反馈数据、渲染单元格到后缓冲区 — 然后与前一帧做 diff，只 flush 变更的部分。
 
 这个架构正是简洁语法的来源：
 
 - **零仪式。** Immediate-mode 意味着不需要 `App` trait、`Model`/`Message`/`Update`/`View`。你的闭包就是整个 UI。状态是普通 Rust 变量，控制流就是 `if`/`for`。
 - **布局不可见。** `ui.col(|ui| { ... })` 只是记录一条"打开列"的命令。引擎负责构建树和运行 flexbox — 你永远不会看到 `LayoutNode`。
 - **性能是自动的。** 双缓冲在帧间对比每个单元格，只输出变化的 ANSI 属性。你在概念上每帧全部重绘，引擎让它变快。无需手动 dirty tracking。
-- **交互自动接线。** `ui.button("Save")` 免费提供 hover、click 和 focus。`collect_all()` 在单次 DFS 中收集所有交互数据 — 替代了 7 次独立的树遍历。
+- **交互自动接线。** `ui.button("Save")` 免费提供 hover、click 和 focus。收集阶段把 7 个独立的子遍历（命中区域、焦点 rect、滚动区域、group rect、content rect、focus group、raw-draw rect）合并为 1 次 DFS — 所以顶层管线是 4 次遍历，而不是 10 次。
 - **同步反馈。** 交互使用前一帧的布局位置（60 FPS 下不可察觉）。无回调、无 async 布局查询 — 代码保持线性。
 
 完整的八阶段生命周期请见[架构指南]。

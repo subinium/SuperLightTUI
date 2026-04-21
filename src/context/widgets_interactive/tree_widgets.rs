@@ -44,23 +44,24 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         let entries = state.flatten();
         for (idx, entry) in entries.iter().enumerate() {
@@ -153,23 +154,24 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         let mut rows = Vec::new();
         flatten_directory_rows(&state.tree.nodes, Vec::new(), &mut rows);

@@ -145,14 +145,14 @@ graph LR
 ```
 
 `ui.*()` 호출은 커맨드를 flat list에 기록합니다 — 트리 구성도, 레이아웃 계산도 없습니다.
-엔진이 이 커맨드를 파이프라인에 통과시킵니다: 레이아웃 트리 생성, flexbox 계산, 히트 영역과 포커스 그룹을 단일 DFS로 수집, back buffer에 셀 렌더링, 이전 프레임과 diff 후 변경분만 flush.
+엔진이 이 커맨드를 **4단계 DFS 파이프라인**에 통과시킵니다 — 각 단계는 역할이 분리되어 있습니다: 레이아웃 트리 생성, flexbox 계산, 상호작용과 피드백 데이터 수집, back buffer에 셀 렌더링 — 이후 이전 프레임과 diff 후 변경분만 flush합니다.
 
 이 아키텍처가 문법을 단순하게 만드는 이유입니다:
 
 - **의식 절차가 없습니다.** Immediate-mode이므로 `App` 트레이트, `Model`/`Message`/`Update`/`View`가 필요 없습니다. 클로저가 전체 UI이고, 상태는 일반 Rust 변수, 제어 흐름은 `if`/`for`입니다.
 - **레이아웃이 보이지 않습니다.** `ui.col(|ui| { ... })`는 "open column" 커맨드를 기록합니다. 엔진이 트리를 빌드하고 flexbox를 실행합니다 — `LayoutNode`는 노출되지 않습니다.
 - **성능이 자동입니다.** 더블 버퍼가 프레임 간 셀을 비교하고 변경된 ANSI 속성만 출력합니다. 매 프레임 전체를 다시 그리지만 엔진이 빠르게 처리합니다. 수동 dirty tracking이 필요 없습니다.
-- **상호작용이 자동 연결됩니다.** `ui.button("Save")`만으로 hover, click, focus가 제공됩니다. `collect_all()`이 단일 DFS로 모든 상호작용 데이터를 수집하며, 기존 7개 트리 순회를 대체합니다.
+- **상호작용이 자동 연결됩니다.** `ui.button("Save")`만으로 hover, click, focus가 제공됩니다. collect 단계가 7개의 독립된 서브 순회(hit area, focus rect, scroll region, group rect, content rect, focus group, raw-draw rect)를 하나의 DFS로 통합했습니다 — 그 결과 최상위 파이프라인은 10회가 아닌 4회 순회입니다.
 - **동기적 피드백.** 상호작용은 이전 프레임의 레이아웃 위치를 사용합니다(60 FPS에서 감지 불가). 콜백도 async 레이아웃 쿼리도 없이 코드가 선형으로 유지됩니다.
 
 전체 8단계 라이프사이클은 [아키텍처 가이드]를 참고하세요.

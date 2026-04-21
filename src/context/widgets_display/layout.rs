@@ -165,7 +165,7 @@ impl Context {
         if has_link {
             self.commands.insert(
                 start,
-                Command::BeginContainer {
+                Command::BeginContainer(Box::new(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -181,7 +181,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                },
+                })),
             );
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
@@ -584,23 +584,24 @@ impl Context {
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
 
-        self.commands.push(Command::BeginContainer {
-            direction,
-            gap,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction,
+                gap,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         self.rollback.text_color_stack.push(None);
         f(self);
         self.rollback.text_color_stack.pop();

@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.18.2] — 2026-04-21
+
+### Performance
+
+- **`flush_buffer_diff` run-length coalescing** — consecutive changed cells in the same row that share style, hyperlink, and column adjacency are now emitted as a single `Print(run)` instead of per-cell `Print`. The cursor-move + style-delta happens once per run. Estimated 200×60 full-redraw reduces `queue!` calls from ~12000 to ~2000 — 3-5x flush-path speedup expected on redraw-heavy frames (e.g., `demo_fire`). Closes #62.
+- **`Command` enum size reduction** — `Command::BeginContainer` and `Command::BeginScrollable` fat variants now wrap `Box<BeginContainerArgs>` / `Box<BeginScrollableArgs>`. Enum size drops from ~200 bytes to ≤ 128 (new `size_of::<Command>()` regression test asserts this). 18 call sites updated; external public API unchanged. Closes #64.
+- **`flexbox::layout_row` / `layout_column` inline scratch** — introduced `U32Stack` (inline `[u32; 16]` + heap overflow) to avoid allocating `Vec<u32>` x4 per call. Eliminates ~4 allocations per flexbox call for child counts ≤ 16 (typical case); deep nested dashboards see ~15-30% layout-step speedup. Closes #67.
+
+### Benchmarks
+
+- **`bench_flush_full_redraw_200x60` + `bench_flush_sparse_change_200x60`** — new criterion benches measuring actual stdout-flush cost into a `Vec<u8>` sink. Adds one `#[doc(hidden)] pub fn __bench_flush_buffer_diff` helper that wraps the private `flush_buffer_diff` for hermetic measurement. Closes #70.
+
+### Documentation
+
+- **`docs/ARCHITECTURE.md`** — pipeline redescribed accurately as **four top-level DFS passes** (build_tree → flexbox → collect_all → render), not "single DFS". Added `The collect_all consolidation` subsection explaining the real improvement: the collect phase went from 7 sub-walks to 1, reducing the total frame work from 10 traversals to 4.
+- **`README.md`** + **localized READMEs (zh-CN, es, ja, ko)** + **`docs/COMPLETE_REFERENCE.md`** — matching language updates to describe the four-stage pipeline. Closes #73.
+
 ## [0.18.1] — 2026-04-21
 
 ### Documentation

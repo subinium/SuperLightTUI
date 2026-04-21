@@ -117,23 +117,24 @@ impl Context {
         let visible_len = page_end.saturating_sub(page_start);
         state.selected = state.selected.min(visible_len.saturating_sub(1));
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         self.render_table_header(state, colors);
         self.render_table_rows(state, focused, page_start, visible_len, colors);
@@ -339,23 +340,24 @@ impl Context {
             self.consume_indices(consumed);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         for (idx, label) in state.labels.iter().enumerate() {
             let style = if idx == state.selected {
                 let s = Style::new()
@@ -417,23 +419,24 @@ impl Context {
             None
         };
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         let raw_label = label.into();
         let mut label_text = String::with_capacity(raw_label.len() + 4);
         label_text.push_str("[ ");
@@ -537,27 +540,28 @@ impl Context {
         };
 
         let (btn_border, btn_border_style) = border.unwrap_or((Border::Rounded, Style::new()));
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 0,
-            align: Align::Center,
-            align_self: None,
-            justify: Justify::Center,
-            border: if border.is_some() {
-                Some(btn_border)
-            } else {
-                None
-            },
-            border_sides: BorderSides::all(),
-            border_style: btn_border_style,
-            bg_color,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Center,
+                align_self: None,
+                justify: Justify::Center,
+                border: if border.is_some() {
+                    Some(btn_border)
+                } else {
+                    None
+                },
+                border_sides: BorderSides::all(),
+                border_style: btn_border_style,
+                bg_color,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         self.styled(text, style);
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
@@ -599,23 +603,24 @@ impl Context {
         } else {
             None
         };
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: hover_bg,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: hover_bg,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         let marker_style = if *checked {
             Style::new().fg(colors.accent.unwrap_or(self.theme.success))
         } else {
@@ -680,23 +685,24 @@ impl Context {
         } else {
             None
         };
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 2,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: hover_bg,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 2,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: hover_bg,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         let label_text = label.into();
         let switch = if *on { "●━━ ON" } else { "━━● OFF" };
         let switch_style = if *on {
@@ -814,23 +820,24 @@ impl Context {
             .unwrap_or_else(|| state.placeholder.clone());
         let arrow = if state.open { "▲" } else { "▼" };
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         self.render_select_trigger(&display_text, arrow, border_color, colors);
 
@@ -849,28 +856,29 @@ impl Context {
         border_color: Color,
         colors: &WidgetColors,
     ) {
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Row,
-            gap: 1,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: Some(Border::Rounded),
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(border_color),
-            bg_color: None,
-            padding: Padding {
-                left: 1,
-                right: 1,
-                top: 0,
-                bottom: 0,
-            },
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 1,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Rounded),
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border_color),
+                bg_color: None,
+                padding: Padding {
+                    left: 1,
+                    right: 1,
+                    top: 0,
+                    bottom: 0,
+                },
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
         self.skip_interaction_slot();
         self.styled(
             display_text,
@@ -955,23 +963,24 @@ impl Context {
             self.consume_indices(consumed);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for (idx, item) in state.items.iter().enumerate() {
             let is_selected = idx == state.selected;
@@ -1054,23 +1063,24 @@ impl Context {
             self.consume_indices(consumed);
         }
 
-        self.commands.push(Command::BeginContainer {
-            direction: Direction::Column,
-            gap: 0,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new().fg(self.theme.border),
-            bg_color: None,
-            padding: Padding::default(),
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-            title: None,
-            grow: 0,
-            group_name: None,
-        });
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
 
         for (idx, item) in state.items.iter().enumerate() {
             let checked = state.selected.contains(&idx);
