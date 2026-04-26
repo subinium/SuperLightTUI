@@ -57,6 +57,8 @@ fn main() -> std::io::Result<()> {
 
 5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop. Ctrl+C just works.
 
+MSRV: Rust 1.81. Default features enable the `crossterm` backend.
+
 ## 60-Second Grammar
 
 There are four ideas most apps start with:
@@ -114,6 +116,38 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+## Runtime Modes
+
+The same closure runs across several entry points. Pick one based on UI shape, not size.
+
+| Mode | API | When to use |
+|------|-----|-------------|
+| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app — alternate screen, mouse, theme. |
+| Inline | `slt::run_inline` / `slt::run_inline_with` | Fixed-height widget below the prompt — no alternate screen. |
+| Static + inline | `slt::run_static` | Log lines stream into scrollback while an inline UI stays live below. |
+| Async messages | `slt::run_async` *(feature: `async`)* | Background tasks push messages into the closure via `tokio::mpsc`. |
+| Custom backend | `slt::frame` + `Backend` + `AppState` | Drive rendering yourself — tests, GUI embeds, WASM, snapshot harnesses. |
+
+`RunConfig` tunes mouse, kitty keyboard, color depth, max FPS, scroll speed, theme, and title across every mode.
+
+## Feature Flags
+
+```toml
+[dependencies]
+superlighttui = { version = "0.19", features = ["async", "image"] }
+```
+
+| Feature | What it adds |
+|---------|--------------|
+| `async` | `tokio` + `run_async` for background message loops |
+| `serde` | `Serialize`/`Deserialize` on selected state types |
+| `image` | PNG/JPEG decoding for `ui.image` |
+| `qrcode` | QR code rendering |
+| `kitty-compress` | zlib compression for the Kitty image protocol |
+| `syntax` | Tree-sitter highlighting for all bundled languages |
+| `syntax-<lang>` | Highlighting for a single language (`rust`, `python`, `typescript`, ...) |
+| `full` | `async + serde + image + qrcode + kitty-compress` — **does not** include `syntax` (grammars are heavy; opt in explicitly) |
+
 ## Why SLT
 
 - **Small public grammar**. Most screens start with normal Rust state, `row()` / `col()` / `container()`, method chaining, and `Response`.
@@ -159,6 +193,9 @@ For the full eight-stage lifecycle, see [Architecture Guide].
 
 ## Common API Surface
 
+Stateless calls take values; stateful widgets take an explicit state struct so your data
+keeps living in normal Rust variables across frames.
+
 ```rust
 // Text and layout
 ui.text("Hello").bold().fg(Color::Cyan);
@@ -169,18 +206,18 @@ ui.row(|ui| {
 });
 
 // Inputs and actions
-ui.text_input(&mut name);
+ui.text_input(&mut input);          // input: TextInputState
 if ui.button("Save").clicked {}
 ui.checkbox("Dark mode", &mut dark);
 
 // Data and navigation
-ui.tabs(&mut tabs);
-ui.list(&mut items);
-ui.table(&mut data);
-ui.command_palette(&mut palette);
+ui.tabs(&mut tabs);                 // tabs: TabsState
+ui.list(&mut list);                 // list: ListState
+ui.table(&mut table);               // table: TableState
+ui.command_palette(&mut palette);   // palette: CommandPaletteState
 
 // Overlays and rich output
-ui.toast(&mut toasts);
+ui.toast(&mut toasts);              // toasts: ToastState
 ui.modal(|ui| {
     ui.text("Confirm?").bold();
 });
@@ -196,6 +233,10 @@ ui.canvas(40, 10, |cv| {
     cv.circle(20, 20, 15);
 });
 ```
+
+State structs (`ListState`, `TableState`, `TextInputState`, `TabsState`, `CommandPaletteState`,
+`ToastState`, `FilePickerState`, `RichLogState`, ...) are public — keep them in your app
+struct or local variables and pass them in each frame.
 
 For the categorized widget list, see [Widget Guide].
 For composition advice, see [Patterns Guide].
