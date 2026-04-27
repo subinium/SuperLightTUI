@@ -9,7 +9,7 @@
 - [AI guide](AI_GUIDE.md): common questions agents get wrong, implementation rules
 - [Widgets](WIDGETS.md): categorized API catalog (50+ widgets, state types, runtime methods)
 - [Patterns](PATTERNS.md): composition patterns, state ownership, screens, forms
-- [Examples guide](EXAMPLES.md): 25+ runnable examples grouped by product shape
+- [Examples guide](EXAMPLES.md): 32 runnable examples grouped by product shape
 - [Architecture](ARCHITECTURE.md): module map, frame lifecycle, layout pipeline
 - [Design principles](DESIGN_PRINCIPLES.md): API philosophy, immediate-mode rationale
 
@@ -24,6 +24,26 @@
 
 - [Crate root re-exports](../src/lib.rs): authoritative public API
 - [Context runtime methods](../src/context/runtime.rs): use_state, use_memo, focus, interaction, error_boundary
+
+### Component / state APIs (v0.19.0)
+
+- `ui.provide(value, |ui| { ... })` — context injection, scoped to the closure body
+- `ui.use_context::<T>()` — read provided context (panics if no `T` is in scope)
+- `ui.try_use_context::<T>()` — read provided context, returns `Option<&T>` (safe form)
+- `ui.use_state_named(id)` / `ui.use_state_named_with(id, init)` — id-keyed local state, safe inside conditionals (does not depend on call order)
+- `.with_if(cond, modifier)` / `.with(modifier)` — fluent conditional styling on text and `ContainerBuilder`
+
+### v0.18.x highlights
+
+- `NO_COLOR` env var support (auto-disables color output when set)
+- `scroll_col` — vertical scroll container helper
+- `draw_with(rect, |buf| { ... })` — typed raw-draw entry point
+- `Buffer::try_get(x, y) -> Option<&Cell>` — fallible buffer cell accessor for `draw(|buf, rect| ...)` raw-draw closures
+
+### v0.19.2 widget helpers
+
+- `breadcrumb_response(segments)` / `breadcrumb_response_with(segments, ...)` — returns `(Response, Option<usize>)` so callers can detect which segment was clicked
+- `mx(n)` / `my(n)` — horizontal / vertical margin shorthands
 
 ## Specialized topics
 
@@ -42,3 +62,5 @@
 - [examples/demo_dashboard.rs](../examples/demo_dashboard.rs): dashboard composition
 - [examples/demo_cli.rs](../examples/demo_cli.rs): CLI-style layout
 - [examples/demo_infoviz.rs](../examples/demo_infoviz.rs): charts and visualizations
+- [examples/demo_website.rs](../examples/demo_website.rs): canonical `provide` / `use_context` composition (v0.19.0)
+- [examples/demo_cjk.rs](../examples/demo_cjk.rs): CJK / wide-character rendering, title clamp, mouse hover

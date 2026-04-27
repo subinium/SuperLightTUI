@@ -49,6 +49,22 @@ Pass `WidgetColors::new().fg(color).bg(color)` as the last argument. See `docs/T
 
 `use_state()` and `use_memo()` must be called in the same order every frame. Never put them inside conditionals.
 
+Exception (v0.19.0): `ui.use_state_named(id)` is the id-keyed variant and IS safe inside `if`/`match` branches because it keys by the supplied `&'static str` instead of call order. Reach for it when you genuinely need a hook in a conditional path.
+
+```rust
+// Wrong: order-based hook inside a conditional drifts the call order.
+if expanded {
+    let count = ui.use_state(|| 0); // BAD — frame N has it, frame N+1 may not.
+}
+
+// Right: id-keyed variant is safe inside conditionals.
+if expanded {
+    let count = ui.use_state_named::<i32>("sidebar.count"); // OK
+}
+```
+
+The original `use_state` / `use_memo` order rule still holds — only the id-keyed `*_named` variants opt out of it.
+
 ### "How do I handle keyboard shortcuts?"
 
 Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. For key sequence detection use `key_seq("gg")`.
@@ -84,6 +100,40 @@ For the frame timeline and prev-frame rect rules, see [Previous Frame Guide](PRE
 - Animation types are standalone structs, not Context methods — compute values separately.
 - Use `palette::tailwind` colors instead of hardcoding RGB values.
 - Check `docs/FEATURES.md` before using feature-gated APIs.
+
+### Context injection: stop threading shared state through every render fn
+
+When a value is *read* by many nested render functions (theme, current tick, current user, toast bus), do not thread `&theme`, `&tick`, `&mut toasts` parameters through every signature. Use `ui.provide(value, |ui| ...)` once near the root, then have nested code read it back with `ui.use_context::<T>()` (panics if missing) or `ui.try_use_context::<T>()` (returns `Option<&T>`). Added in v0.19.0.
+
+```rust
+// `provide` boxes the value as `dyn Any`, so the type must satisfy `T: 'static`.
+// `Theme` is `Copy`, so deref-copy from `ui.theme()`. Use `&'static str` for
+// string literals; switch to `String` if the value comes from runtime input.
+struct AppCtx {
+    theme: slt::Theme,
+    tick: u64,
+    user: &'static str,
+}
+
+slt::run(|ui: &mut slt::Context| {
+    let ctx = AppCtx { theme: *ui.theme(), tick: ui.tick(), user: "subin" };
+    ui.provide(ctx, |ui| {
+        render_header(ui);
+        render_card(ui);
+    });
+});
+
+fn render_card(ui: &mut slt::Context) {
+    let ctx = ui.use_context::<AppCtx>();
+    ui.text(format!("hi {} (tick {})", ctx.user, ctx.tick));
+}
+```
+
+Reserve explicit parameters for **writes** (e.g. `&mut MyDocState`) — those should still be passed in, not read out of the context bag. See [PATTERNS.md](PATTERNS.md) for the full pattern.
+
+### Conditional styling without re-chaining
+
+`with_if(cond, modifier)` and `with(modifier)` (v0.19.0) let you fold conditional styling into a single fluent chain on text and `ContainerBuilder`. Replace `if cond { t.bold(); t.fg(Color::Red); }` style branching with `ui.text(...).with_if(is_error, |t| t.bold().fg(Color::Red))`. Cleaner diffs, no broken chains.
 
 ## Internal widget rules for agents
 

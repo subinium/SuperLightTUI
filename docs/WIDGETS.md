@@ -36,6 +36,7 @@ Every widget method on `Context` follows one of these return patterns:
 | `Response` | Interactive widget with click/hover/changed/focused/rect | `button`, `list`, `table`, `tabs`, `col`, `row`, `alert`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
 | `Option<usize>` | Index of selected segment, or `None` | `breadcrumb` |
+| `(Response, Option<usize>)` | Row `Response` plus clicked segment index | `breadcrumb_response`, `breadcrumb_response_with` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `scrollbar`, `notify`, `screen` |
 
 **`Response` fields:**
@@ -97,7 +98,7 @@ All return `Response` unless noted.
 | `definition_list(items)` | Key-value list from `&[(&str, &str)]` |
 | `accordion(title, open, f)` | Collapsible section. `open: &mut bool` |
 | `confirm(question, result)` | Yes/No dialog. `result: &mut bool`, `Response.clicked` on answer |
-| `breadcrumb(segments)` | Clickable breadcrumb trail. Returns `Option<usize>`. Variant: `breadcrumb_with(segments, sep)` |
+| `breadcrumb(segments)` | Clickable breadcrumb trail. Returns `Option<usize>`. Variants: `breadcrumb_with(segments, sep)`; `breadcrumb_response(segments)` and `breadcrumb_response_with(segments, sep)` return `(Response, Option<usize>)` so you can read hover/focus/rect alongside the clicked index. |
 | `help(bindings)` | Keybinding help bar from `&[(&str, &str)]`. Variant: `help_colored(bindings, key_color, text_color)` |
 | `help_from_keymap(keymap)` | Help bar from a `KeyMap` struct |
 
@@ -153,7 +154,8 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `button(label)` | — | Click button. Variants: `button_colored(label, colors)`, `button_with(label, variant)` where `ButtonVariant`: `Default`, `Primary`, `Danger`, `Outline` |
 | `checkbox(label, checked)` | `&mut bool` | Checkbox toggle. Variant: `checkbox_colored(...)` |
 | `toggle(label, on)` | `&mut bool` | Toggle switch. Variant: `toggle_colored(...)` |
-| `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider |
+| `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider (default step = `span / 20`) |
+| `slider_with_step(label, value, range, step)` | `&mut f64`, `RangeInclusive<f64>`, `f64` | Slider with explicit step size — use for integer counters (`1.0`) or fine controls (`0.1`) |
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
 | `select(state)` | `SelectState` | Dropdown select. Variant: `select_colored(...)` |
@@ -246,7 +248,7 @@ All return `Response`.
 | `kitty_image(rgba, pw, ph, cols, rows)` | — | Kitty graphics protocol image |
 | `kitty_image_fit(rgba, sw, sh, cols)` | — | Auto-fit Kitty image to column width |
 | `sixel_image(rgba, pw, ph, cols, rows)` | — | Sixel protocol image (requires `crossterm`) |
-| `rich_log(state)` | `RichLogState` | Scrollable styled log viewer |
+| `rich_log(state)` | `RichLogState` | Scrollable styled log viewer. `RichLogState::new()` is bounded at `RichLogState::DEFAULT_MAX_ENTRIES` (10,000 entries) — older entries drop from the front. Use `RichLogState::new_unbounded()` only when growth is bounded elsewhere. |
 
 ---
 
@@ -353,7 +355,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
-| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries`, `.auto_scroll` |
+| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries`, `.auto_scroll`, `.max_entries: Option<usize>`. `::new()` caps at 10,000; `::new_unbounded()` opts out (use only when growth is bounded elsewhere). |
 | `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
 
 ---
@@ -464,7 +466,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets_display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
 | `src/context/widgets_display/status.rs` | `alert`, `badge`, `stat`, `breadcrumb`, `accordion`, `code_block`, `divider_text`, `definition_list`, `empty_state`, `confirm`, `key_hint` |
 | `src/context/widgets_display/rich_output.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar` |
-| `src/context/widgets_display/layout.rs` | `col`, `row`, `line`, `line_wrap`, `modal`, `overlay`, `tooltip`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `screen`, `form`, `form_field`, `form_submit` |
+| `src/context/widgets_display/layout.rs` | `col`, `row`, `line`, `line_wrap`, `modal`, `overlay`, `tooltip`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `screen`, `form`, `form_field`, `form_submit`, `separator`, `separator_colored` |
 | `src/context/widgets_input/text_input.rs` | `text_input`, `text_input_colored` |
 | `src/context/widgets_input/textarea_progress.rs` | `textarea`, `progress`, `progress_bar` |
 | `src/context/widgets_input/feedback.rs` | `spinner`, `toast`, `slider`, `notify` |

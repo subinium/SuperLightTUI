@@ -19,13 +19,20 @@ layout for N hasn't happened yet, so `Response.rect` reflects frame N-1. On fram
 it's a zero `Rect`. For measurement-dependent logic, guard with
 `if ui.tick() > 0 { /* use rect */ }`. See `docs/PREVIOUS_FRAME_GUIDE.md`.
 
+For larger apps, write "components as functions": `fn render_card(ui: &mut Context, data: &Card)`.
+Share read-mostly state via `ui.provide(value, |ui| ...)` + `ui.use_context::<T>()`
+(avoids threading `&theme` / `&tick` / `&mut toasts` through every helper fn).
+Component-local state lives in `ui.use_state_named(id)` — the id-keyed variant
+is safe inside conditionals, unlike order-based `use_state`. Conditional styling:
+`.with_if(cond, modifier)` on text and `ContainerBuilder`. See `docs/PATTERNS.md`.
+
 ## Authoring workflow
 
 1. Confirm the goal. What app is the user building? Data table? Dashboard? Form? Game?
 2. Check `docs/COOKBOOK.md` for a matching recipe (login / data table / modal+toast / dashboard / file picker). Start from that if it fits.
 3. Otherwise, read `docs/COMPLETE_REFERENCE.md` (single condensed file) and grep `src/lib.rs` for the needed re-exports.
 4. For state types, read `docs/STATE_APIS.md` — every public `*State` struct listed with methods.
-5. Stick to the small core grammar: `ui.text / row / col / bordered / button / text_input / table / list / modal / toast / chart / canvas / tabs / select / tree / toast / spinner`.
+5. Stick to the small core grammar: `ui.text / row / col / bordered / button / text_input / table / list / modal / toast / chart / canvas / tabs / select / tree / spinner`. For component composition (v0.19.0+): `ui.provide(...)` / `ui.use_context::<T>()` / `ui.use_state_named(id)` / `.with_if(cond, modifier)`.
 6. Before writing `ui.foo(...)`, grep `src/context/` to confirm the method exists. Do NOT invent APIs.
 7. Run the quality gate (below) before saying "done".
 
@@ -77,6 +84,10 @@ Red flags that mean STOP:
 - **`unsafe` blocks.** `#![forbid(unsafe_code)]` is on at crate root. Hard compile error.
 - **Forgetting `'static` on `ContainerBuilder::draw()` closure.** Raw draw is deferred.
 - **Mixing crossterm raw events with `ui.*` helpers.** Prefer `ui.key()`, `ui.key_code()`, `ui.key_mod()`. Raw events are for advanced cases only.
+- **`use_state()` inside `if` / `match` / `for`.** Order-based hooks misbehave when call order changes between frames. Use `ui.use_state_named(id)` (id-keyed) for state inside conditionals.
+- **Threading `&theme`, `&tick`, `&mut state` through every render fn.** v0.19.0+ has `ui.provide(value, |ui| ...)` + `ui.use_context::<T>()` for cross-scope reads. Reserve explicit params for *writes*.
+- **Hard-coding `Color::Rgb(...)` in widget code.** Pull from `ui.theme()` (`primary`, `text`, `border`, `selected_bg`, etc.) so themes can swap. v0.19.2 made `ThemeBuilder` `const fn` — themes can be defined at compile time.
+- **`RichLogState::new()` for unbounded logs.** v0.19.2 capped `new()` at 10000 entries. Use `RichLogState::new_unbounded()` if you really want unlimited accumulation (tail-style log viewers).
 - **Animating without `slt::Tween` / `slt::Spring`.** Don't reinvent — use the animation primitives.
 - **Printing to stdout/stderr from a widget.** `#![warn(clippy::print_stdout)]` / `print_stderr`. A library must not write to stdout.
 
@@ -84,9 +95,10 @@ Red flags that mean STOP:
 
 1. `docs/COMPLETE_REFERENCE.md` — condensed everything, start here.
 2. `docs/COOKBOOK.md` — 5 full app recipes.
-3. `src/lib.rs` — authoritative public re-exports.
-4. `examples/` — 25+ runnable examples; find the closest pattern.
-5. If still stuck: ask the user. Korean conventions to honor: "ㄱㄱ" = proceed immediately, "켜줘" = open the file in Cursor (not `cat` to terminal).
+3. `docs/PATTERNS.md` — component composition (`provide` / `use_context` / `use_state_named` / `with_if`) and state-ownership idioms.
+4. `src/lib.rs` — authoritative public re-exports.
+5. `examples/` — 32 runnable examples; find the closest pattern. `demo_cjk` for CJK / wide-char rendering, `demo_website` for the canonical `provide` / `use_context` example.
+6. If still stuck: ask the user. Korean conventions to honor: "ㄱㄱ" = proceed immediately, "켜줘" = open the file in Cursor (not `cat` to terminal).
 
 ## Testing pattern (headless)
 

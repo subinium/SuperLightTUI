@@ -57,6 +57,41 @@ tb.run_with_events(events, |ui| {
 
 Use `EventBuilder` when the widget logic depends on keyboard, mouse, paste, or resize events.
 
+### Mouse and key chain wrappers (v0.19.1+)
+
+`EventBuilder` ships convenience wrappers for events that previously required
+constructing raw `Event` values. The most useful ones to know:
+
+| Method | Emits | Use for |
+|--------|-------|---------|
+| `.click(x, y)` | mouse down + up at `(x, y)` | most click tests |
+| `.mouse_up(x, y)` | mouse up only | testing release-only handlers, drag end |
+| `.drag(x, y)` | mouse drag at `(x, y)` (button held) | scrubbing sliders, resizing splits |
+| `.key_release(c)` | key release for `c` | matched press/release pairs (e.g. modifier holds) |
+| `.focus_gained()` | terminal `FocusGained` event | windows/tabs gaining focus |
+| `.focus_lost()` | terminal `FocusLost` event | pause-on-blur, autosave |
+
+Click vs drag is the test gap most authors miss — a `click` is two events
+in the same cell, a `drag` is movement while a button is held:
+
+```rust
+// Click: down then up in the same cell
+let events = EventBuilder::new()
+    .click(10, 4)
+    .build();
+
+// Drag: emit drag events while moving across cells
+let events = EventBuilder::new()
+    .drag(10, 4)
+    .drag(11, 4)
+    .drag(12, 4)
+    .mouse_up(12, 4)
+    .build();
+```
+
+Use `mouse_up` when you want to assert that a handler only fires on release
+(common for "press-and-hold to drag, release to commit" patterns).
+
 ## `render()` vs `run_with_events()` vs `render_with_events()`
 
 | Method | Use when |
@@ -142,7 +177,7 @@ Add `insta` to your own project's dev-dependencies:
 
 ```toml
 [dev-dependencies]
-superlighttui = "0.18"
+superlighttui = "0.19"
 insta = "1"
 ```
 

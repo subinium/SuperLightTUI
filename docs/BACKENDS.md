@@ -66,6 +66,16 @@ The built-in terminal backends are intentionally boring:
 
 This matters because SLT is trying to be easy at the API layer without becoming sloppy underneath.
 
+### Buffered stdout (v0.19.1)
+
+Both `Terminal` and `InlineTerminal` wrap stdout in `BufWriter::with_capacity(65536, _)`. Every queued ANSI sequence — cursor moves, style deltas, raw sequences, Kitty placements — accumulates in a 64 KiB buffer and is committed with a single `flush()` per frame. This collapses what was previously dozens to thousands of individual `write` syscalls per frame into one, which materially reduces overhead for high-frequency rendering (charts, animations, image-heavy frames).
+
+The contract for custom backends is unchanged: `Backend::flush()` is still called once per frame and may itself defer or batch writes however it likes.
+
+### `kitty_keyboard` honored in inline mode (v0.19.1)
+
+`InlineTerminal::new` now reads `RunConfig::kitty_keyboard` and propagates it through `TerminalSessionGuard`. Earlier versions hardcoded inline-mode kitty keyboard support to `false` regardless of config; both full-screen and inline runs now agree on the flag.
+
 ## `RunConfig` in practice
 
 `RunConfig` is the runtime policy object for all built-in loops.
@@ -237,6 +247,27 @@ What still remains:
 - `Context`, widgets, events, styles, layout, charts
 
 That is what makes SLT usable as a rendering core instead of only a terminal runtime.
+
+## Sixel auto-detection (v0.19.1)
+
+`ui.sixel_image(...)` is gated by a runtime check that asks "does this terminal speak sixel?" before emitting any sixel sequence. Unsupported terminals see the reserved cell area but no garbled escape output.
+
+Detection logic, in order:
+
+1. `SLT_FORCE_SIXEL=1` (also `true` / `yes` / `on`) — explicit override, returns true unconditionally. Use this for patched-xterm-with-sixel, embedded targets, or testing.
+2. Exact-match `TERM` against the known-good list: `mlterm`, `foot`, `yaft`, `xterm-256color-sixel`.
+3. Substring match: `TERM` contains `sixel` (catches custom builds and forks).
+4. `TERM_PROGRAM` is `foot` or `mlterm`.
+
+Pre-v0.19.1 used `term.contains("xterm")`, which fired on the default `xterm-256color` `TERM` value used by macOS Terminal.app, VS Code's integrated terminal, and most SSH clients — none of which actually parse sixel. Output appeared as raw escape junk in the scrollback. The new exact-match list fixes the false positive while still covering the terminals that do support the protocol.
+
+If you ship an app for end users on unknown terminals, prefer the half-block (`ui.image`) or Kitty (`ui.kitty_image`) path; sixel is a niche protocol and even the "supported" list above varies in fidelity.
+
+## `image()` is one RawDraw command (v0.19.1)
+
+`ui.image(&half_block_image)` previously emitted one `Command::RawDraw` per cell plus one `String` allocation per cell — for a modest 40×20 half-block image, that worked out to ~841 commands and ~800 transient `String` allocations per frame. The implementation now wraps the whole image in a single `container().draw(closure)` call: one `RawDraw`, one closure capture, the inner double-loop runs against the buffer directly with no per-cell allocation.
+
+This matters most for animated image content (frame-by-frame video, sprite scrolling), where the per-frame allocation pressure is what was previously dominating CPU. The widget API (`ui.image(&half)`) is unchanged — the optimization is purely internal.
 
 ## Related APIs
 

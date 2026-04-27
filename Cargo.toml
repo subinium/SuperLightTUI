@@ -143,10 +143,6 @@ name = "demo_infoviz"
 path = "examples/demo_infoviz.rs"
 
 [[example]]
-name = "demo_wiki"
-path = "examples/demo_wiki.rs"
-
-[[example]]
 name = "cookbook_dashboard"
 path = "examples/cookbook_dashboard.rs"
 

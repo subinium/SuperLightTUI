@@ -19,8 +19,7 @@ Use this index to find the smallest example that matches what you want to build.
 | `demo` | `cargo run --example demo` | `qrcode`, `syntax` (optional) | Broad widget overview |
 | `demo_cli` | `cargo run --example demo_cli` | — | CLI-style layout |
 | `demo_table` | `cargo run --example demo_table` | — | Table widget focus |
-| `demo_wiki` | `cargo run --example demo_wiki` | — | Text-heavy layout and markdown |
-| `demo_website` | `cargo run --example demo_website` | — | Website-style terminal layout |
+| `demo_website` | `cargo run --example demo_website` | — | Canonical `provide` / `use_context` example. Root closure calls `ui.provide(AppState { theme, tick }, |ui| ...)`; nested `render_*` fns read shared state via `ui.use_context::<AppState>()` instead of receiving it as parameters (v0.19.0 component DX) |
 | `demo_design_system` | `cargo run --example demo_design_system` | — | Design tokens, ThemeColor, extends, WidgetTheme |
 | `demo_pretext` | `cargo run --example demo_pretext` | — | Pretext-inspired text reflow |
 
@@ -41,6 +40,7 @@ Use this index to find the smallest example that matches what you want to build.
 | `demo_kitty_image` | `cargo run --example demo_kitty_image` | — | Kitty graphics protocol |
 | `demo_fire` | `cargo run --release --example demo_fire` | — | Half-block visual effect |
 | `demo_ime` | `cargo run --example demo_ime` | — | IME and CJK input |
+| `demo_cjk` | `cargo run --example demo_cjk` | — | CJK (Chinese / Japanese / Korean) wide-character demo — title truncation, mixed Korean / Chinese / Japanese body wrap, narrow-clamp title boxes (12-cell width), CJK form fields, mouse support (group hover, click counters, mouse coords). |
 | `demo_key_test` | `cargo run --example demo_key_test` | — | Inspect key events |
 | `debug_selection` | `cargo run --example debug_selection` | — | Selection overlay debugging |
 

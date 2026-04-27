@@ -49,6 +49,45 @@ let theme = Theme::builder()
     .build();
 ```
 
+### Builder entry points
+
+| Constructor | Pre-filled defaults | When to use |
+|-------------|---------------------|-------------|
+| `Theme::builder()` | `Theme::dark()` | Build a dark theme from scratch |
+| `Theme::light_builder()` | `Theme::light()` | Build a light theme — keeps light bg/text/border defaults instead of dark ones (v0.19.2) |
+| `Theme::builder_from(base)` | All fields of `base` | Derive a variant from any preset, override only the fields you want to change (v0.19.2) |
+
+```rust
+use slt::{Color, Theme};
+
+// Nord with a custom primary — keeps Nord's frost/snow palette everywhere else.
+let custom_nord = Theme::builder_from(Theme::nord())
+    .primary(Color::Rgb(255, 0, 0))
+    .build();
+assert_eq!(custom_nord.bg, Theme::nord().bg);
+
+// Light theme variant without re-specifying every light-mode field.
+let my_light = Theme::light_builder()
+    .primary(Color::Rgb(0, 100, 200))
+    .build();
+assert!(!my_light.is_dark);
+```
+
+### `const fn` ThemeBuilder (v0.19.2)
+
+Every `ThemeBuilder` setter is `const fn`, including `builder()`, `builder_from()`, `light_builder()`, `build()`, and all field setters (`primary`, `secondary`, `accent`, `text`, `text_dim`, `border`, `bg`, `success`, `warning`, `error`, `selected_bg`, `selected_fg`, `surface`, `surface_hover`, `surface_text`, `is_dark`, `spacing`). You can define themes at compile time:
+
+```rust
+use slt::{Color, Theme};
+
+const MY_THEME: Theme = Theme::builder()
+    .primary(Color::Rgb(0, 0, 0))
+    .accent(Color::Cyan)
+    .build();
+```
+
+Compile-time themes incur no runtime construction cost and let you embed branded palettes as `static` data alongside other UI constants.
+
 ### All 17 theme fields
 
 | Field | Purpose |
@@ -140,6 +179,8 @@ let fg = ui.theme().contrast_text_on(bg_color);
 // Blend color against theme background
 let overlay = ui.theme().overlay(color, 0.5);
 ```
+
+> **Note (v0.19.1)**: `Color::contrast_fg` and `Theme::contrast_text_on` use the WCAG 2.1 relative luminance threshold of `0.179`, not the previous `0.5`. Mid-tone backgrounds — Dracula purple (`Rgb(189, 147, 249)`, luminance ≈ 0.385), Solarized base1, Catppuccin lavender — now route to white text instead of black, matching WCAG AA contrast guidance. If you depended on the old midpoint behavior for stylistic reasons, override per-callsite with `WidgetColors` instead of relying on the default.
 
 ## Runtime Theme Switching
 
@@ -359,12 +400,14 @@ use slt::Color;
 let bg = Color::Rgb(30, 30, 46);
 
 // Perceived brightness (0.0 = darkest, 1.0 = brightest)
-let lum = bg.luminance(); // ~0.03
+let lum = bg.luminance(); // ~0.013 (sRGB-linearized, BT.709 weights)
 
 // Automatic readable foreground for a background color
-// Returns white for dark backgrounds, black for light ones
+// Returns white if luminance > 0.179 (WCAG threshold), black otherwise
 let fg = Color::contrast_fg(bg); // Rgb(255, 255, 255)
 ```
+
+> **Note (v0.19.1)**: `Color::luminance` now applies the sRGB inverse transfer function (gamma decoding) to each channel before applying BT.709 weights `0.2126·R + 0.7152·G + 0.0722·B`. This matches the WCAG 2.1 relative luminance definition. Numerical results differ from pre-v0.19.1 — most notably, mid-tone colors land at lower luminance values than the old naive linear average produced. If your code compares `luminance()` against a hardcoded threshold, re-check it against the new scale.
 
 ### Downsampling for terminal compatibility
 

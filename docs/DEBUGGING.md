@@ -58,6 +58,8 @@ if show_sidebar {
 }
 ```
 
+If you genuinely need a hook inside an `if` or `match` arm, use the id-keyed variant `ui.use_state_named::<T>(id)` (v0.19.0). It keys by the supplied `&'static str` instead of call order, so it is safe inside conditional branches. The original order-based `use_state` rule still applies — only `*_named` variants opt out of it.
+
 ### 3. `Response.rect` is empty
 
 `Response.rect` is meaningful only after the widget has participated in layout.

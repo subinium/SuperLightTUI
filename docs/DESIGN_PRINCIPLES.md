@@ -133,8 +133,9 @@ Breakpoints: Xs (<40), Sm (40-79), Md (80-119), Lg (120-159), Xl (>=160).
 ### Hook Rules (same as React)
 
 - `use_state()` and `use_memo()` must be called in the **same order** every frame
-- Never call hooks inside conditionals or loops
+- Never call order-based hooks inside conditionals or loops
 - Hook type mismatches panic with a descriptive message — this is a programmer error
+- v0.19.0 added id-keyed variants (`use_state_named`, `use_state_named_with`) that key by `&'static str` and are explicitly safe inside conditional branches — use them when conditional placement is genuinely required
 
 ---
 
