@@ -8,6 +8,26 @@ use slt::{
 };
 
 fn main() -> std::io::Result<()> {
+    slt::run_with(
+        RunConfig::default().mouse(true).kitty_keyboard(true),
+        render,
+    )
+}
+
+/// Render one frame of the widget showcase demo.
+///
+/// All widget state is constructed inside this function so it can be
+/// driven by both the runtime event loop in `main` and by visual snapshot
+/// tests in `tests/visual_snapshots.rs` without external setup.
+///
+/// Note: because state is rebuilt on every call, the runtime example
+/// resets per-widget state (selections, scroll positions, form input)
+/// at every frame. The frame-1 snapshot test does not care, and the
+/// trade-off keeps this entry point small enough for visual coverage
+/// without a 60-field state struct. Migrate to `Context::use_state`
+/// hooks when richer interactive persistence is needed.
+#[allow(unused_assignments)]
+pub fn render(ui: &mut Context) {
     let mut page_tabs = TabsState::new(vec![
         "Core Widgets",
         "Data Viz",
@@ -236,220 +256,214 @@ fn main() -> std::io::Result<()> {
     let mut v152_focus_b = TextInputState::with_placeholder("Input B (focusable #1)");
     let mut v152_search = TextInputState::with_placeholder("Search fills remaining space...");
 
-    slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
-        |ui: &mut Context| {
-            let tick = ui.tick();
+    {
+        let tick = ui.tick();
 
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
-                ui.quit();
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+            theme_idx = (theme_idx + 1) % themes.len();
+            toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
+        }
+        if ui.key_mod('h', slt::KeyModifiers::CONTROL) {
+            progress = (progress - 0.05).max(0.0);
+        }
+        if ui.key_mod('l', slt::KeyModifiers::CONTROL) {
+            progress = (progress + 0.05).min(1.0);
+        }
+        if ui.key_mod('m', slt::KeyModifiers::CONTROL) {
+            show_modal = !show_modal;
+        }
+        if ui.key_mod('o', slt::KeyModifiers::CONTROL) {
+            show_overlay = !show_overlay;
+        }
+        if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
+            palette.open = !palette.open;
+        }
+        if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
+            scroll.offset = 0;
+        }
+        for i in 1..=9u8 {
+            if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
+                page_tabs.selected = (i - 1) as usize;
             }
-            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-                theme_idx = (theme_idx + 1) % themes.len();
-                toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
-            }
-            if ui.key_mod('h', slt::KeyModifiers::CONTROL) {
-                progress = (progress - 0.05).max(0.0);
-            }
-            if ui.key_mod('l', slt::KeyModifiers::CONTROL) {
-                progress = (progress + 0.05).min(1.0);
-            }
-            if ui.key_mod('m', slt::KeyModifiers::CONTROL) {
-                show_modal = !show_modal;
-            }
-            if ui.key_mod('o', slt::KeyModifiers::CONTROL) {
-                show_overlay = !show_overlay;
-            }
-            if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
-                palette.open = !palette.open;
-            }
-            if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
-                scroll.offset = 0;
-            }
-            for i in 1..=9u8 {
-                if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
-                    page_tabs.selected = (i - 1) as usize;
-                }
-            }
+        }
 
-            ui.set_theme(themes[theme_idx]());
-            ui.set_dark_mode(v8_dark_mode);
+        ui.set_theme(themes[theme_idx]());
+        ui.set_dark_mode(v8_dark_mode);
 
-            let theme = *ui.theme();
-            let _ = ui
-                .container()
-                .border(Border::Rounded)
-                .p(1)
-                .grow(1)
-                .col(|ui| {
-                    let _ = ui.row(|ui| {
-                        ui.text("SuperLightTUI").bold().fg(theme.primary);
-                        ui.text(" widget showcase").fg(theme.text);
-                        ui.spacer();
-                        ui.text(theme_names[theme_idx]).fg(theme.text_dim);
+        let theme = *ui.theme();
+        let _ = ui
+            .container()
+            .border(Border::Rounded)
+            .p(1)
+            .grow(1)
+            .col(|ui| {
+                let _ = ui.row(|ui| {
+                    ui.text("SuperLightTUI").bold().fg(theme.primary);
+                    ui.text(" widget showcase").fg(theme.text);
+                    ui.spacer();
+                    ui.text(theme_names[theme_idx]).fg(theme.text_dim);
+                });
+                ui.text("All widgets follow active theme tokens.")
+                    .fg(theme.text_dim);
+                ui.separator();
+
+                render_page_tabs(ui, &mut page_tabs);
+                ui.separator();
+
+                let _ = ui
+                    .scrollable(&mut scroll)
+                    .grow(1)
+                    .col(|ui| match page_tabs.selected {
+                        0 => render_core(
+                            ui,
+                            &mut section_tabs,
+                            &mut input,
+                            &mut textarea,
+                            &mut dark_mode,
+                            &mut notifications,
+                            &mut autosave,
+                            &mut vim_mode,
+                            &mut saves,
+                        ),
+                        1 => render_dataviz(ui),
+                        2 => render_layout(
+                            ui,
+                            &mut list,
+                            &mut table,
+                            &mut table_filter,
+                            &mut show_overlay,
+                        ),
+                        3 => render_forms(ui, &mut form, &mut password),
+                        4 => render_ime(
+                            ui,
+                            &mut ime_name,
+                            &mut ime_search,
+                            &mut ime_message,
+                            &ime_items,
+                        ),
+                        5 => render_feedback(ui, &spinner, progress),
+                        6 => render_advanced(
+                            ui,
+                            &mut select,
+                            &mut radio,
+                            &mut multi,
+                            &mut tree,
+                            &mut vlist,
+                        ),
+                        7 => render_v070(
+                            ui,
+                            &mut v7_scroll,
+                            &mut v7_stream,
+                            &mut v7_tool,
+                            &mut v7_stream_tick,
+                        ),
+                        8 => render_v080(
+                            ui,
+                            &mut list_with_filter,
+                            &mut list_filter_input,
+                            &mut v8_dark_mode,
+                            &mut v8_tween,
+                            &mut v8_anim_done,
+                            tick,
+                        ),
+                        9 => render_v094(
+                            ui,
+                            &mut accordion_general,
+                            &mut accordion_advanced,
+                            &mut alert_visible,
+                        ),
+                        10 => render_v011(
+                            ui,
+                            &mut v11_button_clicks,
+                            &mut v11_volume,
+                            &mut v11_brightness,
+                            &mut v11_confirm_delete,
+                            &mut v11_autocomplete,
+                            &mut v11_validated,
+                            &mut v11_file_picker,
+                            &v11_keymap,
+                        ),
+                        11 => render_v01210(ui),
+                        12 => render_v013(
+                            ui,
+                            &mut v13_show_modal,
+                            &mut v13_modal_message,
+                            &mut v13_palette,
+                            &mut v13_palette_last,
+                            &mut v13_debug_input,
+                            &mut v13_list_a,
+                            &mut v13_list_b,
+                        ),
+                        13 => render_v0132(
+                            ui,
+                            &mut v132_zebra_table,
+                            &mut v132_calendar,
+                            &mut v132_screens,
+                            &mut v132_fuzzy_palette,
+                            &mut v132_fuzzy_last,
+                        ),
+                        14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
+                        15 => render_v0141(ui),
+                        16 => {
+                            render_v0152(ui, &mut v152_focus_a, &mut v152_focus_b, &mut v152_search)
+                        }
+                        _ => {}
                     });
-                    ui.text("All widgets follow active theme tokens.")
-                        .fg(theme.text_dim);
-                    ui.separator();
 
-                    render_page_tabs(ui, &mut page_tabs);
-                    ui.separator();
+                ui.separator();
+                let _ = ui.help(&[
+                    ("^Q/Esc", "quit"),
+                    ("^T", "theme"),
+                    ("^M", "modal"),
+                    ("^O", "overlay"),
+                    ("^H/^L", "progress"),
+                    ("^P", "palette"),
+                    ("^1-9", "tab"),
+                    ("^G", "top"),
+                    ("Tab", "focus"),
+                    ("F12", "debug"),
+                ]);
+            });
 
-                    let _ = ui
-                        .scrollable(&mut scroll)
-                        .grow(1)
-                        .col(|ui| match page_tabs.selected {
-                            0 => render_core(
-                                ui,
-                                &mut section_tabs,
-                                &mut input,
-                                &mut textarea,
-                                &mut dark_mode,
-                                &mut notifications,
-                                &mut autosave,
-                                &mut vim_mode,
-                                &mut saves,
-                            ),
-                            1 => render_dataviz(ui),
-                            2 => render_layout(
-                                ui,
-                                &mut list,
-                                &mut table,
-                                &mut table_filter,
-                                &mut show_overlay,
-                            ),
-                            3 => render_forms(ui, &mut form, &mut password),
-                            4 => render_ime(
-                                ui,
-                                &mut ime_name,
-                                &mut ime_search,
-                                &mut ime_message,
-                                &ime_items,
-                            ),
-                            5 => render_feedback(ui, &spinner, progress),
-                            6 => render_advanced(
-                                ui,
-                                &mut select,
-                                &mut radio,
-                                &mut multi,
-                                &mut tree,
-                                &mut vlist,
-                            ),
-                            7 => render_v070(
-                                ui,
-                                &mut v7_scroll,
-                                &mut v7_stream,
-                                &mut v7_tool,
-                                &mut v7_stream_tick,
-                            ),
-                            8 => render_v080(
-                                ui,
-                                &mut list_with_filter,
-                                &mut list_filter_input,
-                                &mut v8_dark_mode,
-                                &mut v8_tween,
-                                &mut v8_anim_done,
-                                tick,
-                            ),
-                            9 => render_v094(
-                                ui,
-                                &mut accordion_general,
-                                &mut accordion_advanced,
-                                &mut alert_visible,
-                            ),
-                            10 => render_v011(
-                                ui,
-                                &mut v11_button_clicks,
-                                &mut v11_volume,
-                                &mut v11_brightness,
-                                &mut v11_confirm_delete,
-                                &mut v11_autocomplete,
-                                &mut v11_validated,
-                                &mut v11_file_picker,
-                                &v11_keymap,
-                            ),
-                            11 => render_v01210(ui),
-                            12 => render_v013(
-                                ui,
-                                &mut v13_show_modal,
-                                &mut v13_modal_message,
-                                &mut v13_palette,
-                                &mut v13_palette_last,
-                                &mut v13_debug_input,
-                                &mut v13_list_a,
-                                &mut v13_list_b,
-                            ),
-                            13 => render_v0132(
-                                ui,
-                                &mut v132_zebra_table,
-                                &mut v132_calendar,
-                                &mut v132_screens,
-                                &mut v132_fuzzy_palette,
-                                &mut v132_fuzzy_last,
-                            ),
-                            14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
-                            15 => render_v0141(ui),
-                            16 => render_v0152(
-                                ui,
-                                &mut v152_focus_a,
-                                &mut v152_focus_b,
-                                &mut v152_search,
-                            ),
-                            _ => {}
-                        });
+        if show_modal {
+            let _ = ui.modal(|ui| {
+                let theme = *ui.theme();
+                let _ = ui
+                    .container()
+                    .bg(theme.surface)
+                    .border(Border::Rounded)
+                    .p(2)
+                    .col(|ui| {
+                        ui.text("Modal Demo").bold().fg(theme.primary);
+                        ui.text("This modal stays in the demo.")
+                            .fg(theme.surface_text);
+                        ui.text("Press m or click close.").fg(theme.surface_text);
+                        if ui.button("Close").clicked {
+                            show_modal = false;
+                        }
+                    });
+            });
+        }
 
-                    ui.separator();
-                    let _ = ui.help(&[
-                        ("^Q/Esc", "quit"),
-                        ("^T", "theme"),
-                        ("^M", "modal"),
-                        ("^O", "overlay"),
-                        ("^H/^L", "progress"),
-                        ("^P", "palette"),
-                        ("^1-9", "tab"),
-                        ("^G", "top"),
-                        ("Tab", "focus"),
-                        ("F12", "debug"),
-                    ]);
-                });
+        ui.toast(&mut toasts);
 
-            if show_modal {
-                let _ = ui.modal(|ui| {
-                    let theme = *ui.theme();
-                    let _ = ui
-                        .container()
-                        .bg(theme.surface)
-                        .border(Border::Rounded)
-                        .p(2)
-                        .col(|ui| {
-                            ui.text("Modal Demo").bold().fg(theme.primary);
-                            ui.text("This modal stays in the demo.")
-                                .fg(theme.surface_text);
-                            ui.text("Press m or click close.").fg(theme.surface_text);
-                            if ui.button("Close").clicked {
-                                show_modal = false;
-                            }
-                        });
-                });
-            }
-
-            ui.toast(&mut toasts);
-
-            let _cp = ui.command_palette(&mut palette);
-            if let Some(idx) = palette.last_selected {
-                match idx {
-                    0 => {
-                        theme_idx = (theme_idx + 1) % themes.len();
-                        toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
-                    }
-                    1 => show_modal = !show_modal,
-                    2 => show_overlay = !show_overlay,
-                    3 => ui.quit(),
-                    _ => {}
+        let _cp = ui.command_palette(&mut palette);
+        if let Some(idx) = palette.last_selected {
+            match idx {
+                0 => {
+                    theme_idx = (theme_idx + 1) % themes.len();
+                    toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
                 }
+                1 => show_modal = !show_modal,
+                2 => show_overlay = !show_overlay,
+                3 => ui.quit(),
+                _ => {}
             }
-        },
-    )
+        }
+    }
 }
 
 fn render_page_tabs(ui: &mut Context, page_tabs: &mut TabsState) {

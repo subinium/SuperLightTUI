@@ -127,7 +127,7 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
     Response, State, TreemapItem, Widget,
 };
 pub use event::{
@@ -564,7 +564,26 @@ pub(crate) struct DiagnosticsState {
     pub tick: u64,
     pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
+    pub debug_layer: DebugLayer,
     pub fps_ema: f32,
+}
+
+/// Which layers the F12 debug overlay should outline (issue #201).
+///
+/// `All` (the default) outlines both the base layer and any active
+/// overlays/modals — matching the user's expectation for "show everything
+/// the renderer is producing this frame." `TopMost` only outlines the
+/// topmost overlay (or the base if no overlay is active), and `BaseOnly`
+/// keeps the legacy pre-fix behavior of skipping overlays entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugLayer {
+    /// Outline base + all overlays (default — matches reporter expectation).
+    #[default]
+    All,
+    /// Outline only the topmost overlay, or the base if none.
+    TopMost,
+    /// Outline only the base layer (legacy behavior).
+    BaseOnly,
 }
 
 #[derive(Default)]
@@ -575,6 +594,13 @@ pub(crate) struct FrameState {
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
     pub diagnostics: DiagnosticsState,
+    /// Recycled command Vec (issue #150). `Context::new` swaps this into the
+    /// new context (capacity preserved, len reset to 0). After `build_tree`
+    /// drains the commands, the now-empty Vec is reclaimed back here.
+    pub commands_buf: Vec<crate::layout::Command>,
+    /// Recycled per-frame layout collection scratch (issue #155). Same
+    /// pattern as `commands_buf`: clear before use, restore after.
+    pub frame_data: crate::layout::FrameData,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
@@ -1099,6 +1125,7 @@ pub(crate) fn run_frame_kernel(
         state.named_states = ctx.named_states;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
+        state.diagnostics.debug_layer = ctx.debug_layer;
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
         #[cfg(feature = "crossterm")]
@@ -1150,24 +1177,38 @@ pub(crate) fn run_frame_kernel(
     state.focus.focus_index = ctx.focus_index;
     state.focus.prev_focus_count = ctx.rollback.focus_count;
 
-    let mut tree = layout::build_tree(std::mem::take(&mut ctx.commands));
+    // Issue #150: `state.commands_buf` is swapped into `ctx.commands` on
+    // entry (see `Context::new`), so the per-frame `Vec::new()` allocation
+    // for the command list is amortized to one allocation across the
+    // session. Build_tree consumes the Vec by-value here — the empty placeholder
+    // returns to `state.commands_buf` via the `Default` shell from `mem::take`,
+    // and full capacity reclamation will land when build_tree's signature is
+    // refactored to drain (tracked separately; tree.rs is owned by another agent).
+    let commands = std::mem::take(&mut ctx.commands);
+    let mut tree = layout::build_tree(commands);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
-    let fd = layout::collect_all(&tree);
+
+    // Issue #155: reuse `state.frame_data` across frames. `collect_all` calls
+    // `fd.clear()` first so the Vecs reset to len=0 with capacity preserved
+    // from the prior frame, then refills them.
+    let mut fd = std::mem::take(&mut state.frame_data);
+    layout::collect_all(&tree, &mut fd);
     debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
         "scroll feedback vectors must stay aligned"
     );
-    state.layout_feedback.prev_scroll_infos = fd.scroll_infos;
-    state.layout_feedback.prev_scroll_rects = fd.scroll_rects;
-    state.layout_feedback.prev_hit_map = fd.hit_areas;
-    state.layout_feedback.prev_group_rects = fd.group_rects;
-    state.layout_feedback.prev_content_map = fd.content_areas;
-    state.layout_feedback.prev_focus_rects = fd.focus_rects;
-    state.layout_feedback.prev_focus_groups = fd.focus_groups;
+    let raw_rects = std::mem::take(&mut fd.raw_draw_rects);
+    state.layout_feedback.prev_scroll_infos = std::mem::take(&mut fd.scroll_infos);
+    state.layout_feedback.prev_scroll_rects = std::mem::take(&mut fd.scroll_rects);
+    state.layout_feedback.prev_hit_map = std::mem::take(&mut fd.hit_areas);
+    state.layout_feedback.prev_group_rects = std::mem::take(&mut fd.group_rects);
+    state.layout_feedback.prev_content_map = std::mem::take(&mut fd.content_areas);
+    state.layout_feedback.prev_focus_rects = std::mem::take(&mut fd.focus_rects);
+    state.layout_feedback.prev_focus_groups = std::mem::take(&mut fd.focus_groups);
+    state.frame_data = fd;
     layout::render(&tree, buffer);
-    let raw_rects = fd.raw_draw_rects;
     // RAII guard ensuring the kitty clip frame is popped even if a raw-draw
     // callback panics — prevents stale scroll-clip state leaking into the
     // next region or subsequent frames.
@@ -1209,6 +1250,8 @@ pub(crate) fn run_frame_kernel(
     state.named_states = ctx.named_states;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
+    // Issue #201: persist any in-frame `set_debug_layer` change.
+    state.diagnostics.debug_layer = ctx.debug_layer;
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
@@ -1224,7 +1267,13 @@ pub(crate) fn run_frame_kernel(
         (state.diagnostics.fps_ema * 0.9) + (inst_fps * 0.1)
     };
     if state.diagnostics.debug_mode {
-        layout::render_debug_overlay(&tree, buffer, frame_time_us, state.diagnostics.fps_ema);
+        layout::render_debug_overlay(
+            &tree,
+            buffer,
+            frame_time_us,
+            state.diagnostics.fps_ema,
+            state.diagnostics.debug_layer,
+        );
     }
 
     FrameKernelResult {

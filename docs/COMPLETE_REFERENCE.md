@@ -1,6 +1,6 @@
 # SuperLightTUI — Complete Reference (LLM-optimized)
 
-> Version: 0.18.1. This document condenses the full SLT API and common patterns into one file. An LLM agent should be able to load this alone and generate any normal SLT app without further reads.
+> Version: 0.19.2. This document condenses the full SLT API and common patterns into one file. An LLM agent should be able to load this alone and generate any normal SLT app without further reads.
 
 ---
 
@@ -59,6 +59,7 @@ Rules you will use every file:
 | `slt::run_async(|ui, msgs: &mut Vec<M>| { ... })` | Requires `async` feature. Returns `tokio::sync::mpsc::Sender<M>` for pushing messages to the UI. |
 | `slt::run_async_with(config, f)` | Async + config. |
 | `slt::frame(&mut backend, &mut state, &config, &events, &mut f)` | Low-level per-frame driver for custom backends. Returns `Ok(true)` to keep going, `Ok(false)` when quit. |
+| `slt::frame_owned(&mut backend, &mut state, &config, events, &mut f)` | Same as `frame()` but takes `Vec<Event>` by value (zero-copy when callers already own a vector — no slice→Vec clone). |
 
 `RunConfig` (builder, all setters consume `self`):
 
@@ -70,6 +71,7 @@ slt::RunConfig::default()
     .theme(Theme::dracula())
     .color_depth(ColorDepth::TrueColor)
     .max_fps(60)
+    .no_fps_cap()             // disable the FPS limit (sets max_fps = None)
     .scroll_speed(3)
     .title("My App")
     .widget_theme(WidgetTheme::new().button(WidgetColors::new().accent(Color::Cyan)))
@@ -96,7 +98,7 @@ slt::RunConfig::default()
 | `AppState` | Opaque session state passed to `frame()`. |
 | `RunConfig` | Per-run configuration. |
 | `TestBackend` | Headless backend for tests: `TestBackend::new(w, h).render(|ui| ...)`, then `assert_contains`/`line`/`to_string_trimmed`. |
-| `EventBuilder` | `EventBuilder::new().key('a').key_code(KeyCode::Enter).click(5, 2).scroll_up(x, y).paste("txt").resize(w, h).build()`. |
+| `EventBuilder` | `EventBuilder::new().key('a').key_code(KeyCode::Enter).click(5, 2).mouse_up(x, y).drag(x, y).key_release('c').focus_gained().focus_lost().scroll_up(x, y).paste("txt").resize(w, h).build()`. |
 
 ### Style and layout
 | Type | Notes |
@@ -104,7 +106,7 @@ slt::RunConfig::default()
 | `Style` | `Style::new().fg(c).bg(c).bold().italic().dim().underline().reversed().strikethrough()`. |
 | `Color` | `Color::Rgb(r, g, b)`, `Color::Indexed(u8)`, `Color::Named` (all 17 ANSI: `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, `LightRed`, `LightGreen`, `LightYellow`, `LightBlue`, `LightMagenta`, `LightCyan`, `LightWhite`), `Color::Reset`. Helpers: `.blend(o, a)`, `.lighten(f)`, `.darken(f)`, `.luminance()`, `.contrast_ratio(a, b)`, `.meets_contrast_aa(a, b)`, `.contrast_fg(bg)`, `.downsampled(depth)`. |
 | `ColorDepth` | `TrueColor`, `EightBit`, `Basic`. `ColorDepth::detect()` auto-detects from `$COLORTERM`/`$TERM`. |
-| `Modifiers` | Bitflags: `BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `REVERSED`, `STRIKETHROUGH`. |
+| `Modifiers` | Bitflags: `BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `REVERSED`, `STRIKETHROUGH`. Methods: `.contains(o)`, `.is_empty()`, `.remove(o)` (clears bits in-place). |
 | `Border` | `None`, `Single`, `Rounded`, `Double`, `Heavy`, `Thick`, `Dashed`, `Dotted`, `Ascii`. |
 | `BorderSides` | bitflags: `TOP`, `RIGHT`, `BOTTOM`, `LEFT`, or combos. |
 | `Padding` | `{ top, right, bottom, left: u32 }`. |
@@ -122,8 +124,8 @@ slt::RunConfig::default()
 ### Theming
 | Type | Notes |
 |---|---|
-| `Theme` | 17-field struct. `#[non_exhaustive]`. Use presets or `Theme::builder()`. Presets: `Theme::dark()` (default), `light()`, `dracula()`, `catppuccin()`, `nord()`, `solarized_dark()`, `solarized_light()`, `tokyo_night()`, `gruvbox_dark()`, `one_dark()`. |
-| `ThemeBuilder` | `.primary(c).secondary(c).accent(c).text(c).text_dim(c).border(c).bg(c).success(c).warning(c).error(c).selected_bg(c).selected_fg(c).surface(c).surface_hover(c).surface_text(c).is_dark(b).spacing(sp).build()`. |
+| `Theme` | 17-field struct. `#[non_exhaustive]`. Use presets or `Theme::builder()`. Presets: `Theme::dark()` (default), `light()`, `dracula()`, `catppuccin()`, `nord()`, `solarized_dark()`, `solarized_light()`, `tokyo_night()`, `gruvbox_dark()`, `one_dark()`. Builder entry points: `Theme::builder()` (empty), `Theme::builder_from(base: Theme) -> ThemeBuilder` (pre-fill from any theme), `Theme::light_builder() -> ThemeBuilder` (shortcut for `builder_from(Theme::light())`). |
+| `ThemeBuilder` | `.primary(c).secondary(c).accent(c).text(c).text_dim(c).border(c).bg(c).success(c).warning(c).error(c).selected_bg(c).selected_fg(c).surface(c).surface_hover(c).surface_text(c).is_dark(b).spacing(sp).build()`. All setters and `build()` are `const fn` — themes can be defined in `const` context. |
 | `ThemeColor` | Semantic tokens: `Primary`, `Secondary`, `Accent`, `Text`, `TextDim`, `Border`, `Bg`, `Success`, `Warning`, `Error`, `SelectedBg`, `SelectedFg`, `Surface`, `SurfaceHover`, `SurfaceText`, `Info`, `Link`, `FocusRing`, `Custom(Color)`. Resolve via `ui.color(ThemeColor::X)` or `ui.theme().resolve(t)`. |
 | `Spacing` | `{ base: u32 }`. Methods: `none()`, `xs()`, `sm()`, `md()`, `lg()`, `xl()`, `xxl()`. `Spacing::new(2)` doubles everything. `ui.spacing()` returns the current one. |
 | `WidgetColors` | `WidgetColors::new().fg(c).bg(c).border(c).accent(c).theme_fg(t).theme_bg(t).theme_border(t).theme_accent(t)`. Pass to `_colored` variants. |
@@ -140,7 +142,7 @@ slt::RunConfig::default()
 | `MouseEvent` | `{ kind: MouseKind, x: u32, y: u32, modifiers: KeyModifiers, pixel_x: Option<u32>, pixel_y: Option<u32> }`. |
 | `MouseKind` | `Down(MouseButton)`, `Up(MouseButton)`, `Drag(MouseButton)`, `Moved`, `ScrollUp`, `ScrollDown`, `ScrollLeft`, `ScrollRight`. |
 | `MouseButton` | `Left`, `Right`, `Middle`. |
-| `KeyMap` | Declarative keymap used to drive `help_from_keymap(&km)`. Register via `.bind(char, desc)`, `.bind_code(KeyCode, desc)`, `.bind_mod(char, mods, desc)`, `.bind_hidden(char, desc)`. Input matching is still your responsibility via `ui.key(...)`. |
+| `KeyMap` | Declarative keymap used to drive `help_from_keymap(&km)`. Register via `.bind(char, desc)`, `.bind_code(KeyCode, desc)`, `.bind_mod(char, mods, desc)`, `.bind_code_mod(KeyCode, mods, desc)` (any KeyCode + modifiers, e.g. Ctrl+Enter), `.bind_hidden(char, desc)`. Input matching is still your responsibility via `ui.key(...)`. |
 | `Binding` | Entry in a `KeyMap` (`{ key, modifiers, display, description, visible }`). |
 
 ### Animation
@@ -150,7 +152,7 @@ slt::RunConfig::default()
 | `Spring` | `Spring::new(initial, stiffness, damping)`. `.set_target(v)`, `.tick()`, `.value() -> f64`. |
 | `Keyframes` | Timeline with stops. `Keyframes::new(duration).at(0.0, 0.0).at(0.5, 100.0).at(1.0, 0.0).loop_mode(LoopMode::Loop)`. |
 | `Sequence` | Chained tween segments in order. |
-| `Stagger` | `Stagger::new(from, to, duration).delay(ticks).items(count)`. `.value(tick, item_index)`. |
+| `Stagger` | `Stagger::new(from, to, duration).delay(ticks).items(count)`. `.value(tick, item_index)`. `.is_done()` reports completion of the last sampled item; `.is_all_done(tick, item_count) -> bool` reports completion of every item in the batch. |
 | `LoopMode` | `Once`, `Loop`, `PingPong`. |
 | Easings (under `slt::anim::*`) | `ease_linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_quad`, `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`, `ease_out_elastic`, `ease_out_bounce`. |
 
@@ -254,6 +256,8 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.confirm(question, &mut result)` | Yes/No dialog; `result` set on click. |
 | `ui.breadcrumb(&[&str]) -> Option<usize>` | Clickable breadcrumb; returns clicked segment. |
 | `ui.breadcrumb_with(&[&str], separator) -> Option<usize>` | Custom separator. |
+| `ui.breadcrumb_response(&[&str]) -> (Response, Option<usize>)` | Same as `breadcrumb()` but also exposes the row `Response` (hover/focus/rect). |
+| `ui.breadcrumb_response_with(&[&str], separator) -> (Response, Option<usize>)` | Custom separator + `Response`. The plain `breadcrumb()` / `breadcrumb_with()` are wrappers that drop the `Response`. |
 | `ui.help(&[(&str, &str)])` | Key/description help bar. `ui.help_colored(bindings, key_color, text_color)`. |
 | `ui.help_from_keymap(&keymap)` | From a `KeyMap`. |
 
@@ -317,7 +321,8 @@ Finalization:
 | `ui.button(label)` | — | Click button. Variants: `button_colored(label, &colors)`, `button_with(label, ButtonVariant)` (`Default`, `Primary`, `Danger`, `Outline`). |
 | `ui.checkbox(label, &mut bool)` / `checkbox_colored` | — | Checkbox toggle. |
 | `ui.toggle(label, &mut bool)` / `toggle_colored` | — | Toggle switch. |
-| `ui.slider(label, &mut f64, range)` | — | Horizontal slider, `range: RangeInclusive<f64>`. |
+| `ui.slider(label, &mut f64, range)` | — | Horizontal slider, `range: RangeInclusive<f64>`. Default step is `span / 20`. |
+| `ui.slider_with_step(label, &mut f64, range, step)` | — | Slider with explicit step size — use when the default step is too coarse/fine (integers need `1.0`, fine controls `0.1`). |
 | `ui.text_input(&mut state)` / `text_input_colored` | `TextInputState` | Single-line input. |
 | `ui.textarea(&mut state, visible_rows)` | `TextareaState` | Multi-line editor. |
 | `ui.select(&mut state)` / `select_colored` | `SelectState` | Dropdown. |

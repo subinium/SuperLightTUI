@@ -57,6 +57,14 @@ Single-line text input state. Pass `&mut TextInputState` to
 | `set_suggestions(&mut self, suggestions: Vec<String>)` | Replace suggestions and reset popup state. |
 | `matched_suggestions(&self) -> Vec<&str>` | Suggestions whose prefix matches `value` (case-insensitive). |
 
+> **`Clone` note**: `TextInputState::clone()` produces a copy *without* registered
+> validators. Validators are stored as `Box<dyn Fn>`, which is not `Clone`, so
+> the cloned state starts with an empty validator list. This is intentional —
+> re-register validators on the clone if you need them. Inherent fields
+> (`value`, `cursor`, `placeholder`, `max_length`, `validation_error`,
+> `masked`, `suggestions`, `suggestion_index`, `show_suggestions`) are copied
+> as expected.
+
 ### Minimal example
 
 ```rust
@@ -846,12 +854,22 @@ Multi-style append-only log.
 |-------|------|---------|
 | `entries` | `Vec<RichLogEntry>` | Accumulated log rows. |
 | `auto_scroll` | `bool` | Follow the tail when new rows arrive. |
-| `max_entries` | `Option<usize>` | Optional ring-buffer cap. |
+| `max_entries` | `Option<usize>` | Optional ring-buffer cap (`None` = unbounded). |
 
 ### Constructors
 
-- `RichLogState::new() -> Self`
-- `RichLogState::default() -> Self`
+- `RichLogState::new() -> Self` — bounded at `RichLogState::DEFAULT_MAX_ENTRIES`
+  (10,000 entries). Older entries are dropped from the front when the cap is
+  exceeded. **Recommended default for long-running apps** to prevent unbounded
+  memory growth.
+- `RichLogState::new_unbounded() -> Self` — opt-in unbounded log
+  (`max_entries = None`). Use only when the host explicitly bounds growth
+  elsewhere (e.g. you call `clear()` periodically or cap entries upstream).
+- `RichLogState::default() -> Self` — same as `new()` (bounded at 10,000).
+
+### Associated constants
+
+- `RichLogState::DEFAULT_MAX_ENTRIES: usize = 10_000`
 
 ### Methods
 

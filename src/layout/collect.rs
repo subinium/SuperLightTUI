@@ -14,6 +14,23 @@ pub(crate) struct FrameData {
     pub raw_draw_rects: Vec<RawDrawRect>,
 }
 
+impl FrameData {
+    /// Reset all collection vectors to `len = 0` while keeping their
+    /// allocated capacities (issue #155). The next frame's `collect_all`
+    /// call writes into these slots, so the per-frame allocation churn of
+    /// 8 fresh `Vec::new()`s is amortized to zero after warm-up.
+    pub(crate) fn clear(&mut self) {
+        self.scroll_infos.clear();
+        self.scroll_rects.clear();
+        self.hit_areas.clear();
+        self.group_rects.clear();
+        self.content_areas.clear();
+        self.focus_rects.clear();
+        self.focus_groups.clear();
+        self.raw_draw_rects.clear();
+    }
+}
+
 /// Information about a raw-draw node's visible screen rect.
 pub(crate) struct RawDrawRect {
     pub draw_id: usize,
@@ -29,8 +46,12 @@ pub(crate) struct RawDrawRect {
 ///
 /// Replaces the 7 individual `collect_*` functions that each traversed the
 /// tree independently, reducing per-frame traversals from 7x to 1x.
-pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
-    let mut data = FrameData::default();
+///
+/// As of issue #155 the caller owns the `FrameData` allocation: we clear
+/// (preserving capacity) and write into it directly, so steady-state frames
+/// pay zero allocation churn for the 8 collection vectors.
+pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
+    data.clear();
 
     if node.is_scrollable {
         let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
@@ -64,14 +85,12 @@ pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
         0
     };
     for child in &node.children {
-        collect_all_inner(child, &mut data, child_offset, None, None, 1);
+        collect_all_inner(child, data, child_offset, None, None, 1);
     }
 
     for overlay in &node.overlays {
-        collect_all_inner(&overlay.node, &mut data, 0, None, None, 1);
+        collect_all_inner(&overlay.node, data, 0, None, None, 1);
     }
-
-    data
 }
 
 fn collect_all_inner(

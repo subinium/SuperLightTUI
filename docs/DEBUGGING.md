@@ -21,11 +21,49 @@ Use it when you need to inspect:
 
 - container bounds
 - nesting depth
-- widget count
+- widget count (broken down by layer)
 - frame timing / FPS
 - current terminal dimensions
 
 This is the fastest way to debug clipping, spacing, and invisible layout issues.
+
+### Reading the colored outlines
+
+Each layer family is tinted with a distinct hue, matching the convention used by
+Chrome DevTools' layout overlay, the React DevTools component highlighter, and the
+Flutter Inspector's widget tree boundaries. Within each family the color lightens
+with depth so nested containers stay visually separable.
+
+| Color family | Layer | Triggered by |
+|--------------|-------|--------------|
+| Green | **Base** | `ui.col`, `ui.row`, `ui.container().*`, every non-overlay widget |
+| Red | **Overlay** | `ui.overlay`, `ui.overlay_at`, `ui.overlay_at_offset`, `ui.tooltip` |
+| Blue | **Modal** | `ui.modal`, `ui.modal_at`, `ui.modal_at_offset` |
+
+Tooltips currently share the Overlay (red) family because they ride the same
+non-modal overlay plumbing — the layout tree does not yet carry a separate
+tooltip tag. If you need to tell them apart visually, give the tooltip
+container a unique title or background while debugging.
+
+### Reading the status line
+
+The status bar at the bottom of the screen shows a per-layer breakdown when
+more than one layer family is populated:
+
+```
+[SLT Debug] 120x40 | 14 widgets (8 base, 5 overlay, 1 modal) | 1.7ms | 60fps
+```
+
+- **`14 widgets`** — total leaf widgets the renderer drew this frame.
+- **`(8 base, 5 overlay, 1 modal)`** — only present when at least two layer
+  families have widgets, so a base-only scene keeps the short status line.
+- **`1.7ms`** — last frame time.
+- **`60fps`** — exponential moving average frame rate.
+
+Use `Context::set_debug_layer(DebugLayer::TopMost)` to outline only the active
+modal/overlay (helpful when an overlay is fighting the base layout for space)
+or `DebugLayer::BaseOnly` to keep the legacy pre-fix behavior of skipping
+overlays entirely.
 
 ## Common failure modes
 
@@ -57,6 +95,8 @@ if show_sidebar {
     ui.text(format!("{}", state.get(ui)));
 }
 ```
+
+If you genuinely need a hook inside an `if` or `match` arm, use the id-keyed variant `ui.use_state_named::<T>(id)` (v0.19.0). It keys by the supplied `&'static str` instead of call order, so it is safe inside conditional branches. The original order-based `use_state` rule still applies — only `*_named` variants opt out of it.
 
 ### 3. `Response.rect` is empty
 

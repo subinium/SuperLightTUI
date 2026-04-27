@@ -11,4 +11,12 @@
 "flate2" = "flate2"
 
 [files]
-extend-exclude = ["CHANGELOG.md", "Cargo.lock", "AUDIT-REPORT.md", "docs/README.*.md"]
+extend-exclude = [
+    "CHANGELOG.md",
+    "Cargo.lock",
+    "AUDIT-REPORT.md",
+    "docs/README.*.md",
+    # Visual regression snapshots can contain truncated text the typos
+    # checker misreads as misspellings (e.g. "anc" cut from "anchor").
+    "tests/snapshots/visual__*.snap",
+]

@@ -146,10 +146,12 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     if matches!(node.kind, NodeKind::Text) && node.wrap {
         let lines = node.ensure_wrapped_for_width(area.width);
         node.size = (area.width, lines);
-    } else {
-        node.cached_wrap_width = None;
-        node.cached_wrapped = None;
-        node.cached_wrapped_segments = None;
+    } else if let Some(td) = node.text_data.as_deref_mut() {
+        // Only text nodes carry the wrap cache. Non-text variants have
+        // `text_data = None` and have nothing to invalidate here.
+        td.cached_wrap_width = None;
+        td.cached_wrapped = None;
+        td.cached_wrapped_segments = None;
     }
 
     match node.kind {
@@ -235,12 +237,34 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for overlay in &mut node.overlays {
-        let width = overlay.node.min_width().min(area.width);
-        let height = overlay.node.min_height_for_width(width).min(area.height);
-        let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
-        let y = area
-            .y
-            .saturating_add(area.height.saturating_sub(height) / 2);
+        // Issue #200 / #201: When the user's overlay content uses `.grow(>=1)`
+        // (or sets explicit `.w(area_w).h(area_h)` via constraints producing a
+        // child whose min size already equals the area), the wrapper must
+        // take the full area so flexbox `justify` / `align` inside the inner
+        // container has space to push against. Previously the wrapper was
+        // always shrunk to content min-size and centered, so:
+        //   - `overlay(|ui| ui.container().grow(1).align(End).justify(End)…)`
+        //     never reached the bottom-right (no slack to push into).
+        //   - `overlay(|ui| ui.container().grow(1).draw(…))` rendered nothing
+        //     (raw_draw with no constraints had min-size 0×0, so the wrapper
+        //     became 0×0 and `lib.rs` skipped the empty-rect callback).
+        //
+        // Heuristic: if any direct child requests grow, fill the full area.
+        // Otherwise preserve the historic shrink-and-center behavior so plain
+        // `overlay(|ui| ui.bordered(...).p(1).col(...))` still floats in the
+        // middle.
+        let any_grow = overlay.node.children.iter().any(|c| c.grow > 0);
+        let (x, y, width, height) = if any_grow {
+            (area.x, area.y, area.width, area.height)
+        } else {
+            let width = overlay.node.min_width().min(area.width);
+            let height = overlay.node.min_height_for_width(width).min(area.height);
+            let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
+            let y = area
+                .y
+                .saturating_add(area.height.saturating_sub(height) / 2);
+            (x, y, width, height)
+        };
         compute_inner(&mut overlay.node, Rect::new(x, y, width, height), depth + 1);
     }
 }

@@ -7,6 +7,153 @@ fn sep_line() -> &'static str {
     SEP_LINE.get_or_init(|| "─".repeat(200))
 }
 
+/// Compass-rose anchor for [`Context::overlay_at`] / [`Context::modal_at`].
+///
+/// Each variant maps to a (cross-axis [`Align`], main-axis [`Justify`]) pair
+/// that pins overlay content to the requested screen position. The `_at`
+/// helpers expand to a full-screen wrapper (so flexbox has slack to push
+/// against), then place the user's content per the selected anchor.
+///
+/// ```no_run
+/// # use slt::Anchor;
+/// # slt::run(|ui: &mut slt::Context| {
+/// ui.overlay_at(Anchor::BottomRight, |ui| {
+///     ui.text("v0.19.3").dim();
+/// });
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    /// Top-left corner.
+    TopLeft,
+    /// Top edge, horizontally centered.
+    TopCenter,
+    /// Top-right corner.
+    TopRight,
+    /// Left edge, vertically centered.
+    CenterLeft,
+    /// Screen center.
+    Center,
+    /// Right edge, vertically centered.
+    CenterRight,
+    /// Bottom-left corner.
+    BottomLeft,
+    /// Bottom edge, horizontally centered.
+    BottomCenter,
+    /// Bottom-right corner.
+    BottomRight,
+}
+
+/// Map [`Anchor`] to the wrapper column's (cross-axis align, main-axis justify).
+///
+/// The inner column is `Direction::Column`, so:
+///   - `Justify` controls the vertical (main-axis) position.
+///   - `Align`   controls the horizontal (cross-axis) position.
+fn anchor_to_align_justify(anchor: Anchor) -> (Align, Justify) {
+    match anchor {
+        Anchor::TopLeft => (Align::Start, Justify::Start),
+        Anchor::TopCenter => (Align::Center, Justify::Start),
+        Anchor::TopRight => (Align::End, Justify::Start),
+        Anchor::CenterLeft => (Align::Start, Justify::Center),
+        Anchor::Center => (Align::Center, Justify::Center),
+        Anchor::CenterRight => (Align::End, Justify::Center),
+        Anchor::BottomLeft => (Align::Start, Justify::End),
+        Anchor::BottomCenter => (Align::Center, Justify::End),
+        Anchor::BottomRight => (Align::End, Justify::End),
+    }
+}
+
+/// Resolve `(dx, dy)` to a [`Margin`] for the outer grow-1 anchor column,
+/// given an [`Anchor`].
+///
+/// Sign convention: **positive `dx` / `dy` inset toward the viewport center**
+/// (mirrors the CSS `inset` shorthand intuition). The margin shrinks the
+/// column's slack on the side adjacent to the anchored edge, so subsequent
+/// flexbox `align`/`justify` push the user's content inward by `(dx, dy)`:
+///   - `BottomRight` + `(dx=2, dy=1)` → `mr=2, mb=1` (push 2 left, 1 up)
+///   - `TopLeft`     + `(dx=2, dy=1)` → `ml=2, mt=1` (push 2 right, 1 down)
+///   - `Center`      + `(dx=2, dy=1)` → `ml=2, mt=1` (shift 2 right, 1 down)
+///   - `Center`      + `(dx=-2, dy=-1)` → `mr=2, mb=1` (shift 2 left, 1 up)
+///
+/// Negative values for corner / edge anchors would push the content
+/// off-screen (no opposite-side slack to consume), so they are clamped to 0;
+/// see [`Context::overlay_at_offset`] for the documented contract.
+fn anchor_offset_to_margin(anchor: Anchor, dx: i32, dy: i32) -> Margin {
+    let mut margin = Margin::default();
+
+    // Horizontal axis: positive dx insets toward center.
+    let h_anchor = match anchor {
+        Anchor::TopLeft | Anchor::CenterLeft | Anchor::BottomLeft => HSide::Left,
+        Anchor::TopRight | Anchor::CenterRight | Anchor::BottomRight => HSide::Right,
+        Anchor::TopCenter | Anchor::Center | Anchor::BottomCenter => HSide::Center,
+    };
+    match h_anchor {
+        HSide::Left => {
+            // Anchored to left edge: positive dx pushes right via ml.
+            // Negative dx would push left (offscreen) — no slack on the
+            // opposite side, and `u32` margin can't represent negatives,
+            // so we clamp to 0. See `Context::overlay_at_offset` doc.
+            if dx > 0 {
+                margin.left = dx as u32;
+            }
+        }
+        HSide::Right => {
+            // Anchored to right edge: positive dx pushes left via mr.
+            if dx > 0 {
+                margin.right = dx as u32;
+            }
+        }
+        HSide::Center => {
+            // Centered: positive dx shifts right (ml), negative shifts left (mr).
+            if dx > 0 {
+                margin.left = dx as u32;
+            } else if dx < 0 {
+                margin.right = dx.unsigned_abs();
+            }
+        }
+    }
+
+    // Vertical axis: positive dy insets toward center.
+    let v_anchor = match anchor {
+        Anchor::TopLeft | Anchor::TopCenter | Anchor::TopRight => VSide::Top,
+        Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => VSide::Bottom,
+        Anchor::CenterLeft | Anchor::Center | Anchor::CenterRight => VSide::Center,
+    };
+    match v_anchor {
+        VSide::Top => {
+            if dy > 0 {
+                margin.top = dy as u32;
+            }
+        }
+        VSide::Bottom => {
+            if dy > 0 {
+                margin.bottom = dy as u32;
+            }
+        }
+        VSide::Center => {
+            if dy > 0 {
+                margin.top = dy as u32;
+            } else if dy < 0 {
+                margin.bottom = dy.unsigned_abs();
+            }
+        }
+    }
+
+    margin
+}
+
+enum HSide {
+    Left,
+    Right,
+    Center,
+}
+
+enum VSide {
+    Top,
+    Bottom,
+    Center,
+}
+
 impl Context {
     /// Render a horizontal divider line.
     ///
@@ -320,6 +467,140 @@ impl Context {
         self.commands.push(Command::EndOverlay);
         self.rollback.last_text_idx = None;
         self.response_for(interaction_id)
+    }
+
+    /// Render floating content anchored to one of the 9 compass positions.
+    ///
+    /// Wraps [`overlay`](Self::overlay) with a full-area column that pins the
+    /// content to the requested anchor via flexbox `align`/`justify`. The
+    /// inner column gets `grow(1)` so the wrapper consumes the screen, giving
+    /// `align`/`justify` room to push the content to the corner.
+    ///
+    /// ```no_run
+    /// # use slt::Anchor;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.overlay_at(Anchor::TopRight, |ui| {
+    ///     ui.text("0:42").bold();
+    /// });
+    /// # });
+    /// ```
+    pub fn overlay_at(&mut self, anchor: Anchor, f: impl FnOnce(&mut Context)) -> Response {
+        self.overlay(|ui| {
+            let (align, justify) = anchor_to_align_justify(anchor);
+            let _ = ui.container().grow(1).align(align).justify(justify).col(f);
+        })
+    }
+
+    /// Render a modal overlay anchored to one of the 9 compass positions.
+    ///
+    /// Like [`modal`](Self::modal) but pinned to a corner / edge / center via
+    /// the same anchor wrapping as [`overlay_at`](Self::overlay_at).
+    pub fn modal_at(&mut self, anchor: Anchor, f: impl FnOnce(&mut Context)) -> Response {
+        self.modal(|ui| {
+            let (align, justify) = anchor_to_align_justify(anchor);
+            let _ = ui.container().grow(1).align(align).justify(justify).col(f);
+        })
+    }
+
+    /// Render `f` at `anchor` with cell offset `(dx, dy)` from the anchored edge.
+    ///
+    /// This is the SLT analog of CSS `position: absolute; top/right/bottom/left`,
+    /// or Flutter's `Positioned(top:, right:, ...)`. The 9-cell [`Anchor`]
+    /// chooses which edge to anchor to; `(dx, dy)` insets toward the center.
+    ///
+    /// # Sign convention
+    /// Positive `dx` / `dy` always inset toward the viewport center. So
+    /// `overlay_at_offset(Anchor::BottomRight, 2, 1, ...)` places the widget
+    /// 2 cells left and 1 cell up from the bottom-right corner.
+    ///
+    /// For [`Anchor::Center`] (and other centered axes) negative values shift
+    /// in the opposite direction — `(dx=-2, dy=-1)` shifts 2 cells left and 1
+    /// cell up. For corner / edge anchors, negative values would push the
+    /// content off-screen, so they are clamped to 0; use a different anchor
+    /// instead of negative offsets to escape an edge.
+    ///
+    /// # CSS analogy
+    /// ```text
+    /// CSS:    place-self: end end; bottom: 1px; right: 2px;
+    /// SLT:    overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| { ... })
+    /// ```
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::Anchor;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Inset corner badge — 2 cells from the right, 1 row from the bottom.
+    /// ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
+    ///     ui.text("v0.19.3").dim();
+    /// });
+    /// # });
+    /// ```
+    pub fn overlay_at_offset(
+        &mut self,
+        anchor: Anchor,
+        dx: i32,
+        dy: i32,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
+        self.overlay(|ui| {
+            let (align, justify) = anchor_to_align_justify(anchor);
+            let margin = anchor_offset_to_margin(anchor, dx, dy);
+            // Apply margin on the outer (grow=1) column so flexbox's parent
+            // (the synthetic overlay root) shrinks the column's area before
+            // align/justify pick a position. This avoids a wrapper container
+            // around `f`, which would expose a flexbox limitation where
+            // `Align::End` shifts the immediate child's `pos` but does not
+            // propagate the shift down to grandchildren.
+            let _ = ui
+                .container()
+                .grow(1)
+                .align(align)
+                .justify(justify)
+                .margin(margin)
+                .col(f);
+        })
+    }
+
+    /// Modal variant of [`overlay_at_offset`](Self::overlay_at_offset).
+    ///
+    /// Like [`modal_at`](Self::modal_at) but with a `(dx, dy)` cell inset
+    /// from the anchored edge. Positive values inset toward the center —
+    /// see [`overlay_at_offset`](Self::overlay_at_offset) for the full sign
+    /// convention.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::{Anchor, Border};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.modal_at_offset(Anchor::TopRight, 2, 1, |ui| {
+    ///     ui.bordered(Border::Rounded).p(1).col(|ui| {
+    ///         ui.text("Saved!");
+    ///     });
+    /// });
+    /// # });
+    /// ```
+    pub fn modal_at_offset(
+        &mut self,
+        anchor: Anchor,
+        dx: i32,
+        dy: i32,
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
+        self.modal(|ui| {
+            let (align, justify) = anchor_to_align_justify(anchor);
+            let margin = anchor_offset_to_margin(anchor, dx, dy);
+            // See `overlay_at_offset` for why margin lives on the outer
+            // grow-1 column rather than a wrapper around `f`.
+            let _ = ui
+                .container()
+                .grow(1)
+                .align(align)
+                .justify(justify)
+                .margin(margin)
+                .col(f);
+        })
     }
 
     /// Render a hover tooltip for the previously rendered interactive widget.

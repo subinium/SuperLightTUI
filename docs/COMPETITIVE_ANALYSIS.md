@@ -1,6 +1,6 @@
 # SLT Competitive Analysis & Roadmap
 
-**Date**: 2026-04-07 (v0.17.1)
+**Date**: 2026-04-27 (v0.19.2)
 **Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
 
 ---
@@ -78,7 +78,7 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 | Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
 |---|---|---|---|---|---|
 | State model | Closure + hooks | Manual struct | Reactive attrs | React hooks | Elm MVU |
-| Hooks | ✅ use_state, use_memo | ❌ | ❌ | ✅ Full React | ❌ |
+| Hooks | ✅ use_state, use_memo, use_state_named (id-keyed; safe in conditionals), provide / use_context (scoped state injection) | ❌ | ❌ | ✅ Full React | ❌ |
 | Event bubbling | ❌ | ❌ | ✅ | ✅ | ❌ |
 | Error boundary | ✅ | ❌ | ❌ | ✅ | ❌ |
 | Custom widgets | ✅ Widget trait | ✅ Widget trait | ✅ Class inheritance | ✅ React components | ✅ Model interface |
@@ -129,7 +129,7 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 
 ---
 
-## Completed Roadmap (v0.14.0–v0.14.1)
+## Completed Roadmap (v0.14.0 – v0.19.2)
 
 ### v0.14.0 — Ecosystem Foundation
 
@@ -168,6 +168,44 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 | — | Kernel parity + proptest coverage | ✅ |
 | — | Terminal session hardening | ✅ |
 | — | Interaction allocator unification | ✅ |
+
+### v0.18.x — Performance + Hardening
+
+| ID | Feature | Status |
+|---|---|---|
+| #62 | Flush coalescing — single ANSI emit per frame | ✅ |
+| #64 | Command enum boxing — shrinks the per-frame command stream | ✅ |
+| #67 | Flexbox U32Stack scratch — no per-frame allocations in layout | ✅ |
+| — | NO_COLOR env var support | ✅ |
+| — | `scroll_col` + `draw_with` helpers | ✅ |
+| — | `try_get` for safer state access | ✅ |
+
+### v0.19.0 — Component DX
+
+| ID | Feature | Status |
+|---|---|---|
+| — | `provide` / `use_context::<T>()` — scoped state injection (no parameter threading) | ✅ |
+| — | `use_state_named(id)` — id-keyed local state, safe inside conditionals | ✅ |
+| — | `with_if(cond, modifier)` / `with(modifier)` — fluent conditional styling on text and ContainerBuilder | ✅ |
+
+### v0.19.1 — Output + Image Perf
+
+| ID | Feature | Status |
+|---|---|---|
+| — | BufWriter stdout (1 flush/frame) | ✅ |
+| — | `image()` reduced to 1 RawDraw/frame (was 841) | ✅ |
+| — | Sixel exact-match detection | ✅ |
+| #131 | EventBuilder chain wrappers (`mouse_up`, `drag`, `key_release`, `focus_gained`, `focus_lost`) | ✅ |
+| #160 | CJK title clamp regression coverage | ✅ |
+
+### v0.19.2 — Theme + Status DX
+
+| ID | Feature | Status |
+|---|---|---|
+| #108 | `mx` / `my` margin shorthands | ✅ |
+| — | `ThemeBuilder` const fn — compile-time theme construction | ✅ |
+| #182 | `breadcrumb_response` / `breadcrumb_response_with` returning `(Response, Option<usize>)` | ✅ |
+| — | `RichLogState` bounded default (no unbounded growth) | ✅ |
 
 ---
 

@@ -356,7 +356,8 @@ fn collect_focus_rects_from_markers() {
     let area = crate::rect::Rect::new(0, 0, 40, 10);
     compute(&mut tree, area);
 
-    let fd = collect_all(&tree);
+    let mut fd = FrameData::default();
+    collect_all(&tree, &mut fd);
     assert_eq!(fd.focus_rects.len(), 2);
     assert_eq!(fd.focus_rects[0].0, 0);
     assert_eq!(fd.focus_rects[1].0, 1);
@@ -406,7 +407,8 @@ fn focus_marker_tags_container() {
     let area = crate::rect::Rect::new(0, 0, 40, 10);
     compute(&mut tree, area);
 
-    let fd = collect_all(&tree);
+    let mut fd = FrameData::default();
+    collect_all(&tree, &mut fd);
     assert_eq!(fd.focus_rects.len(), 1);
     assert_eq!(fd.focus_rects[0].0, 0);
     assert!(fd.focus_rects[0].1.width >= 8);
@@ -426,13 +428,21 @@ fn wrapped_text_cache_reused_for_same_width() {
     );
 
     let height_a = node.min_height_for_width(6);
-    let first_ptr = node.cached_wrapped.as_ref().map(Vec::as_ptr).unwrap();
+    let first_ptr = node
+        .text_data()
+        .and_then(|t| t.cached_wrapped.as_ref())
+        .map(Vec::as_ptr)
+        .unwrap();
     let height_b = node.min_height_for_width(6);
-    let second_ptr = node.cached_wrapped.as_ref().map(Vec::as_ptr).unwrap();
+    let second_ptr = node
+        .text_data()
+        .and_then(|t| t.cached_wrapped.as_ref())
+        .map(Vec::as_ptr)
+        .unwrap();
 
     assert_eq!(height_a, height_b);
     assert_eq!(first_ptr, second_ptr);
-    assert_eq!(node.cached_wrap_width, Some(6));
+    assert_eq!(node.text_data().and_then(|t| t.cached_wrap_width), Some(6));
 }
 
 #[test]
@@ -465,7 +475,9 @@ fn collect_all_clips_raw_draw_to_scroll_viewport() {
     scroll.children.push(raw);
     root.children.push(scroll);
 
-    let rects: Vec<_> = collect_all(&root)
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    let rects: Vec<_> = fd
         .raw_draw_rects
         .into_iter()
         .map(|r| (r.draw_id, r.rect, r.top_clip_rows, r.original_height))
@@ -532,7 +544,8 @@ fn group_names_share_arc_across_focus_descendants() {
     let mut tree = build_tree(commands);
     let area = crate::rect::Rect::new(0, 0, 80, (N_GROUPS * FOCUSES_PER_GROUP) as u32 + 4);
     compute(&mut tree, area);
-    let fd = collect_all(&tree);
+    let mut fd = FrameData::default();
+    collect_all(&tree, &mut fd);
 
     // All N_GROUPS group rects present with the expected names.
     assert_eq!(
@@ -859,7 +872,8 @@ fn collect_all_keeps_scroll_invariant_with_nested_scrollables() {
     root.children.push(outer);
     root.children.push(sibling);
 
-    let fd = collect_all(&root);
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
 
     assert_eq!(
         fd.scroll_infos.len(),
@@ -902,8 +916,9 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert_eq!(node.focus_id, Some(11));
     assert_eq!(node.interaction_id, Some(13));
     // Defaults — none of these should be populated by the constructor.
-    assert!(node.content.is_none());
-    assert!(node.cursor_offset.is_none());
+    // Non-text nodes have no `text_data`; the text-only fields are
+    // unreachable from this variant (issue #153 split them off).
+    assert!(node.text_data().is_none());
     assert_eq!(node.align, Align::Start);
     assert!(node.align_self.is_none());
     assert_eq!(node.justify, Justify::Start);
@@ -917,10 +932,8 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert!(!node.is_scrollable);
     assert_eq!(node.scroll_offset, 0);
     assert_eq!(node.content_height, 0);
-    assert!(node.cached_wrap_width.is_none());
-    assert!(node.cached_wrapped.is_none());
-    assert!(node.segments.is_none());
-    assert!(node.cached_wrapped_segments.is_none());
+    // The wrap caches and segments are inside `text_data`, which is
+    // `None` for `RawDraw` nodes.
     assert!(node.link_url.is_none());
     assert!(node.group_name.is_none());
     assert!(node.overlays.is_empty());
@@ -970,7 +983,8 @@ fn collect_all_panics_at_depth_guard() {
         }
     }
     populate_sizes(&mut node);
-    let _ = collect_all(&node);
+    let mut fd = FrameData::default();
+    collect_all(&node, &mut fd);
 }
 
 #[test]
@@ -991,4 +1005,255 @@ fn render_panics_at_depth_guard() {
     populate_sizes(&mut node);
     let mut buf = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 80, 24));
     super::render::render(&node, &mut buf);
+}
+
+#[test]
+fn collect_all_reuses_buffer_without_leaking_prior_frame_data() {
+    // Regression for issue #155: `collect_all(&tree, &mut fd)` must call
+    // `fd.clear()` before populating, so a recycled `FrameData` does not
+    // carry data from a previous frame's tree. The capacity is reused; the
+    // contents are not.
+    use crate::style::{Constraints, Margin};
+
+    // Frame A: tree with two focusables.
+    let mut tree_a = LayoutNode::container(Direction::Column, default_container_config());
+    let mut focus_a0 = LayoutNode::container(Direction::Column, default_container_config());
+    focus_a0.focus_id = Some(0);
+    focus_a0.pos = (0, 0);
+    focus_a0.size = (10, 1);
+    tree_a.children.push(focus_a0);
+    let mut focus_a1 = LayoutNode::container(Direction::Column, default_container_config());
+    focus_a1.focus_id = Some(1);
+    focus_a1.pos = (0, 1);
+    focus_a1.size = (10, 1);
+    tree_a.children.push(focus_a1);
+
+    let mut fd = FrameData::default();
+    collect_all(&tree_a, &mut fd);
+    assert_eq!(fd.focus_rects.len(), 2, "frame A: two focus rects");
+
+    // Frame B: a different tree with a single raw_draw (no focuses, no
+    // groups). After collect_all, the recycled `fd` must reflect *only*
+    // tree B — not a mix of A and B.
+    let mut tree_b = LayoutNode::container(Direction::Column, default_container_config());
+    let mut raw =
+        LayoutNode::raw_draw(42, Constraints::default(), 0, Margin::default(), None, None);
+    raw.pos = (0, 0);
+    raw.size = (4, 2);
+    tree_b.children.push(raw);
+
+    collect_all(&tree_b, &mut fd);
+    assert_eq!(
+        fd.focus_rects.len(),
+        0,
+        "frame B: focus_rects must be cleared before refill"
+    );
+    assert_eq!(
+        fd.raw_draw_rects.len(),
+        1,
+        "frame B: one raw_draw rect must be present"
+    );
+    assert_eq!(fd.raw_draw_rects[0].draw_id, 42);
+}
+
+#[test]
+fn f12_debug_overlay_outlines_overlay_layer() {
+    // Regression for issue #201 Part A: `render_debug_overlay` previously
+    // walked only `node.children`, leaving any active overlay/modal invisible
+    // to the F12 outline pass. Build a root with one base child + one
+    // overlay child, and verify the overlay's bounds receive border chars.
+
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+
+    // Base layer: a container at (0,0) sized 40×5.
+    let mut base = LayoutNode::container(Direction::Column, default_container_config());
+    base.pos = (0, 0);
+    base.size = (40, 5);
+    root.children.push(base);
+
+    // Overlay layer: a container at (10,10) sized 20×4.
+    let mut overlay_node = LayoutNode::container(Direction::Column, default_container_config());
+    overlay_node.pos = (10, 10);
+    overlay_node.size = (20, 4);
+    root.overlays.push(super::tree::OverlayLayer {
+        node: overlay_node,
+        modal: false,
+    });
+
+    let mut buf = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 40, 20));
+    super::render::render_debug_overlay(&root, &mut buf, 0, 60.0, crate::DebugLayer::All);
+
+    // The overlay container's top-RIGHT corner should now carry the outline
+    // corner char ('┐'). The top-left position is overwritten by the depth
+    // label '0', so we sample the right corner instead. Pre-fix the entire
+    // overlay rect was untouched.
+    let cell_top_right = buf.get(10 + 20 - 1, 10);
+    assert_eq!(
+        cell_top_right.symbol, "┐",
+        "F12 overlay outline must hit overlay's top-right corner; got {:?}",
+        cell_top_right.symbol
+    );
+    // Bottom-right corner of overlay.
+    let cell_bottom_right = buf.get(10 + 20 - 1, 10 + 4 - 1);
+    assert_eq!(
+        cell_bottom_right.symbol, "┘",
+        "F12 overlay outline must hit overlay's bottom-right corner; got {:?}",
+        cell_bottom_right.symbol
+    );
+}
+
+#[test]
+fn count_leaf_widgets_matches_outline_count_with_overlays() {
+    // Regression for issue #201 Part C: the status-bar widget count must
+    // include overlay nodes so the displayed total reflects what the renderer
+    // actually drew.
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+
+    // 2 base widgets.
+    root.children.push(LayoutNode::text(
+        "a".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    ));
+    root.children.push(LayoutNode::text(
+        "b".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    ));
+
+    // 1 overlay widget.
+    let mut overlay_root = LayoutNode::container(Direction::Column, default_container_config());
+    overlay_root.children.push(LayoutNode::text(
+        "overlay".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    ));
+    root.overlays.push(super::tree::OverlayLayer {
+        node: overlay_root,
+        modal: false,
+    });
+
+    // Render the debug status bar at the bottom. The widget count is the
+    // first integer following "| ".
+    let mut buf = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 80, 5));
+    super::render::render_debug_overlay(&root, &mut buf, 0, 60.0, crate::DebugLayer::All);
+
+    let mut bottom = String::new();
+    for x in 0..80 {
+        bottom.push_str(&buf.get(x, 4).symbol);
+    }
+    // Expected: 2 base widgets + 1 overlay widget = 3 total.
+    assert!(
+        bottom.contains("3 widgets"),
+        "status bar widget count must include overlay nodes; got {bottom:?}"
+    );
+    // Per-layer breakdown is appended in parens whenever more than one
+    // layer family is non-empty (matches the doc update in DEBUGGING.md).
+    assert!(
+        bottom.contains("2 base") && bottom.contains("1 overlay"),
+        "status bar must include per-layer breakdown when multiple layers \
+         are populated; got {bottom:?}"
+    );
+}
+
+#[test]
+fn f12_debug_overlay_distinguishes_layers_by_color() {
+    // Regression for the #201 follow-up: each layer family (base / overlay /
+    // modal) must paint its outlines in a distinct hue so the F12 view stays
+    // legible when several layers are stacked. We sample a known cell on
+    // each layer's border ring and check that the foreground colors differ
+    // meaningfully (different `Color::Rgb` channels — testing equality is
+    // sufficient because `debug_color_for_depth` returns concrete RGBs).
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+
+    // Base container: (2, 2) sized 10x4. Bottom-right corner at (11, 5).
+    let mut base = LayoutNode::container(Direction::Column, default_container_config());
+    base.pos = (2, 2);
+    base.size = (10, 4);
+    root.children.push(base);
+
+    // Non-modal overlay: (15, 2) sized 10x4. Bottom-right corner at (24, 5).
+    let mut overlay_node = LayoutNode::container(Direction::Column, default_container_config());
+    overlay_node.pos = (15, 2);
+    overlay_node.size = (10, 4);
+    root.overlays.push(super::tree::OverlayLayer {
+        node: overlay_node,
+        modal: false,
+    });
+
+    // Modal overlay: (28, 2) sized 10x4. Bottom-right corner at (37, 5).
+    let mut modal_node = LayoutNode::container(Direction::Column, default_container_config());
+    modal_node.pos = (28, 2);
+    modal_node.size = (10, 4);
+    root.overlays.push(super::tree::OverlayLayer {
+        node: modal_node,
+        modal: true,
+    });
+
+    let mut buf = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 60, 8));
+    super::render::render_debug_overlay(&root, &mut buf, 0, 60.0, crate::DebugLayer::All);
+
+    // Sample the bottom-right corner '┘' of each container — that cell is
+    // never overwritten by the depth label (which sits at the top-left).
+    let base_fg = buf.get(11, 5).style.fg;
+    let overlay_fg = buf.get(24, 5).style.fg;
+    let modal_fg = buf.get(37, 5).style.fg;
+
+    assert!(
+        base_fg.is_some() && overlay_fg.is_some() && modal_fg.is_some(),
+        "all three layer outlines must carry a foreground color; \
+         got base={base_fg:?} overlay={overlay_fg:?} modal={modal_fg:?}"
+    );
+    assert_ne!(
+        base_fg, overlay_fg,
+        "base and overlay outlines must be different colors"
+    );
+    assert_ne!(
+        base_fg, modal_fg,
+        "base and modal outlines must be different colors"
+    );
+    assert_ne!(
+        overlay_fg, modal_fg,
+        "overlay and modal outlines must be different colors"
+    );
+
+    // Sanity-check the hue families: green-dominant for Base, red-dominant
+    // for Overlay, blue-dominant for Modal. Catches future palette drift
+    // that keeps colors distinct but loses the convention.
+    if let Some(crate::style::Color::Rgb(r, g, b)) = base_fg {
+        assert!(
+            g > r && g > b,
+            "Base outline should be green-dominant; got rgb({r},{g},{b})"
+        );
+    } else {
+        panic!("Base outline must be Color::Rgb; got {base_fg:?}");
+    }
+    if let Some(crate::style::Color::Rgb(r, g, b)) = overlay_fg {
+        assert!(
+            r > g && r > b,
+            "Overlay outline should be red-dominant; got rgb({r},{g},{b})"
+        );
+    } else {
+        panic!("Overlay outline must be Color::Rgb; got {overlay_fg:?}");
+    }
+    if let Some(crate::style::Color::Rgb(r, g, b)) = modal_fg {
+        assert!(
+            b > r && b > g,
+            "Modal outline should be blue-dominant; got rgb({r},{g},{b})"
+        );
+    } else {
+        panic!("Modal outline must be Color::Rgb; got {modal_fg:?}");
+    }
 }

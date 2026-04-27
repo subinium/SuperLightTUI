@@ -72,7 +72,7 @@ slt::run(|ui: &mut Context| {
 Key methods:
 - `Spring::new(initial, stiffness, damping)` — constructor
   - `stiffness`: acceleration per unit displacement (`0.1`..`0.5`)
-  - `damping`: velocity decay per tick, `< 1.0` (`0.8`..`0.95`)
+  - `damping`: per-tick velocity multiplier, must satisfy `0.0 < damping < 1.0` (`0.8`..`0.95`). Both bounds are enforced via `debug_assert!` in `Spring::new` (v0.19.1); release builds do not panic but values outside this range conserve or amplify energy and never settle.
 - `.on_settle(fn)` — callback when settled (builder)
 - `.set_target(value)` — change the goal position (interactive use)
 - `.tick()` — advance simulation by one frame (call once per frame)
@@ -80,6 +80,8 @@ Key methods:
 - `.is_settled() -> bool` — true when velocity and distance are both < 0.01
 
 Spring does not use `reset(tick)`. Call `.tick()` every frame and `.set_target()` to change direction.
+
+> **Damping note**: This `damping` is *not* the standard ODE damping ratio ζ — it is a velocity multiplier applied each tick (`velocity *= damping` after the spring force). A value of `1.0` would conserve energy (eternal oscillation); `> 1.0` would amplify it. The recommended `0.80..=0.95` range covers fast-settle to slow-bouncy UI feel.
 
 ### Keyframes
 
@@ -103,9 +105,9 @@ let brightness = kf.value(ui.tick());
 
 Key methods:
 - `Keyframes::new(duration_ticks)` — constructor
-- `.stop(position, value)` — add a stop at normalized position `[0.0, 1.0]`
+- `.stop(position, value)` — add a stop at normalized position `[0.0, 1.0]`. Stops are kept sorted by `position` after every call, so the order in which you append them does not matter — a `.stop(0.7, 100.0)` after `.stop(1.0, 40.0)` lands in the right slot. Code that relied on insertion order to identify segments will see the sorted-by-time order instead.
 - `.easing(fn)` — default easing for all segments
-- `.segment_easing(index, fn)` — override easing for segment `index` (0 = first-to-second stop)
+- `.segment_easing(index, fn)` — override easing for segment `index` (0 = first-to-second stop). Out-of-range indices are silently ignored in release builds (preserving the panic-free guarantee for runtime code) and trigger a `debug_assert!` panic in debug builds (v0.19.1) so builder-order mistakes — calling `segment_easing(2, ...)` before three stops have been added — surface during development.
 - `.loop_mode(mode)` — set loop behavior
 - `.on_complete(fn)` — callback when done
 - `.reset(tick)` — start/restart
@@ -171,6 +173,7 @@ Key methods:
 - `.reset(tick)` — start/restart
 - `.value(tick, item_index) -> f64` — sample value for a specific item
 - `.is_done() -> bool` — true if the most recently sampled item finished
+- `.is_all_done(tick, item_count) -> bool` — true once **every** item has finished, computed from pure tick arithmetic (v0.19.1). Use this when you need a single completion signal that does not depend on which item happened to be sampled last. With `LoopMode::Repeat` / `PingPong` it only reports `true` for the first cycle (loops re-enter after completion).
 
 ## Easing functions
 
@@ -347,7 +350,7 @@ ui.text("->").ml(pos);
 | Builder | `.easing(fn)`, `.delay(ticks)`, `.items(count)`, `.loop_mode(mode)`, `.on_complete(fn)` |
 | Control | `.reset(tick)` |
 | Sample | `.value(tick, item_index) -> f64` |
-| Done | `.is_done() -> bool` |
+| Done | `.is_done() -> bool` (last-sampled item), `.is_all_done(tick, item_count) -> bool` (every item) |
 
 ## Related docs
 

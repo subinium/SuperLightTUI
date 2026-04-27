@@ -57,6 +57,41 @@ tb.run_with_events(events, |ui| {
 
 Use `EventBuilder` when the widget logic depends on keyboard, mouse, paste, or resize events.
 
+### Mouse and key chain wrappers (v0.19.1+)
+
+`EventBuilder` ships convenience wrappers for events that previously required
+constructing raw `Event` values. The most useful ones to know:
+
+| Method | Emits | Use for |
+|--------|-------|---------|
+| `.click(x, y)` | mouse down + up at `(x, y)` | most click tests |
+| `.mouse_up(x, y)` | mouse up only | testing release-only handlers, drag end |
+| `.drag(x, y)` | mouse drag at `(x, y)` (button held) | scrubbing sliders, resizing splits |
+| `.key_release(c)` | key release for `c` | matched press/release pairs (e.g. modifier holds) |
+| `.focus_gained()` | terminal `FocusGained` event | windows/tabs gaining focus |
+| `.focus_lost()` | terminal `FocusLost` event | pause-on-blur, autosave |
+
+Click vs drag is the test gap most authors miss — a `click` is two events
+in the same cell, a `drag` is movement while a button is held:
+
+```rust
+// Click: down then up in the same cell
+let events = EventBuilder::new()
+    .click(10, 4)
+    .build();
+
+// Drag: emit drag events while moving across cells
+let events = EventBuilder::new()
+    .drag(10, 4)
+    .drag(11, 4)
+    .drag(12, 4)
+    .mouse_up(12, 4)
+    .build();
+```
+
+Use `mouse_up` when you want to assert that a handler only fires on release
+(common for "press-and-hold to drag, release to commit" patterns).
+
 ## `render()` vs `run_with_events()` vs `render_with_events()`
 
 | Method | Use when |
@@ -142,7 +177,7 @@ Add `insta` to your own project's dev-dependencies:
 
 ```toml
 [dev-dependencies]
-superlighttui = "0.18"
+superlighttui = "0.19"
 insta = "1"
 ```
 
@@ -173,6 +208,68 @@ Snapshot tests pair well with `EventBuilder` for interaction journeys, and
 with focused `assert_contains` / `assert_line` for narrow invariants.
 Prefer small snapshots — one widget or one panel — over full-screen dumps
 that churn on every theme or layout tweak.
+
+## Visual snapshot regression tests
+
+`tests/visual_snapshots.rs` renders one frame of each demo example into a
+`TestBackend` and stores the buffer output as a plain-text snapshot under
+`tests/snapshots/visual__<demo>.snap`. The goal is to catch the kinds of
+visual regressions that raw assertions miss — top-border title overflow,
+flexbox grow drift, theme color shifts, CJK width handling at the right
+edge — by failing CI when the rendered output changes unexpectedly.
+
+### How to run
+
+```bash
+cargo test --test visual_snapshots
+```
+
+The first run on a clean checkout passes against the committed baselines.
+A failing test prints a side-by-side diff of expected vs actual buffer.
+
+### Updating baselines after intentional changes
+
+When you deliberately change visual output (a widget restyling, a layout
+tweak, a new badge), the snapshots will fail. Review and accept the new
+baseline:
+
+```bash
+cargo insta review     # interactive
+cargo insta accept     # accept all pending
+```
+
+Commit the updated `tests/snapshots/visual__*.snap` files alongside the
+code change so reviewers can see the visual diff in the PR.
+
+### What it catches
+
+- Layout drift (flexbox grow/shrink/gap regressions)
+- Border rendering bugs (wrong corners, missing edges, **title overflow**)
+- Theme color shifts that flip glyph attributes
+- CJK / wide-char width handling at the right edge
+- Wrap and truncation at small terminal sizes
+
+### What it does NOT catch
+
+- Interactive state transitions (focus, hover, click) — use `EventBuilder`
+  with assertion-based tests instead
+- Animation and frame timing — use parity / property tests
+- Sixel / kitty image output — not represented in plain-text buffer
+- Multi-frame state changes (only frame 1 is captured)
+
+### Implementation
+
+Each example file (`examples/demo*.rs`) exposes a `pub fn render(ui: &mut Context)`
+entry point that builds fresh state and runs one rendering pass. The
+example's own `main` keeps using `slt::run` (or `slt::run_with`) so the
+interactive demo still works; the snapshot test imports the example via
+Rust's `#[path = "../examples/demo.rs"]` attribute and calls `render`
+directly.
+
+Demos with rich internal state (`demo.rs`, `demo_dashboard.rs`,
+`demo_infoviz.rs`, `demo_cjk.rs`) use a `render_frame(ui, &mut state)`
+helper for runtime, and a thin `render(ui)` wrapper that builds default
+state and forwards. Frame-1 snapshots only need that wrapper.
 
 ## Testing custom widgets
 

@@ -21,19 +21,21 @@ Load this only when the user asks about specific feature flags, or when building
 
 ## Doc pointers
 
-- `docs/COMPLETE_REFERENCE.md` — full API, single-file, ~1500 lines (LLM-optimized)
+- `docs/COMPLETE_REFERENCE.md` — full API, single-file, ~1530 lines (LLM-optimized)
 - `docs/COOKBOOK.md` — 5 copy-paste app recipes
-- `docs/STATE_APIS.md` — every public `*State` struct with methods
+- `docs/STATE_APIS.md` — every public `*State` struct with methods (note: `RichLogState::new()` is bounded at 10000 entries since v0.19.2; use `RichLogState::new_unbounded()` for unlimited)
 - `docs/PREVIOUS_FRAME_GUIDE.md` — frame timing, when `Response.rect` is valid
-- `docs/PATTERNS.md` — reusable patterns
+- `docs/PATTERNS.md` — reusable patterns including `provide` / `use_context` / `use_state_named` / `with_if` (v0.19.0+ component DX)
+- `docs/EXAMPLES.md` — annotated table of every example; start here when looking for a runnable reference
 - `docs/ARCHITECTURE.md` — render pipeline (commands → build_tree → flexbox → collect → render → flush)
-- `docs/THEMING.md` — `Theme` presets, `ThemeColor` semantic tokens, contrast helpers
-- `docs/TESTING.md` — `TestBackend`, `EventBuilder`, snapshot patterns
+- `docs/THEMING.md` — `Theme` presets, `ThemeColor` semantic tokens, contrast helpers (`ThemeBuilder` is `const fn` since v0.19.2; themes can be defined at compile time)
+- `docs/TESTING.md` — `TestBackend`, `EventBuilder` (incl. v0.19.1 `mouse_up` / `drag` / `key_release` / `focus_gained` / `focus_lost`), snapshot patterns
 - `docs/AI_GUIDE.md` — concise AI-oriented overview
-- `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths
+- `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths; sixel auto-detection uses an exact-match list (`mlterm` / `foot` / `yaft` / `xterm-256color-sixel`) plus the `"sixel"` substring catch-all and `SLT_FORCE_SIXEL=1` opt-in
 - `docs/DEBUGGING.md` — F12 layout overlay, common debug flags
+- `docs/ANIMATION.md` — `Tween` / `Spring` / `Keyframes` / `Sequence` / `Stagger` (`Stagger::is_all_done()` reports completion across all items, distinct from `is_done()`)
 - `src/lib.rs` — authoritative public re-exports
-- `examples/` — 25+ runnable examples
+- `examples/` — 32 runnable examples (highlights: `demo_cjk` CJK / wide-char rendering, `demo_website` `provide` / `use_context` composition, `demo_dashboard` full layout)
 
 ## Release / deployment reference
 

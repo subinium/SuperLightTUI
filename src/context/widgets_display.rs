@@ -5,6 +5,8 @@ mod rich_output;
 mod status;
 mod text;
 
+pub use layout::Anchor;
+
 #[cfg(test)]
 mod line_wrap_tests;
 #[cfg(test)]

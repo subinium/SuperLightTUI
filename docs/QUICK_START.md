@@ -104,7 +104,8 @@ This is the core contract across the library.
 ## 7. Next docs
 
 - `docs/WIDGETS.md` - categorized widget map
-- `docs/PATTERNS.md` - common composition patterns
+- `docs/PATTERNS.md` - common composition patterns, including component composition (`provide` / `use_context`)
+- `docs/FEATURES.md` - feature flags (`async`, `serde`, `image`, `qrcode`, `syntax-*`)
 - `docs/EXAMPLES.md` - runnable examples by use case
 - `docs/ARCHITECTURE.md` - internal module map and frame lifecycle
 - `docs/DESIGN_PRINCIPLES.md` - why the API is shaped this way

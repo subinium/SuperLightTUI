@@ -11,6 +11,8 @@ Recipes assume familiarity with the core mental model from [QUICK_START.md](QUIC
 - [Modal Confirmation with Toast](#modal-confirmation-with-toast) — `cargo run --example cookbook_modal_toast`
 - [Real-time Dashboard with Charts](#real-time-dashboard-with-charts) — `cargo run --example cookbook_dashboard`
 - [File Picker with Preview](#file-picker-with-preview) — `cargo run --example cookbook_file_picker`
+- [Components with Shared State](#components-with-shared-state) — `provide` / `use_context` (v0.19.0)
+- [Common pitfalls](#common-pitfalls)
 
 ## Prerequisites
 
@@ -19,7 +21,7 @@ Add SLT to a fresh project:
 ```toml
 # Cargo.toml
 [dependencies]
-superlighttui = "0.18"
+superlighttui = "0.19"
 ```
 
 Every recipe follows the same outer shape:
@@ -611,6 +613,105 @@ fn read_preview(path: &std::path::Path) -> Result<String, String> {
 - `picker.selected()` returns `Option<&PathBuf>` only when the user picks a file with Enter — directories set `current_dir` instead and emit `changed = true` but no selection.
 - Always gate `std::fs::read_to_string` behind a size check. A runaway file read blocks the thread and the UI stops responding.
 - Pair a `ScrollState` with every long content region. Reset `offset = 0` when you swap the content — otherwise the previous file's scroll position leaks into the new file.
+
+---
+
+## Components with Shared State
+
+### What it shows
+
+- `ui.provide(value, |ui| ...)` to publish shared app context once at the root.
+- `ui.use_context::<T>()` (panics if missing) and `ui.try_use_context::<T>()` (returns `Option<&T>`) to read it back from any nested render fn.
+- Replaces threading `&theme`, `&tick`, `&user` parameters through every signature.
+
+The canonical real-world refactor is `examples/demo_website.rs`, which moved from per-call argument threading to one `provide` at the top.
+
+### When to reach for it
+
+- Many nested render helpers all want the same read-only value (theme, tick, current user).
+- You catch yourself adding the same parameter to every render fn signature.
+
+Reserve explicit parameters for **writes** (`&mut MyDocState`, `&mut ToastState`). `provide` / `use_context` is a *read*-side ergonomics tool, not a state container.
+
+### Full code
+
+```rust
+use slt::{Border, Color, Context, KeyCode, Theme};
+
+// `provide` boxes the value as `dyn Any`, requiring `T: 'static`. `Theme` is
+// `Copy`, so deref-copy from `ui.theme()`. `&'static str` works for string
+// literals; switch to `String` for runtime values.
+struct AppCtx {
+    theme: Theme,
+    tick: u64,
+    user: &'static str,
+}
+
+fn main() -> std::io::Result<()> {
+    slt::run(|ui: &mut Context| {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+
+        let ctx = AppCtx {
+            theme: *ui.theme(),
+            tick: ui.tick(),
+            user: "subin",
+        };
+
+        ui.provide(ctx, |ui| {
+            let _ = ui
+                .bordered(Border::Rounded)
+                .title("Shared context demo")
+                .pad(1)
+                .gap(1)
+                .col(|ui| {
+                    render_header(ui);
+                    render_card(ui);
+                });
+        });
+    })
+}
+
+fn render_header(ui: &mut Context) {
+    let ctx = ui.use_context::<AppCtx>();
+    ui.text(format!("hi, {}", ctx.user)).bold().fg(Color::Cyan);
+    ui.text(format!("tick {}", ctx.tick)).dim();
+}
+
+fn render_card(ui: &mut Context) {
+    // Optional read — never panics if no provider is on the stack.
+    if let Some(ctx) = ui.try_use_context::<AppCtx>() {
+        ui.text(format!("theme bg: {:?}", ctx.theme.bg));
+    } else {
+        ui.text("no app context").dim();
+    }
+}
+```
+
+### Key patterns
+
+- `provide` is scoped to the closure body. Once that body returns, the value pops off the context stack.
+- `use_context::<T>()` finds the nearest provided `T` by type. Two providers of the same type stack — the inner one wins inside its body.
+- Use `try_use_context` in helpers that should also work outside the provider (e.g. unit tests, isolated demos).
+
+---
+
+## Common pitfalls
+
+### `RichLogState::new()` silently truncates at 10000 entries
+
+`RichLogState::new()` is bounded at 10000 entries (v0.19.2). Older entries are dropped to keep memory predictable. If you are running a long-lived dashboard or log viewer and entries seem to "disappear" from the top, that is the cap, not a bug.
+
+For unbounded accumulation use `RichLogState::new_unbounded()` and accept the memory cost, or add your own retention policy on top of the bounded variant.
+
+```rust
+// Bounded — drops oldest after 10k entries.
+let mut log = slt::RichLogState::new();
+
+// Unbounded — grows until the process dies. Use only when you control the input rate.
+let mut log = slt::RichLogState::new_unbounded();
+```
 
 ---
 

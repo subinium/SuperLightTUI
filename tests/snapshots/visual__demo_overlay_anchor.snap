@@ -1,0 +1,27 @@
+---
+source: tests/visual_snapshots.rs
+---
+ TL erlay_at + overlay_at_offset demo─ TC ────────────────────────────────── TR
+│  tl*                                                                    tr*  │
+│                                                                              │
+│  Press q to quit.                                                            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+ ML uter flush badges = overlay_at(anc CC                                    MR
+│  Inner inset badges = overlay_at_offset(anchor, 2, 1)                        │
+│  CSS analog: place-self + top/right/bottom/left inset.                       │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│  bl*                                                                    br*  │
+ BL ────────────────────────────────── BC ────────────────────────────────── BR
