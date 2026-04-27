@@ -20,6 +20,7 @@ impl Context {
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
 
+        let pre_lines = state.lines.clone();
         let pre_vlines = textarea_build_visual_lines(&state.lines, wrap_w);
 
         if focused {
@@ -38,7 +39,6 @@ impl Context {
                             byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
                         state.lines[state.cursor_row].insert(index, ch);
                         state.cursor_col += 1;
-                        state.dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
@@ -48,7 +48,6 @@ impl Context {
                         state.cursor_row += 1;
                         state.lines.insert(state.cursor_row, remainder);
                         state.cursor_col = 0;
-                        state.dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
@@ -63,14 +62,12 @@ impl Context {
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
                             state.cursor_col -= 1;
-                            state.dirty = true;
-                        } else if state.cursor_row > 0 {
+                            } else if state.cursor_row > 0 {
                             let current = state.lines.remove(state.cursor_row);
                             state.cursor_row -= 1;
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                             state.lines[state.cursor_row].push_str(&current);
-                            state.dirty = true;
-                        }
+                            }
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
@@ -150,12 +147,10 @@ impl Context {
                                 state.cursor_col + 1,
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
-                            state.dirty = true;
-                        } else if state.cursor_row + 1 < state.lines.len() {
+                            } else if state.cursor_row + 1 < state.lines.len() {
                             let next = state.lines.remove(state.cursor_row + 1);
                             state.lines[state.cursor_row].push_str(&next);
-                            state.dirty = true;
-                        }
+                            }
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
@@ -170,9 +165,6 @@ impl Context {
                 // incrementally — recomputing via `.iter().map(...).sum()`
                 // inside the loop would be O(n²) on large pastes.
                 let mut total_chars: usize = state.lines.iter().map(|l| l.chars().count()).sum();
-                if !text.is_empty() {
-                    state.dirty = true;
-                }
                 for ch in text.chars() {
                     if let Some(max) = state.max_length {
                         if total_chars >= max {
@@ -201,10 +193,10 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        let vlines = if state.dirty {
-            textarea_build_visual_lines(&state.lines, wrap_w)
-        } else {
+        let vlines = if state.lines == pre_lines {
             pre_vlines
+        } else {
+            textarea_build_visual_lines(&state.lines, wrap_w)
         };
         let (cursor_vrow, cursor_vcol) =
             textarea_logical_to_visual(&vlines, state.cursor_row, state.cursor_col);
@@ -279,8 +271,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = state.dirty;
-        state.dirty = false;
+        response.changed = state.lines != pre_lines;
         response
     }
 

@@ -3866,8 +3866,9 @@ fn text_input_state_clone_drops_validators() {
 }
 
 #[test]
-fn textarea_dirty_flag_avoids_clone_change_detection() {
-    // a10-004 (#94): response.changed reflects dirty flag, not Vec comparison.
+fn textarea_change_detection_via_response_changed() {
+    // a10-004 (#94): response.changed reports whether the lines mutated
+    // since the previous frame.
     let mut tb = TestBackend::new(40, 10);
     let mut state = TextareaState::new();
     // Idle frame (no events) — should report changed=false.
@@ -3978,40 +3979,3 @@ fn text_input_suggestions_track_typed_chars_in_burst() {
     );
 }
 
-#[test]
-fn textarea_visual_lines_reused_on_idle_frame() {
-    // a10-005 (#95): pre-key visual_lines is reused on idle frames (dirty=false).
-    // Behavioral test: cursor navigation and rendering must remain correct
-    // both before and after a mutation, in wrap mode.
-    let mut tb = TestBackend::new(20, 10);
-    let mut state = TextareaState::new().word_wrap(5);
-    state.set_value("hello world foo");
-    // Render once to settle layout (set_value sets dirty; first frame consumes it).
-    tb.render(|ui| {
-        ui.textarea(&mut state, 5);
-    });
-    assert!(!state.is_dirty(), "dirty cleared after frame");
-
-    // Idle frame: nothing to type — pre_vlines is reused. Cursor unchanged.
-    let row_before = state.cursor_row;
-    let col_before = state.cursor_col;
-    tb.render(|ui| {
-        ui.textarea(&mut state, 5);
-    });
-    assert_eq!(
-        state.cursor_row, row_before,
-        "idle frame: cursor_row stable"
-    );
-    assert_eq!(
-        state.cursor_col, col_before,
-        "idle frame: cursor_col stable"
-    );
-
-    // Mutation frame: typing 'X' triggers rebuild via dirty flag.
-    let events = slt::EventBuilder::new().key('X').build();
-    tb.render_with_events(events, 0, 1, |ui| {
-        ui.textarea(&mut state, 5);
-    });
-    assert!(state.lines[0].contains('X'), "mutation applied");
-    assert!(!state.is_dirty(), "dirty cleared after mutation frame");
-}

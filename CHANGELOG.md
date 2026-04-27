@@ -36,8 +36,8 @@
 - **`is_group_hovered`/`is_group_focused` cache** (#136) — switched to a `HashSet<Arc<str>>` lookup parallel to the rect list.
 - **`TextInputState::clone()` documents validator drop** (#92) — explicit doc note; clone returns a no-validator copy by design (validators are `Box<dyn Fn>` and cannot be cloned).
 - **`text_input` `matched_suggestions` invalidation** (#93) — `suggestions_dirty` flag is set on Char/Backspace/Delete/paste; suggestions recompute exactly when `state.value` changes within a key burst.
-- **`textarea` change detection via `dirty` flag** (#94) — replaces per-frame `state.lines.clone()`. Mutation arms set `state.dirty = true`; `response.changed` consumes it. Public `state.is_dirty()` exposes the flag for "unsaved changes" prompts.
-- **`textarea` `visual_lines` reused on idle frames** (#95) — depends on the dirty flag; wrap-mode rebuild only runs when content actually changed.
+- **`textarea` change detection via lines comparison** (#94) — `response.changed` now reflects whether `state.lines` differs from the pre-frame snapshot. The faster dirty-flag path (#95) is deferred to v0.20.0 because adding the field is not patch-safe under cargo-semver-checks (struct literal compatibility).
+- **`textarea` `visual_lines` reused on idle frames** — when `state.lines == pre_lines`, the pre-event `pre_vlines` is reused; mutation frames rebuild. No new state field required.
 - **`ListState::set_filter` uses cached lowercase items** (#96) — eliminates per-keystroke `to_lowercase()` over the whole item set.
 - **`slider_with_step(label, value, range, step)`** (#97) — additive method that takes an explicit step; the existing `slider()` keeps the `span/20` default.
 - **`rgb_to_ansi16` saturated colors map to standard ANSI** (#107) — pure primaries (`min == 0`) route to `Red/Green/Blue/...`; only desaturated and lifted tones (e.g. `255, 85, 85`) become `Light*` variants. Bright/standard split now uses `max >= 200 && min >= 64` instead of WCAG luminance.

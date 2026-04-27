@@ -1256,7 +1256,7 @@ impl<'a> ContainerBuilder<'a> {
     /// [`Context::scrollable`] together with a [`ScrollState`].
     ///
     /// [`ScrollState`]: crate::widgets::ScrollState
-    pub(crate) fn scroll_offset(mut self, offset: u32) -> Self {
+    pub fn scroll_offset(mut self, offset: u32) -> Self {
         self.scroll_offset = Some(offset);
         self
     }

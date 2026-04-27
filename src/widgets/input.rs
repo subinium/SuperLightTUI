@@ -456,8 +456,6 @@ pub struct TextareaState {
     pub wrap_width: Option<u32>,
     /// First visible visual line (managed internally by `textarea()`).
     pub scroll_offset: usize,
-    /// Set by mutation arms; consumed by `textarea()` for change detection.
-    pub(crate) dirty: bool,
 }
 
 impl TextareaState {
@@ -470,22 +468,12 @@ impl TextareaState {
             max_length: None,
             wrap_width: None,
             scroll_offset: 0,
-            dirty: false,
         }
     }
 
     /// Return all lines joined with newline characters.
     pub fn value(&self) -> String {
         self.lines.join("\n")
-    }
-
-    /// Returns `true` if the contents were mutated since the last frame.
-    ///
-    /// Use this to drive "unsaved changes" prompts before navigation. The
-    /// flag is cleared by `textarea()` once `Response.changed` has been
-    /// reported for the frame.
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
     }
 
     /// Replace the content with the given text, splitting on newlines.
@@ -500,7 +488,6 @@ impl TextareaState {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.scroll_offset = 0;
-        self.dirty = true;
     }
 
     /// Set the maximum allowed total character count.
