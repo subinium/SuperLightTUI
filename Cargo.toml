@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.19.2"
+version = "0.19.3"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -177,6 +177,10 @@ path = "examples/demo_kitty_image.rs"
 [[example]]
 name = "demo_cjk"
 path = "examples/demo_cjk.rs"
+
+[[example]]
+name = "demo_overlay_anchor"
+path = "examples/demo_overlay_anchor.rs"
 
 [[bench]]
 name = "benchmarks"

@@ -13,7 +13,7 @@ use super::*;
 /// use slt::{Border, Color};
 /// ui.container()
 ///     .border(Border::Rounded)
-///     .pad(1)
+///     .p(1)
 ///     .grow(1)
 ///     .col(|ui| {
 ///         ui.text("inside a bordered, padded, growing column");
@@ -825,15 +825,16 @@ impl<'a> ContainerBuilder<'a> {
 
     // ── padding (Tailwind: p, px, py, pt, pr, pb, pl) ───────────────
 
-    /// Set uniform padding on all sides. Alias for [`pad`](Self::pad).
-    pub fn p(self, value: u32) -> Self {
-        self.pad(value)
-    }
-
     /// Set uniform padding on all sides.
-    pub fn pad(mut self, value: u32) -> Self {
+    pub fn p(mut self, value: u32) -> Self {
         self.padding = Padding::all(value);
         self
+    }
+
+    /// Set uniform padding on all sides. Deprecated alias for [`p`](Self::p).
+    #[deprecated(since = "0.20.0", note = "Use `p()` instead")]
+    pub fn pad(self, value: u32) -> Self {
+        self.p(value)
     }
 
     /// Set horizontal padding (left and right).
@@ -1017,34 +1018,56 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    define_breakpoint_methods!(
+        base = min_h,
+        arg = value: u32,
+        xs = xs_min_h => ["Minimum height applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_min_h => ["Minimum height applied only at Sm breakpoint (40-79 cols)."],
+        md = md_min_h => ["Minimum height applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_min_h => ["Minimum height applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_min_h => ["Minimum height applied only at Xl breakpoint (>= 160 cols)."],
+        at = min_h_at => ["Minimum height applied only at the given breakpoint."]
+    );
+
     /// Set the maximum height constraint. Shorthand for [`max_height`](Self::max_height).
     pub fn max_h(mut self, value: u32) -> Self {
         self.constraints.max_height = Some(value);
         self
     }
 
-    /// Set the minimum width constraint in cells.
-    pub fn min_width(mut self, value: u32) -> Self {
-        self.constraints.min_width = Some(value);
-        self
+    define_breakpoint_methods!(
+        base = max_h,
+        arg = value: u32,
+        xs = xs_max_h => ["Maximum height applied only at Xs breakpoint (< 40 cols)."],
+        sm = sm_max_h => ["Maximum height applied only at Sm breakpoint (40-79 cols)."],
+        md = md_max_h => ["Maximum height applied only at Md breakpoint (80-119 cols)."],
+        lg = lg_max_h => ["Maximum height applied only at Lg breakpoint (120-159 cols)."],
+        xl = xl_max_h => ["Maximum height applied only at Xl breakpoint (>= 160 cols)."],
+        at = max_h_at => ["Maximum height applied only at the given breakpoint."]
+    );
+
+    /// Set the minimum width constraint in cells. Deprecated alias for [`min_w`](Self::min_w).
+    #[deprecated(since = "0.20.0", note = "Use `min_w()` instead")]
+    pub fn min_width(self, value: u32) -> Self {
+        self.min_w(value)
     }
 
-    /// Set the maximum width constraint in cells.
-    pub fn max_width(mut self, value: u32) -> Self {
-        self.constraints.max_width = Some(value);
-        self
+    /// Set the maximum width constraint in cells. Deprecated alias for [`max_w`](Self::max_w).
+    #[deprecated(since = "0.20.0", note = "Use `max_w()` instead")]
+    pub fn max_width(self, value: u32) -> Self {
+        self.max_w(value)
     }
 
-    /// Set the minimum height constraint in rows.
-    pub fn min_height(mut self, value: u32) -> Self {
-        self.constraints.min_height = Some(value);
-        self
+    /// Set the minimum height constraint in rows. Deprecated alias for [`min_h`](Self::min_h).
+    #[deprecated(since = "0.20.0", note = "Use `min_h()` instead")]
+    pub fn min_height(self, value: u32) -> Self {
+        self.min_h(value)
     }
 
-    /// Set the maximum height constraint in rows.
-    pub fn max_height(mut self, value: u32) -> Self {
-        self.constraints.max_height = Some(value);
-        self
+    /// Set the maximum height constraint in rows. Deprecated alias for [`max_h`](Self::max_h).
+    #[deprecated(since = "0.20.0", note = "Use `max_h()` instead")]
+    pub fn max_height(self, value: u32) -> Self {
+        self.max_h(value)
     }
 
     /// Set width as a percentage (1-100) of the parent container.
@@ -1212,7 +1235,7 @@ impl<'a> ContainerBuilder<'a> {
     /// use slt::Border;
     /// let highlighted = true;
     /// ui.container()
-    ///     .pad(1)
+    ///     .p(1)
     ///     .with_if(highlighted, |c| c.border(Border::Single).title("Active"))
     ///     .col(|ui| {
     ///         ui.text("body");
@@ -1238,7 +1261,7 @@ impl<'a> ContainerBuilder<'a> {
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::Border;
     /// ui.container()
-    ///     .with(|c| c.border(Border::Rounded).pad(1))
+    ///     .with(|c| c.border(Border::Rounded).p(1))
     ///     .col(|ui| {
     ///         ui.text("body");
     ///     });

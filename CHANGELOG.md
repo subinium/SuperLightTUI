@@ -2,6 +2,67 @@
 
 ## [Unreleased]
 
+## [0.19.3] — 2026-04-27
+
+Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting
+extensions framing SLT in terms of broader UI library patterns (CSS / Flutter /
+React Native positioning, performance budget, migration guidance, visual
+snapshot regression infrastructure).
+
+### Added
+
+- **`feat(layout)` — `Anchor` enum + `overlay_at` / `modal_at`** (#200) — 9-cell positioning (`TopLeft`, `TopCenter`, …, `BottomRight`). Maps to CSS `place-self`, Flutter `Align(alignment:)`, React Native `position: absolute`.
+- **`feat(layout)` — `overlay_at_offset(anchor, dx, dy, …)` / `modal_at_offset(…)`** — CSS `inset`-style offset on top of 9-cell anchor. Sign convention: positive `(dx, dy)` always inset toward viewport center. Mapping documented in `docs/POSITIONING.md`.
+- **`feat(layout)` — `DebugLayer::{All, TopMost, BaseOnly}`** (#201) + `Context::set_debug_layer` / `debug_layer()` — F12 overlay scoped to a single layer. `All` is the default → no API call needed for the reported case.
+- **`feat(api)` — `min_h` / `max_h` breakpoint variants** (#147) — `xs_min_h` / `sm_min_h` / `md_min_h` / `lg_min_h` / `xl_min_h` / `min_h_at` and same for `max_h`. Symmetric with `min_w` / `max_w` breakpoint coverage.
+- **`feat(skill)` — `.claude/skills/slt-migration/SKILL.md`** (398 lines) — Migration skill mapping `ratatui` / `cursive` / `textual` → SLT with grep-verified API references.
+- **`feat(test)` — `tests/visual_snapshots.rs` + 5 baselines** — Visual snapshot regression infrastructure using `insta`. Catches layout drift, border render bugs, theme color shifts, CJK width issues. Baselines: `demo`, `demo_dashboard`, `demo_cjk`, `demo_infoviz`, `demo_overlay_anchor`.
+- **`docs(positioning)` — `docs/POSITIONING.md`** (286 lines) — CSS `place-self` / Flutter `Align`+`Positioned` / React Native `position: absolute` ↔ SLT `Anchor` mapping with migration recipes.
+- **`docs(performance)` — `docs/PERFORMANCE.md`** (336 lines) — 60 fps frame budget, allocation budget, 6 optimization patterns, comparison vs React / Flutter / UIKit / ratatui, regression detection workflow.
+- **`docs(migration)` — `docs/MIGRATION.md`** (234 lines) — v0.19 → v0.20 migration guide with deprecation table + sed-based codemod + comparison vs React / Vue / Angular / Flutter migration tooling.
+- **`example` — `examples/demo_overlay_anchor.rs`** — 9 anchor positions + 4 inset corners using `overlay_at_offset`.
+
+### Fixes
+
+- **`fix(layout)` overlay `align(End)/justify(End)` rendered at center** (#200 part 2) — root cause in `src/layout/flexbox.rs`: overlay sizing block hard-coded shrink-and-center, starving any inner `grow`. New `any_grow` heuristic expands the wrapper to full area when a child has `grow > 0`; legacy behavior preserved otherwise.
+- **`fix(layout)` `container.grow(1).draw(|buf, rect|)` inside overlay didn't render** (#200 part 3) — same root cause: 0×0 wrapper rect was being skipped. Same fix resolves both bugs together.
+- **`fix(layout)` F12 debug overlay skipped `node.overlays`** (#201 part A) — `render_debug_overlay` now walks both `node.children` and `node.overlays`, matching `count_leaf_widgets`. Default-on; no API call needed.
+
+### Perf
+
+- **`perf(container)` integer `isqrt` for `filled_circle`** (#146) — Newton's method replaces `f64::sqrt()` round-trip. MSRV 1.81 blocks `u64::isqrt` (1.84+); migrate when MSRV bumps.
+- **`perf(layout)` `LayoutNode` size 432 → 320 bytes (~26 % reduction)** (#153) — 6 text-only fields extracted into `Box<TextNodeData>`. Spacer / Container / RawDraw nodes (the majority) now pay 8 bytes (`Option<Box<…>>`) instead of ~120 bytes of always-`None` fields. `const _ASSERT_LAYOUT_NODE_SIZE` regression guard at `tree.rs:3-15`.
+- **`perf(layout)` `commands` Vec capacity reused via `FrameState.commands_buf`** (#150) — eliminates per-frame Vec allocation in `Context::new`.
+- **`perf(layout)` `FrameData` Vec capacity reused via `&mut FrameData`** (#155) — `collect_all` signature changed to `(&LayoutNode, &mut FrameData)`. 8 Vec allocations per frame eliminated.
+- **`perf(layout)` `wrap_segments` `line_segs` capacity hint** (#157) — `Vec::with_capacity(segments.len().min(16))` reduces early growth churn on text wrap path.
+- **`perf(layout)` viewport bound check before bottom border corner** (#162) — gates `set_char` on `bottom_i < viewport_bottom`. No functional change (OOB writes were silently skipped); saves up to 2 `set_char` per scrolled border frame.
+
+### Refactor
+
+- **`refactor(api)` deprecate long-form aliases** (#148) — `pad()` / `min_width()` / `max_width()` / `min_height()` / `max_height()` are now `#[deprecated(since = "0.20.0")]`. Use short forms: `p()` / `min_w()` / `max_w()` / `min_h()` / `max_h()`. Internal callers updated. Migration guide in `docs/MIGRATION.md`.
+- **`refactor(debug)` F12 per-layer color tagging** — Base = green family, Overlay = red, Modal = blue. Status bar adds breakdown: `14 widgets (8 base, 5 overlay, 1 modal)`. Inspired by Chrome DevTools / React DevTools / Flutter Inspector layer color conventions.
+- **`refactor(layout)` `group_name: Option<Arc<str>>` confirmed in `LayoutNode`** (#152) — already shipped earlier in v0.19.x; collect-side conversion is now a pointer bump (atomic increment) rather than heap alloc.
+
+### Docs
+
+- **`docs(skill)` SLT skill (`.claude/skills/slt/`) v0.19.x sync** — v0.19.0 component DX (`provide` / `use_context` / `use_state_named` / `with_if`), `RichLogState` bounded default, `ThemeBuilder` `const fn`, `EventBuilder` v0.19.1 chain wrappers.
+- **`docs(audit)` 17 docs files audited and synced to v0.19.x** — BLOCKING: `AppCtx` `'static` lifetime fix in AI_GUIDE / COOKBOOK examples (owned `Theme` via `*ui.theme()` Copy pattern, mirroring `examples/demo_website.rs`). HIGH: 16 leaked GitHub issue refs scrubbed from prose. MEDIUM: `COMPLETE_REFERENCE` version banner update, `WIDGETS` separator path corrected, `EXAMPLES` `demo_cjk` row added with audit prose cleanup, `llms.txt` `try_get` signature corrected and `demo_website` / `demo_cjk` added to examples list.
+- **`docs(testing)` visual snapshot regression workflow** — section in `docs/TESTING.md` covering `cargo test --test visual_snapshots`, `cargo insta review` flow, scope of detection.
+- **`docs(debugging)` F12 layer-color reading guide** — section in `docs/DEBUGGING.md` describing color tagging and status-line breakdown.
+
+### Tests
+
+- **7 new regression tests** for #200 (overlay anchor + 2 bug fixes) and #201 (F12 walks overlays, layer color distinction, count breakdown).
+- **5 visual snapshot baselines** committed in `tests/snapshots/visual__*.snap`.
+
+### Asset cleanup
+
+- Removed orphan assets (~6.1 MB): `assets/tui-builders-demo.gif`, `assets/demo_tetris.png`, `examples/demo_wiki.rs` (depended on private `assets/blackpink/`, broke external builds).
+
+### Notes
+
+This release closes the v0.19.x perf / refactor backlog (11 patch-safe issues) plus pairs with the external reporter promise on #200 / #201. Breaking-change issues (#98, #134, #149, #161, #184, #192, #193) remain deferred to v0.20.0. #102 (textarea undo / redo) remains blocked on `cargo-semver-checks` private-field rule; #171 (line-hash flush skip) remains blocked on bench gate. 3-pass review (5 author agents → 10 independent reviewers → 5 post-fix reviewers) per group; full Core + Extended Gate green at tag.
+
 ## [0.19.2] — 2026-04-27
 
 Patch release covering 34 v0.19.x issues plus two long-standing visual regressions

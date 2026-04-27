@@ -41,6 +41,10 @@ pub struct Context {
     pub(crate) prev_modal_active: bool,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) debug: bool,
+    /// Issue #201: which layers the F12 debug overlay should outline. Read
+    /// from `state.diagnostics.debug_layer` at frame start and written back
+    /// at frame end so [`Context::set_debug_layer`] persists across frames.
+    pub(crate) debug_layer: crate::DebugLayer,
     pub(crate) theme: Theme,
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,

@@ -16,7 +16,200 @@ struct Metrics {
 fn main() -> std::io::Result<()> {
     let spinner = SpinnerState::dots();
     let mut log_scroll = ScrollState::new();
-    let mut proc_table = TableState::new(
+    let mut proc_table = make_proc_table();
+    let mut dark_mode = true;
+    let mut toasts = ToastState::new();
+    let logs = make_logs();
+
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+        render_frame(
+            ui,
+            &spinner,
+            &mut log_scroll,
+            &mut proc_table,
+            &mut dark_mode,
+            &mut toasts,
+            &logs,
+        );
+    })
+}
+
+/// Render one frame with fresh, default state — used by visual snapshot tests
+/// in `tests/visual_snapshots.rs`. The runtime example uses [`render_frame`]
+/// directly so widget state can persist across frames.
+pub fn render(ui: &mut Context) {
+    let spinner = SpinnerState::dots();
+    let mut log_scroll = ScrollState::new();
+    let mut proc_table = make_proc_table();
+    let mut dark_mode = true;
+    let mut toasts = ToastState::new();
+    let logs = make_logs();
+    render_frame(
+        ui,
+        &spinner,
+        &mut log_scroll,
+        &mut proc_table,
+        &mut dark_mode,
+        &mut toasts,
+        &logs,
+    );
+}
+
+/// Render one frame of the dashboard demo into the supplied context.
+///
+/// Exposed so both `main` (which keeps state across frames) and the
+/// visual snapshot test (which builds fresh state and renders once) can
+/// share the same rendering logic.
+pub fn render_frame(
+    ui: &mut Context,
+    spinner: &SpinnerState,
+    log_scroll: &mut ScrollState,
+    proc_table: &mut TableState,
+    dark_mode: &mut bool,
+    toasts: &mut ToastState,
+    logs: &[(&'static str, &'static str, &'static str)],
+) {
+    if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
+        ui.quit();
+    }
+    if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+        *dark_mode = !*dark_mode;
+    }
+    ui.set_theme(if *dark_mode {
+        Theme::dark()
+    } else {
+        Theme::light()
+    });
+
+    let tick = ui.tick();
+    let metrics = sim_metrics(tick);
+
+    let _ = ui
+        .bordered(Border::Rounded)
+        .title("System Dashboard")
+        .p(1)
+        .grow(1)
+        .col(|ui| {
+            let _ = ui.row(|ui| {
+                ui.spinner(spinner);
+                ui.text(" LIVE").bold().fg(Color::Green);
+                ui.spacer();
+                ui.text(format!(
+                    "Uptime: {}d {}h {}m",
+                    metrics.uptime_secs / 86400,
+                    (metrics.uptime_secs % 86400) / 3600,
+                    (metrics.uptime_secs % 3600) / 60,
+                ))
+                .dim();
+            });
+            let _ = ui.divider_text("System Metrics");
+            let _ = ui.row(|ui| {
+                metric_card(ui, "CPU", metrics.cpu, "%", Color::Cyan);
+                metric_card(ui, "Memory", metrics.mem, "%", Color::Yellow);
+                metric_card(
+                    ui,
+                    "Disk",
+                    metrics.disk,
+                    "%",
+                    if metrics.disk > 80.0 {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    },
+                );
+                metric_card(ui, "Net In", metrics.net_in, "MB/s", Color::Blue);
+                metric_card(ui, "Net Out", metrics.net_out, "MB/s", Color::Magenta);
+            });
+
+            let _ = ui.divider_text("Key Metrics");
+            let _ = ui.row(|ui| {
+                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    let _ = ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
+                });
+                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    let _ = ui.stat_colored(
+                        "Errors",
+                        &format!("{}", metrics.errors),
+                        if metrics.errors > 5 {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        },
+                    );
+                });
+                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    let _ = ui.stat_colored("P99", "45ms", Color::Yellow);
+                });
+                let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
+                    let _ = ui.stat_colored("Threads", "24", Color::Blue);
+                });
+            });
+
+            let _ = ui.container().grow(1).row(|ui| {
+                // process table
+                let _ = ui
+                    .bordered(Border::Rounded)
+                    .title("Processes")
+                    .p(1)
+                    .grow(1)
+                    .col(|ui| {
+                        let _ = ui.table(proc_table);
+                        ui.separator();
+                        let _ = ui.row(|ui| {
+                            if ui.button("Kill").clicked {
+                                let row = proc_table.selected;
+                                if let Some(name) = proc_table.rows.get(row).and_then(|r| r.get(1))
+                                {
+                                    toasts.warning(format!("Killed: {name}"), tick);
+                                }
+                            }
+                            if ui.button("Restart").clicked {
+                                let row = proc_table.selected;
+                                if let Some(name) = proc_table.rows.get(row).and_then(|r| r.get(1))
+                                {
+                                    toasts.success(format!("Restarted: {name}"), tick);
+                                }
+                            }
+                        });
+                    });
+
+                // log stream
+                let _ = ui
+                    .bordered(Border::Rounded)
+                    .title("Logs")
+                    .p(1)
+                    .grow(1)
+                    .col(|ui| {
+                        let _ = ui.scrollable(log_scroll).grow(1).col(|ui| {
+                            for &(time, level, msg) in logs {
+                                let color = match level {
+                                    "ERROR" => Color::Red,
+                                    "WARN" => Color::Yellow,
+                                    _ => Color::Indexed(245),
+                                };
+                                ui.styled(
+                                    format!("{time} [{level:5}] {msg}"),
+                                    Style::new().fg(color),
+                                );
+                            }
+                        });
+                    });
+            });
+
+            ui.toast(toasts);
+
+            let _ = ui.divider_text("Controls");
+            let _ = ui.help(&[
+                ("Ctrl+Q", "quit"),
+                ("Ctrl+T", "theme"),
+                ("Tab", "focus"),
+                ("j/k", "select"),
+            ]);
+        });
+}
+
+fn make_proc_table() -> TableState {
+    TableState::new(
         vec!["PID", "Name", "CPU%", "Mem%", "Status"],
         vec![
             vec!["1", "systemd", "0.1", "0.3", "running"],
@@ -28,11 +221,11 @@ fn main() -> std::io::Result<()> {
             vec!["789", "go-api", "3.8", "2.9", "running"],
             vec!["834", "cron", "0.0", "0.1", "sleeping"],
         ],
-    );
-    let mut dark_mode = true;
-    let mut toasts = ToastState::new();
+    )
+}
 
-    let logs = vec![
+fn make_logs() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
         ("12:04:01", "INFO", "Request GET /api/users 200 (12ms)"),
         ("12:04:03", "INFO", "Request POST /api/auth 200 (45ms)"),
         ("12:04:05", "WARN", "High memory usage: 82.4%"),
@@ -61,150 +254,7 @@ fn main() -> std::io::Result<()> {
         ),
         ("12:04:42", "ERROR", "Failed to send email: SMTP timeout"),
         ("12:04:45", "INFO", "Worker process recycled (PID 501)"),
-    ];
-
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
-            ui.quit();
-        }
-        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-            dark_mode = !dark_mode;
-        }
-        ui.set_theme(if dark_mode {
-            Theme::dark()
-        } else {
-            Theme::light()
-        });
-
-        let tick = ui.tick();
-        let metrics = sim_metrics(tick);
-
-        let _ = ui
-            .bordered(Border::Rounded)
-            .title("System Dashboard")
-            .p(1)
-            .grow(1)
-            .col(|ui| {
-                let _ = ui.row(|ui| {
-                    ui.spinner(&spinner);
-                    ui.text(" LIVE").bold().fg(Color::Green);
-                    ui.spacer();
-                    ui.text(format!(
-                        "Uptime: {}d {}h {}m",
-                        metrics.uptime_secs / 86400,
-                        (metrics.uptime_secs % 86400) / 3600,
-                        (metrics.uptime_secs % 3600) / 60,
-                    ))
-                    .dim();
-                });
-                let _ = ui.divider_text("System Metrics");
-                let _ = ui.row(|ui| {
-                    metric_card(ui, "CPU", metrics.cpu, "%", Color::Cyan);
-                    metric_card(ui, "Memory", metrics.mem, "%", Color::Yellow);
-                    metric_card(
-                        ui,
-                        "Disk",
-                        metrics.disk,
-                        "%",
-                        if metrics.disk > 80.0 {
-                            Color::Red
-                        } else {
-                            Color::Green
-                        },
-                    );
-                    metric_card(ui, "Net In", metrics.net_in, "MB/s", Color::Blue);
-                    metric_card(ui, "Net Out", metrics.net_out, "MB/s", Color::Magenta);
-                });
-
-                let _ = ui.divider_text("Key Metrics");
-                let _ = ui.row(|ui| {
-                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                        let _ =
-                            ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
-                    });
-                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                        let _ = ui.stat_colored(
-                            "Errors",
-                            &format!("{}", metrics.errors),
-                            if metrics.errors > 5 {
-                                Color::Red
-                            } else {
-                                Color::Green
-                            },
-                        );
-                    });
-                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                        let _ = ui.stat_colored("P99", "45ms", Color::Yellow);
-                    });
-                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                        let _ = ui.stat_colored("Threads", "24", Color::Blue);
-                    });
-                });
-
-                let _ = ui.container().grow(1).row(|ui| {
-                    // process table
-                    let _ = ui
-                        .bordered(Border::Rounded)
-                        .title("Processes")
-                        .p(1)
-                        .grow(1)
-                        .col(|ui| {
-                            let _ = ui.table(&mut proc_table);
-                            ui.separator();
-                            let _ = ui.row(|ui| {
-                                if ui.button("Kill").clicked {
-                                    let row = proc_table.selected;
-                                    if let Some(name) =
-                                        proc_table.rows.get(row).and_then(|r| r.get(1))
-                                    {
-                                        toasts.warning(format!("Killed: {name}"), tick);
-                                    }
-                                }
-                                if ui.button("Restart").clicked {
-                                    let row = proc_table.selected;
-                                    if let Some(name) =
-                                        proc_table.rows.get(row).and_then(|r| r.get(1))
-                                    {
-                                        toasts.success(format!("Restarted: {name}"), tick);
-                                    }
-                                }
-                            });
-                        });
-
-                    // log stream
-                    let _ = ui
-                        .bordered(Border::Rounded)
-                        .title("Logs")
-                        .p(1)
-                        .grow(1)
-                        .col(|ui| {
-                            let _ = ui.scrollable(&mut log_scroll).grow(1).col(|ui| {
-                                for &(time, level, msg) in &logs {
-                                    let color = match level {
-                                        "ERROR" => Color::Red,
-                                        "WARN" => Color::Yellow,
-                                        _ => Color::Indexed(245),
-                                    };
-                                    ui.styled(
-                                        format!("{time} [{level:5}] {msg}"),
-                                        Style::new().fg(color),
-                                    );
-                                }
-                            });
-                        });
-                });
-
-                ui.toast(&mut toasts);
-
-                let _ = ui.divider_text("Controls");
-                let _ = ui.help(&[
-                    ("Ctrl+Q", "quit"),
-                    ("Ctrl+T", "theme"),
-                    ("Tab", "focus"),
-                    ("j/k", "select"),
-                ]);
-            });
-    })
+    ]
 }
 
 fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Color) {

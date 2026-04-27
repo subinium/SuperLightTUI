@@ -1,5 +1,19 @@
 use super::*;
 
+/// Regression guard for the size of [`LayoutNode`] (issue #153).
+///
+/// A frame may build hundreds of layout nodes, and `LayoutNode` is moved /
+/// recursed over throughout the layout pipeline. The text-only fields
+/// (`content`, `cursor_offset`, `cached_*`, `segments`) are split into
+/// [`TextNodeData`] behind a `Box`, so non-text variants (`Spacer`,
+/// `Container`, `RawDraw`) — which are the vast majority of nodes — pay
+/// only the 8-byte `Option<Box<TextNodeData>>` rather than ~120 bytes of
+/// always-`None` fields inline. Pre-split the struct measured 432 bytes;
+/// post-split it should be substantially smaller. If a future field
+/// addition pushes this past the bound, either box the new field or audit
+/// whether the addition needs to live on `LayoutNode` at all.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 320);
+
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
     pub(crate) node: LayoutNode,
@@ -14,11 +28,32 @@ pub(crate) enum NodeKind {
     RawDraw(usize),
 }
 
+/// Text-only data for [`NodeKind::Text`] nodes (issue #153).
+///
+/// All six fields are unused by `Spacer`, `Container`, and `RawDraw`
+/// nodes, so we hide them behind a `Box` on `LayoutNode` to keep the
+/// hot non-text paths small. Boxing is cheap because text nodes already
+/// own at least one heap allocation (`content` or `segments`), so the
+/// extra indirection costs one more allocation per text node in exchange
+/// for ~120 bytes saved on every non-text node — a clear win when most
+/// nodes are containers.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TextNodeData {
+    pub(crate) content: Option<String>,
+    pub(crate) cursor_offset: Option<usize>,
+    pub(crate) cached_wrap_width: Option<u32>,
+    pub(crate) cached_wrapped: Option<Vec<String>>,
+    pub(crate) segments: Option<Vec<(String, Style)>>,
+    pub(crate) cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LayoutNode {
     pub(crate) kind: NodeKind,
-    pub(crate) content: Option<String>,
-    pub(crate) cursor_offset: Option<usize>,
+    /// Text-only payload. `Some` only for `NodeKind::Text` nodes; always
+    /// `None` for `Spacer`, `Container`, and `RawDraw`. See
+    /// [`TextNodeData`] for the rationale behind boxing.
+    pub(crate) text_data: Option<Box<TextNodeData>>,
     pub(crate) style: Style,
     pub(crate) grow: u16,
     pub(crate) align: Align,
@@ -41,10 +76,6 @@ pub(crate) struct LayoutNode {
     pub(crate) is_scrollable: bool,
     pub(crate) scroll_offset: u32,
     pub(crate) content_height: u32,
-    pub(crate) cached_wrap_width: Option<u32>,
-    pub(crate) cached_wrapped: Option<Vec<String>>,
-    pub(crate) segments: Option<Vec<(String, Style)>>,
-    pub(crate) cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
     pub(crate) focus_id: Option<usize>,
     pub(crate) interaction_id: Option<usize>,
     pub(crate) link_url: Option<String>,
@@ -75,6 +106,27 @@ pub(crate) struct ContainerConfig {
 }
 
 impl LayoutNode {
+    /// Get a shared reference to the text-only payload.
+    ///
+    /// Returns `None` for non-text variants. Use this everywhere the
+    /// caller only reads text fields (e.g. `render_inner`).
+    #[inline]
+    pub(crate) fn text_data(&self) -> Option<&TextNodeData> {
+        self.text_data.as_deref()
+    }
+
+    /// Get a mutable reference to the text-only payload.
+    ///
+    /// Panics if the node is not a `NodeKind::Text` node — callers are
+    /// expected to check `kind` first or operate on a node they know to
+    /// be text-shaped (e.g. inside `ensure_wrapped_for_width`).
+    #[inline]
+    pub(crate) fn text_data_mut(&mut self) -> &mut TextNodeData {
+        self.text_data
+            .as_deref_mut()
+            .expect("text_data_mut called on non-text node")
+    }
+
     pub(crate) fn text(
         content: String,
         style: Style,
@@ -88,8 +140,11 @@ impl LayoutNode {
         let width = UnicodeWidthStr::width(content.as_str()) as u32;
         Self {
             kind: NodeKind::Text,
-            content: Some(content),
-            cursor_offset,
+            text_data: Some(Box::new(TextNodeData {
+                content: Some(content),
+                cursor_offset,
+                ..Default::default()
+            })),
             style,
             grow,
             align,
@@ -112,10 +167,6 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
-            cached_wrap_width: None,
-            cached_wrapped: None,
-            segments: None,
-            cached_wrapped_segments: None,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -137,8 +188,10 @@ impl LayoutNode {
             .sum();
         Self {
             kind: NodeKind::Text,
-            content: None,
-            cursor_offset: None,
+            text_data: Some(Box::new(TextNodeData {
+                segments: Some(segments),
+                ..Default::default()
+            })),
             style: Style::new(),
             grow: 0,
             align,
@@ -161,10 +214,6 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
-            cached_wrap_width: None,
-            cached_wrapped: None,
-            segments: Some(segments),
-            cached_wrapped_segments: None,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -176,8 +225,7 @@ impl LayoutNode {
     pub(crate) fn container(direction: Direction, config: ContainerConfig) -> Self {
         Self {
             kind: NodeKind::Container(direction),
-            content: None,
-            cursor_offset: None,
+            text_data: None,
             style: Style::new(),
             grow: config.grow,
             align: config.align,
@@ -200,10 +248,6 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
-            cached_wrap_width: None,
-            cached_wrapped: None,
-            segments: None,
-            cached_wrapped_segments: None,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -230,8 +274,7 @@ impl LayoutNode {
     ) -> Self {
         Self {
             kind: NodeKind::RawDraw(draw_id),
-            content: None,
-            cursor_offset: None,
+            text_data: None,
             style: Style::new(),
             grow,
             align: Align::Start,
@@ -257,10 +300,6 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
-            cached_wrap_width: None,
-            cached_wrapped: None,
-            segments: None,
-            cached_wrapped_segments: None,
             focus_id,
             interaction_id,
             link_url: None,
@@ -272,8 +311,7 @@ impl LayoutNode {
     pub(crate) fn spacer(grow: u16) -> Self {
         Self {
             kind: NodeKind::Spacer,
-            content: None,
-            cursor_offset: None,
+            text_data: None,
             style: Style::new(),
             grow,
             align: Align::Start,
@@ -296,10 +334,6 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
-            cached_wrap_width: None,
-            cached_wrapped: None,
-            segments: None,
-            cached_wrapped_segments: None,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -415,29 +449,34 @@ impl LayoutNode {
     }
 
     pub(crate) fn ensure_wrapped_for_width(&mut self, available_width: u32) -> u32 {
-        if self.cached_wrap_width == Some(available_width) {
-            if let Some(ref segs) = self.cached_wrapped_segments {
+        // `ensure_wrapped_for_width` is only called for `NodeKind::Text` nodes
+        // (gated by `compute_body` and `min_height_for_width`), so `text_data`
+        // is guaranteed to be `Some`. Unwrap once at the top to avoid threading
+        // mutable borrows across multiple field reads/writes below.
+        let td = self.text_data_mut();
+        if td.cached_wrap_width == Some(available_width) {
+            if let Some(ref segs) = td.cached_wrapped_segments {
                 return segs.len().max(1) as u32;
             }
-            if let Some(ref lines) = self.cached_wrapped {
+            if let Some(ref lines) = td.cached_wrapped {
                 return lines.len().max(1) as u32;
             }
         }
 
-        if let Some(ref segs) = self.segments {
+        if let Some(ref segs) = td.segments {
             let wrapped = wrap_segments(segs, available_width);
             let line_count = wrapped.len().max(1) as u32;
-            self.cached_wrap_width = Some(available_width);
-            self.cached_wrapped_segments = Some(wrapped);
-            self.cached_wrapped = None;
+            td.cached_wrap_width = Some(available_width);
+            td.cached_wrapped_segments = Some(wrapped);
+            td.cached_wrapped = None;
             line_count
         } else {
-            let text = self.content.as_deref().unwrap_or("");
+            let text = td.content.as_deref().unwrap_or("");
             let lines = wrap_lines(text, available_width);
             let line_count = lines.len().max(1) as u32;
-            self.cached_wrap_width = Some(available_width);
-            self.cached_wrapped = Some(lines);
-            self.cached_wrapped_segments = None;
+            td.cached_wrap_width = Some(available_width);
+            td.cached_wrapped = Some(lines);
+            td.cached_wrapped_segments = None;
             line_count
         }
     }
@@ -723,7 +762,11 @@ pub(crate) fn wrap_segments(
             }
         }
 
-        let mut line_segs: Vec<(String, Style)> = Vec::new();
+        // Capacity hint: most lines hold a small handful of style runs, so
+        // pre-size the scratch buffer to avoid the early Vec growth churn.
+        // The 16-cap clamp keeps over-allocation bounded when the input has
+        // a long segment list that wraps into many short lines (issue #157).
+        let mut line_segs: Vec<(String, Style)> = Vec::with_capacity(segments.len().min(16));
         let mut line_width: u32 = 0;
         // Snapshot of the most recent space boundary on the current line:
         // (line_segs.len(), last seg's byte-length, line_width, space_seg_idx, space_byte_off).

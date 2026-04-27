@@ -37,6 +37,7 @@ mod widgets_display;
 mod widgets_input;
 mod widgets_interactive;
 mod widgets_viz;
+pub use widgets_display::Anchor;
 pub use widgets_viz::TreemapItem;
 
 mod state;

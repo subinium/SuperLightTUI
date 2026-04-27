@@ -43,8 +43,15 @@ impl Context {
             }
         }
 
+        // Reuse `commands_buf` capacity from the previous frame (issue #150).
+        // `mem::take` swaps an empty Vec into `state.commands_buf`; we then
+        // clear (no-op since len==0) and reuse the reclaimed allocation. After
+        // `build_tree` consumes commands, the empty Vec is returned to
+        // `state.commands_buf` for the next frame in `run_frame_kernel`.
+        let mut commands = std::mem::take(&mut state.commands_buf);
+        commands.clear();
         let mut ctx = Self {
-            commands: Vec::new(),
+            commands,
             events,
             consumed,
             should_quit: false,
@@ -69,6 +76,7 @@ impl Context {
             prev_modal_active: focus.prev_modal_active,
             clipboard_text: None,
             debug: diagnostics.debug_mode,
+            debug_layer: diagnostics.debug_layer,
             theme,
             is_real_terminal: false,
             deferred_draws: Vec::new(),

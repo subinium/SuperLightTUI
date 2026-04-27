@@ -209,6 +209,68 @@ with focused `assert_contains` / `assert_line` for narrow invariants.
 Prefer small snapshots — one widget or one panel — over full-screen dumps
 that churn on every theme or layout tweak.
 
+## Visual snapshot regression tests
+
+`tests/visual_snapshots.rs` renders one frame of each demo example into a
+`TestBackend` and stores the buffer output as a plain-text snapshot under
+`tests/snapshots/visual__<demo>.snap`. The goal is to catch the kinds of
+visual regressions that raw assertions miss — top-border title overflow,
+flexbox grow drift, theme color shifts, CJK width handling at the right
+edge — by failing CI when the rendered output changes unexpectedly.
+
+### How to run
+
+```bash
+cargo test --test visual_snapshots
+```
+
+The first run on a clean checkout passes against the committed baselines.
+A failing test prints a side-by-side diff of expected vs actual buffer.
+
+### Updating baselines after intentional changes
+
+When you deliberately change visual output (a widget restyling, a layout
+tweak, a new badge), the snapshots will fail. Review and accept the new
+baseline:
+
+```bash
+cargo insta review     # interactive
+cargo insta accept     # accept all pending
+```
+
+Commit the updated `tests/snapshots/visual__*.snap` files alongside the
+code change so reviewers can see the visual diff in the PR.
+
+### What it catches
+
+- Layout drift (flexbox grow/shrink/gap regressions)
+- Border rendering bugs (wrong corners, missing edges, **title overflow**)
+- Theme color shifts that flip glyph attributes
+- CJK / wide-char width handling at the right edge
+- Wrap and truncation at small terminal sizes
+
+### What it does NOT catch
+
+- Interactive state transitions (focus, hover, click) — use `EventBuilder`
+  with assertion-based tests instead
+- Animation and frame timing — use parity / property tests
+- Sixel / kitty image output — not represented in plain-text buffer
+- Multi-frame state changes (only frame 1 is captured)
+
+### Implementation
+
+Each example file (`examples/demo*.rs`) exposes a `pub fn render(ui: &mut Context)`
+entry point that builds fresh state and runs one rendering pass. The
+example's own `main` keeps using `slt::run` (or `slt::run_with`) so the
+interactive demo still works; the snapshot test imports the example via
+Rust's `#[path = "../examples/demo.rs"]` attribute and calls `render`
+directly.
+
+Demos with rich internal state (`demo.rs`, `demo_dashboard.rs`,
+`demo_infoviz.rs`, `demo_cjk.rs`) use a `render_frame(ui, &mut state)`
+helper for runtime, and a thin `render(ui)` wrapper that builds default
+state and forwards. Frame-1 snapshots only need that wrapper.
+
 ## Testing custom widgets
 
 For custom widgets:

@@ -15,7 +15,7 @@ mod flexbox;
 mod render;
 mod tree;
 
-pub(crate) use collect::collect_all;
+pub(crate) use collect::{collect_all, FrameData};
 pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;

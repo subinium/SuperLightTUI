@@ -4,6 +4,45 @@ use slt::{
 };
 
 fn main() -> std::io::Result<()> {
+    let mut tabs = TabsState::new(vec![
+        "Overview",
+        "Lines",
+        "Scatter",
+        "Bars",
+        "Heatmap",
+        "Financial",
+        "Treemap",
+        "Canvas",
+    ]);
+    slt::run(|ui: &mut Context| {
+        render_frame(ui, &mut tabs);
+    })
+}
+
+/// Render one frame with fresh, default state — used by visual snapshot tests
+/// in `tests/visual_snapshots.rs`. The runtime example uses [`render_frame`]
+/// directly so the selected tab persists across frames.
+pub fn render(ui: &mut Context) {
+    let mut tabs = TabsState::new(vec![
+        "Overview",
+        "Lines",
+        "Scatter",
+        "Bars",
+        "Heatmap",
+        "Financial",
+        "Treemap",
+        "Canvas",
+    ]);
+    render_frame(ui, &mut tabs);
+}
+
+/// Render one frame of the infoviz demo.
+///
+/// All chart data is constructed inside this function so it can be called
+/// from both the runtime event loop in `main` and from visual snapshot
+/// tests in `tests/visual_snapshots.rs` without external setup. `tabs`
+/// is passed in so its selected index can persist across frames at runtime.
+pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
     // --- Shared data ---
     let cpu_data: Vec<(f64, f64)> = vec![
         (0.0, 32.0),
@@ -251,22 +290,10 @@ fn main() -> std::io::Result<()> {
         ),
     ];
 
-    let mut tabs = TabsState::new(vec![
-        "Overview",
-        "Lines",
-        "Scatter",
-        "Bars",
-        "Heatmap",
-        "Financial",
-        "Treemap",
-        "Canvas",
-    ]);
-
-    slt::run(|ui: &mut Context| {
-        if ui.key('q') || ui.key_code(slt::KeyCode::Esc) {
-            ui.quit();
-        }
-
+    if ui.key('q') || ui.key_code(slt::KeyCode::Esc) {
+        ui.quit();
+    }
+    {
         let tw = ui.width() as u32;
         let th = ui.height() as u32;
         let grid_dim = slt::Style::new().fg(Color::Indexed(237));
@@ -276,7 +303,7 @@ fn main() -> std::io::Result<()> {
             .title("SLT Infoviz")
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(&mut tabs);
+                let _ = ui.tabs(tabs);
 
                 match tabs.selected {
                     // ── Tab 0: Overview ──────────────────────────────────
@@ -1134,5 +1161,5 @@ fn main() -> std::io::Result<()> {
 
                 let _ = ui.help(&[("q", "quit"), ("\u{2190}/\u{2192}", "tab"), ("Esc", "quit")]);
             });
-    })
+    }
 }

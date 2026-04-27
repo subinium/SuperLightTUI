@@ -21,14 +21,76 @@ fn dim_entire_buffer(buf: &mut Buffer) {
     }
 }
 
+/// Layer category used to tint F12 debug outlines.
+///
+/// Inspired by Chrome DevTools layout overlay, React DevTools component
+/// highlighter, and the Flutter Inspector — each layer family gets its own
+/// hue so a glance at the screen tells you which container is part of the
+/// base tree, an overlay, or a modal. Within each family the depth still
+/// varies the brightness so nested containers remain distinguishable.
+#[derive(Debug, Clone, Copy)]
+enum LayerTint {
+    /// Base tree (root + children) — green family ("default, healthy").
+    Base,
+    /// Floating overlay — red family ("attention"). Tooltips share this
+    /// tint because they ride the same `overlay()` plumbing as
+    /// [`Context::overlay`] (no separate variant tag yet).
+    Overlay,
+    /// Modal dialog — blue family ("deliberate, dimmed background").
+    Modal,
+}
+
+/// Per-layer widget breakdown for the debug status bar.
+///
+/// Returned by [`count_leaf_widgets_layered`]. The legacy `total` accessor
+/// preserves the v0.19.3 "N widgets" status line so existing snapshot tests
+/// stay green; the per-layer fields surface in the new
+/// "(N base, M overlay, K modal)" suffix.
+#[derive(Debug, Clone, Copy, Default)]
+struct LayerCounts {
+    base: u32,
+    overlay: u32,
+    modal: u32,
+}
+
+impl LayerCounts {
+    fn total(self) -> u32 {
+        self.base
+            .saturating_add(self.overlay)
+            .saturating_add(self.modal)
+    }
+}
+
 pub(crate) fn render_debug_overlay(
     node: &LayoutNode,
     buf: &mut Buffer,
     frame_time_us: u64,
     fps: f32,
+    layer: crate::DebugLayer,
 ) {
-    for child in &node.children {
-        render_debug_overlay_inner(child, buf, 0, 0);
+    // Issue #201 Part A: previously this only walked `node.children`, so any
+    // active overlay/modal was invisible to the F12 outline pass even though
+    // the underlying renderer DID draw it. Walk overlays too unless the user
+    // explicitly opted into a narrower layer via [`Context::set_debug_layer`].
+    let walk_base = !matches!(layer, crate::DebugLayer::TopMost) || node.overlays.is_empty();
+    let walk_overlays = !matches!(layer, crate::DebugLayer::BaseOnly);
+    if walk_base {
+        for child in &node.children {
+            render_debug_overlay_inner(child, buf, 0, 0, LayerTint::Base);
+        }
+    }
+    if walk_overlays {
+        for overlay in &node.overlays {
+            // Distinguish modal from non-modal overlays — `OverlayLayer.modal`
+            // is the only tag the layout tree carries today (tooltips fall
+            // under the non-modal `Overlay` bucket).
+            let tint = if overlay.modal {
+                LayerTint::Modal
+            } else {
+                LayerTint::Overlay
+            };
+            render_debug_overlay_inner(&overlay.node, buf, 0, 0, tint);
+        }
     }
     render_debug_status_bar(node, buf, frame_time_us, fps);
 }
@@ -38,17 +100,41 @@ fn render_debug_status_bar(node: &LayoutNode, buf: &mut Buffer, frame_time_us: u
         return;
     }
 
-    let widgets: u32 = node.children.iter().map(count_leaf_widgets).sum();
+    // Issue #201 Part C: include overlay widgets in the status-bar count so
+    // the displayed total matches what the renderer actually drew. The
+    // recursive `count_leaf_widgets` already walks overlays at every nested
+    // level — only the root sum was missing the overlay branch.
+    let counts = count_leaf_widgets_layered(node);
+    let widgets = counts.total();
     let width = buf.area.width;
     let height = buf.area.height;
     let y = buf.area.bottom() - 1;
     let style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
 
+    // Per-layer breakdown only renders the layers that actually have
+    // widgets, so a base-only scene keeps the original short status line.
+    let mut breakdown_parts: Vec<String> = Vec::with_capacity(3);
+    if counts.base > 0 {
+        breakdown_parts.push(format!("{} base", counts.base));
+    }
+    if counts.overlay > 0 {
+        breakdown_parts.push(format!("{} overlay", counts.overlay));
+    }
+    if counts.modal > 0 {
+        breakdown_parts.push(format!("{} modal", counts.modal));
+    }
+    let breakdown = if breakdown_parts.len() > 1 {
+        format!(" ({})", breakdown_parts.join(", "))
+    } else {
+        String::new()
+    };
+
     let status = format!(
-        "[SLT Debug] {}x{} | {} widgets | {:.1}ms | {:.0}fps",
+        "[SLT Debug] {}x{} | {} widgets{} | {:.1}ms | {:.0}fps",
         width,
         height,
         widgets,
+        breakdown,
         frame_time_us as f64 / 1_000.0,
         fps.max(0.0)
     );
@@ -56,6 +142,32 @@ fn render_debug_status_bar(node: &LayoutNode, buf: &mut Buffer, frame_time_us: u
     let row_fill = " ".repeat(width as usize);
     buf.set_string(buf.area.x, y, &row_fill, style);
     buf.set_string(buf.area.x, y, &status, style);
+}
+
+/// Count leaf widgets per layer category, walking nested overlays.
+///
+/// The base count comes from `node.children`. Overlays are split by their
+/// `modal` flag — tooltips ride the non-modal path (see [`LayerTint`]).
+/// Nested overlays inside an overlay's subtree inherit the outer overlay's
+/// bucket: the goal is "how many widgets did each top-level layer
+/// contribute," matching what the user sees on screen.
+fn count_leaf_widgets_layered(node: &LayoutNode) -> LayerCounts {
+    let base: u32 = node.children.iter().map(count_leaf_widgets).sum();
+    let mut overlay: u32 = 0;
+    let mut modal: u32 = 0;
+    for layer in &node.overlays {
+        let n = count_leaf_widgets(&layer.node);
+        if layer.modal {
+            modal = modal.saturating_add(n);
+        } else {
+            overlay = overlay.saturating_add(n);
+        }
+    }
+    LayerCounts {
+        base,
+        overlay,
+        modal,
+    }
 }
 
 fn count_leaf_widgets(node: &LayoutNode) -> u32 {
@@ -75,7 +187,13 @@ fn count_leaf_widgets(node: &LayoutNode) -> u32 {
     total
 }
 
-fn render_debug_overlay_inner(node: &LayoutNode, buf: &mut Buffer, depth: u32, y_offset: u32) {
+fn render_debug_overlay_inner(
+    node: &LayoutNode,
+    buf: &mut Buffer,
+    depth: u32,
+    y_offset: u32,
+    tint: LayerTint,
+) {
     let child_offset = if node.is_scrollable {
         y_offset.saturating_add(node.scroll_offset)
     } else {
@@ -85,7 +203,7 @@ fn render_debug_overlay_inner(node: &LayoutNode, buf: &mut Buffer, depth: u32, y
     if let NodeKind::Container(_) = node.kind {
         let sy = screen_y(node.pos.1, y_offset);
         if sy + node.size.1 as i64 > 0 {
-            let color = debug_color_for_depth(depth);
+            let color = debug_color_for_depth(tint, depth);
             let style = Style::new().fg(color);
             let clamped_y = sy.max(0) as u32;
             draw_debug_border(node.pos.0, clamped_y, node.size.0, node.size.1, buf, style);
@@ -95,28 +213,43 @@ fn render_debug_overlay_inner(node: &LayoutNode, buf: &mut Buffer, depth: u32, y
         }
     }
 
+    // Nested overlays inherit the outer layer's tint — a modal that opens an
+    // inner non-modal overlay still reads as part of the modal stack to the
+    // human eye, which is what we want.
     if node.is_scrollable {
         if let Some(area) = visible_area(node, y_offset) {
             let inner = inner_area(node, area);
             buf.push_clip(inner);
             for child in &node.children {
-                render_debug_overlay_inner(child, buf, depth.saturating_add(1), child_offset);
+                render_debug_overlay_inner(child, buf, depth.saturating_add(1), child_offset, tint);
             }
             buf.pop_clip();
         }
     } else {
         for child in &node.children {
-            render_debug_overlay_inner(child, buf, depth.saturating_add(1), child_offset);
+            render_debug_overlay_inner(child, buf, depth.saturating_add(1), child_offset, tint);
         }
     }
 }
 
-fn debug_color_for_depth(depth: u32) -> Color {
+/// Pick an outline color from the layer family + depth.
+///
+/// Each [`LayerTint`] gets a distinct base hue so layers stay visually
+/// separable; depth then pulls the color toward white to keep nested
+/// containers distinguishable inside the same family. Two depth bands
+/// (`<= 1` = base, `<= 3` = lighter, `> 3` = lightest) give enough
+/// gradation for typical 5–15-deep TUI trees without overshooting into
+/// pure white where the hue would be lost.
+fn debug_color_for_depth(tint: LayerTint, depth: u32) -> Color {
+    let base = match tint {
+        LayerTint::Base => Color::Rgb(64, 200, 64),
+        LayerTint::Overlay => Color::Rgb(220, 80, 80),
+        LayerTint::Modal => Color::Rgb(80, 140, 220),
+    };
     match depth {
-        0 => Color::Cyan,
-        1 => Color::Yellow,
-        2 => Color::Magenta,
-        _ => Color::Red,
+        0..=1 => base,
+        2..=3 => base.lighten(0.25),
+        _ => base.lighten(0.5),
     }
 }
 
@@ -209,10 +342,17 @@ fn render_inner(
 
     match node.kind {
         NodeKind::Text => {
-            if let Some(ref segs) = node.segments {
+            // For Text nodes the constructors guarantee `text_data = Some`.
+            // Read-only access through `text_data()` keeps us off the borrow
+            // checker's bad side and lets the segments / content branches
+            // share the same payload reference.
+            let Some(td) = node.text_data() else {
+                return;
+            };
+            if let Some(ref segs) = td.segments {
                 if node.wrap {
                     let fallback;
-                    let wrapped = if let Some(cached) = &node.cached_wrapped_segments {
+                    let wrapped = if let Some(cached) = &td.cached_wrapped_segments {
                         cached.as_slice()
                     } else {
                         fallback = wrap_segments(segs, node.size.0);
@@ -247,14 +387,14 @@ fn render_inner(
                         x += UnicodeWidthStr::width(text.as_str()) as u32;
                     }
                 }
-            } else if let Some(ref text) = node.content {
+            } else if let Some(ref text) = td.content {
                 let mut style = node.style;
                 if style.bg.is_none() {
                     style.bg = parent_bg;
                 }
                 if node.wrap {
                     let fallback;
-                    let lines = if let Some(cached) = &node.cached_wrapped {
+                    let lines = if let Some(cached) = &td.cached_wrapped {
                         cached.as_slice()
                     } else {
                         fallback = wrap_lines(text, node.size.0);
@@ -316,7 +456,7 @@ fn render_inner(
                             0
                         };
                         let draw_x = node.pos.0.saturating_add(x_offset);
-                        if let Some(cursor_offset) = node.cursor_offset {
+                        if let Some(cursor_offset) = td.cursor_offset {
                             let cursor_x = text
                                 .chars()
                                 .take(cursor_offset)
@@ -464,25 +604,33 @@ fn render_container_border(
         }
     }
 
-    let y = bottom_i as u32;
-    let bl = match (sides.bottom, sides.left) {
-        (true, true) => Some(chars.bl),
-        (true, false) => Some(chars.h),
-        (false, true) => Some(chars.v),
-        (false, false) => None,
-    };
-    if let Some(ch) = bl {
-        buf.set_char(x, y, ch, style);
-    }
+    // Issue #162: skip the bottom corner writes entirely when `bottom_i` is
+    // already off-screen. `buf.set_char` silently drops out-of-bounds writes,
+    // so this is a perf-only guard — saves two redundant `set_char` calls per
+    // scrolled container border per frame. `viewport_bottom` is exclusive
+    // (matches `render_inner`'s convention).
+    let viewport_bottom = i64::from(buf.area.y).saturating_add(i64::from(buf.area.height));
+    if bottom_i < viewport_bottom {
+        let y = bottom_i as u32;
+        let bl = match (sides.bottom, sides.left) {
+            (true, true) => Some(chars.bl),
+            (true, false) => Some(chars.h),
+            (false, true) => Some(chars.v),
+            (false, false) => None,
+        };
+        if let Some(ch) = bl {
+            buf.set_char(x, y, ch, style);
+        }
 
-    let br = match (sides.bottom, sides.right) {
-        (true, true) => Some(chars.br),
-        (true, false) => Some(chars.h),
-        (false, true) => Some(chars.v),
-        (false, false) => None,
-    };
-    if let Some(ch) = br {
-        buf.set_char(right, y, ch, style);
+        let br = match (sides.bottom, sides.right) {
+            (true, true) => Some(chars.br),
+            (true, false) => Some(chars.h),
+            (false, true) => Some(chars.v),
+            (false, false) => None,
+        };
+        if let Some(ch) = br {
+            buf.set_char(right, y, ch, style);
+        }
     }
 
     if sides.top && top_i >= 0 {
