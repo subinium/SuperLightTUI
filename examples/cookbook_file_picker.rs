@@ -73,7 +73,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Cookbook — File Picker")
-            .pad(1)
+            .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {
@@ -81,7 +81,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Single)
                         .title("Files")
-                        .pad(1)
+                        .p(1)
                         .grow(1)
                         .col(|ui| {
                             let _ = ui.file_picker(&mut picker);
@@ -90,7 +90,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Single)
                         .title("Preview")
-                        .pad(1)
+                        .p(1)
                         .grow(2)
                         .col(|ui| match preview.as_ref() {
                             Some(Ok(text)) if !text.is_empty() => {

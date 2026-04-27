@@ -11,7 +11,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Error Boundary Demo")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("Trigger panic inside error boundary.").bold();

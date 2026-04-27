@@ -13,23 +13,26 @@ pub(super) struct GridSpec<'a> {
 pub(super) fn apply_grid(
     config: &ChartConfig,
     grid: GridSpec<'_>,
-    plot_chars: &mut [Vec<char>],
-    plot_styles: &mut [Vec<Style>],
+    plot_chars: &mut [char],
+    plot_styles: &mut [Style],
+    cols: usize,
+    rows: usize,
     grid_style: Style,
 ) {
-    if !config.grid || plot_chars.is_empty() || plot_chars[0].is_empty() {
+    if !config.grid || cols == 0 || rows == 0 {
         return;
     }
-    let h = plot_chars.len();
-    let w = plot_chars[0].len();
+    let h = rows;
+    let w = cols;
 
     for tick in grid.y_ticks {
         let row = map_value_to_cell(*tick, grid.y_min, grid.y_max, h, true);
         if row < h {
             for col in 0..w {
-                if plot_chars[row][col] == ' ' {
-                    plot_chars[row][col] = '·';
-                    plot_styles[row][col] = grid_style;
+                let idx = row * w + col;
+                if plot_chars[idx] == ' ' {
+                    plot_chars[idx] = '·';
+                    plot_styles[idx] = grid_style;
                 }
             }
         }
@@ -39,9 +42,10 @@ pub(super) fn apply_grid(
         let col = map_value_to_cell(*tick, grid.x_min, grid.x_max, w, false);
         if col < w {
             for row in 0..h {
-                if plot_chars[row][col] == ' ' {
-                    plot_chars[row][col] = '·';
-                    plot_styles[row][col] = grid_style;
+                let idx = row * w + col;
+                if plot_chars[idx] == ' ' {
+                    plot_chars[idx] = '·';
+                    plot_styles[idx] = grid_style;
                 }
             }
         }
@@ -78,16 +82,16 @@ pub(super) fn marker_char(marker: Marker) -> char {
 pub(super) fn overlay_legend_on_plot(
     position: LegendPosition,
     items: &[(char, String, Color)],
-    plot_chars: &mut [Vec<char>],
-    plot_styles: &mut [Vec<Style>],
+    plot_chars: &mut [char],
+    plot_styles: &mut [Style],
+    cols: usize,
+    rows: usize,
     axis_style: Style,
 ) {
-    if plot_chars.is_empty() || plot_chars[0].is_empty() || items.is_empty() {
+    if cols == 0 || rows == 0 || items.is_empty() {
         return;
     }
 
-    let rows = plot_chars.len();
-    let cols = plot_chars[0].len();
     let start_row = match position {
         LegendPosition::TopLeft => 0,
         LegendPosition::BottomLeft => rows.saturating_sub(items.len()),
@@ -104,8 +108,9 @@ pub(super) fn overlay_legend_on_plot(
             if col >= cols {
                 break;
             }
-            plot_chars[row][col] = ch;
-            plot_styles[row][col] = if col == 0 {
+            let idx = row * cols + col;
+            plot_chars[idx] = ch;
+            plot_styles[idx] = if col == 0 {
                 Style::new().fg(*color)
             } else {
                 axis_style

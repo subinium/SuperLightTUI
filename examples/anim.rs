@@ -80,13 +80,13 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Animation Primitives — SLT v0.5.0")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Tween")
-                    .pad(1)
+                    .p(1)
                     .gap(1)
                     .col(|ui| {
                         ui.text("Press Space to retarget");
@@ -102,7 +102,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Spring")
-                    .pad(1)
+                    .p(1)
                     .gap(1)
                     .col(|ui| {
                         ui.text("Up/k +10, Down/j -10");
@@ -117,7 +117,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Keyframes")
-                    .pad(1)
+                    .p(1)
                     .gap(1)
                     .col(|ui| {
                         let kf_val = kf.value(ui.tick());
@@ -133,7 +133,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Sequence")
-                    .pad(1)
+                    .p(1)
                     .gap(1)
                     .col(|ui| {
                         let seq_val = seq.value(ui.tick());
@@ -149,7 +149,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Stagger")
-                    .pad(1)
+                    .p(1)
                     .gap(1)
                     .col(|ui| {
                         let labels = ["Item A", "Item B", "Item C", "Item D", "Item E"];

@@ -157,8 +157,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     let x_min = x_ticks.values.first().copied().unwrap_or(x_min).min(x_min);
     let x_max = x_ticks.values.last().copied().unwrap_or(x_max).max(x_max);
 
-    let mut plot_chars = vec![vec![' '; plot_width]; plot_height];
-    let mut plot_styles = vec![vec![Style::new(); plot_width]; plot_height];
+    let mut plot_chars: Vec<char> = vec![' '; plot_width * plot_height];
+    let mut plot_styles: Vec<Style> = vec![Style::new(); plot_width * plot_height];
 
     apply_grid(
         config,
@@ -172,6 +172,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         },
         &mut plot_chars,
         &mut plot_styles,
+        plot_width,
+        plot_height,
         config.grid_style.unwrap_or(dim_style),
     );
 
@@ -179,8 +181,9 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         let row = map_value_to_cell(y_val, y_min, y_max, plot_height, true);
         if row < plot_height {
             for col in 0..plot_width {
-                plot_chars[row][col] = '─';
-                plot_styles[row][col] = *style;
+                let idx = row * plot_width + col;
+                plot_chars[idx] = '─';
+                plot_styles[idx] = *style;
             }
         }
     }
@@ -188,9 +191,10 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         let col = map_value_to_cell(x_val, x_min, x_max, plot_width, false);
         if col < plot_width {
             for row in 0..plot_height {
-                if plot_chars[row][col] == ' ' || plot_chars[row][col] == '·' {
-                    plot_chars[row][col] = '│';
-                    plot_styles[row][col] = *style;
+                let idx = row * plot_width + col;
+                if plot_chars[idx] == ' ' || plot_chars[idx] == '·' {
+                    plot_chars[idx] = '│';
+                    plot_styles[idx] = *style;
                 }
             }
         }
@@ -207,6 +211,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                     y_max,
                     &mut plot_chars,
                     &mut plot_styles,
+                    plot_width,
+                    plot_height,
                 );
             }
             GraphType::Bar => {
@@ -218,6 +224,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                     y_max,
                     &mut plot_chars,
                     &mut plot_styles,
+                    plot_width,
+                    plot_height,
                 );
             }
         }
@@ -234,6 +242,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             &legend_items,
             &mut plot_chars,
             &mut plot_styles,
+            plot_width,
+            plot_height,
             axis_style,
         );
     }
@@ -315,7 +325,8 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         let mut current_style = Style::new();
         let mut buffer = String::new();
         for col in 0..plot_width {
-            let style = plot_styles[row][col];
+            let idx = row * plot_width + col;
+            let style = plot_styles[idx];
             if col == 0 {
                 current_style = style;
             }
@@ -326,7 +337,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 }
                 current_style = style;
             }
-            buffer.push(plot_chars[row][col]);
+            buffer.push(plot_chars[idx]);
         }
         if !buffer.is_empty() {
             segments.push((buffer, current_style));

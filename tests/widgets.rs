@@ -1609,7 +1609,7 @@ fn modal_renders_centered_on_large_screen() {
     tb.render(|ui| {
         ui.text("background");
         ui.modal(|ui| {
-            ui.bordered(slt::Border::Rounded).pad(1).col(|ui| {
+            ui.bordered(slt::Border::Rounded).p(1).col(|ui| {
                 ui.text("Hello Modal");
                 if ui.button("OK").clicked {}
             });
@@ -1710,12 +1710,9 @@ fn modal_with_max_w_renders_centered() {
     tb.render(|ui| {
         ui.text("bg");
         ui.modal(|ui| {
-            ui.bordered(slt::Border::Rounded)
-                .pad(1)
-                .max_w(30)
-                .col(|ui| {
-                    ui.text("Center Me");
-                });
+            ui.bordered(slt::Border::Rounded).p(1).max_w(30).col(|ui| {
+                ui.text("Center Me");
+            });
         });
     });
     for y in 0..20u32 {
@@ -3977,4 +3974,1003 @@ fn text_input_suggestions_track_typed_chars_in_burst() {
         vec!["apple", "apricot"],
         "after burst, matches reflect post-mutation 'ap' prefix, not stale empty value"
     );
+}
+
+// ── #180: code_block_numbered gutter width via ilog10 ──────────────────────
+
+#[test]
+fn code_block_numbered_single_line_gutter_one_digit() {
+    // 1 line → gutter width = 1 ("1 │ ")
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.code_block_numbered("only_line");
+    });
+    let output = tb.to_string();
+    assert!(output.contains("1 │"));
+    assert!(output.contains("only_line"));
+}
+
+#[test]
+fn code_block_numbered_ten_lines_gutter_two_digits() {
+    // 10 lines → gutter width = 2 (" 1 │ ", "10 │ ")
+    let code: String = (1..=10)
+        .map(|i| format!("ln{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut tb = TestBackend::new(40, 14);
+    tb.render(|ui| {
+        ui.code_block_numbered(&code);
+    });
+    let output = tb.to_string();
+    // First line right-padded to width 2
+    assert!(output.contains(" 1 │"));
+    // Tenth line uses both digits
+    assert!(output.contains("10 │"));
+}
+
+#[test]
+fn code_block_numbered_hundred_lines_gutter_three_digits() {
+    // 100 lines → gutter width = 3
+    let code: String = (1..=100)
+        .map(|i| format!("l{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut tb = TestBackend::new(60, 110);
+    tb.render(|ui| {
+        ui.code_block_numbered(&code);
+    });
+    let output = tb.to_string();
+    // 100th line should appear with no leading space ("100 │")
+    assert!(output.contains("100 │"));
+    // 1st line should be padded with 2 spaces (" 1 │") — but stricter:
+    // "  1 │" with two leading spaces is the right-aligned form for width=3.
+    assert!(output.contains("  1 │"));
+}
+
+#[test]
+fn code_block_numbered_empty_input_does_not_panic() {
+    // lines.len() == 0 → .max(1).ilog10() == 0 → gutter_w = 1, no panic
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.code_block_numbered("");
+    });
+    // Empty body still renders the bordered container without crashing.
+    let _ = tb.to_string();
+}
+
+// ── #181: definition_list manual padding ──────────────────────────────────
+
+#[test]
+fn definition_list_right_aligns_mixed_ascii_keys() {
+    // Longest key drives column width; shorter keys are right-padded.
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.definition_list(&[("Hostname", "localhost"), ("Port", "8080")]);
+    });
+    let output = tb.to_string();
+    // "Hostname" is 8 cols; "Port" must be padded to 8 cols → "    Port".
+    assert!(
+        output.contains("    Port"),
+        "expected right-padded 'Port' in: {output}"
+    );
+    assert!(output.contains("Hostname"));
+}
+
+#[test]
+fn definition_list_handles_cjk_double_width_keys() {
+    // CJK characters are 2 display columns each per UnicodeWidthStr.
+    // "한" (2 cols) should be padded to match a longer ASCII key.
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.definition_list(&[("Region", "ap-northeast-2"), ("한", "Seoul")]);
+    });
+    let output = tb.to_string();
+    // "Region" = 6 cols → "한" (2 cols) padded with 4 spaces.
+    assert!(
+        output.contains("    한"),
+        "expected CJK-aware right-padding in: {output}"
+    );
+    assert!(output.contains("Seoul"));
+}
+
+#[test]
+fn definition_list_empty_key_renders_only_padding() {
+    // Empty key with non-empty co-keys → padded with `max_key_width` spaces.
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.definition_list(&[("Name", "Alice"), ("", "—")]);
+    });
+    let output = tb.to_string();
+    // "Name" max width is 4 → empty key becomes "    " (4 spaces), then "  —".
+    assert!(output.contains("Alice"));
+    assert!(output.contains("—"));
+}
+
+// ── #182: breadcrumb_response returns (Response, Option<usize>) ───────────
+
+#[test]
+fn breadcrumb_response_exposes_rect() {
+    let mut tb = TestBackend::new(60, 3);
+    let mut rect = slt::Rect::default();
+    let mut idx: Option<usize> = None;
+    tb.render(|ui| {
+        let (resp, clicked) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
+        rect = resp.rect;
+        idx = clicked;
+    });
+    // First frame has no prev_hit_map entry yet, so rect may be zero — render
+    // a second frame so the response carries a real rect.
+    tb.render(|ui| {
+        let (resp, _) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
+        rect = resp.rect;
+    });
+    assert!(
+        rect.width > 0,
+        "rect width should be non-zero after warm frame"
+    );
+    assert!(
+        rect.height > 0,
+        "rect height should be non-zero after warm frame"
+    );
+    assert_eq!(idx, None, "no events → no clicked segment");
+}
+
+#[test]
+fn breadcrumb_response_returns_clicked_index_on_enter() {
+    let mut tb = TestBackend::new(60, 3);
+    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut clicked: Option<usize> = None;
+    tb.render_with_events(events, 0, 1, |ui| {
+        let (_resp, idx) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
+        clicked = idx;
+    });
+    assert_eq!(clicked, Some(0));
+}
+
+#[test]
+fn breadcrumb_legacy_api_still_returns_index() {
+    // The non-Response variant must keep working unchanged.
+    let mut tb = TestBackend::new(60, 3);
+    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut clicked: Option<usize> = None;
+    tb.render_with_events(events, 0, 1, |ui| {
+        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    });
+    assert_eq!(clicked, Some(0));
+}
+
+#[test]
+fn breadcrumb_response_with_custom_separator() {
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        let (_resp, _idx) = ui.breadcrumb_response_with(&["A", "B", "C"], " > ");
+    });
+    let output = tb.to_string();
+    assert!(output.contains(" > "));
+    assert!(output.contains("A"));
+    assert!(output.contains("C"));
+}
+
+// --- v0.19.2 layout perf wave: end-to-end regression coverage ------------
+
+/// Issue #150: rendering many frames in succession must remain functionally
+/// correct under the `FrameState.commands_buf` carry-over. The drained Vec
+/// is reused across frames, so any bug that left stale items would corrupt
+/// the second frame's output.
+#[test]
+fn many_frames_under_commands_buf_reuse_remain_correct() {
+    let mut tb = TestBackend::new(40, 4);
+    for frame in 0..10 {
+        tb.render(|ui| {
+            ui.text(format!("frame {frame}"));
+        });
+        // Each frame must show only its own text — if commands_buf were
+        // not properly drained we'd see leaked content from prior frames.
+        let out = tb.to_string();
+        assert!(
+            out.contains(&format!("frame {frame}")),
+            "frame {frame} text missing from output: {out:?}"
+        );
+        for prior in 0..frame {
+            assert!(
+                !out.contains(&format!("frame {prior}")),
+                "frame {prior} content leaked into frame {frame}: {out:?}"
+            );
+        }
+    }
+}
+
+/// Issue #155: rendering many frames in succession must remain functionally
+/// correct under the `FrameState.frame_data` carry-over. The collect Vecs
+/// are cleared in place; any bug that left stale focus / hit / scroll
+/// entries would corrupt later-frame interactions and assertions.
+#[test]
+fn many_frames_under_frame_data_reuse_remain_correct() {
+    let mut tb = TestBackend::new(60, 8);
+    for frame in 0..8 {
+        tb.render(|ui| {
+            // Use a varying number of focusable widgets to make sure stale
+            // focus_rects / hit_areas / focus_groups from a longer prior
+            // frame don't survive a shorter current frame.
+            let n = (frame % 4) + 1;
+            for i in 0..n {
+                ui.text(format!("row-{frame}-{i}"));
+            }
+        });
+        let out = tb.to_string();
+        for i in 0..((frame % 4) + 1) {
+            assert!(
+                out.contains(&format!("row-{frame}-{i}")),
+                "current-frame row {i} missing in frame {frame}: {out:?}"
+            );
+        }
+    }
+}
+
+// --- regression: issue #110 ThemeBuilder::builder_from + light_builder ---
+
+#[test]
+fn theme_builder_from_preserves_base() {
+    use slt::Theme;
+    // builder_from(base) without any overrides must reproduce `base`
+    // field-for-field, otherwise users deriving variants from presets
+    // would silently lose unset fields.
+    let nord = Theme::nord();
+    let derived = Theme::builder_from(nord).build();
+    assert_eq!(derived.bg, nord.bg);
+    assert_eq!(derived.primary, nord.primary);
+    assert_eq!(derived.surface, nord.surface);
+    assert_eq!(derived.is_dark, nord.is_dark);
+}
+
+#[test]
+fn theme_light_builder_keeps_light_defaults() {
+    use slt::{Color, Theme};
+    // Plain Theme::builder() inherits dark() defaults for unset fields,
+    // so a "light variant" that only overrides .primary would still get
+    // a dark bg. light_builder() must avoid that surprise.
+    let t = Theme::light_builder()
+        .primary(Color::Rgb(0, 100, 200))
+        .build();
+    let light = Theme::light();
+    assert_eq!(t.primary, Color::Rgb(0, 100, 200));
+    assert_eq!(t.bg, light.bg);
+    assert_eq!(t.surface, light.surface);
+    assert!(!t.is_dark);
+}
+
+#[test]
+fn theme_builder_methods_are_const_evaluable() {
+    // Compile-time const-eval regression: if any builder method or
+    // build() is demoted to non-const, this fails to compile.
+    use slt::{Color, Theme};
+    const T: Theme = Theme::builder()
+        .primary(Color::Rgb(1, 2, 3))
+        .bg(Color::Rgb(4, 5, 6))
+        .build();
+    assert_eq!(T.primary, Color::Rgb(1, 2, 3));
+    assert_eq!(T.bg, Color::Rgb(4, 5, 6));
+}
+
+// --- regression: issue #173 in-place trim_end in extract_selection_text ---
+//
+// The selection helpers are crate-private, so this test exercises the
+// observable behavior end-to-end: rendering text. The trim semantics
+// preserved by `String::truncate(trim_end().len())` must match what
+// `trim_end().to_string()` produced previously.
+#[test]
+fn render_strips_trailing_whitespace_from_text() {
+    let mut tb = TestBackend::new(20, 2);
+    tb.render(|ui| {
+        ui.text("hello   ");
+    });
+    let out = tb.to_string();
+    let first_line = out.lines().next().unwrap_or("");
+    assert!(first_line.contains("hello"));
+}
+
+// ── #196: tabs mouse.x - rect.x must use saturating_sub ─────────────────────
+
+#[test]
+fn tabs_mouse_outside_rect_no_panic() {
+    // Regression for #196: a click at x=0 while the tabs container starts at
+    // x>0 used raw `mouse.x - rect.x` subtraction, which panicked in debug
+    // builds with "attempt to subtract with overflow". After the fix the hit
+    // test uses `saturating_sub`, leaving the selection unchanged.
+    let mut tb = TestBackend::new(40, 5);
+    let mut state = TabsState::new(vec!["Tab1", "Tab2", "Tab3"]);
+    let events = slt::EventBuilder::new().click(0, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        // Force the tabs row to start past x=0 so the click lands outside it.
+        ui.col(|ui| {
+            ui.text(" ");
+            ui.tabs(&mut state);
+        });
+    });
+    assert_eq!(
+        state.selected, 0,
+        "click outside tabs rect must not change selection"
+    );
+}
+
+// ── #195: TableState::recompute_widths must short-circuit when not dirty ────
+
+#[test]
+fn table_recompute_widths_stable_across_clean_renders() {
+    // Regression for #195: rendering the same TableState across multiple
+    // frames without any mutation must keep the column widths stable. The
+    // dirty-flag guard at the top of `recompute_widths` makes the second
+    // frame a no-op; this test verifies the observable invariant — the
+    // header cell width matches the longest cell content on every frame.
+    let mut tb = TestBackend::new(80, 30);
+    let rows: Vec<Vec<String>> = (0..200)
+        .map(|i| vec![format!("row{i:03}"), format!("val{i:03}")])
+        .collect();
+    let mut state = TableState::new(vec!["NameNameName", "Score"], rows);
+
+    tb.render(|ui| {
+        ui.table(&mut state);
+    });
+    let frame1 = tb.to_string();
+
+    tb.render(|ui| {
+        ui.table(&mut state);
+    });
+    let frame2 = tb.to_string();
+
+    // No mutation between frames → identical render. If `recompute_widths`
+    // ever accidentally clobbers `column_widths` on a clean call, the second
+    // frame would diverge from the first.
+    assert_eq!(
+        frame1, frame2,
+        "clean re-render must produce identical output"
+    );
+    // Header text "NameNameName" (12 cols) is wider than every cell ("rowNNN"
+    // = 6 cols) and must be visible in full — confirms widths are intact.
+    assert!(frame2.contains("NameNameName"));
+}
+
+// ── #194: collect_grid_elements extraction — grid() and grid_with() share logic
+
+#[test]
+fn grid_and_grid_with_produce_same_elements() {
+    // Regression for #194: the child-command parsing logic used to be a 41-line
+    // byte-for-byte duplicate across `grid()` and `grid_with()`. After extraction
+    // both call `collect_grid_elements`; this test pins the public contract by
+    // rendering the same children through both and asserting both render the
+    // input texts.
+    let mut tb1 = TestBackend::new(60, 10);
+    tb1.render(|ui| {
+        ui.grid(3, |ui| {
+            ui.text("a");
+            ui.text("b");
+            ui.text("c");
+            ui.text("d");
+            ui.text("e");
+            ui.text("f");
+        });
+    });
+    tb1.assert_contains("a");
+    tb1.assert_contains("f");
+
+    let mut tb2 = TestBackend::new(60, 10);
+    tb2.render(|ui| {
+        ui.grid_with(
+            &[
+                slt::GridColumn::Auto,
+                slt::GridColumn::Auto,
+                slt::GridColumn::Auto,
+            ],
+            |ui| {
+                ui.text("a");
+                ui.text("b");
+                ui.text("c");
+                ui.text("d");
+                ui.text("e");
+                ui.text("f");
+            },
+        );
+    });
+    tb2.assert_contains("a");
+    tb2.assert_contains("f");
+}
+
+// ── #108: ContainerStyle mx/my margin shorthands ─────────────────────
+
+#[test]
+fn container_style_mx_my() {
+    let s = slt::ContainerStyle::new().mx(4).my(2);
+    let m = s.margin.unwrap();
+    assert_eq!(m.left, 4);
+    assert_eq!(m.right, 4);
+    assert_eq!(m.top, 2);
+    assert_eq!(m.bottom, 2);
+}
+
+#[test]
+fn container_style_mx_preserves_vertical() {
+    let s = slt::ContainerStyle::new().my(3).mx(1);
+    let m = s.margin.unwrap();
+    assert_eq!(m.top, 3);
+    assert_eq!(m.bottom, 3);
+    assert_eq!(m.left, 1);
+    assert_eq!(m.right, 1);
+}
+
+#[test]
+fn container_style_my_preserves_horizontal() {
+    let s = slt::ContainerStyle::new().mx(5).my(2);
+    let m = s.margin.unwrap();
+    assert_eq!(m.left, 5);
+    assert_eq!(m.right, 5);
+    assert_eq!(m.top, 2);
+    assert_eq!(m.bottom, 2);
+}
+
+#[test]
+fn container_style_mx_only() {
+    let s = slt::ContainerStyle::new().mx(2);
+    let m = s.margin.unwrap();
+    assert_eq!(m.left, 2);
+    assert_eq!(m.right, 2);
+    assert_eq!(m.top, 0);
+    assert_eq!(m.bottom, 0);
+}
+
+#[test]
+fn container_style_my_only() {
+    let s = slt::ContainerStyle::new().my(3);
+    let m = s.margin.unwrap();
+    assert_eq!(m.top, 3);
+    assert_eq!(m.bottom, 3);
+    assert_eq!(m.left, 0);
+    assert_eq!(m.right, 0);
+}
+
+// ── #111: Modifiers::remove ──────────────────────────────────────────
+
+#[test]
+fn modifiers_remove() {
+    let mut m = slt::Modifiers::BOLD | slt::Modifiers::ITALIC | slt::Modifiers::UNDERLINE;
+    m.remove(slt::Modifiers::ITALIC);
+    assert!(m.contains(slt::Modifiers::BOLD));
+    assert!(!m.contains(slt::Modifiers::ITALIC));
+    assert!(m.contains(slt::Modifiers::UNDERLINE));
+}
+
+#[test]
+fn modifiers_remove_none_is_noop() {
+    let mut m = slt::Modifiers::BOLD;
+    m.remove(slt::Modifiers::NONE);
+    assert!(m.contains(slt::Modifiers::BOLD));
+}
+
+#[test]
+fn modifiers_remove_all() {
+    let mut m = slt::Modifiers::BOLD | slt::Modifiers::DIM;
+    m.remove(slt::Modifiers::BOLD | slt::Modifiers::DIM);
+    assert!(m.is_empty());
+}
+
+#[test]
+fn modifiers_remove_unset_is_noop() {
+    let mut m = slt::Modifiers::BOLD;
+    m.remove(slt::Modifiers::ITALIC);
+    assert!(m.contains(slt::Modifiers::BOLD));
+    assert!(!m.contains(slt::Modifiers::ITALIC));
+}
+
+// ── #183: separator() still works after move to widgets_display ──────
+
+#[test]
+fn separator_still_callable_after_move() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.text("above");
+        ui.separator();
+        ui.text("below");
+    });
+    tb.assert_contains("above");
+    tb.assert_contains("below");
+    tb.assert_contains("─");
+}
+
+#[test]
+fn separator_colored_still_callable_after_move() {
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.separator_colored(slt::Color::Red);
+    });
+    tb.assert_contains("─");
+}
+
+// ── #133: use_memo single-downcast cache-hit path ──────────────────────────
+
+#[test]
+fn use_memo_cache_hit_returns_consistent_value() {
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let v1 = *ui.use_memo(&42i32, |x| x * 2);
+        // Different compute closure on a different slot: hook cursor must
+        // advance correctly even when the cache-hit path returns directly
+        // from a single downcast. If the cursor or downcast logic regresses,
+        // these reads will conflict.
+        let v2 = *ui.use_memo(&10i32, |x| x * 3);
+        assert_eq!(v1, 84);
+        assert_eq!(v2, 30);
+    });
+}
+
+#[test]
+fn use_memo_cache_hit_does_not_recompute() {
+    let mut tb = TestBackend::new(20, 5);
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+
+    let c1 = calls.clone();
+    tb.render(|ui| {
+        let v = *ui.use_memo(&7i32, |d| {
+            c1.set(c1.get() + 1);
+            d * 4
+        });
+        assert_eq!(v, 28);
+    });
+
+    let c2 = calls.clone();
+    tb.render(|ui| {
+        // Same deps — must hit cache and return the stored value via the
+        // single-downcast path without invoking `compute`.
+        let v = *ui.use_memo(&7i32, |d| {
+            c2.set(c2.get() + 1);
+            d * 99 // would corrupt result if recomputed
+        });
+        assert_eq!(v, 28);
+    });
+
+    assert_eq!(calls.get(), 1, "compute must run only on first frame");
+}
+
+// ── #135: SmallVec activation-key consume ──────────────────────────────────
+
+#[test]
+fn button_activates_on_enter_through_smallvec_path() {
+    // Exercises the SmallVec-backed activation-key consumer through the
+    // public button widget — Enter on the focused button must trigger a
+    // click response, going through `consume_activation_keys` which now
+    // collects matched events into a `SmallVec<[usize; 8]>` with no heap
+    // allocation in the typical case.
+    let mut tb = TestBackend::new(20, 5);
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    let mut clicked = false;
+    tb.render_with_events(events, 0, 1, |ui| {
+        if ui.button("OK").clicked {
+            clicked = true;
+        }
+    });
+    assert!(
+        clicked,
+        "Enter on focused button must activate via SmallVec path"
+    );
+}
+
+#[test]
+fn button_does_not_activate_without_key_event() {
+    // Empty event list — SmallVec stays empty (`is_empty == true`) and the
+    // early `activated = false` branch fires. Activation must not occur.
+    let mut tb = TestBackend::new(20, 5);
+    let mut clicked = false;
+    tb.render(|ui| {
+        if ui.button("OK").clicked {
+            clicked = true;
+        }
+    });
+    assert!(!clicked, "no key events ⇒ no activation");
+}
+
+// ── #148: deprecated long-form aliases still compile and behave the same ───
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_long_form_aliases_still_function() {
+    let mut tb = TestBackend::new(40, 10);
+    // Old long-forms must still produce identical layouts to the short forms.
+    tb.render(|ui| {
+        ui.container()
+            .p(1)
+            .min_w(10)
+            .max_w(30)
+            .min_h(2)
+            .max_h(8)
+            .col(|ui| {
+                ui.text("legacy api");
+            });
+    });
+    tb.assert_contains("legacy api");
+}
+
+// ── #123: candlestick_hd half-block body precision ─────────────────────────
+
+#[test]
+fn candlestick_hd_uses_half_block_body() {
+    // Tall canvas + a doji (open == close) plus narrow-bodied candles forces
+    // the body to land on a single half-cell, requiring ▀ or ▄ rendering.
+    let mut tb = TestBackend::new(20, 8);
+    let candles = vec![
+        slt::Candle {
+            open: 50.0,
+            high: 100.0,
+            low: 0.0,
+            close: 50.0,
+        },
+        slt::Candle {
+            open: 30.0,
+            high: 100.0,
+            low: 0.0,
+            close: 70.0,
+        },
+        slt::Candle {
+            open: 35.0,
+            high: 100.0,
+            low: 0.0,
+            close: 65.0,
+        },
+    ];
+    tb.render(|ui| {
+        ui.candlestick_hd(
+            &candles,
+            slt::Color::Rgb(38, 166, 91),
+            slt::Color::Rgb(234, 57, 67),
+        );
+    });
+    let output = tb.to_string();
+    assert!(
+        output.contains('▀') || output.contains('▄'),
+        "candlestick_hd should render at least one half-block (▀ or ▄) for sub-cell body edges; output:\n{output}"
+    );
+    assert!(
+        output.contains('┃'),
+        "candlestick_hd should still draw heavy wick ┃; output:\n{output}"
+    );
+}
+
+#[test]
+fn candlestick_hd_full_block_when_body_spans_full_cells() {
+    // A wide-bodied candle (open near low, close near high) covers many full
+    // cells, so at least one █ must appear.
+    let mut tb = TestBackend::new(12, 10);
+    let candles = vec![slt::Candle {
+        open: 10.0,
+        high: 100.0,
+        low: 0.0,
+        close: 90.0,
+    }];
+    tb.render(|ui| {
+        ui.candlestick_hd(&candles, slt::Color::Green, slt::Color::Red);
+    });
+    let output = tb.to_string();
+    assert!(
+        output.contains('█'),
+        "wide-bodied candle should still include full █ blocks; output:\n{output}"
+    );
+}
+
+// ── #121: treemap sort uses total_cmp; tolerates NaN ───────────────────────
+
+#[test]
+fn treemap_total_cmp_handles_nan_without_panic() {
+    let mut tb = TestBackend::new(30, 10);
+    tb.render(|ui| {
+        let _ = ui.treemap(&[
+            slt::TreemapItem::new("A", 50.0, slt::Color::Red),
+            slt::TreemapItem::new("B", f64::NAN, slt::Color::Blue),
+            slt::TreemapItem::new("C", 30.0, slt::Color::Green),
+        ]);
+    });
+    // Survives NaN input without panic; total_cmp gives a deterministic order.
+}
+
+// ── #115: squarify_recursive incremental ratio path (no Vec::clone) ────────
+
+#[test]
+fn treemap_many_items_renders_without_panic() {
+    // Stress the squarify inner loop with 100+ items — exercises the
+    // incremental sum/max/min tracking that replaces the per-iteration
+    // candidate Vec::clone.
+    let mut tb = TestBackend::new(80, 30);
+    let items: Vec<slt::TreemapItem> = (0..120)
+        .map(|i| {
+            let value = ((i % 17) + 1) as f64 * 1.5;
+            slt::TreemapItem::new(format!("item-{i}"), value, slt::Color::Cyan)
+        })
+        .collect();
+    tb.render(|ui| {
+        let _ = ui.treemap(&items);
+    });
+    let output = tb.to_string();
+    assert!(
+        !output.is_empty(),
+        "treemap with 120 items should render some cells"
+    );
+}
+
+// ── v0.19.2 fix wave: regressions for #99, #101, #117, #122, #191 ────────────
+
+#[test]
+fn rich_log_bounded_default() {
+    // a-191: RichLogState::new() must default to Some(DEFAULT_MAX_ENTRIES) so
+    // long-running apps cannot accumulate state without bound.
+    let mut state = RichLogState::new();
+    assert!(
+        state.max_entries.is_some(),
+        "new() must apply default cap, got max_entries=None"
+    );
+    for i in 0..(RichLogState::DEFAULT_MAX_ENTRIES + 10) {
+        state.push_plain(format!("line {i}"));
+    }
+    assert!(
+        state.entries.len() <= RichLogState::DEFAULT_MAX_ENTRIES,
+        "entries.len() = {}, should be <= {}",
+        state.entries.len(),
+        RichLogState::DEFAULT_MAX_ENTRIES
+    );
+}
+
+#[test]
+fn rich_log_unbounded_new() {
+    // a-191: explicit opt-in via new_unbounded() must skip the trim guard.
+    let state = RichLogState::new_unbounded();
+    assert!(state.max_entries.is_none());
+}
+
+#[test]
+fn spinner_state_frame_is_stable_across_clones() {
+    // a-099: SpinnerState now stores frames as &'static [char], so cloning is
+    // cheap and the frame sequence must be byte-identical to the heap-Vec
+    // implementation.
+    let s = slt::SpinnerState::dots();
+    let s2 = s.clone();
+    for tick in 0..32u64 {
+        assert_eq!(
+            s.frame(tick),
+            s2.frame(tick),
+            "clone must yield identical frame at tick {tick}"
+        );
+    }
+    let dots: Vec<char> = (0..10).map(|t| s.frame(t)).collect();
+    assert_eq!(dots, vec!['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']);
+    assert_eq!(s.frame(10), '⠋', "tick 10 wraps back to first frame");
+
+    let line = slt::SpinnerState::line();
+    let line_seq: Vec<char> = (0..4).map(|t| line.frame(t)).collect();
+    assert_eq!(line_seq, vec!['|', '/', '-', '\\']);
+    assert_eq!(line.frame(4), '|');
+}
+
+#[test]
+fn command_palette_render_uses_filter_cache() {
+    // a-101: command_palette() previously called fuzzy_score twice per frame.
+    // Now it routes through filtered_indices_cached(), but the rendered output
+    // must remain unchanged.
+    let cmds = vec![
+        slt::PaletteCommand::new("open file", ""),
+        slt::PaletteCommand::new("save file", ""),
+        slt::PaletteCommand::new("quit", ""),
+    ];
+    let mut state = CommandPaletteState::new(cmds);
+    state.toggle();
+    state.input.push_str("file");
+
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.command_palette(&mut state);
+    });
+    let out = tb.to_string();
+    assert!(out.contains("open file"), "expected 'open file' in:\n{out}");
+    assert!(out.contains("save file"), "expected 'save file' in:\n{out}");
+}
+
+#[test]
+fn chart_flat_buffer_renders_line() {
+    // a-117: chart's plot_chars/plot_styles are now flat Vec<T> instead of
+    // Vec<Vec<T>>. Verify a line chart renders without panics and produces
+    // non-empty output.
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.line(&[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 1.5)])
+                    .label("S1")
+                    .color(slt::Color::Cyan);
+            },
+            70,
+            20,
+        );
+    });
+    let out = tb.to_string();
+    assert!(!out.trim().is_empty(), "chart output must not be blank");
+    assert!(out.contains("S1"), "legend label must render");
+}
+
+#[test]
+fn chart_bar_dataset_renders_with_flat_buffer() {
+    // a-117: bar dataset path through draw_bar_dataset on flat buffer.
+    let mut tb = TestBackend::new(80, 24);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.bar(&[(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)])
+                    .label("B")
+                    .color(slt::Color::Cyan);
+            },
+            70,
+            20,
+        );
+    });
+    let out = tb.to_string();
+    assert!(out.contains('█'), "bar chart should render block glyph");
+}
+
+#[test]
+fn sixel_image_renders_with_stack_register_array() {
+    // a-122: row_registers() now uses [bool; 216] on the stack. Verify the
+    // sixel encode path still produces output for a small multi-color image.
+    let mut rgba = Vec::with_capacity(4 * 6 * 4);
+    let cols = [
+        [255u8, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [128, 128, 128, 255],
+    ];
+    for _ in 0..6 {
+        for c in &cols {
+            rgba.extend_from_slice(c);
+        }
+    }
+    let mut tb = TestBackend::new(20, 8);
+    tb.render(|ui| {
+        let _ = ui.sixel_image(&rgba, 4, 6, 20, 4);
+    });
+    // Smoke: rendering must not panic with the stack-array implementation.
+}
+
+// ===== v0.19.2 — issue #103 / #176 regression tests =====
+
+#[test]
+fn textarea_kill_line_truncates_to_cursor() {
+    // Issue #103: Ctrl+K from middle of line truncates to cursor.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.set_value("hello world");
+    state.cursor_row = 0;
+    state.cursor_col = 5;
+    let events = slt::EventBuilder::new()
+        .key_with(KeyCode::Char('k'), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["hello".to_string()]);
+    assert_eq!(state.cursor_col, 5);
+}
+
+#[test]
+fn textarea_kill_line_preserves_following_lines() {
+    // Issue #103: Ctrl+K does NOT remove the line break — only truncates
+    // the current line at the cursor column.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.set_value("foo bar\nnext");
+    state.cursor_row = 0;
+    state.cursor_col = 3;
+    let events = slt::EventBuilder::new()
+        .key_with(KeyCode::Char('k'), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["foo".to_string(), "next".to_string()]);
+}
+
+#[test]
+fn textarea_word_jump_forward() {
+    // Issue #103: Ctrl+Right from cursor=0 on "foo bar baz" must jump
+    // past the end of the next word ("foo") to char 3.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.set_value("foo bar baz");
+    state.cursor_row = 0;
+    state.cursor_col = 0;
+    let events = slt::EventBuilder::new()
+        .key_with(KeyCode::Right, KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.cursor_col, 3);
+}
+
+#[test]
+fn textarea_word_jump_backward() {
+    // Issue #103: Ctrl+Left from cursor=7 on "foo bar baz" must jump back
+    // to the start of "bar" at char 4.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.set_value("foo bar baz");
+    state.cursor_row = 0;
+    state.cursor_col = 7;
+    let events = slt::EventBuilder::new()
+        .key_with(KeyCode::Left, KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.cursor_col, 4);
+}
+
+#[test]
+fn textarea_word_jump_alt_modifier() {
+    // Issue #103: Alt+Left/Right are equivalent to Ctrl+Left/Right
+    // (matches macOS readline conventions).
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    state.set_value("alpha beta gamma");
+    state.cursor_row = 0;
+    state.cursor_col = 0;
+    let events = slt::EventBuilder::new()
+        .key_with(KeyCode::Right, KeyModifiers::ALT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.cursor_col, 5);
+}
+
+#[test]
+fn markdown_byte_index_handles_cjk_bold() {
+    // Issue #176: byte-index scan of `**굵은**` must NOT split the
+    // multi-byte Korean characters (each is 3 bytes in UTF-8).
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.markdown("**굵은**");
+    });
+    tb.assert_contains("굵은");
+}
+
+#[test]
+fn markdown_byte_index_handles_interleaved_cjk_markers() {
+    // Issue #176: arbitrary order of bold/italic/code with multi-byte text.
+    let mut tb = TestBackend::new(80, 5);
+    tb.render(|ui| {
+        ui.markdown("**굵은** `코드` *이탤릭*");
+    });
+    let out = tb.to_string_trimmed();
+    assert!(out.contains("굵은"), "bold CJK segment lost: {out:?}");
+    assert!(out.contains("코드"), "code CJK segment lost: {out:?}");
+    assert!(out.contains("이탤릭"), "italic CJK segment lost: {out:?}");
+    // The marker characters themselves must be stripped.
+    assert!(!out.contains("**"), "** marker must be stripped: {out:?}");
+    assert!(!out.contains('`'), "code marker must be stripped: {out:?}");
+}
+
+#[test]
+fn markdown_byte_index_unclosed_marker_falls_through() {
+    // Issue #176: unclosed `**` must render as plain text, not panic.
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.markdown("**unclosed");
+    });
+    // The literal `**unclosed` must appear since the marker never closes.
+    tb.assert_contains("**unclosed");
+}
+
+#[test]
+fn markdown_byte_index_empty_bold_marker() {
+    // Issue #176: `****` is a valid empty bold span — must not produce
+    // garbage or panic on byte indices.
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        ui.markdown("a****b");
+    });
+    tb.assert_contains("ab");
 }

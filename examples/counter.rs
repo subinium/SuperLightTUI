@@ -15,7 +15,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Single)
             .title("Counter")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("SLT Counter").bold().fg(Color::Cyan);

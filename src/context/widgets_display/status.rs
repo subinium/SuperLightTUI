@@ -173,11 +173,31 @@ impl Context {
 
     /// Render a breadcrumb with a custom separator string.
     pub fn breadcrumb_with(&mut self, segments: &[&str], separator: &str) -> Option<usize> {
+        self.breadcrumb_response_with(segments, separator).1
+    }
+
+    /// Render a breadcrumb and return both the row [`Response`] and the
+    /// clicked segment index.
+    ///
+    /// The `Response` exposes hover/focus state and the widget rectangle, while
+    /// the `Option<usize>` carries the clicked segment index (same value as
+    /// [`Self::breadcrumb`]).
+    pub fn breadcrumb_response(&mut self, segments: &[&str]) -> (Response, Option<usize>) {
+        self.breadcrumb_response_with(segments, " › ")
+    }
+
+    /// Render a breadcrumb with a custom separator and return both the row
+    /// [`Response`] and the clicked segment index.
+    pub fn breadcrumb_response_with(
+        &mut self,
+        segments: &[&str],
+        separator: &str,
+    ) -> (Response, Option<usize>) {
         let theme = self.theme;
         let last_idx = segments.len().saturating_sub(1);
         let mut clicked_idx: Option<usize> = None;
 
-        let _ = self.row(|ui| {
+        let response = self.row(|ui| {
             for (i, segment) in segments.iter().enumerate() {
                 let is_last = i == last_idx;
                 if is_last {
@@ -200,7 +220,7 @@ impl Context {
             }
         });
 
-        clicked_idx
+        (response, clicked_idx)
     }
 
     /// Collapsible section that toggles on click, Enter, or Space.
@@ -418,7 +438,7 @@ impl Context {
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .pad(1)
+            .p(1)
             .col(|ui| {
                 if let Some(ref lines) = highlighted {
                     render_tree_sitter_lines(ui, lines);
@@ -447,7 +467,7 @@ impl Context {
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .pad(1)
+            .p(1)
             .col(|ui| {
                 if let Some(ref hl_lines) = highlighted {
                     for (i, segs) in hl_lines.iter().enumerate() {

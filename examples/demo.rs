@@ -279,7 +279,7 @@ fn main() -> std::io::Result<()> {
             let _ = ui
                 .container()
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .grow(1)
                 .col(|ui| {
                     let _ = ui.row(|ui| {
@@ -420,7 +420,7 @@ fn main() -> std::io::Result<()> {
                         .container()
                         .bg(theme.surface)
                         .border(Border::Rounded)
-                        .pad(2)
+                        .p(2)
                         .col(|ui| {
                             ui.text("Modal Demo").bold().fg(theme.primary);
                             ui.text("This modal stays in the demo.")
@@ -648,7 +648,7 @@ fn render_layout(
                         .container()
                         .bg(theme.surface_hover)
                         .border(Border::Rounded)
-                        .pad(1)
+                        .p(1)
                         .col(|ui| {
                             ui.text(format!("Cell {i}")).fg(theme.surface_text);
                         });
@@ -703,7 +703,7 @@ fn render_layout(
                 .container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .align(Align::Start)
                 .col(|ui| {
                     ui.text("Start").fg(theme.primary);
@@ -712,7 +712,7 @@ fn render_layout(
                 .container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .align(Align::Center)
                 .col(|ui| {
                     ui.text("Center").fg(theme.secondary);
@@ -721,7 +721,7 @@ fn render_layout(
                 .container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .align(Align::End)
                 .col(|ui| {
                     ui.text("End").fg(theme.accent);
@@ -735,7 +735,7 @@ fn render_layout(
                 .container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .justify(Justify::SpaceBetween)
                 .row(|ui| {
                     ui.text("A").fg(theme.primary);
@@ -746,7 +746,7 @@ fn render_layout(
                 .container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .space_around()
                 .row(|ui| {
                     ui.text("A").fg(theme.primary);
@@ -765,7 +765,7 @@ fn render_layout(
                     .container()
                     .bg(theme.surface)
                     .border(Border::Rounded)
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         ui.text("Overlay Active").fg(theme.warning);
                         ui.text("Press o to toggle").fg(theme.surface_text);
@@ -1105,7 +1105,7 @@ fn render_advanced(
             let _ = ui.container()
                 .bg(theme.surface_hover)
                 .border(Border::Rounded)
-                .pad(1)
+                .p(1)
                 .col(|ui| {
                     ui.text("line_wrap()").bold().fg(theme.accent);
                     ui.line_wrap(|ui| {
@@ -1128,7 +1128,7 @@ fn render_advanced(
                 .bg(theme.surface_hover)
                 .border(Border::Single)
                 .border_sides(BorderSides::horizontal())
-                .pad(1)
+                .p(1)
                 .col(|ui| {
                     ui.text("Horizontal borders").fg(theme.surface_text);
                 });
@@ -1137,7 +1137,7 @@ fn render_advanced(
                 .bg(theme.surface_hover)
                 .border(Border::Single)
                 .border_sides(BorderSides::vertical())
-                .pad(1)
+                .p(1)
                 .col(|ui| {
                     ui.text("Vertical borders").fg(theme.surface_text);
                 });
@@ -1147,7 +1147,7 @@ fn render_advanced(
                     .bg(theme.surface_hover)
                     .border(Border::Rounded)
                     .w_pct(30)
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         ui.text("30%").fg(theme.primary);
                     });
@@ -1155,7 +1155,7 @@ fn render_advanced(
                     .bg(theme.surface_hover)
                     .border(Border::Rounded)
                     .w_pct(70)
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         ui.text("70%").fg(theme.secondary);
                     });
@@ -1217,10 +1217,10 @@ fn render_v070(
             ui.text("Dashed Borders").bold().fg(theme.primary);
             ui.text("2 new border variants").fg(theme.surface_text);
 
-            let _ = ui.container().border(Border::Dashed).pad(1).col(|ui| {
+            let _ = ui.container().border(Border::Dashed).p(1).col(|ui| {
                 ui.text("Border::Dashed").fg(theme.text);
             });
-            let _ = ui.container().border(Border::DashedThick).pad(1).col(|ui| {
+            let _ = ui.container().border(Border::DashedThick).p(1).col(|ui| {
                 ui.text("Border::DashedThick").fg(theme.text);
             });
         });
@@ -1691,7 +1691,7 @@ fn render_v013(
 
         if *show_modal {
             let r = ui.modal(|ui| {
-                let _ = ui.bordered(Border::Rounded).pad(2).col(|ui| {
+                let _ = ui.bordered(Border::Rounded).p(2).col(|ui| {
                     ui.text("Modal with Focus Trap").bold().fg(theme.primary);
                     ui.text("Tab only cycles within this modal")
                         .fg(theme.surface_text);
@@ -2209,7 +2209,7 @@ fn card(ui: &mut Context, f: impl FnOnce(&mut Context)) {
         .container()
         .bg(theme.surface)
         .border(Border::Rounded)
-        .pad(1)
+        .p(1)
         .grow(1)
         .col(f);
 }

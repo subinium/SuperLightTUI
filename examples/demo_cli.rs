@@ -192,7 +192,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("cargo-slt")
-            .pad(1)
+            .p(1)
             .grow(1)
             .col(|ui| {
                 let _ = ui.row(|ui| {
@@ -207,7 +207,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Rounded)
                         .title("Packages")
-                        .pad(1)
+                        .p(1)
                         .grow(1)
                         .col(|ui| {
                             let _ = ui.text_input(&mut search);
@@ -249,7 +249,7 @@ fn main() -> std::io::Result<()> {
                         let _ = ui
                             .bordered(Border::Rounded)
                             .title("Details")
-                            .pad(1)
+                            .p(1)
                             .col(|ui| {
                                 ui.text(pkg.name).bold().fg(Color::Cyan);
                                 ui.text(format!("v{}", pkg.version)).dim();
@@ -322,7 +322,7 @@ fn main() -> std::io::Result<()> {
                         let _ = ui
                             .bordered(Border::Rounded)
                             .title("Output")
-                            .pad(1)
+                            .p(1)
                             .grow(1)
                             .col(|ui| {
                                 let _ = ui.scrollable(&mut output_scroll).grow(1).col(|ui| {

@@ -373,6 +373,11 @@ impl Constraints {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Align {
     /// Align children to the start of the cross axis (default).
+    ///
+    /// Unlike CSS `flex-start`, this variant fills the full cross-axis
+    /// (equivalent to CSS `stretch`). Children are sized to the container's
+    /// cross-axis dimension. Use [`Align::Center`] or [`Align::End`] to
+    /// size children by their natural dimensions instead.
     #[default]
     Start,
     /// Center children on the cross axis.
@@ -443,6 +448,23 @@ impl Modifiers {
     #[inline]
     pub fn insert(&mut self, other: Self) {
         self.0 |= other.0;
+    }
+
+    /// Unset all bits from `other`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Modifiers;
+    ///
+    /// let mut m = Modifiers::BOLD | Modifiers::ITALIC;
+    /// m.remove(Modifiers::BOLD);
+    /// assert!(!m.contains(Modifiers::BOLD));
+    /// assert!(m.contains(Modifiers::ITALIC));
+    /// ```
+    #[inline]
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
     }
 
     /// Returns `true` if no modifiers are set.
@@ -783,6 +805,54 @@ impl ContainerStyle {
             left: value,
             right: value,
         });
+        self
+    }
+
+    /// Set horizontal margin (left + right). Top and bottom are preserved if
+    /// margin was previously set, otherwise default to 0.
+    ///
+    /// ```
+    /// use slt::ContainerStyle;
+    /// let s = ContainerStyle::new().mx(2).py(1);
+    /// assert_eq!(s.margin.unwrap().left, 2);
+    /// assert_eq!(s.margin.unwrap().right, 2);
+    /// assert_eq!(s.margin.unwrap().top, 0);
+    /// ```
+    pub const fn mx(mut self, value: u32) -> Self {
+        let m = match self.margin {
+            Some(m) => Margin {
+                left: value,
+                right: value,
+                ..m
+            },
+            None => Margin {
+                top: 0,
+                bottom: 0,
+                left: value,
+                right: value,
+            },
+        };
+        self.margin = Some(m);
+        self
+    }
+
+    /// Set vertical margin (top + bottom). Left and right are preserved if
+    /// margin was previously set, otherwise default to 0.
+    pub const fn my(mut self, value: u32) -> Self {
+        let m = match self.margin {
+            Some(m) => Margin {
+                top: value,
+                bottom: value,
+                ..m
+            },
+            None => Margin {
+                top: value,
+                bottom: value,
+                left: 0,
+                right: 0,
+            },
+        };
+        self.margin = Some(m);
         self
     }
 

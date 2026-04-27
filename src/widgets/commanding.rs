@@ -15,6 +15,9 @@ pub struct CommandPaletteState {
     /// Check this after `response.changed` is true.
     pub last_selected: Option<usize>,
     selected: usize,
+    /// Cached filtered indices for the last `input` value. Avoids running
+    /// `fuzzy_score` twice per frame (clamp + render).
+    filter_cache: Option<(String, Vec<usize>)>,
 }
 
 impl CommandPaletteState {
@@ -27,6 +30,7 @@ impl CommandPaletteState {
             open: false,
             last_selected: None,
             selected: 0,
+            filter_cache: None,
         }
     }
 
@@ -37,6 +41,7 @@ impl CommandPaletteState {
             self.input.clear();
             self.cursor = 0;
             self.selected = 0;
+            self.filter_cache = None;
         }
     }
 
@@ -82,6 +87,29 @@ impl CommandPaletteState {
         }
 
         Some(score)
+    }
+
+    /// Cached variant of [`Self::filtered_indices`].
+    ///
+    /// Reuses the previous result when `self.input` has not changed since the
+    /// last call. `command_palette()` invokes this twice per frame (before key
+    /// handling, to clamp the selection index, and again for render); on idle
+    /// frames the second call is served from cache instead of re-running
+    /// `fuzzy_score` over the full command list.
+    pub(crate) fn filtered_indices_cached(&mut self) -> &[usize] {
+        let needs_recompute = match &self.filter_cache {
+            Some((cached_input, _)) => *cached_input != self.input,
+            None => true,
+        };
+        if needs_recompute {
+            let indices = self.filtered_indices();
+            self.filter_cache = Some((self.input.clone(), indices));
+        }
+        &self
+            .filter_cache
+            .as_ref()
+            .expect("filter_cache populated above")
+            .1
     }
 
     pub(crate) fn filtered_indices(&self) -> Vec<usize> {

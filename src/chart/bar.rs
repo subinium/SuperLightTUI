@@ -1,20 +1,21 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_bar_dataset(
     dataset: &Dataset,
     _x_min: f64,
     _x_max: f64,
     y_min: f64,
     y_max: f64,
-    plot_chars: &mut [Vec<char>],
-    plot_styles: &mut [Vec<Style>],
+    plot_chars: &mut [char],
+    plot_styles: &mut [Style],
+    cols: usize,
+    rows: usize,
 ) {
-    if dataset.data.is_empty() || plot_chars.is_empty() || plot_chars[0].is_empty() {
+    if dataset.data.is_empty() || cols == 0 || rows == 0 {
         return;
     }
 
-    let rows = plot_chars.len();
-    let cols = plot_chars[0].len();
     let n = dataset.data.len();
     let slot_width = cols as f64 / n as f64;
     let zero_row = map_value_to_cell(0.0, y_min, y_max, rows, true);
@@ -43,13 +44,15 @@ pub(super) fn draw_bar_dataset(
         for row in top..=bottom.min(rows.saturating_sub(1)) {
             for col in x_start..=x_end {
                 if col < cols {
-                    plot_chars[row][col] = '█';
-                    plot_styles[row][col] = Style::new().fg(dataset.color);
+                    let idx = row * cols + col;
+                    plot_chars[idx] = '█';
+                    plot_styles[idx] = Style::new().fg(dataset.color);
                 }
             }
             if frac_w > 0 && frac_col < cols {
-                plot_chars[row][frac_col] = BLOCK_FRACTIONS[frac_w.min(8)];
-                plot_styles[row][frac_col] = Style::new().fg(dataset.color);
+                let idx = row * cols + frac_col;
+                plot_chars[idx] = BLOCK_FRACTIONS[frac_w.min(8)];
+                plot_styles[idx] = Style::new().fg(dataset.color);
             }
         }
     }

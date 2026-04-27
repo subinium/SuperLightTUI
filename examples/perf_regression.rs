@@ -30,7 +30,7 @@ fn main() {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("Perf sanity")
-                .pad(1)
+                .p(1)
                 .grow(1)
                 .col(|ui| {
                     ui.text("Input cursor path").bold();

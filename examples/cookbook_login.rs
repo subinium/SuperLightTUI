@@ -27,7 +27,7 @@ fn main() -> std::io::Result<()> {
             let _ = ui
                 .bordered(Border::Rounded)
                 .title("Cookbook — Login")
-                .pad(2)
+                .p(2)
                 .grow(1)
                 .center()
                 .col(|ui| {
@@ -45,7 +45,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Cookbook — Login")
-            .pad(2)
+            .p(2)
             .gap(1)
             .grow(1)
             .col(|ui| {

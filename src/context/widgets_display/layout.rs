@@ -1,6 +1,56 @@
 use super::*;
+use std::sync::OnceLock;
+
+static SEP_LINE: OnceLock<String> = OnceLock::new();
+
+fn sep_line() -> &'static str {
+    SEP_LINE.get_or_init(|| "─".repeat(200))
+}
 
 impl Context {
+    /// Render a horizontal divider line.
+    ///
+    /// The line is drawn with the theme's border color and expands to fill the
+    /// container width.
+    pub fn separator(&mut self) -> &mut Self {
+        // The cached `sep_line()` is much wider than any reasonable terminal,
+        // so the cross-axis (column-direction) clip in `Buffer::set_string`
+        // truncates the trailing chars. Keeping `grow = 0` means a column
+        // layout doesn't stretch the separator vertically, and `truncate =
+        // false` avoids the ellipsis fallback which would otherwise replace
+        // the last cell with `…`.
+        self.commands.push(Command::Text {
+            content: sep_line().to_owned(),
+            cursor_offset: None,
+            style: Style::new().fg(self.theme.border).dim(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
+        self
+    }
+
+    /// Render a horizontal separator line with a custom color.
+    pub fn separator_colored(&mut self, color: Color) -> &mut Self {
+        self.commands.push(Command::Text {
+            content: sep_line().to_owned(),
+            cursor_offset: None,
+            style: Style::new().fg(color),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
+        self
+    }
+
     /// Conditionally render content when the named screen is active.
     ///
     /// Each screen gets an isolated hook segment — `use_state` / `use_memo`
@@ -380,7 +430,7 @@ impl Context {
     /// use slt::Border;
     /// ui.container()
     ///     .border(Border::Rounded)
-    ///     .pad(1)
+    ///     .p(1)
     ///     .title("My Panel")
     ///     .col(|ui| {
     ///         ui.text("content");

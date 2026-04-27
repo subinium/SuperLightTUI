@@ -442,9 +442,105 @@ fn terminal_supports_sixel() -> bool {
         .map(|v| v.to_ascii_lowercase())
         .unwrap_or_default();
 
-    term.contains("sixel")
-        || term.contains("mlterm")
-        || term.contains("xterm")
-        || term.contains("foot")
-        || term_program.contains("foot")
+    // Exact-match known sixel terminals; substring "sixel" catches custom builds.
+    // The previous `term.contains("xterm")` check fired on `xterm-256color`,
+    // which is the default for macOS Terminal.app, VS Code, and most SSH
+    // clients — none of which support sixel. Patched-xterm-with-sixel users
+    // can opt in with `SLT_FORCE_SIXEL=1`.
+    const KNOWN_SIXEL_TERMS: &[&str] = &["mlterm", "foot", "yaft", "xterm-256color-sixel"];
+    KNOWN_SIXEL_TERMS.iter().any(|&t| term == t)
+        || term.contains("sixel")
+        || term_program == "foot"
+        || term_program == "mlterm"
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod sixel_detection_tests {
+    use super::terminal_supports_sixel;
+    use std::sync::Mutex;
+
+    // Env vars are process-global. A test-local mutex serializes access so
+    // concurrent test threads don't observe each other's set_var() calls.
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+    fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_term = std::env::var("TERM").ok();
+        let prev_program = std::env::var("TERM_PROGRAM").ok();
+        let prev_force = std::env::var("SLT_FORCE_SIXEL").ok();
+
+        match term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
+        }
+        match term_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        if force {
+            std::env::set_var("SLT_FORCE_SIXEL", "1");
+        } else {
+            std::env::remove_var("SLT_FORCE_SIXEL");
+        }
+
+        f();
+
+        match prev_term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
+        }
+        match prev_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        match prev_force {
+            Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
+            None => std::env::remove_var("SLT_FORCE_SIXEL"),
+        }
+    }
+
+    #[test]
+    fn sixel_xterm_256color_no_false_positive() {
+        // Regression: `term.contains("xterm")` previously matched
+        // `xterm-256color` and printed raw escape sequences to screen on
+        // macOS Terminal.app, VS Code, and most SSH clients.
+        with_env(Some("xterm-256color"), None, false, || {
+            assert!(!terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_mlterm_detected() {
+        with_env(Some("mlterm"), None, false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_foot_detected_via_term() {
+        with_env(Some("foot"), None, false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_foot_detected_via_term_program() {
+        with_env(Some("xterm-256color"), Some("foot"), false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_force_env_overrides_negative_term() {
+        with_env(Some("xterm-256color"), None, true, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_substring_match_catches_custom_builds() {
+        with_env(Some("custom-with-sixel"), None, false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
 }

@@ -8,7 +8,7 @@ fn main() -> std::io::Result<()> {
 
         let _ = ui
             .bordered(Border::Rounded)
-            .pad(1)
+            .p(1)
             .title("SLT")
             .col(|ui: &mut Context| {
                 ui.text("Hello, World!").bold().fg(Color::Cyan);

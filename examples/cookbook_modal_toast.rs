@@ -30,7 +30,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Cookbook — Modal + Toast")
-            .pad(2)
+            .p(2)
             .gap(1)
             .grow(1)
             .col(|ui| {
@@ -58,7 +58,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Rounded)
                     .title("Confirm")
-                    .pad(2)
+                    .p(2)
                     .gap(1)
                     .col(|ui| {
                         ui.text("Delete this item? This cannot be undone.").bold();

@@ -33,7 +33,7 @@ fn main() -> std::io::Result<()> {
             let _ = ui
                 .bordered(Border::Rounded)
                 .title("Interactive Perf Demo")
-                .pad(1)
+                .p(1)
                 .grow(1)
                 .col(|ui| {
                     ui.line(|ui| {

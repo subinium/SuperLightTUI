@@ -17,7 +17,7 @@ fn main() {
             let _ = ui
                 .bordered(Border::Rounded)
                 .title("draw_raw demo")
-                .pad(1)
+                .p(1)
                 .gap(1)
                 .col(|ui| {
                     ui.text("Direct buffer access via ContainerBuilder::draw()")

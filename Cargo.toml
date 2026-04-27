@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.19.1"
+version = "0.19.2"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -22,6 +22,7 @@ name = "slt"
 [dependencies]
 crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
+smallvec = "1"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
@@ -176,6 +177,10 @@ path = "examples/demo_game.rs"
 [[example]]
 name = "demo_kitty_image"
 path = "examples/demo_kitty_image.rs"
+
+[[example]]
+name = "demo_cjk"
+path = "examples/demo_cjk.rs"
 
 [[bench]]
 name = "benchmarks"

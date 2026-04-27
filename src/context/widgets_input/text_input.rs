@@ -287,7 +287,6 @@ impl Context {
             .bordered(Border::Rounded)
             .border_style(Style::new().fg(border_color))
             .px(1)
-            .grow(1)
             .col(|ui| {
                 ui.styled_with_cursor(input_text, input_style, cursor_offset);
             });

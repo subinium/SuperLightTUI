@@ -176,7 +176,11 @@ fn row_registers(
     y_base: usize,
     reg_count: usize,
 ) -> Vec<u8> {
-    let mut used = vec![false; reg_count];
+    // `reg_count` is bounded by the sixel 6-cube quantization (`color_limit`
+    // in `encode_sixel` clamps `max_colors` to ≤ 216). Use a fixed-size stack
+    // array to eliminate per-row heap allocation.
+    let mut used = [false; 216];
+    let used = &mut used[..reg_count];
 
     for bit in 0..6 {
         let y = y_base + bit;
@@ -192,9 +196,9 @@ fn row_registers(
         }
     }
 
-    used.into_iter()
+    used.iter()
         .enumerate()
-        .filter_map(|(reg, is_used)| is_used.then_some(reg as u8))
+        .filter_map(|(reg, &is_used)| is_used.then_some(reg as u8))
         .collect()
 }
 

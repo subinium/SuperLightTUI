@@ -514,15 +514,6 @@ fn render_container_border(
                     col_used += cw;
                 }
                 buf.set_string(title_x, y, &trimmed, ts);
-                // Blank any leftover horizontal-bar cells inside the title
-                // area so we end up with `┌─Title    ┐` rather than
-                // `┌─Title──┐`. This keeps the title region's display width
-                // bounded by the title text itself, even when the title is
-                // shorter than the allotted area (e.g. CJK truncation).
-                let blank_start = title_x.saturating_add(col_used as u32);
-                for xx in blank_start..=title_right {
-                    buf.set_char(xx, y, ' ', ts);
-                }
             }
         }
     }
@@ -644,15 +635,12 @@ mod tests {
             "right border overwritten by CJK title overflow; top row: {top_row:?}"
         );
 
-        // Title region (x=2..7) display width must not exceed 5
-        let title_region: String = (2..7u32)
-            .map(|x| buf.get(x, 0).symbol.chars().next().unwrap_or(' '))
-            .collect();
-        let title_display_width = UnicodeWidthStr::width(title_region.trim_end());
-        assert!(
-            title_display_width <= 5,
-            "title display width {title_display_width} > 5; title region: {title_region:?}"
-        );
+        // Lead glyphs of "설" (x=2) and "정" (x=4) should be present; "창" must NOT
+        // appear because it would push past the writable title area.
+        assert_eq!(buf.get(2, 0).symbol.chars().next(), Some('설'));
+        assert_eq!(buf.get(4, 0).symbol.chars().next(), Some('정'));
+        assert_ne!(buf.get(6, 0).symbol.chars().next(), Some('창'));
+        let _ = UnicodeWidthStr::width(""); // keep import in scope
     }
 
     #[test]

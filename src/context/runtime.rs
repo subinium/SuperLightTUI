@@ -436,30 +436,25 @@ impl Context {
 
         // Activation keys (Enter / Space) are typically 0–1 per frame and
         // bounded above by the simultaneous-keypress count from the input
-        // pipeline (well under 8 in practice). A small inline buffer
-        // eliminates the per-focusable `Vec<usize>` heap allocation that
-        // showed up on every focused widget × every frame. Closes #135.
-        const INLINE_CAP: usize = 8;
-        let mut buf = [0usize; INLINE_CAP];
-        let mut count = 0usize;
-        let mut overflow: Vec<usize> = Vec::new();
-
-        for (i, key) in self.available_key_presses() {
-            if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                if count < INLINE_CAP {
-                    buf[count] = i;
-                    count += 1;
+        // pipeline (well under 8 in practice). A `SmallVec` with an 8-slot
+        // inline capacity eliminates the per-focusable `Vec<usize>` heap
+        // allocation that showed up on every focused widget × every frame.
+        // Spillover beyond 8 falls back to the heap automatically. Closes #135.
+        let consumed: smallvec::SmallVec<[usize; 8]> = self
+            .available_key_presses()
+            .filter_map(|(i, key)| {
+                if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                    Some(i)
                 } else {
-                    overflow.push(i);
+                    None
                 }
-            }
-        }
-
-        let activated = count > 0 || !overflow.is_empty();
+            })
+            .collect();
+        let activated = !consumed.is_empty();
         if activated {
-            // `consume_indices` takes `IntoIterator<Item = usize>` — pass an
-            // iterator directly, no allocation needed for the inline path.
-            self.consume_indices(buf[..count].iter().copied().chain(overflow));
+            // `consume_indices` takes `IntoIterator<Item = usize>` — `SmallVec`
+            // satisfies that bound directly, no signature change needed.
+            self.consume_indices(consumed);
         }
         activated
     }
@@ -665,12 +660,18 @@ impl Context {
 
         // Slot already exists: it must be the same `(D, T)` shape we used last
         // frame, or the caller broke the rules-of-hooks contract.
-        match self.hook_states[idx].downcast_ref::<(D, T)>() {
-            Some((stored, _)) => {
-                if stored != deps {
-                    let value = compute(deps);
-                    self.hook_states[idx] = Box::new((deps.clone(), value));
+        //
+        // Single downcast on the cache-hit path (closes #133): use
+        // `downcast_mut` to update deps/value in place when they change, and
+        // return `&stored.1` directly — eliminating the redundant second
+        // `downcast_ref` that ran on every call regardless of cache state.
+        match self.hook_states[idx].downcast_mut::<(D, T)>() {
+            Some(stored) => {
+                if stored.0 != *deps {
+                    stored.0 = deps.clone();
+                    stored.1 = compute(deps);
                 }
+                &stored.1
             }
             None => panic!(
                 "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
@@ -678,11 +679,6 @@ impl Context {
                 std::any::type_name::<(D, T)>()
             ),
         }
-
-        self.hook_states[idx]
-            .downcast_ref::<(D, T)>()
-            .map(|(_, v)| v)
-            .expect("slot was just verified or replaced with the correct type")
     }
 
     /// Returns `light` color if current theme is light mode, `dark` color if dark mode.

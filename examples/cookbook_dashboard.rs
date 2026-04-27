@@ -64,18 +64,18 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Cookbook — Dashboard")
-            .pad(1)
+            .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {
                 let _ = ui.row_gap(2, |ui| {
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored("CPU", &format!("{:.1}%", m.cpu), Color::Cyan);
                     });
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored("Memory", &format!("{:.1}%", m.mem), Color::Yellow);
                     });
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let _ =
                             ui.stat_colored("Req/s", &format!("{:.0}", m.req_per_s), Color::Green);
                     });

@@ -25,7 +25,7 @@ async fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Async Demo")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("Background updates from tokio task")

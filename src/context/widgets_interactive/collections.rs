@@ -45,48 +45,7 @@ impl Context {
         f(self);
         let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
 
-        let mut elements: Vec<Vec<Command>> = Vec::new();
-        let mut iter = child_commands.into_iter().peekable();
-        let mut pending_markers: Vec<Command> = Vec::new();
-        while let Some(cmd) = iter.next() {
-            match cmd {
-                Command::InteractionMarker(_) => {
-                    pending_markers.push(cmd);
-                }
-                Command::BeginContainer(_) | Command::BeginScrollable(_) => {
-                    let mut depth = 1_u32;
-                    let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
-                    element.push(cmd);
-                    for next in iter.by_ref() {
-                        match next {
-                            Command::BeginContainer(_) | Command::BeginScrollable(_) => {
-                                depth += 1;
-                            }
-                            Command::EndContainer => {
-                                depth = depth.saturating_sub(1);
-                            }
-                            _ => {}
-                        }
-                        let at_end = matches!(next, Command::EndContainer) && depth == 0;
-                        element.push(next);
-                        if at_end {
-                            break;
-                        }
-                    }
-                    elements.push(element);
-                }
-                Command::EndContainer => {}
-                _ => {
-                    let mut element = std::mem::take(&mut pending_markers);
-                    element.push(cmd);
-                    elements.push(element);
-                }
-            }
-        }
-        // Flush any trailing markers (edge case: marker with no following command)
-        if !pending_markers.is_empty() {
-            elements.push(pending_markers);
-        }
+        let elements = collect_grid_elements(child_commands);
 
         let cols = cols.max(1) as usize;
         for row in elements.chunks(cols) {
@@ -201,47 +160,7 @@ impl Context {
         f(self);
         let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
 
-        let mut elements: Vec<Vec<Command>> = Vec::new();
-        let mut iter = child_commands.into_iter().peekable();
-        let mut pending_markers: Vec<Command> = Vec::new();
-        while let Some(cmd) = iter.next() {
-            match cmd {
-                Command::InteractionMarker(_) => {
-                    pending_markers.push(cmd);
-                }
-                Command::BeginContainer(_) | Command::BeginScrollable(_) => {
-                    let mut depth = 1_u32;
-                    let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
-                    element.push(cmd);
-                    for next in iter.by_ref() {
-                        match next {
-                            Command::BeginContainer(_) | Command::BeginScrollable(_) => {
-                                depth += 1;
-                            }
-                            Command::EndContainer => {
-                                depth = depth.saturating_sub(1);
-                            }
-                            _ => {}
-                        }
-                        let at_end = matches!(next, Command::EndContainer) && depth == 0;
-                        element.push(next);
-                        if at_end {
-                            break;
-                        }
-                    }
-                    elements.push(element);
-                }
-                Command::EndContainer => {}
-                _ => {
-                    let mut element = std::mem::take(&mut pending_markers);
-                    element.push(cmd);
-                    elements.push(element);
-                }
-            }
-        }
-        if !pending_markers.is_empty() {
-            elements.push(pending_markers);
-        }
+        let elements = collect_grid_elements(child_commands);
 
         for row in elements.chunks(cols) {
             self.skip_interaction_slot();
@@ -781,4 +700,56 @@ impl Context {
         response.changed = file_selected;
         response
     }
+}
+
+/// Group `child_commands` into per-cell command vectors for `grid()` / `grid_with()`.
+///
+/// Each container subtree (`BeginContainer`/`BeginScrollable` … matching `EndContainer`)
+/// becomes one element. Bare `InteractionMarker`s are flushed onto the next element so
+/// hit-testing slots stay attached to the cell that owns them. Trailing markers with
+/// no following command form their own (empty-content) element.
+fn collect_grid_elements(child_commands: Vec<Command>) -> Vec<Vec<Command>> {
+    let mut elements: Vec<Vec<Command>> = Vec::new();
+    let mut iter = child_commands.into_iter().peekable();
+    let mut pending_markers: Vec<Command> = Vec::new();
+    while let Some(cmd) = iter.next() {
+        match cmd {
+            Command::InteractionMarker(_) => {
+                pending_markers.push(cmd);
+            }
+            Command::BeginContainer(_) | Command::BeginScrollable(_) => {
+                let mut depth = 1_u32;
+                let mut element: Vec<Command> = std::mem::take(&mut pending_markers);
+                element.push(cmd);
+                for next in iter.by_ref() {
+                    match next {
+                        Command::BeginContainer(_) | Command::BeginScrollable(_) => {
+                            depth += 1;
+                        }
+                        Command::EndContainer => {
+                            depth = depth.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                    let at_end = matches!(next, Command::EndContainer) && depth == 0;
+                    element.push(next);
+                    if at_end {
+                        break;
+                    }
+                }
+                elements.push(element);
+            }
+            Command::EndContainer => {}
+            _ => {
+                let mut element = std::mem::take(&mut pending_markers);
+                element.push(cmd);
+                elements.push(element);
+            }
+        }
+    }
+    // Flush any trailing markers (edge case: marker with no following command)
+    if !pending_markers.is_empty() {
+        elements.push(pending_markers);
+    }
+    elements
 }
