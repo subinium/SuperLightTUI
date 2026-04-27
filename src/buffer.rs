@@ -312,7 +312,34 @@ impl Buffer {
     /// (e.g., CJK) occupy two columns; the trailing cell is blanked. Writes
     /// that fall outside the current clip region are skipped but still advance
     /// the cursor position.
-    pub fn set_string(&mut self, mut x: u32, y: u32, s: &str, style: Style) {
+    pub fn set_string(&mut self, x: u32, y: u32, s: &str, style: Style) {
+        self.set_string_inner(x, y, s, style, None);
+    }
+
+    /// Write a hyperlinked string into the buffer starting at `(x, y)`.
+    ///
+    /// Like [`Buffer::set_string`] but attaches an OSC 8 hyperlink URL to each
+    /// cell. The terminal renders these cells as clickable links.
+    pub fn set_string_linked(&mut self, x: u32, y: u32, s: &str, style: Style, url: &str) {
+        let link = sanitize_osc8_url(url).map(compact_str::CompactString::new);
+        self.set_string_inner(x, y, s, style, link.as_ref());
+    }
+
+    /// Shared implementation for [`Self::set_string`] and
+    /// [`Self::set_string_linked`].
+    ///
+    /// `link` is `Some` only for the OSC 8 path; both paths share clip,
+    /// wide-char, and zero-width grapheme handling. Keeping a single
+    /// implementation prevents the two call sites from drifting on edge cases
+    /// (e.g., `MAX_CELL_SYMBOL_BYTES` checks, wide-char blanking).
+    fn set_string_inner(
+        &mut self,
+        mut x: u32,
+        y: u32,
+        s: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+    ) {
         if y >= self.area.bottom() {
             return;
         }
@@ -355,6 +382,7 @@ impl Buffer {
             let cell = self.get_mut(x, y);
             cell.set_char(ch);
             cell.set_style(style);
+            cell.hyperlink = link.cloned();
 
             // Wide characters occupy two cells; blank the trailing cell.
             if char_width > 1 {
@@ -363,69 +391,7 @@ impl Buffer {
                     let next = self.get_mut(next_x, y);
                     next.symbol.clear();
                     next.style = style;
-                }
-            }
-
-            x = x.saturating_add(char_width);
-        }
-    }
-
-    /// Write a hyperlinked string into the buffer starting at `(x, y)`.
-    ///
-    /// Like [`Buffer::set_string`] but attaches an OSC 8 hyperlink URL to each
-    /// cell. The terminal renders these cells as clickable links.
-    pub fn set_string_linked(&mut self, mut x: u32, y: u32, s: &str, style: Style, url: &str) {
-        if y >= self.area.bottom() {
-            return;
-        }
-        let clip = self.effective_clip().copied();
-        let sanitized_url = sanitize_osc8_url(url);
-        let link = sanitized_url.map(compact_str::CompactString::new);
-        for ch in s.chars() {
-            if x >= self.area.right() {
-                break;
-            }
-            let ch = sanitize_cell_char(ch);
-            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            if char_width == 0 {
-                if x > self.area.x {
-                    let prev_in_clip = clip.map_or(true, |clip| {
-                        (x - 1) >= clip.x
-                            && (x - 1) < clip.right()
-                            && y >= clip.y
-                            && y < clip.bottom()
-                    });
-                    if prev_in_clip {
-                        let prev = self.get_mut(x - 1, y);
-                        if prev.symbol.len() + ch.len_utf8() <= MAX_CELL_SYMBOL_BYTES {
-                            prev.symbol.push(ch);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            let in_clip = clip.map_or(true, |clip| {
-                x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
-            });
-
-            if !in_clip {
-                x = x.saturating_add(char_width);
-                continue;
-            }
-
-            let cell = self.get_mut(x, y);
-            cell.set_char(ch);
-            cell.set_style(style);
-            cell.hyperlink = link.clone();
-
-            if char_width > 1 {
-                let next_x = x + 1;
-                if next_x < self.area.right() {
-                    let next = self.get_mut(next_x, y);
-                    next.symbol.clear();
-                    next.style = style;
-                    next.hyperlink = link.clone();
+                    next.hyperlink = link.cloned();
                 }
             }
 
@@ -450,9 +416,21 @@ impl Buffer {
 
     /// Compute the diff between `self` (current) and `other` (previous).
     ///
-    /// Returns `(x, y, cell)` tuples for every cell that changed. The run loop
-    /// uses this to emit only the minimal set of terminal escape sequences
-    /// needed to update the display.
+    /// Returns `(x, y, cell)` tuples for every cell that changed. Useful for
+    /// custom backends or tests that need to inspect changed cells directly.
+    ///
+    /// # Allocation
+    ///
+    /// Allocates a new [`Vec`] on every call. For high-frequency use
+    /// (per-frame diffing in a render loop), prefer the internal
+    /// `flush_buffer_diff` path used by [`crate::run`], which streams updates
+    /// directly to the backend without an intermediate `Vec`. Calling
+    /// `diff()` on every frame in a 60 fps loop adds one heap allocation
+    /// (sized to the changed-cell count) per frame.
+    ///
+    /// # Benchmarks
+    ///
+    /// `benches/benchmarks.rs` exercises this path in `bench_buffer_diff`.
     pub fn diff<'a>(&'a self, other: &'a Buffer) -> Vec<(u32, u32, &'a Cell)> {
         let mut updates = Vec::new();
         for y in self.area.y..self.area.bottom() {
@@ -504,34 +482,47 @@ impl Buffer {
     }
 }
 
+/// Maximum byte length for OSC 8 hyperlink URLs.
+///
+/// Longer than any legitimate URL and enough to prevent DoS via
+/// balloon-sized hyperlinks. Shared by [`is_valid_osc8_url`] and
+/// [`sanitize_osc8_url`] so both gates agree on acceptance.
+const MAX_OSC8_URL_BYTES: usize = 2048;
+
+/// Returns `true` if `url` is safe to emit as an OSC 8 hyperlink payload.
+///
+/// Equivalent to `sanitize_osc8_url(url).is_some()` but avoids the `String`
+/// allocation when callers only need a boolean validity check (e.g.,
+/// defense-in-depth validation of a public `Cell::hyperlink` field on the
+/// flush path).
+#[inline]
+pub(crate) fn is_valid_osc8_url(url: &str) -> bool {
+    if url.is_empty() || url.len() > MAX_OSC8_URL_BYTES {
+        return false;
+    }
+    // Reject all C0 controls (incl. BEL 0x07, ESC 0x1b), DEL 0x7f, and
+    // anything below 0x20. ESC enables the ST (ESC \) terminator trick;
+    // BEL is the legacy OSC terminator. Either would let an
+    // attacker-controlled URL prematurely close the OSC 8 sequence and
+    // inject arbitrary follow-up commands (e.g., OSC 52 clipboard writes).
+    url.bytes().all(|b| b >= 0x20 && b != 0x7f)
+}
+
 /// Validate an OSC 8 hyperlink URL, returning `Some(url)` if safe to emit.
 ///
 /// Rejects URLs containing control bytes, the BEL terminator, or an
 /// embedded ST (`ESC \`). Those would let an attacker-controlled URL
 /// prematurely close the OSC 8 sequence and inject arbitrary follow-up
-/// commands (e.g., OSC 52 clipboard writes). Also caps length at 2048
-/// bytes — longer than any legitimate URL and enough to prevent DoS via
-/// balloon-sized hyperlinks.
+/// commands (e.g., OSC 52 clipboard writes). Also caps length at
+/// [`MAX_OSC8_URL_BYTES`] (2048).
+///
+/// For boolean validation (no allocation), use [`is_valid_osc8_url`].
 pub(crate) fn sanitize_osc8_url(url: &str) -> Option<String> {
-    const MAX_URL_BYTES: usize = 2048;
-    if url.is_empty() || url.len() > MAX_URL_BYTES {
-        return None;
+    if is_valid_osc8_url(url) {
+        Some(url.to_string())
+    } else {
+        None
     }
-    let bytes = url.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        // Reject all C0 controls (incl. BEL, ESC), DEL, and C1 control range.
-        if b < 0x20 || b == 0x7f {
-            return None;
-        }
-        // Reject raw ESC \ (ST terminator) just in case something sneaked through.
-        if b == 0x1b {
-            return None;
-        }
-        i += 1;
-    }
-    Some(url.to_string())
 }
 
 fn intersect_rects(a: Rect, b: Rect) -> Rect {
@@ -645,6 +636,70 @@ mod tests {
         // Empty / oversize.
         assert!(sanitize_osc8_url("").is_none());
         assert!(sanitize_osc8_url(&"a".repeat(2049)).is_none());
+    }
+
+    #[test]
+    fn is_valid_osc8_url_matches_sanitize() {
+        // is_valid_osc8_url must agree with sanitize_osc8_url on every input.
+        // If the two ever drift, the OSC 8 flush path either rejects
+        // legitimate URLs (silent) or admits dangerous ones (security).
+        let oversize = "x".repeat(2049);
+        let cases: &[&str] = &[
+            "https://example.com",
+            "http://localhost:8080/path?q=1#frag",
+            "ftp://[::1]/file",
+            "",
+            &oversize,
+            "https://evil.com\x1b]52;c;inject\x1b\\",
+            "https://evil.com\x07bel",
+            "https://example.com\x7f",
+            "https://example.com\x00",
+        ];
+        for url in cases {
+            assert_eq!(
+                is_valid_osc8_url(url),
+                sanitize_osc8_url(url).is_some(),
+                "is_valid_osc8_url and sanitize_osc8_url disagree on {url:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_string_inner_parity_no_link() {
+        // set_string and set_string_linked with an invalid URL must produce
+        // identical buffer state (link rejected → None).
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf_a = Buffer::empty(area);
+        let mut buf_b = Buffer::empty(area);
+        let style = Style::new();
+
+        buf_a.set_string(0, 0, "Hello wide世界", style);
+        buf_b.set_string_linked(0, 0, "Hello wide世界", style, "");
+
+        for x in 0..20 {
+            let ca = buf_a.get(x, 0);
+            let cb = buf_b.get(x, 0);
+            assert_eq!(ca.symbol, cb.symbol, "symbol mismatch at x={x}");
+            assert_eq!(ca.style, cb.style, "style mismatch at x={x}");
+            assert_eq!(
+                cb.hyperlink, None,
+                "invalid URL must produce None hyperlink at x={x}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_string_linked_attaches_hyperlink_to_wide_char_pair() {
+        // Wide chars span two cells; both must carry the same hyperlink.
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+        buf.set_string_linked(0, 0, "世", Style::new(), "https://example.com");
+        let leading = buf.get(0, 0);
+        let trailing = buf.get(1, 0);
+        assert_eq!(leading.symbol, "世");
+        assert!(trailing.symbol.is_empty(), "wide-char trailing must blank");
+        assert!(leading.hyperlink.is_some());
+        assert_eq!(leading.hyperlink, trailing.hyperlink);
     }
 
     #[test]

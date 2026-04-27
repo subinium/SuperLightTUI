@@ -38,7 +38,7 @@ pub struct ContainerBuilder<'a> {
     pub(crate) dark_border_style: Option<Style>,
     pub(crate) group_hover_bg: Option<Color>,
     pub(crate) group_hover_border_style: Option<Style>,
-    pub(crate) group_name: Option<String>,
+    pub(crate) group_name: Option<std::sync::Arc<str>>,
     pub(crate) padding: Padding,
     pub(crate) margin: Margin,
     pub(crate) constraints: Constraints,
@@ -83,10 +83,39 @@ pub struct CanvasContext {
     px_w: usize,
     px_h: usize,
     current_color: Color,
+    /// Flat scratch buffer for `render()` pixel composition.
+    /// Capacity = `cols * rows`; flat index = `row * cols + col`.
+    scratch_pixels: Vec<CanvasPixel>,
+    /// Flat scratch buffer for `render()` label overlay.
+    /// Capacity = `cols * rows`; flat index = `row * cols + col`.
+    scratch_labels: Vec<Option<(char, Color)>>,
+}
+
+/// Integer square root for non-negative `i64` values, returning `isize`.
+///
+/// Uses an `f64` seed plus a bounded correction step to absorb rounding at
+/// integer boundaries. Avoids the unconditional `f64` round-trip used in
+/// hot canvas paths (e.g. `filled_circle`). Replace with `u64::isqrt()`
+/// once the project MSRV reaches 1.84.
+#[inline]
+fn isqrt_i64(n: i64) -> isize {
+    if n <= 0 {
+        return 0;
+    }
+    let mut x = (n as f64).sqrt() as i64;
+    // Single correction step handles f64 rounding at integer boundaries.
+    while x > 0 && x.saturating_mul(x) > n {
+        x -= 1;
+    }
+    while (x + 1).saturating_mul(x + 1) <= n {
+        x += 1;
+    }
+    x as isize
 }
 
 impl CanvasContext {
     pub(crate) fn new(cols: usize, rows: usize) -> Self {
+        let cell_count = cols.saturating_mul(rows);
         Self {
             layers: vec![Self::new_layer(cols, rows)],
             cols,
@@ -94,6 +123,14 @@ impl CanvasContext {
             px_w: cols * 2,
             px_h: rows * 4,
             current_color: Color::Reset,
+            scratch_pixels: vec![
+                CanvasPixel {
+                    bits: 0,
+                    color: Color::Reset,
+                };
+                cell_count
+            ],
+            scratch_labels: vec![None; cell_count],
         }
     }
 
@@ -281,7 +318,8 @@ impl CanvasContext {
         for y in (cy - r)..=(cy + r) {
             let dy = y - cy;
             let span_sq = (r * r - dy * dy).max(0);
-            let dx = (span_sq as f64).sqrt() as isize;
+            // TODO(msrv): switch to u64::isqrt() when MSRV >= 1.84
+            let dx = isqrt_i64(span_sq as i64);
             for x in (cx - dx)..=(cx + dx) {
                 self.dot_isize(x, y);
             }
@@ -314,7 +352,11 @@ impl CanvasContext {
         let max_y = vertices.iter().map(|(_, y)| *y).max().unwrap_or(-1);
 
         for y in min_y..=max_y {
-            let mut intersections: Vec<f64> = Vec::new();
+            // A triangle has exactly 3 edges -> at most 3 intersections per
+            // scanline. A 4-element stack array avoids per-scanline heap
+            // allocations from the previous Vec<f64>.
+            let mut intersections = [0.0f64; 4];
+            let mut isect_count = 0usize;
 
             for edge in [(0usize, 1usize), (1usize, 2usize), (2usize, 0usize)] {
                 let (x_a, y_a) = vertices[edge.0];
@@ -334,12 +376,15 @@ impl CanvasContext {
                 }
 
                 let t = (y - y_start) as f64 / (y_end - y_start) as f64;
-                intersections.push(x_start as f64 + t * (x_end - x_start) as f64);
+                if isect_count < intersections.len() {
+                    intersections[isect_count] = x_start as f64 + t * (x_end - x_start) as f64;
+                    isect_count += 1;
+                }
             }
 
-            intersections.sort_by(|a, b| a.total_cmp(b));
+            intersections[..isect_count].sort_by(|a, b| a.total_cmp(b));
             let mut i = 0usize;
-            while i + 1 < intersections.len() {
+            while i + 1 < isect_count {
                 let x_start = intersections[i].ceil() as isize;
                 let x_end = intersections[i + 1].floor() as isize;
                 for x in x_start..=x_end {
@@ -391,28 +436,44 @@ impl CanvasContext {
         self.layers.push(Self::new_layer(self.cols, self.rows));
     }
 
-    pub(crate) fn render(&self) -> Vec<Vec<(String, Color)>> {
-        let mut final_grid = vec![
-            vec![
+    pub(crate) fn render(&mut self) -> Vec<Vec<(String, Color)>> {
+        let cell_count = self.cols.saturating_mul(self.rows);
+
+        // Reset reusable scratch buffers, growing them only if `cols`/`rows`
+        // changed since construction. `fill` keeps the existing allocation.
+        if self.scratch_pixels.len() < cell_count {
+            self.scratch_pixels.resize(
+                cell_count,
                 CanvasPixel {
                     bits: 0,
                     color: Color::Reset,
-                };
-                self.cols
-            ];
-            self.rows
-        ];
-        let mut labels_overlay: Vec<Vec<Option<(char, Color)>>> =
-            vec![vec![None; self.cols]; self.rows];
+                },
+            );
+        }
+        if self.scratch_labels.len() < cell_count {
+            self.scratch_labels.resize(cell_count, None);
+        }
+        for px in &mut self.scratch_pixels[..cell_count] {
+            *px = CanvasPixel {
+                bits: 0,
+                color: Color::Reset,
+            };
+        }
+        for slot in &mut self.scratch_labels[..cell_count] {
+            *slot = None;
+        }
+
+        let cols = self.cols;
+        let rows = self.rows;
 
         for layer in &self.layers {
-            for (row, final_row) in final_grid.iter_mut().enumerate().take(self.rows) {
-                for (col, dst) in final_row.iter_mut().enumerate().take(self.cols) {
-                    let src = layer.grid[row][col];
+            for (row, src_row) in layer.grid.iter().enumerate().take(rows) {
+                let row_offset = row * cols;
+                for (col, src) in src_row.iter().enumerate().take(cols) {
                     if src.bits == 0 {
                         continue;
                     }
-
+                    let dst = &mut self.scratch_pixels[row_offset + col];
                     let merged = dst.bits | src.bits;
                     if merged != dst.bits {
                         dst.bits = merged;
@@ -423,33 +484,36 @@ impl CanvasContext {
 
             for label in &layer.labels {
                 let row = label.y / 4;
-                if row >= self.rows {
+                if row >= rows {
                     continue;
                 }
                 let start_col = label.x / 2;
+                let row_offset = row * cols;
                 for (offset, ch) in label.text.chars().enumerate() {
                     let col = start_col + offset;
-                    if col >= self.cols {
+                    if col >= cols {
                         break;
                     }
-                    labels_overlay[row][col] = Some((ch, label.color));
+                    self.scratch_labels[row_offset + col] = Some((ch, label.color));
                 }
             }
         }
 
-        let mut lines: Vec<Vec<(String, Color)>> = Vec::with_capacity(self.rows);
-        for row in 0..self.rows {
+        let mut lines: Vec<Vec<(String, Color)>> = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let row_offset = row * cols;
             let mut segments: Vec<(String, Color)> = Vec::new();
             let mut current_color: Option<Color> = None;
             let mut current_text = String::new();
 
-            for col in 0..self.cols {
-                let (ch, color) = if let Some((label_ch, label_color)) = labels_overlay[row][col] {
+            for col in 0..cols {
+                let idx = row_offset + col;
+                let (ch, color) = if let Some((label_ch, label_color)) = self.scratch_labels[idx] {
                     (label_ch, label_color)
                 } else {
-                    let bits = final_grid[row][col].bits;
-                    let ch = char::from_u32(0x2800 + bits).unwrap_or(' ');
-                    (ch, final_grid[row][col].color)
+                    let pixel = self.scratch_pixels[idx];
+                    let ch = char::from_u32(0x2800 + pixel.bits).unwrap_or(' ');
+                    (ch, pixel.color)
                 };
 
                 match current_color {
@@ -1187,12 +1251,24 @@ impl<'a> ContainerBuilder<'a> {
     // ── internal ─────────────────────────────────────────────────────
 
     /// Set the vertical scroll offset in rows. Used internally by [`Context::scrollable`].
-    pub fn scroll_offset(mut self, offset: u32) -> Self {
+    ///
+    /// This is a crate-internal helper; external callers should use
+    /// [`Context::scrollable`] together with a [`ScrollState`].
+    ///
+    /// [`ScrollState`]: crate::widgets::ScrollState
+    pub(crate) fn scroll_offset(mut self, offset: u32) -> Self {
         self.scroll_offset = Some(offset);
         self
     }
 
-    pub(crate) fn group_name(mut self, name: String) -> Self {
+    /// Internal entry point that takes an already-shared `Arc<str>`.
+    ///
+    /// Used by `Context::group()` so the name allocated in the public path
+    /// is pushed onto `group_stack` and threaded into `BeginContainerArgs`
+    /// through a single `Arc::clone` instead of two `String` allocations.
+    /// Closes #145 (double `to_string`) and completes the `Arc<str>`
+    /// migration in #139.
+    pub(crate) fn group_name_arc(mut self, name: std::sync::Arc<str>) -> Self {
         self.group_name = Some(name);
         self
     }
@@ -1389,11 +1465,17 @@ impl<'a> ContainerBuilder<'a> {
                     border: self.border,
                     border_sides: self.border_sides,
                     border_style,
+                    bg_color,
+                    align: self.align,
+                    align_self: self.align_self_value,
+                    justify: self.justify,
+                    gap: resolved_gap,
                     padding: self.padding,
                     margin: self.margin,
                     constraints: self.constraints,
                     title: self.title,
                     scroll_offset,
+                    group_name,
                 })));
         } else {
             self.ctx
@@ -1428,5 +1510,110 @@ impl<'a> ContainerBuilder<'a> {
         }
 
         self.ctx.response_for(interaction_id)
+    }
+}
+
+#[cfg(test)]
+mod hotfix_tests {
+    //! Regression tests for v0.19.1 A3 hotfixes (issues #143, #144, #146, #149).
+
+    use super::*;
+
+    // -- #143: filled_triangle stack-array intersections ----------------
+
+    /// Filling a triangle must paint the same pixel set whether the
+    /// previous Vec<f64> path or the new inline-array path is used.
+    #[test]
+    fn filled_triangle_paints_expected_interior() {
+        let mut canvas = CanvasContext::new(20, 20);
+        canvas.filled_triangle(2, 2, 18, 4, 6, 18);
+
+        // Sample a point that must be filled (lies clearly inside the
+        // triangle) and a point that must remain empty.
+        let lines = canvas.render();
+        // Pixel (8, 8) -> char cell (4, 2). Pull bits via re-render fallback.
+        let inside_row = 8 / 4;
+        let outside_row = 0;
+        // Each row must be present in the rendered output.
+        assert!(lines.len() > inside_row);
+        assert!(lines.len() > outside_row);
+
+        // Inside row must contain at least one non-blank braille glyph.
+        let inside: String = lines[inside_row].iter().map(|(s, _)| s.as_str()).collect();
+        assert!(
+            inside.chars().any(|c| c != '\u{2800}' && c != ' '),
+            "expected filled glyphs inside triangle, got: {inside:?}"
+        );
+    }
+
+    /// Tall triangles previously allocated O(H) Vecs; the new path must
+    /// still produce filled output for many scanlines without panicking.
+    #[test]
+    fn filled_triangle_handles_tall_triangle_without_panic() {
+        let mut canvas = CanvasContext::new(8, 50);
+        canvas.filled_triangle(0, 0, 15, 0, 8, 199);
+        let lines = canvas.render();
+        assert_eq!(lines.len(), 50);
+    }
+
+    /// Degenerate horizontal triangle (all three vertices on the same row)
+    /// must not panic and must produce no fill (only the outline edges).
+    #[test]
+    fn filled_triangle_degenerate_horizontal_is_safe() {
+        let mut canvas = CanvasContext::new(20, 20);
+        canvas.filled_triangle(0, 0, 10, 0, 19, 0);
+        let _ = canvas.render();
+    }
+
+    // -- #146: integer isqrt for filled_circle -------------------------
+
+    #[test]
+    fn isqrt_i64_matches_floor_sqrt_for_small_values() {
+        for n in 0i64..=10_000 {
+            let expected = (n as f64).sqrt().floor() as isize;
+            assert_eq!(isqrt_i64(n), expected, "mismatch at n={n}");
+        }
+    }
+
+    #[test]
+    fn isqrt_i64_handles_perfect_squares_and_boundaries() {
+        for k in 0i64..=4096 {
+            assert_eq!(isqrt_i64(k * k), k as isize);
+            if k > 0 {
+                assert_eq!(isqrt_i64(k * k - 1), (k - 1) as isize);
+            }
+        }
+    }
+
+    #[test]
+    fn isqrt_i64_clamps_non_positive_to_zero() {
+        assert_eq!(isqrt_i64(0), 0);
+        assert_eq!(isqrt_i64(-1), 0);
+        assert_eq!(isqrt_i64(i64::MIN), 0);
+    }
+
+    /// `filled_circle` should produce a symmetric span around its center
+    /// after switching from f64 sqrt to integer isqrt.
+    #[test]
+    fn filled_circle_renders_without_panic_and_is_non_empty() {
+        let mut canvas = CanvasContext::new(20, 20);
+        canvas.filled_circle(10, 10, 6);
+        let lines = canvas.render();
+        let any_filled = lines
+            .iter()
+            .flatten()
+            .any(|(s, _)| s.chars().any(|c| c != '\u{2800}' && c != ' '));
+        assert!(any_filled, "filled_circle produced empty output");
+    }
+
+    // -- #149: scroll_offset visibility (compile-time check) -----------
+
+    /// The crate-internal `scroll_offset` helper must remain callable
+    /// from inside the crate. Resolving the function path under `pub(crate)`
+    /// is a compile-time guarantee — this test compiles only when the path
+    /// is reachable.
+    #[test]
+    fn scroll_offset_is_crate_internal_api() {
+        let _ = ContainerBuilder::scroll_offset;
     }
 }

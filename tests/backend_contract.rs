@@ -226,3 +226,35 @@ fn frame_uses_backend_size_after_resize() {
     .unwrap();
     assert_eq!(backend.snapshot(), "1234567890");
 }
+
+#[test]
+fn run_config_default_caps_at_sixty_fps() {
+    // RunConfig defaults to a 60 fps cap. Sanity check before exercising the
+    // chain methods below.
+    let config = RunConfig::default();
+    assert_eq!(config.max_fps, Some(60));
+}
+
+#[test]
+fn run_config_no_fps_cap_clears_max_fps() {
+    // `no_fps_cap()` must reset `max_fps` to `None` so the run loop skips the
+    // sleep step (issue #87).
+    let config = RunConfig::default().no_fps_cap();
+    assert!(config.max_fps.is_none());
+}
+
+#[test]
+fn run_config_no_fps_cap_after_max_fps() {
+    // `no_fps_cap()` after `max_fps(...)` must win — builder ordering matters
+    // (issue #87).
+    let config = RunConfig::default().max_fps(120).no_fps_cap();
+    assert!(config.max_fps.is_none());
+}
+
+#[test]
+fn run_config_max_fps_after_no_fps_cap() {
+    // `max_fps(...)` after `no_fps_cap()` must reinstate the cap. Confirms the
+    // builder is symmetric and chainable in either order.
+    let config = RunConfig::default().no_fps_cap().max_fps(30);
+    assert_eq!(config.max_fps, Some(30));
+}

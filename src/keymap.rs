@@ -75,6 +75,31 @@ impl KeyMap {
         self
     }
 
+    /// Bind a special key with modifier keys (Ctrl+Enter, Alt+Up, Shift+F5, etc.).
+    ///
+    /// Unlike [`KeyMap::bind_mod`], which is restricted to character keys, this
+    /// accepts any [`KeyCode`] together with optional modifier keys.
+    ///
+    /// # Example
+    /// ```
+    /// use slt::{KeyMap, KeyCode, KeyModifiers};
+    ///
+    /// let km = KeyMap::new()
+    ///     .bind_code_mod(KeyCode::Enter, KeyModifiers::CONTROL, "Submit")
+    ///     .bind_code_mod(KeyCode::Up, KeyModifiers::ALT, "Jump to top");
+    /// ```
+    pub fn bind_code_mod(mut self, key: KeyCode, mods: KeyModifiers, description: &str) -> Self {
+        let display = display_for_code_mod(&key, mods);
+        self.bindings.push(Binding {
+            key,
+            modifiers: Some(mods),
+            display,
+            description: description.to_string(),
+            visible: true,
+        });
+        self
+    }
+
     /// Bind but hide from help bar display.
     pub fn bind_hidden(mut self, key: char, description: &str) -> Self {
         self.bindings.push(Binding {
@@ -120,6 +145,35 @@ fn display_for_key_code(key: &KeyCode) -> String {
         KeyCode::Menu => "Menu".to_string(),
         KeyCode::KeypadBegin => "KP5".to_string(),
         KeyCode::F(n) => format!("F{n}"),
+    }
+}
+
+fn display_for_code_mod(key: &KeyCode, mods: KeyModifiers) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if mods.contains(KeyModifiers::CONTROL) {
+        parts.push("Ctrl");
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        parts.push("Alt");
+    }
+    if mods.contains(KeyModifiers::SHIFT) {
+        parts.push("Shift");
+    }
+    if mods.contains(KeyModifiers::SUPER) {
+        parts.push("Super");
+    }
+    if mods.contains(KeyModifiers::HYPER) {
+        parts.push("Hyper");
+    }
+    if mods.contains(KeyModifiers::META) {
+        parts.push("Meta");
+    }
+
+    let key_label = display_for_key_code(key);
+    if parts.is_empty() {
+        key_label
+    } else {
+        format!("{}+{}", parts.join("+"), key_label)
     }
 }
 

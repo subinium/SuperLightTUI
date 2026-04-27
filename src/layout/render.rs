@@ -2,13 +2,13 @@ use super::flexbox::inner_area;
 use super::*;
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
-    render_inner(node, buf, 0, None);
+    render_inner(node, buf, 0, None, 0);
     buf.clip_stack.clear();
     for overlay in &node.overlays {
         if overlay.modal {
             dim_entire_buffer(buf);
         }
-        render_inner(&overlay.node, buf, 0, None);
+        render_inner(&overlay.node, buf, 0, None, 0);
     }
 }
 
@@ -174,7 +174,22 @@ fn visible_area(node: &LayoutNode, y_offset: u32) -> Option<Rect> {
     Some(Rect::new(node.pos.0, clamped_y, node.size.0, clamped_h))
 }
 
-fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: Option<Color>) {
+fn render_inner(
+    node: &LayoutNode,
+    buf: &mut Buffer,
+    y_offset: u32,
+    parent_bg: Option<Color>,
+    depth: usize,
+) {
+    // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. Same rationale as the
+    // build/compute/collect guards: surface a diagnostic panic instead of a
+    // silent stack overflow if a synthetic tree slips past `build_children`.
+    if depth > super::tree::MAX_LAYOUT_DEPTH {
+        panic!(
+            "layout tree depth exceeds {}: check for recursive container nesting",
+            super::tree::MAX_LAYOUT_DEPTH
+        );
+    }
     if node.size.0 == 0 || node.size.1 == 0 {
         return;
     }
@@ -347,7 +362,7 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
                     if child_bottom <= render_y_start || child_top >= render_y_end {
                         continue;
                     }
-                    render_inner(child, buf, child_offset, child_bg);
+                    render_inner(child, buf, child_offset, child_bg, depth + 1);
                 }
                 buf.pop_clip();
                 render_scroll_indicators(node, inner, buf, child_bg);
@@ -358,7 +373,7 @@ fn render_inner(node: &LayoutNode, buf: &mut Buffer, y_offset: u32, parent_bg: O
                 let clip = inner_area(node, area);
                 buf.push_clip(clip);
                 for child in &node.children {
-                    render_inner(child, buf, y_offset, child_bg);
+                    render_inner(child, buf, y_offset, child_bg, depth + 1);
                 }
                 buf.pop_clip();
             }
@@ -478,10 +493,36 @@ fn render_container_border(
             }
             let y = top_i as u32;
             let title_x = x.saturating_add(2);
-            if title_x <= right {
-                let max_width = (right - title_x + 1) as usize;
-                let trimmed: String = title.chars().take(max_width).collect();
+            // The right corner sits at `right`. When the right side is drawn we
+            // must keep that column intact, so the writable title area ends at
+            // `right - 1`. With no right border we can use the full row.
+            let title_right = if sides.right {
+                right.saturating_sub(1)
+            } else {
+                right
+            };
+            if title_x <= title_right {
+                let max_width = (title_right - title_x + 1) as usize;
+                let mut trimmed = String::new();
+                let mut col_used = 0usize;
+                for ch in title.chars() {
+                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if col_used + cw > max_width {
+                        break;
+                    }
+                    trimmed.push(ch);
+                    col_used += cw;
+                }
                 buf.set_string(title_x, y, &trimmed, ts);
+                // Blank any leftover horizontal-bar cells inside the title
+                // area so we end up with `┌─Title    ┐` rather than
+                // `┌─Title──┐`. This keeps the title region's display width
+                // bounded by the title text itself, even when the title is
+                // shorter than the allotted area (e.g. CJK truncation).
+                let blank_start = title_x.saturating_add(col_used as u32);
+                for xx in blank_start..=title_right {
+                    buf.set_char(xx, y, ' ', ts);
+                }
             }
         }
     }
@@ -537,6 +578,7 @@ fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -557,5 +599,99 @@ mod tests {
         render(&node, &mut buf);
 
         assert_eq!(buf.cursor_pos(), Some((5, 1)));
+    }
+
+    #[test]
+    fn border_title_cjk_truncates_within_box() {
+        use crate::style::{Align, Border, Constraints, Justify, Margin, Padding};
+        use unicode_width::UnicodeWidthStr;
+
+        // Box: w=8, border=Single => inner w=6, title area = right - title_x + 1 = 5
+        // "설정창" = 3 CJK × 2 cols = 6 display cols > 5 → must truncate to "설정" (4 cols)
+        let mut root = LayoutNode::container(
+            Direction::Row,
+            super::tree::ContainerConfig {
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Single),
+                border_sides: BorderSides::all(),
+                border_style: Style::new(),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: Some(("설정창".to_string(), Style::new())),
+                grow: 0,
+            },
+        );
+
+        let area = Rect::new(0, 0, 8, 4);
+        super::flexbox::compute(&mut root, area);
+        let mut buf = Buffer::empty(area);
+        render(&root, &mut buf);
+
+        // Collect all chars in top row (y=0)
+        let top_row: String = (0..8u32)
+            .map(|x| buf.get(x, 0).symbol.chars().next().unwrap_or(' '))
+            .collect();
+
+        // Right border char (x=7) must be '┐' (Single border corner), not a CJK char
+        let right_border = buf.get(7, 0).symbol.chars().next().unwrap_or(' ');
+        assert_eq!(
+            right_border, '┐',
+            "right border overwritten by CJK title overflow; top row: {top_row:?}"
+        );
+
+        // Title region (x=2..7) display width must not exceed 5
+        let title_region: String = (2..7u32)
+            .map(|x| buf.get(x, 0).symbol.chars().next().unwrap_or(' '))
+            .collect();
+        let title_display_width = UnicodeWidthStr::width(title_region.trim_end());
+        assert!(
+            title_display_width <= 5,
+            "title display width {title_display_width} > 5; title region: {title_region:?}"
+        );
+    }
+
+    #[test]
+    fn border_title_ascii_unchanged() {
+        use crate::style::{Align, Border, Constraints, Justify, Margin, Padding};
+
+        // Box: w=10, title="Hello" (5 ASCII chars = 5 cols), fits in title area (7 cols)
+        let mut root = LayoutNode::container(
+            Direction::Row,
+            super::tree::ContainerConfig {
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Single),
+                border_sides: BorderSides::all(),
+                border_style: Style::new(),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: Some(("Hello".to_string(), Style::new())),
+                grow: 0,
+            },
+        );
+
+        let area = Rect::new(0, 0, 10, 3);
+        super::flexbox::compute(&mut root, area);
+        let mut buf = Buffer::empty(area);
+        render(&root, &mut buf);
+
+        // Title chars at x=2..7 must spell "Hello"
+        let rendered: String = (2..7u32)
+            .map(|x| buf.get(x, 0).symbol.chars().next().unwrap_or(' '))
+            .collect();
+        assert_eq!(rendered, "Hello", "ASCII title should render unchanged");
+
+        // Right border must be intact
+        let right_border = buf.get(9, 0).symbol.chars().next().unwrap_or(' ');
+        assert_eq!(right_border, '┐', "right border must not be overwritten");
     }
 }

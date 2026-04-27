@@ -47,6 +47,15 @@ pub enum Color {
     Indexed(u8),
 }
 
+#[inline]
+fn to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 impl Color {
     /// Resolve to `(r, g, b)` for luminance and blending operations.
     ///
@@ -95,17 +104,17 @@ impl Color {
     /// ```
     pub fn luminance(self) -> f32 {
         let (r, g, b) = self.to_rgb();
-        let rf = r as f32 / 255.0;
-        let gf = g as f32 / 255.0;
-        let bf = b as f32 / 255.0;
+        let rf = to_linear(r as f32 / 255.0);
+        let gf = to_linear(g as f32 / 255.0);
+        let bf = to_linear(b as f32 / 255.0);
         0.2126 * rf + 0.7152 * gf + 0.0722 * bf
     }
 
     /// Return a contrasting foreground color for the given background.
     ///
-    /// Uses the BT.709 luminance threshold (0.5) to decide between white
-    /// and black text. For theme-aware contrast, prefer using this over
-    /// hardcoding `theme.bg` as the foreground.
+    /// Uses the WCAG 2.1 relative luminance threshold (0.179) to decide
+    /// between white and black text. For theme-aware contrast, prefer using
+    /// this over hardcoding `theme.bg` as the foreground.
     ///
     /// # Example
     ///
@@ -114,10 +123,10 @@ impl Color {
     ///
     /// let bg = Color::Rgb(189, 147, 249); // Dracula purple
     /// let fg = Color::contrast_fg(bg);
-    /// // Purple is mid-bright → returns black for readable text
+    /// // Dracula purple → white (WCAG luminance 0.385 < 0.179 threshold)
     /// ```
     pub fn contrast_fg(bg: Color) -> Color {
-        if bg.luminance() > 0.5 {
+        if bg.luminance() > 0.179 {
             Color::Rgb(0, 0, 0)
         } else {
             Color::Rgb(255, 255, 255)
@@ -299,7 +308,7 @@ fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
         if r < 8 {
             return 16;
         }
-        if r > 248 {
+        if r >= 248 {
             return 231;
         }
         return 232 + (((r as u16 - 8) * 24 / 240) as u8);
@@ -324,8 +333,9 @@ fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
 }
 
 fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
-    let lum =
-        0.2126 * (r as f32 / 255.0) + 0.7152 * (g as f32 / 255.0) + 0.0722 * (b as f32 / 255.0);
+    let lum = 0.2126 * to_linear(r as f32 / 255.0)
+        + 0.7152 * to_linear(g as f32 / 255.0)
+        + 0.0722 * to_linear(b as f32 / 255.0);
 
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -336,12 +346,23 @@ fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
     };
 
     if saturation < 0.2 {
-        return if lum < 0.15 {
-            Color::Black
-        } else {
-            Color::White
+        // Grayscale: classify purely by luminance.
+        return match lum {
+            l if l < 0.05 => Color::Black,
+            l if l < 0.25 => Color::DarkGray,
+            l if l < 0.7 => Color::White,
+            _ => Color::White, // LightWhite is not available in Color enum
         };
     }
+
+    // For chromatic colors the "bright" variant of each ANSI hue (e.g. xterm
+    // LightRed = `(255, 85, 85)`) is distinguished by the minimum channel
+    // being lifted off zero — it's a brighter, partially desaturated version
+    // of the same hue. A perfectly saturated primary (`min == 0`) like pure
+    // red `(255, 0, 0)` should map to the standard color. We pick the bright
+    // variant only when both the value is high and the color is desaturated
+    // enough to look "lifted".
+    let bright = max >= 200 && min >= 64;
 
     let rf = r as f32;
     let gf = g as f32;
@@ -349,22 +370,48 @@ fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
 
     if rf >= gf && rf >= bf {
         if gf > bf * 1.5 {
-            Color::Yellow
+            if bright {
+                Color::LightYellow
+            } else {
+                Color::Yellow
+            }
         } else if bf > gf * 1.5 {
-            Color::Magenta
+            if bright {
+                Color::LightMagenta
+            } else {
+                Color::Magenta
+            }
+        } else if bright {
+            Color::LightRed
         } else {
             Color::Red
         }
     } else if gf >= rf && gf >= bf {
         if bf > rf * 1.5 {
-            Color::Cyan
+            if bright {
+                Color::LightCyan
+            } else {
+                Color::Cyan
+            }
+        } else if bright {
+            Color::LightGreen
         } else {
             Color::Green
         }
     } else if rf > gf * 1.5 {
-        Color::Magenta
+        if bright {
+            Color::LightMagenta
+        } else {
+            Color::Magenta
+        }
     } else if gf > rf * 1.5 {
-        Color::Cyan
+        if bright {
+            Color::LightCyan
+        } else {
+            Color::Cyan
+        }
+    } else if bright {
+        Color::LightBlue
     } else {
         Color::Blue
     }
@@ -405,6 +452,7 @@ fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -438,5 +486,76 @@ mod tests {
             Color::Rgb(180, 180, 180),
             Color::Rgb(200, 200, 200)
         ));
+    }
+
+    // --- regression: issue #104 rgb_to_ansi256 overflow at r=g=b=248 ---
+
+    #[test]
+    fn rgb_to_ansi256_no_overflow_full_range() {
+        // 256^3 exhaustive — guarantees no panic in debug or release builds
+        for r in 0u8..=255 {
+            for g in 0u8..=255 {
+                for b in 0u8..=255 {
+                    let _ = Color::Rgb(r, g, b).downsampled(ColorDepth::EightBit);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_248_maps_to_231() {
+        assert_eq!(
+            Color::Rgb(248, 248, 248).downsampled(ColorDepth::EightBit),
+            Color::Indexed(231)
+        );
+    }
+
+    // --- regression: issue #105 WCAG luminance sRGB gamma ---
+
+    #[test]
+    fn luminance_dracula_purple_wcag() {
+        let l = Color::Rgb(189, 147, 249).luminance();
+        assert!((l - 0.385).abs() < 0.01, "expected ~0.385, got {l}");
+    }
+
+    #[test]
+    fn contrast_aa_dracula_pair() {
+        let p = Color::Rgb(189, 147, 249);
+        let bg = Color::Rgb(40, 42, 54);
+        assert!(Color::meets_contrast_aa(p, bg));
+        let r = Color::contrast_ratio(p, bg);
+        assert!((r - 5.90).abs() < 0.1, "expected ~5.90, got {r}");
+    }
+
+    #[test]
+    fn contrast_white_on_black_is_21() {
+        let r = Color::contrast_ratio(Color::Rgb(255, 255, 255), Color::Rgb(0, 0, 0));
+        assert!((r - 21.0).abs() < 0.5, "expected ~21.0, got {r}");
+    }
+
+    // --- regression: issue #107 rgb_to_ansi16 includes bright (8-15) colors ---
+
+    #[test]
+    fn rgb_to_ansi16_bright_variants() {
+        // bright red → LightRed
+        assert_eq!(
+            Color::Rgb(255, 80, 80).downsampled(ColorDepth::Basic),
+            Color::LightRed
+        );
+        // dark red → Red
+        assert_eq!(
+            Color::Rgb(128, 20, 20).downsampled(ColorDepth::Basic),
+            Color::Red
+        );
+        // bright gray → White
+        assert_eq!(
+            Color::Rgb(200, 200, 200).downsampled(ColorDepth::Basic),
+            Color::White
+        );
+        // dark gray → DarkGray
+        assert_eq!(
+            Color::Rgb(80, 80, 80).downsampled(ColorDepth::Basic),
+            Color::DarkGray
+        );
     }
 }

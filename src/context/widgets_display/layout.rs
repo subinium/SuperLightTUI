@@ -20,11 +20,19 @@ impl Context {
     /// # });
     /// ```
     pub fn screen(&mut self, name: &str, screens: &mut ScreenState, f: impl FnOnce(&mut Context)) {
-        // Look up (or create) this screen's reserved hook segment
-        let (seg_start, seg_count) = *self
-            .screen_hook_map
-            .entry(name.to_string())
-            .or_insert((self.hook_states.len(), 0));
+        // Look up (or create) this screen's reserved hook segment.
+        //
+        // Cache-hit path is the steady state — every frame after the first.
+        // Avoid the unconditional `name.to_string()` `entry()` allocation by
+        // checking first via `&str` lookup. Only the first frame for a
+        // given screen pays the `to_string()` cost. Closes #134 (Option B).
+        let (seg_start, seg_count) = if let Some(&v) = self.screen_hook_map.get(name) {
+            v
+        } else {
+            let v = (self.hook_states.len(), 0);
+            self.screen_hook_map.insert(name.to_string(), v);
+            v
+        };
 
         let is_active = screens.current() == name;
 
@@ -41,10 +49,19 @@ impl Context {
             // Execute the screen's closure
             f(self);
 
-            // Record the hook count for this screen
+            // Record the hook count for this screen.
+            //
+            // The first-frame path above already inserted an owned `String`
+            // key for this screen; subsequent frames reuse it. Locate that
+            // existing slot via `&str` and overwrite the value in place,
+            // avoiding a second `to_string()` allocation per active frame.
             let hooks_used = self.rollback.hook_cursor - seg_start;
-            self.screen_hook_map
-                .insert(name.to_string(), (seg_start, hooks_used));
+            if let Some(slot) = self.screen_hook_map.get_mut(name) {
+                *slot = (seg_start, hooks_used);
+            } else {
+                self.screen_hook_map
+                    .insert(name.to_string(), (seg_start, hooks_used));
+            }
 
             // Save this screen's focus state
             let screen_focus_count = self.rollback.focus_count - focus_count_before;
@@ -215,11 +232,16 @@ impl Context {
 
     /// Render content in a modal overlay with dimmed background.
     ///
-    /// ```ignore
-    /// ui.modal(|ui| {
-    ///     ui.text("Are you sure?");
-    ///     if ui.button("OK") { show = false; }
-    /// });
+    /// ```no_run
+    /// # let mut show = true;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// if show {
+    ///     ui.modal(|ui| {
+    ///         ui.text("Are you sure?");
+    ///         if ui.button("OK").clicked { show = false; }
+    ///     });
+    /// }
+    /// # });
     /// ```
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
@@ -269,14 +291,14 @@ impl Context {
             return;
         }
         let lines = wrap_tooltip_text(&tooltip_text, 38);
-        self.rollback.pending_tooltips.push(PendingTooltip {
+        self.pending_tooltips.push(PendingTooltip {
             anchor_rect: last_response.rect,
             lines,
         });
     }
 
     pub(crate) fn emit_pending_tooltips(&mut self) {
-        let tooltips = std::mem::take(&mut self.rollback.pending_tooltips);
+        let tooltips = std::mem::take(&mut self.pending_tooltips);
         if tooltips.is_empty() {
             return;
         }
@@ -334,9 +356,15 @@ impl Context {
     ///     .col(|ui| { ui.text("Hover anywhere"); });
     /// ```
     pub fn group(&mut self, name: &str) -> ContainerBuilder<'_> {
+        // Materialize the name once; subsequent uses are cheap `Arc::clone`
+        // pointer bumps. Closes #145 (double `to_string` allocation) and
+        // completes the `Arc<str>` migration tracked by #139.
         self.rollback.group_count = self.rollback.group_count.saturating_add(1);
-        self.rollback.group_stack.push(name.to_string());
-        self.container().group_name(name.to_string())
+        let name_arc: std::sync::Arc<str> = std::sync::Arc::from(name);
+        self.rollback
+            .group_stack
+            .push(std::sync::Arc::clone(&name_arc));
+        self.container().group_name_arc(name_arc)
     }
 
     /// Create a container with a fluent builder.
@@ -517,18 +545,15 @@ impl Context {
         };
 
         let theme = self.theme;
-        let track_char = '│';
-        let thumb_char = '█';
+        const THUMB: &str = "█";
+        const TRACK: &str = "│";
 
         let _ = self.container().w(1).h(track_height).col(|ui| {
             for i in 0..track_height {
                 if i >= thumb_pos && i < thumb_pos + thumb_height {
-                    ui.styled(thumb_char.to_string(), Style::new().fg(theme.primary));
+                    ui.styled(THUMB, Style::new().fg(theme.primary));
                 } else {
-                    ui.styled(
-                        track_char.to_string(),
-                        Style::new().fg(theme.text_dim).dim(),
-                    );
+                    ui.styled(TRACK, Style::new().fg(theme.text_dim).dim());
                 }
             }
         });
@@ -643,18 +668,18 @@ impl Context {
     }
 
     /// Returns true if the named group is currently hovered by the mouse.
+    ///
+    /// Uses the per-frame `hovered_groups` `HashSet` populated by
+    /// `Context::build_hovered_groups()`; turns the previous O(n) scan over
+    /// `prev_group_rects` into an O(1) lookup. Closes the cache half of
+    /// #136 / #139.
     pub fn is_group_hovered(&self, name: &str) -> bool {
-        if let Some(pos) = self.mouse_pos {
-            self.prev_group_rects.iter().any(|(n, rect)| {
-                n.as_ref() == name
-                    && pos.0 >= rect.x
-                    && pos.0 < rect.x + rect.width
-                    && pos.1 >= rect.y
-                    && pos.1 < rect.y + rect.height
-            })
-        } else {
-            false
+        if self.mouse_pos.is_none() {
+            return false;
         }
+        // `HashSet<Arc<str>>::contains` accepts `&str` via `Borrow<str>`, so
+        // there is no allocation on the hot path.
+        self.hovered_groups.contains(name)
     }
 
     /// Returns true if the named group contains the currently focused widget.
@@ -694,10 +719,10 @@ impl Context {
     /// Shows a validation error below the input when present.
     pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
         let _ = self.col(|ui| {
-            ui.styled(field.label.clone(), Style::new().bold().fg(ui.theme.text));
+            ui.styled(field.label.as_str(), Style::new().bold().fg(ui.theme.text));
             let _ = ui.text_input(&mut field.input);
             if let Some(error) = field.error.as_deref() {
-                ui.styled(error.to_string(), Style::new().dim().fg(ui.theme.error));
+                ui.styled(error, Style::new().dim().fg(ui.theme.error));
             }
         });
         self

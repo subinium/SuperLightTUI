@@ -31,24 +31,39 @@ pub(crate) struct BeginContainerArgs {
     pub constraints: Constraints,
     pub title: Option<(String, Style)>,
     pub grow: u16,
-    pub group_name: Option<String>,
+    pub group_name: Option<std::sync::Arc<str>>,
 }
 
 /// Arguments for [`Command::BeginScrollable`].
 ///
 /// Boxed for the same reason as [`BeginContainerArgs`] — keeps the
 /// `Command` enum from being dragged up to the width of this payload.
+///
+/// Note: `direction` is intentionally omitted — scrollable containers are
+/// always `Direction::Column` (vertical scroll only).
 #[derive(Debug, Clone)]
 pub(crate) struct BeginScrollableArgs {
     pub grow: u16,
     pub border: Option<Border>,
     pub border_sides: BorderSides,
     pub border_style: Style,
+    /// Background color (dark-mode resolved). Fixes #142.
+    pub bg_color: Option<Color>,
+    /// Main-axis child alignment. Fixes #142.
+    pub align: Align,
+    /// Cross-axis self alignment. Fixes #142.
+    pub align_self: Option<Align>,
+    /// Main-axis justification. Fixes #142.
+    pub justify: Justify,
+    /// Gap between children in pixels. Fixes #142.
+    pub gap: u32,
     pub padding: Padding,
     pub margin: Margin,
     pub constraints: Constraints,
     pub title: Option<(String, Style)>,
     pub scroll_offset: u32,
+    /// Group name for hover/focus registration. Fixes #141.
+    pub group_name: Option<std::sync::Arc<str>>,
 }
 
 #[derive(Debug, Clone)]

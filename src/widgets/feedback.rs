@@ -19,8 +19,27 @@ pub struct RichLogEntry {
 }
 
 impl RichLogState {
-    /// Create an empty rich log state.
+    /// Default maximum entry cap used by [`RichLogState::new`].
+    ///
+    /// Long-running apps that push log entries continuously would otherwise
+    /// accumulate state without bound. Use [`RichLogState::new_unbounded`] to
+    /// opt out explicitly.
+    pub const DEFAULT_MAX_ENTRIES: usize = 10_000;
+
+    /// Create an empty rich log state with the default entry cap
+    /// ([`Self::DEFAULT_MAX_ENTRIES`]).
     pub fn new() -> Self {
+        Self {
+            max_entries: Some(Self::DEFAULT_MAX_ENTRIES),
+            ..Self::new_unbounded()
+        }
+    }
+
+    /// Create an empty rich log state without an entry cap.
+    ///
+    /// Prefer [`RichLogState::new`] in long-running apps. Use this constructor
+    /// only when the host explicitly bounds growth elsewhere.
+    pub fn new_unbounded() -> Self {
         Self {
             entries: Vec::new(),
             scroll_offset: 0,

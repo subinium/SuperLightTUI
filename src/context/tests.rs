@@ -42,7 +42,7 @@ fn snapshot_shape(ctx: &Context) -> SnapshotShape {
         dark_mode: ctx.rollback.dark_mode,
         deferred_draws_len: ctx.deferred_draws.len(),
         notification_queue_len: ctx.rollback.notification_queue.len(),
-        pending_tooltips_len: ctx.rollback.pending_tooltips.len(),
+        pending_tooltips_len: ctx.pending_tooltips.len(),
         text_color_stack_len: ctx.rollback.text_color_stack.len(),
     }
 }
@@ -146,7 +146,7 @@ fn error_boundary_restores_snapshot_state_after_panic() {
     ctx.rollback
         .notification_queue
         .push(("keep".into(), ToastLevel::Info, 1));
-    ctx.rollback.pending_tooltips.push(PendingTooltip {
+    ctx.pending_tooltips.push(PendingTooltip {
         anchor_rect: crate::rect::Rect::new(0, 0, 1, 1),
         lines: vec!["keep".into()],
     });
@@ -185,7 +185,7 @@ fn error_boundary_restores_snapshot_state_after_panic() {
             ui.rollback
                 .notification_queue
                 .push(("drop".into(), ToastLevel::Error, 2));
-            ui.rollback.pending_tooltips.push(PendingTooltip {
+            ui.pending_tooltips.push(PendingTooltip {
                 anchor_rect: crate::rect::Rect::new(1, 1, 1, 1),
                 lines: vec!["drop".into()],
             });
@@ -226,11 +226,11 @@ fn emit_pending_tooltips_drains_queue_and_settles_overlay_depth() {
 
     let _ = ctx.interaction();
     ctx.tooltip("Helpful tip");
-    assert_eq!(ctx.rollback.pending_tooltips.len(), 1);
+    assert_eq!(ctx.pending_tooltips.len(), 1);
 
     ctx.emit_pending_tooltips();
 
-    assert!(ctx.rollback.pending_tooltips.is_empty());
+    assert!(ctx.pending_tooltips.is_empty());
     assert_eq!(ctx.rollback.overlay_depth, 0);
 }
 
@@ -500,6 +500,158 @@ fn grid_with_fixed_columns_emit_constraints() {
         grow_container.is_some(),
         "Grow(2) column should produce grow=2, no width constraints"
     );
+}
+
+#[test]
+fn scrollable_preserves_group_name_for_hover_registration() {
+    // Regression for #141: group_name was dropped before BeginScrollable was
+    // pushed, so is_group_hovered() always returned false on scrollable groups.
+    use crate::test_utils::TestBackend;
+    use crate::widgets::ScrollState;
+
+    let scroll = ScrollState::new();
+    TestBackend::new(40, 10).render(|ui| {
+        let resp = ui
+            .group("card")
+            .scroll_offset(scroll.offset as u32)
+            .col(|ui| {
+                ui.text("hover text");
+            });
+        let _ = resp;
+        // Confirm the BeginScrollable command carries the group_name.
+        let cmd = ui.commands.iter().find(|c| {
+            matches!(c, crate::layout::Command::BeginScrollable(a) if a.group_name.as_deref() == Some("card"))
+        });
+        assert!(
+            cmd.is_some(),
+            "BeginScrollable must carry group_name=\"card\"; #141 regression"
+        );
+    });
+}
+
+#[test]
+fn scrollable_propagates_bg_color_align_justify_gap() {
+    // Regression for #142: bg_color/align/justify/gap were silently dropped
+    // because BeginScrollableArgs lacked those fields.
+    use crate::style::{Align, Color, Justify};
+    use crate::test_utils::TestBackend;
+    use crate::widgets::ScrollState;
+
+    let mut scroll = ScrollState::new();
+    TestBackend::new(40, 10).render(|ui| {
+        let _ = ui
+            .scrollable(&mut scroll)
+            .bg(Color::Indexed(236))
+            .gap(2)
+            .align(Align::Center)
+            .justify(Justify::Center)
+            .col(|ui| {
+                ui.text("line");
+            });
+        // Confirm the BeginScrollable command carries the expected values.
+        let cmd = ui.commands.iter().find(|c| {
+            matches!(
+                c,
+                crate::layout::Command::BeginScrollable(a)
+                    if a.bg_color == Some(Color::Indexed(236))
+                    && a.gap == 2
+                    && a.align == Align::Center
+                    && a.justify == Justify::Center
+            )
+        });
+        assert!(
+            cmd.is_some(),
+            "BeginScrollable must carry bg_color/gap/align/justify; #142 regression"
+        );
+    });
+}
+
+#[test]
+fn group_uses_arc_str_and_single_allocation_path() {
+    // Regression for #139 / #145: `group_stack` is `Vec<Arc<str>>` and
+    // `Context::group()` no longer double-allocates the name.
+    use crate::test_utils::TestBackend;
+
+    TestBackend::new(20, 5).render(|ui| {
+        let _ = ui.group("ring").col(|ui| {
+            // The current group must be observable as `Arc<str>` on the
+            // rollback stack while the closure runs.
+            assert_eq!(
+                ui.rollback.group_stack.last().map(|a| a.as_ref()),
+                Some("ring")
+            );
+            ui.text("inside");
+        });
+        // Stack must unwind cleanly after the group ends.
+        assert!(ui.rollback.group_stack.is_empty());
+    });
+}
+
+#[test]
+fn is_group_hovered_uses_o1_hashset_lookup() {
+    // Regression for the cache half of #136 / #139: `is_group_hovered` must
+    // consult the precomputed `hovered_groups` HashSet rather than scan
+    // `prev_group_rects` linearly. We assert behavior, not the algorithm:
+    // populate the HashSet manually and confirm the lookup honors it without
+    // requiring matching rects.
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+
+    // Without a mouse position the lookup must short-circuit to `false`,
+    // even if the HashSet is non-empty.
+    ctx.hovered_groups
+        .insert(std::sync::Arc::<str>::from("widget"));
+    assert!(!ctx.is_group_hovered("widget"));
+
+    // With a mouse position, lookup must consult the HashSet.
+    ctx.mouse_pos = Some((1, 1));
+    assert!(ctx.is_group_hovered("widget"));
+    assert!(!ctx.is_group_hovered("other"));
+}
+
+#[test]
+fn screen_hook_map_avoids_repeat_allocation_on_cache_hit() {
+    // Regression for #134 (Option B): the second and later frames for the
+    // same screen must reuse the existing `String` key. We verify the slot
+    // is populated and updated in place across frames.
+    use crate::test_utils::TestBackend;
+    use crate::widgets::ScreenState;
+
+    let mut screens = ScreenState::new("a");
+    let mut backend = TestBackend::new(20, 5);
+
+    backend.render(|ui| {
+        ui.screen("a", &mut screens, |ui| {
+            let _ = ui.use_state(|| 0i32);
+        });
+        // First frame inserted a key.
+        assert!(ui.screen_hook_map.contains_key("a"));
+    });
+
+    backend.render(|ui| {
+        ui.screen("a", &mut screens, |ui| {
+            let _ = ui.use_state(|| 0i32);
+        });
+        // Second frame must reuse the same slot, not double up.
+        assert_eq!(ui.screen_hook_map.len(), 1);
+    });
+}
+
+#[test]
+fn render_notifications_preserves_queue_after_render() {
+    // Regression for the non-empty path of #138: `render_notifications`
+    // moves the queue out for rendering, then restores it so subsequent
+    // frames continue to display un-expired entries.
+    use crate::test_utils::TestBackend;
+
+    let mut backend = TestBackend::new(40, 10);
+    backend.render(|ui| {
+        ui.notify("saved", crate::widgets::ToastLevel::Success);
+        assert_eq!(ui.rollback.notification_queue.len(), 1);
+        ui.render_notifications();
+        // Queue must still hold the entry after rendering.
+        assert_eq!(ui.rollback.notification_queue.len(), 1);
+    });
 }
 
 fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {

@@ -322,7 +322,6 @@ impl Context {
     ///
     /// The selected item is highlighted with the theme's primary color. If the
     /// list is empty, nothing is rendered.
-    /// Render a navigable list widget.
     pub fn list(&mut self, state: &mut ListState) -> Response {
         let colors = self.widget_theme.list;
         self.list_colored(state, &colors)

@@ -343,8 +343,10 @@ impl KeyModifiers {
 /// A mouse event with position and kind.
 ///
 /// Coordinates are zero-based terminal columns (`x`) and rows (`y`).
-/// When the terminal supports pixel-level reporting (e.g. Kitty, or WASM),
-/// `pixel_x` and `pixel_y` contain the sub-cell position in pixels.
+/// `pixel_x` and `pixel_y` are reserved for future sub-cell precision
+/// (e.g. Kitty pixel mouse protocol, WASM backend); they are currently
+/// always `None` with the crossterm backend, since SGR 1006 only reports
+/// cell coordinates and crossterm 0.28 has no pixel mouse fields.
 /// Mouse events are only produced when `mouse: true` is set in
 /// [`crate::RunConfig`].
 #[non_exhaustive]
@@ -358,9 +360,15 @@ pub struct MouseEvent {
     pub y: u32,
     /// Modifier keys held at the time of the event.
     pub modifiers: KeyModifiers,
-    /// Pixel-level x coordinate, if available.
+    /// Pixel-level x coordinate (reserved).
+    ///
+    /// Currently always `None` with the crossterm backend; populated only
+    /// when a Kitty-capable or WASM backend provides sub-cell precision.
     pub pixel_x: Option<u16>,
-    /// Pixel-level y coordinate, if available.
+    /// Pixel-level y coordinate (reserved).
+    ///
+    /// Currently always `None` with the crossterm backend; populated only
+    /// when a Kitty-capable or WASM backend provides sub-cell precision.
     pub pixel_y: Option<u16>,
 }
 

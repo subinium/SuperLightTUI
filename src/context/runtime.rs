@@ -43,7 +43,7 @@ impl Context {
             }
         }
 
-        Self {
+        let mut ctx = Self {
             commands: Vec::new(),
             events,
             consumed,
@@ -86,12 +86,30 @@ impl Context {
                 hook_cursor: 0,
                 dark_mode: theme.is_dark,
                 notification_queue: std::mem::take(&mut diagnostics.notification_queue),
-                pending_tooltips: Vec::new(),
                 text_color_stack: Vec::new(),
             },
+            pending_tooltips: Vec::new(),
+            hovered_groups: std::collections::HashSet::new(),
             scroll_lines_per_event: 1,
             screen_hook_map,
             widget_theme: WidgetTheme::new(),
+        };
+        ctx.build_hovered_groups();
+        ctx
+    }
+
+    fn build_hovered_groups(&mut self) {
+        self.hovered_groups.clear();
+        if let Some(pos) = self.mouse_pos {
+            for (name, rect) in &self.prev_group_rects {
+                if pos.0 >= rect.x
+                    && pos.0 < rect.x + rect.width
+                    && pos.1 >= rect.y
+                    && pos.1 < rect.y + rect.height
+                {
+                    self.hovered_groups.insert(std::sync::Arc::clone(name));
+                }
+            }
         }
     }
 
@@ -416,18 +434,33 @@ impl Context {
             return false;
         }
 
-        let consumed: Vec<usize> = self
-            .available_key_presses()
-            .filter_map(|(i, key)| {
-                if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-                    Some(i)
+        // Activation keys (Enter / Space) are typically 0–1 per frame and
+        // bounded above by the simultaneous-keypress count from the input
+        // pipeline (well under 8 in practice). A small inline buffer
+        // eliminates the per-focusable `Vec<usize>` heap allocation that
+        // showed up on every focused widget × every frame. Closes #135.
+        const INLINE_CAP: usize = 8;
+        let mut buf = [0usize; INLINE_CAP];
+        let mut count = 0usize;
+        let mut overflow: Vec<usize> = Vec::new();
+
+        for (i, key) in self.available_key_presses() {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                if count < INLINE_CAP {
+                    buf[count] = i;
+                    count += 1;
                 } else {
-                    None
+                    overflow.push(i);
                 }
-            })
-            .collect();
-        let activated = !consumed.is_empty();
-        self.consume_indices(consumed);
+            }
+        }
+
+        let activated = count > 0 || !overflow.is_empty();
+        if activated {
+            // `consume_indices` takes `IntoIterator<Item = usize>` — pass an
+            // iterator directly, no allocation needed for the inline path.
+            self.consume_indices(buf[..count].iter().copied().chain(overflow));
+        }
         activated
     }
 
@@ -522,9 +555,9 @@ impl Context {
         id: &'static str,
         init: impl FnOnce() -> T,
     ) -> State<T> {
-        if !self.named_states.contains_key(id) {
-            self.named_states.insert(id, Box::new(init()));
-        }
+        self.named_states
+            .entry(id)
+            .or_insert_with(|| Box::new(init()));
         State::from_named(id)
     }
 
@@ -620,41 +653,36 @@ impl Context {
         let idx = self.rollback.hook_cursor;
         self.rollback.hook_cursor += 1;
 
-        let should_recompute = if idx >= self.hook_states.len() {
-            true
-        } else {
-            let (stored_deps, _) = self.hook_states[idx]
-                .downcast_ref::<(D, T)>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
-                        idx,
-                        std::any::type_name::<(D, T)>()
-                    )
-                });
-            stored_deps != deps
-        };
-
-        if should_recompute {
+        // First call at this slot: allocate fresh state.
+        if idx >= self.hook_states.len() {
             let value = compute(deps);
-            let slot = Box::new((deps.clone(), value));
-            if idx < self.hook_states.len() {
-                self.hook_states[idx] = slot;
-            } else {
-                self.hook_states.push(slot);
-            }
+            self.hook_states.push(Box::new((deps.clone(), value)));
+            return self.hook_states[idx]
+                .downcast_ref::<(D, T)>()
+                .map(|(_, v)| v)
+                .expect("freshly inserted slot must downcast to its own type");
         }
 
-        let (_, value) = self.hook_states[idx]
+        // Slot already exists: it must be the same `(D, T)` shape we used last
+        // frame, or the caller broke the rules-of-hooks contract.
+        match self.hook_states[idx].downcast_ref::<(D, T)>() {
+            Some((stored, _)) => {
+                if stored != deps {
+                    let value = compute(deps);
+                    self.hook_states[idx] = Box::new((deps.clone(), value));
+                }
+            }
+            None => panic!(
+                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
+                idx,
+                std::any::type_name::<(D, T)>()
+            ),
+        }
+
+        self.hook_states[idx]
             .downcast_ref::<(D, T)>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
-                    idx,
-                    std::any::type_name::<(D, T)>()
-                )
-            });
-        value
+            .map(|(_, v)| v)
+            .expect("slot was just verified or replaced with the correct type")
     }
 
     /// Returns `light` color if current theme is light mode, `dark` color if dark mode.
@@ -683,41 +711,44 @@ impl Context {
     }
 
     pub(crate) fn render_notifications(&mut self) {
+        let tick = self.tick;
         self.rollback
             .notification_queue
-            .retain(|(_, _, created)| self.tick.saturating_sub(*created) < 180);
+            .retain(|(_, _, created)| tick.saturating_sub(*created) < 180);
         if self.rollback.notification_queue.is_empty() {
             return;
         }
 
-        let items: Vec<(String, Color)> = self
-            .rollback
-            .notification_queue
-            .iter()
-            .rev()
-            .map(|(message, level, _)| {
-                let color = match level {
-                    ToastLevel::Info => self.theme.primary,
-                    ToastLevel::Success => self.theme.success,
-                    ToastLevel::Warning => self.theme.warning,
-                    ToastLevel::Error => self.theme.error,
-                };
-                (message.clone(), color)
-            })
-            .collect();
+        // The `overlay` closure captures `self` mutably, so we cannot keep an
+        // immutable borrow of `self.rollback.notification_queue` alive across
+        // the call. Move the queue out for the render, then move it back —
+        // no `String::clone` per notification, no intermediate `Vec` alloc.
+        // Closes the non-empty path of #138.
+        let queue = std::mem::take(&mut self.rollback.notification_queue);
+        let theme = self.theme;
 
         let _ = self.overlay(|ui| {
             let _ = ui.row(|ui| {
                 ui.spacer();
                 let _ = ui.col(|ui| {
-                    for (message, color) in &items {
+                    for (message, level, _) in queue.iter().rev() {
+                        let color = match level {
+                            ToastLevel::Info => theme.primary,
+                            ToastLevel::Success => theme.success,
+                            ToastLevel::Warning => theme.warning,
+                            ToastLevel::Error => theme.error,
+                        };
                         let mut line = String::with_capacity(2 + message.len());
                         line.push_str("● ");
                         line.push_str(message);
-                        ui.styled(line, Style::new().fg(*color));
+                        ui.styled(line, Style::new().fg(color));
                     }
                 });
             });
         });
+
+        // Restore the queue so subsequent frames can re-render until each
+        // entry's TTL expires above.
+        self.rollback.notification_queue = queue;
     }
 }

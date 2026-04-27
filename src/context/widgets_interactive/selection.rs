@@ -1,11 +1,11 @@
 use super::*;
 
 impl Context {
-    /// Render a data table with column headers. Handles Up/Down selection when focused.
-    ///
-    /// Column widths are computed automatically from header and cell content.
-    /// The selected row is highlighted with the theme's selection colors.
     /// Render a data table with sortable columns and row selection.
+    ///
+    /// Handles Up/Down selection when focused. Column widths are computed
+    /// automatically from header and cell content. The selected row is
+    /// highlighted with the theme's selection colors.
     pub fn table(&mut self, state: &mut TableState) -> Response {
         let colors = self.widget_theme.table;
         self.table_colored(state, &colors)
@@ -276,11 +276,10 @@ impl Context {
         }
     }
 
-    /// Render a tab bar. Handles Left/Right navigation when focused.
+    /// Render a horizontal tab bar. Handles Left/Right navigation when focused.
     ///
     /// The active tab is rendered in the theme's primary color. If the labels
     /// list is empty, nothing is rendered.
-    /// Render a horizontal tab bar.
     pub fn tabs(&mut self, state: &mut TabsState) -> Response {
         let colors = self.widget_theme.tabs;
         self.tabs_colored(state, &colors)
@@ -326,7 +325,7 @@ impl Context {
             let mut consumed = Vec::new();
             for (i, mouse) in clicks {
                 let mut x_offset = 0u32;
-                let rel_x = mouse.x - rect.x;
+                let rel_x = mouse.x.saturating_sub(rect.x);
                 for (idx, label) in state.labels.iter().enumerate() {
                     let tab_width = UnicodeWidthStr::width(label.as_str()) as u32 + 4;
                     if rel_x >= x_offset && rel_x < x_offset + tab_width {
@@ -384,11 +383,11 @@ impl Context {
         response
     }
 
-    /// Render a clickable button. Returns `true` when activated via Enter, Space, or mouse click.
+    /// Render a clickable button. Activation fires via Enter, Space, or mouse click.
     ///
-    /// The button is styled with the theme's primary color when focused and the
-    /// accent color when hovered.
-    /// Render a clickable button.
+    /// The returned [`Response::clicked`] flag is set on activation. The button
+    /// is styled with the theme's primary color when focused and the accent
+    /// color when hovered.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         let colors = self.widget_theme.button;
         self.button_colored(label, &colors)

@@ -3801,3 +3801,217 @@ fn candlestick_standard_renders() {
         "candlestick should render wick or body"
     );
 }
+
+#[test]
+fn textarea_paste_max_length_incremental() {
+    // 1000-char paste with max_length=500 must truncate at exactly 500 chars,
+    // not panic and not use O(n²) scanning.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new().max_length(500);
+    let paste: String = "a".repeat(1000);
+    let events = slt::EventBuilder::new().paste(paste).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    let total: usize = state.lines.iter().map(|l| l.chars().count()).sum();
+    assert_eq!(
+        total, 500,
+        "expected exactly 500 chars after truncation, got {total}"
+    );
+}
+
+#[test]
+fn textarea_newline_paste_respects_max_length() {
+    // "a\nb\nc\n…" paste — newlines also count toward max_length.
+    let mut tb = TestBackend::new(40, 20);
+    let mut state = TextareaState::new().max_length(5);
+    // 10 "a\n" pairs = 20 chars if uncapped; should stop at 5.
+    let paste: String = "a\n".repeat(10);
+    let events = slt::EventBuilder::new().paste(paste).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 10);
+    });
+    let total: usize = state.lines.iter().map(|l| l.chars().count()).sum::<usize>()
+        + state.lines.len().saturating_sub(1); // newlines between lines
+    assert!(
+        total <= 5,
+        "expected total chars+newlines <= 5 after max_length cap, got {total}"
+    );
+}
+
+// ===== a10 batch regression tests =====
+
+#[test]
+fn text_input_state_clone_drops_validators() {
+    // a10-001 (#92): validators do not survive Clone; doc note clarifies behavior.
+    let mut s = TextInputState::new();
+    s.add_validator(|v: &str| {
+        if v.is_empty() {
+            Err("empty".to_string())
+        } else {
+            Ok(())
+        }
+    });
+    s.run_validators();
+    assert_eq!(s.errors().len(), 1, "validator should produce 1 error");
+    let mut clone = s.clone();
+    // errors are preserved on clone (stale)
+    assert_eq!(clone.errors().len(), 1, "stale errors preserved on clone");
+    // running validators on clone clears them (no validators registered)
+    clone.run_validators();
+    assert!(
+        clone.errors().is_empty(),
+        "clone has no validators; errors cleared"
+    );
+}
+
+#[test]
+fn textarea_dirty_flag_avoids_clone_change_detection() {
+    // a10-004 (#94): response.changed reflects dirty flag, not Vec comparison.
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    // Idle frame (no events) — should report changed=false.
+    let mut changed = true;
+    tb.render(|ui| {
+        changed = ui.textarea(&mut state, 5).changed;
+    });
+    assert!(!changed, "idle frame: changed must be false");
+
+    // Mutation frame — typing 'a' should set changed=true.
+    let events = slt::EventBuilder::new().key('a').build();
+    let mut changed2 = false;
+    tb.render_with_events(events, 0, 1, |ui| {
+        changed2 = ui.textarea(&mut state, 5).changed;
+    });
+    assert!(changed2, "mutation frame: changed must be true");
+    assert_eq!(state.lines[0], "a");
+
+    // Next idle frame — changed must reset to false.
+    let mut changed3 = true;
+    tb.render(|ui| {
+        changed3 = ui.textarea(&mut state, 5).changed;
+    });
+    assert!(!changed3, "post-mutation idle: changed reset to false");
+}
+
+#[test]
+fn list_state_filter_uses_search_cache() {
+    // a10-006 (#96): filter no longer calls to_lowercase per item per keystroke;
+    // behavior must remain case-insensitive.
+    let mut state = ListState::new(vec!["Hello", "World", "HELLO World"]);
+    state.set_filter("hello");
+    let visible = state.visible_indices();
+    assert_eq!(visible, &[0, 2], "case-insensitive 'hello' matches 0 and 2");
+
+    state.set_filter("hello world");
+    let visible = state.visible_indices();
+    assert_eq!(visible, &[2], "AND tokens: only 'HELLO World' matches both");
+
+    state.set_filter("");
+    assert_eq!(
+        state.visible_indices(),
+        &[0, 1, 2],
+        "empty filter: all visible"
+    );
+
+    // set_items rebuilds cache.
+    state.set_items(vec!["Foo", "Bar"]);
+    state.set_filter("foo");
+    assert_eq!(state.visible_indices(), &[0]);
+}
+
+#[test]
+fn slider_with_step_uses_explicit_step() {
+    // a10-007 (#97): slider_with_step accepts an explicit step.
+    let mut tb = TestBackend::new(80, 5);
+    let mut value = 50.0_f64;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.slider_with_step("Volume", &mut value, 0.0..=100.0, 1.0);
+    });
+    assert!(
+        (value - 51.0).abs() < f64::EPSILON,
+        "step=1.0 should advance by exactly 1.0, got {value}"
+    );
+
+    // slider() unchanged: span/20 = 5.0 step on a 0..=100 range.
+    let mut value2 = 50.0_f64;
+    let events2 = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(events2, 0, 1, |ui| {
+        ui.slider("Volume", &mut value2, 0.0..=100.0);
+    });
+    assert!(
+        (value2 - 55.0).abs() < f64::EPSILON,
+        "default step span/20=5.0 unchanged, got {value2}"
+    );
+}
+
+#[test]
+fn text_input_suggestions_track_typed_chars_in_burst() {
+    // a10-003 (#93): matched_suggestions is recomputed after Char/Backspace/
+    // Delete mutations within the same key burst. Test that a burst of typed
+    // chars filters suggestions correctly at every step (would fail if
+    // matched_suggestions were hoisted unconditionally outside the loop).
+    let mut tb = TestBackend::new(40, 10);
+    let mut input = TextInputState::new();
+    input.set_suggestions(vec![
+        "apple".into(),
+        "apricot".into(),
+        "banana".into(),
+        "blueberry".into(),
+    ]);
+    // Burst: type 'a','p' — both refine the suggestion match.
+    let events = slt::EventBuilder::new().key('a').key('p').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "ap", "both keys consumed in single frame");
+    let matches = input.matched_suggestions();
+    assert_eq!(
+        matches,
+        vec!["apple", "apricot"],
+        "after burst, matches reflect post-mutation 'ap' prefix, not stale empty value"
+    );
+}
+
+#[test]
+fn textarea_visual_lines_reused_on_idle_frame() {
+    // a10-005 (#95): pre-key visual_lines is reused on idle frames (dirty=false).
+    // Behavioral test: cursor navigation and rendering must remain correct
+    // both before and after a mutation, in wrap mode.
+    let mut tb = TestBackend::new(20, 10);
+    let mut state = TextareaState::new().word_wrap(5);
+    state.set_value("hello world foo");
+    // Render once to settle layout (set_value sets dirty; first frame consumes it).
+    tb.render(|ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert!(!state.is_dirty(), "dirty cleared after frame");
+
+    // Idle frame: nothing to type — pre_vlines is reused. Cursor unchanged.
+    let row_before = state.cursor_row;
+    let col_before = state.cursor_col;
+    tb.render(|ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(
+        state.cursor_row, row_before,
+        "idle frame: cursor_row stable"
+    );
+    assert_eq!(
+        state.cursor_col, col_before,
+        "idle frame: cursor_col stable"
+    );
+
+    // Mutation frame: typing 'X' triggers rebuild via dirty flag.
+    let events = slt::EventBuilder::new().key('X').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert!(state.lines[0].contains('X'), "mutation applied");
+    assert!(!state.is_dirty(), "dirty cleared after mutation frame");
+}

@@ -21,7 +21,7 @@ use slt::{Style, TestBackend};
 fn multiple_raw_draws_in_one_frame_do_not_clobber() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        ui.col(|ui| {
+        let _ = ui.col(|ui| {
             ui.container().w(10).h(1).draw(|buf, rect| {
                 buf.set_string(rect.x, rect.y, "first", Style::new());
             });

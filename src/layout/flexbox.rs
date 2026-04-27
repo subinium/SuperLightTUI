@@ -100,6 +100,24 @@ impl Iterator for U32StackIter<'_> {
 }
 
 pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
+    compute_inner(node, area, 0);
+}
+
+fn compute_inner(node: &mut LayoutNode, area: Rect, depth: usize) {
+    // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
+    // already enforces this at construction; this guard catches synthetic
+    // trees built directly in tests or via future programmatic paths so we
+    // panic with a diagnostic instead of overflowing the stack.
+    if depth > super::tree::MAX_LAYOUT_DEPTH {
+        panic!(
+            "layout tree depth exceeds {}: check for recursive container nesting",
+            super::tree::MAX_LAYOUT_DEPTH
+        );
+    }
+    compute_body(node, area, depth);
+}
+
+fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     if let Some(pct) = node.constraints.width_pct {
         let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
         node.constraints.min_width = Some(resolved);
@@ -143,6 +161,7 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                     node,
                     Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
                 ),
+                depth,
             );
             node.content_height = 0;
         }
@@ -191,7 +210,7 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                         viewport_area.width,
                         natural_height,
                     );
-                    layout_column(node, virtual_area);
+                    layout_column(node, virtual_area, depth);
                 } else {
                     match &saved_overflow {
                         Some(over) => {
@@ -205,11 +224,11 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
                             }
                         }
                     }
-                    layout_column(node, viewport_area);
+                    layout_column(node, viewport_area, depth);
                 }
                 node.content_height = scroll_content_height(node, viewport_area.y);
             } else {
-                layout_column(node, viewport_area);
+                layout_column(node, viewport_area, depth);
                 node.content_height = 0;
             }
         }
@@ -222,7 +241,7 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
         let y = area
             .y
             .saturating_add(area.height.saturating_sub(height) / 2);
-        compute(&mut overlay.node, Rect::new(x, y, width, height));
+        compute_inner(&mut overlay.node, Rect::new(x, y, width, height), depth + 1);
     }
 }
 
@@ -286,7 +305,7 @@ pub(super) fn inner_area(node: &LayoutNode, area: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-fn layout_row(node: &mut LayoutNode, area: Rect) {
+fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
     if node.children.is_empty() {
         return;
     }
@@ -359,7 +378,11 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
         let child_y = area.y.saturating_add(child.margin.top);
         let child_w = w.saturating_sub(child.margin.horizontal());
         let child_h = child_outer_h.saturating_sub(child.margin.vertical());
-        compute(child, Rect::new(child_x, child_y, child_w, child_h));
+        compute_inner(
+            child,
+            Rect::new(child_x, child_y, child_w, child_h),
+            depth + 1,
+        );
         let child_total_h = child.size.1.saturating_add(child.margin.vertical());
         let y_offset = match child_cross_align {
             Align::Start => 0,
@@ -367,11 +390,12 @@ fn layout_row(node: &mut LayoutNode, area: Rect) {
             Align::End => area.height.saturating_sub(child_total_h),
         };
         child.pos.1 = child.pos.1.saturating_add(y_offset);
-        x += w + inter_gap;
+        let effective_w = child.size.0.saturating_add(child.margin.horizontal());
+        x += effective_w + inter_gap;
     }
 }
 
-fn layout_column(node: &mut LayoutNode, area: Rect) {
+fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     if node.children.is_empty() {
         return;
     }
@@ -444,7 +468,11 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
         let child_y = y.saturating_add(child.margin.top);
         let child_w = child_outer_w.saturating_sub(child.margin.horizontal());
         let child_h = h.saturating_sub(child.margin.vertical());
-        compute(child, Rect::new(child_x, child_y, child_w, child_h));
+        compute_inner(
+            child,
+            Rect::new(child_x, child_y, child_w, child_h),
+            depth + 1,
+        );
         let child_total_w = child.size.0.saturating_add(child.margin.horizontal());
         let x_offset = match child_cross_align {
             Align::Start => 0,
@@ -452,6 +480,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect) {
             Align::End => area.width.saturating_sub(child_total_w),
         };
         child.pos.0 = child.pos.0.saturating_add(x_offset);
-        y += h + inter_gap;
+        let effective_h = child.size.1.saturating_add(child.margin.vertical());
+        y += effective_h + inter_gap;
     }
 }

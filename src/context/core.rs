@@ -45,6 +45,8 @@ pub struct Context {
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) rollback: ContextRollbackState,
+    pub(crate) pending_tooltips: Vec<PendingTooltip>,
+    pub(crate) hovered_groups: std::collections::HashSet<std::sync::Arc<str>>,
     pub(crate) scroll_lines_per_event: u32,
     pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub(crate) widget_theme: WidgetTheme,
@@ -65,7 +67,7 @@ pub(crate) struct ContextRollbackState {
     pub(crate) interaction_count: usize,
     pub(crate) scroll_count: usize,
     pub(crate) group_count: usize,
-    pub(crate) group_stack: Vec<String>,
+    pub(crate) group_stack: Vec<std::sync::Arc<str>>,
     pub(crate) overlay_depth: usize,
     pub(crate) modal_active: bool,
     pub(crate) modal_focus_start: usize,
@@ -73,7 +75,6 @@ pub(crate) struct ContextRollbackState {
     pub(crate) hook_cursor: usize,
     pub(crate) dark_mode: bool,
     pub(crate) notification_queue: Vec<(String, ToastLevel, u64)>,
-    pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) text_color_stack: Vec<Option<Color>>,
 }
 
@@ -82,6 +83,7 @@ pub(super) struct ContextCheckpoint {
     hook_states_len: usize,
     deferred_draws_len: usize,
     context_stack_len: usize,
+    pending_tooltips_len: usize,
     rollback: ContextRollbackState,
 }
 
@@ -92,6 +94,7 @@ impl ContextCheckpoint {
             hook_states_len: ctx.hook_states.len(),
             deferred_draws_len: ctx.deferred_draws.len(),
             context_stack_len: ctx.context_stack.len(),
+            pending_tooltips_len: ctx.pending_tooltips.len(),
             rollback: ctx.rollback.clone(),
         }
     }
@@ -102,5 +105,8 @@ impl ContextCheckpoint {
         ctx.deferred_draws.truncate(self.deferred_draws_len);
         ctx.context_stack.truncate(self.context_stack_len);
         ctx.rollback = self.rollback.clone();
+        // Drop tooltips queued by the panicking widget but keep any that were
+        // already pending before the error boundary was entered.
+        ctx.pending_tooltips.truncate(self.pending_tooltips_len);
     }
 }

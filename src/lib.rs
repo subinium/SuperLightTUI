@@ -62,7 +62,9 @@
 //! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/TESTING.md>
 //! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DEBUGGING.md>
 
+/// Animation primitives: tween, spring, keyframes, sequence, stagger.
 pub mod anim;
+/// Double-buffered cell grid with clip stack and diff tracking.
 pub mod buffer;
 /// Terminal cell representation.
 pub mod cell;
@@ -80,14 +82,19 @@ pub mod keymap;
 pub mod layout;
 /// Color palettes (Tailwind-style).
 pub mod palette;
+/// Rectangular region type used throughout SLT layout.
 pub mod rect;
 #[cfg(feature = "crossterm")]
 mod sixel;
+/// Styling: colors, borders, padding, margins, themes, constraints.
 pub mod style;
+/// Tree-sitter syntax highlighting integration.
 pub mod syntax;
 #[cfg(feature = "crossterm")]
 mod terminal;
+/// Headless test utilities for unit-testing TUI closures.
 pub mod test_utils;
+/// Widget state types (list, table, input, select, etc.).
 pub mod widgets;
 
 use std::io;
@@ -296,7 +303,35 @@ pub fn frame(
     events: &[Event],
     f: &mut impl FnMut(&mut Context),
 ) -> io::Result<bool> {
-    run_frame(backend, &mut state.inner, config, events.to_vec(), f)
+    frame_owned(backend, state, config, events.to_vec(), f)
+}
+
+/// Process a single UI frame, taking ownership of the events `Vec` (zero-copy).
+///
+/// Like [`frame`], but accepts an owned `Vec<Event>` to avoid the `to_vec()`
+/// copy `frame` performs internally. Prefer this in high-frequency custom
+/// render loops where you already own the event buffer.
+///
+/// # Example
+///
+/// ```ignore
+/// let events: Vec<slt::Event> = collect_events();
+/// let keep_going = slt::frame_owned(
+///     &mut my_backend,
+///     &mut state,
+///     &config,
+///     events,
+///     &mut |ui| { ui.text("hello"); },
+/// )?;
+/// ```
+pub fn frame_owned(
+    backend: &mut impl Backend,
+    state: &mut AppState,
+    config: &RunConfig,
+    events: Vec<Event>,
+    f: &mut impl FnMut(&mut Context),
+) -> io::Result<bool> {
+    run_frame(backend, &mut state.inner, config, events, f)
 }
 
 #[cfg(feature = "crossterm")]
@@ -466,6 +501,24 @@ impl RunConfig {
         self
     }
 
+    /// Disable the frame rate cap (unlimited FPS).
+    ///
+    /// By default, [`RunConfig`] caps rendering at 60 fps. Call this to remove
+    /// the cap entirely — useful when controlling external sleep/vsync.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// slt::run_with(
+    ///     slt::RunConfig::default().no_fps_cap(),
+    ///     |ui| { ui.text("uncapped"); },
+    /// ).unwrap();
+    /// ```
+    pub fn no_fps_cap(mut self) -> Self {
+        self.max_fps = None;
+        self
+    }
+
     /// Set the scroll speed (lines per scroll event).
     pub fn scroll_speed(mut self, lines: u32) -> Self {
         self.scroll_speed = lines.max(1);
@@ -549,7 +602,9 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 fn set_terminal_title(title: &Option<String>) {
     if let Some(title) = title {
         use std::io::Write;
-        let _ = write!(io::stdout(), "\x1b]2;{title}\x07");
+        let mut stdout = io::stdout();
+        let _ = write!(stdout, "\x1b]2;{title}\x07");
+        let _ = stdout.flush();
     }
 }
 
@@ -592,7 +647,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         let frame_start = Instant::now();
         let (w, h) = term.size();
         if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start);
+            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
             continue;
         }
 
@@ -605,6 +660,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         )? {
             break;
         }
+        let render_elapsed = frame_start.elapsed();
 
         if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
             term.handle_resize()
@@ -612,7 +668,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start);
+        sleep_for_fps_cap(config.max_fps, render_elapsed);
     }
 
     Ok(())
@@ -685,18 +741,19 @@ fn run_async_loop<M: Send + 'static>(
         term.theme_bg = Some(config.theme.bg);
     }
     let mut events: Vec<Event> = Vec::new();
+    let mut messages: Vec<M> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
-        let mut messages: Vec<M> = Vec::new();
+        messages.clear();
         while let Ok(message) = rx.try_recv() {
             messages.push(message);
         }
 
         let (w, h) = term.size();
         if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start);
+            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
             continue;
         }
 
@@ -712,6 +769,7 @@ fn run_async_loop<M: Send + 'static>(
         )? {
             break;
         }
+        let render_elapsed = frame_start.elapsed();
 
         if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
             term.handle_resize()
@@ -719,7 +777,7 @@ fn run_async_loop<M: Send + 'static>(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start);
+        sleep_for_fps_cap(config.max_fps, render_elapsed);
     }
 
     Ok(())
@@ -764,7 +822,7 @@ pub fn run_inline_with(
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = InlineTerminal::new(height, config.mouse, color_depth)?;
+    let mut term = InlineTerminal::new(height, config.mouse, config.kitty_keyboard, color_depth)?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -776,7 +834,7 @@ pub fn run_inline_with(
         let frame_start = Instant::now();
         let (w, h) = term.size();
         if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start);
+            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
             continue;
         }
 
@@ -789,6 +847,7 @@ pub fn run_inline_with(
         )? {
             break;
         }
+        let render_elapsed = frame_start.elapsed();
 
         if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
             term.handle_resize()
@@ -796,7 +855,7 @@ pub fn run_inline_with(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start);
+        sleep_for_fps_cap(config.max_fps, render_elapsed);
     }
 
     Ok(())
@@ -839,7 +898,12 @@ pub fn run_static_with(
     write_static_lines(&initial_lines)?;
 
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = InlineTerminal::new(dynamic_height, config.mouse, color_depth)?;
+    let mut term = InlineTerminal::new(
+        dynamic_height,
+        config.mouse,
+        config.kitty_keyboard,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -852,7 +916,7 @@ pub fn run_static_with(
         let frame_start = Instant::now();
         let (w, h) = term.size();
         if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start);
+            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
             continue;
         }
 
@@ -868,6 +932,7 @@ pub fn run_static_with(
         )? {
             break;
         }
+        let render_elapsed = frame_start.elapsed();
 
         if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
             term.handle_resize()
@@ -875,7 +940,7 @@ pub fn run_static_with(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start);
+        sleep_for_fps_cap(config.max_fps, render_elapsed);
     }
 
     Ok(())
@@ -904,6 +969,30 @@ fn poll_events(
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
+    let mut has_resize = false;
+
+    fn process_ev(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
+        match ev {
+            Event::Mouse(m) => {
+                state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
+            }
+            Event::FocusLost => {
+                state.layout_feedback.last_mouse_pos = None;
+            }
+            Event::Key(event::KeyEvent {
+                code: KeyCode::F(12),
+                kind: event::KeyEventKind::Press,
+                ..
+            }) => {
+                state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
+            }
+            Event::Resize(_, _) => {
+                *has_resize = true;
+            }
+            _ => {}
+        }
+    }
+
     if crossterm::event::poll(tick_rate)? {
         let raw = crossterm::event::read()?;
         if let Some(ev) = event::from_crossterm(raw) {
@@ -913,6 +1002,7 @@ fn poll_events(
             if matches!(ev, Event::Resize(_, _)) {
                 on_resize()?;
             }
+            process_ev(&ev, state, &mut has_resize);
             events.push(ev);
         }
 
@@ -925,28 +1015,30 @@ fn poll_events(
                 if matches!(ev, Event::Resize(_, _)) {
                     on_resize()?;
                 }
+                process_ev(&ev, state, &mut has_resize);
                 events.push(ev);
-            }
-        }
-
-        for ev in events.iter() {
-            if matches!(
-                ev,
-                Event::Key(event::KeyEvent {
-                    code: KeyCode::F(12),
-                    kind: event::KeyEventKind::Press,
-                    ..
-                })
-            ) {
-                state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
             }
         }
     }
 
-    update_last_mouse_pos(state, events);
-
-    if events.iter().any(|e| matches!(e, Event::Resize(_, _))) {
+    // #90: clear cache first (which also resets last_mouse_pos to None),
+    // then re-apply latest mouse pos so Resize+Mouse frames keep coords.
+    if has_resize {
         clear_frame_layout_cache(state);
+        // After clearing, re-walk events to restore the latest mouse pos
+        // (process_ev already set it during collection, but
+        // clear_frame_layout_cache wiped it).
+        for ev in events.iter() {
+            match ev {
+                Event::Mouse(m) => {
+                    state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
+                }
+                Event::FocusLost => {
+                    state.layout_feedback.last_mouse_pos = None;
+                }
+                _ => {}
+            }
+        }
     }
 
     Ok(true)
@@ -998,7 +1090,7 @@ pub(crate) fn run_frame_kernel(
         "text color stack must be empty before layout"
     );
     debug_assert!(
-        ctx.rollback.pending_tooltips.is_empty(),
+        ctx.pending_tooltips.is_empty(),
         "pending tooltips must be emitted before layout"
     );
 
@@ -1062,7 +1154,7 @@ pub(crate) fn run_frame_kernel(
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
     let fd = layout::collect_all(&tree);
-    assert_eq!(
+    debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
         "scroll feedback vectors must stay aligned"
@@ -1192,21 +1284,6 @@ fn run_frame(
 }
 
 #[cfg(feature = "crossterm")]
-fn update_last_mouse_pos(state: &mut FrameState, events: &[Event]) {
-    for ev in events {
-        match ev {
-            Event::Mouse(mouse) => {
-                state.layout_feedback.last_mouse_pos = Some((mouse.x, mouse.y));
-            }
-            Event::FocusLost => {
-                state.layout_feedback.last_mouse_pos = None;
-            }
-            _ => {}
-        }
-    }
-}
-
-#[cfg(feature = "crossterm")]
 fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.prev_hit_map.clear();
     state.layout_feedback.prev_group_rects.clear();
@@ -1231,12 +1308,11 @@ fn is_ctrl_c(ev: &Event) -> bool {
 }
 
 #[cfg(feature = "crossterm")]
-fn sleep_for_fps_cap(max_fps: Option<u32>, frame_start: Instant) {
+fn sleep_for_fps_cap(max_fps: Option<u32>, render_elapsed: Duration) {
     if let Some(fps) = max_fps.filter(|fps| *fps > 0) {
         let target = Duration::from_secs_f64(1.0 / fps as f64);
-        let elapsed = frame_start.elapsed();
-        if elapsed < target {
-            std::thread::sleep(target - elapsed);
+        if render_elapsed < target {
+            std::thread::sleep(target - render_elapsed);
         }
     }
 }

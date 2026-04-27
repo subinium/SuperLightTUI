@@ -64,11 +64,11 @@ pub(crate) fn collect_all(node: &LayoutNode) -> FrameData {
         0
     };
     for child in &node.children {
-        collect_all_inner(child, &mut data, child_offset, None, None);
+        collect_all_inner(child, &mut data, child_offset, None, None, 1);
     }
 
     for overlay in &node.overlays {
-        collect_all_inner(&overlay.node, &mut data, 0, None, None);
+        collect_all_inner(&overlay.node, &mut data, 0, None, None, 1);
     }
 
     data
@@ -80,13 +80,26 @@ fn collect_all_inner(
     y_offset: u32,
     active_group: Option<&Arc<str>>,
     viewport: Option<Rect>,
+    depth: usize,
 ) {
+    // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
+    // already enforces this at construction, so reaching it here means
+    // either a future refactor introduced a new tree-mutation path or the
+    // build-side guard regressed; surfacing an explicit panic with the
+    // same message keeps diagnostics consistent across the pipeline.
+    if depth > super::tree::MAX_LAYOUT_DEPTH {
+        panic!(
+            "layout tree depth exceeds {}: check for recursive container nesting",
+            super::tree::MAX_LAYOUT_DEPTH
+        );
+    }
+    // Single combined block — keep `scroll_infos` and `scroll_rects` writes
+    // adjacent so the `assert_eq!(scroll_infos.len(), scroll_rects.len())`
+    // invariant in `lib.rs` cannot drift if one side is edited without the
+    // other. Mirrors the root-node path in `collect_all`.
     if node.is_scrollable {
         let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
         data.scroll_infos.push((node.content_height, viewport_h));
-    }
-
-    if node.is_scrollable {
         let adj_y = node.pos.1.saturating_sub(y_offset);
         data.scroll_rects
             .push(Rect::new(node.pos.0, adj_y, node.size.0, node.size.1));
@@ -144,10 +157,11 @@ fn collect_all_inner(
         }
     }
 
-    // Materialize this node's group name as an Arc<str> once (if present).
-    // Downstream siblings/descendants inherit the Arc via pointer bumps
-    // (`Arc::clone`) instead of re-allocating a fresh String per focus hit.
-    let node_group_arc: Option<Arc<str>> = node.group_name.as_deref().map(Arc::<str>::from);
+    // The build-time conversion in `ContainerBuilder::group_name` /
+    // `Context::begin_container` already produced an `Arc<str>`. Cloning here
+    // is a pointer bump (atomic increment), not a heap allocation — so this
+    // collect-time handoff costs zero allocations regardless of group depth.
+    let node_group_arc: Option<Arc<str>> = node.group_name.clone();
 
     if let Some(name) = &node_group_arc {
         if node.pos.1 + node.size.1 > y_offset {
@@ -206,75 +220,13 @@ fn collect_all_inner(
         (y_offset, viewport)
     };
     for child in &node.children {
-        collect_all_inner(child, data, child_offset, current_group, child_viewport);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn collect_raw_draw_rects(node: &LayoutNode) -> Vec<RawDrawRect> {
-    let mut rects = Vec::new();
-    collect_raw_draw_rects_inner(node, &mut rects, 0, None);
-    for overlay in &node.overlays {
-        collect_raw_draw_rects_inner(&overlay.node, &mut rects, 0, None);
-    }
-    rects
-}
-
-#[cfg(test)]
-fn collect_raw_draw_rects_inner(
-    node: &LayoutNode,
-    rects: &mut Vec<RawDrawRect>,
-    y_offset: u32,
-    viewport: Option<Rect>,
-) {
-    if let NodeKind::RawDraw(draw_id) = node.kind {
-        let node_x = node.pos.0;
-        let node_w = node.size.0;
-        let node_h = node.size.1;
-        let screen_y = node.pos.1 as i64 - y_offset as i64;
-
-        if let Some(vp) = viewport {
-            let img_top = screen_y;
-            let img_bottom = screen_y + node_h as i64;
-            let vp_top = vp.y as i64;
-            let vp_bottom = vp.bottom() as i64;
-
-            if img_bottom <= vp_top || img_top >= vp_bottom {
-                return;
-            }
-
-            let visible_top = img_top.max(vp_top) as u32;
-            let visible_bottom = (img_bottom.min(vp_bottom)) as u32;
-            let visible_height = visible_bottom.saturating_sub(visible_top);
-            let top_clip_rows = (vp_top - img_top).max(0) as u32;
-
-            rects.push(RawDrawRect {
-                draw_id,
-                rect: Rect::new(node_x, visible_top, node_w, visible_height),
-                top_clip_rows,
-                original_height: node_h,
-            });
-        } else {
-            let screen_y_clamped = screen_y.max(0) as u32;
-            rects.push(RawDrawRect {
-                draw_id,
-                rect: Rect::new(node_x, screen_y_clamped, node_w, node_h),
-                top_clip_rows: 0,
-                original_height: node_h,
-            });
-        }
-    }
-
-    let (child_offset, child_viewport) = if node.is_scrollable {
-        let screen_y = node.pos.1.saturating_sub(y_offset);
-        let area = Rect::new(node.pos.0, screen_y, node.size.0, node.size.1);
-        let inner = inner_area(node, area);
-        (y_offset.saturating_add(node.scroll_offset), Some(inner))
-    } else {
-        (y_offset, viewport)
-    };
-
-    for child in &node.children {
-        collect_raw_draw_rects_inner(child, rects, child_offset, child_viewport);
+        collect_all_inner(
+            child,
+            data,
+            child_offset,
+            current_group,
+            child_viewport,
+            depth + 1,
+        );
     }
 }

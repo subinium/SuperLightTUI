@@ -48,7 +48,12 @@ pub(crate) struct LayoutNode {
     pub(crate) focus_id: Option<usize>,
     pub(crate) interaction_id: Option<usize>,
     pub(crate) link_url: Option<String>,
-    pub(crate) group_name: Option<String>,
+    /// Group name for hover/focus registration.
+    ///
+    /// Stored as `Arc<str>` so the collect-side handoff into
+    /// `FrameData.group_rects` / `FrameData.focus_groups` is a pointer bump
+    /// rather than a fresh `String` → `Arc<str>` allocation per group node.
+    pub(crate) group_name: Option<std::sync::Arc<str>>,
     pub(crate) overlays: Vec<OverlayLayer>,
 }
 
@@ -201,6 +206,63 @@ impl LayoutNode {
             cached_wrapped_segments: None,
             focus_id: None,
             interaction_id: None,
+            link_url: None,
+            group_name: None,
+            overlays: Vec::new(),
+        }
+    }
+
+    /// Construct a `RawDraw` leaf node.
+    ///
+    /// Mirrors the `text` / `rich_text` / `container` / `spacer` constructor
+    /// pattern so that adding a field to `LayoutNode` only requires editing
+    /// the constructors, not every call site in `build_children`. The initial
+    /// `size` is seeded from the constraints' minimum so the parent's
+    /// `min_height_for_width` / `min_width` queries report the same values
+    /// the previous inline literal produced.
+    pub(crate) fn raw_draw(
+        draw_id: usize,
+        constraints: Constraints,
+        grow: u16,
+        margin: Margin,
+        focus_id: Option<usize>,
+        interaction_id: Option<usize>,
+    ) -> Self {
+        Self {
+            kind: NodeKind::RawDraw(draw_id),
+            content: None,
+            cursor_offset: None,
+            style: Style::new(),
+            grow,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            wrap: false,
+            truncate: false,
+            gap: 0,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin,
+            constraints,
+            title: None,
+            children: Vec::new(),
+            pos: (0, 0),
+            size: (
+                constraints.min_width.unwrap_or(0),
+                constraints.min_height.unwrap_or(0),
+            ),
+            is_scrollable: false,
+            scroll_offset: 0,
+            content_height: 0,
+            cached_wrap_width: None,
+            cached_wrapped: None,
+            segments: None,
+            cached_wrapped_segments: None,
+            focus_id,
+            interaction_id,
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
@@ -753,11 +815,20 @@ pub(crate) fn wrap_segments(
     }
 }
 
+/// Hard upper bound on layout-tree recursion depth.
+///
+/// Reached only by pathological input (e.g. a code generator emitting an
+/// unbounded chain of `BeginContainer` commands or a recursive widget). A 2 MB
+/// task stack overflows around depth ~5000 with no diagnostic message; an
+/// explicit panic with a message at 512 is far more actionable than a silent
+/// SIGSEGV. Normal TUI trees reach depth 5–15.
+pub(crate) const MAX_LAYOUT_DEPTH: usize = 512;
+
 pub(crate) fn build_tree(commands: Vec<Command>) -> LayoutNode {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut overlays: Vec<OverlayLayer> = Vec::new();
     let mut commands = commands.into_iter();
-    build_children(&mut root, &mut commands, &mut overlays, false);
+    build_children(&mut root, &mut commands, &mut overlays, false, 0);
     root.overlays = overlays;
     root
 }
@@ -785,7 +856,14 @@ fn build_children(
     commands: &mut std::vec::IntoIter<Command>,
     overlays: &mut Vec<OverlayLayer>,
     stop_on_end_overlay: bool,
+    depth: usize,
 ) {
+    if depth > MAX_LAYOUT_DEPTH {
+        panic!(
+            "layout tree depth exceeds {MAX_LAYOUT_DEPTH}: \
+             check for recursive container nesting"
+        );
+    }
     let mut pending_focus_id: Option<usize> = None;
     let mut pending_interaction_id: Option<usize> = None;
     while let Some(command) = commands.next() {
@@ -888,7 +966,7 @@ fn build_children(
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
-                build_children(&mut node, commands, overlays, false);
+                build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
             Command::BeginScrollable(args) => {
@@ -897,23 +975,29 @@ fn build_children(
                     border,
                     border_sides,
                     border_style,
+                    bg_color,
+                    align,
+                    align_self,
+                    justify,
+                    gap,
                     padding,
                     margin,
                     constraints,
                     title,
                     scroll_offset,
+                    group_name,
                 } = *args;
                 let mut node = LayoutNode::container(
                     Direction::Column,
                     ContainerConfig {
-                        gap: 0,
-                        align: Align::Start,
-                        align_self: None,
-                        justify: Justify::Start,
+                        gap,
+                        align,
+                        align_self,
+                        justify,
                         border,
                         border_sides,
                         border_style,
-                        bg_color: None,
+                        bg_color,
                         padding,
                         margin,
                         constraints,
@@ -925,14 +1009,15 @@ fn build_children(
                 node.scroll_offset = scroll_offset;
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
-                build_children(&mut node, commands, overlays, false);
+                node.group_name = group_name;
+                build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
             Command::BeginOverlay { modal } => {
                 let mut overlay_node =
                     LayoutNode::container(Direction::Column, default_container_config());
                 overlay_node.interaction_id = pending_interaction_id.take();
-                build_children(&mut overlay_node, commands, overlays, true);
+                build_children(&mut overlay_node, commands, overlays, true, depth + 1);
                 overlays.push(OverlayLayer {
                     node: overlay_node,
                     modal,
@@ -945,45 +1030,14 @@ fn build_children(
                 grow,
                 margin,
             } => {
-                let node = LayoutNode {
-                    kind: NodeKind::RawDraw(draw_id),
-                    content: None,
-                    cursor_offset: None,
-                    style: Style::new(),
-                    grow,
-                    align: Align::Start,
-                    align_self: None,
-                    justify: Justify::Start,
-                    wrap: false,
-                    truncate: false,
-                    gap: 0,
-                    border: None,
-                    border_sides: BorderSides::all(),
-                    border_style: Style::new(),
-                    bg_color: None,
-                    padding: Padding::default(),
-                    margin,
+                let node = LayoutNode::raw_draw(
+                    draw_id,
                     constraints,
-                    title: None,
-                    children: Vec::new(),
-                    pos: (0, 0),
-                    size: (
-                        constraints.min_width.unwrap_or(0),
-                        constraints.min_height.unwrap_or(0),
-                    ),
-                    is_scrollable: false,
-                    scroll_offset: 0,
-                    content_height: 0,
-                    cached_wrap_width: None,
-                    cached_wrapped: None,
-                    segments: None,
-                    cached_wrapped_segments: None,
-                    focus_id: pending_focus_id.take(),
-                    interaction_id: pending_interaction_id.take(),
-                    link_url: None,
-                    group_name: None,
-                    overlays: Vec::new(),
-                };
+                    grow,
+                    margin,
+                    pending_focus_id.take(),
+                    pending_interaction_id.take(),
+                );
                 parent.children.push(node);
             }
             Command::EndContainer => return,

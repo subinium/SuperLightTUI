@@ -163,17 +163,14 @@ impl Tween {
     /// Returns `to` immediately if the tween has finished or `duration_ticks`
     /// is zero. Marks the tween as done once `tick >= start_tick + duration_ticks`.
     pub fn value(&mut self, tick: u64) -> f64 {
-        let was_done = self.done;
         if self.done {
             return self.to;
         }
 
         if self.duration_ticks == 0 {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return self.to;
         }
@@ -181,17 +178,12 @@ impl Tween {
         let elapsed = tick.wrapping_sub(self.start_tick);
         if elapsed >= self.duration_ticks {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return self.to;
         }
 
-        if self.duration_ticks == 0 {
-            return self.to;
-        }
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)
@@ -310,8 +302,18 @@ impl Keyframes {
     /// Override easing for a specific segment index.
     ///
     /// Segment `0` is between the first and second stop, segment `1` between
-    /// the second and third, and so on. Out-of-range indices are ignored.
+    /// the second and third, and so on. Out-of-range indices are ignored in
+    /// release builds; debug builds panic via `debug_assert!` to catch
+    /// builder-order mistakes (call `stop()` to add stops before assigning
+    /// per-segment easing).
     pub fn segment_easing(mut self, segment_index: usize, f: fn(f64) -> f64) -> Self {
+        debug_assert!(
+            segment_index < self.segment_easing.len(),
+            "Keyframes::segment_easing: index {} is out of range \
+             (only {} segments defined; call stop() first to add more stops)",
+            segment_index,
+            self.segment_easing.len(),
+        );
         if let Some(slot) = self.segment_easing.get_mut(segment_index) {
             *slot = f;
         }
@@ -332,22 +334,17 @@ impl Keyframes {
 
     /// Return the interpolated keyframe value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
-        let was_done = self.done;
         if self.stops.is_empty() {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return 0.0;
         }
         if self.stops.len() == 1 {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return self.stops[0].value;
         }
@@ -364,10 +361,8 @@ impl Keyframes {
         ) {
             Some(v) => v,
             None => {
-                if !was_done && self.done {
-                    if let Some(cb) = &mut self.on_complete {
-                        cb();
-                    }
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
                 }
                 return end_value;
             }
@@ -499,13 +494,10 @@ impl Sequence {
 
     /// Return the sequence value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
-        let was_done = self.done;
         if self.segments.is_empty() {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return 0.0;
         }
@@ -525,10 +517,8 @@ impl Sequence {
         ) {
             Some(v) => v,
             None => {
-                if !was_done && self.done {
-                    if let Some(cb) = &mut self.on_complete {
-                        cb();
-                    }
+                if let Some(cb) = &mut self.on_complete {
+                    cb();
                 }
                 return end_value;
             }
@@ -654,7 +644,6 @@ impl Stagger {
 
     /// Return the value for `item_index` at `tick`.
     pub fn value(&mut self, tick: u64, item_index: usize) -> f64 {
-        let was_done = self.done;
         if item_index >= self.item_count {
             self.item_count = item_index + 1;
         }
@@ -701,10 +690,8 @@ impl Stagger {
 
         if self.duration_ticks == 0 {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return self.to;
         }
@@ -712,18 +699,13 @@ impl Stagger {
         let elapsed = effective_tick - item_start;
         if elapsed >= self.duration_ticks {
             self.done = true;
-            if !was_done && self.done {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+            if let Some(cb) = &mut self.on_complete {
+                cb();
             }
             return self.to;
         }
 
         self.done = false;
-        if self.duration_ticks == 0 {
-            return self.to;
-        }
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)
@@ -736,9 +718,42 @@ impl Stagger {
         self.duration_ticks.saturating_add(max_delay)
     }
 
-    /// Returns `true` if the most recently sampled item reached its end value.
+    /// Returns `true` if the **last-sampled** item reached its end value.
+    ///
+    /// `done` is updated on every [`Stagger::value`] call; sampling
+    /// `value(tick, i)` for a non-final `i` after a later item completed can
+    /// reset this flag to `false`. To check whether the entire stagger has
+    /// finished — independent of which item was sampled last — use
+    /// [`Stagger::is_all_done`].
     pub fn is_done(&self) -> bool {
         self.done
+    }
+
+    /// Returns `true` if all `item_count` items have passed their end tick.
+    ///
+    /// Independent of which item was sampled last: uses pure tick arithmetic
+    /// against the configured `delay_ticks`, `duration_ticks`, and
+    /// `start_tick`. With [`LoopMode::Repeat`] / [`LoopMode::PingPong`] this
+    /// only reports `true` for the first cycle (loops are re-entered after
+    /// completion).
+    ///
+    /// # Example
+    /// ```
+    /// use slt::Stagger;
+    /// let stagger = Stagger::new(0.0, 100.0, 10).delay(5);
+    /// // 10 items: last item starts at tick 45, ends at tick 55.
+    /// assert!(stagger.is_all_done(60, 10));
+    /// assert!(!stagger.is_all_done(40, 10));
+    /// ```
+    pub fn is_all_done(&self, tick: u64, item_count: usize) -> bool {
+        if item_count == 0 {
+            return true;
+        }
+        let last_start = self.start_tick.saturating_add(
+            self.delay_ticks
+                .saturating_mul(item_count.saturating_sub(1) as u64),
+        );
+        tick >= last_start.saturating_add(self.duration_ticks)
     }
 
     /// Restart stagger timing, treating `tick` as the base start time.
@@ -798,8 +813,14 @@ fn map_loop_tick(
 /// simulation. Read the current position with [`Spring::value`].
 ///
 /// Tune behavior with `stiffness` (how fast it accelerates toward the target)
-/// and `damping` (how quickly oscillations decay). A damping value close to
-/// 1.0 is overdamped (no oscillation); lower values produce more bounce.
+/// and `damping` (velocity multiplier per tick). `damping` must be strictly in
+/// `(0.0, 1.0)` — this is **not** the ODE damping ratio ζ. Values `>= 1.0`
+/// conserve or amplify energy, causing perpetual oscillation or divergence.
+///
+/// Recommended range: `0.80..=0.95`.
+/// - `0.95`: slow settle, noticeable oscillation
+/// - `0.85`: balanced (typical UI spring)
+/// - `0.80`: fast settle, minimal oscillation
 ///
 /// # Example
 ///
@@ -832,6 +853,11 @@ impl Spring {
     /// - `stiffness`: acceleration per unit of displacement (try `0.1`..`0.5`)
     /// - `damping`: velocity multiplier per tick, `< 1.0` (try `0.8`..`0.95`)
     pub fn new(initial: f64, stiffness: f64, damping: f64) -> Self {
+        debug_assert!(
+            damping > 0.0 && damping < 1.0,
+            "Spring::new: damping must be in (0, 1), got {damping}. \
+             Values >= 1.0 conserve or amplify energy and never settle."
+        );
         Self {
             value: initial,
             target: initial,
@@ -1009,6 +1035,36 @@ mod tests {
         assert_eq!(count.get(), 1);
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "damping must be in (0, 1)")]
+    fn spring_damping_one_panics_in_debug() {
+        let _ = Spring::new(0.0, 0.5, 1.0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "damping must be in (0, 1)")]
+    fn spring_damping_gt_one_panics_in_debug() {
+        let _ = Spring::new(0.0, 0.5, 2.0);
+    }
+
+    #[test]
+    fn spring_valid_damping_settles() {
+        for &d in &[0.5_f64, 0.7, 0.85, 0.95] {
+            let mut s = Spring::new(0.0, 0.2, d);
+            s.set_target(100.0);
+            for _ in 0..1000 {
+                s.tick();
+                if s.is_settled() {
+                    break;
+                }
+            }
+            assert!(s.is_settled(), "damping={d} should settle");
+            assert!((s.value() - 100.0).abs() < 0.01, "damping={d} value off");
+        }
+    }
+
     #[test]
     fn lerp_interpolates_values() {
         assert_eq!(lerp(0.0, 10.0, 0.0), 0.0);
@@ -1109,5 +1165,63 @@ mod tests {
         assert_eq!(stagger.value(20, 3), 25.0);
         assert_eq!(stagger.value(35, 3), 100.0);
         assert!(stagger.is_done());
+    }
+
+    /// Regression test for issue #127:
+    /// `is_all_done` reports completion across all items, independent of last sample.
+    #[test]
+    fn stagger_is_all_done_returns_false_mid_animation() {
+        let stagger = Stagger::new(0.0, 100.0, 10).delay(5);
+        // 5 items: item 0 ends at tick 10, item 4 ends at tick 30.
+        assert!(!stagger.is_all_done(15, 5), "items still in progress");
+    }
+
+    /// Regression test for issue #127: `is_all_done` returns true after last item.
+    #[test]
+    fn stagger_is_all_done_returns_true_after_last_item() {
+        let stagger = Stagger::new(0.0, 100.0, 10).delay(5);
+        assert!(stagger.is_all_done(31, 5), "all items done by tick 31");
+    }
+
+    /// Regression test for issue #127: `is_done` reflects last sampled item only.
+    #[test]
+    fn stagger_is_done_reflects_last_sampled_item_only() {
+        let mut stagger = Stagger::new(0.0, 100.0, 10).delay(5);
+        stagger.value(100, 4); // item 4 already past end → done = true
+        assert!(stagger.is_done());
+        // Sample item 2 mid-flight → done resets.
+        stagger.value(15, 2);
+        assert!(!stagger.is_done(), "is_done reflects last sampled item");
+    }
+
+    /// Regression test for issue #127: empty stagger trivially "all done".
+    #[test]
+    fn stagger_is_all_done_zero_items() {
+        let stagger = Stagger::new(0.0, 100.0, 10);
+        assert!(stagger.is_all_done(0, 0));
+    }
+
+    /// Regression test for issue #130: out-of-range segment_easing panics in debug builds.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn keyframes_segment_easing_oob_panics_in_debug() {
+        // 2 stops → 1 segment (only index 0 valid).
+        let _ = Keyframes::new(60)
+            .stop(0.0, 0.0)
+            .stop(1.0, 100.0)
+            .segment_easing(5, ease_linear);
+    }
+
+    /// Regression test for issue #130: valid segment_easing index does not panic.
+    #[test]
+    fn keyframes_segment_easing_valid_index() {
+        let kf = Keyframes::new(60)
+            .stop(0.0, 0.0)
+            .stop(0.5, 50.0)
+            .stop(1.0, 100.0)
+            .segment_easing(0, ease_in_quad)
+            .segment_easing(1, ease_out_quad);
+        let _ = kf;
     }
 }

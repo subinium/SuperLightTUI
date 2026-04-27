@@ -11,17 +11,24 @@ pub struct ListState {
     /// Case-insensitive substring filter applied to list items.
     pub filter: String,
     view_indices: Vec<usize>,
+    /// Lowercase cache parallel to `items`, rebuilt only on `set_items` / `new`.
+    /// Mirrors the `row_search_cache` pattern in `TableState`.
+    item_search_cache: Vec<String>,
 }
 
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
+        let items: Vec<String> = items.into_iter().map(Into::into).collect();
+        let item_search_cache: Vec<String> =
+            items.iter().map(|s| s.to_lowercase()).collect();
         let len = items.len();
         Self {
-            items: items.into_iter().map(Into::into).collect(),
+            items,
             selected: 0,
             filter: String::new(),
             view_indices: (0..len).collect(),
+            item_search_cache,
         }
     }
 
@@ -31,6 +38,7 @@ impl ListState {
     /// filter/view state stays consistent.
     pub fn set_items(&mut self, items: Vec<impl Into<String>>) {
         self.items = items.into_iter().map(Into::into).collect();
+        self.item_search_cache = self.items.iter().map(|s| s.to_lowercase()).collect();
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
         self.rebuild_view();
     }
@@ -65,9 +73,11 @@ impl ListState {
         } else {
             (0..self.items.len())
                 .filter(|&i| {
-                    tokens
-                        .iter()
-                        .all(|token| self.items[i].to_lowercase().contains(token.as_str()))
+                    let cached = match self.item_search_cache.get(i) {
+                        Some(s) => s.as_str(),
+                        None => return false,
+                    };
+                    tokens.iter().all(|token| cached.contains(token.as_str()))
                 })
                 .collect()
         };
@@ -517,6 +527,12 @@ impl TableState {
     }
 
     pub(crate) fn recompute_widths(&mut self) {
+        // Skip when no mutation since the last computation. `widths_dirty` is
+        // set by `rebuild_view` (covers `set_rows`, `set_filter`, sort) and at
+        // construction. Frames without data mutation become a no-op.
+        if !self.widths_dirty {
+            return;
+        }
         let col_count = self.headers.len();
         self.column_widths = vec![0u32; col_count];
         for (i, header) in self.headers.iter().enumerate() {

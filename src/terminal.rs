@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{self, Read, Stdout, Write};
+use std::io::{self, BufWriter, Read, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -248,7 +248,7 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
 }
 
 pub(crate) struct Terminal {
-    stdout: Stdout,
+    stdout: BufWriter<Stdout>,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -259,7 +259,7 @@ pub(crate) struct Terminal {
 }
 
 pub(crate) struct InlineTerminal {
-    stdout: Stdout,
+    stdout: BufWriter<Stdout>,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -288,7 +288,7 @@ struct TerminalSessionGuard {
 impl TerminalSessionGuard {
     fn enter(
         mode: TerminalSessionMode,
-        stdout: &mut Stdout,
+        stdout: &mut impl Write,
         mouse_enabled: bool,
         kitty_keyboard: bool,
     ) -> io::Result<Self> {
@@ -307,7 +307,7 @@ impl TerminalSessionGuard {
         Ok(guard)
     }
 
-    fn restore(&self, stdout: &mut Stdout, inline_reserved: bool) {
+    fn restore(&self, stdout: &mut impl Write, inline_reserved: bool) {
         if self.kitty_keyboard {
             use crossterm::event::PopKeyboardEnhancementFlags;
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
@@ -326,16 +326,16 @@ impl Terminal {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
 
-        let mut stdout = io::stdout();
+        let mut raw = io::stdout();
         let session = TerminalSessionGuard::enter(
             TerminalSessionMode::Fullscreen,
-            &mut stdout,
+            &mut raw,
             mouse,
             kitty_keyboard,
         )?;
 
         Ok(Self {
-            stdout,
+            stdout: BufWriter::with_capacity(65536, raw),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -424,23 +424,32 @@ impl crate::Backend for Terminal {
 }
 
 impl InlineTerminal {
-    pub fn new(height: u32, mouse: bool, color_depth: ColorDepth) -> io::Result<Self> {
+    pub fn new(
+        height: u32,
+        mouse: bool,
+        kitty_keyboard: bool,
+        color_depth: ColorDepth,
+    ) -> io::Result<Self> {
         let (cols, _) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, height);
 
-        let mut stdout = io::stdout();
-        let session =
-            TerminalSessionGuard::enter(TerminalSessionMode::Inline, &mut stdout, mouse, false)?;
+        let mut raw = io::stdout();
+        let session = TerminalSessionGuard::enter(
+            TerminalSessionMode::Inline,
+            &mut raw,
+            mouse,
+            kitty_keyboard,
+        )?;
 
         let (_, cursor_row) = match cursor::position() {
             Ok(pos) => pos,
             Err(err) => {
-                session.restore(&mut stdout, false);
+                session.restore(&mut raw, false);
                 return Err(err);
             }
         };
         Ok(Self {
-            stdout,
+            stdout: BufWriter::with_capacity(65536, raw),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -873,7 +882,7 @@ fn flush_buffer_diff(
             let cell_link = cell
                 .hyperlink
                 .as_deref()
-                .filter(|u| crate::buffer::sanitize_osc8_url(u).is_some());
+                .filter(|u| crate::buffer::is_valid_osc8_url(u));
 
             // Decide whether this cell extends the open run or starts a new one.
             let extends = run_open
@@ -1221,6 +1230,7 @@ fn write_session_cleanup(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -1775,5 +1785,86 @@ mod tests {
         );
         assert!(s.contains("AAA"), "missing 'AAA' run in {:?}", s);
         assert!(s.contains("BBB"), "missing 'BBB' run in {:?}", s);
+    }
+
+    /// Verifies that `flush_buffer_diff` produces identical ANSI output whether the
+    /// destination is a plain `Vec<u8>` or a `BufWriter<Vec<u8>>`. This ensures the
+    /// BufWriter wrapper introduced for stdout does not alter the byte stream.
+    #[test]
+    fn bufwriter_output_identical_to_direct_write() {
+        let area = Rect::new(0, 0, 5, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let style = Style::new().fg(Color::Rgb(255, 128, 0));
+        for x in 0..5u32 {
+            current.get_mut(x, 0).set_char('X').set_style(style);
+        }
+
+        let mut direct: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut direct, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+
+        let mut buffered: BufWriter<Vec<u8>> = BufWriter::with_capacity(65536, Vec::new());
+        flush_buffer_diff(&mut buffered, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        buffered.flush().unwrap();
+        let via_buf = buffered.into_inner().unwrap();
+
+        assert_eq!(
+            direct, via_buf,
+            "BufWriter output must be byte-for-byte identical to direct write"
+        );
+    }
+
+    /// Verifies that a `BufWriter<Vec<u8>>` sink accumulates all writes and only
+    /// issues a single underlying `write` call to the inner sink when flushed.
+    /// This is a proxy for the syscall-reduction guarantee on the real stdout.
+    #[test]
+    fn bufwriter_coalesces_writes_into_single_flush() {
+        #[derive(Debug)]
+        struct CountingWriter {
+            buf: Vec<u8>,
+            write_call_count: usize,
+        }
+        impl Write for CountingWriter {
+            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+                self.write_call_count += 1;
+                self.buf.extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        // Alternate styles on every cell to maximise queue! calls inside flush_buffer_diff.
+        for x in 0..10u32 {
+            let color = if x % 2 == 0 {
+                Color::Rgb(255, 0, 0)
+            } else {
+                Color::Rgb(0, 255, 0)
+            };
+            current
+                .get_mut(x, 0)
+                .set_char('Z')
+                .set_style(Style::new().fg(color));
+        }
+
+        let sink = CountingWriter {
+            buf: Vec::new(),
+            write_call_count: 0,
+        };
+        let mut bw = BufWriter::with_capacity(65536, sink);
+        flush_buffer_diff(&mut bw, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        bw.flush().unwrap();
+        let inner = bw.into_inner().unwrap();
+
+        // BufWriter should have batched everything into 1 write call to the sink.
+        assert_eq!(
+            inner.write_call_count, 1,
+            "expected 1 write syscall to sink, got {}",
+            inner.write_call_count
+        );
     }
 }

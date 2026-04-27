@@ -16,10 +16,10 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
+            let max_index = entries.len().saturating_sub(1);
             for (i, key) in self.available_key_presses() {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let max_index = state.flatten().len().saturating_sub(1);
                         let _ =
                             handle_vertical_nav(&mut state.selected, max_index, key.code.clone());
                         changed = changed || state.selected != old_selected;
@@ -111,10 +111,13 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
+            // Per-keypress arms are mutually exclusive, and Right/Left only
+            // call `toggle_at` AFTER inspecting the entry. Reusing the outer
+            // `entries` snapshot is therefore safe within a single pass.
+            let max_index = entries.len().saturating_sub(1);
             for (i, key) in self.available_key_presses() {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let max_index = state.tree.flatten().len().saturating_sub(1);
                         let _ = handle_vertical_nav(
                             &mut state.tree.selected,
                             max_index,
@@ -124,9 +127,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Right => {
-                        let current_entries = state.tree.flatten();
-                        let entry =
-                            &current_entries[state.tree.selected.min(current_entries.len() - 1)];
+                        let entry = &entries[state.tree.selected.min(entries.len() - 1)];
                         if !entry.is_leaf && !entry.expanded {
                             state.tree.toggle_at(state.tree.selected);
                             changed = true;
@@ -139,9 +140,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
-                        let current_entries = state.tree.flatten();
-                        let entry =
-                            &current_entries[state.tree.selected.min(current_entries.len() - 1)];
+                        let entry = &entries[state.tree.selected.min(entries.len() - 1)];
                         if entry.expanded {
                             state.tree.toggle_at(state.tree.selected);
                             changed = true;
