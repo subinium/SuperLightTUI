@@ -3978,4 +3978,3 @@ fn text_input_suggestions_track_typed_chars_in_burst() {
         "after burst, matches reflect post-mutation 'ap' prefix, not stale empty value"
     );
 }
-

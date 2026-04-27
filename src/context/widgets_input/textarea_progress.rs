@@ -62,12 +62,12 @@ impl Context {
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
                             state.cursor_col -= 1;
-                            } else if state.cursor_row > 0 {
+                        } else if state.cursor_row > 0 {
                             let current = state.lines.remove(state.cursor_row);
                             state.cursor_row -= 1;
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                             state.lines[state.cursor_row].push_str(&current);
-                            }
+                        }
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
@@ -147,10 +147,10 @@ impl Context {
                                 state.cursor_col + 1,
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
-                            } else if state.cursor_row + 1 < state.lines.len() {
+                        } else if state.cursor_row + 1 < state.lines.len() {
                             let next = state.lines.remove(state.cursor_row + 1);
                             state.lines[state.cursor_row].push_str(&next);
-                            }
+                        }
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
