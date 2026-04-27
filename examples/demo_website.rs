@@ -540,7 +540,7 @@ fn render_docs(ui: &mut Context) {
             "rust",
             "ui.container()\n\
              \x20   .gap(1)                // space between children\n\
-             \x20   .pad(2)                // inner padding (all sides)\n\
+             \x20   .p(2)                // inner padding (all sides)\n\
              \x20   .padding(Padding::xy(4, 1))  // horizontal=4, vertical=1\n\
              \x20   .margin(Margin::new(1,1,0,0))\n\
              \x20   .col(|ui| { /* ... */ });",
@@ -571,7 +571,7 @@ fn render_docs(ui: &mut Context) {
             "rust",
             "ui.bordered(Border::Rounded)\n\
              \x20   .title(\"My Section\")\n\
-             \x20   .pad(1)\n\
+             \x20   .p(1)\n\
              \x20   .col(|ui| {\n\
              \x20       ui.text(\"inside\");\n\
              \x20   });",
@@ -861,7 +861,7 @@ fn render_blog(ui: &mut Context, blog_view: &mut Option<usize>) {
             );
 
             for (i, post) in BLOG_POSTS.iter().enumerate() {
-                let resp = ui.container().bg(theme.surface).pad(1).col(|ui| {
+                let resp = ui.container().bg(theme.surface).p(1).col(|ui| {
                     let _ = ui.row(|ui| {
                         ui.text(post.date).fg(theme.surface_text);
                         ui.text(" · ").fg(theme.surface_text);
@@ -1151,12 +1151,12 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
         ui,
         "rust",
         "ui.row(|ui| {\n\
-         \x20   ui.bordered(Border::Rounded).grow(1).pad(1).col(|ui| {\n\
+         \x20   ui.bordered(Border::Rounded).grow(1).p(1).col(|ui| {\n\
          \x20       ui.text(\"CPU\").dim();\n\
          \x20       ui.text(\"42%\").bold().fg(theme.primary);\n\
          \x20       ui.progress(0.42);\n\
          \x20   });\n\
-         \x20   ui.bordered(Border::Rounded).grow(1).pad(1).col(|ui| {\n\
+         \x20   ui.bordered(Border::Rounded).grow(1).p(1).col(|ui| {\n\
          \x20       ui.text(\"Memory\").dim();\n\
          \x20       ui.text(\"2.1 GB / 8 GB\").bold().fg(theme.success);\n\
          \x20       ui.progress(0.26);\n\
@@ -1192,7 +1192,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
     md_code_block(
         ui,
         "rust",
-        "ui.scrollable(&mut scroll).max_height(10).col(|ui| {\n\
+        "ui.scrollable(&mut scroll).max_h(10).col(|ui| {\n\
          \x20   for log in &logs {\n\
          \x20       ui.text(log).dim();\n\
          \x20   }\n\
@@ -1290,7 +1290,7 @@ fn render_post_flexbox(ui: &mut Context) {
 
     md_h2(ui, "The Mapping");
 
-    let _ = ui.bordered(Border::Rounded).pad(1).col(|ui| {
+    let _ = ui.bordered(Border::Rounded).p(1).col(|ui| {
         let _ = ui.row(|ui| {
             ui.styled(
                 format!("{:<32}", "CSS"),
@@ -1306,12 +1306,12 @@ fn render_post_flexbox(ui: &mut Context) {
             ("gap: 8px", ".gap(1)"),
             ("flex-grow: 1", ".grow(1)"),
             ("flex-shrink: 0", ".shrink(0)"),
-            ("padding: 8px", ".pad(1)"),
+            ("padding: 8px", ".p(1)"),
             ("padding: 8px 16px", ".padding(Padding::xy(2, 1))"),
             ("margin: 4px", ".margin(Margin::all(1))"),
             ("align-items: center", ".align(Align::Center)"),
-            ("min-width: 20px", ".min_width(20)"),
-            ("max-height: 10px", ".max_height(10)"),
+            ("min-width: 20px", ".min_w(20)"),
+            ("max-height: 10px", ".max_h(10)"),
             ("overflow: scroll", "ui.scrollable(&mut s)"),
             ("overflow: hidden", "automatic on containers"),
             ("border: 1px solid", ".border(Border::Single)"),
@@ -1375,7 +1375,7 @@ fn render_post_flexbox(ui: &mut Context) {
          \n\
          \x20   // Main content: sidebar + body\n\
          \x20   ui.row(|ui| {\n\
-         \x20       ui.container().min_width(20).col(|ui| {\n\
+         \x20       ui.container().min_w(20).col(|ui| {\n\
          \x20           ui.list(&mut menu);\n\
          \x20       });\n\
          \x20       ui.container().grow(1).col(|ui| {\n\
@@ -1506,7 +1506,7 @@ fn render_pricing(
         ui.text("");
         let _ = ui.container()
             .bg(theme.surface)
-            .pad(1)
+            .p(1)
             .col(|ui| {
                 ui.text("Ship faster with SLT").bold().fg(theme.primary);
                 ui.text(
@@ -1539,7 +1539,7 @@ fn render_pricing(
                 }
                 let _ = ui.bordered(Border::Rounded)
                     .bg(theme.surface)
-                    .pad(2)
+                    .p(2)
                     .max_w(56)
                     .col(|ui| {
                         ui.text("✦ Confirm Subscription").bold().fg(theme.primary);
@@ -1770,7 +1770,7 @@ fn price_card(
         .container()
         .with_if(highlight, |c| c.border(Border::Rounded))
         .bg(theme.surface)
-        .pad(1)
+        .p(1)
         .grow(1)
         .col(|ui| {
             ui.text(tier).bold().fg(color);

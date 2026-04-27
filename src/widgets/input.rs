@@ -516,26 +516,25 @@ impl Default for TextareaState {
 /// tick counter.
 #[derive(Debug, Clone)]
 pub struct SpinnerState {
-    chars: Vec<char>,
+    chars: &'static [char],
 }
+
+static DOTS_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+static LINE_CHARS: &[char] = &['|', '/', '-', '\\'];
 
 impl SpinnerState {
     /// Create a dots-style spinner using braille characters.
     ///
     /// Cycles through: `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`
     pub fn dots() -> Self {
-        Self {
-            chars: vec!['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-        }
+        Self { chars: DOTS_CHARS }
     }
 
     /// Create a line-style spinner using ASCII characters.
     ///
     /// Cycles through: `| / - \`
     pub fn line() -> Self {
-        Self {
-            chars: vec!['|', '/', '-', '\\'],
-        }
+        Self { chars: LINE_CHARS }
     }
 
     /// Return the spinner character for the given tick.

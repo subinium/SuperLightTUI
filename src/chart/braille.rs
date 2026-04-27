@@ -1,31 +1,32 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_braille_dataset(
     dataset: &Dataset,
     x_min: f64,
     x_max: f64,
     y_min: f64,
     y_max: f64,
-    plot_chars: &mut [Vec<char>],
-    plot_styles: &mut [Vec<Style>],
+    plot_chars: &mut [char],
+    plot_styles: &mut [Style],
+    cols: usize,
+    rows: usize,
 ) {
-    if dataset.data.is_empty() || plot_chars.is_empty() || plot_chars[0].is_empty() {
+    if dataset.data.is_empty() || cols == 0 || rows == 0 {
         return;
     }
 
-    let cols = plot_chars[0].len();
-    let rows = plot_chars.len();
     let px_w = cols * 2;
     let px_h = rows * 4;
-    let mut bits = vec![vec![0u32; cols]; rows];
-    let mut color_map = vec![vec![None::<Color>; cols]; rows];
+    let mut bits: Vec<u32> = vec![0u32; cols * rows];
+    let mut color_map: Vec<Option<Color>> = vec![None; cols * rows];
 
     let mut set_dot_colored = |px: usize, py: usize, color: Color| {
         set_braille_dot(px, py, &mut bits, cols, rows);
         let char_col = px / 2;
         let char_row = py / 4;
         if char_col < cols && char_row < rows {
-            color_map[char_row][char_col] = Some(color);
+            color_map[char_row * cols + char_col] = Some(color);
         }
     };
 
@@ -112,11 +113,12 @@ pub(super) fn draw_braille_dataset(
 
     for row in 0..rows {
         for col in 0..cols {
-            if bits[row][col] != 0 {
-                let ch = char::from_u32(BRAILLE_BASE + bits[row][col]).unwrap_or(' ');
-                plot_chars[row][col] = ch;
-                let color = color_map[row][col].unwrap_or(dataset.color);
-                plot_styles[row][col] = Style::new().fg(color);
+            let idx = row * cols + col;
+            if bits[idx] != 0 {
+                let ch = char::from_u32(BRAILLE_BASE + bits[idx]).unwrap_or(' ');
+                plot_chars[idx] = ch;
+                let color = color_map[idx].unwrap_or(dataset.color);
+                plot_styles[idx] = Style::new().fg(color);
             }
         }
     }
@@ -131,14 +133,15 @@ pub(super) fn draw_braille_dataset(
             let col = map_value_to_cell(*x, x_min, x_max, cols, false);
             let row = map_value_to_cell(*y, y_min, y_max, rows, true);
             if row < rows && col < cols {
-                plot_chars[row][col] = m;
-                plot_styles[row][col] = Style::new().fg(dataset.color);
+                let idx = row * cols + col;
+                plot_chars[idx] = m;
+                plot_styles[idx] = Style::new().fg(dataset.color);
             }
         }
     }
 }
 
-fn set_braille_dot(px: usize, py: usize, bits: &mut [Vec<u32>], cols: usize, rows: usize) {
+fn set_braille_dot(px: usize, py: usize, bits: &mut [u32], cols: usize, rows: usize) {
     if cols == 0 || rows == 0 {
         return;
     }
@@ -149,7 +152,7 @@ fn set_braille_dot(px: usize, py: usize, bits: &mut [Vec<u32>], cols: usize, row
     }
     let sub_col = px % 2;
     let sub_row = py % 4;
-    bits[char_row][char_col] |= if sub_col == 0 {
+    bits[char_row * cols + char_col] |= if sub_col == 0 {
         BRAILLE_LEFT_BITS[sub_row]
     } else {
         BRAILLE_RIGHT_BITS[sub_row]

@@ -1052,7 +1052,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "superlighttui"
-version = "0.19.1"
+version = "0.19.2"
 dependencies = [
  "compact_str",
  "criterion",
@@ -1063,6 +1063,7 @@ dependencies = [
  "proptest",
  "qrcode",
  "serde",
+ "smallvec",
  "tokio",
  "tree-sitter-bash",
  "tree-sitter-c",

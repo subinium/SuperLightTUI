@@ -82,7 +82,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("System Dashboard")
-            .pad(1)
+            .p(1)
             .grow(1)
             .col(|ui| {
                 let _ = ui.row(|ui| {
@@ -118,11 +118,11 @@ fn main() -> std::io::Result<()> {
 
                 let _ = ui.divider_text("Key Metrics");
                 let _ = ui.row(|ui| {
-                    let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
                         let _ =
                             ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
                     });
-                    let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored(
                             "Errors",
                             &format!("{}", metrics.errors),
@@ -133,10 +133,10 @@ fn main() -> std::io::Result<()> {
                             },
                         );
                     });
-                    let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored("P99", "45ms", Color::Yellow);
                     });
-                    let _ = ui.bordered(Border::Rounded).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored("Threads", "24", Color::Blue);
                     });
                 });
@@ -146,7 +146,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Rounded)
                         .title("Processes")
-                        .pad(1)
+                        .p(1)
                         .grow(1)
                         .col(|ui| {
                             let _ = ui.table(&mut proc_table);
@@ -175,7 +175,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Rounded)
                         .title("Logs")
-                        .pad(1)
+                        .p(1)
                         .grow(1)
                         .col(|ui| {
                             let _ = ui.scrollable(&mut log_scroll).grow(1).col(|ui| {
@@ -208,7 +208,7 @@ fn main() -> std::io::Result<()> {
 }
 
 fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Color) {
-    let resp = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+    let resp = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
         ui.text(label).dim();
         ui.text(format!("{value:.1}{unit}")).bold().fg(color);
         let bar_w = 10;

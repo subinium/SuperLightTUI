@@ -264,7 +264,7 @@ impl Context {
         state.last_selected = None;
         let interaction_id = self.next_interaction_id();
 
-        let filtered = state.filtered_indices();
+        let filtered: Vec<usize> = state.filtered_indices_cached().to_vec();
         let sel = state.selected().min(filtered.len().saturating_sub(1));
         state.set_selected(sel);
 
@@ -315,7 +315,7 @@ impl Context {
         }
         self.consume_indices(consumed_indices);
 
-        let filtered = state.filtered_indices();
+        let filtered: Vec<usize> = state.filtered_indices_cached().to_vec();
 
         let _ = self.modal(|ui| {
             let primary = ui.theme.primary;
@@ -323,7 +323,7 @@ impl Context {
                 .container()
                 .border(Border::Rounded)
                 .border_style(Style::new().fg(primary))
-                .pad(1)
+                .p(1)
                 .max_w(60)
                 .col(|ui| {
                     let border_color = ui.theme.primary;
@@ -702,56 +702,74 @@ impl Context {
         bold: Style,
         code: Style,
     ) -> Vec<(String, Style)> {
+        // All inline markers (`**`, `*`, `` ` ``) are single-byte ASCII, so
+        // byte-index slicing of `text` is safe — multi-byte chars in `inner`
+        // are never split. Avoids the `chars().collect::<Vec<_>>()` allocation
+        // and per-match `String` reconstructions of the prior implementation.
         let mut segments: Vec<(String, Style)> = Vec::new();
+        let bytes = text.as_bytes();
         let mut current = String::new();
-        let chars: Vec<char> = text.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
-                let rest: String = chars[i + 2..].iter().collect();
-                if let Some(end) = rest.find("**") {
+        let mut i: usize = 0;
+
+        while i < bytes.len() {
+            // Bold: **text**
+            if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                let after_open = i + 2;
+                if let Some(rel_end) = text[after_open..].find("**") {
+                    let close = after_open + rel_end;
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    let inner: String = rest[..end].to_string();
-                    let char_count = inner.chars().count();
+                    let inner = text[after_open..close].to_string();
                     segments.push((inner, bold));
-                    i += 2 + char_count + 2;
+                    i = close + 2;
                     continue;
                 }
             }
-            if chars[i] == '*'
-                && (i + 1 >= chars.len() || chars[i + 1] != '*')
-                && (i == 0 || chars[i - 1] != '*')
+
+            // Italic: *text* — skipped if part of a `**` run.
+            if bytes[i] == b'*'
+                && (i + 1 >= bytes.len() || bytes[i + 1] != b'*')
+                && (i == 0 || bytes[i - 1] != b'*')
             {
-                let rest: String = chars[i + 1..].iter().collect();
-                if let Some(end) = rest.find('*') {
+                let after_open = i + 1;
+                if let Some(rel_end) = text[after_open..].find('*') {
+                    let close = after_open + rel_end;
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    let inner: String = rest[..end].to_string();
-                    let char_count = inner.chars().count();
+                    let inner = text[after_open..close].to_string();
                     segments.push((inner, base.italic()));
-                    i += 1 + char_count + 1;
+                    i = close + 1;
                     continue;
                 }
             }
-            if chars[i] == '`' {
-                let rest: String = chars[i + 1..].iter().collect();
-                if let Some(end) = rest.find('`') {
+
+            // Inline code: `text`
+            if bytes[i] == b'`' {
+                let after_open = i + 1;
+                if let Some(rel_end) = text[after_open..].find('`') {
+                    let close = after_open + rel_end;
                     if !current.is_empty() {
                         segments.push((std::mem::take(&mut current), base));
                     }
-                    let inner: String = rest[..end].to_string();
-                    let char_count = inner.chars().count();
+                    let inner = text[after_open..close].to_string();
                     segments.push((inner, code));
-                    i += 1 + char_count + 1;
+                    i = close + 1;
                     continue;
                 }
             }
-            current.push(chars[i]);
-            i += 1;
+
+            // No marker — append one whole character (possibly multi-byte)
+            // and advance past it.
+            let ch = text[i..]
+                .chars()
+                .next()
+                .expect("non-empty tail past bounds check");
+            current.push(ch);
+            i += ch.len_utf8();
         }
+
         if !current.is_empty() {
             segments.push((current, base));
         }
@@ -941,61 +959,85 @@ impl Context {
     /// `**bold**` → `bold`, `*italic*` → `italic`, `` `code` `` → `code`,
     /// `[text](url)` → `text`, `![alt](url)` → `alt`.
     fn md_strip(text: &str) -> String {
-        let mut result = String::with_capacity(text.len());
+        // Bracket/paren parsing for links/images still uses a `Vec<char>`
+        // because the helper takes a char-slice; pre-build it once and reuse
+        // the precomputed char→byte mapping for both code paths.
         let chars: Vec<char> = text.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            // Image ![alt](url) → alt
-            if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-                if let Some((alt, _, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
+        let char_to_byte = {
+            let mut v = Vec::with_capacity(chars.len() + 1);
+            let mut acc = 0usize;
+            v.push(0);
+            for ch in &chars {
+                acc += ch.len_utf8();
+                v.push(acc);
+            }
+            v
+        };
+        let bytes = text.as_bytes();
+        let mut result = String::with_capacity(text.len());
+        let mut ci: usize = 0;
+
+        while ci < chars.len() {
+            // Image: ![alt](url) — char-based bracket scanner is reused as-is.
+            if chars[ci] == '!' && ci + 1 < chars.len() && chars[ci + 1] == '[' {
+                if let Some((alt, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci + 1) {
                     result.push_str(&alt);
-                    i += 1 + consumed;
+                    ci += 1 + consumed;
                     continue;
                 }
             }
-            // Link [text](url) → text
-            if chars[i] == '[' {
-                if let Some((link_text, _, consumed)) = Self::parse_md_bracket_paren(&chars, i) {
+            // Link: [text](url)
+            if chars[ci] == '[' {
+                if let Some((link_text, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci) {
                     result.push_str(&link_text);
-                    i += consumed;
+                    ci += consumed;
                     continue;
                 }
             }
-            // Bold **text**
-            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
-                let rest: String = chars[i + 2..].iter().collect();
-                if let Some(end) = rest.find("**") {
-                    let inner = &rest[..end];
+
+            let bi = char_to_byte[ci];
+
+            // Bold: **text**
+            if bytes[bi] == b'*' && bi + 1 < bytes.len() && bytes[bi + 1] == b'*' {
+                let after_open = bi + 2;
+                if let Some(rel_end) = text[after_open..].find("**") {
+                    let close = after_open + rel_end;
+                    let inner = &text[after_open..close];
                     result.push_str(inner);
-                    i += 2 + inner.chars().count() + 2;
+                    ci += 2 + inner.chars().count() + 2;
                     continue;
                 }
             }
-            // Italic *text*
-            if chars[i] == '*'
-                && (i + 1 >= chars.len() || chars[i + 1] != '*')
-                && (i == 0 || chars[i - 1] != '*')
+
+            // Italic: *text* — skipped inside a `**` run.
+            if bytes[bi] == b'*'
+                && (bi + 1 >= bytes.len() || bytes[bi + 1] != b'*')
+                && (bi == 0 || bytes[bi - 1] != b'*')
             {
-                let rest: String = chars[i + 1..].iter().collect();
-                if let Some(end) = rest.find('*') {
-                    let inner = &rest[..end];
+                let after_open = bi + 1;
+                if let Some(rel_end) = text[after_open..].find('*') {
+                    let close = after_open + rel_end;
+                    let inner = &text[after_open..close];
                     result.push_str(inner);
-                    i += 1 + inner.chars().count() + 1;
+                    ci += 1 + inner.chars().count() + 1;
                     continue;
                 }
             }
-            // Inline code `text`
-            if chars[i] == '`' {
-                let rest: String = chars[i + 1..].iter().collect();
-                if let Some(end) = rest.find('`') {
-                    let inner = &rest[..end];
+
+            // Inline code: `text`
+            if bytes[bi] == b'`' {
+                let after_open = bi + 1;
+                if let Some(rel_end) = text[after_open..].find('`') {
+                    let close = after_open + rel_end;
+                    let inner = &text[after_open..close];
                     result.push_str(inner);
-                    i += 1 + inner.chars().count() + 1;
+                    ci += 1 + inner.chars().count() + 1;
                     continue;
                 }
             }
-            result.push(chars[i]);
-            i += 1;
+
+            result.push(chars[ci]);
+            ci += 1;
         }
         result
     }

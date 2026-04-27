@@ -1,5 +1,35 @@
 use super::*;
 
+/// Move a logical column index backward to the start of the previous word.
+///
+/// Word boundary: a run of one-or-more alphanumeric characters. Leading
+/// non-alphanumerics before the cursor are skipped first, then the run of
+/// alphanumerics is consumed.
+fn prev_word_col(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let mut pos = col.min(chars.len());
+    while pos > 0 && !chars[pos - 1].is_alphanumeric() {
+        pos -= 1;
+    }
+    while pos > 0 && chars[pos - 1].is_alphanumeric() {
+        pos -= 1;
+    }
+    pos
+}
+
+/// Move a logical column index forward past the end of the next word.
+fn next_word_col(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let mut pos = col.min(chars.len());
+    while pos < chars.len() && !chars[pos].is_alphanumeric() {
+        pos += 1;
+    }
+    while pos < chars.len() && chars[pos].is_alphanumeric() {
+        pos += 1;
+    }
+    pos
+}
+
 impl Context {
     ///
     /// When focused, handles character input, Enter (new line), Backspace,
@@ -7,6 +37,10 @@ impl Context {
     ///
     /// Set [`TextareaState::word_wrap`] to enable soft-wrapping at a given
     /// display-column width. Up/Down then navigate visual lines.
+    ///
+    /// Editing shortcuts: `Ctrl+K` deletes from the cursor to the end of the
+    /// current line. `Ctrl+Left` / `Alt+Left` jumps to the previous word
+    /// boundary; `Ctrl+Right` / `Alt+Right` jumps past the next word end.
     pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
         if state.lines.is_empty() {
             state.lines.push(String::new());
@@ -27,6 +61,44 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
                 match key.code {
+                    KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let line_len = state.lines[state.cursor_row].chars().count();
+                        if state.cursor_col < line_len {
+                            let cut = byte_index_for_char(
+                                &state.lines[state.cursor_row],
+                                state.cursor_col,
+                            );
+                            state.lines[state.cursor_row].truncate(cut);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Left
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            || key.modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        if state.cursor_col > 0 {
+                            state.cursor_col =
+                                prev_word_col(&state.lines[state.cursor_row], state.cursor_col);
+                        } else if state.cursor_row > 0 {
+                            state.cursor_row -= 1;
+                            state.cursor_col = state.lines[state.cursor_row].chars().count();
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            || key.modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        let line_len = state.lines[state.cursor_row].chars().count();
+                        if state.cursor_col < line_len {
+                            state.cursor_col =
+                                next_word_col(&state.lines[state.cursor_row], state.cursor_col);
+                        } else if state.cursor_row + 1 < state.lines.len() {
+                            state.cursor_row += 1;
+                            state.cursor_col = 0;
+                        }
+                        consumed_indices.push(i);
+                    }
                     KeyCode::Char(ch) => {
                         if let Some(max) = state.max_length {
                             let total: usize =

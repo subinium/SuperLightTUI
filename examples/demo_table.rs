@@ -42,7 +42,7 @@ fn main() -> std::io::Result<()> {
         });
         let theme = *ui.theme();
 
-        let _ = ui.container().pad(1).grow(1).col(|ui| {
+        let _ = ui.container().p(1).grow(1).col(|ui| {
             let _ = ui.row(|ui| {
                 ui.text("Table Demo").bold().fg(theme.primary);
                 ui.spacer();

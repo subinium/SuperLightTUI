@@ -12,7 +12,7 @@ fn render_demo_basic_layout() {
     tb.render(|ui| {
         ui.bordered(Border::Rounded)
             .title("SLT Demo")
-            .pad(1)
+            .p(1)
             .grow(1)
             .col(|ui| {
                 ui.row(|ui| {
@@ -23,7 +23,7 @@ fn render_demo_basic_layout() {
                 ui.separator();
                 ui.bordered(Border::Single)
                     .title("Input")
-                    .pad(1)
+                    .p(1)
                     .grow(1)
                     .col(|ui| {
                         ui.text("Name:").bold();
@@ -49,14 +49,11 @@ fn render_demo_basic_layout() {
 fn render_justify_layout() {
     let mut tb = TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.bordered(Border::Single)
-            .space_between()
-            .pad(1)
-            .row(|ui| {
-                ui.text("A");
-                ui.text("B");
-                ui.text("C");
-            });
+        ui.bordered(Border::Single).space_between().p(1).row(|ui| {
+            ui.text("A");
+            ui.text("B");
+            ui.text("C");
+        });
     });
     let output = tb.to_string_trimmed();
     println!("Justify output:\n{}", output);
@@ -93,7 +90,7 @@ fn render_modal() {
     tb.render(|ui| {
         ui.text("Background content");
         ui.modal(|ui| {
-            ui.bordered(Border::Rounded).pad(1).col(|ui| {
+            ui.bordered(Border::Rounded).p(1).col(|ui| {
                 ui.text("Modal title");
                 ui.text("Modal body");
             });

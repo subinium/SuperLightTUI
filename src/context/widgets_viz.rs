@@ -1167,24 +1167,6 @@ impl Context {
         low_color: Color,
         high_color: Color,
     ) -> Response {
-        fn blend_color(a: Color, b: Color, t: f64) -> Color {
-            let t = t.clamp(0.0, 1.0);
-            match (a, b) {
-                (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
-                    (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
-                    (g1 as f64 * (1.0 - t) + g2 as f64 * t).round() as u8,
-                    (b1 as f64 * (1.0 - t) + b2 as f64 * t).round() as u8,
-                ),
-                _ => {
-                    if t > 0.5 {
-                        b
-                    } else {
-                        a
-                    }
-                }
-            }
-        }
-
         if data.is_empty() || width == 0 || height == 0 {
             return Response::none();
         }
@@ -1623,24 +1605,6 @@ impl Context {
                 }
             };
 
-            let blend = |t: f64| -> Color {
-                let t = t.clamp(0.0, 1.0);
-                match (low_color, high_color) {
-                    (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
-                        (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
-                        (g1 as f64 * (1.0 - t) + g2 as f64 * t).round() as u8,
-                        (b1 as f64 * (1.0 - t) + b2 as f64 * t).round() as u8,
-                    ),
-                    _ => {
-                        if t > 0.5 {
-                            high_color
-                        } else {
-                            low_color
-                        }
-                    }
-                }
-            };
-
             for row in 0..h {
                 let upper_data_row =
                     (row * 2 * data_rows / virtual_rows).min(data_rows.saturating_sub(1));
@@ -1650,8 +1614,8 @@ impl Context {
                 for col in 0..w.min(cols) {
                     let upper_t = sample(upper_data_row, col);
                     let lower_t = sample(lower_data_row, col);
-                    let upper_color = blend(upper_t);
-                    let lower_color = blend(lower_t);
+                    let upper_color = blend_color(low_color, high_color, upper_t);
+                    let lower_color = blend_color(low_color, high_color, lower_t);
 
                     buf.set_char(
                         rect.x + col as u32,
@@ -1670,6 +1634,11 @@ impl Context {
     ///
     /// Uses `┃` for wicks (heavier than `│`) and `▀`/`▄` at body edges for
     /// sub-cell vertical precision, effectively doubling the price resolution.
+    ///
+    /// Each terminal cell represents two half-cells vertically: the body's open
+    /// and close prices snap to the nearest half-cell, so a body that covers an
+    /// odd number of half-cells terminates with `▀` (top half only) or `▄`
+    /// (bottom half only) rather than rounding to a full cell.
     ///
     /// # Example
     ///
@@ -1716,9 +1685,17 @@ impl Context {
             }
 
             let price_range = if (hi - lo).abs() < 0.01 { 1.0 } else { hi - lo };
+            // Cell-resolution price-to-row map (used for wicks).
             let map_y = |v: f64| -> usize {
                 let t = ((v - lo) / price_range).clamp(0.0, 1.0);
                 ((1.0 - t) * h.saturating_sub(1) as f64).round() as usize
+            };
+            // Half-cell resolution price-to-row map (used for body edges).
+            // Returns half-cell index in [0, 2h-1]; 0 = top of cell 0, 2h-1 = bottom of cell h-1.
+            let half_rows = h.saturating_mul(2);
+            let map_y_half = |v: f64| -> usize {
+                let t = ((v - lo) / price_range).clamp(0.0, 1.0);
+                ((1.0 - t) * half_rows.saturating_sub(1) as f64).round() as usize
             };
 
             let n = candles.len();
@@ -1746,7 +1723,7 @@ impl Context {
                     down_color
                 };
 
-                // Wick
+                // Wick (cell-resolution; body draws over wick within its range).
                 let wick_top = map_y(c.high);
                 let wick_bot = map_y(c.low);
                 for row in wick_top..=wick_bot.min(h - 1) {
@@ -1758,15 +1735,30 @@ impl Context {
                     );
                 }
 
-                // Body
-                let body_top = map_y(c.open.max(c.close));
-                let body_bot = map_y(c.open.min(c.close));
-                for row in body_top..=body_bot.min(h - 1) {
+                // Body uses half-cell precision: each cell covers two half-cells
+                // (top = 2·row, bottom = 2·row + 1). Body extends from
+                // `body_top_half` (highest price) down to `body_bot_half`
+                // (lowest price) inclusive, in half-cell units.
+                let body_top_half = map_y_half(c.open.max(c.close));
+                let body_bot_half = map_y_half(c.open.min(c.close));
+                let row_first = body_top_half / 2;
+                let row_last = (body_bot_half / 2).min(h - 1);
+                for row in row_first..=row_last {
+                    let top_hc = row * 2;
+                    let bot_hc = row * 2 + 1;
+                    let top_in = top_hc >= body_top_half && top_hc <= body_bot_half;
+                    let bot_in = bot_hc >= body_top_half && bot_hc <= body_bot_half;
+                    let body_char = match (top_in, bot_in) {
+                        (true, true) => '█',
+                        (true, false) => '▀',
+                        (false, true) => '▄',
+                        (false, false) => continue,
+                    };
                     for col in x0..=x1.min(w - 1) {
                         buf.set_char(
                             rect.x + col as u32,
                             rect.y + row as u32,
-                            '█',
+                            body_char,
                             Style::new().fg(color),
                         );
                     }
@@ -2186,12 +2178,7 @@ fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec
     // Normalize values to fill the available area
     let area = w * h;
     let mut sorted_indices: Vec<usize> = (0..items.len()).collect();
-    sorted_indices.sort_by(|a, b| {
-        items[*b]
-            .value
-            .partial_cmp(&items[*a].value)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    sorted_indices.sort_by(|a, b| items[*b].value.total_cmp(&items[*a].value));
 
     let areas: Vec<f64> = sorted_indices
         .iter()
@@ -2211,21 +2198,34 @@ fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec
     result
 }
 
-fn worst_ratio(row: &[f64], side: f64) -> f64 {
-    if row.is_empty() || side <= 0.0 {
+/// Incremental form of [`worst_ratio`] that uses pre-aggregated row statistics.
+///
+/// `sum` is the total of all areas in the row (including non-positive ones, to
+/// match `row.iter().sum()`). `pos_max` and `pos_min` are the max/min over
+/// strictly positive areas only — set them to `f64::NEG_INFINITY` / `f64::INFINITY`
+/// when there are no positives. `pos_count` is the number of strictly positive areas.
+///
+/// Returns the same value as `worst_ratio` for any row whose sum/min/max/count
+/// match, since `worst_ratio`'s loop reduces to `max(side²·max / sum², sum² / (side²·min))`
+/// when all summed areas are positive, and to `0.0` when none are.
+#[inline]
+fn worst_ratio_incremental(
+    sum: f64,
+    pos_max: f64,
+    pos_min: f64,
+    pos_count: usize,
+    side: f64,
+) -> f64 {
+    if side <= 0.0 {
         return f64::INFINITY;
     }
-    let sum: f64 = row.iter().sum();
-    let mut worst = 0.0f64;
-    for &a in row {
-        if a <= 0.0 {
-            continue;
-        }
-        let ratio1 = (side * side * a) / (sum * sum);
-        let ratio2 = (sum * sum) / (side * side * a);
-        worst = worst.max(ratio1.max(ratio2));
+    if pos_count == 0 {
+        return 0.0;
     }
-    worst
+    let s2 = side * side;
+    let sum2 = sum * sum;
+    // sum2 > 0 here because pos_count > 0 implies sum > 0.
+    (s2 * pos_max / sum2).max(sum2 / (s2 * pos_min))
 }
 
 fn squarify_recursive(
@@ -2249,13 +2249,47 @@ fn squarify_recursive(
     let short_side = w.min(h);
     let mut row: Vec<f64> = Vec::new();
     let mut row_indices: Vec<usize> = Vec::new();
+    // Incremental row statistics avoid cloning `row` each iteration just to
+    // probe the ratio of `row + [area]`. `pos_*` track positive-only stats to
+    // match `worst_ratio`'s zero-skip behavior exactly.
+    let mut row_sum_acc = 0f64;
+    let mut row_pos_max = f64::NEG_INFINITY;
+    let mut row_pos_min = f64::INFINITY;
+    let mut row_pos_count: usize = 0;
 
     for (i, &area) in areas.iter().enumerate() {
-        let mut candidate = row.clone();
-        candidate.push(area);
-        if row.is_empty() || worst_ratio(&candidate, short_side) <= worst_ratio(&row, short_side) {
+        let cand_sum = row_sum_acc + area;
+        let (cand_pos_max, cand_pos_min, cand_pos_count) = if area > 0.0 {
+            (
+                row_pos_max.max(area),
+                row_pos_min.min(area),
+                row_pos_count + 1,
+            )
+        } else {
+            (row_pos_max, row_pos_min, row_pos_count)
+        };
+
+        let candidate_ratio = worst_ratio_incremental(
+            cand_sum,
+            cand_pos_max,
+            cand_pos_min,
+            cand_pos_count,
+            short_side,
+        );
+        let current_ratio = worst_ratio_incremental(
+            row_sum_acc,
+            row_pos_max,
+            row_pos_min,
+            row_pos_count,
+            short_side,
+        );
+        if row.is_empty() || candidate_ratio <= current_ratio {
             row.push(area);
             row_indices.push(indices[i]);
+            row_sum_acc = cand_sum;
+            row_pos_max = cand_pos_max;
+            row_pos_min = cand_pos_min;
+            row_pos_count = cand_pos_count;
         } else {
             // Layout the current row
             let row_sum: f64 = row.iter().sum();
@@ -2354,6 +2388,29 @@ fn squarify_recursive(
                     h,
                 };
                 cx += cell_w;
+            }
+        }
+    }
+}
+
+/// Linearly interpolate between two RGB colors.
+///
+/// Both colors must be `Color::Rgb` for true interpolation; mixed/named inputs
+/// fall back to a binary threshold at `t = 0.5`. `t` is clamped to `[0.0, 1.0]`.
+#[inline]
+fn blend_color(a: Color, b: Color, t: f64) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    match (a, b) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
+            (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
+            (g1 as f64 * (1.0 - t) + g2 as f64 * t).round() as u8,
+            (b1 as f64 * (1.0 - t) + b2 as f64 * t).round() as u8,
+        ),
+        _ => {
+            if t > 0.5 {
+                b
+            } else {
+                a
             }
         }
     }

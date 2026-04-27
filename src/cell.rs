@@ -16,7 +16,7 @@ use crate::style::Style;
 // document why — but do not silently let it drift.
 const _: () = assert!(
     std::mem::size_of::<Cell>() <= 64,
-    "Cell exceeds one cache line (64 B).      If the size increase is intentional, update this bound and document why."
+    "Cell exceeds one cache line (64 B). If the size increase is intentional, update this bound and document why."
 );
 
 /// A single terminal cell containing a character and style.
@@ -85,7 +85,7 @@ mod tests {
         let size = std::mem::size_of::<Cell>();
         assert!(
             size <= 64,
-            "Cell size = {size}B; exceeds 64B cache-line budget.              If intentional, update the const-assert and this test together."
+            "Cell size = {size}B; exceeds 64B cache-line budget. If intentional, update the const-assert and this test together."
         );
     }
 }

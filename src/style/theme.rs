@@ -231,7 +231,7 @@ impl Theme {
     }
 
     /// Create a dark theme with cyan primary and white text.
-    pub fn dark() -> Self {
+    pub const fn dark() -> Self {
         Self {
             primary: Color::Cyan,
             secondary: Color::Blue,
@@ -254,7 +254,7 @@ impl Theme {
     }
 
     /// Create a light theme with high-contrast dark text on light backgrounds.
-    pub fn light() -> Self {
+    pub const fn light() -> Self {
         Self {
             primary: Color::Rgb(37, 99, 235),
             secondary: Color::Rgb(14, 116, 144),
@@ -278,6 +278,10 @@ impl Theme {
 
     /// Create a [`ThemeBuilder`] for configuring a custom theme.
     ///
+    /// Unset fields fall back to [`Theme::dark()`] defaults. Use
+    /// [`Theme::builder_from`] to start from a different base, or
+    /// [`Theme::light_builder`] for a light-base shorthand.
+    ///
     /// # Example
     ///
     /// ```
@@ -288,7 +292,7 @@ impl Theme {
     ///     .accent(Color::Cyan)
     ///     .build();
     /// ```
-    pub fn builder() -> ThemeBuilder {
+    pub const fn builder() -> ThemeBuilder {
         ThemeBuilder {
             primary: None,
             secondary: None,
@@ -308,6 +312,68 @@ impl Theme {
             is_dark: None,
             spacing: None,
         }
+    }
+
+    /// Create a [`ThemeBuilder`] pre-filled with every field from `base`.
+    ///
+    /// Only fields explicitly overridden via builder methods will differ
+    /// from `base`; unset fields keep `base`'s value (rather than falling
+    /// back to [`Theme::dark()`] defaults as plain [`Theme::builder`]
+    /// does). Useful for deriving variants from any preset.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, Theme};
+    ///
+    /// // Nord variant: keep all Nord colors but override primary.
+    /// let custom_nord = Theme::builder_from(Theme::nord())
+    ///     .primary(Color::Rgb(255, 0, 0))
+    ///     .build();
+    /// assert_eq!(custom_nord.bg, Theme::nord().bg);
+    /// assert_eq!(custom_nord.primary, Color::Rgb(255, 0, 0));
+    /// ```
+    pub const fn builder_from(base: Theme) -> ThemeBuilder {
+        ThemeBuilder {
+            primary: Some(base.primary),
+            secondary: Some(base.secondary),
+            accent: Some(base.accent),
+            text: Some(base.text),
+            text_dim: Some(base.text_dim),
+            border: Some(base.border),
+            bg: Some(base.bg),
+            success: Some(base.success),
+            warning: Some(base.warning),
+            error: Some(base.error),
+            selected_bg: Some(base.selected_bg),
+            selected_fg: Some(base.selected_fg),
+            surface: Some(base.surface),
+            surface_hover: Some(base.surface_hover),
+            surface_text: Some(base.surface_text),
+            is_dark: Some(base.is_dark),
+            spacing: Some(base.spacing),
+        }
+    }
+
+    /// Convenience: builder pre-filled with all [`Theme::light()`] fields.
+    ///
+    /// Equivalent to `Theme::builder_from(Theme::light())`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, Theme};
+    ///
+    /// let my_light = Theme::light_builder()
+    ///     .primary(Color::Rgb(0, 100, 200))
+    ///     .build();
+    /// assert!(!my_light.is_dark);
+    /// assert_eq!(my_light.primary, Color::Rgb(0, 100, 200));
+    /// // bg stays light (not dark()'s Reset)
+    /// assert_eq!(my_light.bg, Theme::light().bg);
+    /// ```
+    pub const fn light_builder() -> ThemeBuilder {
+        Self::builder_from(Self::light())
     }
 
     /// Dracula theme — purple primary on dark gray.
@@ -518,128 +584,183 @@ pub struct ThemeBuilder {
 
 impl ThemeBuilder {
     /// Set the primary color.
-    pub fn primary(mut self, color: Color) -> Self {
+    pub const fn primary(mut self, color: Color) -> Self {
         self.primary = Some(color);
         self
     }
 
     /// Set the secondary color.
-    pub fn secondary(mut self, color: Color) -> Self {
+    pub const fn secondary(mut self, color: Color) -> Self {
         self.secondary = Some(color);
         self
     }
 
     /// Set the accent color.
-    pub fn accent(mut self, color: Color) -> Self {
+    pub const fn accent(mut self, color: Color) -> Self {
         self.accent = Some(color);
         self
     }
 
     /// Set the main text color.
-    pub fn text(mut self, color: Color) -> Self {
+    pub const fn text(mut self, color: Color) -> Self {
         self.text = Some(color);
         self
     }
 
     /// Set the dimmed text color.
-    pub fn text_dim(mut self, color: Color) -> Self {
+    pub const fn text_dim(mut self, color: Color) -> Self {
         self.text_dim = Some(color);
         self
     }
 
     /// Set the border color.
-    pub fn border(mut self, color: Color) -> Self {
+    pub const fn border(mut self, color: Color) -> Self {
         self.border = Some(color);
         self
     }
 
     /// Set the background color.
-    pub fn bg(mut self, color: Color) -> Self {
+    pub const fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
     }
 
     /// Set the success indicator color.
-    pub fn success(mut self, color: Color) -> Self {
+    pub const fn success(mut self, color: Color) -> Self {
         self.success = Some(color);
         self
     }
 
     /// Set the warning indicator color.
-    pub fn warning(mut self, color: Color) -> Self {
+    pub const fn warning(mut self, color: Color) -> Self {
         self.warning = Some(color);
         self
     }
 
     /// Set the error indicator color.
-    pub fn error(mut self, color: Color) -> Self {
+    pub const fn error(mut self, color: Color) -> Self {
         self.error = Some(color);
         self
     }
 
     /// Set the selected item background color.
-    pub fn selected_bg(mut self, color: Color) -> Self {
+    pub const fn selected_bg(mut self, color: Color) -> Self {
         self.selected_bg = Some(color);
         self
     }
 
     /// Set the selected item foreground color.
-    pub fn selected_fg(mut self, color: Color) -> Self {
+    pub const fn selected_fg(mut self, color: Color) -> Self {
         self.selected_fg = Some(color);
         self
     }
 
     /// Set the surface background color.
-    pub fn surface(mut self, color: Color) -> Self {
+    pub const fn surface(mut self, color: Color) -> Self {
         self.surface = Some(color);
         self
     }
 
     /// Set the surface hover color.
-    pub fn surface_hover(mut self, color: Color) -> Self {
+    pub const fn surface_hover(mut self, color: Color) -> Self {
         self.surface_hover = Some(color);
         self
     }
 
     /// Set the surface text color.
-    pub fn surface_text(mut self, color: Color) -> Self {
+    pub const fn surface_text(mut self, color: Color) -> Self {
         self.surface_text = Some(color);
         self
     }
 
     /// Set the dark mode flag.
-    pub fn is_dark(mut self, is_dark: bool) -> Self {
+    pub const fn is_dark(mut self, is_dark: bool) -> Self {
         self.is_dark = Some(is_dark);
         self
     }
 
     /// Set the spacing scale.
-    pub fn spacing(mut self, spacing: Spacing) -> Self {
+    pub const fn spacing(mut self, spacing: Spacing) -> Self {
         self.spacing = Some(spacing);
         self
     }
 
     /// Build the theme. Unfilled fields use [`Theme::dark()`] defaults.
-    pub fn build(self) -> Theme {
-        let defaults = Theme::dark();
+    ///
+    /// `match` is used in place of [`Option::unwrap_or`] so the entire
+    /// builder chain compiles in `const` context (MSRV 1.81). All fields
+    /// involved are `Copy`, so `Some(c) => c` is a plain bit-copy.
+    pub const fn build(self) -> Theme {
+        let d = Theme::dark();
         Theme {
-            primary: self.primary.unwrap_or(defaults.primary),
-            secondary: self.secondary.unwrap_or(defaults.secondary),
-            accent: self.accent.unwrap_or(defaults.accent),
-            text: self.text.unwrap_or(defaults.text),
-            text_dim: self.text_dim.unwrap_or(defaults.text_dim),
-            border: self.border.unwrap_or(defaults.border),
-            bg: self.bg.unwrap_or(defaults.bg),
-            success: self.success.unwrap_or(defaults.success),
-            warning: self.warning.unwrap_or(defaults.warning),
-            error: self.error.unwrap_or(defaults.error),
-            selected_bg: self.selected_bg.unwrap_or(defaults.selected_bg),
-            selected_fg: self.selected_fg.unwrap_or(defaults.selected_fg),
-            surface: self.surface.unwrap_or(defaults.surface),
-            surface_hover: self.surface_hover.unwrap_or(defaults.surface_hover),
-            surface_text: self.surface_text.unwrap_or(defaults.surface_text),
-            is_dark: self.is_dark.unwrap_or(defaults.is_dark),
-            spacing: self.spacing.unwrap_or(defaults.spacing),
+            primary: match self.primary {
+                Some(c) => c,
+                None => d.primary,
+            },
+            secondary: match self.secondary {
+                Some(c) => c,
+                None => d.secondary,
+            },
+            accent: match self.accent {
+                Some(c) => c,
+                None => d.accent,
+            },
+            text: match self.text {
+                Some(c) => c,
+                None => d.text,
+            },
+            text_dim: match self.text_dim {
+                Some(c) => c,
+                None => d.text_dim,
+            },
+            border: match self.border {
+                Some(c) => c,
+                None => d.border,
+            },
+            bg: match self.bg {
+                Some(c) => c,
+                None => d.bg,
+            },
+            success: match self.success {
+                Some(c) => c,
+                None => d.success,
+            },
+            warning: match self.warning {
+                Some(c) => c,
+                None => d.warning,
+            },
+            error: match self.error {
+                Some(c) => c,
+                None => d.error,
+            },
+            selected_bg: match self.selected_bg {
+                Some(c) => c,
+                None => d.selected_bg,
+            },
+            selected_fg: match self.selected_fg {
+                Some(c) => c,
+                None => d.selected_fg,
+            },
+            surface: match self.surface {
+                Some(c) => c,
+                None => d.surface,
+            },
+            surface_hover: match self.surface_hover {
+                Some(c) => c,
+                None => d.surface_hover,
+            },
+            surface_text: match self.surface_text {
+                Some(c) => c,
+                None => d.surface_text,
+            },
+            is_dark: match self.is_dark {
+                Some(b) => b,
+                None => d.is_dark,
+            },
+            spacing: match self.spacing {
+                Some(s) => s,
+                None => d.spacing,
+            },
         }
     }
 }
@@ -851,5 +972,95 @@ mod tests {
         let t = Theme::dark();
         let fg = t.contrast_text_on(Color::Rgb(255, 255, 255));
         assert_eq!(fg, Color::Rgb(0, 0, 0));
+    }
+
+    // --- regression: issue #109 ThemeBuilder methods are const fn ---
+
+    /// If this `const` evaluation ever fails to compile, a setter on
+    /// `ThemeBuilder` was accidentally demoted to a non-const fn.
+    const _CONST_THEME: Theme = Theme::builder()
+        .primary(Color::Rgb(255, 100, 100))
+        .bg(Color::Rgb(20, 20, 20))
+        .is_dark(true)
+        .spacing(Spacing::new(2))
+        .build();
+
+    #[test]
+    fn theme_builder_const_eval() {
+        // Set fields take the override.
+        assert_eq!(_CONST_THEME.primary, Color::Rgb(255, 100, 100));
+        assert_eq!(_CONST_THEME.bg, Color::Rgb(20, 20, 20));
+        assert_eq!(_CONST_THEME.spacing, Spacing::new(2));
+        // Unset fields fall back to Theme::dark() — verifies the const
+        // `match` arms in build() reproduce the unwrap_or semantics.
+        let dark = Theme::dark();
+        assert_eq!(_CONST_THEME.text, dark.text);
+        assert_eq!(_CONST_THEME.border, dark.border);
+        assert_eq!(_CONST_THEME.surface, dark.surface);
+    }
+
+    // --- regression: issue #110 builder_from / light_builder ---
+
+    #[test]
+    fn builder_from_preserves_base_fields() {
+        // builder_from(base) must seed every field from `base`, so an
+        // empty .build() yields a theme equal to `base`.
+        let nord = Theme::nord();
+        let t = Theme::builder_from(nord).build();
+        assert_eq!(t.primary, nord.primary);
+        assert_eq!(t.secondary, nord.secondary);
+        assert_eq!(t.accent, nord.accent);
+        assert_eq!(t.text, nord.text);
+        assert_eq!(t.text_dim, nord.text_dim);
+        assert_eq!(t.border, nord.border);
+        assert_eq!(t.bg, nord.bg);
+        assert_eq!(t.success, nord.success);
+        assert_eq!(t.warning, nord.warning);
+        assert_eq!(t.error, nord.error);
+        assert_eq!(t.selected_bg, nord.selected_bg);
+        assert_eq!(t.selected_fg, nord.selected_fg);
+        assert_eq!(t.surface, nord.surface);
+        assert_eq!(t.surface_hover, nord.surface_hover);
+        assert_eq!(t.surface_text, nord.surface_text);
+        assert_eq!(t.is_dark, nord.is_dark);
+        assert_eq!(t.spacing, nord.spacing);
+    }
+
+    #[test]
+    fn builder_from_overrides_only_specified_fields() {
+        let t = Theme::builder_from(Theme::nord())
+            .primary(Color::Rgb(255, 0, 0))
+            .build();
+        // Only primary changed; all other Nord fields preserved.
+        assert_eq!(t.primary, Color::Rgb(255, 0, 0));
+        assert_eq!(t.bg, Theme::nord().bg);
+        assert_eq!(t.text, Theme::nord().text);
+        assert_ne!(t.primary, Theme::nord().primary);
+    }
+
+    #[test]
+    fn light_builder_starts_from_light_preset() {
+        // Without builder_from, a plain Theme::builder() would inherit
+        // dark() defaults — bg == Color::Reset — even when callers want
+        // a light-base theme. light_builder() must keep light defaults.
+        let t = Theme::light_builder()
+            .primary(Color::Rgb(0, 100, 200))
+            .build();
+        let light = Theme::light();
+        assert_eq!(t.primary, Color::Rgb(0, 100, 200));
+        assert_eq!(t.bg, light.bg);
+        assert_eq!(t.text, light.text);
+        assert_eq!(t.surface, light.surface);
+        assert!(!t.is_dark);
+    }
+
+    /// const-evaluation regression for builder_from + light_builder.
+    const _CONST_LIGHT: Theme = Theme::light_builder().primary(Color::Rgb(1, 2, 3)).build();
+
+    #[test]
+    fn light_builder_is_const_evaluable() {
+        assert_eq!(_CONST_LIGHT.primary, Color::Rgb(1, 2, 3));
+        assert_eq!(_CONST_LIGHT.bg, Theme::light().bg);
+        assert!(!_CONST_LIGHT.is_dark);
     }
 }

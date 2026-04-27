@@ -41,15 +41,16 @@ pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str
 }
 
 pub(crate) fn table_visible_len(state: &TableState) -> usize {
+    let visible = state.visible_indices();
     if state.page_size == 0 {
-        return state.visible_indices().len();
+        return visible.len();
     }
 
     let start = state
         .page
         .saturating_mul(state.page_size)
-        .min(state.visible_indices().len());
-    let end = (start + state.page_size).min(state.visible_indices().len());
+        .min(visible.len());
+    let end = (start + state.page_size).min(visible.len());
     end.saturating_sub(start)
 }
 

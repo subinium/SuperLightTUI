@@ -43,7 +43,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Cookbook — Table")
-            .pad(1)
+            .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {

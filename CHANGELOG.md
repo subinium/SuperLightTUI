@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-04-27
+
+Patch release covering 34 v0.19.x issues plus two long-standing visual regressions
+caught during demo validation.
+
+### Fixes (Visual regressions)
+
+- **Bordered container title overdraws the top horizontal bar with spaces** — regression introduced in v0.19.1 (#160) when the CJK title clamp added a blank-pad pass that overwrote `─` cells with `' '`. ASCII titles like `cargo-slt` lost the surrounding `──` and rendered as `╭─cargo-slt           ╮` instead of `╭─cargo-slt──────╮`. The clamp now relies on `chars.h` (the original horizontal bar character) being already in place; only the clamped-title char is overwritten. CJK truncation correctness (the original purpose of #160) is preserved by the `UnicodeWidthChar` loop.
+- **`text_input()` claims all available vertical space in its parent column (regression dating to v0.17)** — `text_input_colored` always called `.grow(1)` on its bordered container, so a single-line input inside `bordered("Packages").p(1).grow(1).col(...)` would expand to fill the column and push siblings off-screen. Removed the implicit grow. Cross-axis stretch via the parent column still gives the input the full row width as before.
+
+### Added
+
+- **`examples/demo_cjk.rs`** — multi-language demo covering CJK title truncation, mixed Korean / Chinese / Japanese body wrap, narrow-clamp title boxes (12-cell width), and CJK form fields. Pins both regressions above and serves as a manual visual gate for future title-clamp / wrap changes.
+- **`feat(style)` — `ContainerStyle::mx(value)` / `my(value)`** (#108) — Tailwind-style horizontal/vertical margin shorthands.
+- **`feat(style)` — `Modifiers::remove(other)`** (#111) — opposite of `insert()`.
+- **`feat(theme)` — `Theme::builder_from(base)` and `Theme::light_builder()`** (#110) — start a `ThemeBuilder` from any `Theme` or from the `light` preset, instead of having to copy/reapply every field.
+- **`feat(theme)` — `ThemeBuilder` methods are `const fn`** (#109) — themes can now be defined in a `const` context for compile-time evaluation.
+- **`feat(widgets-display)` — `breadcrumb_response()` / `breadcrumb_response_with()`** (#182) — returns `(Response, Option<usize>)` so callers can read both the click index and the underlying interaction state.
+- **`feat(widgets-input)` — textarea kill-line (Ctrl+K) and word jump (Ctrl/Alt + ←/→)** (#103) — standard Emacs-style line and word movement on the multi-line input.
+
+### Fixes
+
+- **`fix(viz)` sixel auto-detection false positive on `xterm-256color`** (#116) — substring `"xterm"` previously fired on macOS Terminal, VS Code, and most SSH clients, none of which speak sixel. Replaced with an exact-match list (`mlterm`, `foot`, `yaft`, `xterm-256color-sixel`) plus the `"sixel"` substring catch-all and `SLT_FORCE_SIXEL=1` opt-in for patched builds.
+- **`fix(widgets-display)` `separator()` 200-char hardcoded string causes per-frame allocation and overflow** (#177) — `OnceLock`-cached `SEP_LINE` initialized once per process; `set_string` clip truncates the trailing chars on narrow terminals. Was already in place via #160 prep; this release closes the tracking issue.
+- **`fix(widgets-feedback)` `RichLogState::new()` defaults to unbounded entry accumulation** (#191) — bounded default of 10000 entries; `RichLogState::unbounded()` is the new opt-in for explicit unbounded callers.
+- **`fix(widgets-interactive)` `tabs` mouse `x - rect.x` underflow panic in debug builds** (#196) — `saturating_sub` on the offset.
+
+### Perf
+
+- **`perf(chart)` flat `Vec<T>` for plot buffers** (#117) — `plot_chars` and `plot_styles` are now contiguous `Vec<T>` instead of `Vec<Vec<T>>`. Removes per-row indirection and shrinks the per-frame allocation count.
+- **`perf(viz)` `squarify_recursive` no per-iter `Vec::clone`** (#115) — incremental sum / pos-min / pos-max / pos-count tracking via a closed-form `worst_ratio_incremental`. Inner loop is now alloc-free.
+- **`perf(viz)` `treemap` sort uses `total_cmp`** (#121) — replaces the `partial_cmp + NaN fallback` pattern, removing one branch per comparison.
+- **`perf(viz)` candlestick body renders at half-cell precision** (#123, closes #120) — body cells now emit `█` / `▀` / `▄` based on price-edge half-cell membership instead of full-cell snapping. Doc updated.
+- **`perf(viz)` `blend_color` lifted to a module-level helper** (#119) — eliminated three copies of the same closure.
+- **`perf(widgets-input)` `SpinnerState` static frame data** (#99) — `frames: Vec<char>` → `&'static [char]`. Removes the per-state heap allocation; constructor is now `const fn`-friendly.
+- **`perf(widgets-interactive)` `CommandPaletteState::filtered_indices` cache** (#101) — `fuzzy_score` no longer runs twice per render. Cache is invalidated on `toggle()`.
+- **`perf(widgets-interactive)` `parse_inline_segments` byte-index scan** (#176) — markdown inline tokens (`**`, `*`, `` ` ``) are scanned via byte indices into `text.as_bytes()` instead of `chars[i+N..].iter().collect::<String>()`. Multi-byte characters in `inner` are never split.
+- **`perf(widgets-interactive)` `recompute_widths` dirty-flag short-circuit** (#195) — table column widths are only recomputed when the items vector or filter actually changed, instead of once per frame.
+- **`perf(widgets-interactive)` `collect_grid_elements` extracted** (#194) — 41-line duplicate between `grid()` and `grid_with()` lifted into a shared free function.
+- **`perf(hooks)` single `downcast_mut` in `use_memo` cache-hit path** (#133) — eliminates the redundant second `downcast_ref` after key comparison; type mismatch panics with the hook index instead of silently overwriting.
+- **`perf(events)` `SmallVec<[usize; 8]>` in `consume_activation_keys`** (#135) — typical button activation queues 0-2 indices; the 8-slot stack buffer keeps these allocation-free.
+- **`perf(table)` extract `let visible = state.visible_indices()` local binding in `table_visible_len`** (#140) — avoids re-traversing the filter chain inside the loop.
+- **`perf(widgets-display)` `streaming_text` no per-frame content clone** (#178) — caller buffer borrowed via `&str` instead of cloned into `Command::Text`.
+- **`perf(widgets-display)` `scrollbar` static cell glyphs** (#179) — `'█'.to_string()` / `'│'.to_string()` per-cell allocations replaced with `const THUMB: &str / const TRACK: &str`.
+- **`perf(widgets-display)` `code_block_numbered` gutter via `ilog10`** (#180) — gutter width derived from `lines.len().ilog10()` instead of `format!("{}", lines.len()).len()`.
+- **`perf(widgets-display)` `definition_list` manual padding** (#181) — eliminates the per-row `format!()` for right-aligned key padding.
+- **`perf(terminal)` `extract_selection_text` `truncate(trim_end().len())`** (#173) — drops the trailing `to_string()` reallocation.
+
+### Refactor
+
+- **`refactor(widgets-display)` `separator()` moved from `widgets_interactive/events.rs` to `widgets_display/layout.rs`** (#183) — same `impl Context` so the public call site is unchanged. Restores topical placement (separator is a display widget, not an event helper).
+- **`refactor(viz)` `blend_color` helper extracted** (#119) — see Perf above; flagged as refactor in the issue tracker.
+
+### Docs
+
+- **`docs(buffer)` `Buffer::diff()` documents per-call `Vec` allocation cost and hot-path warning** (#170).
+- **`docs(style)` `Align::Start` clarifies CSS-stretch semantics** (#165) — documents the `flex-start` vs CSS-stretch divergence.
+
+### Tests
+
+- **`test(cell)` compile-time `Cell` size assertion** (#167) — `const _: () = assert!(size_of::<Cell>() <= N);` catches accidental field-bloat regressions at build time.
+
+### Closed (already implemented)
+
+- #132, #125, #136, #138, #118, #177, #179 — verified that the working code already matches the proposed solution; closed without further changes.
+
+### Deferred to v0.19.3
+
+- **#102** (textarea undo / redo Ctrl+Z / Ctrl+Y) — landed during the wave but reverted: the implementation requires three new `pub(crate)` fields on `TextareaState`, and `cargo-semver-checks` reports `constructible_struct_adds_private_field` as a major-version break. v0.19.1 followed the same constraint for #94 (deferred to v0.20.0) — this is the same constraint applied here. Will re-apply alongside #94 in the v0.20.0 textarea state revision (or, if patch-safe, by gating history behind a separate state type that the textarea looks up via `use_state_named`).
+- **#171** (`terminal` per-row hash skip in `flush_buffer_diff`) — landed during the wave but reverted: the issue body's own bench gate (`< 50µs → NO-GO`) was not met, and a regression test caught a row-skip case where the dirty-flag interaction lost a changed row. Will re-evaluate once a dedicated bench rig lands.
+- **#150 / #152 / #153 / #155 / #157 / #162** (layout perf — commands buffer reuse, `group_name → Arc<str>`, `LayoutNode::TextData` boxing, `FrameData` reuse, `wrap_segments` scratch, viewport bound check) — landed but reverted while triaging the unrelated v0.19.1 title-clamp regression. Will re-apply on top of the title fix in v0.19.3 with isolated visual gates.
+- **#146 / #147 / #148** (container — `filled_circle` `isqrt`, `min_h` / `max_h` breakpoint variants, deprecation of long-form aliases) — same triage cycle as the layout perf set; re-apply in v0.19.3.
+
 ## [0.19.1] — 2026-04-27
 
 ### Fixes (Blocker)
