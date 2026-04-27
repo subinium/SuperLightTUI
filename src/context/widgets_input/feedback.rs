@@ -61,6 +61,9 @@ impl Context {
 
     /// Horizontal slider for numeric values.
     ///
+    /// Step defaults to `span / 20.0`. Use [`Context::slider_with_step`] for an
+    /// explicit step (e.g. integer volume controls).
+    ///
     /// # Examples
     /// ```
     /// # use slt::*;
@@ -76,13 +79,48 @@ impl Context {
         value: &mut f64,
         range: std::ops::RangeInclusive<f64>,
     ) -> Response {
+        let span = (*range.end() - *range.start()).max(0.0);
+        let step = if span > 0.0 { span / 20.0 } else { 0.0 };
+        self.slider_inner(label, value, range, step)
+    }
+
+    /// Horizontal slider with an explicit step size.
+    ///
+    /// Each Left/Right (or `h`/`l`) advances `value` by `step`. Use this when
+    /// the default step (`span / 20`) is too coarse or too fine — for example
+    /// integer counters need `step = 1.0`, fine controls need `step = 0.1`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut volume = 50.0_f64;
+    /// ui.slider_with_step("Volume", &mut volume, 0.0..=100.0, 1.0);
+    /// # });
+    /// ```
+    pub fn slider_with_step(
+        &mut self,
+        label: &str,
+        value: &mut f64,
+        range: std::ops::RangeInclusive<f64>,
+        step: f64,
+    ) -> Response {
+        self.slider_inner(label, value, range, step.max(0.0))
+    }
+
+    fn slider_inner(
+        &mut self,
+        label: &str,
+        value: &mut f64,
+        range: std::ops::RangeInclusive<f64>,
+        step: f64,
+    ) -> Response {
         let focused = self.register_focusable();
         let mut changed = false;
 
         let start = *range.start();
         let end = *range.end();
         let span = (end - start).max(0.0);
-        let step = if span > 0.0 { span / 20.0 } else { 0.0 };
 
         *value = (*value).clamp(start, end);
 

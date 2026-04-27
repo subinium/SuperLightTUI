@@ -990,8 +990,8 @@ impl Context {
             })
             .collect();
 
-        const LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
-        const RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+        // Braille dot bit masks shared with `chart::braille` (fix #114).
+        use crate::chart::{BRAILLE_LEFT_BITS as LEFT_BITS, BRAILLE_RIGHT_BITS as RIGHT_BITS};
 
         let mut grid = vec![vec![0u32; cols]; rows];
 
@@ -1859,16 +1859,23 @@ impl Context {
 
                 let text_color = treemap_label_color(item.color);
 
-                // Label: truncate to fit, center in cell
+                // Label: truncate to fit, center in cell (unicode-safe, fix #112)
                 if cell_w >= 2 {
                     let max_label_w = cell_w.saturating_sub(1);
-                    let label = if item.label.len() > max_label_w {
-                        &item.label[..max_label_w]
-                    } else {
-                        &item.label
-                    };
+                    let mut used_w = 0usize;
+                    let mut last_byte = 0usize;
+                    for (idx, ch) in item.label.char_indices() {
+                        let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
+                        if used_w + cw > max_label_w {
+                            break;
+                        }
+                        used_w += cw;
+                        last_byte = idx + ch.len_utf8();
+                    }
+                    let label = &item.label[..last_byte];
+                    let label_unicode_w = UnicodeWidthStr::width(label);
                     let label_y = y0 + cell_h / 2;
-                    let label_x = x0 + (cell_w.saturating_sub(label.len())) / 2;
+                    let label_x = x0 + (cell_w.saturating_sub(label_unicode_w)) / 2;
                     if label_y < y1.min(h) {
                         for (offset, ch) in label.chars().enumerate() {
                             let cx = label_x + offset;
@@ -2378,4 +2385,19 @@ fn test_qr_code() {
 
     let output = backend.to_string();
     assert!(output.contains('▀') || output.contains('█'));
+}
+
+#[test]
+fn treemap_cjk_label_no_panic() {
+    use super::TreemapItem;
+    use crate::style::Color;
+    let mut backend = crate::TestBackend::new(20, 10);
+    backend.render(|ui| {
+        let _ = ui.treemap(&[
+            TreemapItem::new("한글파일", 100.0, Color::Cyan),
+            TreemapItem::new("English", 50.0, Color::Yellow),
+            TreemapItem::new("🎉파티", 30.0, Color::Green),
+        ]);
+    });
+    // passes if no panic
 }

@@ -24,8 +24,8 @@ use grid::{
 };
 
 const BRAILLE_BASE: u32 = 0x2800;
-const BRAILLE_LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
-const BRAILLE_RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
+pub(crate) const BRAILLE_LEFT_BITS: [u32; 4] = [0x01, 0x02, 0x04, 0x40];
+pub(crate) const BRAILLE_RIGHT_BITS: [u32; 4] = [0x08, 0x10, 0x20, 0x80];
 const PALETTE: [Color; 8] = [
     Color::Cyan,
     Color::Yellow,

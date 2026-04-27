@@ -2,6 +2,95 @@
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-04-27
+
+### Fixes (Blocker)
+
+- **`rgb_to_ansi256` u8 overflow at `r=g=b=248`** (#104) — `232u8 + 24u8` wrapped, panicking in debug builds and silently mapping near-white grayscale to `Color::Indexed(0)` (Black) in release. Inclusive boundary `r >= 248` closes the gap. Adds 256³ exhaustive panic-free regression test.
+- **`treemap` label byte-slicing panic on multibyte input** (#112) — `&item.label[..max_label_w]` cut into the middle of CJK and emoji characters, raising `byte index N is not a char boundary`. Replaced with `char_indices` + `UnicodeWidthChar` truncation; label centering now uses display width via `UnicodeWidthStr`.
+
+### Fixes (Critical)
+
+- **`textarea` paste with `max_length` rescans every line per character** (#91) — previously `O(n²)` over paste length × line count. Hoisted `total_chars` once per paste, and the newline branch now also respects `max_length` (secondary bug).
+- **WCAG luminance must apply sRGB gamma linearization** (#105) — `Color::luminance()` now linearizes via the sRGB inverse transfer function before applying BT.709 weights. `contrast_fg` threshold corrected from `0.5` to the WCAG `0.179`. Dracula purple, Solarized base1, and similar mid-tones now route to the correct contrasting foreground.
+- **`syntax::highlight_code` allocates `Highlighter` per call** (#113) — switched to a `thread_local! RefCell<Highlighter>` so the parser is reused across frames in the single-threaded event loop.
+- **`Spring` damping > 1.0 diverges, damping == 1.0 oscillates forever** (#124) — added `debug_assert!` validating `damping ∈ (0, 1)` in `Spring::new`. Doc clarifies that the parameter is the per-tick velocity multiplier, not the standard ODE damping ratio ζ.
+- **`group("name").scrollable(...)` silently drops hover/focus registration** (#141) — `BeginScrollableArgs` now carries `group_name`; `tree.rs` propagates it onto the layout node so `is_group_hovered`/`is_group_focused` work for scrollable containers.
+- **`BeginScrollableArgs` ignored 5 container fields** (#142) — `bg_color`, `align`, `align_self`, `justify`, `gap` are now passed through and applied; previously hard-coded defaults silently overrode the builder chain.
+- **`flexbox` grow children with `max_width`/`max_height` left a gap** (#159) — sibling position now advances by post-clamp `child.size.0`/`child.size.1` plus margin, not the pre-clamp share.
+- **Border title truncation breaks on CJK** (#160) — `chars().take(n)` (code-point count) replaced with `UnicodeWidthChar`-based display-width loop matching `truncate_with_ellipsis`. Title clamp also accounts for the right corner cell.
+- **`Rect::area()` u32 multiplication can wrap to 0** (#166) — `saturating_mul` prevents `Buffer::empty(rect)` from allocating a zero-sized buffer for hostile/test dimensions on WASM and 32-bit targets.
+- **`stdout` not buffered → one write syscall per ANSI command** (#172) — `Terminal` and `InlineTerminal` now wrap `stdout` in `BufWriter::with_capacity(65536, _)`; `TerminalSessionGuard` accepts `&mut impl Write`. A single `flush()` per frame replaces dozens of `write_all` calls.
+- **`image()` emits 841 commands/frame for a 40×20 image** (#174) — replaced the per-pixel `Command::Text` row-container nesting with a single `container().draw(move |buf, rect| { ... })` (matches `kitty_image`/`big_text`). 841 commands → 1 RawDraw, 800 String allocations/frame eliminated.
+- **`confirm()` `[No]` hit region was unbounded to the right** (#175) — added `no_end = no_start + 4` and the `mx < no_end` check; click-driven hit-test no longer registers as `[No]` for clicks anywhere right of the prompt.
+
+### Fixes (Warning, batched)
+
+- **`use_state_named_with` double `HashMap` lookup** (#137) — switched to the `entry` API.
+- **`use_memo` redundant `downcast_ref`** (#138) — single downcast on cache hit; type mismatch on existing slot now panics with hook index and expected type, instead of silently overwriting.
+- **`ContextCheckpoint` no longer deep-clones `pending_tooltips`** (#138) — the queue is moved out and restored, with a per-checkpoint `pending_tooltips_len` so panic recovery truncates rather than clears.
+- **`group_stack` and group rect/focus paths now use `Arc<str>`** (#139) — name materialized once per `group()` call; descendants `Arc::clone` instead of allocating per node.
+- **`screen()` HashMap key switched to `&'static str`** (#136) — fewer allocations for screen lifecycle hooks. (Non-breaking variant; the `String` overload remains available.)
+- **`consume_activation_keys` uses inline scratch** (#136) — typical 1–2 active keys no longer trigger heap allocation.
+- **`render_notifications` reuses scratch `Vec`** (#136) — frame-rate path no longer allocates when notifications are empty.
+- **`is_group_hovered`/`is_group_focused` cache** (#136) — switched to a `HashSet<Arc<str>>` lookup parallel to the rect list.
+- **`TextInputState::clone()` documents validator drop** (#92) — explicit doc note; clone returns a no-validator copy by design (validators are `Box<dyn Fn>` and cannot be cloned).
+- **`text_input` `matched_suggestions` invalidation** (#93) — `suggestions_dirty` flag is set on Char/Backspace/Delete/paste; suggestions recompute exactly when `state.value` changes within a key burst.
+- **`textarea` change detection via lines comparison** (#94) — `response.changed` now reflects whether `state.lines` differs from the pre-frame snapshot. The faster dirty-flag path (#95) is deferred to v0.20.0 because adding the field is not patch-safe under cargo-semver-checks (struct literal compatibility).
+- **`textarea` `visual_lines` reused on idle frames** — when `state.lines == pre_lines`, the pre-event `pre_vlines` is reused; mutation frames rebuild. No new state field required.
+- **`ListState::set_filter` uses cached lowercase items** (#96) — eliminates per-keystroke `to_lowercase()` over the whole item set.
+- **`slider_with_step(label, value, range, step)`** (#97) — additive method that takes an explicit step; the existing `slider()` keeps the `span/20` default.
+- **`rgb_to_ansi16` saturated colors map to standard ANSI** (#107) — pure primaries (`min == 0`) route to `Red/Green/Blue/...`; only desaturated and lifted tones (e.g. `255, 85, 85`) become `Light*` variants. Bright/standard split now uses `max >= 200 && min >= 64` instead of WCAG luminance.
+- **Nord, Solarized Dark, and Solarized Light theme `text_dim` no longer collides with `border`** (#106) — distinct values restore the visual hierarchy in default themes.
+- **`Stagger::is_all_done()` and `is_done()` semantics** (#127) — new method reports completion across all items rather than the last-sampled one.
+- **`bind_code_mod(KeyCode, KeyModifiers, &str)`** (#128) — additive `KeyMap` builder for non-`char` keys with modifiers (`Ctrl+Enter`, `Alt+Up`, etc.).
+- **Braille dot bit constants deduplicated** (#114) — `widgets_viz.rs` line chart now imports `BRAILLE_LEFT_BITS`/`BRAILLE_RIGHT_BITS` from `chart::braille` instead of redeclaring them; eliminates the silent-divergence risk on future edits.
+- **`Keyframes::segment_easing` debug-asserts on out-of-range index** (#130) — release builds still ignore silently (preserving the panic-free guarantee), but builder-order mistakes now surface immediately in development.
+- **`treemap` byte-slice fix** (#112) — see Blocker section.
+- **`commands` Vec reused across frames via `FrameState.commands_buf`** (#143) — eliminates the per-`Context::new()` allocation.
+- **`is_scrollable` branch merge in `collect.rs`** (#144) — single conditional path keeps `scroll_infos`/`scroll_rects` pairing invariant explicit.
+- **`group_name` switched to `Option<Arc<str>>` in build path** (#145) — completes the `Arc<str>` migration started in v0.18.1.
+- **Buffer/`set_string_inner` dedup** (#169) — the OSC 8 and non-linked paths share an inner helper; the duplicated branches diverged on minor edge cases (URL validation gating).
+- **`is_valid_osc8_url(&str) -> bool`** (#168) — separate from `sanitize_osc8_url(&str) -> Option<CompactString>`; URL validation no longer allocates a `String` only to drop it.
+- **`Rect::area()` saturating fix** (#166) — see Critical section.
+- **`separator()` uses `area_width` and does not stretch in column layouts** (#163) — restored `grow: 0` (column layouts were stretching the separator vertically); buffer clipping handles the cached 200-cell fill on narrow terminals.
+- **`scrollbar` thumb/track use `&'static str`** (#164) — eliminates `char.to_string()` per visible cell.
+- **`divider_text` symmetric label centering** (#186) — replaced `left_len = 4` with `total / 2` so the label sits centered; on odd widths the right separator is one cell longer.
+- **`tree()` and `directory_tree()` redundant `flatten()` per keypress** (#190) — hoisted `entries` out of the key-event loop; up/down/left/right arms now reuse the outer flatten snapshot. Single O(n) DFS per keypress instead of two.
+- **`streaming_markdown` skips `code_block_lang` writes when unchanged** (#187) — guards the unconditional `state.code_block_lang = ...` assignment, eliminating the String drop+clone on idle frames between code-block transitions.
+- **`form_field` no longer clones `field.label` per frame** (#189) — `as_str()` borrow + `&str` for the validation error path; eliminates two String allocations per form field render.
+- **`definition_list` and `divider_text` use short `UnicodeWidthStr::width(...)`** (#185) — `unicode_width::UnicodeWidthStr::*` fully-qualified path replaced with the in-scope import.
+- **Doc duplicate paragraphs on `list()`, `table()`, `button()`, `tabs()`** (#197) — merged duplicate `///` blocks; rustdoc no longer renders two near-identical descriptions on docs.rs.
+- **Modal doc example used `if ui.button(...)` as `bool`** (#188) — switched to `.clicked` and a runnable `no_run` block driven by `slt::run`.
+- **Layout tree depth guard** (#154) — `collect_all_inner`, `compute_inner`, and `render_inner` now thread an explicit depth counter and panic at `512` to prevent stack overflow on adversarial inputs. Build path already had a guard.
+- **`LayoutNode::raw_draw(...)` constructor** (#156) — replaces the inline 34-field literal in `build_children` for `Command::RawDraw`; the test-only `collect_raw_draw_rects` walker (#158) is removed and its check folded into `collect_all_clips_raw_draw_to_scroll_viewport`.
+- **`is_scrollable` branch merge in `collect.rs`** (#151) — single conditional path keeps the `scroll_infos`/`scroll_rects` pairing invariant explicit.
+- **`run_async_loop` messages `Vec` hoisted** (#83 / a1-003) — cleared and reused across iterations rather than reallocated.
+- **`InlineTerminal::new` honors `RunConfig::kitty_keyboard`** (#84 / a1-004) — flag was previously hardcoded `false`, silently ignoring the user setting in inline/static modes.
+- **F12, mouse, and resize event passes consolidated** (#86 / a1-006) — `events: &[Event]` is now scanned once instead of three times per frame.
+- **`update_last_mouse_pos` runs after `clear_frame_layout_cache`** (#90 / a1-010) — fixes a frame ordering edge case on simultaneous resize + mouse events.
+
+### Fixes (Nit, batched)
+
+- `frame_owned(events: Vec<Event>)` exposes a zero-copy public path for custom backends; `frame(&[Event])` retained (#81).
+- FPS cap math accounts for `poll_events` blocking time so `tick_rate=16ms` + `max_fps=60` no longer caps below the configured rate (#82).
+- `RunConfig::scroll_alignment_assert` downgraded to `debug_assert_eq!` (#85).
+- `RunConfig::no_fps_cap()` builder method (#87).
+- `set_terminal_title` flushes stdout (#88).
+- 7 undocumented `pub mod` declarations gained doc comments (#89).
+- `progress_bar_colored` uses `String::with_capacity` (#100).
+- Theme `bright` palette restored on the `rgb_to_ansi16` path (#107).
+- `MouseEvent::pixel_x` / `pixel_y` doc clarifies they are always `None` with the crossterm backend; reserved for future Kitty/WASM sub-cell precision (#129).
+- `EventBuilder::mouse_up` / `drag` / `key_release` / `focus_gained` / `focus_lost` chain wrappers in `test_utils` (#131).
+
+### Tests
+
+- All fixes ship with regression tests; `cargo test --all-features` passes 13 binaries / 530+ test cases on `release/v0.19.1`.
+
+### Notes
+
+This release is a non-breaking patch wave. Public API surface is unchanged; the `Context::pending_tooltips` field migration is `pub(crate)` only.
+
 ## [0.19.0] — 2026-04-21
 
 ### Features

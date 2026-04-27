@@ -363,8 +363,8 @@ impl Theme {
             secondary: Color::Rgb(129, 161, 193),
             accent: Color::Rgb(180, 142, 173),
             text: Color::Rgb(236, 239, 244),
-            text_dim: Color::Rgb(76, 86, 106),
-            border: Color::Rgb(76, 86, 106),
+            text_dim: Color::Rgb(216, 222, 233),
+            border: Color::Rgb(59, 66, 82),
             bg: Color::Rgb(46, 52, 64),
             success: Color::Rgb(163, 190, 140),
             warning: Color::Rgb(235, 203, 139),
@@ -386,8 +386,8 @@ impl Theme {
             secondary: Color::Rgb(42, 161, 152),
             accent: Color::Rgb(211, 54, 130),
             text: Color::Rgb(131, 148, 150),
-            text_dim: Color::Rgb(88, 110, 117),
-            border: Color::Rgb(88, 110, 117),
+            text_dim: Color::Rgb(101, 123, 131),
+            border: Color::Rgb(7, 54, 66),
             bg: Color::Rgb(0, 43, 54),
             success: Color::Rgb(133, 153, 0),
             warning: Color::Rgb(181, 137, 0),
@@ -409,8 +409,8 @@ impl Theme {
             secondary: Color::Rgb(42, 161, 152),
             accent: Color::Rgb(211, 54, 130),
             text: Color::Rgb(101, 123, 131),
-            text_dim: Color::Rgb(147, 161, 161),
-            border: Color::Rgb(147, 161, 161),
+            text_dim: Color::Rgb(88, 110, 117),
+            border: Color::Rgb(238, 232, 213),
             bg: Color::Rgb(253, 246, 227),
             success: Color::Rgb(133, 153, 0),
             warning: Color::Rgb(181, 137, 0),
@@ -762,6 +762,19 @@ mod tests {
         let t = Theme::one_dark();
         assert_eq!(t.bg, Color::Rgb(40, 44, 52));
         assert!(t.is_dark);
+    }
+
+    // --- regression: issue #106 Nord/Solarized text_dim collides with border ---
+
+    #[test]
+    fn theme_text_dim_ne_border() {
+        for theme in [
+            Theme::nord(),
+            Theme::solarized_dark(),
+            Theme::solarized_light(),
+        ] {
+            assert_ne!(theme.text_dim, theme.border, "text_dim == border in theme");
+        }
     }
 
     #[test]

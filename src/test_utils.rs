@@ -83,6 +83,39 @@ impl EventBuilder {
         self
     }
 
+    /// Append a left mouse button release at terminal position `(x, y)`.
+    pub fn mouse_up(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::mouse_up(x, y));
+        self
+    }
+
+    /// Append a mouse drag (movement with the left button held) at `(x, y)`.
+    pub fn drag(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::mouse_drag(x, y));
+        self
+    }
+
+    /// Append a key-release event for character `c`.
+    ///
+    /// Only meaningful on terminals that emit release events
+    /// (e.g. with the Kitty keyboard protocol enabled).
+    pub fn key_release(mut self, c: char) -> Self {
+        self.events.push(Event::key_release(c));
+        self
+    }
+
+    /// Append a terminal focus-gained event.
+    pub fn focus_gained(mut self) -> Self {
+        self.events.push(Event::FocusGained);
+        self
+    }
+
+    /// Append a terminal focus-lost event.
+    pub fn focus_lost(mut self) -> Self {
+        self.events.push(Event::FocusLost);
+        self
+    }
+
     /// Append a scroll-up event at `(x, y)`.
     pub fn scroll_up(mut self, x: u32, y: u32) -> Self {
         self.events.push(Event::Mouse(MouseEvent {
@@ -303,5 +336,62 @@ impl TestBackend {
 impl std::fmt::Display for TestBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_string_trimmed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{KeyEventKind, MouseKind};
+
+    /// Regression test for issue #131: `mouse_up` produces `MouseKind::Up(Left)`.
+    #[test]
+    fn event_builder_mouse_up_produces_up_event() {
+        let events = EventBuilder::new().mouse_up(5, 3).build();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Mouse(m) => {
+                assert!(matches!(m.kind, MouseKind::Up(MouseButton::Left)));
+                assert_eq!(m.x, 5);
+                assert_eq!(m.y, 3);
+            }
+            _ => panic!("expected mouse event"),
+        }
+    }
+
+    /// Regression test for issue #131: `drag` produces a drag mouse event.
+    #[test]
+    fn event_builder_drag_produces_drag_event() {
+        let events = EventBuilder::new().drag(10, 5).build();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Mouse(m) => {
+                assert!(matches!(m.kind, MouseKind::Drag(MouseButton::Left)));
+                assert_eq!(m.x, 10);
+                assert_eq!(m.y, 5);
+            }
+            _ => panic!("expected mouse event"),
+        }
+    }
+
+    /// Regression test for issue #131: `key_release` produces a release key event.
+    #[test]
+    fn event_builder_key_release_produces_release_event() {
+        let events = EventBuilder::new().key_release('a').build();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(k) => {
+                assert_eq!(k.code, KeyCode::Char('a'));
+                assert!(matches!(k.kind, KeyEventKind::Release));
+            }
+            _ => panic!("expected key event"),
+        }
+    }
+
+    /// Regression test for issue #131: focus_gained / focus_lost chain through builder.
+    #[test]
+    fn event_builder_focus_events_chaining() {
+        let events = EventBuilder::new().focus_lost().focus_gained().build();
+        assert_eq!(events, vec![Event::FocusLost, Event::FocusGained]);
     }
 }

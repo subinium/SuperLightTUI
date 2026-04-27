@@ -559,6 +559,31 @@ fn highlight_name_to_style(name: &str, theme: &Theme) -> Style {
     }
 }
 
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+thread_local! {
+    // SAFETY: SLT runs a single-threaded synchronous event loop.
+    // Re-entrant highlight calls are architecturally impossible.
+    // If an async runtime is added later, revisit this (see issue #113).
+    static HIGHLIGHTER: std::cell::RefCell<tree_sitter_highlight::Highlighter> =
+        std::cell::RefCell::new(tree_sitter_highlight::Highlighter::new());
+}
+
 /// Highlight source code using tree-sitter.
 ///
 /// Returns `Some(lines)` where each line is a `Vec<(text, style)>` of
@@ -595,13 +620,17 @@ pub fn highlight_code(code: &str, lang: &str, theme: &Theme) -> Option<Vec<Vec<(
         feature = "syntax-yaml",
     ))]
     {
-        use tree_sitter_highlight::{HighlightEvent, Highlighter};
+        use tree_sitter_highlight::HighlightEvent;
 
         let config = get_config(lang)?;
-        let mut highlighter = Highlighter::new();
-        let highlights = highlighter
-            .highlight(config, code.as_bytes(), None, |_| None)
-            .ok()?;
+        let highlights = HIGHLIGHTER.with(|cell| {
+            let mut highlighter = cell.borrow_mut();
+            highlighter
+                .highlight(config, code.as_bytes(), None, |_| None)
+                .ok()
+                .map(|iter| iter.collect::<Vec<_>>())
+        })?;
+        let highlights = highlights.into_iter();
 
         let default_style = Style::new().fg(theme.text);
         let mut result: Vec<Vec<(String, Style)>> = Vec::new();
@@ -713,6 +742,7 @@ pub fn is_language_supported(lang: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::style::Theme;
 
@@ -896,5 +926,32 @@ mod tests {
     fn highlight_yaml_basic() {
         let theme = Theme::dark();
         assert!(highlight_code("name: slt\nversion: 0.14", "yaml", &theme).is_some());
+    }
+
+    /// Regression test for issue #113:
+    /// `highlight_code()` must not panic on repeated calls (thread_local HIGHLIGHTER reuse).
+    #[cfg(feature = "syntax-rust")]
+    #[test]
+    fn highlight_reuse_does_not_panic() {
+        let theme = Theme::dark();
+        // Call twice with the same language — exercises HIGHLIGHTER.with borrow_mut reuse.
+        let first = highlight_code("let x = 1;", "rust", &theme);
+        let second = highlight_code("fn foo() {}", "rust", &theme);
+        assert!(first.is_some(), "first call should succeed");
+        assert!(second.is_some(), "second call should succeed");
+    }
+
+    /// Regression test for issue #113:
+    /// Multiple calls across different languages must all return Some.
+    #[cfg(all(feature = "syntax-rust", feature = "syntax-python"))]
+    #[test]
+    fn highlight_reuse_across_languages() {
+        let theme = Theme::dark();
+        let r1 = highlight_code("let x = 1;", "rust", &theme);
+        let r2 = highlight_code("def foo(): pass", "python", &theme);
+        let r3 = highlight_code("fn bar() {}", "rust", &theme);
+        assert!(r1.is_some());
+        assert!(r2.is_some());
+        assert!(r3.is_some());
     }
 }

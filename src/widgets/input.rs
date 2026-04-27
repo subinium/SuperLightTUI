@@ -96,6 +96,15 @@ impl std::fmt::Debug for TextInputState {
 }
 
 impl Clone for TextInputState {
+    /// # Clone behavior
+    ///
+    /// `validators` registered via [`TextInputState::add_validator`] are **not**
+    /// cloned because closures are not `Clone`. `validation_errors` is preserved
+    /// in the clone, but it becomes stale — calling
+    /// [`TextInputState::run_validators`] on the clone will clear errors without
+    /// re-running any validation.
+    ///
+    /// Re-register validators on the clone before calling `run_validators()`.
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -160,6 +169,11 @@ impl TextInputState {
     ///
     /// Multiple validators can be added. Call [`run_validators`](Self::run_validators)
     /// to execute all validators and collect their errors.
+    ///
+    /// # Note on cloning
+    ///
+    /// Validators are **not** preserved across [`Clone`] because closures are
+    /// not `Clone`. Re-register after cloning the state.
     pub fn add_validator(&mut self, f: impl Fn(&str) -> Result<(), String> + 'static) {
         self.validators.push(Box::new(f));
     }
@@ -168,6 +182,12 @@ impl TextInputState {
     ///
     /// Updates `validation_errors` with all errors from all validators.
     /// Also updates `validation_error` to the first error for backward compatibility.
+    ///
+    /// # Note on cloning
+    ///
+    /// Validators do not survive [`Clone`]. Calling this on a cloned state with
+    /// no re-registered validators clears `validation_errors` without re-running
+    /// any check. Re-register validators on the clone first.
     pub fn run_validators(&mut self) {
         self.validation_errors.clear();
         for validator in &self.validators {

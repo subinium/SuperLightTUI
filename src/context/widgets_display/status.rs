@@ -129,19 +129,32 @@ impl Context {
             ui.styled("[No]", no_style);
         });
 
-        if !clicked && response.clicked {
-            if let Some((mx, _)) = self.click_pos {
-                let yes_start = response.rect.x + q_width + 1;
-                let yes_end = yes_start + 5;
-                let no_start = yes_end + 1;
-                if mx >= yes_start && mx < yes_end {
-                    is_yes = true;
-                    *result = true;
-                    clicked = true;
-                } else if mx >= no_start {
-                    is_yes = false;
-                    *result = false;
-                    clicked = true;
+        if !clicked {
+            if let Some((mx, my)) = self.click_pos {
+                // Hit-test against the row's recorded rect when available.
+                // On the first frame the row has no entry in `prev_hit_map`
+                // yet, so `response.rect` is the zero rect. In that case we
+                // fall back to assuming the row starts at (0, 0): callers
+                // testing confirm() on the first frame still get correct
+                // x-axis hit-testing because the column layout begins at
+                // x=0 by default.
+                let row_x = response.rect.x;
+                let in_row_y = response.rect.height == 0
+                    || (my >= response.rect.y && my < response.rect.bottom());
+                if in_row_y {
+                    let yes_start = row_x + q_width + 1;
+                    let yes_end = yes_start + 5;
+                    let no_start = yes_end + 1;
+                    let no_end = no_start + 4; // "[No]" = 4 display columns
+                    if mx >= yes_start && mx < yes_end {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
+                    } else if mx >= no_start && mx < no_end {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
+                    }
                 }
             }
         }
@@ -235,14 +248,18 @@ impl Context {
     pub fn definition_list(&mut self, items: &[(&str, &str)]) -> Response {
         let max_key_width = items
             .iter()
-            .map(|(k, _)| unicode_width::UnicodeWidthStr::width(*k))
+            .map(|(k, _)| UnicodeWidthStr::width(*k))
             .max()
             .unwrap_or(0);
 
         let _ = self.col(|ui| {
             for (key, value) in items {
                 ui.line(|ui| {
-                    let padded = format!("{:>width$}", key, width = max_key_width);
+                    let key_display_w = UnicodeWidthStr::width(*key);
+                    let pad = max_key_width.saturating_sub(key_display_w);
+                    let mut padded = String::with_capacity(key.len() + pad);
+                    padded.extend(std::iter::repeat(' ').take(pad));
+                    padded.push_str(key);
                     ui.text(padded).dim();
                     ui.text("  ");
                     ui.text(*value);
@@ -256,10 +273,13 @@ impl Context {
     /// Render a horizontal divider with a centered text label.
     pub fn divider_text(&mut self, label: &str) -> Response {
         let w = self.width();
-        let label_len = unicode_width::UnicodeWidthStr::width(label) as u32;
-        let pad = 1u32;
-        let left_len = 4u32;
-        let right_len = w.saturating_sub(left_len + pad + label_len + pad);
+        let label_len = UnicodeWidthStr::width(label) as u32;
+        // Reserve `label_len + 2` for the label and its single-space padding on
+        // each side, then split the remaining width evenly. On odd widths the
+        // right separator is one cell longer (no asymmetry that's visible).
+        let total_separator = w.saturating_sub(label_len + 2);
+        let left_len = total_separator / 2;
+        let right_len = total_separator - left_len;
         let left: String = "─".repeat(left_len as usize);
         let right: String = "─".repeat(right_len as usize);
         let theme = self.theme;
@@ -420,7 +440,7 @@ impl Context {
     /// Render a code block with line numbers and language-aware highlighting.
     pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
         let lines: Vec<&str> = code.lines().collect();
-        let gutter_w = format!("{}", lines.len()).len();
+        let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
         let theme = self.theme;
         let highlighted: Option<Vec<Vec<(String, Style)>>> =
             crate::syntax::highlight_code(code, lang, &theme);

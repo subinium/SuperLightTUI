@@ -166,10 +166,58 @@ pub(crate) fn extract_selection_text(
                 line.push_str(sym);
             }
         }
-        lines.push(line.trim_end().to_string());
+        // Trim trailing spaces in place: `trim_end().to_string()` would
+        // allocate a second `String` and immediately drop the original.
+        let trimmed_len = line.trim_end().len();
+        line.truncate(trimmed_len);
+        lines.push(line);
     }
     while lines.last().is_some_and(|l| l.is_empty()) {
         lines.pop();
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::Style;
+
+    fn make_state(anchor: (u32, u32), current: (u32, u32), rect: Rect) -> SelectionState {
+        SelectionState {
+            anchor: Some(anchor),
+            current: Some(current),
+            widget_rect: Some(rect),
+            active: true,
+        }
+    }
+
+    #[test]
+    fn extract_selection_text_trims_trailing_spaces_in_place() {
+        // Verifies the in-place truncate path matches the previous
+        // `trim_end().to_string()` behavior: lines lose trailing spaces and
+        // empty trailing lines are dropped.
+        let area = Rect::new(0, 0, 10, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "hello", Style::new());
+        // row 1: "hi" then 8 trailing spaces (default cells are blanks).
+        buf.set_string(0, 1, "hi", Style::new());
+        // row 2 left blank → must be dropped after pop loop.
+
+        let sel = make_state((0, 0), (9, 2), area);
+        let out = extract_selection_text(&buf, &sel, &[]);
+        assert_eq!(out, "hello\nhi");
+    }
+
+    #[test]
+    fn extract_selection_text_preserves_multibyte_content() {
+        // truncate(len) operates on UTF-8 byte indices; trim_end() returns a
+        // byte-aligned slice, so this must hold for CJK and emoji.
+        let area = Rect::new(0, 0, 6, 1);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "世界", Style::new());
+        let sel = make_state((0, 0), (5, 0), area);
+        let out = extract_selection_text(&buf, &sel, &[]);
+        assert_eq!(out, "世界");
+    }
 }

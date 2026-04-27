@@ -74,19 +74,15 @@ impl Context {
     /// # });
     /// ```
     pub fn image(&mut self, img: &HalfBlockImage) -> Response {
-        let width = img.width;
-        let height = img.height;
-
-        let _ = self.container().w(width).h(height).gap(0).col(|ui| {
-            for row in 0..height {
-                let _ = ui.container().gap(0).row(|ui| {
-                    for col in 0..width {
-                        let idx = (row * width + col) as usize;
-                        if let Some(&(upper, lower)) = img.pixels.get(idx) {
-                            ui.styled("▀", Style::new().fg(upper).bg(lower));
-                        }
+        let pixels: Vec<(Color, Color)> = img.pixels.clone();
+        let (w, h) = (img.width, img.height);
+        self.container().w(w).h(h).draw(move |buf, rect| {
+            for row in 0..h {
+                for col in 0..w {
+                    if let Some(&(fg, bg)) = pixels.get((row * w + col) as usize) {
+                        buf.set_char(rect.x + col, rect.y + row, '▀', Style::new().fg(fg).bg(bg));
                     }
-                });
+                }
             }
         });
 
@@ -304,10 +300,10 @@ impl Context {
         }
 
         if !state.content.is_empty() {
+            self.text(&state.content).wrap();
             if state.streaming && state.cursor_visible {
-                self.text(format!("{}▌", state.content)).wrap();
-            } else {
-                self.text(&state.content).wrap();
+                let primary = self.theme.primary;
+                self.styled("▌", Style::new().fg(primary));
             }
         }
 
@@ -554,8 +550,12 @@ impl Context {
             }
         }
 
-        state.in_code_block = in_code_block;
-        state.code_block_lang = code_block_lang;
+        if state.in_code_block != in_code_block {
+            state.in_code_block = in_code_block;
+        }
+        if state.code_block_lang != code_block_lang {
+            state.code_block_lang = code_block_lang;
+        }
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;

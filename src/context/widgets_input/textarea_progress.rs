@@ -11,7 +11,6 @@ impl Context {
         if state.lines.is_empty() {
             state.lines.push(String::new());
         }
-        let old_lines = state.lines.clone();
         state.cursor_row = state.cursor_row.min(state.lines.len().saturating_sub(1));
         state.cursor_col = state
             .cursor_col
@@ -21,6 +20,7 @@ impl Context {
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
 
+        let pre_lines = state.lines.clone();
         let pre_vlines = textarea_build_visual_lines(&state.lines, wrap_w);
 
         if focused {
@@ -161,7 +161,16 @@ impl Context {
                 }
             }
             for (i, text) in self.available_pastes() {
+                // Hoist total char count once per paste event and update
+                // incrementally — recomputing via `.iter().map(...).sum()`
+                // inside the loop would be O(n²) on large pastes.
+                let mut total_chars: usize = state.lines.iter().map(|l| l.chars().count()).sum();
                 for ch in text.chars() {
+                    if let Some(max) = state.max_length {
+                        if total_chars >= max {
+                            break;
+                        }
+                    }
                     if ch == '\n' || ch == '\r' {
                         let split_index =
                             byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
@@ -169,17 +178,13 @@ impl Context {
                         state.cursor_row += 1;
                         state.lines.insert(state.cursor_row, remainder);
                         state.cursor_col = 0;
+                        total_chars += 1;
                     } else {
-                        if let Some(max) = state.max_length {
-                            let total: usize = state.lines.iter().map(|l| l.chars().count()).sum();
-                            if total >= max {
-                                break;
-                            }
-                        }
                         let index =
                             byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
                         state.lines[state.cursor_row].insert(index, ch);
                         state.cursor_col += 1;
+                        total_chars += 1;
                     }
                 }
                 consumed_indices.push(i);
@@ -188,7 +193,11 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        let vlines = textarea_build_visual_lines(&state.lines, wrap_w);
+        let vlines = if state.lines == pre_lines {
+            pre_vlines
+        } else {
+            textarea_build_visual_lines(&state.lines, wrap_w)
+        };
         let (cursor_vrow, cursor_vcol) =
             textarea_logical_to_visual(&vlines, state.cursor_row, state.cursor_col);
 
@@ -262,7 +271,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = state.lines != old_lines;
+        response.changed = state.lines != pre_lines;
         response
     }
 

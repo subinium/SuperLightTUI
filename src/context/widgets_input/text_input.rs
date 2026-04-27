@@ -37,16 +37,27 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, key) in self.available_key_presses() {
-                let matched_suggestions = if state.show_suggestions {
+            // Hoist matched_suggestions out of the loop and recompute only
+            // after a mutation key (Char/Backspace/Delete) sets the dirty flag.
+            // A 10-key burst with one mutation: 10 calls -> 2 calls.
+            let compute_matched = |state: &TextInputState| -> Vec<String> {
+                if state.show_suggestions {
                     state
                         .matched_suggestions()
                         .into_iter()
                         .map(str::to_string)
-                        .collect::<Vec<String>>()
+                        .collect()
                 } else {
                     Vec::new()
-                };
+                }
+            };
+            let mut matched_suggestions = compute_matched(state);
+            let mut suggestions_dirty = false;
+            for (i, key) in self.available_key_presses() {
+                if suggestions_dirty {
+                    matched_suggestions = compute_matched(state);
+                    suggestions_dirty = false;
+                }
                 let suggestions_visible = !matched_suggestions.is_empty();
                 if suggestions_visible {
                     state.suggestion_index = state
@@ -93,6 +104,7 @@ impl Context {
                             state.show_suggestions = true;
                             state.suggestion_index = 0;
                         }
+                        suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
@@ -106,6 +118,7 @@ impl Context {
                             state.show_suggestions = true;
                             state.suggestion_index = 0;
                         }
+                        suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
@@ -131,6 +144,7 @@ impl Context {
                             state.show_suggestions = true;
                             state.suggestion_index = 0;
                         }
+                        suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
@@ -166,8 +180,11 @@ impl Context {
                     state.show_suggestions = true;
                     state.suggestion_index = 0;
                 }
+                suggestions_dirty = true;
                 consumed_indices.push(i);
             }
+            // Suppress unused-assignment warning when no key after last paste.
+            let _ = suggestions_dirty;
 
             self.consume_indices(consumed_indices);
         }

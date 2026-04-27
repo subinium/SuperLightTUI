@@ -1,6 +1,6 @@
 #![allow(clippy::print_stderr)]
+#![allow(clippy::unwrap_used)]
 
-use super::collect::collect_raw_draw_rects;
 use super::tree::{default_container_config, ContainerConfig};
 use super::*;
 
@@ -436,62 +436,48 @@ fn wrapped_text_cache_reused_for_same_width() {
 }
 
 #[test]
-fn collect_all_matches_raw_draw_collection() {
+fn collect_all_clips_raw_draw_to_scroll_viewport() {
+    // Replaces the prior `collect_all_matches_raw_draw_collection` legacy-vs-
+    // current parity test. The legacy `collect_raw_draw_rects` walker (a
+    // `#[cfg(test)]` duplicate of the production branch) was removed; this
+    // test exercises the production `collect_all` path directly.
+    //
+    // Setup: scroll container at (0,0) sized 20x4 with `scroll_offset = 2`,
+    // containing a 6x3 RawDraw child at layout coordinates (1, 3).
+    // Hand trace:
+    //   inner viewport (no border/padding) = (0,0)..(20,4)
+    //   screen_y     = 3 - 2 = 1            (image top in screen coords)
+    //   img_bottom   = 1 + 3 = 4
+    //   visible_top  = max(1, 0)     = 1
+    //   visible_bot  = min(4, 4)     = 4
+    //   visible_h    = 4 - 1         = 3    (entire image fits inside)
+    //   top_clip     = max(0 - 1, 0) = 0    (image top sits below vp top)
+    //   original_h   = 3                    (drives pixel renderer crop)
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut scroll = LayoutNode::container(Direction::Column, default_container_config());
     scroll.is_scrollable = true;
     scroll.pos = (0, 0);
     scroll.size = (20, 4);
     scroll.scroll_offset = 2;
-    scroll.children.push(LayoutNode {
-        kind: NodeKind::RawDraw(7),
-        content: None,
-        cursor_offset: None,
-        style: Style::new(),
-        grow: 0,
-        align: Align::Start,
-        align_self: None,
-        justify: Justify::Start,
-        wrap: false,
-        truncate: false,
-        gap: 0,
-        border: None,
-        border_sides: BorderSides::all(),
-        border_style: Style::new(),
-        bg_color: None,
-        padding: Padding::default(),
-        margin: Margin::default(),
-        constraints: Constraints::default(),
-        title: None,
-        children: Vec::new(),
-        pos: (1, 3),
-        size: (6, 3),
-        is_scrollable: false,
-        scroll_offset: 0,
-        content_height: 0,
-        cached_wrap_width: None,
-        cached_wrapped: None,
-        segments: None,
-        cached_wrapped_segments: None,
-        focus_id: None,
-        interaction_id: None,
-        link_url: None,
-        group_name: None,
-        overlays: Vec::new(),
-    });
+    let mut raw = LayoutNode::raw_draw(7, Constraints::default(), 0, Margin::default(), None, None);
+    raw.pos = (1, 3);
+    raw.size = (6, 3);
+    scroll.children.push(raw);
     root.children.push(scroll);
 
-    let via_collect_all = collect_all(&root)
+    let rects: Vec<_> = collect_all(&root)
         .raw_draw_rects
         .into_iter()
         .map(|r| (r.draw_id, r.rect, r.top_clip_rows, r.original_height))
-        .collect::<Vec<_>>();
-    let via_legacy = collect_raw_draw_rects(&root)
-        .into_iter()
-        .map(|r| (r.draw_id, r.rect, r.top_clip_rows, r.original_height))
-        .collect::<Vec<_>>();
+        .collect();
 
-    assert_eq!(via_collect_all, via_legacy);
+    assert_eq!(
+        rects,
+        vec![(7, crate::rect::Rect::new(1, 1, 6, 3), 0, 3)],
+        "collect_all must clip RawDraw rect into the scroll viewport, \
+         leave top_clip_rows = 0 when the image top is already inside \
+         the viewport, and report the unclipped original height"
+    );
 }
 
 #[test]
@@ -523,7 +509,7 @@ fn group_names_share_arc_across_focus_descendants() {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
-            group_name: Some(format!("group-{i}")),
+            group_name: Some(Arc::from(format!("group-{i}").as_str())),
         })));
         for _ in 0..FOCUSES_PER_GROUP {
             commands.push(Command::FocusMarker(focus_id));
@@ -688,4 +674,321 @@ fn flexbox_column_many_children_overflow_scratch() {
         prev_end = child.pos.1 + child.size.1;
     }
     assert!(prev_end <= 50);
+}
+
+#[test]
+fn flexbox_grow_with_max_width_no_gap() {
+    // Row: 40px wide, no gap, two grow:1 children.
+    // Child 0: grow:1, max_width:10 → rendered 10px, x should advance by 10.
+    // Child 1: grow:1, no constraint → starts at x=10, rendered ~30px.
+    use crate::style::{Align, Constraints, Justify, Margin, Padding};
+
+    let commands = vec![
+        Command::BeginContainer(Box::new(BeginContainerArgs {
+            direction: Direction::Row,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: crate::style::Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        })),
+        Command::Text {
+            content: "A".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 1,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default().max_w(10),
+        },
+        Command::Text {
+            content: "B".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 1,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        },
+        Command::EndContainer,
+    ];
+
+    let mut tree = build_tree(commands);
+    compute(&mut tree, crate::rect::Rect::new(0, 0, 40, 4));
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    let c0 = &row.children[0];
+    let c1 = &row.children[1];
+
+    // Child 0 clamped to max_width=10
+    assert_eq!(
+        c0.size.0, 10,
+        "child 0 width should be clamped to max_width=10"
+    );
+    // Child 1 must start immediately after child 0 (no gap)
+    assert_eq!(
+        c1.pos.0,
+        c0.pos.0 + c0.size.0,
+        "child 1 x must equal child 0 x + child 0 width (no gap)"
+    );
+}
+
+#[test]
+fn flexbox_column_grow_with_max_height_no_gap() {
+    // Column: 20px tall, no gap, two grow:1 children.
+    // Child 0: grow:1, max_height:5 → rendered 5px, y should advance by 5.
+    // Child 1: grow:1, no constraint → starts at y=5.
+    //
+    // The outer column itself uses grow:1 so the implicit root column built by
+    // `build_tree` stretches it to the full 20px area; otherwise the outer
+    // column shrinks to its min_height and there is no flex space for c0/c1
+    // to grow into.
+    use crate::style::{Align, Constraints, Justify, Margin, Padding};
+
+    let commands = vec![
+        Command::BeginContainer(Box::new(BeginContainerArgs {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: crate::style::Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 1,
+            group_name: None,
+        })),
+        Command::Text {
+            content: "A".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 1,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default().max_h(5),
+        },
+        Command::Text {
+            content: "B".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 1,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        },
+        Command::EndContainer,
+    ];
+
+    let mut tree = build_tree(commands);
+    compute(&mut tree, crate::rect::Rect::new(0, 0, 20, 20));
+
+    let col = &tree.children[0];
+    assert_eq!(col.children.len(), 2);
+    let c0 = &col.children[0];
+    let c1 = &col.children[1];
+
+    // Child 0 clamped to max_height=5
+    assert_eq!(
+        c0.size.1, 5,
+        "child 0 height should be clamped to max_height=5"
+    );
+    // Child 1 must start immediately after child 0
+    assert_eq!(
+        c1.pos.1,
+        c0.pos.1 + c0.size.1,
+        "child 1 y must equal child 0 y + child 0 height (no gap)"
+    );
+}
+
+// --- Regression tests for v0.19.1 hotfix ---------------------------------
+
+#[test]
+fn collect_all_keeps_scroll_invariant_with_nested_scrollables() {
+    // Regression for issue #151: `collect_all_inner` historically split the
+    // `scroll_infos` push and the `scroll_rects` push into two separate
+    // `if node.is_scrollable` branches, making it possible to update one
+    // side without the other and silently break the
+    // `scroll_infos.len() == scroll_rects.len()` invariant enforced by the
+    // outer pipeline. Merging the branches makes drift impossible; this test
+    // pins the invariant so a future re-split fails loudly.
+    //
+    // Build a tree with two nested scrollable containers + one sibling
+    // scrollable (3 scrollable nodes total, all visible) and verify both
+    // vectors agree in length.
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+
+    let mut outer = LayoutNode::container(Direction::Column, default_container_config());
+    outer.is_scrollable = true;
+    outer.pos = (0, 0);
+    outer.size = (40, 20);
+
+    let mut inner = LayoutNode::container(Direction::Column, default_container_config());
+    inner.is_scrollable = true;
+    inner.pos = (1, 1);
+    inner.size = (38, 18);
+    outer.children.push(inner);
+
+    let mut sibling = LayoutNode::container(Direction::Column, default_container_config());
+    sibling.is_scrollable = true;
+    sibling.pos = (0, 25);
+    sibling.size = (40, 10);
+
+    root.children.push(outer);
+    root.children.push(sibling);
+
+    let fd = collect_all(&root);
+
+    assert_eq!(
+        fd.scroll_infos.len(),
+        fd.scroll_rects.len(),
+        "scroll_infos and scroll_rects must always have equal length \
+         (collect_all_inner branch merge invariant)"
+    );
+    assert_eq!(
+        fd.scroll_infos.len(),
+        3,
+        "expected 3 scrollable nodes (outer, inner, sibling)"
+    );
+}
+
+#[test]
+fn raw_draw_constructor_matches_inline_literal_shape() {
+    // Regression for issue #156: `LayoutNode::raw_draw` must produce a node
+    // identical to the prior inline 34-field literal in `build_children`.
+    // This pins every field that the constructor sets so a future drift in
+    // the constructor or the build_children call site is caught immediately.
+    let constraints = Constraints::default().min_w(7).min_h(2);
+    let margin = Margin {
+        top: 1,
+        right: 2,
+        bottom: 3,
+        left: 4,
+    };
+    let node = LayoutNode::raw_draw(42, constraints, 5, margin, Some(11), Some(13));
+
+    assert!(matches!(node.kind, NodeKind::RawDraw(42)));
+    assert_eq!(node.grow, 5);
+    assert_eq!(node.margin.top, 1);
+    assert_eq!(node.margin.right, 2);
+    assert_eq!(node.margin.bottom, 3);
+    assert_eq!(node.margin.left, 4);
+    assert_eq!(node.constraints.min_width, Some(7));
+    assert_eq!(node.constraints.min_height, Some(2));
+    assert_eq!(node.size, (7, 2), "size must seed from constraints minima");
+    assert_eq!(node.pos, (0, 0));
+    assert_eq!(node.focus_id, Some(11));
+    assert_eq!(node.interaction_id, Some(13));
+    // Defaults — none of these should be populated by the constructor.
+    assert!(node.content.is_none());
+    assert!(node.cursor_offset.is_none());
+    assert_eq!(node.align, Align::Start);
+    assert!(node.align_self.is_none());
+    assert_eq!(node.justify, Justify::Start);
+    assert!(!node.wrap);
+    assert!(!node.truncate);
+    assert_eq!(node.gap, 0);
+    assert!(node.border.is_none());
+    assert!(node.bg_color.is_none());
+    assert!(node.title.is_none());
+    assert!(node.children.is_empty());
+    assert!(!node.is_scrollable);
+    assert_eq!(node.scroll_offset, 0);
+    assert_eq!(node.content_height, 0);
+    assert!(node.cached_wrap_width.is_none());
+    assert!(node.cached_wrapped.is_none());
+    assert!(node.segments.is_none());
+    assert!(node.cached_wrapped_segments.is_none());
+    assert!(node.link_url.is_none());
+    assert!(node.group_name.is_none());
+    assert!(node.overlays.is_empty());
+}
+
+/// Build a `LayoutNode` chain of the given depth without going through
+/// `build_children` (which has its own depth guard at construction time).
+/// Used to exercise the depth guards in `compute` / `collect_all_inner` /
+/// `render_inner` directly.
+fn build_deep_node(depth: usize) -> LayoutNode {
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut cursor = &mut root;
+    for _ in 0..depth {
+        cursor.children.push(LayoutNode::container(
+            Direction::Column,
+            default_container_config(),
+        ));
+        cursor = cursor.children.last_mut().unwrap();
+    }
+    root
+}
+
+#[test]
+#[should_panic(expected = "layout tree depth exceeds 512")]
+fn compute_panics_at_depth_guard() {
+    // Regression for issue #154: `compute` must panic with the documented
+    // diagnostic message when recursion depth exceeds `MAX_LAYOUT_DEPTH`.
+    // build_deep_node(514) yields a chain of 515 nested containers (root +
+    // 514 children); the inner-most container is reached at depth 514,
+    // which is past the limit of 512.
+    let mut node = build_deep_node(514);
+    compute(&mut node, crate::rect::Rect::new(0, 0, 80, 24));
+}
+
+#[test]
+#[should_panic(expected = "layout tree depth exceeds 512")]
+fn collect_all_panics_at_depth_guard() {
+    // Regression for issue #154: `collect_all_inner` must panic with the
+    // documented diagnostic message when recursion depth exceeds
+    // `MAX_LAYOUT_DEPTH`. Sizes are populated directly (bypassing `compute`,
+    // which would also panic) so the DFS reaches the inner-most depth.
+    let mut node = build_deep_node(514);
+    fn populate_sizes(n: &mut LayoutNode) {
+        n.size = (10, 10);
+        for c in &mut n.children {
+            populate_sizes(c);
+        }
+    }
+    populate_sizes(&mut node);
+    let _ = collect_all(&node);
+}
+
+#[test]
+#[should_panic(expected = "layout tree depth exceeds 512")]
+fn render_panics_at_depth_guard() {
+    // Regression for issue #154: `render_inner` must panic with the
+    // documented diagnostic message when recursion depth exceeds
+    // `MAX_LAYOUT_DEPTH`. Sizes are populated directly so the renderer does
+    // not short-circuit on the size-zero check before reaching the guard.
+    let mut node = build_deep_node(514);
+    fn populate_sizes(n: &mut LayoutNode) {
+        n.size = (10, 10);
+        n.pos = (0, 0);
+        for c in &mut n.children {
+            populate_sizes(c);
+        }
+    }
+    populate_sizes(&mut node);
+    let mut buf = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 80, 24));
+    super::render::render(&node, &mut buf);
 }

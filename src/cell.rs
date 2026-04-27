@@ -4,6 +4,21 @@ use compact_str::CompactString;
 
 use crate::style::Style;
 
+// Compile-time size assertion for `Cell`.
+//
+// `Cell` is composed of `symbol: CompactString` + `style: Style` +
+// `hyperlink: Option<CompactString>`. Upstream changes to any of these
+// (e.g., `CompactString` inline-storage tweaks, `Style` field additions,
+// or hyperlink type swaps) can silently grow the struct until runtime.
+// A 64-byte budget keeps each cell within one cache line.
+//
+// If an intentional growth pushes us past 64 B, raise this bound and
+// document why — but do not silently let it drift.
+const _: () = assert!(
+    std::mem::size_of::<Cell>() <= 64,
+    "Cell exceeds one cache line (64 B).      If the size increase is intentional, update this bound and document why."
+);
+
 /// A single terminal cell containing a character and style.
 ///
 /// Each cell holds one grapheme cluster (stored as a [`CompactString`] for
@@ -58,5 +73,19 @@ impl Cell {
         self.symbol.push(' ');
         self.style = Style::new();
         self.hyperlink = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_size_within_cache_line() {
+        let size = std::mem::size_of::<Cell>();
+        assert!(
+            size <= 64,
+            "Cell size = {size}B; exceeds 64B cache-line budget.              If intentional, update the const-assert and this test together."
+        );
     }
 }

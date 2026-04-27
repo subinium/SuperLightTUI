@@ -36,7 +36,7 @@ impl Rect {
     /// Total area in cells (`width * height`).
     #[inline]
     pub const fn area(&self) -> u32 {
-        self.width * self.height
+        self.width.saturating_mul(self.height)
     }
 
     /// Exclusive right edge (`x + width`).
@@ -362,5 +362,15 @@ mod tests {
         let r = Rect::new(0, 0, 0, 5);
         let positions: Vec<(u32, u32)> = r.positions().collect();
         assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn rect_area_no_overflow() {
+        // u32::MAX * u32::MAX would wrap to 0 without saturating_mul
+        let r = Rect::new(0, 0, u32::MAX, u32::MAX);
+        assert_eq!(r.area(), u32::MAX);
+        // Concrete case from issue #166: 65536 * 65536 wraps to 0 without fix
+        let r2 = Rect::new(0, 0, 65536, 65536);
+        assert_eq!(r2.area(), u32::MAX);
     }
 }
