@@ -50,6 +50,7 @@ tree-sitter-yaml = { version = "0.7", optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
 proptest = "1"
+serde_json = "1"
 
 [features]
 crossterm = ["dep:crossterm"]

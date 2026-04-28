@@ -4,7 +4,8 @@
 use crate::buffer::Buffer;
 use crate::rect::Rect;
 use crate::style::{
-    Align, Border, BorderSides, Color, Constraints, Justify, Margin, Padding, Style,
+    Align, Border, BorderSides, Color, Constraints, HeightSpec, Justify, Margin, Padding, Style,
+    WidthSpec,
 };
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;

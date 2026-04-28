@@ -140,8 +140,8 @@ pub use palette::Palette;
 pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder, ThemeColor,
-    WidgetColors, WidgetTheme,
+    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
+    ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
 pub use widgets::{
     AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,

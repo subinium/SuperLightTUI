@@ -99,6 +99,47 @@ impl Iterator for U32StackIter<'_> {
     }
 }
 
+/// Resolve `Pct` and `Ratio` width/height variants against a parent area
+/// into concrete `Fixed` widths/heights.
+///
+/// Single match per axis (the v0.20 successor to the previous three
+/// `if let Some(pct)` blocks). [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
+/// [`WidthSpec::MinMax`] pass through unchanged. A `Ratio` with `den == 0`
+/// is treated as no constraint (`Auto`).
+#[inline]
+pub(crate) fn resolve_axis_specs(c: &mut Constraints, area: Rect) {
+    match c.width {
+        WidthSpec::Pct(pct) => {
+            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
+            c.width = WidthSpec::Fixed(resolved);
+        }
+        WidthSpec::Ratio(num, den) => {
+            let resolved = if den == 0 {
+                area.width
+            } else {
+                (area.width as u64 * num as u64 / den as u64) as u32
+            };
+            c.width = WidthSpec::Fixed(resolved);
+        }
+        WidthSpec::Auto | WidthSpec::Fixed(_) | WidthSpec::MinMax { .. } => {}
+    }
+    match c.height {
+        HeightSpec::Pct(pct) => {
+            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
+            c.height = HeightSpec::Fixed(resolved);
+        }
+        HeightSpec::Ratio(num, den) => {
+            let resolved = if den == 0 {
+                area.height
+            } else {
+                (area.height as u64 * num as u64 / den as u64) as u32
+            };
+            c.height = HeightSpec::Fixed(resolved);
+        }
+        HeightSpec::Auto | HeightSpec::Fixed(_) | HeightSpec::MinMax { .. } => {}
+    }
+}
+
 pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     compute_inner(node, area, 0);
 }
@@ -118,29 +159,20 @@ fn compute_inner(node: &mut LayoutNode, area: Rect, depth: usize) {
 }
 
 fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
-    if let Some(pct) = node.constraints.width_pct {
-        let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-        node.constraints.min_width = Some(resolved);
-        node.constraints.max_width = Some(resolved);
-        node.constraints.width_pct = None;
-    }
-    if let Some(pct) = node.constraints.height_pct {
-        let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-        node.constraints.min_height = Some(resolved);
-        node.constraints.max_height = Some(resolved);
-        node.constraints.height_pct = None;
-    }
+    resolve_axis_specs(&mut node.constraints, area);
 
+    let (min_w, max_w) = (
+        node.constraints.min_width().unwrap_or(0),
+        node.constraints.max_width().unwrap_or(u32::MAX),
+    );
+    let (min_h, max_h) = (
+        node.constraints.min_height().unwrap_or(0),
+        node.constraints.max_height().unwrap_or(u32::MAX),
+    );
     node.pos = (area.x, area.y);
     node.size = (
-        area.width.clamp(
-            node.constraints.min_width.unwrap_or(0),
-            node.constraints.max_width.unwrap_or(u32::MAX),
-        ),
-        area.height.clamp(
-            node.constraints.min_height.unwrap_or(0),
-            node.constraints.max_height.unwrap_or(u32::MAX),
-        ),
+        area.width.clamp(min_w, max_w),
+        area.height.clamp(min_h, max_h),
     );
 
     if matches!(node.kind, NodeKind::Text) && node.wrap {
@@ -335,18 +367,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for child in &mut node.children {
-        if let Some(pct) = child.constraints.width_pct {
-            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_width = Some(resolved);
-            child.constraints.max_width = Some(resolved);
-            child.constraints.width_pct = None;
-        }
-        if let Some(pct) = child.constraints.height_pct {
-            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_height = Some(resolved);
-            child.constraints.max_height = Some(resolved);
-            child.constraints.height_pct = None;
-        }
+        resolve_axis_specs(&mut child.constraints, area);
     }
 
     let n = node.children.len() as u32;
@@ -425,18 +446,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for child in &mut node.children {
-        if let Some(pct) = child.constraints.width_pct {
-            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_width = Some(resolved);
-            child.constraints.max_width = Some(resolved);
-            child.constraints.width_pct = None;
-        }
-        if let Some(pct) = child.constraints.height_pct {
-            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_height = Some(resolved);
-            child.constraints.max_height = Some(resolved);
-            child.constraints.height_pct = None;
-        }
+        resolve_axis_specs(&mut child.constraints, area);
     }
 
     let n = node.children.len() as u32;

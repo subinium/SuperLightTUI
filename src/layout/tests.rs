@@ -909,8 +909,8 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert_eq!(node.margin.right, 2);
     assert_eq!(node.margin.bottom, 3);
     assert_eq!(node.margin.left, 4);
-    assert_eq!(node.constraints.min_width, Some(7));
-    assert_eq!(node.constraints.min_height, Some(2));
+    assert_eq!(node.constraints.min_width(), Some(7));
+    assert_eq!(node.constraints.min_height(), Some(2));
     assert_eq!(node.size, (7, 2), "size must seed from constraints minima");
     assert_eq!(node.pos, (0, 0));
     assert_eq!(node.focus_id, Some(11));

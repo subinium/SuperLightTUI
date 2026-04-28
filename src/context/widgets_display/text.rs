@@ -378,48 +378,47 @@ impl Context {
 
     /// Set a fixed width on the last rendered text or link element.
     ///
-    /// Sets both `min_width` and `max_width` to `value`, making the element
-    /// occupy exactly that many columns (padded with spaces or truncated).
+    /// Sets the [`WidthSpec`](crate::WidthSpec) to `Fixed(value)`, making the
+    /// element occupy exactly that many columns (padded with spaces or
+    /// truncated).
     pub fn w(&mut self, value: u32) -> &mut Self {
         self.modify_last_constraints(|c| {
-            c.min_width = Some(value);
-            c.max_width = Some(value);
+            *c = c.w(value);
         });
         self
     }
 
     /// Set a fixed height on the last rendered text or link element.
     ///
-    /// Sets both `min_height` and `max_height` to `value`.
+    /// Sets the [`HeightSpec`](crate::HeightSpec) to `Fixed(value)`.
     pub fn h(&mut self, value: u32) -> &mut Self {
         self.modify_last_constraints(|c| {
-            c.min_height = Some(value);
-            c.max_height = Some(value);
+            *c = c.h(value);
         });
         self
     }
 
     /// Set the minimum width on the last rendered text or link element.
     pub fn min_w(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.min_width = Some(value));
+        self.modify_last_constraints(|c| c.set_min_width(Some(value)));
         self
     }
 
     /// Set the maximum width on the last rendered text or link element.
     pub fn max_w(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.max_width = Some(value));
+        self.modify_last_constraints(|c| c.set_max_width(Some(value)));
         self
     }
 
     /// Set the minimum height on the last rendered text or link element.
     pub fn min_h(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.min_height = Some(value));
+        self.modify_last_constraints(|c| c.set_min_height(Some(value)));
         self
     }
 
     /// Set the maximum height on the last rendered text or link element.
     pub fn max_h(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.max_height = Some(value));
+        self.modify_last_constraints(|c| c.set_max_height(Some(value)));
         self
     }
 
