@@ -17,16 +17,17 @@
 //!   h / Left       — drop selected counter (-1)
 //!   +              — add a row (max 20)
 //!   -              — remove a row (min 1)
-//!   Ctrl-Q / Esc   — quit
+//!   Click [-]/[+]  — bump / drop that row's counter (independent of selection)
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
-//!   ┌── use_state_keyed: per-item counters ──┐
-//!   │ helper text                              │
-//!   │                                          │
-//!   │ ▶ item  0  count =    0                  │
-//!   │   item  1  count =    7                  │
-//!   │   item  2  count =   -3                  │
-//!   └──────────────────────────────────────────┘
+//!   ┌── use_state_keyed: per-item counters ──────────┐
+//!   │ helper text                                     │
+//!   │                                                 │
+//!   │ ▶ item  0  count =    0   [-] [+]               │
+//!   │   item  1  count =    7   [-] [+]               │
+//!   │   item  2  count =   -3   [-] [+]               │
+//!   └─────────────────────────────────────────────────┘
 
 use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 
@@ -61,7 +62,7 @@ fn main() -> std::io::Result<()> {
 /// Public so snapshot tests can pin frames against this exact UI shape
 /// without re-deriving widget composition in test fragments.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
-    if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+    if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
         ui.quit();
         return;
     }
@@ -89,7 +90,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             )
             .dim();
             ui.text(
-                "j/k = move   l/h = bump/drop selected   +/- = add/remove rows   Ctrl+Q = quit",
+                "j/k move   l/h bump/drop selected   +/- add/remove rows   click [-]/[+] bump per row   q quit",
             )
             .dim();
 
@@ -104,10 +105,25 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                         *counter.get_mut(ui) -= 1;
                     }
                 }
-                let value = *counter.get(ui);
-                let prefix = if i == selected { "▶" } else { " " };
-                let label = format!("{prefix} item {i:>2}  count = {value:>4}");
-                ui.text(label).fg(row_color(i == selected, value));
+
+                let row_gap = ui.spacing().xs();
+                let _ = ui.row_gap(row_gap, |ui| {
+                    let value = *counter.get(ui);
+                    let prefix = if i == selected { "▶" } else { " " };
+                    let label = format!("{prefix} item {i:>2}  count = {value:>4}");
+                    ui.text(label).fg(row_color(i == selected, value));
+
+                    // Per-row clickable buttons mutate THIS row's counter,
+                    // independent of the global selection. Demonstrates
+                    // that keyed state works regardless of which item the
+                    // cursor points at — every row holds its own slot.
+                    if ui.button("-").clicked {
+                        *counter.get_mut(ui) -= 1;
+                    }
+                    if ui.button("+").clicked {
+                        *counter.get_mut(ui) += 1;
+                    }
+                });
             }
         });
 }

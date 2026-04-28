@@ -17,7 +17,7 @@
 //!   k / Up         — count++
 //!   j / Down       — count--
 //!   Space          — toggle effect-log panel
-//!   Ctrl-Q / Esc   — quit
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
 //!   ┌── use_effect: dep-tracked side effects ──┐
@@ -68,7 +68,7 @@ fn main() -> std::io::Result<()> {
 /// Public so snapshot tests can drive frames sequentially and inspect the
 /// shared log without depending on a real terminal backend.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
-    if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+    if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
         ui.quit();
         return;
     }
@@ -120,7 +120,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .p(pad)
         .gap(gap)
         .col(|ui| {
-            ui.text("k/Up = count++   j/Down = count--   Space = toggle log   Ctrl+Q = quit")
+            ui.text("k/Up = count++   j/Down = count--   Space = toggle log   q quit")
                 .dim();
             ui.text(format!("count = {count}")).bold().fg(Color::Cyan);
 

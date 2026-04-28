@@ -4,18 +4,25 @@
 //!
 //! Three text inputs ("name", "email", "city") and three "Focus X"
 //! buttons. Tab / Shift-Tab cycle through inputs positionally; clicking a
-//! button calls `focus_by_name(...)` to jump directly without caring
-//! about render order. The current focus name is echoed at the top —
-//! it stays in sync because `focused_name()` reads the resolved name from
-//! the previous frame's name map.
+//! button — or pressing the matching number key — calls
+//! `focus_by_name(...)` to jump directly without caring about render
+//! order. Clicking a row also routes through `focus_by_name` so the
+//! mouse-click experience matches a normal form. The current focus name
+//! is echoed at the top — it stays in sync because `focused_name()`
+//! reads the resolved name from the previous frame's name map.
 //!
 //! Run: `cargo run --example v020_named_focus`
 //!
 //! Keys:
 //!   Tab            — focus next input (positional)
 //!   Shift-Tab      — focus previous input (positional)
+//!   1 / 2 / 3      — jump focus to name / email / city
+//!   Click row      — jump focus to that input by name
 //!   Click [Focus N]— jump focus to that named input
-//!   Ctrl-Q / Esc   — quit
+//!   Type           — text flows into the focused input
+//!   q / Esc / Ctrl-Q — quit (Esc and Ctrl-Q always quit; plain `q`
+//!                       quits only when no input has focus, otherwise
+//!                       it types into the focused input)
 //!
 //! Layout:
 //!   ┌── register_focusable_named + focus_by_name ──┐
@@ -51,7 +58,9 @@ fn main() -> std::io::Result<()> {
 /// Public so snapshot tests can pin a specific focus state without
 /// reimplementing the input layout.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
-    if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+    // Esc / Ctrl-Q always quit — they never collide with text-input
+    // typing, so they can fire before the body renders.
+    if ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
         ui.quit();
         return;
     }
@@ -66,7 +75,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .p(pad)
         .gap(gap)
         .col(|ui| {
-            ui.text("Tab/Shift+Tab = cycle   Click [Focus X] = jump by name   Ctrl+Q = quit")
+            ui.text("Tab/Shift+Tab cycle   1/2/3 or click row jumps by name   Esc / Ctrl+Q quit")
                 .dim();
 
             // `focused_name` resolves against the previous frame's map, so
@@ -79,23 +88,62 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             render_input_rows(ui, state);
             render_focus_buttons(ui, row_gap);
         });
+
+    // Numeric shortcuts and plain `q` are checked AFTER the body so a
+    // focused `text_input` consumes typed digits and 'q' first. This
+    // means: if no input is focused, `1`/`2`/`3` jump focus and `q`
+    // quits; if an input has focus, the keys flow into it as text. Use
+    // Esc or Ctrl-Q to quit unconditionally.
+    if ui.key('1') {
+        let _ = ui.focus_by_name("name");
+    }
+    if ui.key('2') {
+        let _ = ui.focus_by_name("email");
+    }
+    if ui.key('3') {
+        let _ = ui.focus_by_name("city");
+    }
+    if ui.key('q') {
+        ui.quit();
+    }
 }
 
 /// Render the three named inputs. The order here is positional Tab order;
 /// names are independent of visual position and persist across re-orders.
+///
+/// Each row is wrapped in a clickable container. Clicking anywhere in the
+/// row routes through `focus_by_name` so mouse focus matches keyboard
+/// focus — text_input itself doesn't claim focus on click.
 fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
     let _ = ui.col(|ui| {
-        ui.text("Name:");
-        let _ = ui.register_focusable_named("name");
-        let _ = ui.text_input(&mut state.name);
+        let row_gap = ui.spacing().xs();
 
-        ui.text("Email:");
-        let _ = ui.register_focusable_named("email");
-        let _ = ui.text_input(&mut state.email);
+        let name_row = ui.row_gap(row_gap, |ui| {
+            ui.text("Name: ");
+            let _ = ui.register_focusable_named("name");
+            let _ = ui.text_input(&mut state.name);
+        });
+        if name_row.clicked {
+            let _ = ui.focus_by_name("name");
+        }
 
-        ui.text("City:");
-        let _ = ui.register_focusable_named("city");
-        let _ = ui.text_input(&mut state.city);
+        let email_row = ui.row_gap(row_gap, |ui| {
+            ui.text("Email:");
+            let _ = ui.register_focusable_named("email");
+            let _ = ui.text_input(&mut state.email);
+        });
+        if email_row.clicked {
+            let _ = ui.focus_by_name("email");
+        }
+
+        let city_row = ui.row_gap(row_gap, |ui| {
+            ui.text("City: ");
+            let _ = ui.register_focusable_named("city");
+            let _ = ui.text_input(&mut state.city);
+        });
+        if city_row.clicked {
+            let _ = ui.focus_by_name("city");
+        }
     });
 }
 
