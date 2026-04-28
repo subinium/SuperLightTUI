@@ -177,6 +177,94 @@ fn issue_223_split_pane_state_clamps_to_min_ratio() {
     assert!(state.ratio <= 1.0 - state.min_ratio);
 }
 
+#[test]
+fn issue_223_split_pane_mouse_drag_updates_ratio() {
+    // Mouse drag is the primary advertised interaction for `split_pane`.
+    // The flow is:
+    //   1. MouseDown on the handle's prev-frame rect → state.dragging = true.
+    //   2. MouseDrag at a new x → state.ratio is recomputed from the
+    //      cursor's relative x within the outer container's rect.
+    //
+    // Both events must reuse the previous frame's `prev_hit_map`, so the
+    // first render seeds the map, and the second render fires the events.
+    let mut tb = TestBackend::new(40, 5);
+    let mut state = SplitPaneState::new(0.5);
+
+    // The split_pane mouse-drag implementation looks up the prior-frame's
+    // hit-map at `interaction_count` (captured before the row is allocated,
+    // i.e. the row's id slot). The previous frame must therefore have
+    // populated that slot. We render two warm-up frames so that
+    // `prev_hit_map` is stable.
+    for _ in 0..2 {
+        tb.render(|ui| {
+            let _ = ui.split_pane(
+                &mut state,
+                |ui| {
+                    ui.text("LEFT");
+                },
+                |ui| {
+                    ui.text("RIGHT");
+                },
+            );
+        });
+    }
+
+    // Verify the handle char rendered (sanity-check before driving mouse).
+    let mut found_handle = false;
+    for y in 0..5u32 {
+        if tb.line(y).contains('│') {
+            found_handle = true;
+            break;
+        }
+    }
+    assert!(found_handle, "split_pane must render '│' handle");
+
+    let ratio_before_drag = state.ratio;
+    // The split_pane row defaults to grow=0, so its prev-frame rect
+    // height equals the content height (one row of text). The mouse-Down
+    // therefore must hit y=0 to land inside the row's rect.
+    let events = EventBuilder::new()
+        .click(20, 0) // MouseDown inside the row (y=0 is text row)
+        .drag(5, 0) // MouseDrag toward the left edge
+        .build();
+
+    // ── Frame 3: feed the click + drag events with the handle as the
+    // current focusable so we mirror the way the runtime presents the
+    // widget after Tab navigation. ──────────────────────────────────────
+    tb.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.split_pane(
+            &mut state,
+            |ui| {
+                ui.text("LEFT");
+            },
+            |ui| {
+                ui.text("RIGHT");
+            },
+        );
+    });
+
+    // Mouse-Down must have entered drag mode; the Drag must have updated
+    // the ratio toward the left (smaller value).
+    assert!(
+        state.dragging,
+        "MouseDown inside split_pane's prev-frame hit area must enter drag mode (state.dragging was false, ratio={})",
+        state.ratio
+    );
+    assert!(
+        state.ratio < ratio_before_drag,
+        "MouseDrag toward the left must shrink the left pane: ratio went from {} to {}",
+        ratio_before_drag,
+        state.ratio
+    );
+    // Ratio must respect the min_ratio clamp.
+    assert!(
+        state.ratio >= state.min_ratio,
+        "ratio must respect min_ratio clamp: ratio={}, min_ratio={}",
+        state.ratio,
+        state.min_ratio
+    );
+}
+
 // ── #224: gauge / line_gauge (builder API + f64) ─────────────────────────
 
 #[test]

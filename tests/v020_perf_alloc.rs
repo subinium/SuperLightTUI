@@ -475,3 +475,156 @@ fn use_state_keyed_cache_hit_scales_one_per_call() {
         extra_calls * 2
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #206: kitty placement flush — re-emit on row_offset change (resize)
+// ---------------------------------------------------------------------------
+
+/// When `InlineTerminal` resizes, the `start_row` (i.e. row_offset passed to
+/// `KittyImageManager::flush`) changes. The fast-path comparison uses
+/// `placement_eq_with_offset(c, row_offset, p)` which compares
+/// `current.y + row_offset` against the previously-stored
+/// `prev_placements[i].y` (which already includes the prior offset). When the
+/// offset changes between two flushes, the comparison must fail and the flush
+/// must re-emit placements at the new offset.
+#[test]
+fn kitty_flush_resize_reemits() {
+    let mut fx = slt::__bench_new_kitty_fixture(3);
+    let mut sink: Vec<u8> = Vec::new();
+
+    // First flush at row_offset = 10 → fresh manager, must emit placements.
+    fx.flush_inline(&mut sink, 10).unwrap();
+    let after_first = sink.len();
+    assert!(
+        after_first > 0,
+        "first flush at row_offset=10 must emit placements (sink_len={after_first})"
+    );
+
+    // Second flush at row_offset = 10 (steady state) → fast-path should
+    // return without writing anything.
+    sink.clear();
+    fx.flush_inline(&mut sink, 10).unwrap();
+    assert_eq!(
+        sink.len(),
+        0,
+        "second flush at same row_offset=10 must hit fast-path and emit no bytes"
+    );
+
+    // Third flush at row_offset = 15 (resize) → the offset changed, so the
+    // fast-path comparison fails and the manager must re-emit placements.
+    sink.clear();
+    fx.flush_inline(&mut sink, 15).unwrap();
+    assert!(
+        !sink.is_empty(),
+        "third flush at row_offset=15 (resize) must re-emit placements (sink_len={})",
+        sink.len()
+    );
+
+    // Fourth flush at row_offset = 15 (new steady state) → fast-path again.
+    sink.clear();
+    fx.flush_inline(&mut sink, 15).unwrap();
+    assert_eq!(
+        sink.len(),
+        0,
+        "fourth flush at same row_offset=15 must return to fast-path with no bytes"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #204: FrameState reuse buffers restored on error_boundary panic
+// ---------------------------------------------------------------------------
+
+/// `error_boundary` should restore the per-frame reuse buffers
+/// (`context_stack`, `deferred_draws`, `group_stack`, `text_color_stack`,
+/// `pending_tooltips`) to their pre-child state when a child closure panics.
+/// `hovered_groups` is a `HashSet` populated by hit-testing rather than the
+/// rollback snapshot, so it is not asserted here.
+///
+/// The buffers are `pub(crate)`, so this test verifies the contract through
+/// public-API observable side effects:
+///   * commands / draw output: the panicking child's pushes must not leak
+///     into the rendered output of the fallback or sibling widgets.
+///   * group_stack: a child opening a `group()` and panicking must not
+///     leave the group stack in an unbalanced state — sibling widgets after
+///     the boundary must still render correctly.
+///   * across-frame robustness: the kernel's
+///     `debug_assert!(group_stack.is_empty())` invariant at the end of every
+///     frame would trip if the rollback failed to restore the stack.
+#[test]
+fn framestate_reuse_buffers_restored_on_error_boundary_panic() {
+    use slt::TestBackend;
+
+    // ── Frame 1: normal render to populate FrameState reuse buffers. ────
+    let mut tb = TestBackend::new(80, 12);
+    tb.render(|ui| {
+        let _ = ui.col(|ui| {
+            ui.text("normal frame");
+        });
+    });
+
+    // ── Frame 2: error_boundary wraps a child that pushes group state, a
+    // deferred draw, and arbitrary text — then panics from inside a
+    // group container. The fallback must render cleanly, and the sibling
+    // text after the boundary must also render. ────────────────────────
+    tb.render(|ui| {
+        ui.error_boundary_with(
+            |ui| {
+                // Push state into multiple buffers, then panic from inside
+                // the nested group's `col`. The inner col's panic-handler
+                // pops `text_color_stack` and resumes the panic; the outer
+                // error_boundary's snapshot restore then truncates the
+                // remaining buffers and restores the rollback state.
+                let _ = ui.group("transient-group").col(|ui| {
+                    ui.text("inside-transient-group-text");
+                    panic!("simulated child panic");
+                });
+            },
+            |ui, msg| {
+                ui.text(format!("recovered: {msg}"));
+            },
+        );
+
+        // Sibling rendered AFTER the error_boundary. If group_stack
+        // weren't rolled back, the kernel's debug_assert at frame end
+        // would panic because group_stack would not be empty.
+        ui.text("sibling-after-boundary");
+    });
+
+    let dump = tb.to_string_trimmed();
+
+    // The fallback must have rendered the recovery message.
+    assert!(
+        dump.contains("recovered: simulated child panic"),
+        "fallback must render after panic, got:\n{dump}"
+    );
+
+    // The child's "inside-transient-group-text" was pushed to commands,
+    // then truncated by the rollback. It must NOT appear in the final
+    // buffer.
+    assert!(
+        !dump.contains("inside-transient-group-text"),
+        "rolled-back child commands must not render: \n{dump}"
+    );
+
+    // The sibling rendered after the boundary must render — proving the
+    // group_stack and other reuse buffers were restored to their
+    // pre-boundary depth, and confirming the frame's debug_assert
+    // invariants did not trip.
+    assert!(
+        dump.contains("sibling-after-boundary"),
+        "sibling text after boundary must render normally, got:\n{dump}"
+    );
+
+    // ── Frame 3: a clean render must succeed without panicking. The
+    // FrameState reuse buffers persist across frames; if the rollback had
+    // left them in an inconsistent state, the kernel's
+    // `debug_assert!(group_stack.is_empty())` invariant at frame end of
+    // frame 2 would already have tripped. This third frame additionally
+    // verifies the buffers are still functional, not just balanced. ─────
+    tb.render(|ui| {
+        let _ = ui.col(|ui| {
+            ui.text("post-recovery-frame");
+        });
+    });
+    tb.assert_contains("post-recovery-frame");
+}

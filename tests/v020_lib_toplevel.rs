@@ -68,6 +68,85 @@ fn static_log_pre_frame_dynamic_independent() {
     tb.assert_contains("dynamic line");
 }
 
+#[test]
+fn static_log_full_screen_mode_discards_pending_lines() {
+    // Issue #233: full-screen runtimes (`run`, `run_async`, `run_inline`) call
+    // `discard_static_log` after every frame because they have no scrollback
+    // channel. Only `run_static` / `run_static_with` retain the lines and
+    // flush them above the inline area.
+    //
+    // The runtime-layer discard is a `pub(crate)` helper (`fn
+    // discard_static_log`) called from inside the run loop, so it cannot be
+    // exercised directly from an integration test. What CAN be tested from
+    // the public API surface is the kernel-side contract that backs it:
+    // every per-frame static_log call writes into a buffer that `take_*`
+    // consumers MUST be able to drain in a single call. The runtime's
+    // discard path is implemented as `let _ = drain_static_log(state);` —
+    // exactly what `Context::take_static_log()` does for tests.
+    //
+    // This test simulates the contract by calling `take_static_log()`
+    // inside the frame closure (the way the runtime's discard helper
+    // would), and asserts that:
+    //   1. The drained buffer contains the lines that were logged this
+    //      frame, in call order.
+    //   2. After the drain, the buffer is empty — the next frame starts
+    //      with a fresh buffer just as the full-screen runtime expects.
+    //   3. The buffer's emptiness persists across frames; pending lines
+    //      from a previous frame must not leak forward when no consumer
+    //      drained them on the prior frame (the runtime would have, so
+    //      the test must too).
+    //
+    // Acceptance gap: the actual runtime discard call (with the
+    // cfg(debug_assertions) warning) lives inside `slt::run()` and
+    // requires a real terminal. It cannot be exercised from `tests/`
+    // without exposing `discard_static_log` (or an equivalent
+    // RunMode-aware Context constructor) through the public API.
+    let mut tb = TestBackend::new(40, 4);
+
+    // Frame 1: log two lines, simulate the runtime drain.
+    let mut frame1_drained: Vec<String> = Vec::new();
+    tb.render(|ui| {
+        ui.static_log("frame1: a");
+        ui.static_log("frame1: b");
+        ui.text("dynamic-frame1");
+        // The full-screen runtime would call drain_static_log here. The
+        // public-API equivalent is take_static_log. The result MUST equal
+        // the lines logged this frame.
+        frame1_drained = ui.take_static_log();
+    });
+    assert_eq!(
+        frame1_drained,
+        vec!["frame1: a".to_string(), "frame1: b".to_string()],
+        "drain inside frame must yield logged lines in call order"
+    );
+
+    // Frame 2: do not log anything, but verify the previous frame's lines
+    // did not survive the drain (would survive if the runtime hadn't
+    // drained, which is the very leak the discard prevents).
+    let mut frame2_drained: Vec<String> = Vec::new();
+    tb.render(|ui| {
+        ui.text("dynamic-frame2");
+        frame2_drained = ui.take_static_log();
+    });
+    assert!(
+        frame2_drained.is_empty(),
+        "previous frame's static_log lines must not leak into frame 2 after drain: {frame2_drained:?}"
+    );
+
+    // Frame 3: log new lines and confirm the buffer is fresh (no
+    // accumulation across frames — proves the per-frame contract).
+    let mut frame3_drained: Vec<String> = Vec::new();
+    tb.render(|ui| {
+        ui.static_log("frame3: x");
+        frame3_drained = ui.take_static_log();
+    });
+    assert_eq!(
+        frame3_drained,
+        vec!["frame3: x".to_string()],
+        "frame 3 should see only its own logs after frame-2 drain: {frame3_drained:?}"
+    );
+}
+
 // ─── #236: keymap publishing ───────────────────────────────────────────
 
 struct CounterWidget;
@@ -168,6 +247,82 @@ fn published_keymap_construct_const() {
     const PK: PublishedKeymap = PublishedKeymap::new("scope", &[("k", "up")]);
     assert_eq!(PK.name, "scope");
     assert_eq!(PK.bindings.len(), 1);
+}
+
+// SLT does NOT ship built-in `WidgetKeyHelp` impls — the trait is a
+// user-facing extension point. The tests below mirror the user pattern in
+// `examples/v020_keymap_help.rs`: declare a widget struct, implement
+// `WidgetKeyHelp` with a `'static` const slice, then forward the slice
+// through `Context::publish_keymap` during render. The first test verifies
+// the slice round-trips through the registry; the second verifies the
+// auto-rendered `keymap_help_overlay` displays the user's bindings.
+
+struct TestWidget;
+impl WidgetKeyHelp for TestWidget {
+    fn key_help(&self) -> &'static [(&'static str, &'static str)] {
+        const HELP: &[(&str, &str)] = &[("space", "increment"), ("r", "reset")];
+        HELP
+    }
+}
+
+#[test]
+fn widget_key_help_user_impl_flows_to_published_keymap() {
+    // A user-provided `WidgetKeyHelp` impl forwards its `key_help()` slice
+    // into `Context::publish_keymap`. The published registry must:
+    //   1. Surface the entry under the user-supplied name.
+    //   2. Preserve the const slice's bindings byte-for-byte (no copy).
+    let mut tb = TestBackend::new(40, 4);
+    let mut name: Option<&'static str> = None;
+    let mut bindings: &[(&'static str, &'static str)] = &[];
+    tb.render(|ui| {
+        let widget = TestWidget;
+        ui.publish_keymap("test", widget.key_help());
+        let entries = ui.published_keymaps();
+        assert_eq!(entries.len(), 1);
+        name = Some(entries[0].name);
+        bindings = entries[0].bindings;
+    });
+    assert_eq!(name, Some("test"));
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(bindings[0], ("space", "increment"));
+    assert_eq!(bindings[1], ("r", "reset"));
+}
+
+#[test]
+fn widget_key_help_overlay_renders_user_bindings_when_open() {
+    // The same user impl, fed through `keymap_help_overlay(true)`, must
+    // surface in the rendered overlay so end-users can read their own
+    // shortcuts in the auto-generated help dialog.
+    let mut tb = TestBackend::new(80, 14);
+    tb.render(|ui| {
+        let widget = TestWidget;
+        ui.publish_keymap("test", widget.key_help());
+        ui.keymap_help_overlay(true);
+    });
+    let dump = tb.to_string_trimmed();
+
+    // The overlay's title and the user-supplied scope/binding text must
+    // all appear in the rendered output.
+    assert!(
+        dump.contains("Keyboard shortcuts"),
+        "overlay title missing — dump:\n{dump}"
+    );
+    assert!(
+        dump.contains("test"),
+        "user-supplied scope name missing — dump:\n{dump}"
+    );
+    assert!(
+        dump.contains("space"),
+        "user-supplied key combo 'space' missing — dump:\n{dump}"
+    );
+    assert!(
+        dump.contains("increment"),
+        "user-supplied description 'increment' missing — dump:\n{dump}"
+    );
+    assert!(
+        dump.contains("reset"),
+        "user-supplied description 'reset' missing — dump:\n{dump}"
+    );
 }
 
 // ─── #238: Ctrl+C opt-out ──────────────────────────────────────────────

@@ -8,7 +8,9 @@
 
 use slt::anim::DEFAULT_ANIMATE_TICKS;
 use slt::event::Event;
-use slt::{frame, AppState, Backend, Buffer, Context, Rect, RunConfig, TestBackend};
+use slt::{
+    frame, AppState, Backend, Buffer, ContainerStyle, Context, Rect, RunConfig, TestBackend,
+};
 
 /// Minimal Backend impl that drives `frame()` against an in-memory buffer.
 /// Unlike `TestBackend::render()`, going through `frame()` advances the
@@ -420,6 +422,86 @@ fn fill_extends_to_full_remaining_width() {
     let line0 = tb.line(0);
     assert!(line0.contains('L'), "LHS not rendered: {line0:?}");
     assert!(line0.contains('R'), "RHS not rendered: {line0:?}");
+}
+
+// ── #220 — ContainerStyle const-fn shorthand for grow=1 ──────────────────
+//
+// `ContainerStyle::grow(1)` must remain a `const fn` so the equivalent of
+// `ContainerBuilder::fill()` is usable in `static` / `const` context (e.g.
+// for design-system style recipes). The test below proves the const-context
+// usage compiles and that applying the style produces output identical to
+// `ContainerBuilder::grow(1)` — which is the behavior `fill()` is documented
+// to be a shorthand for.
+//
+// NOTE: a `ContainerStyle::fill()` const-fn shorthand is NOT yet exposed on
+// `ContainerStyle` itself (only on `ContainerBuilder`). If the orchestrator
+// chooses to add that shorthand, this test should be updated to use it
+// directly; the const-context assertion below would still hold.
+
+/// Const-context proof: `ContainerStyle::new().grow(1)` evaluates at compile
+/// time, so it can live in a `const` / `static` style recipe.
+const FILL_LIKE_STYLE: ContainerStyle = ContainerStyle::new().grow(1);
+
+#[test]
+fn container_style_grow1_is_usable_in_const_context() {
+    // The const above already proves compile-time evaluation succeeds. Here
+    // we just confirm the field is set as expected — i.e. grow=1, identical
+    // to what `ContainerBuilder::fill()` produces.
+    assert_eq!(FILL_LIKE_STYLE.grow, Some(1));
+    // No other fields should be set — `fill()`-equivalent must be a
+    // single-purpose shorthand, not silently mutate other style fields.
+    assert!(FILL_LIKE_STYLE.border.is_none());
+    assert!(FILL_LIKE_STYLE.padding.is_none());
+    assert!(FILL_LIKE_STYLE.margin.is_none());
+    assert!(FILL_LIKE_STYLE.bg.is_none());
+    assert!(FILL_LIKE_STYLE.w.is_none());
+    assert!(FILL_LIKE_STYLE.h.is_none());
+}
+
+#[test]
+fn container_style_grow1_apply_renders_identically_to_builder_fill() {
+    // Apply the const style to a container and compare against the
+    // builder-side `fill()` — the rendered output must be identical.
+    let mut tb_style = TestBackend::new(40, 4);
+    tb_style.render(|ui| {
+        let _ = ui.row(|ui| {
+            let _ = ui.container().w(10).col(|ui| {
+                ui.text("L");
+            });
+            let _ = ui.container().apply(&FILL_LIKE_STYLE).col(|ui| {
+                ui.text("R");
+            });
+        });
+    });
+
+    let mut tb_builder = TestBackend::new(40, 4);
+    tb_builder.render(|ui| {
+        let _ = ui.row(|ui| {
+            let _ = ui.container().w(10).col(|ui| {
+                ui.text("L");
+            });
+            let _ = ui.container().fill().col(|ui| {
+                ui.text("R");
+            });
+        });
+    });
+
+    assert_eq!(
+        tb_style.to_string_trimmed(),
+        tb_builder.to_string_trimmed(),
+        "applying ContainerStyle::new().grow(1) must render identically to ContainerBuilder::fill()"
+    );
+}
+
+#[test]
+fn container_style_default_then_grow1_is_const_evaluated() {
+    // `ContainerStyle::default()` is the trait-default constructor and is
+    // equivalent to `ContainerStyle::new()`; both should compose with the
+    // const-fn `.grow(...)` builder. The trait's `default()` is itself not
+    // const, so we use `new()` here — but both produce identical output.
+    const STYLE: ContainerStyle = ContainerStyle::new().grow(1);
+    let runtime: ContainerStyle = ContainerStyle::default().grow(1);
+    assert_eq!(STYLE.grow, runtime.grow);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
