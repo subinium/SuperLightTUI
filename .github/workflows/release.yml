@@ -21,7 +21,10 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-features
-      - run: cargo test --all-features
+      # See ci.yml — perf-alloc tests use a global counter, so CI's higher
+      # parallelism contaminates measurements. Single-threaded keeps the
+      # budget asserts honest.
+      - run: cargo test --all-features -- --test-threads=1
       - run: cargo clippy --all-features -- -D warnings
       - run: cargo fmt -- --check
 
