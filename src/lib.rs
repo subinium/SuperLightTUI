@@ -106,9 +106,16 @@ use std::io::Write;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+#[doc(hidden)]
+pub use layout::__bench_dim_buffer_around;
+#[doc(hidden)]
+pub use layout::__bench_wrap_segments;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::__bench_flush_buffer_diff;
+#[cfg(feature = "crossterm")]
+#[doc(hidden)]
+pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
 #[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
@@ -586,6 +593,12 @@ pub enum DebugLayer {
     BaseOnly,
 }
 
+/// Type alias matching `context::core::RawDrawCallback` (private over there);
+/// used inside `FrameState` for the recycled-Vec field for issue #204. Kept
+/// in lib.rs to avoid leaking a public type alias.
+pub(crate) type FrameDeferredDrawSlot =
+    Option<Box<dyn FnOnce(&mut crate::buffer::Buffer, crate::rect::Rect)>>;
+
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
@@ -601,6 +614,24 @@ pub(crate) struct FrameState {
     /// Recycled per-frame layout collection scratch (issue #155). Same
     /// pattern as `commands_buf`: clear before use, restore after.
     pub frame_data: crate::layout::FrameData,
+    /// Recycled `Context::context_stack` Vec (issue #204). Empty/cleared at
+    /// frame end (same pattern as `commands_buf`).
+    pub context_stack_buf: Vec<Box<dyn std::any::Any>>,
+    /// Recycled `Context::deferred_draws` Vec (issue #204). Slots are emptied
+    /// (set to `None`) when callbacks fire; we clear before reuse.
+    pub deferred_draws_buf: Vec<FrameDeferredDrawSlot>,
+    /// Recycled `rollback.group_stack` Vec (issue #204). Asserted empty at
+    /// frame end before reclamation.
+    pub group_stack_buf: Vec<std::sync::Arc<str>>,
+    /// Recycled `rollback.text_color_stack` Vec (issue #204). Asserted empty
+    /// at frame end before reclamation.
+    pub text_color_stack_buf: Vec<Option<crate::style::Color>>,
+    /// Recycled `Context::pending_tooltips` Vec (issue #204). Asserted empty
+    /// at frame end before reclamation.
+    pub pending_tooltips_buf: Vec<context::PendingTooltip>,
+    /// Recycled `Context::hovered_groups` set (issue #204). Cleared at the
+    /// start of each frame by `build_hovered_groups`.
+    pub hovered_groups_buf: std::collections::HashSet<std::sync::Arc<str>>,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
@@ -1252,6 +1283,36 @@ pub(crate) fn run_frame_kernel(
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
     state.diagnostics.debug_layer = ctx.debug_layer;
+
+    // Issue #204: reclaim the six per-frame `Vec`/`HashSet` allocations so the
+    // next frame reuses the existing capacity instead of allocating fresh.
+    // Frame-end invariants (asserted above at lines 1102–1121):
+    //   - `rollback.group_stack` and `rollback.text_color_stack` are empty
+    //   - `pending_tooltips` is empty
+    // `context_stack` is asserted-empty by the consumers in `widgets_*`
+    // modules (provider/use_context); on the rare panic-rollback path the
+    // checkpoint truncates it back to the saved length, so we still
+    // recover capacity.
+    //
+    // `deferred_draws`: most slots are emptied by the `take()` above, but
+    // entries whose `RawDrawRect` had `width == 0 || height == 0` are
+    // skipped at the loop guard and remain `Some(_)`. We explicitly
+    // `clear()` to drop those callbacks here so they don't outlive the
+    // frame; capacity is preserved. (Leaving them would not cause UB —
+    // `Context::new` calls `.clear()` on the reclaimed Vec — but dropping
+    // promptly matches user expectation that one-shot callbacks don't
+    // survive past their frame.)
+    //
+    // `hovered_groups`: `clear()`-ed at the start of every frame inside
+    // `build_hovered_groups`, so the existing entries are harmless to
+    // reclaim with content; capacity is preserved.
+    ctx.deferred_draws.clear();
+    state.context_stack_buf = std::mem::take(&mut ctx.context_stack);
+    state.deferred_draws_buf = std::mem::take(&mut ctx.deferred_draws);
+    state.group_stack_buf = std::mem::take(&mut ctx.rollback.group_stack);
+    state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
+    state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
+    state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;

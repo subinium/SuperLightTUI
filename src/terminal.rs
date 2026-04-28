@@ -52,9 +52,26 @@ impl KittyImageManager {
     }
 
     /// Flush Kitty image placements: upload new images, manage placements.
-    pub fn flush(&mut self, stdout: &mut impl Write, current: &[KittyPlacement]) -> io::Result<()> {
-        // Fast path: nothing changed
-        if current == self.prev_placements.as_slice() {
+    ///
+    /// `row_offset` shifts `current[i].y` for both terminal output and the
+    /// diff comparison against `prev_placements`. Stored placements always
+    /// include the offset (the displayed `y`) so re-emit detection works
+    /// across resize even when the offset itself changes (issue #206).
+    pub fn flush(
+        &mut self,
+        stdout: &mut impl Write,
+        current: &[KittyPlacement],
+        row_offset: u32,
+    ) -> io::Result<()> {
+        // Fast path: nothing changed (compare against post-offset y values
+        // stored in `prev_placements`). This avoids materializing a translated
+        // `Vec<KittyPlacement>` in the caller (issue #206).
+        if current.len() == self.prev_placements.len()
+            && current
+                .iter()
+                .zip(self.prev_placements.iter())
+                .all(|(c, p)| placement_eq_with_offset(c, row_offset, p))
+        {
             return Ok(());
         }
 
@@ -88,9 +105,9 @@ impl KittyImageManager {
                 id
             };
 
-            // Place the image
+            // Place the image (with row_offset applied to y at point of use).
             let pid = idx as u32 + 1;
-            self.place_image(stdout, img_id, pid, p)?;
+            self.place_image_offset(stdout, img_id, pid, p, row_offset)?;
         }
 
         // Clean up images no longer used by any placement
@@ -109,7 +126,19 @@ impl KittyImageManager {
             }
         }
 
-        self.prev_placements = current.to_vec();
+        // Persist post-offset placements for the next frame's diff. We still
+        // write `current.len()` items but rebuild the Vec in place — capacity
+        // is preserved across frames so this is at most an `Arc::clone` per
+        // image (the `Vec<u8>` is shared via `Arc`, no pixel copy). This
+        // remains the only `Arc::clone` cost; the per-frame `Vec` allocation
+        // in the caller (`InlineTerminal::flush`) is what #206 eliminates.
+        self.prev_placements.clear();
+        self.prev_placements.reserve(current.len());
+        for p in current {
+            let mut copy = p.clone();
+            copy.y = copy.y.saturating_add(row_offset);
+            self.prev_placements.push(copy);
+        }
         Ok(())
     }
 
@@ -137,14 +166,20 @@ impl KittyImageManager {
     }
 
     /// Place an already-uploaded image at a screen position with optional crop.
-    fn place_image(
+    ///
+    /// `row_offset` is added to `p.y` at output time so callers (notably
+    /// `InlineTerminal::flush`) can avoid materializing a translated copy of
+    /// the placements list per frame (issue #206).
+    fn place_image_offset(
         &self,
         stdout: &mut impl Write,
         img_id: u32,
         placement_id: u32,
         p: &KittyPlacement,
+        row_offset: u32,
     ) -> io::Result<()> {
-        queue!(stdout, cursor::MoveTo(sat_u16(p.x), sat_u16(p.y)))?;
+        let display_y = p.y.saturating_add(row_offset);
+        queue!(stdout, cursor::MoveTo(sat_u16(p.x), sat_u16(display_y)))?;
 
         let mut cmd = format!(
             "\x1b_Ga=p,i={},p={},c={},r={},C=1,q=2",
@@ -168,6 +203,28 @@ impl KittyImageManager {
     pub fn delete_all(&self, stdout: &mut impl Write) -> io::Result<()> {
         queue!(stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))
     }
+}
+
+/// Compare a fresh placement (`current`, in pre-offset coordinates) against a
+/// stored placement (`prev`, already includes any prior `row_offset`).
+///
+/// Equivalent to `*current == *prev` after virtually applying `row_offset` to
+/// `current.y`, without materializing the translated copy. Used by
+/// `KittyImageManager::flush` to keep the diff fast-path even when the inline
+/// terminal applies a non-zero offset (issue #206).
+#[inline]
+fn placement_eq_with_offset(
+    current: &KittyPlacement,
+    row_offset: u32,
+    prev: &KittyPlacement,
+) -> bool {
+    current.content_hash == prev.content_hash
+        && current.x == prev.x
+        && current.y.saturating_add(row_offset) == prev.y
+        && current.cols == prev.cols
+        && current.rows == prev.rows
+        && current.crop_y == prev.crop_y
+        && current.crop_h == prev.crop_h
 }
 
 /// Compress RGBA data with zlib if available, returning (payload, format_string).
@@ -368,9 +425,10 @@ impl Terminal {
             0,
         )?;
 
-        // Kitty graphics: structured image management with IDs and compression
+        // Kitty graphics: structured image management with IDs and compression.
+        // Full-screen mode has no row offset (issue #206).
         self.kitty_mgr
-            .flush(&mut self.stdout, &self.current.kitty_placements)?;
+            .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
 
         // Raw sequences (sixel, other passthrough) — simple diff
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
@@ -500,19 +558,13 @@ impl InlineTerminal {
             row_offset,
         )?;
 
-        // Kitty graphics: structured image management with IDs and compression
-        // Adjust Y positions for inline terminal offset
-        let adjusted: Vec<KittyPlacement> = self
-            .current
-            .kitty_placements
-            .iter()
-            .map(|p| {
-                let mut ap = p.clone();
-                ap.y += row_offset;
-                ap
-            })
-            .collect();
-        self.kitty_mgr.flush(&mut self.stdout, &adjusted)?;
+        // Kitty graphics: structured image management with IDs and compression.
+        // Issue #206: pass `row_offset` instead of materializing a translated
+        // `Vec<KittyPlacement>` copy — `KittyImageManager::flush` applies the
+        // offset arithmetically at point of use and stores post-offset y in
+        // `prev_placements` for the next frame's diff.
+        self.kitty_mgr
+            .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
 
         // Raw sequences (sixel, other passthrough) — simple diff
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
@@ -975,6 +1027,78 @@ pub fn __bench_flush_buffer_diff<W: Write>(
     color_depth: ColorDepth,
 ) -> io::Result<()> {
     flush_buffer_diff(w, current, previous, color_depth, 0)
+}
+
+/// Opaque test fixture wrapping `KittyImageManager` + a placements list.
+///
+/// Returned by [`__bench_new_kitty_fixture`]. Internal types stay
+/// `pub(crate)` — only the opaque struct crosses the crate boundary.
+#[doc(hidden)]
+pub struct __BenchKittyFixture {
+    mgr: KittyImageManager,
+    placements: Vec<KittyPlacement>,
+}
+
+/// Build a self-contained kitty-flush fixture for the perf alloc suite
+/// (issue #206). `n` is the number of distinct images.
+#[doc(hidden)]
+pub fn __bench_new_kitty_fixture(n: usize) -> __BenchKittyFixture {
+    let mut placements = Vec::with_capacity(n);
+    for i in 0..n {
+        // 8x8 RGBA: 64 px * 4 bytes = 256 bytes.
+        let mut rgba = vec![0u8; 256];
+        // Vary contents per placement to give each a unique content_hash.
+        rgba[0] = i as u8;
+        let content_hash = crate::buffer::hash_rgba(&rgba);
+        placements.push(KittyPlacement {
+            content_hash,
+            rgba: std::sync::Arc::new(rgba),
+            src_width: 8,
+            src_height: 8,
+            x: (i as u32) * 4,
+            y: (i as u32) * 2,
+            cols: 4,
+            rows: 2,
+            crop_y: 0,
+            crop_h: 0,
+        });
+    }
+    __BenchKittyFixture {
+        mgr: KittyImageManager::new(),
+        placements,
+    }
+}
+
+impl __BenchKittyFixture {
+    /// Strong-count snapshot of the inner `Arc<Vec<u8>>` for each placement.
+    /// Used by the alloc-budget tests to confirm no extra Arc clones leak
+    /// past the manager's stored `prev_placements`.
+    #[doc(hidden)]
+    pub fn rgba_strong_counts(&self) -> Vec<usize> {
+        self.placements
+            .iter()
+            .map(|p| std::sync::Arc::strong_count(&p.rgba))
+            .collect()
+    }
+
+    /// Run the inline-mode flush path with the given row offset. Writes
+    /// terminal escapes into `sink` and updates the internal manager state.
+    #[doc(hidden)]
+    pub fn flush_inline<W: Write>(&mut self, sink: &mut W, row_offset: u32) -> io::Result<()> {
+        self.mgr.flush(sink, &self.placements, row_offset)
+    }
+
+    /// Number of placements in this fixture.
+    #[doc(hidden)]
+    pub fn len(&self) -> usize {
+        self.placements.len()
+    }
+
+    /// Whether this fixture has zero placements.
+    #[doc(hidden)]
+    pub fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
 }
 
 fn flush_raw_sequences(

@@ -807,16 +807,30 @@ pub(crate) fn wrap_segments(
             }
 
             // Extend the last run if the style matches, otherwise start a new run.
+            //
+            // Issue #205: pre-size new style-run `String`s with
+            // `with_capacity` so the first `push` does not realloc. We use
+            // the byte count remaining in the source segment (`cur_off..len`)
+            // capped at `max_width * 4` (worst-case UTF-8 bytes for a single
+            // wrap-width line) to avoid over-allocation when one
+            // same-style segment spans many wrap widths. The clamp is in
+            // bytes — `String::with_capacity` is bytes — and the `.max(1)`
+            // guarantees we never request a zero-capacity `String` (which
+            // would re-trigger the very alloc we are eliminating).
+            let segment_remaining = segments[cur_seg].0.len().saturating_sub(cur_off);
+            let cap = segment_remaining
+                .min((max_width as usize).saturating_mul(4))
+                .max(1);
             if let Some(last) = line_segs.last_mut() {
                 if last.1 == style {
                     last.0.push(ch);
                 } else {
-                    let mut nw = String::new();
+                    let mut nw = String::with_capacity(cap);
                     nw.push(ch);
                     line_segs.push((nw, style));
                 }
             } else {
-                let mut nw = String::new();
+                let mut nw = String::with_capacity(cap);
                 nw.push(ch);
                 line_segs.push((nw, style));
             }

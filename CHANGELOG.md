@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **`perf(context)` reuse 6 per-frame `Vec`/`HashSet` allocations via `FrameState`** (#204) — `context_stack`, `deferred_draws`, `rollback.group_stack`, `rollback.text_color_stack`, `pending_tooltips`, `hovered_groups` now follow the `mem::take` pattern established by #150 / #155. Steady-state allocation count for a 100-frame loop drops from a baseline that scaled with these six fields to a tight per-frame budget (verified by `tests/v020_perf_alloc.rs::framestate_reuse_steady_state_alloc_count_low`).
+- **`perf(layout)` pre-size `wrap_segments` per-style-run `String` with `with_capacity`** (#205) — eliminates the realloc on the first character pushed at every style boundary in `wrap_segments`. Capacity is computed from the remaining bytes in the source segment, capped at `max_width * 4` to bound over-allocation. Output is byte-identical to the prior implementation (`tests/v020_perf_demo.rs::wrap_segments_with_capacity_preserves_byte_output`).
+- **`perf(terminal)` avoid `Vec<KittyPlacement>` clone in `InlineTerminal::flush`** (#206) — `KittyImageManager::flush` now accepts a `row_offset: u32` and applies it arithmetically at point of use. The `prev_placements` diff stores post-offset y values so resize-driven offset changes still re-emit. Eliminates one `Vec` allocation + N `Arc::clone`/`Arc::drop` round-trips per inline-mode frame with images (`tests/v020_perf_alloc.rs::kitty_placement_flush_alloc_count_low` confirms 1 alloc across 100 stable flushes).
+- **`perf(render)` modal-aware `dim_buffer_around` replaces full-buffer scan** (#228) — for the common modal-with-margin case, `render` now calls `dim_buffer_around(modal_rect)` which walks only the four strips outside the modal instead of the full O(W×H) buffer. The legacy `dim_entire_buffer` path is retained for the zero-size-modal fallback. Visible output is unchanged (`tests/v020_perf_demo.rs::modal_dim_path_preserves_modal_content`).
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting
