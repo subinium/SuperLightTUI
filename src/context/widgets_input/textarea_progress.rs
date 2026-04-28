@@ -41,6 +41,8 @@ impl Context {
     /// Editing shortcuts: `Ctrl+K` deletes from the cursor to the end of the
     /// current line. `Ctrl+Left` / `Alt+Left` jumps to the previous word
     /// boundary; `Ctrl+Right` / `Alt+Right` jumps past the next word end.
+    /// `Ctrl+Z` undoes the last edit and `Ctrl+Y` redoes it — see the
+    /// [`TextareaState`] docs for the snapshot policy.
     pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
         if state.lines.is_empty() {
             state.lines.push(String::new());
@@ -61,15 +63,27 @@ impl Context {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
                 match key.code {
+                    KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        state.undo();
+                        state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        state.redo();
+                        state.last_was_char_insert = false;
+                        consumed_indices.push(i);
+                    }
                     KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         let line_len = state.lines[state.cursor_row].chars().count();
                         if state.cursor_col < line_len {
+                            state.push_history();
                             let cut = byte_index_for_char(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col,
                             );
                             state.lines[state.cursor_row].truncate(cut);
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Left
@@ -83,6 +97,7 @@ impl Context {
                             state.cursor_row -= 1;
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Right
@@ -97,6 +112,7 @@ impl Context {
                             state.cursor_row += 1;
                             state.cursor_col = 0;
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Char(ch) => {
@@ -107,22 +123,33 @@ impl Context {
                                 continue;
                             }
                         }
+                        // Coalesce a typing burst into one undoable batch:
+                        // only the first Char of the burst pushes a snapshot.
+                        if !state.last_was_char_insert {
+                            state.push_history();
+                        }
                         let index =
                             byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
                         state.lines[state.cursor_row].insert(index, ch);
                         state.cursor_col += 1;
+                        state.last_was_char_insert = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
+                        state.push_history();
                         let split_index =
                             byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
                         let remainder = state.lines[state.cursor_row].split_off(split_index);
                         state.cursor_row += 1;
                         state.lines.insert(state.cursor_row, remainder);
                         state.cursor_col = 0;
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
+                        if state.cursor_col > 0 || state.cursor_row > 0 {
+                            state.push_history();
+                        }
                         if state.cursor_col > 0 {
                             let start = byte_index_for_char(
                                 &state.lines[state.cursor_row],
@@ -140,6 +167,7 @@ impl Context {
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                             state.lines[state.cursor_row].push_str(&current);
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
@@ -149,6 +177,7 @@ impl Context {
                             state.cursor_row -= 1;
                             state.cursor_col = state.lines[state.cursor_row].chars().count();
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Right => {
@@ -159,6 +188,7 @@ impl Context {
                             state.cursor_row += 1;
                             state.cursor_col = 0;
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Up => {
@@ -180,6 +210,7 @@ impl Context {
                                 .cursor_col
                                 .min(state.lines[state.cursor_row].chars().count());
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Down => {
@@ -201,14 +232,21 @@ impl Context {
                                 .cursor_col
                                 .min(state.lines[state.cursor_row].chars().count());
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
                         state.cursor_col = 0;
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Delete => {
                         let line_len = state.lines[state.cursor_row].chars().count();
+                        let will_mutate =
+                            state.cursor_col < line_len || state.cursor_row + 1 < state.lines.len();
+                        if will_mutate {
+                            state.push_history();
+                        }
                         if state.cursor_col < line_len {
                             let start = byte_index_for_char(
                                 &state.lines[state.cursor_row],
@@ -223,16 +261,23 @@ impl Context {
                             let next = state.lines.remove(state.cursor_row + 1);
                             state.lines[state.cursor_row].push_str(&next);
                         }
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
                         state.cursor_col = state.lines[state.cursor_row].chars().count();
+                        state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     _ => {}
                 }
             }
             for (i, text) in self.available_pastes() {
+                // A paste is one undoable unit — push a single snapshot
+                // before applying the burst.
+                if !text.is_empty() {
+                    state.push_history();
+                }
                 // Hoist total char count once per paste event and update
                 // incrementally — recomputing via `.iter().map(...).sum()`
                 // inside the loop would be O(n²) on large pastes.
@@ -259,6 +304,7 @@ impl Context {
                         total_chars += 1;
                     }
                 }
+                state.last_was_char_insert = false;
                 consumed_indices.push(i);
             }
 

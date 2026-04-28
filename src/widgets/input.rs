@@ -438,10 +438,54 @@ impl Default for ToastState {
     }
 }
 
+/// Default maximum number of [`TextareaSnapshot`] entries kept in
+/// [`TextareaState::history`]. Used by [`TextareaState::new`] and the
+/// `Default` impl. Override per-instance via
+/// [`TextareaState::history_max`].
+pub(crate) const DEFAULT_TEXTAREA_HISTORY_MAX: usize = 100;
+
+/// Snapshot of textarea content + cursor for the undo/redo history stack.
+///
+/// One snapshot is pushed before every destructive mutation (char insert,
+/// delete, Enter, Backspace, paste). `Ctrl+Z` walks the index backward to a
+/// previous snapshot; `Ctrl+Y` walks it forward.
+///
+/// Crate-internal — the `pub(crate)` visibility keeps the history layout an
+/// implementation detail. Inspect via the public undo/redo behavior instead.
+#[derive(Debug, Clone)]
+pub(crate) struct TextareaSnapshot {
+    /// Lines of text at the time of the snapshot.
+    pub(crate) lines: Vec<String>,
+    /// Cursor row at the time of the snapshot.
+    pub(crate) cursor_row: usize,
+    /// Cursor column at the time of the snapshot.
+    pub(crate) cursor_col: usize,
+}
+
 /// State for a multi-line text area widget.
 ///
 /// Pass a mutable reference to `Context::textarea` each frame along with the
 /// number of visible rows. The widget handles all keyboard events when focused.
+///
+/// # Undo / redo
+///
+/// `Ctrl+Z` undoes the most recent edit and `Ctrl+Y` redoes it. The widget
+/// pushes a snapshot before every destructive mutation (char insert, delete,
+/// Enter, Backspace, paste). Rapid character typing coalesces into a single
+/// undoable batch — only the first char of a typing burst pushes a snapshot.
+/// History is capped at [`history_max`](Self::history_max) entries (default
+/// `100`); the oldest snapshot is dropped when the cap is exceeded.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::TextareaState;
+/// # slt::run(|ui: &mut slt::Context| {
+/// let mut state = TextareaState::new();
+/// // Type, then press Ctrl+Z to undo or Ctrl+Y to redo.
+/// ui.textarea(&mut state, 5);
+/// # });
+/// ```
 #[derive(Debug, Clone)]
 pub struct TextareaState {
     /// The lines of text, one entry per line.
@@ -456,6 +500,18 @@ pub struct TextareaState {
     pub wrap_width: Option<u32>,
     /// First visible visual line (managed internally by `textarea()`).
     pub scroll_offset: usize,
+    /// Undo/redo snapshot stack. Newest entry is at the tip; the index walks
+    /// backward on `Ctrl+Z` and forward on `Ctrl+Y`.
+    pub(crate) history: Vec<TextareaSnapshot>,
+    /// Pointer into [`history`](Self::history) for the next undo target.
+    pub(crate) history_index: usize,
+    /// Maximum [`history`](Self::history) length before the oldest snapshot is
+    /// evicted. Defaults to [`DEFAULT_TEXTAREA_HISTORY_MAX`].
+    pub(crate) history_max: usize,
+    /// Whether the previous keypress was a `Char` insert. Used to coalesce
+    /// rapid typing into a single undoable burst — when true, the next `Char`
+    /// keypress does not push a snapshot.
+    pub(crate) last_was_char_insert: bool,
 }
 
 impl TextareaState {
@@ -468,6 +524,10 @@ impl TextareaState {
             max_length: None,
             wrap_width: None,
             scroll_offset: 0,
+            history: Vec::new(),
+            history_index: 0,
+            history_max: DEFAULT_TEXTAREA_HISTORY_MAX,
+            last_was_char_insert: false,
         }
     }
 
@@ -478,7 +538,9 @@ impl TextareaState {
 
     /// Replace the content with the given text, splitting on newlines.
     ///
-    /// Resets the cursor to the beginning of the first line.
+    /// Resets the cursor to the beginning of the first line and clears the
+    /// undo history — programmatic replacement is treated as a fresh state,
+    /// not an undoable edit.
     pub fn set_value(&mut self, text: impl Into<String>) {
         let value = text.into();
         self.lines = value.split('\n').map(str::to_string).collect();
@@ -488,6 +550,9 @@ impl TextareaState {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.scroll_offset = 0;
+        self.history.clear();
+        self.history_index = 0;
+        self.last_was_char_insert = false;
     }
 
     /// Set the maximum allowed total character count.
@@ -500,6 +565,100 @@ impl TextareaState {
     pub fn word_wrap(mut self, width: u32) -> Self {
         self.wrap_width = Some(width);
         self
+    }
+
+    /// Override the maximum number of undo snapshots kept (default `100`).
+    ///
+    /// When the history exceeds this cap the oldest snapshot is dropped.
+    /// Setting `0` disables undo recording — the field is read every keypress.
+    pub fn history_max(mut self, cap: usize) -> Self {
+        self.history_max = cap;
+        self
+    }
+
+    /// Number of undo snapshots currently retained.
+    ///
+    /// Read-only — useful for tests and debugging the history cap. The cap
+    /// itself is set via [`history_max`](Self::history_max).
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    /// Maximum number of undo snapshots retained.
+    ///
+    /// Mirrors [`history_max`](Self::history_max) (the builder setter) but as
+    /// a getter — useful for tests asserting the cap stays bounded.
+    pub fn history_cap(&self) -> usize {
+        self.history_max
+    }
+
+    /// Push a snapshot of the current content + cursor onto the undo stack.
+    ///
+    /// Truncates any redo tail beyond `history_index`, appends the snapshot,
+    /// and caps the stack at [`history_max`](Self::history_max) by dropping the
+    /// oldest entry. `history_index` is left pointing one past the newest
+    /// snapshot so the next `Ctrl+Z` returns to the just-pushed state.
+    pub(crate) fn push_history(&mut self) {
+        if self.history_max == 0 {
+            return;
+        }
+        // Drop any redo tail — a fresh edit invalidates the redo branch.
+        if self.history_index < self.history.len() {
+            self.history.truncate(self.history_index);
+        }
+        self.history.push(TextareaSnapshot {
+            lines: self.lines.clone(),
+            cursor_row: self.cursor_row,
+            cursor_col: self.cursor_col,
+        });
+        // Evict oldest when over the cap. `Vec::remove(0)` is O(n) but the
+        // history cap is small (default 100) and this only runs at the cap
+        // boundary, so the cost is bounded.
+        while self.history.len() > self.history_max {
+            self.history.remove(0);
+        }
+        self.history_index = self.history.len();
+    }
+
+    /// Walk the undo index back one step and apply the snapshot.
+    ///
+    /// No-op when the history is empty or already at the start. Returns `true`
+    /// when a snapshot was applied.
+    pub(crate) fn undo(&mut self) -> bool {
+        if self.history.is_empty() || self.history_index == 0 {
+            return false;
+        }
+        // First Ctrl+Z after edits captures the current (unsaved) tip so the
+        // user can redo back to it; subsequent presses walk down the stack.
+        if self.history_index == self.history.len() {
+            self.history.push(TextareaSnapshot {
+                lines: self.lines.clone(),
+                cursor_row: self.cursor_row,
+                cursor_col: self.cursor_col,
+            });
+        }
+        self.history_index -= 1;
+        let snap = &self.history[self.history_index];
+        self.lines = snap.lines.clone();
+        self.cursor_row = snap.cursor_row;
+        self.cursor_col = snap.cursor_col;
+        true
+    }
+
+    /// Walk the undo index forward one step and apply the snapshot.
+    ///
+    /// No-op when already at the redo tip. Returns `true` when a snapshot was
+    /// applied.
+    pub(crate) fn redo(&mut self) -> bool {
+        if self.history_index + 1 >= self.history.len() {
+            return false;
+        }
+        self.history_index += 1;
+        let snap = &self.history[self.history_index];
+        self.lines = snap.lines.clone();
+        self.cursor_row = snap.cursor_row;
+        self.cursor_col = snap.cursor_col;
+        true
     }
 }
 
