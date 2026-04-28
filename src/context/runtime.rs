@@ -1172,4 +1172,195 @@ impl Context {
             *slot = true;
         }
     }
+
+    // ── Issue #233: in-frame static-log append ───────────────────────────
+    //
+    // The runtime holds the buffer inside `named_states` under a reserved
+    // sentinel key. `Context::new` (owned by another agent) does not need to
+    // initialise this field — `or_insert_with` handles first-call creation,
+    // and `lib::run_frame_kernel` drains the buffer back into `FrameState`
+    // for the run-loop to consume.
+
+    /// Append a line that will be flushed to terminal scrollback **before**
+    /// the dynamic frame content (issue #233).
+    ///
+    /// Lines accumulated this frame are written via the active runtime — for
+    /// [`crate::run_static`] / [`crate::run_static_with`], they are printed
+    /// above the inline dynamic area as committed scrollback. For full-screen
+    /// runtimes ([`crate::run`], [`crate::run_async`]) and inline mode
+    /// ([`crate::run_inline`]), the buffer is silently dropped after a debug
+    /// warning is emitted on the first call per frame, since those modes have
+    /// no scrollback area to write to.
+    ///
+    /// The headless [`crate::TestBackend`] accumulates the lines into the
+    /// frame state where they can be inspected by tests via
+    /// [`crate::TestBackend::static_log_lines`] (or by reading the buffer
+    /// returned by [`Context::take_static_log_pending`] when constructing a
+    /// custom backend).
+    ///
+    /// # Order
+    ///
+    /// `static_log` may be called any number of times per frame. Lines are
+    /// flushed in call order, all before the dynamic frame for the same
+    /// tick.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(40, 4).render(|ui| {
+    /// ui.static_log("event 1");
+    /// ui.static_log(format!("event {}", 2));
+    /// ui.text("dynamic content");
+    /// # });
+    /// ```
+    pub fn static_log(&mut self, line: impl Into<String>) {
+        let entry = self
+            .named_states
+            .entry(STATIC_LOG_KEY)
+            .or_insert_with(|| Box::new(Vec::<String>::new()) as Box<dyn std::any::Any>);
+        if let Some(buf) = entry.downcast_mut::<Vec<String>>() {
+            buf.push(line.into());
+        }
+    }
+
+    /// Drain and return the queued static-log lines for the current frame
+    /// (issue #233). Used by tests / external backends to inspect what
+    /// `ui.static_log(...)` emitted during a [`crate::TestBackend::render`]
+    /// call.
+    pub fn take_static_log(&mut self) -> Vec<String> {
+        if let Some(boxed) = self.named_states.get_mut(STATIC_LOG_KEY) {
+            if let Some(buf) = boxed.downcast_mut::<Vec<String>>() {
+                return std::mem::take(buf);
+            }
+        }
+        Vec::new()
+    }
+
+    // ── Issue #236: widget keymap publishing ─────────────────────────────
+
+    /// Publish a widget's keymap so the framework can show it in the help
+    /// overlay (issue #236).
+    ///
+    /// Each call registers `(name, bindings)` for the current frame. Widgets
+    /// implementing [`crate::keymap::WidgetKeyHelp`] typically forward their
+    /// `key_help()` slice here:
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # use slt::keymap::WidgetKeyHelp;
+    /// struct Counter;
+    /// impl WidgetKeyHelp for Counter {
+    ///     fn key_help(&self) -> &'static [(&'static str, &'static str)] {
+    ///         const HELP: &[(&str, &str)] = &[("↑", "increment"), ("↓", "decrement")];
+    ///         HELP
+    ///     }
+    /// }
+    /// # TestBackend::new(40, 4).render(|ui| {
+    /// let counter = Counter;
+    /// ui.publish_keymap("counter", counter.key_help());
+    /// # });
+    /// ```
+    ///
+    /// The registry is reset at the start of every frame (the first call on a
+    /// new tick clears stale entries). Both calls in the same frame
+    /// accumulate; calls across frames do not leak.
+    pub fn publish_keymap(
+        &mut self,
+        name: &'static str,
+        bindings: &'static [(&'static str, &'static str)],
+    ) {
+        // The registry is cleared at frame start by `run_frame_kernel`
+        // (issue #236) — see `clear_keymap_registry` in `lib.rs`. We just
+        // need to insert/append here.
+        let entry = self
+            .named_states
+            .entry(KEYMAP_REGISTRY_KEY)
+            .or_insert_with(|| {
+                Box::new(Vec::<crate::keymap::PublishedKeymap>::new()) as Box<dyn std::any::Any>
+            });
+        if let Some(vec) = entry.downcast_mut::<Vec<crate::keymap::PublishedKeymap>>() {
+            vec.push(crate::keymap::PublishedKeymap::new(name, bindings));
+        }
+    }
+
+    /// Return all keymaps published this frame (issue #236).
+    ///
+    /// Empty if no widget called [`Context::publish_keymap`] yet on the
+    /// current frame. The registry is reset at the start of every frame.
+    pub fn published_keymaps(&self) -> &[crate::keymap::PublishedKeymap] {
+        if let Some(boxed) = self.named_states.get(KEYMAP_REGISTRY_KEY) {
+            if let Some(vec) = boxed.downcast_ref::<Vec<crate::keymap::PublishedKeymap>>() {
+                return vec;
+            }
+        }
+        EMPTY_KEYMAPS
+    }
+
+    /// Render an automatic keymap-help overlay listing every widget keymap
+    /// published this frame (issue #236).
+    ///
+    /// Pass `open = true` to render the overlay (typically gated on a
+    /// `?` / `F1` keypress). When `open` is `false`, this method is a
+    /// no-op. The overlay groups bindings by widget name and dismisses
+    /// when the next frame is rendered with `open = false`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(40, 12).render(|ui| {
+    /// const RICHLOG: &[(&str, &str)] = &[("↑/k", "scroll up"), ("↓/j", "scroll down")];
+    /// ui.publish_keymap("rich_log", RICHLOG);
+    /// // Show the help overlay when '?' is pressed
+    /// let show = ui.key('?');
+    /// ui.keymap_help_overlay(show);
+    /// # });
+    /// ```
+    pub fn keymap_help_overlay(&mut self, open: bool) {
+        if !open {
+            return;
+        }
+
+        let entries: Vec<crate::keymap::PublishedKeymap> = self.published_keymaps().to_vec();
+        if entries.is_empty() {
+            return;
+        }
+
+        let theme = self.theme;
+        let _ = self.modal(|ui| {
+            ui.styled("Keyboard shortcuts", Style::new().bold().fg(theme.primary));
+            ui.text("");
+            for entry in &entries {
+                ui.styled(entry.name, Style::new().bold().fg(theme.text));
+                for (key, desc) in entry.bindings {
+                    let line = format!("  {key:<14}  {desc}");
+                    ui.styled(line, Style::new().fg(theme.text_dim));
+                }
+                ui.text("");
+            }
+            ui.styled(
+                "Press Esc / ? to close",
+                Style::new().fg(theme.text_dim).italic(),
+            );
+        });
+    }
+}
+
+// Sentinel keys mirror the constants in `lib.rs`. They are duplicated here
+// (rather than imported) to keep this module self-contained — the values
+// match `STATIC_LOG_NAMED_STATE_KEY` and `KEYMAP_REGISTRY_NAMED_STATE_KEY`.
+const STATIC_LOG_KEY: &str = "__slt_static_log_pending";
+const KEYMAP_REGISTRY_KEY: &str = "__slt_keymap_registry";
+const EMPTY_KEYMAPS: &[crate::keymap::PublishedKeymap] = &[];
+
+#[cfg(all(test, feature = "crossterm"))]
+mod sentinel_key_tests {
+    use super::*;
+
+    #[test]
+    fn sentinel_keys_match_lib_constants() {
+        assert_eq!(STATIC_LOG_KEY, crate::STATIC_LOG_NAMED_STATE_KEY);
+        assert_eq!(KEYMAP_REGISTRY_KEY, crate::KEYMAP_REGISTRY_NAMED_STATE_KEY);
+    }
 }

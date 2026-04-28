@@ -141,7 +141,7 @@ pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
 };
 pub use halfblock::HalfBlockImage;
-pub use keymap::{Binding, KeyMap};
+pub use keymap::{Binding, KeyMap, PublishedKeymap, WidgetKeyHelp};
 pub use layout::Direction;
 pub use palette::Palette;
 pub use rect::Rect;
@@ -455,6 +455,32 @@ pub struct RunConfig {
     /// Per-callsite `_colored()` overrides still take precedence.
     /// Defaults to all-`None` (use theme colors).
     pub widget_theme: style::WidgetTheme,
+    /// Whether the runtime intercepts Ctrl+C and exits the loop cleanly.
+    ///
+    /// When `true` (the default), Ctrl+C is treated as a quit signal —
+    /// matching the v0.19 behavior. When `false`, the Ctrl+C key event flows
+    /// through to the frame closure as a regular [`Event::Key`], matching
+    /// RataTUI's raw-mode semantics. The user is then responsible for
+    /// deciding whether to call [`Context::quit`] or treat it as any other
+    /// shortcut (e.g. clear input, cancel current operation).
+    ///
+    /// Set this to `false` when migrating code from RataTUI that already
+    /// handles Ctrl+C explicitly, or when implementing a graceful-shutdown
+    /// prompt (e.g. "save unsaved changes?").
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::{KeyCode, KeyModifiers, RunConfig};
+    /// slt::run_with(RunConfig::default().handle_ctrl_c(false), |ui| {
+    ///     // Ctrl+C now reaches your closure as a normal key event.
+    ///     if ui.key_mod('c', KeyModifiers::CONTROL) {
+    ///         // Decide what to do — clear input, prompt to save, quit, etc.
+    ///         ui.quit();
+    ///     }
+    /// }).unwrap();
+    /// ```
+    pub handle_ctrl_c: bool,
 }
 
 impl Default for RunConfig {
@@ -469,6 +495,7 @@ impl Default for RunConfig {
             scroll_speed: 1,
             title: None,
             widget_theme: style::WidgetTheme::new(),
+            handle_ctrl_c: true,
         }
     }
 }
@@ -543,6 +570,24 @@ impl RunConfig {
     /// Set default widget colors for all widget types.
     pub fn widget_theme(mut self, widget_theme: style::WidgetTheme) -> Self {
         self.widget_theme = widget_theme;
+        self
+    }
+
+    /// Configure whether the runtime auto-exits on Ctrl+C.
+    ///
+    /// Defaults to `true` (current v0.19 behavior). Set to `false` to
+    /// receive Ctrl+C as a regular [`Event::Key`] inside the frame closure
+    /// — see [`RunConfig::handle_ctrl_c`] for the full migration story.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().handle_ctrl_c(false);
+    /// assert!(!cfg.handle_ctrl_c);
+    /// ```
+    pub fn handle_ctrl_c(mut self, enabled: bool) -> Self {
+        self.handle_ctrl_c = enabled;
         self
     }
 }
@@ -658,6 +703,42 @@ pub(crate) struct FrameState {
 /// Enters alternate screen mode, runs `f` each frame, and exits cleanly on
 /// Ctrl+C or when [`Context::quit`] is called.
 ///
+/// # Raw mode is handled for you
+///
+/// SLT enters raw mode automatically inside [`run`] / [`run_with`] /
+/// [`run_inline`] / [`run_async`]. Wrapping these with manual
+/// `crossterm::terminal::enable_raw_mode()` and `disable_raw_mode()` is
+/// **redundant** — the calls are idempotent so no harm comes of it, but it
+/// suggests a misunderstood lifecycle. Drop the wrapper calls:
+///
+/// ```no_run
+/// // Don't do this — it's already handled internally:
+/// // crossterm::terminal::enable_raw_mode()?;
+/// slt::run(|ui| { ui.text("hi"); })?;
+/// // crossterm::terminal::disable_raw_mode()?;
+/// # Ok::<_, std::io::Error>(())
+/// ```
+///
+/// # Ctrl+C opt-out (issue #238)
+///
+/// By default, Ctrl+C exits the loop cleanly — matching the v0.19 contract
+/// and the convention most TUIs follow. To match RataTUI's raw-mode
+/// semantics (Ctrl+C delivered as a regular `Event::Key`), set
+/// [`RunConfig::handle_ctrl_c(false)`](RunConfig::handle_ctrl_c) and decide
+/// inside the frame closure whether to call [`Context::quit`]:
+///
+/// ```no_run
+/// use slt::{KeyModifiers, RunConfig};
+///
+/// slt::run_with(RunConfig::default().handle_ctrl_c(false), |ui| {
+///     if ui.key_mod('c', KeyModifiers::CONTROL) {
+///         // e.g. clear input, prompt to save, then quit:
+///         ui.quit();
+///     }
+/// })?;
+/// # Ok::<_, std::io::Error>(())
+/// ```
+///
 /// # Example
 ///
 /// ```no_run
@@ -734,11 +815,19 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         )? {
             break;
         }
+        // Issue #233: full-screen mode has no scrollback channel — warn and
+        // drop any `ui.static_log(...)` lines so they do not leak into the
+        // next frame's named_states.
+        discard_static_log(&mut state, "full-screen run()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -843,11 +932,18 @@ fn run_async_loop<M: Send + 'static>(
         )? {
             break;
         }
+        // Issue #233: full-screen async mode has no scrollback channel — warn
+        // and drop any pending static_log lines.
+        discard_static_log(&mut state, "run_async()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -921,11 +1017,18 @@ pub fn run_inline_with(
         )? {
             break;
         }
+        // Issue #233: inline mode without `StaticOutput` has no scrollback
+        // channel either — warn and drop any pending lines.
+        discard_static_log(&mut state, "run_inline()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -1006,11 +1109,21 @@ pub fn run_static_with(
         )? {
             break;
         }
+        // Issue #233: drain any `ui.static_log(...)` lines queued during the
+        // frame closure into `output`; the next loop iteration flushes them
+        // above the inline area via `write_static_lines`.
+        for line in drain_static_log(&mut state) {
+            output.println(line);
+        }
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -1034,14 +1147,84 @@ fn write_static_lines(lines: &[String]) -> io::Result<()> {
     stdout.flush()
 }
 
+/// Reserved sentinel key used by [`Context::static_log`] (issue #233).
+/// MUST stay in sync with `STATIC_LOG_KEY` in `context::runtime`. Only
+/// referenced from the crossterm-gated `drain_static_log` helper.
+#[cfg(feature = "crossterm")]
+pub(crate) const STATIC_LOG_NAMED_STATE_KEY: &str = "__slt_static_log_pending";
+
+/// Reserved sentinel key used by [`Context::publish_keymap`] (issue #236).
+/// MUST stay in sync with `KEYMAP_REGISTRY_KEY` in `context::runtime`.
+pub(crate) const KEYMAP_REGISTRY_NAMED_STATE_KEY: &str = "__slt_keymap_registry";
+
+/// Clear the per-frame keymap registry stored in [`FrameState::named_states`]
+/// (issue #236). Called at the start of every kernel iteration so that
+/// `Context::publish_keymap` always sees a fresh empty buffer. Capacity is
+/// preserved by clearing the inner `Vec` rather than removing the entry.
+pub(crate) fn clear_keymap_registry(state: &mut FrameState) {
+    if let Some(boxed) = state.named_states.get_mut(KEYMAP_REGISTRY_NAMED_STATE_KEY) {
+        if let Some(vec) = boxed.downcast_mut::<Vec<crate::keymap::PublishedKeymap>>() {
+            vec.clear();
+        }
+    }
+}
+
+/// Drain any [`Context::static_log`] lines accumulated during the most recent
+/// frame from the persisted [`FrameState`] (issue #233).
+///
+/// After [`run_frame_kernel`] returns, `state.named_states` owns the buffer.
+/// This helper drains it back to a `Vec<String>` so the runtime can flush
+/// the lines through whichever scrollback mechanism is appropriate
+/// (`run_static_with` writes them above the inline region; other run modes
+/// drop them with a debug warning).
+#[cfg(feature = "crossterm")]
+pub(crate) fn drain_static_log(state: &mut FrameState) -> Vec<String> {
+    if let Some(boxed) = state.named_states.get_mut(STATIC_LOG_NAMED_STATE_KEY) {
+        if let Some(buf) = boxed.downcast_mut::<Vec<String>>() {
+            return std::mem::take(buf);
+        }
+    }
+    Vec::new()
+}
+
+/// Discard any [`Context::static_log`] lines that accumulated during the
+/// most recent frame and emit a debug warning (issue #233).
+///
+/// Used by run modes that have no scrollback channel (full-screen,
+/// inline-without-static, async). Release builds silently drop the buffer.
+#[cfg(feature = "crossterm")]
+fn discard_static_log(state: &mut FrameState, mode: &str) {
+    let drained = drain_static_log(state);
+    #[cfg(debug_assertions)]
+    if !drained.is_empty() {
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[slt] {} static_log lines were dropped: {} runtime has no scrollback channel; use slt::run_static for streaming output",
+                drained.len(),
+                mode
+            );
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (drained, mode);
+    }
+}
+
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
+///
+/// `handle_ctrl_c` controls whether Ctrl+C exits the loop (`true`, default
+/// v0.19 behavior) or is delivered to the frame closure as a regular key
+/// event (`false`, RataTUI parity, issue #238).
 #[cfg(feature = "crossterm")]
 fn poll_events(
     events: &mut Vec<Event>,
     state: &mut FrameState,
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
+    handle_ctrl_c: bool,
 ) -> io::Result<bool> {
     let mut has_resize = false;
 
@@ -1070,7 +1253,7 @@ fn poll_events(
     if crossterm::event::poll(tick_rate)? {
         let raw = crossterm::event::read()?;
         if let Some(ev) = event::from_crossterm(raw) {
-            if is_ctrl_c(&ev) {
+            if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
             if matches!(ev, Event::Resize(_, _)) {
@@ -1083,7 +1266,7 @@ fn poll_events(
         while crossterm::event::poll(Duration::ZERO)? {
             let raw = crossterm::event::read()?;
             if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
+                if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
                 }
                 if matches!(ev, Event::Resize(_, _)) {
@@ -1137,6 +1320,11 @@ pub(crate) fn run_frame_kernel(
 ) -> FrameKernelResult {
     let frame_start = Instant::now();
     let (w, h) = size;
+    // Issue #236: reset the per-frame keymap registry before constructing
+    // `Context`. Widgets that call `publish_keymap` accumulate fresh
+    // entries; entries from the previous frame must not leak through
+    // `named_states` persistence.
+    clear_keymap_registry(state);
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
     ctx.set_scroll_speed(config.scroll_speed);
