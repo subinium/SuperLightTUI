@@ -280,14 +280,14 @@ fn main() -> std::io::Result<()> {
                                 if installing {
                                     ui.separator();
                                     let _ = ui.row(|ui| {
-                                        ui.spinner(&spinner);
+                                        let _ = ui.spinner(&spinner);
                                         ui.text(format!(
                                             " Installing... {:.0}%",
                                             install_progress * 100.0
                                         ))
                                         .fg(Color::Yellow);
                                     });
-                                    ui.progress(install_progress);
+                                    let _ = ui.progress(install_progress);
                                 } else {
                                     ui.separator();
                                     let _ = ui.row(|ui| {

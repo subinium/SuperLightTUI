@@ -90,7 +90,7 @@ fn main() -> std::io::Result<()> {
                     .gap(1)
                     .col(|ui| {
                         ui.text("Press Space to retarget");
-                        ui.progress(progress);
+                        let _ = ui.progress(progress);
                         ui.text(format!(
                             "value {:.2} -> target {:.2} | done {}",
                             progress,
@@ -121,7 +121,7 @@ fn main() -> std::io::Result<()> {
                     .gap(1)
                     .col(|ui| {
                         let kf_val = kf.value(ui.tick());
-                        ui.progress(kf_val / 100.0);
+                        let _ = ui.progress(kf_val / 100.0);
                         ui.text(format!(
                             "value {:.1} | done {} | mode PingPong",
                             kf_val,
@@ -137,7 +137,7 @@ fn main() -> std::io::Result<()> {
                     .gap(1)
                     .col(|ui| {
                         let seq_val = seq.value(ui.tick());
-                        ui.progress(seq_val / 100.0);
+                        let _ = ui.progress(seq_val / 100.0);
                         ui.text(format!(
                             "value {:.1} | done {} | mode Repeat",
                             seq_val,
@@ -157,7 +157,7 @@ fn main() -> std::io::Result<()> {
                             let val = stagger.value(ui.tick(), i);
                             let _ = ui.row(|ui| {
                                 ui.text(format!("{label}:"));
-                                ui.progress(val);
+                                let _ = ui.progress(val);
                             });
                         }
                         ui.text("5 items, 6-tick delay each").dim();
@@ -166,7 +166,7 @@ fn main() -> std::io::Result<()> {
                 let accent = ui.theme().accent;
                 ui.text("Callback").bold().fg(accent);
                 let val = cb_tween.value(ui.tick());
-                ui.progress(val / 100.0);
+                let _ = ui.progress(val / 100.0);
                 if cb_tween.is_done() && !cb_fired {
                     cb_fired = true;
                 }

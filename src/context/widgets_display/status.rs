@@ -166,36 +166,36 @@ impl Context {
         response
     }
 
-    /// Render a breadcrumb navigation bar. Returns the clicked segment index.
-    pub fn breadcrumb(&mut self, segments: &[&str]) -> Option<usize> {
-        self.breadcrumb_with(segments, " › ")
+    /// Render a breadcrumb navigation bar with the default separator (` › `).
+    ///
+    /// Returns a [`BreadcrumbResponse`] carrying the row-level interaction
+    /// response (hover, rect, focus) and the index of the clicked segment if
+    /// any. Use [`Self::breadcrumb_sep`] for a custom separator string.
+    ///
+    /// `BreadcrumbResponse` derefs to `Response`, so `.hovered`, `.rect`, and
+    /// `.focused` work directly.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    /// if let Some(i) = r.clicked_segment {
+    ///     // navigate to segment `i`
+    /// }
+    /// # });
+    /// ```
+    pub fn breadcrumb(&mut self, segments: &[&str]) -> BreadcrumbResponse {
+        self.breadcrumb_sep(segments, " › ")
     }
 
     /// Render a breadcrumb with a custom separator string.
-    pub fn breadcrumb_with(&mut self, segments: &[&str], separator: &str) -> Option<usize> {
-        self.breadcrumb_response_with(segments, separator).1
-    }
-
-    /// Render a breadcrumb and return both the row [`Response`] and the
-    /// clicked segment index.
     ///
-    /// The `Response` exposes hover/focus state and the widget rectangle, while
-    /// the `Option<usize>` carries the clicked segment index (same value as
-    /// [`Self::breadcrumb`]).
-    pub fn breadcrumb_response(&mut self, segments: &[&str]) -> (Response, Option<usize>) {
-        self.breadcrumb_response_with(segments, " › ")
-    }
-
-    /// Render a breadcrumb with a custom separator and return both the row
-    /// [`Response`] and the clicked segment index.
-    pub fn breadcrumb_response_with(
-        &mut self,
-        segments: &[&str],
-        separator: &str,
-    ) -> (Response, Option<usize>) {
+    /// See [`Self::breadcrumb`] for the default separator variant.
+    pub fn breadcrumb_sep(&mut self, segments: &[&str], separator: &str) -> BreadcrumbResponse {
         let theme = self.theme;
         let last_idx = segments.len().saturating_sub(1);
-        let mut clicked_idx: Option<usize> = None;
+        let mut clicked_segment: Option<usize> = None;
 
         let response = self.row(|ui| {
             for (i, segment) in segments.iter().enumerate() {
@@ -213,14 +213,17 @@ impl Context {
                     };
                     ui.text(*segment).fg(color).underline();
                     if activated {
-                        clicked_idx = Some(i);
+                        clicked_segment = Some(i);
                     }
                     ui.text(separator).dim();
                 }
             }
         });
 
-        (response, clicked_idx)
+        BreadcrumbResponse {
+            response,
+            clicked_segment,
+        }
     }
 
     /// Collapsible section that toggles on click, Enter, or Space.

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Added
 
 - **`feat(test-utils)` — `TestBackend::record_frames()` + `FrameRecord` history** (#229) — Opt-in frame recorder. Every `render()` call appends a `FrameRecord { snapshot, lines }` accessible via `tb.frames()`. `FrameRecord` exposes `assert_contains`, `to_string_trimmed`, and per-row text. Disabled by default → zero allocation overhead for tests that don't need history.
@@ -21,6 +22,10 @@
 - **`feat(theme)` — `ContainerBuilder::theme(theme)`** (#226) — per-subtree theme override. Swaps `ctx.theme` (and `dark_mode` flag) for the duration of the closure body, restoring on exit — including on panic. Nested `.theme(...)` calls compose correctly: outer theme resumes once the inner scope closes. Independent of `provide` / `use_context` (general-purpose context injection); this method directly mutates the active theme so every built-in widget (which reads `self.theme`) picks up the change without opt-in.
 - **`feat(theme)` — `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` density presets** (#227) — base spacings 1 / 2 / 3 respectively. Matches the existing `Spacing` scale (`xs` / `sm` / `md` / `lg` / `xl` / `xxl`). `compact()` is bit-identical to existing presets, preserving v0.19 visuals when adopted explicitly.
 - **`feat(theme)` — `Theme::with_spacing(spacing)`** (#227) — mutate spacing on any preset (Nord, Dracula, custom) without touching colors.
+- **`feat(widgets-display)` — `split_pane` / `vsplit_pane`** (#223) — resizable horizontal/vertical split containers driven by `SplitPaneState`. Drag the 1-cell handle (`│` / `─`) with the mouse, or focus it (Tab) and use arrow keys to grow/shrink the first pane by 5% per press. `SplitPaneResponse` exposes `ratio` and `drag_active`.
+- **`feat(widgets-display)` — `gauge` / `gauge_w` / `gauge_colored`** (#224) — block-fill progress bar with a centered inline label (e.g. `█████████ 60% ░░░░░░`). Color-tiered by default (`success` < 50%, `warning` 50–80%, `error` ≥ 80%); pass an explicit color via `gauge_colored` to disable tiering. Returns `GaugeResponse` (derefs to `Response`).
+- **`feat(widgets-display)` — `line_gauge`** (#224) — single-line gauge with configurable fill / empty characters and an optional appended label. Builder API on `LineGaugeOpts`: `.filled(ch)`, `.empty(ch)`, `.width(n)`, `.label(s)`.
+- **`feat(widgets-display)` — `scrollable_with_gutter`** (#235) — scrollable container variant rendering a per-line left gutter (line numbers, breakpoint markers, etc.) plus search-result highlight bands. Companion API on `ScrollState`: `set_highlights`, `highlight_next`, `highlight_previous`, `clear_highlights`, `current_highlight`. New `HighlightRange` type re-exported at the crate root. Returns `GutterResponse` carrying the current highlight index and total count.
 
 ### Changed
 
@@ -57,6 +62,31 @@
   `serde` wire format changes: persisted `Constraints` JSON from v0.19 will not deserialize into v0.20 because the field shape is different. Re-export persisted data after upgrading.
 - **`State<T>` is no longer `Copy`** (#215) — required to support the `Keyed(String)` variant of the internal `StateKey` enum. `Clone` is still derived (cheap for `Indexed` / `Named`, allocates one `String` for `Keyed`). **Migration**: if you previously relied on implicit copy semantics — for example `let s = ui.use_state(...); use_a(s); use_b(s);` — call `s.clone()` explicitly: `use_a(s.clone()); use_b(s);`. An audit of every `State<T>` use site in `src/`, `tests/`, `examples/` showed **zero** sites depended on `Copy`; existing call sites borrow or move the handle and continue to compile unchanged.
 - **`break(theme)` Spacing scale activation may shift visuals** (#227) — if you customized themes with non-default spacing (e.g., `Spacing::new(2)`), affected widgets now respect that scale. Migration: set `Theme::spacing` explicitly via `ThemeBuilder::spacing(...)` or use `Theme::with_spacing(...)` to lock down the visual you depend on. The 10 stock presets still ship `Spacing::new(1)`, so upgraders who never touched the spacing field see no change.
+- **`refactor(widgets-display)` — `breadcrumb` collapsed into a single `BreadcrumbResponse` (#213)** — replaced the four-variant API (`breadcrumb`, `breadcrumb_with`, `breadcrumb_response`, `breadcrumb_response_with`) with two methods: `breadcrumb(segments)` (default ` › ` separator) and `breadcrumb_sep(segments, separator)`. Both return `BreadcrumbResponse` carrying the row-level `Response` plus `clicked_segment: Option<usize>`. `BreadcrumbResponse` derefs to `Response`, so existing `.hovered`, `.rect`, `.focused` reads continue to compile after migration.
+
+  Migration:
+  ```rust
+  // before:
+  let clicked = ui.breadcrumb(&segments);            // Option<usize>
+  let (resp, clicked) = ui.breadcrumb_response(&segments);
+  let clicked = ui.breadcrumb_with(&segments, " > ");
+  let (resp, clicked) = ui.breadcrumb_response_with(&segments, " > ");
+
+  // after:
+  let r = ui.breadcrumb(&segments);
+  let clicked = r.clicked_segment;
+  let r = ui.breadcrumb_sep(&segments, " > ");
+  ```
+
+- **`refactor(widgets-input)` — `spinner` / `progress` / `progress_bar` / `progress_bar_colored` now return `Response` (#212)** — these widgets previously returned `&mut Self` (a builder-chain shim). They now return `Response` so callers can detect hover, attach tooltips, or implement click-to-set scrubbers. `toast` continues to return `&mut Self` (no meaningful single rect — purely visual overlay).
+
+  Migration: code that ignored the return value still compiles; the `#[must_use]` attribute on `Response` will warn at the call site. The recommended fix is `let _ = ui.progress(0.5);`. Code that chained builder-style methods (e.g. `ui.spinner(&s).fg(theme.primary)`) must split into two statements:
+  ```rust
+  // before:
+  ui.spinner(&s).fg(theme.primary);
+  // after:
+  let _ = ui.spinner(&s); // color is already theme.primary; if you need a different color, render manually.
+  ```
 
 ## [0.19.3] — 2026-04-27
 

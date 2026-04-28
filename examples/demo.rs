@@ -1194,10 +1194,10 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
         card(ui, |ui| {
             ui.text("Progress").bold().fg(theme.primary);
             let _ = ui.row(|ui| {
-                ui.spinner(spinner);
+                let _ = ui.spinner(spinner);
                 ui.text(" Loading...").fg(theme.surface_text);
             });
-            ui.progress(progress);
+            let _ = ui.progress(progress);
             ui.text(format!("{:.0}%", progress * 100.0))
                 .fg(theme.surface_text);
         });
@@ -1618,7 +1618,7 @@ fn render_v080(
     card(ui, |ui| {
         let val = v8_tween.value(tick);
         let progress = val / 100.0;
-        ui.progress(progress);
+        let _ = ui.progress(progress);
 
         let _ = ui.row_gap(1, |ui| {
             ui.text(format!("Value: {:.0}", val));
@@ -2447,7 +2447,7 @@ fn render_v094(
     }
 
     let _ = ui.divider_text("Navigation");
-    ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
 
     let _ = ui.divider_text("Dashboard");
     let _ = ui.row(|ui| {

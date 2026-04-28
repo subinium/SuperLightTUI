@@ -1,7 +1,10 @@
 use super::*;
 
+mod gauge;
+mod gutter;
 mod layout;
 mod rich_output;
+mod split;
 mod status;
 mod text;
 

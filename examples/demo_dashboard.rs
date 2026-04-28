@@ -91,7 +91,7 @@ pub fn render_frame(
         .grow(1)
         .col(|ui| {
             let _ = ui.row(|ui| {
-                ui.spinner(spinner);
+                let _ = ui.spinner(spinner);
                 ui.text(" LIVE").bold().fg(Color::Green);
                 ui.spacer();
                 ui.text(format!(
