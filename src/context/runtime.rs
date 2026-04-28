@@ -576,6 +576,73 @@ impl Context {
         self.use_state_named_with(id, T::default)
     }
 
+    /// Smoothly animate between `0.0` and `1.0` driven by a boolean.
+    ///
+    /// Returns the current interpolated value (0.0..=1.0). When `value` is
+    /// `true` the result tweens toward `1.0`; when `false` it tweens back
+    /// toward `0.0`. The transition duration defaults to
+    /// [`DEFAULT_ANIMATE_TICKS`](crate::anim::DEFAULT_ANIMATE_TICKS) (12 ticks
+    /// ≈ 200 ms at 60 Hz). Use [`Context::animate_value`] for custom duration
+    /// or non-binary targets.
+    ///
+    /// State is stored in [`Context::named_states`](Self::named_states) under
+    /// `id`. The id is `&'static str` (single global namespace per context),
+    /// matching [`Context::use_state_named`]. Pick a unique key per call site
+    /// — two `animate_bool` calls with the same id share state.
+    ///
+    /// On the first call, the value snaps to the target with no visible
+    /// transition (so widgets that mount in their final state don't pop).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let opacity = ui.animate_bool("sidebar::visible", is_open);
+    /// // 0.0 ≤ opacity ≤ 1.0; use as alpha or visibility threshold.
+    /// ```
+    pub fn animate_bool(&mut self, id: &'static str, value: bool) -> f64 {
+        let target = if value { 1.0 } else { 0.0 };
+        self.animate_value(id, target, crate::anim::DEFAULT_ANIMATE_TICKS)
+    }
+
+    /// Smoothly animate a `f64` value toward `target` over `duration_ticks`.
+    ///
+    /// Uses a linear-easing [`Tween`] stored implicitly in
+    /// [`Context::named_states`](Self::named_states) under `id`. Returns the
+    /// current interpolated value. On the first call the value snaps to
+    /// `target` with no visible transition; on subsequent calls when
+    /// `target` changes the tween is rebuilt starting from the current
+    /// interpolated value, so retargeting mid-flight does not produce a
+    /// jump.
+    ///
+    /// `duration_ticks == 0` snaps immediately to the new target.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let bar_height = ui.animate_value("loading::bar", target_height, 30);
+    /// ui.bar(bar_height);
+    /// ```
+    ///
+    /// # Comparison with `Tween`
+    /// Use this shorthand when you want zero boilerplate and linear easing
+    /// is acceptable. For custom easing, a non-static key, or
+    /// non-tick-based control, construct a [`Tween`] explicitly via
+    /// [`Context::use_state_named_with`](Self::use_state_named_with).
+    pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
+        let tick = self.tick;
+        let entry = self
+            .named_states
+            .entry(id)
+            .or_insert_with(|| Box::new(crate::anim::AnimState::new(target, tick)));
+        let state = entry
+            .downcast_mut::<crate::anim::AnimState>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "animate_value: id {:?} is already used for a different state type",
+                    id
+                )
+            });
+        state.sample(target, duration_ticks, tick)
+    }
+
     /// Push a value onto the context stack for the duration of `body`.
     ///
     /// Inside `body`, child widgets can call

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`feat(context)` — `Response::on_hover` / `on_hover_ui` chaining** (#209) — Attach a tooltip (or run an arbitrary tooltip-rendering closure) directly on a widget's `Response` without the order-sensitive `ui.tooltip(...)` post-call. Composes cleanly: `if ui.button("Save").on_hover(ui, "Saves the file").clicked { ... }`. Skips alloc when `hovered == false` or `text` is empty.
+- **`feat(anim)` — `Context::animate_bool` / `animate_value` shorthand** (#210) — Zero-boilerplate implicit animation keyed by `&'static str`, stored in `named_states`. `animate_bool(id, value) -> f64` returns 0.0..=1.0 over `DEFAULT_ANIMATE_TICKS` (12 ticks ≈ 200 ms @ 60 Hz). `animate_value(id, target, duration) -> f64` retargets smoothly from the current interpolated value; `duration_ticks == 0` snaps. First call snaps to target with no visible pop.
+- **`feat(container)` — `ContainerBuilder::fill()` shorthand** (#220) — Self-documenting alias for `.grow(1)` (CSS `flex: 1`, ratatui `Constraint::Fill(1)`). One-liner that improves readability of the most common flex case without changing semantics.
+- **`feat(rect)` — `Rect::center_in` / `center_horizontally_in` / `center_vertically_in`** (#221) — Position a sized rect centered inside a parent (the inverse of `Rect::centered`). Matches ratatui v0.30. Clamps to parent extent on oversize. `const fn` — usable in static contexts.
+- **`example` — `examples/v020_dx_shortcuts.rs`** — Single-screen demo exercising all four DX helpers side-by-side; pinned via `tests/v020_dx_shortcuts_demo.rs` insta snapshot.
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting
