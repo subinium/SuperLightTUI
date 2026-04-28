@@ -258,6 +258,7 @@ For composition advice, see [Patterns Guide].
 | [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
 | [Theming Guide] | Theme struct, presets, ThemeBuilder, custom themes |
 | [Design Principles] | API constraints and design philosophy |
+| [API Design] | Five consistency rules for new widgets and PR review checklist |
 
 ## Representative Examples
 
@@ -316,6 +317,7 @@ The release process expects format, check, clippy, tests, examples, and backend 
 [Patterns Guide]: docs/PATTERNS.md
 [Architecture Guide]: docs/ARCHITECTURE.md
 [Design Principles]: docs/DESIGN_PRINCIPLES.md
+[API Design]: docs/API_DESIGN.md
 [Animation Guide]: docs/ANIMATION.md
 [Theming Guide]: docs/THEMING.md
 [Features Guide]: docs/FEATURES.md
