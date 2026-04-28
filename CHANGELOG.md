@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### Added (v0.20.0 widgets — Agent 7)
+
+- **`feat(widgets-display)` — `split_pane` / `vsplit_pane` (#223)** — resizable horizontal/vertical split containers driven by `SplitPaneState`. Drag the 1-cell handle (`│` / `─`) with the mouse, or focus it (Tab) and use arrow keys to grow/shrink the first pane by 5% per press. `SplitPaneResponse` exposes `ratio` and `drag_active`.
+- **`feat(widgets-display)` — `gauge` / `gauge_w` / `gauge_colored` (#224)** — block-fill progress bar with a centered inline label (e.g. `█████████ 60% ░░░░░░`). Color-tiered by default (`success` < 50%, `warning` 50–80%, `error` ≥ 80%); pass an explicit color via `gauge_colored` to disable tiering. Returns `GaugeResponse` (derefs to `Response`).
+- **`feat(widgets-display)` — `line_gauge` (#224)** — single-line gauge with configurable fill / empty characters and an optional appended label. Builder API on `LineGaugeOpts`: `.filled(ch)`, `.empty(ch)`, `.width(n)`, `.label(s)`.
+- **`feat(widgets-display)` — `scrollable_with_gutter` (#235)** — scrollable container variant rendering a per-line left gutter (line numbers, breakpoint markers, etc.) plus search-result highlight bands. Companion API on `ScrollState`: `set_highlights`, `highlight_next`, `highlight_previous`, `clear_highlights`, `current_highlight`. New `HighlightRange` type re-exported at the crate root. Returns `GutterResponse` carrying the current highlight index and total count.
+
+### Changed (v0.20.0 widgets — Agent 7)
+
+- **`refactor(widgets-display)` — `breadcrumb` collapsed into a single `BreadcrumbResponse` (#213, BREAKING)** — replaced the four-variant API (`breadcrumb`, `breadcrumb_with`, `breadcrumb_response`, `breadcrumb_response_with`) with two methods: `breadcrumb(segments)` (default ` › ` separator) and `breadcrumb_sep(segments, separator)`. Both return `BreadcrumbResponse` carrying the row-level `Response` plus `clicked_segment: Option<usize>`. `BreadcrumbResponse` derefs to `Response`, so existing `.hovered`, `.rect`, `.focused` reads continue to compile after migration.
+
+  Migration:
+  ```rust
+  // before:
+  let clicked = ui.breadcrumb(&segments);            // Option<usize>
+  let (resp, clicked) = ui.breadcrumb_response(&segments);
+  let clicked = ui.breadcrumb_with(&segments, " > ");
+  let (resp, clicked) = ui.breadcrumb_response_with(&segments, " > ");
+
+  // after:
+  let r = ui.breadcrumb(&segments);
+  let clicked = r.clicked_segment;
+  let r = ui.breadcrumb_sep(&segments, " > ");
+  ```
+
+- **`refactor(widgets-input)` — `spinner` / `progress` / `progress_bar` / `progress_bar_colored` now return `Response` (#212, BREAKING)** — these widgets previously returned `&mut Self` (a builder-chain shim). They now return `Response` so callers can detect hover, attach tooltips, or implement click-to-set scrubbers. `toast` continues to return `&mut Self` (no meaningful single rect — purely visual overlay).
+
+  Migration: code that ignored the return value still compiles; the `#[must_use]` attribute on `Response` will warn at the call site. The recommended fix is `let _ = ui.progress(0.5);`. Code that chained builder-style methods (e.g. `ui.spinner(&s).fg(theme.primary)`) must split into two statements:
+  ```rust
+  // before:
+  ui.spinner(&s).fg(theme.primary);
+  // after:
+  let _ = ui.spinner(&s); // color is already theme.primary; if you need a different color, render manually.
+  ```
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting

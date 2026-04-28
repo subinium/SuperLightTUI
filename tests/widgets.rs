@@ -805,7 +805,7 @@ fn calendar_renders_month_title() {
 fn progress_renders() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.progress(0.5);
+        let _ = ui.progress(0.5);
     });
     tb.assert_contains("█");
     tb.assert_contains("░");
@@ -816,7 +816,7 @@ fn spinner_renders() {
     let mut tb = TestBackend::new(40, 5);
     let spinner = SpinnerState::dots();
     tb.render(|ui| {
-        ui.spinner(&spinner);
+        let _ = ui.spinner(&spinner);
     });
     tb.assert_contains("⠋");
 }
@@ -3057,7 +3057,7 @@ fn alert_consumes_dismiss_key() {
 fn breadcrumb_renders_segments() {
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
     });
     let output = tb.to_string();
     assert!(output.contains("Home"));
@@ -3070,7 +3070,9 @@ fn breadcrumb_enter_activates_focused_segment() {
     let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
     let mut clicked = None;
     tb.render_with_events(events, 0, 1, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        clicked = ui
+            .breadcrumb(&["Home", "Settings", "Profile"])
+            .clicked_segment;
     });
     assert_eq!(clicked, Some(0));
 }
@@ -3085,7 +3087,9 @@ fn breadcrumb_mouse_click_activates_segment() {
     let events = slt::EventBuilder::new().click(1, 0).build();
     let mut clicked = None;
     tb.render_with_events(events, 0, 0, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        clicked = ui
+            .breadcrumb(&["Home", "Settings", "Profile"])
+            .clicked_segment;
     });
 
     assert_eq!(clicked, Some(0));
@@ -3257,7 +3261,7 @@ fn demo_v094_content_does_not_panic() {
             ui.alert("Test alert", AlertLevel::Success);
         }
         ui.divider_text("Nav");
-        ui.breadcrumb(&["Home", "Settings"]);
+        let _ = ui.breadcrumb(&["Home", "Settings"]);
         ui.stat("Uptime", "14d");
         ui.stat_trend("Revenue", "$12,400", Trend::Up);
         ui.stat_colored("CPU", "72%", Color::Yellow);
@@ -4086,7 +4090,7 @@ fn definition_list_empty_key_renders_only_padding() {
     assert!(output.contains("—"));
 }
 
-// ── #182: breadcrumb_response returns (Response, Option<usize>) ───────────
+// ── v0.20.0 #213: breadcrumb collapsed to BreadcrumbResponse ─────────────
 
 #[test]
 fn breadcrumb_response_exposes_rect() {
@@ -4094,15 +4098,15 @@ fn breadcrumb_response_exposes_rect() {
     let mut rect = slt::Rect::default();
     let mut idx: Option<usize> = None;
     tb.render(|ui| {
-        let (resp, clicked) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        rect = resp.rect;
-        idx = clicked;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        rect = r.rect;
+        idx = r.clicked_segment;
     });
     // First frame has no prev_hit_map entry yet, so rect may be zero — render
     // a second frame so the response carries a real rect.
     tb.render(|ui| {
-        let (resp, _) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        rect = resp.rect;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        rect = r.rect;
     });
     assert!(
         rect.width > 0,
@@ -4121,29 +4125,30 @@ fn breadcrumb_response_returns_clicked_index_on_enter() {
     let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
     let mut clicked: Option<usize> = None;
     tb.render_with_events(events, 0, 1, |ui| {
-        let (_resp, idx) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        clicked = idx;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        clicked = r.clicked_segment;
     });
     assert_eq!(clicked, Some(0));
 }
 
 #[test]
-fn breadcrumb_legacy_api_still_returns_index() {
-    // The non-Response variant must keep working unchanged.
-    let mut tb = TestBackend::new(60, 3);
-    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
-    let mut clicked: Option<usize> = None;
-    tb.render_with_events(events, 0, 1, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
-    });
-    assert_eq!(clicked, Some(0));
-}
-
-#[test]
-fn breadcrumb_response_with_custom_separator() {
+fn breadcrumb_response_derefs_to_response() {
+    // BreadcrumbResponse derefs into Response, so .hovered/.rect work directly.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let (_resp, _idx) = ui.breadcrumb_response_with(&["A", "B", "C"], " > ");
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        // Must compile via Deref impl.
+        let _ = r.hovered;
+        let _ = r.rect;
+        let _ = r.focused;
+    });
+}
+
+#[test]
+fn breadcrumb_sep_uses_custom_separator() {
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        let _ = ui.breadcrumb_sep(&["A", "B", "C"], " > ");
     });
     let output = tb.to_string();
     assert!(output.contains(" > "));

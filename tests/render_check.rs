@@ -30,7 +30,7 @@ fn render_demo_basic_layout() {
                         ui.text_input(&mut input);
                     });
                 ui.row(|ui| {
-                    ui.spinner(&spinner);
+                    let _ = ui.spinner(&spinner);
                     ui.text(" Loading...").dim();
                 });
             });
