@@ -276,6 +276,80 @@ fn duplicate_named_registration_first_wins() {
     });
 }
 
+// `focus_by_name` returns `true` whenever the call *will* resolve. That
+// includes the natural same-frame ordering "register first, then focus":
+// the call reads the in-progress name map (built earlier in this frame),
+// not just the previous frame's settled map. The actual focus shift still
+// lands next frame, but the return value matches caller intuition.
+#[test]
+fn focus_by_name_returns_true_when_resolvable_from_current_frame() {
+    let mut tb = TestBackend::new(80, 4);
+
+    let resolved = std::cell::Cell::new(false);
+    let r = &resolved;
+    // Single frame: the name is registered first, then `focus_by_name`
+    // resolves against the in-progress map. Previous-frame map is empty.
+    tb.render(move |ui| {
+        let _ = ui.register_focusable_named("search");
+        let did = ui.focus_by_name("search");
+        r.set(did);
+    });
+    assert!(
+        resolved.get(),
+        "focus_by_name should return true for a name registered earlier this frame"
+    );
+}
+
+#[test]
+fn focus_by_name_returns_true_when_resolvable_from_previous_frame() {
+    let mut tb = TestBackend::new(80, 4);
+
+    // Frame 0: register the name so the next frame's _prev map has it.
+    tb.render(|ui| {
+        let _ = ui.register_focusable_named("toolbar");
+    });
+
+    // Frame 1: call before any registration in this frame. Resolution comes
+    // exclusively from the previous frame's settled map.
+    let resolved = std::cell::Cell::new(false);
+    let r = &resolved;
+    tb.render(move |ui| {
+        let did = ui.focus_by_name("toolbar");
+        r.set(did);
+        let _ = ui.register_focusable_named("toolbar");
+    });
+    assert!(
+        resolved.get(),
+        "focus_by_name should return true for a name registered last frame"
+    );
+}
+
+#[test]
+fn focus_by_name_returns_false_when_neither_frame_has_name() {
+    let mut tb = TestBackend::new(80, 4);
+
+    // Frame 0: register an unrelated name. The previous-frame map seeded for
+    // frame 1 will only contain "alpha".
+    tb.render(|ui| {
+        let _ = ui.register_focusable_named("alpha");
+    });
+
+    // Frame 1: ask for a name nobody has ever registered. The request is
+    // queued (still useful for late-binding registration), but the return
+    // value reports the call cannot resolve yet.
+    let resolved = std::cell::Cell::new(true);
+    let r = &resolved;
+    tb.render(move |ui| {
+        let _ = ui.register_focusable_named("alpha");
+        let did = ui.focus_by_name("ghost");
+        r.set(did);
+    });
+    assert!(
+        !resolved.get(),
+        "focus_by_name should return false when neither frame has the name"
+    );
+}
+
 // ----------------------------------------------------------------
 // #218 — key_presses_when + consume_event
 // ----------------------------------------------------------------

@@ -1161,6 +1161,96 @@ fn confirm_tab_toggles_choice_before_focus_processing() {
     assert!(answer);
 }
 
+// Regression: clicking [Yes] must update `result` in the SAME frame (not lag
+// one frame). The previous implementation mutated `*result` correctly but
+// computed `[Yes]/[No]` styles before the mouse hit-test, leaking a visual
+// one-frame lag and forcing a `let _ = is_yes;` dead-write silencer. After
+// the fix, both the outparam and the rendered visual feedback land together.
+#[test]
+fn confirm_click_yes_updates_answer_in_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    // Frame 0: render once so the row enters `prev_hit_map`.
+    let mut answer = false;
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+    assert!(!answer, "default state should be No");
+
+    // Frame 1: click on [Yes]. "Continue?" is 9 columns, then a space, so
+    // [Yes] starts at x=10 and runs through x=14.
+    let events = slt::EventBuilder::new().click(11, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+        if answer {
+            // Render this only when the click landed; an extra row guarantees
+            // the assertion below tests current-frame behaviour, not next.
+            ui.text("YES SELECTED");
+        }
+    });
+    assert!(answer, "click on [Yes] must update outparam in same frame");
+    tb.assert_contains("YES SELECTED");
+}
+
+#[test]
+fn confirm_click_no_updates_answer_in_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    // Default is `false`, so start in the Yes state to verify the click flips
+    // the answer back to No within a single frame.
+    let mut answer = true;
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // [No] sits one space after [Yes]. With "Continue?" = 9 columns:
+    //   row_x=0, q_width=9, yes_start=10, yes_end=15, no_start=16, no_end=20.
+    let events = slt::EventBuilder::new().click(17, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+        if !answer {
+            ui.text("NO SELECTED");
+        }
+    });
+    assert!(!answer, "click on [No] must update outparam in same frame");
+    tb.assert_contains("NO SELECTED");
+}
+
+// Visual-feedback regression: when a click lands on [Yes], the rendered row
+// in the *same* frame must show `[Yes]` with the selected (focused) style
+// applied — i.e. the foreground colour for `[Yes]` is the theme's `bg` (the
+// reverse of unselected). The old implementation computed styles before the
+// hit-test, so `[Yes]` painted as unselected on the click frame.
+#[test]
+fn confirm_click_yes_renders_selected_style_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut answer = false;
+    // Prime `prev_hit_map`.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // Snapshot the cell at the 'Y' of "[Yes]" before the click. With default
+    // `is_yes = false`, [Yes] is painted in `text_dim`, not the bold/bg-swap
+    // selected style.
+    let style_before = tb.buffer().get(11, 0).style;
+
+    let events = slt::EventBuilder::new().click(11, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // After the click, [Yes] should be rendered in the selected style (bold +
+    // bg swapped to theme.success). The simplest check that catches the old
+    // bug: the cell's style must have changed compared to the unselected
+    // frame. The previous-frame render painted [Yes] dim; the current-frame
+    // render after the fix paints [Yes] with the success-on-bg style.
+    let style_after = tb.buffer().get(11, 0).style;
+    assert!(answer, "outparam should track the click");
+    assert_ne!(
+        style_before, style_after,
+        "[Yes] style must change in the click frame, not lag by one frame"
+    );
+}
+
 #[test]
 fn notify_renders_without_toast_state() {
     let mut tb = TestBackend::new(80, 5);

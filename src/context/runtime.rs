@@ -1079,8 +1079,12 @@ impl Context {
     /// has never been registered, the request stays pending: the next
     /// frame to register that name receives focus.
     ///
-    /// Returns `true` if the name resolved against the most recent frame's
-    /// registrations; `false` if the request was queued for later.
+    /// Returns `true` if the call **will** resolve — i.e. the name was
+    /// either registered earlier in this frame (via
+    /// [`register_focusable_named`](Self::register_focusable_named)) or in
+    /// the previous frame. Returns `false` only when the name has not been
+    /// seen by either frame, in which case the request stays pending until
+    /// some future frame registers the name.
     ///
     /// # Example
     ///
@@ -1090,7 +1094,18 @@ impl Context {
     /// }
     /// ```
     pub fn focus_by_name(&mut self, name: &str) -> bool {
-        let resolved = self.focus_name_map_prev.contains_key(name);
+        // Resolve against either the previous frame's settled map or the
+        // in-progress map being built right now. The latter handles the
+        // common "register, then focus_by_name in the same frame" pattern
+        // that callers naturally expect to return `true`.
+        //
+        // The actual focus change still lands at the start of the next
+        // frame via `focus_name_map_prev` lookup in `Context::new`. The
+        // return value is purely about resolvability: "true" means the name
+        // is known and the focus shift will land next frame; "false" means
+        // the request is pending a future registration.
+        let resolved =
+            self.focus_name_map_prev.contains_key(name) || self.focus_name_map.contains_key(name);
         // Always store the request — even if it resolved this frame, the
         // next-frame plumbing (`Context::new`) is what actually applies
         // the index. We use take/replace so the caller cannot stack two
