@@ -2,7 +2,6 @@
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Added
 
 - **`feat(test-utils)` — `TestBackend::record_frames()` + `FrameRecord` history** (#229) — Opt-in frame recorder. Every `render()` call appends a `FrameRecord { snapshot, lines }` accessible via `tb.frames()`. `FrameRecord` exposes `assert_contains`, `to_string_trimmed`, and per-row text. Disabled by default → zero allocation overhead for tests that don't need history.
