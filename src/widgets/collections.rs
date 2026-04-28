@@ -769,7 +769,8 @@ impl Default for ScrollState {
     }
 }
 
-/// State for a [`Context::split_pane`] / [`Context::vsplit_pane`] container.
+/// State for a [`crate::Context::split_pane`] /
+/// [`crate::Context::vsplit_pane`] container.
 ///
 /// Tracks the split ratio and drag state. Pass a mutable reference each frame
 /// — the widget updates `ratio` in place when the user drags the handle or
@@ -822,7 +823,7 @@ impl Default for SplitPaneState {
     }
 }
 
-/// Column specification for [`Context::grid_with()`].
+/// Column specification for [`crate::Context::grid_with()`].
 ///
 /// Controls the width allocation of individual columns in a grid layout.
 ///

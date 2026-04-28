@@ -1,9 +1,10 @@
 //! Tree-sitter based syntax highlighting.
 //!
-//! When one of the `syntax-*` features is enabled, [`highlight_code`] uses
-//! tree-sitter grammars for accurate, language-aware highlighting.
-//! Without those features the function always returns `None` so callers
-//! can fall back to the built-in keyword highlighter.
+//! When one of the `syntax-*` features is enabled,
+//! [`crate::syntax::highlight_code`] uses tree-sitter grammars for accurate,
+//! language-aware highlighting. Without those features the function always
+//! returns `None` so callers can fall back to the built-in keyword
+//! highlighter.
 
 #[cfg(any(
     feature = "syntax-rust",

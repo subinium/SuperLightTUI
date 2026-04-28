@@ -295,7 +295,7 @@ impl Default for StreamingMarkdownState {
 ///
 /// Tracks screen names in a push/pop stack while preserving the root screen.
 /// Each screen gets isolated focus and hook state when used with
-/// [`Context::screen`].
+/// [`crate::Context::screen`].
 ///
 /// # Example
 ///

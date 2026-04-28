@@ -618,20 +618,21 @@ impl Context {
 
     /// Return which layers the F12 debug overlay outlines (issue #201).
     ///
-    /// Default is [`DebugLayer::All`], which outlines the base tree plus any
-    /// active overlays/modals. See [`set_debug_layer`](Self::set_debug_layer)
-    /// to narrow the outline to a specific layer.
+    /// Default is [`crate::DebugLayer::All`], which outlines the base tree
+    /// plus any active overlays/modals. See
+    /// [`set_debug_layer`](Self::set_debug_layer) to narrow the outline to a
+    /// specific layer.
     pub fn debug_layer(&self) -> crate::DebugLayer {
         self.debug_layer
     }
 
     /// Choose which layers the F12 debug overlay outlines (issue #201).
     ///
-    /// Persists across frames. The default ([`DebugLayer::All`]) matches the
-    /// reporter's expectation that F12 reflects everything the renderer is
-    /// drawing. Use [`DebugLayer::TopMost`] to focus on the active modal /
-    /// overlay only, or [`DebugLayer::BaseOnly`] to keep the legacy behavior
-    /// of skipping overlays.
+    /// Persists across frames. The default ([`crate::DebugLayer::All`])
+    /// matches the reporter's expectation that F12 reflects everything the
+    /// renderer is drawing. Use [`crate::DebugLayer::TopMost`] to focus on
+    /// the active modal / overlay only, or [`crate::DebugLayer::BaseOnly`]
+    /// to keep the legacy behavior of skipping overlays.
     pub fn set_debug_layer(&mut self, layer: crate::DebugLayer) {
         self.debug_layer = layer;
     }
