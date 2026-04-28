@@ -1460,7 +1460,7 @@ fn render_v070(
                         ui.text(format!("  Line {i}")).fg(fg);
                     }
                 });
-                ui.scrollbar(scroll);
+                let _ = ui.scrollbar(scroll);
             });
         });
 

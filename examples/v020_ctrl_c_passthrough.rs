@@ -72,14 +72,9 @@ const SNAPSHOT_COUNT: u32 = 1;
 /// Persistent strike counter for the passthrough demo. Survives across
 /// frames so a real Ctrl+C/Ctrl+G keypress (or a button click) advances
 /// the counter the same way every time the demo is rendered.
+#[derive(Default)]
 pub struct DemoState {
     pub ctrl_c_count: u32,
-}
-
-impl Default for DemoState {
-    fn default() -> Self {
-        Self { ctrl_c_count: 0 }
-    }
 }
 
 /// Shared body. The count is the only varying input — keeping the visible

@@ -1148,6 +1148,6 @@ mod tests {
     fn light_builder_is_const_evaluable() {
         assert_eq!(_CONST_LIGHT.primary, Color::Rgb(1, 2, 3));
         assert_eq!(_CONST_LIGHT.bg, Theme::light().bg);
-        assert!(!_CONST_LIGHT.is_dark);
+        const { assert!(!_CONST_LIGHT.is_dark) };
     }
 }

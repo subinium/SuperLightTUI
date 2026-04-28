@@ -58,18 +58,10 @@ const SNAPSHOT_COUNT: i32 = 3;
 ///
 /// Counter increments survive across frames; `help_open` controls whether
 /// the auto-generated overlay is rendered.
+#[derive(Default)]
 pub struct DemoState {
     pub count: i32,
     pub help_open: bool,
-}
-
-impl Default for DemoState {
-    fn default() -> Self {
-        Self {
-            count: 0,
-            help_open: false,
-        }
-    }
 }
 
 /// Shared body. Every focusable widget publishes its bindings BEFORE the

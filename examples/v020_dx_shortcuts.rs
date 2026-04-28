@@ -30,18 +30,10 @@ use slt::{Border, Color, Context, KeyCode, KeyModifiers, Rect, Style};
 /// Persistent state for the DX shorthand demo. Public so the v0.20 tour
 /// can own a single [`DemoState`] across frames — clicks on the help
 /// overlay or panel toggle would otherwise reset every frame.
+#[derive(Default)]
 pub struct DemoState {
     pub panel_open: bool,
     pub show_help: bool,
-}
-
-impl Default for DemoState {
-    fn default() -> Self {
-        Self {
-            panel_open: false,
-            show_help: false,
-        }
-    }
 }
 
 // Layout constants. Pinned here so the help overlay and the action column
