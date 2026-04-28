@@ -59,8 +59,9 @@ fn main() -> std::io::Result<()> {
     let mut ctrl_c_count: u32 = 0;
 
     // Opt out of the default ctrl-c-quits behaviour so the loop can decide
-    // when (and after how many strikes) to exit.
-    let config = RunConfig::default().handle_ctrl_c(false);
+    // when (and after how many strikes) to exit. Also enable mouse so any
+    // future widgets in this demo can receive click events.
+    let config = RunConfig::default().handle_ctrl_c(false).mouse(true);
 
     slt::run_with(config, |ui: &mut Context| {
         if ui.key_mod('c', KeyModifiers::CONTROL) {

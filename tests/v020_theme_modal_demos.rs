@@ -16,7 +16,7 @@ use slt::{context::ModalOptions, Border, ButtonVariant, Context, TestBackend, Th
 fn render_theme_subtree(ui: &mut Context) {
     let _ = ui
         .bordered(Border::Rounded)
-        .title("SLT v0.20 — Per-subtree theme override")
+        .title("SLT v0.20: Per-subtree theme override")
         .p(1)
         .grow(1)
         .col(|ui| {

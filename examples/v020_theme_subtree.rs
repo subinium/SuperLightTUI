@@ -13,7 +13,7 @@
 //!   Ctrl-Q / Esc   — quit
 //!
 //! Layout:
-//!   ┌── SLT v0.20 — Per-subtree theme override ──────────────────┐
+//!   ┌── SLT v0.20: Per-subtree theme override ──────────────────┐
 //!   │ ┌── Dark ──┐ ┌── Light ──┐ ┌── Dracula ──┐ ┌── Nord ──┐    │
 //!   │ │ body…    │ │ body…     │ │ body…       │ │ body…    │    │
 //!   │ │ [Press]  │ │ [Press]   │ │ [Press]     │ │ [Press]  │    │
@@ -23,7 +23,7 @@
 //!   └────────────────────────────────────────────────────────────┘
 
 use slt::widgets::AlertLevel;
-use slt::{Border, Context, KeyCode, KeyModifiers, Theme};
+use slt::{Border, Context, KeyCode, KeyModifiers, RunConfig, Theme};
 
 /// Theme bench: label + theme constructor pairs rendered in panel order.
 /// Centralised so the layout and the test render the same set.
@@ -37,7 +37,7 @@ pub fn theme_bench() -> [(&'static str, Theme); 4] {
 }
 
 fn main() -> std::io::Result<()> {
-    slt::run(render)
+    slt::run_with(RunConfig::default().mouse(true), render)
 }
 
 /// Render one frame of the theme-subtree demo.
@@ -55,7 +55,7 @@ pub fn render(ui: &mut Context) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("SLT v0.20 — Per-subtree theme override")
+        .title("SLT v0.20: Per-subtree theme override")
         .p(pad)
         .grow(1)
         .col(|ui| {

@@ -63,9 +63,9 @@ impl Default for DemoState {
 pub fn render(ui: &mut Context, state: &mut DemoState) {
     let sp = ui.spacing();
     let title = if state.vertical {
-        "v0.20.0 #223 — vsplit_pane (vertical)"
+        "v0.20.0 #223: vsplit_pane (vertical)"
     } else {
-        "v0.20.0 #223 — split_pane (horizontal)"
+        "v0.20.0 #223: split_pane (horizontal)"
     };
 
     let _ = ui

@@ -17,7 +17,7 @@
 //!   │ └─────────────┘ └─────────────────┘ └──────────────┘    │
 //!   └─────────────────────────────────────────────────────────┘
 
-use slt::{Border, Context, KeyCode, KeyModifiers, Theme};
+use slt::{Border, Context, KeyCode, KeyModifiers, RunConfig, Theme};
 
 /// Shared body. The outer frame uses the OUTER theme's spacing scale;
 /// each panel re-establishes its own spacing via `container().theme(...)`.
@@ -27,7 +27,7 @@ fn body(ui: &mut Context) {
     let sp = ui.spacing();
     let _ = ui
         .bordered(Border::Rounded)
-        .title("SLT v0.20 — Density presets")
+        .title("SLT v0.20: Density presets")
         .p(sp.xs())
         .grow(1)
         .col(|ui| {
@@ -75,7 +75,7 @@ pub fn render(ui: &mut Context) {
 }
 
 fn main() -> std::io::Result<()> {
-    slt::run(|ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }

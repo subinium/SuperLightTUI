@@ -19,7 +19,7 @@
 //!   │ Press ? for help…         │       │ counter: k/Up, j/Down, r  │
 //!   └───────────────────────────┘       └───────────────────────────┘
 
-use slt::{Color, Context, KeyCode, Style, WidgetKeyHelp};
+use slt::{Color, Context, KeyCode, RunConfig, Style, WidgetKeyHelp};
 
 /// Counter widget bindings — published every frame the widget renders, so
 /// the help overlay only lists keys that are actually live.
@@ -81,7 +81,7 @@ fn main() -> std::io::Result<()> {
     let mut count: i32 = 0;
     let mut help_open = false;
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key('q') {
             ui.quit();
         }

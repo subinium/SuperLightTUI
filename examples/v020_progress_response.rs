@@ -10,7 +10,7 @@
 //!   Ctrl-Q / Esc — quit
 //!
 //! Layout:
-//!   ┌── v0.20.0 #212 — Response from progress / spinner ──┐
+//!   ┌── v0.20.0 #212: Response from progress / spinner ──┐
 //!   │  ⠋  Loading...                                       │
 //!   │  ████████░░░░░░░░░░░░    ratio = 42%                 │
 //!   └──────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("v0.20.0 #212 — Response from progress / spinner")
+        .title("v0.20.0 #212: Response from progress / spinner")
         .p(sp.xs())
         .gap(sp.xs())
         .col(|ui| {

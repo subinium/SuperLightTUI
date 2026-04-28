@@ -20,7 +20,7 @@
 //!   Ctrl-Q / Esc   — quit
 //!
 //! Layout:
-//!   ┌── use_state_keyed — per-item counters ──┐
+//!   ┌── use_state_keyed: per-item counters ──┐
 //!   │ helper text                              │
 //!   │                                          │
 //!   │ ▶ item  0  count =    0                  │
@@ -28,7 +28,7 @@
 //!   │   item  2  count =   -3                  │
 //!   └──────────────────────────────────────────┘
 
-use slt::{Border, Color, Context, KeyCode, KeyModifiers};
+use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 
 /// Per-frame inputs for [`render`]. Kept on the stack in `main`; passed by
 /// `&mut` so snapshot tests can drive the same render path frame-by-frame.
@@ -51,7 +51,9 @@ const MIN_ROWS: usize = 1;
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
-    slt::run(move |ui: &mut Context| render(ui, &mut state))
+    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+        render(ui, &mut state)
+    })
 }
 
 /// Render one frame of the keyed-state demo.
@@ -78,7 +80,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("use_state_keyed — per-item counters")
+        .title("use_state_keyed: per-item counters")
         .p(pad)
         .gap(gap)
         .col(|ui| {

@@ -21,7 +21,7 @@
 //! +-----------------------------------------------------------------+
 //! ```
 
-use slt::{Border, Color, Constraints, Context, KeyCode, KeyModifiers};
+use slt::{Border, Color, Constraints, Context, KeyCode, KeyModifiers, RunConfig};
 
 // Label column width. Pinned so every variant's left-hand label aligns
 // regardless of how its right-hand container resolves.
@@ -33,7 +33,7 @@ const MINMAX_LO: u32 = 10;
 const MINMAX_HI: u32 = 30;
 
 fn main() -> std::io::Result<()> {
-    slt::run(|ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key('q') || ui.key_mod('c', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }

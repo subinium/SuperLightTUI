@@ -47,7 +47,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("v0.20.0 #224 — gauge / line_gauge")
+        .title("v0.20.0 #224: gauge / line_gauge")
         .p(sp.xs())
         .gap(sp.xs())
         .col(|ui| {

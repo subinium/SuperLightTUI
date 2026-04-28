@@ -28,7 +28,7 @@
 //!   └───────────────────────────────────────────────┘
 
 use slt::widgets::TextInputState;
-use slt::{Border, Color, Context, KeyCode, KeyModifiers};
+use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 
 /// Persistent inputs across frames. Each `TextInputState` carries its own
 /// cursor and selection, so we can't substitute a bare `String` here.
@@ -41,7 +41,9 @@ pub struct DemoState {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
-    slt::run(move |ui: &mut Context| render(ui, &mut state))
+    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+        render(ui, &mut state)
+    })
 }
 
 /// Render one frame of the named-focus demo.

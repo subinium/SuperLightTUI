@@ -13,7 +13,7 @@
 //!   Ctrl-Q / Esc    — quit
 //!
 //! Layout:
-//!   ┌── v0.20.0 #213 — BreadcrumbResponse ────────┐
+//!   ┌── v0.20.0 #213: BreadcrumbResponse ────────┐
 //!   │  Home › Projects › SuperLightTUI › v0.20.0  │
 //!   │  Current segment: v0.20.0                   │
 //!   └─────────────────────────────────────────────┘
@@ -56,7 +56,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("v0.20.0 #213 — BreadcrumbResponse")
+        .title("v0.20.0 #213: BreadcrumbResponse")
         .p(sp.xs())
         .gap(sp.xs())
         .col(|ui| {

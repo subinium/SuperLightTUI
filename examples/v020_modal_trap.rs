@@ -18,7 +18,9 @@
 //!   │ Last answer: …                      │      │ [Yes][No] │
 //!   └─────────────────────────────────────┘      └───────────┘
 
-use slt::{context::ModalOptions, Border, ButtonVariant, Context, KeyCode, KeyModifiers};
+use slt::{
+    context::ModalOptions, Border, ButtonVariant, Context, KeyCode, KeyModifiers, RunConfig,
+};
 
 /// Mutable demo state. Bundling these into a struct keeps `main()` minimal
 /// and lets `render` synthesise a deterministic snapshot frame without
@@ -49,7 +51,7 @@ fn body(ui: &mut Context, state: &mut State) {
     let sp = ui.spacing();
     let _ = ui
         .bordered(Border::Rounded)
-        .title("SLT v0.20 — Modal focus trap")
+        .title("SLT v0.20: Modal focus trap")
         .p(sp.sm())
         .gap(sp.xs())
         .grow(1)
@@ -124,7 +126,7 @@ pub fn render(ui: &mut Context) {
 fn main() -> std::io::Result<()> {
     let mut state = State::new();
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }

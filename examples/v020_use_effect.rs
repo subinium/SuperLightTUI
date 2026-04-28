@@ -20,7 +20,7 @@
 //!   Ctrl-Q / Esc   — quit
 //!
 //! Layout:
-//!   ┌── use_effect — dep-tracked side effects ──┐
+//!   ┌── use_effect: dep-tracked side effects ──┐
 //!   │ help line                                  │
 //!   │ count = 3                                  │
 //!   │ log panel: visible                         │
@@ -30,7 +30,7 @@
 //!   │ └────────────────┘                         │
 //!   └────────────────────────────────────────────┘
 
-use slt::{Border, Color, Context, KeyCode, KeyModifiers};
+use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -58,7 +58,9 @@ impl Default for DemoState {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
-    slt::run(move |ui: &mut Context| render(ui, &mut state))
+    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+        render(ui, &mut state)
+    })
 }
 
 /// Render one frame of the use_effect demo.
@@ -114,7 +116,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("use_effect — dep-tracked side effects")
+        .title("use_effect: dep-tracked side effects")
         .p(pad)
         .gap(gap)
         .col(|ui| {

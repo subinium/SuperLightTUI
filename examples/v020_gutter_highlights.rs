@@ -130,7 +130,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let _ = ui
         .bordered(Border::Rounded)
-        .title("v0.20.0 #235 — scrollable_with_gutter")
+        .title("v0.20.0 #235: scrollable_with_gutter")
         .p(sp.xs())
         .gap(sp.xs())
         .grow(1)
