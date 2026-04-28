@@ -394,7 +394,7 @@ fn bench_flush_full_redraw_200x60(c: &mut Criterion) {
     let mut group = c.benchmark_group("flush");
     group.bench_function("full_redraw_200x60", |b| {
         let area = Rect::new(0, 0, 200, 60);
-        let prev = Buffer::empty(area);
+        let mut prev = Buffer::empty(area);
         let mut curr = Buffer::empty(area);
         fill_realistic(&mut curr, 1);
         // Sanity: make sure we actually have a non-trivial diff workload.
@@ -403,10 +403,13 @@ fn bench_flush_full_redraw_200x60(c: &mut Criterion) {
         let mut sink: Vec<u8> = Vec::with_capacity(256 * 1024);
         b.iter(|| {
             sink.clear();
-            slt::__bench_flush_buffer_diff(
+            // Issue #171: use the mutable bench entry point so the per-row
+            // hash refresh is part of the measured cost (matches what
+            // `Terminal::flush` does in production).
+            slt::__bench_flush_buffer_diff_mut(
                 &mut sink,
-                black_box(&curr),
-                black_box(&prev),
+                black_box(&mut curr),
+                black_box(&mut prev),
                 ColorDepth::TrueColor,
             )
             .expect("flush into Vec<u8> cannot fail");
@@ -437,10 +440,45 @@ fn bench_flush_sparse_change_200x60(c: &mut Criterion) {
         let mut sink: Vec<u8> = Vec::with_capacity(64 * 1024);
         b.iter(|| {
             sink.clear();
-            slt::__bench_flush_buffer_diff(
+            slt::__bench_flush_buffer_diff_mut(
                 &mut sink,
-                black_box(&curr),
-                black_box(&prev),
+                black_box(&mut curr),
+                black_box(&mut prev),
+                ColorDepth::TrueColor,
+            )
+            .expect("flush into Vec<u8> cannot fail");
+            black_box(sink.len());
+        });
+    });
+    group.finish();
+}
+
+/// 0%-dirty (static) flush baseline for issue #171's GO/NO-GO decision.
+///
+/// Two identical buffers — `flush_buffer_diff` walks every cell, finds no
+/// difference, and emits nothing. This is the worst case for the per-cell
+/// scan because every cell pays the comparison cost while no output is
+/// produced. If this bench stays under 50 µs on 200×60 we do **not**
+/// implement the per-row hash skip (issue #171 NO-GO).
+#[cfg(feature = "crossterm")]
+fn bench_flush_static_200x60(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush");
+    group.bench_function("static_200x60", |b| {
+        let area = Rect::new(0, 0, 200, 60);
+        let mut prev = Buffer::empty(area);
+        let mut curr = Buffer::empty(area);
+        fill_realistic(&mut prev, 1);
+        fill_realistic(&mut curr, 1);
+        // Sanity: 0% dirty — diff must be empty.
+        debug_assert!(curr.diff(&prev).is_empty());
+
+        let mut sink: Vec<u8> = Vec::with_capacity(1024);
+        b.iter(|| {
+            sink.clear();
+            slt::__bench_flush_buffer_diff_mut(
+                &mut sink,
+                black_box(&mut curr),
+                black_box(&mut prev),
                 ColorDepth::TrueColor,
             )
             .expect("flush into Vec<u8> cannot fail");
@@ -458,6 +496,7 @@ fn bench_flush_group(c: &mut Criterion) {
     {
         bench_flush_full_redraw_200x60(c);
         bench_flush_sparse_change_200x60(c);
+        bench_flush_static_200x60(c);
     }
     let _ = c;
 }

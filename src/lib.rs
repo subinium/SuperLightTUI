@@ -136,6 +136,9 @@ pub use layout::__bench_wrap_segments;
 pub use terminal::__bench_flush_buffer_diff;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
+pub use terminal::__bench_flush_buffer_diff_mut;
+#[cfg(feature = "crossterm")]
+#[doc(hidden)]
 pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
 #[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};

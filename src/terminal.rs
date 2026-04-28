@@ -426,6 +426,12 @@ impl Terminal {
         }
 
         queue!(self.stdout, BeginSynchronizedUpdate)?;
+        // Issue #171: refresh both buffers' per-row digests so the per-row
+        // skip inside `flush_buffer_diff` can short-circuit unchanged rows.
+        // `previous` only needs a recompute when the prior frame mutated
+        // it (e.g. after a swap); cheap when nothing's dirty.
+        self.current.recompute_line_hashes();
+        self.previous.recompute_line_hashes();
         flush_buffer_diff(
             &mut self.stdout,
             &self.current,
@@ -569,6 +575,10 @@ impl InlineTerminal {
             }
         }
         let row_offset = self.start_row as u32;
+        // Issue #171: refresh per-row digests before the diff so the
+        // unchanged-row skip can fire (same call shape as `Terminal::flush`).
+        self.current.recompute_line_hashes();
+        self.previous.recompute_line_hashes();
         flush_buffer_diff(
             &mut self.stdout,
             &self.current,
@@ -938,6 +948,20 @@ fn flush_buffer_diff(
     }
 
     for y in current.area.y..current.area.bottom() {
+        // Issue #171: skip the per-cell scan for rows that were not touched
+        // since the last hash refresh AND match the previous frame's
+        // digest. Both conditions must hold:
+        //   * `row_clean` rules out rows that received writes this frame
+        //     even if those writes happened to land on identical cells.
+        //   * The hash equality is the actual unchanged-row signal.
+        // Falling through to the per-cell loop on either failure preserves
+        // legacy behavior; the skip is a pure short-circuit.
+        if current.row_clean(y)
+            && current.row_hash(y).is_some()
+            && current.row_hash(y) == previous.row_hash(y)
+        {
+            continue;
+        }
         for x in current.area.x..current.area.right() {
             let cell = current.get(x, y);
             let prev = previous.get(x, y);
@@ -1047,6 +1071,26 @@ pub fn __bench_flush_buffer_diff<W: Write>(
     previous: &Buffer,
     color_depth: ColorDepth,
 ) -> io::Result<()> {
+    flush_buffer_diff(w, current, previous, color_depth, 0)
+}
+
+/// Mutable-buffer variant of [`__bench_flush_buffer_diff`] (issue #171).
+///
+/// Refreshes per-row digests on both buffers before invoking
+/// `flush_buffer_diff`, matching what the real `Terminal::flush` and
+/// `InlineTerminal::flush` paths do. Benches that want to measure the
+/// flush including the hash-refresh cost should use this entry point;
+/// the immutable variant is preserved for backwards compatibility with
+/// existing benches that own only `&Buffer`.
+#[doc(hidden)]
+pub fn __bench_flush_buffer_diff_mut<W: Write>(
+    w: &mut W,
+    current: &mut Buffer,
+    previous: &mut Buffer,
+    color_depth: ColorDepth,
+) -> io::Result<()> {
+    current.recompute_line_hashes();
+    previous.recompute_line_hashes();
     flush_buffer_diff(w, current, previous, color_depth, 0)
 }
 
@@ -2010,6 +2054,67 @@ mod tests {
             inner.write_call_count, 1,
             "expected 1 write syscall to sink, got {}",
             inner.write_call_count
+        );
+    }
+
+    /// Issue #171 regression: identical buffers must produce no flush
+    /// output once both have refreshed line hashes. Validates that the
+    /// per-row skip path is correctness-preserving — a skipped row
+    /// emits zero bytes, exactly like the per-cell path would for an
+    /// unchanged row.
+    #[test]
+    fn flush_skips_unchanged_rows_when_hashes_match() {
+        let area = Rect::new(0, 0, 20, 4);
+        let mut current = Buffer::empty(area);
+        let mut previous = Buffer::empty(area);
+        // Populate both buffers with identical content.
+        for y in 0..4u32 {
+            current.set_string(0, y, "identical-row-content", Style::new());
+            previous.set_string(0, y, "identical-row-content", Style::new());
+        }
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "identical buffers must emit zero flush bytes; got {} bytes: {:?}",
+            out.len(),
+            out
+        );
+    }
+
+    /// Issue #171 regression: when only some rows match, only those rows
+    /// are skipped. The differing row must still drive its full per-cell
+    /// flush path so the terminal sees the correct glyphs.
+    #[test]
+    fn flush_skips_only_matching_rows_in_mixed_diff() {
+        let area = Rect::new(0, 0, 6, 3);
+        let mut current = Buffer::empty(area);
+        let mut previous = Buffer::empty(area);
+        current.set_string(0, 0, "abcdef", Style::new());
+        previous.set_string(0, 0, "abcdef", Style::new());
+        current.set_string(0, 1, "xxxxxx", Style::new());
+        previous.set_string(0, 1, "yyyyyy", Style::new());
+        current.set_string(0, 2, "zzzzzz", Style::new());
+        previous.set_string(0, 2, "zzzzzz", Style::new());
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        let s = String::from_utf8_lossy(&out);
+        // The mismatched row's new content must appear; matching rows'
+        // glyphs must not (they share content with `previous`).
+        assert!(s.contains("xxxxxx"), "differing row must flush: {s:?}");
+        assert!(
+            !s.contains("abcdef"),
+            "matching row 0 must not flush: {s:?}"
+        );
+        assert!(
+            !s.contains("zzzzzz"),
+            "matching row 2 must not flush: {s:?}"
         );
     }
 }
