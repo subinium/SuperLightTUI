@@ -134,8 +134,8 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
-    Response, State, TreemapItem, Widget,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
+    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
 };
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,

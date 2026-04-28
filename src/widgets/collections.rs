@@ -584,6 +584,13 @@ impl HighlightRange {
         }
     }
 
+    /// Create a single-line highlight at `line` (idiomatic alias for
+    /// [`Self::line`] introduced in v0.20.0 — reads better at call sites that
+    /// alternate between `single` / `span`).
+    pub fn single(line: usize) -> Self {
+        Self::line(line)
+    }
+
     /// Create a multi-line highlight starting at `start_line` covering `line_count` rows.
     pub fn span(start_line: usize, line_count: usize) -> Self {
         Self {

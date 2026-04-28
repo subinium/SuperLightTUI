@@ -9,8 +9,8 @@
 
 use slt::widgets::SpinnerState;
 use slt::{
-    BreadcrumbResponse, EventBuilder, GaugeResponse, GutterResponse, HighlightRange, KeyCode,
-    LineGaugeOpts, ScrollState, SplitPaneState, TestBackend,
+    BreadcrumbResponse, Color, EventBuilder, GaugeResponse, GutterOpts, GutterResponse,
+    HighlightRange, KeyCode, ScrollState, SplitPaneState, TestBackend,
 };
 
 // ── #212: spinner / progress return Response ─────────────────────────────
@@ -49,7 +49,7 @@ fn issue_212_progress_returns_response() {
 fn issue_213_breadcrumb_returns_breadcrumb_response() {
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let r: BreadcrumbResponse = ui.breadcrumb(&["Home", "Settings"]);
+        let r: BreadcrumbResponse = ui.breadcrumb(&["Home", "Settings"]).show();
         assert_eq!(r.clicked_segment, None);
     });
 }
@@ -58,7 +58,7 @@ fn issue_213_breadcrumb_returns_breadcrumb_response() {
 fn issue_213_breadcrumb_response_derefs_to_response() {
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let r = ui.breadcrumb(&["A", "B", "C"]);
+        let r = ui.breadcrumb(&["A", "B", "C"]).show();
         // Via Deref<Target = Response>:
         let _hovered: bool = r.hovered;
         let _rect = r.rect;
@@ -66,13 +66,39 @@ fn issue_213_breadcrumb_response_derefs_to_response() {
 }
 
 #[test]
-fn issue_213_breadcrumb_sep_uses_custom_separator() {
+fn issue_213_breadcrumb_builder_separator_uses_custom_string() {
+    // v0.20.0 builder replacement for the deprecated `breadcrumb_sep` shim.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let _ = ui.breadcrumb_sep(&["A", "B", "C"], " >> ");
+        ui.breadcrumb(&["A", "B", "C"]).separator(" >> ");
     });
     let output = tb.to_string_trimmed();
     assert!(output.contains(" >> "), "got: {output}");
+}
+
+#[test]
+fn issue_213_breadcrumb_builder_color_overrides_link_color() {
+    // The .color() override changes link color without touching theme.
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.breadcrumb(&["A", "B", "C"]).color(Color::Red);
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("A"));
+    assert!(output.contains("C"));
+}
+
+#[test]
+fn issue_213_breadcrumb_drops_renders_without_show() {
+    // Letting the Breadcrumb builder drop without calling .show() must still
+    // emit the segments — the only difference is that no response is captured.
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.breadcrumb(&["alpha", "beta"]);
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("alpha"), "drop renders: {output}");
+    assert!(output.contains("beta"), "drop renders: {output}");
 }
 
 // ── #223: split_pane / vsplit_pane ───────────────────────────────────────
@@ -150,14 +176,14 @@ fn issue_223_split_pane_state_clamps_to_min_ratio() {
     assert!(state.ratio <= 1.0 - state.min_ratio);
 }
 
-// ── #224: gauge / line_gauge ─────────────────────────────────────────────
+// ── #224: gauge / line_gauge (builder API + f64) ─────────────────────────
 
 #[test]
 fn issue_224_gauge_renders_label_inside_bar() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        let r: GaugeResponse = ui.gauge(0.5, "50%");
-        assert!((r.ratio - 0.5).abs() < f32::EPSILON);
+        let r: GaugeResponse = ui.gauge(0.5).label("50%").show();
+        assert!((r.ratio - 0.5).abs() < f64::EPSILON);
     });
     let output = tb.to_string_trimmed();
     assert!(output.contains("50%"), "label visible: {output}");
@@ -169,18 +195,54 @@ fn issue_224_gauge_renders_label_inside_bar() {
 fn issue_224_gauge_clamps_ratio() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        let r = ui.gauge(2.0, "");
-        assert!((r.ratio - 1.0).abs() < f32::EPSILON);
-        let r = ui.gauge(-0.5, "");
-        assert!((r.ratio - 0.0).abs() < f32::EPSILON);
+        let r = ui.gauge(2.0).show();
+        assert!((r.ratio - 1.0).abs() < f64::EPSILON);
+        let r = ui.gauge(-0.5).show();
+        assert!((r.ratio - 0.0).abs() < f64::EPSILON);
     });
+}
+
+#[test]
+fn issue_224_gauge_takes_f64_ratio() {
+    // The gauge family was widened to f64 in v0.20.0 to match animate_value,
+    // chart APIs, and progress_bar. f32 → f64 inference must Just Work.
+    let mut tb = TestBackend::new(20, 3);
+    let ratio: f64 = 1.0 / 3.0;
+    tb.render(|ui| {
+        let r = ui.gauge(ratio).show();
+        // f64 precision must be preserved through the response field.
+        assert!((r.ratio - ratio).abs() < f64::EPSILON);
+    });
+}
+
+#[test]
+fn issue_224_gauge_color_overrides_tier() {
+    // .color(...) replaces the auto-tiered color; the gauge still renders.
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        ui.gauge(0.42).label("CPU").width(20).color(Color::Cyan);
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("CPU"));
+    assert!(output.contains('█'));
+}
+
+#[test]
+fn issue_224_gauge_drop_renders_without_show() {
+    // Letting Gauge drop without .show() must still emit the bar.
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.gauge(0.5).label("D");
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains('█') || output.contains('░'));
 }
 
 #[test]
 fn issue_224_line_gauge_default_chars_render() {
     let mut tb = TestBackend::new(40, 3);
     tb.render(|ui| {
-        let _ = ui.line_gauge(0.5, LineGaugeOpts::default());
+        ui.line_gauge(0.5);
     });
     let output = tb.to_string_trimmed();
     assert!(output.contains('━'), "filled char ━ visible: {output}");
@@ -191,10 +253,47 @@ fn issue_224_line_gauge_default_chars_render() {
 fn issue_224_line_gauge_with_label_appended() {
     let mut tb = TestBackend::new(40, 3);
     tb.render(|ui| {
-        let _ = ui.line_gauge(0.6, LineGaugeOpts::default().label("60%"));
+        ui.line_gauge(0.6).label("60%");
     });
     let output = tb.to_string_trimmed();
     assert!(output.contains("60%"), "label visible: {output}");
+}
+
+#[test]
+fn issue_224_line_gauge_filled_char_override() {
+    // .filled(...) lets callers swap the bar character.
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        ui.line_gauge(0.7).width(20).filled('#').empty('.');
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains('#'), "custom filled char: {output}");
+    assert!(output.contains('.'), "custom empty char: {output}");
+}
+
+#[test]
+#[allow(deprecated)]
+fn issue_224_deprecated_gauge_w_still_works() {
+    // Deprecated shim must keep rendering identically through one minor cycle.
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        let r = ui.gauge_w(0.5, "50%", 24);
+        assert!((r.ratio - 0.5).abs() < f64::EPSILON);
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("50%"));
+}
+
+#[test]
+#[allow(deprecated)]
+fn issue_224_deprecated_line_gauge_with_still_works() {
+    use slt::LineGaugeOpts;
+    let mut tb = TestBackend::new(40, 3);
+    tb.render(|ui| {
+        let _ = ui.line_gauge_with(0.6, LineGaugeOpts::default().label("60%").width(24));
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("60%"));
 }
 
 // ── #235: scrollable gutter + highlight_next/prev ────────────────────────
@@ -249,9 +348,7 @@ fn issue_235_scrollable_with_gutter_renders_line_numbers() {
     tb.render(|ui| {
         let _: GutterResponse = ui.scrollable_with_gutter(
             &mut state,
-            lines.len(),
-            5,
-            |idx| format!("{:>3}", idx + 1),
+            GutterOpts::new(lines.len(), 5, |idx| format!("{:>3}", idx + 1)),
             |ui, abs| {
                 if let Some(s) = lines.get(abs) {
                     ui.text(s.clone());
@@ -266,17 +363,39 @@ fn issue_235_scrollable_with_gutter_renders_line_numbers() {
 }
 
 #[test]
+fn issue_235_scrollable_with_gutter_line_numbers_shortcut() {
+    // GutterOpts::line_numbers is the 90% case — no closure needed.
+    let mut tb = TestBackend::new(40, 8);
+    let mut state = ScrollState::new();
+    let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+    tb.render(|ui| {
+        let _: GutterResponse = ui.scrollable_with_gutter(
+            &mut state,
+            GutterOpts::line_numbers(lines.len(), 5),
+            |ui, abs| {
+                if let Some(s) = lines.get(abs) {
+                    ui.text(s.clone());
+                }
+            },
+        );
+    });
+    let output = tb.to_string_trimmed();
+    assert!(output.contains("line 0"));
+    // 1-based line numbers must show.
+    assert!(output.contains('1'));
+}
+
+#[test]
 fn issue_235_scrollable_with_gutter_highlight_marks_line() {
     let mut tb = TestBackend::new(40, 6);
     let mut state = ScrollState::new();
-    state.set_highlights(&[HighlightRange::line(1)]);
+    // Use HighlightRange::single (idiomatic v0.20.0 alias).
+    state.set_highlights(&[HighlightRange::single(1)]);
     let lines: Vec<String> = (0..10).map(|i| format!("L{i}")).collect();
     tb.render(|ui| {
         let r = ui.scrollable_with_gutter(
             &mut state,
-            lines.len(),
-            5,
-            |idx| format!("{}", idx + 1),
+            GutterOpts::line_numbers(lines.len(), 5),
             |ui, abs| {
                 if let Some(s) = lines.get(abs) {
                     ui.text(s.clone());
@@ -286,6 +405,12 @@ fn issue_235_scrollable_with_gutter_highlight_marks_line() {
         assert_eq!(r.total_highlights, 1);
         assert_eq!(r.current_highlight, Some(0));
     });
+}
+
+#[test]
+fn issue_235_highlight_range_single_aliases_line() {
+    // `single(i)` and `line(i)` produce identical ranges.
+    assert_eq!(HighlightRange::single(7), HighlightRange::line(7));
 }
 
 #[test]

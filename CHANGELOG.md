@@ -22,9 +22,9 @@
 - **`feat(theme)` — `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` density presets** (#227) — base spacings 1 / 2 / 3 respectively. Matches the existing `Spacing` scale (`xs` / `sm` / `md` / `lg` / `xl` / `xxl`). `compact()` is bit-identical to existing presets, preserving v0.19 visuals when adopted explicitly.
 - **`feat(theme)` — `Theme::with_spacing(spacing)`** (#227) — mutate spacing on any preset (Nord, Dracula, custom) without touching colors.
 - **`feat(widgets-display)` — `split_pane` / `vsplit_pane`** (#223) — resizable horizontal/vertical split containers driven by `SplitPaneState`. Drag the 1-cell handle (`│` / `─`) with the mouse, or focus it (Tab) and use arrow keys to grow/shrink the first pane by 5% per press. `SplitPaneResponse` exposes `ratio` and `drag_active`.
-- **`feat(widgets-display)` — `gauge` / `gauge_w` / `gauge_colored`** (#224) — block-fill progress bar with a centered inline label (e.g. `█████████ 60% ░░░░░░`). Color-tiered by default (`success` < 50%, `warning` 50–80%, `error` ≥ 80%); pass an explicit color via `gauge_colored` to disable tiering. Returns `GaugeResponse` (derefs to `Response`).
-- **`feat(widgets-display)` — `line_gauge`** (#224) — single-line gauge with configurable fill / empty characters and an optional appended label. Builder API on `LineGaugeOpts`: `.filled(ch)`, `.empty(ch)`, `.width(n)`, `.label(s)`.
-- **`feat(widgets-display)` — `scrollable_with_gutter`** (#235) — scrollable container variant rendering a per-line left gutter (line numbers, breakpoint markers, etc.) plus search-result highlight bands. Companion API on `ScrollState`: `set_highlights`, `highlight_next`, `highlight_previous`, `clear_highlights`, `current_highlight`. New `HighlightRange` type re-exported at the crate root. Returns `GutterResponse` carrying the current highlight index and total count.
+- **`feat(widgets-display)` — `gauge` (chainable builder)** (#224, builder finalized in v0.20.0 API consistency pass) — block-fill progress bar with optional centered inline label (e.g. `█████████ 60% ░░░░░░`). Chainable: `ui.gauge(ratio).label(s).width(n).color(c)`. Color-tiered by default (`success` < 50%, `warning` 50–80%, `error` ≥ 80%); `.color(c)` disables tiering. Auto-renders on `Drop`; call `.show()` for a `GaugeResponse` (derefs to `Response`). `ratio` is `f64` for parity with `animate_value`, chart APIs, and `progress_bar`.
+- **`feat(widgets-display)` — `line_gauge` (chainable builder)** (#224, builder finalized in v0.20.0 API consistency pass) — single-line gauge with configurable fill/empty characters and an optional trailing label. Chainable: `ui.line_gauge(ratio).label(s).width(n).filled(c).empty(c)`. Auto-renders on `Drop`; call `.show()` for a `GaugeResponse`. The legacy `LineGaugeOpts` struct is retained for one minor cycle as a backward-compat shim via `Context::line_gauge_with`.
+- **`feat(widgets-display)` — `scrollable_with_gutter` + `GutterOpts<G>`** (#235, signature finalized in v0.20.0 API consistency pass) — scrollable container variant rendering a per-line left gutter (line numbers, breakpoint markers, etc.) plus search-result highlight bands. The bookkeeping arguments collapse into `GutterOpts<G>`; use `GutterOpts::line_numbers(total, viewport)` for the 90% case or `GutterOpts::new(total, viewport, |i| ...)` for custom labels. Companion API on `ScrollState`: `set_highlights`, `highlight_next`, `highlight_previous`, `clear_highlights`, `current_highlight`. `HighlightRange` is re-exported at the crate root with both `HighlightRange::line(i)` and the v0.20 idiomatic `HighlightRange::single(i)` alias. Returns `GutterResponse` carrying the current highlight index and total count.
 - **`feat(lib)` — `Context::static_log(line)`** (#233) — append-only scrollback widget API. Inside the frame closure, queue lines that get committed to the terminal's history above the inline dynamic area. Drains automatically through `slt::run_static` / `slt::run_static_with`; no-op (with a `cfg(debug_assertions)` warning) on full-screen and inline runtimes that have no scrollback channel. Inspired by Ink's `<Static>`. Companion accessor `Context::take_static_log()` exposes the same buffer to custom backends and `TestBackend` callers.
 - **`feat(keymap)` — `WidgetKeyHelp` trait + `Context::publish_keymap` / `published_keymaps` / `keymap_help_overlay`** (#236) — opt-in trait for widgets to publish their `&'static [(key, description)]` shortcut list. The framework aggregates every keymap registered this frame (cleared at frame start by `run_frame_kernel`) and `keymap_help_overlay(open)` renders an automatic modal listing all bindings — wire it to `?` / `F1` for instant discoverability. Standalone `PublishedKeymap` struct exposed for downstream widgets / palettes.
 - **`feat(lib)` — `RunConfig::handle_ctrl_c(bool)`** (#238) — opt-out for the auto-Ctrl+C-quits behavior. Defaults to `true` (preserves v0.19 contract). Setting `false` delivers Ctrl+C to the frame closure as a normal `Event::Key` with `KeyModifiers::CONTROL` — matches RataTUI's raw-mode semantics so users migrating code that already handles Ctrl+C explicitly do not need to fork SLT. Threaded through `run_with`, `run_inline_with`, `run_static_with`, and `run_async_loop`. `run()` rustdoc updated to note that wrapping with `crossterm::terminal::enable_raw_mode()` / `disable_raw_mode()` is redundant — SLT enters raw mode automatically.
@@ -41,6 +41,40 @@
 - **`perf(render)` modal-aware `dim_buffer_around` replaces full-buffer scan** (#228) — for the common modal-with-margin case, `render` now calls `dim_buffer_around(modal_rect)` which walks only the four strips outside the modal instead of the full O(W×H) buffer. The legacy `dim_entire_buffer` path is retained for the zero-size-modal fallback. Visible output is unchanged (`tests/v020_perf_demo.rs::modal_dim_path_preserves_modal_content`).
 
 ### Breaking
+
+- **API consistency pass on new widgets** — `gauge` / `line_gauge` / `breadcrumb` and `scrollable_with_gutter` were unified onto a single design language so v0.20 does not ship five new widgets with five argument styles. The five mismatched signatures became three Egui-style chainable builders + one options struct. Migration:
+
+  ```rust
+  // before (v0.19.x preview)
+  ui.gauge(0.42, "CPU");                                       // 2 positional
+  ui.gauge_w(0.42, "CPU", 48);                                 // 3 positional
+  ui.gauge_colored(0.42, "CPU", 48, Color::Red);               // 4 positional
+  ui.line_gauge(0.42, LineGaugeOpts::default().width(48).label("CPU"));
+  ui.breadcrumb_sep(&["Home", "src"], " > ");
+  ui.scrollable_with_gutter(
+      &mut scroll, total, viewport, |i| line_label(i), |ui, i| { ... }
+  );
+
+  // after (v0.20.0)
+  ui.gauge(0.42).label("CPU");
+  ui.gauge(0.42).label("CPU").width(48);
+  ui.gauge(0.42).label("CPU").width(48).color(Color::Red);
+  ui.line_gauge(0.42).label("CPU").width(48);
+  ui.breadcrumb(&["Home", "src"]).separator(" > ");
+  ui.scrollable_with_gutter(
+      &mut scroll,
+      GutterOpts::line_numbers(total, viewport),    // 90% case shortcut
+      |ui, i| { ... },
+  );
+  ```
+
+  The new builders auto-render on `Drop` so a bare `ui.gauge(0.5).label("CPU");` is the idiomatic form when the response isn't needed; call `.show()` to capture a `GaugeResponse` / `BreadcrumbResponse`. Deprecated shims for `gauge_w`, `gauge_colored`, `breadcrumb_sep`, and a new `line_gauge_with(opts)` shim remain for one minor cycle (`#[deprecated]` warns at compile time, removed in v0.21.0). `LineGaugeOpts` stays public during the deprecation window so existing v0.19 preview callers keep building.
+
+- **`f32 → f64` unification on `gauge` / `line_gauge` ratio** — the ratio argument and `GaugeResponse.ratio` widened from `f32` to `f64`. This aligns the gauge family with `Context::animate_value` (`f64`), the chart APIs (`f64`), and the existing `Context::progress_bar` (`f64`); no more outliers. Most callers need no change because Rust auto-coerces float literals (`ui.gauge(0.42)` works either way). Explicit `f32` casts (`ratio as f32`) at the call site must be removed; use `f64` arithmetic throughout, or cast `as f64` once at the boundary.
+
+- **`refactor(widgets-display)` — `scrollable_with_gutter` now takes `GutterOpts<G>`** (#235 follow-up) — the four-positional signature `(state, total_lines, viewport_height, gutter_fn, body_fn)` was hard to read and easy to misorder. v0.20 collapses the bookkeeping arguments into a `GutterOpts<G>` struct: `pub fn scrollable_with_gutter(&mut self, state, opts: GutterOpts<G>, body_fn)`. The 90% case (1-based line numbers) gets a `GutterOpts::line_numbers(total, viewport)` shortcut so most callers never write the labeling closure. Use `GutterOpts::new(total, viewport, gutter_fn)` for custom labels (breakpoints, Git diff markers, fold indicators, etc.).
+
+- **`HighlightRange::single` idiomatic alias** — added as a one-line alias for `HighlightRange::line` (#235). `single` reads better at call sites that mix single-line and `span` ranges. The original `line(i)` is **not** deprecated — both compile, no migration burden. Applies to fresh v0.20 callers only.
 
 - **`refactor(style)` — `Constraints` redesign with `WidthSpec`/`HeightSpec`** (#237 — closes #207, #219). The `Constraints` struct now holds two enum-typed fields, `width: WidthSpec` and `height: HeightSpec`, instead of the v0.19 trio of `Option<u32>` / `Option<u8>` fields per axis. Builder methods (`min_w`, `max_w`, `min_h`, `max_h`, `w`, `h`, `w_pct`, `h_pct`) are preserved as ergonomic shortcuts that set the appropriate variant. New: `w_ratio(num, den)` / `h_ratio(num, den)` for exact integer-fraction sizing — `Ratio(1, 3)` produces `area / 3` (floor division; for `area = 80, num = 1, den = 3` → `26`). `size_of::<Constraints>()` drops from 36 → 24 bytes (33 % reduction); `WidthSpec` and `HeightSpec` are 12 bytes each. The `MinMax` variant uses sentinel encoding (`min = 0` means "no minimum", `max = u32::MAX` means "no maximum") so the variant fits in 12 bytes.
 
@@ -64,21 +98,23 @@
   `serde` wire format changes: persisted `Constraints` JSON from v0.19 will not deserialize into v0.20 because the field shape is different. Re-export persisted data after upgrading.
 - **`State<T>` is no longer `Copy`** (#215) — required to support the `Keyed(String)` variant of the internal `StateKey` enum. `Clone` is still derived (cheap for `Indexed` / `Named`, allocates one `String` for `Keyed`). **Migration**: if you previously relied on implicit copy semantics — for example `let s = ui.use_state(...); use_a(s); use_b(s);` — call `s.clone()` explicitly: `use_a(s.clone()); use_b(s);`. An audit of every `State<T>` use site in `src/`, `tests/`, `examples/` showed **zero** sites depended on `Copy`; existing call sites borrow or move the handle and continue to compile unchanged.
 - **`break(theme)` Spacing scale activation may shift visuals** (#227) — if you customized themes with non-default spacing (e.g., `Spacing::new(2)`), affected widgets now respect that scale. Migration: set `Theme::spacing` explicitly via `ThemeBuilder::spacing(...)` or use `Theme::with_spacing(...)` to lock down the visual you depend on. The 10 stock presets still ship `Spacing::new(1)`, so upgraders who never touched the spacing field see no change.
-- **`refactor(widgets-display)` — `breadcrumb` collapsed into a single `BreadcrumbResponse` (#213)** — replaced the four-variant API (`breadcrumb`, `breadcrumb_with`, `breadcrumb_response`, `breadcrumb_response_with`) with two methods: `breadcrumb(segments)` (default ` › ` separator) and `breadcrumb_sep(segments, separator)`. Both return `BreadcrumbResponse` carrying the row-level `Response` plus `clicked_segment: Option<usize>`. `BreadcrumbResponse` derefs to `Response`, so existing `.hovered`, `.rect`, `.focused` reads continue to compile after migration.
+- **`refactor(widgets-display)` — `breadcrumb` is now a chainable builder (#213, builder finalized in v0.20.0 API consistency pass)** — replaced the four-variant API (`breadcrumb`, `breadcrumb_with`, `breadcrumb_response`, `breadcrumb_response_with`) with a chainable builder. `ui.breadcrumb(segments)` returns a `Breadcrumb<'_>` that auto-renders on `Drop`; chain `.separator(s)` or `.color(c)` and call `.show()` to capture a `BreadcrumbResponse` (derefs to `Response`, so `.hovered`, `.rect`, `.focused` work on `r`).
 
   Migration:
   ```rust
-  // before:
+  // before (v0.19):
   let clicked = ui.breadcrumb(&segments);            // Option<usize>
   let (resp, clicked) = ui.breadcrumb_response(&segments);
   let clicked = ui.breadcrumb_with(&segments, " > ");
-  let (resp, clicked) = ui.breadcrumb_response_with(&segments, " > ");
 
-  // after:
-  let r = ui.breadcrumb(&segments);
+  // after (v0.20):
+  ui.breadcrumb(&segments);                                 // simple
+  let r = ui.breadcrumb(&segments).show();                  // capture response
   let clicked = r.clicked_segment;
-  let r = ui.breadcrumb_sep(&segments, " > ");
+  let r = ui.breadcrumb(&segments).separator(" > ").show(); // custom separator
   ```
+
+  The deprecated `breadcrumb_sep(segments, sep)` shim remains for one minor cycle.
 
 - **`refactor(widgets-input)` — `spinner` / `progress` / `progress_bar` / `progress_bar_colored` now return `Response` (#212)** — these widgets previously returned `&mut Self` (a builder-chain shim). They now return `Response` so callers can detect hover, attach tooltips, or implement click-to-set scrubbers. `toast` continues to return `&mut Self` (no meaningful single rect — purely visual overlay).
 

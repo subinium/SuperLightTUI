@@ -5,7 +5,7 @@
 //! numbers; matching lines are bolded and the current match has an accent
 //! background.
 
-use slt::{Border, Color, Context, HighlightRange, KeyCode, ScrollState};
+use slt::{Border, Color, Context, GutterOpts, HighlightRange, KeyCode, ScrollState};
 
 const SAMPLE_LOG: &[&str] = &[
     "INFO  app starting up",
@@ -76,9 +76,7 @@ fn main() -> std::io::Result<()> {
 
                 let r = ui.scrollable_with_gutter(
                     &mut state,
-                    SAMPLE_LOG.len(),
-                    12,
-                    |idx| format!("{:>3}", idx + 1),
+                    GutterOpts::new(SAMPLE_LOG.len(), 12, |idx| format!("{:>3}", idx + 1)),
                     |ui, abs| {
                         if let Some(line) = SAMPLE_LOG.get(abs) {
                             let style_color = if line.contains("ERROR") {
@@ -111,7 +109,7 @@ fn refresh_highlights(state: &mut ScrollState, query: &str) {
     if !query.is_empty() {
         for (i, line) in SAMPLE_LOG.iter().enumerate() {
             if line.contains(query) {
-                hits.push(HighlightRange::line(i));
+                hits.push(HighlightRange::single(i));
             }
         }
     }
