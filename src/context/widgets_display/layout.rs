@@ -910,11 +910,17 @@ impl Context {
     /// });
     /// # });
     /// ```
-    pub fn scrollbar(&mut self, state: &ScrollState) {
+    ///
+    /// # Returns
+    ///
+    /// Currently always returns [`Response::none()`]. The [`Response`] return
+    /// type reserves an extension point so future click-to-jump and
+    /// drag-to-scroll handling can be added without a further breaking change.
+    pub fn scrollbar(&mut self, state: &ScrollState) -> Response {
         let vh = state.viewport_height();
         let ch = state.content_height();
         if vh == 0 || ch <= vh {
-            return;
+            return Response::none();
         }
 
         let track_height = vh;
@@ -940,6 +946,8 @@ impl Context {
                 }
             }
         });
+
+        Response::none()
     }
 
     fn auto_scroll_nested(
