@@ -620,8 +620,23 @@ impl Context {
     ///
     /// Default is [`crate::DebugLayer::All`], which outlines the base tree
     /// plus any active overlays/modals. See
-    /// [`set_debug_layer`](Self::set_debug_layer) to narrow the outline to a
-    /// specific layer.
+    /// [`set_debug_layer`](Self::set_debug_layer) to narrow the outline to
+    /// a specific layer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Context, DebugLayer};
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     // Read the current layer to drive a UI badge or debug toolbar.
+    ///     match ui.debug_layer() {
+    ///         DebugLayer::All => ui.text("layer: all"),
+    ///         DebugLayer::TopMost => ui.text("layer: topmost"),
+    ///         DebugLayer::BaseOnly => ui.text("layer: base"),
+    ///     };
+    /// }).unwrap();
+    /// ```
     pub fn debug_layer(&self) -> crate::DebugLayer {
         self.debug_layer
     }
@@ -633,6 +648,30 @@ impl Context {
     /// renderer is drawing. Use [`crate::DebugLayer::TopMost`] to focus on
     /// the active modal / overlay only, or [`crate::DebugLayer::BaseOnly`]
     /// to keep the legacy behavior of skipping overlays.
+    ///
+    /// # Runtime keybinding
+    ///
+    /// At runtime, **Shift+F12** cycles through `All` → `TopMost` →
+    /// `BaseOnly` → `All`. Plain F12 still toggles the overlay on/off.
+    /// The two keys are independent: enabling the overlay does not change
+    /// the active layer, and cycling layers does not enable the overlay.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Context, DebugLayer};
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     // Toggle between viewing only the base tree and viewing all
+    ///     // layers, e.g. from a custom debug menu.
+    ///     let next = match ui.debug_layer() {
+    ///         DebugLayer::All => DebugLayer::BaseOnly,
+    ///         DebugLayer::BaseOnly => DebugLayer::TopMost,
+    ///         DebugLayer::TopMost => DebugLayer::All,
+    ///     };
+    ///     ui.set_debug_layer(next);
+    /// }).unwrap();
+    /// ```
     pub fn set_debug_layer(&mut self, layer: crate::DebugLayer) {
         self.debug_layer = layer;
     }

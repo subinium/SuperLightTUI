@@ -664,14 +664,50 @@ pub(crate) struct DiagnosticsState {
 /// the renderer is producing this frame." `TopMost` only outlines the
 /// topmost overlay (or the base if no overlay is active), and `BaseOnly`
 /// keeps the legacy pre-fix behavior of skipping overlays entirely.
+///
+/// At runtime, **Shift+F12** cycles `All → TopMost → BaseOnly → All` so a
+/// developer debugging a stacked modal can shrink the visible outlines to
+/// just the layer they care about without leaving the keyboard. Plain
+/// **F12** independently toggles the overlay on/off.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{Context, DebugLayer};
+///
+/// slt::run(|ui: &mut Context| {
+///     // Match on the current layer to drive bespoke debug UI.
+///     let label = match ui.debug_layer() {
+///         DebugLayer::All => "showing base + overlays",
+///         DebugLayer::TopMost => "showing topmost overlay only",
+///         DebugLayer::BaseOnly => "showing base layer only",
+///     };
+///     ui.text(label);
+/// })
+/// .unwrap();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DebugLayer {
-    /// Outline base + all overlays (default — matches reporter expectation).
+    /// Outline both the base tree and every active overlay/modal.
+    ///
+    /// Default. Matches the reporter expectation that F12 reflects
+    /// everything the renderer is producing this frame. Each layer family
+    /// gets its own hue so a glance distinguishes base, overlay, and modal
+    /// containers.
     #[default]
     All,
-    /// Outline only the topmost overlay, or the base if none.
+    /// Outline only the topmost overlay (or the base if no overlay is
+    /// active).
+    ///
+    /// Useful when modals or popovers stack and you only care about the
+    /// active dialog — base-tree outlines become noise underneath an open
+    /// modal.
     TopMost,
-    /// Outline only the base layer (legacy behavior).
+    /// Outline only the base layer (legacy v0.19.x behavior).
+    ///
+    /// Skips overlays and modals entirely. Use when an overlay is
+    /// confirmed correct and you want to inspect the base layout
+    /// underneath it.
     BaseOnly,
 }
 
@@ -1234,6 +1270,57 @@ fn discard_static_log(state: &mut FrameState, mode: &str) {
     }
 }
 
+/// Apply a single terminal event to `FrameState`, mutating tracked
+/// diagnostics fields (debug overlay toggle, mouse position cache,
+/// resize flag) accordingly.
+///
+/// Issue #201: handles **F12** (toggle overlay on/off) and **Shift+F12**
+/// (cycle [`DebugLayer`] across `All → TopMost → BaseOnly`). The two
+/// keybindings are independent — toggling the overlay does not change
+/// the active layer.
+///
+/// Extracted from `poll_events` so the keybinding behavior can be
+/// exercised by unit tests without standing up a real crossterm event
+/// stream.
+#[cfg(feature = "crossterm")]
+pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
+    match ev {
+        Event::Mouse(m) => {
+            state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
+        }
+        Event::FocusLost => {
+            state.layout_feedback.last_mouse_pos = None;
+        }
+        // Issue #201: Shift+F12 cycles the active `DebugLayer`. Match
+        // before the plain-F12 arm so the modifier branch wins. Plain
+        // F12 keeps its legacy on/off toggle when no modifiers are
+        // held; we explicitly require `KeyModifiers::NONE` so the two
+        // arms do not double-fire on the same press.
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if modifiers.contains(event::KeyModifiers::SHIFT) => {
+            state.diagnostics.debug_layer = match state.diagnostics.debug_layer {
+                DebugLayer::All => DebugLayer::TopMost,
+                DebugLayer::TopMost => DebugLayer::BaseOnly,
+                DebugLayer::BaseOnly => DebugLayer::All,
+            };
+        }
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if *modifiers == event::KeyModifiers::NONE => {
+            state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
+        }
+        Event::Resize(_, _) => {
+            *has_resize = true;
+        }
+        _ => {}
+    }
+}
+
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
 ///
@@ -1251,25 +1338,7 @@ fn poll_events(
     let mut has_resize = false;
 
     fn process_ev(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
-        match ev {
-            Event::Mouse(m) => {
-                state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
-            }
-            Event::FocusLost => {
-                state.layout_feedback.last_mouse_pos = None;
-            }
-            Event::Key(event::KeyEvent {
-                code: KeyCode::F(12),
-                kind: event::KeyEventKind::Press,
-                ..
-            }) => {
-                state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
-            }
-            Event::Resize(_, _) => {
-                *has_resize = true;
-            }
-            _ => {}
-        }
+        process_run_loop_event(ev, state, has_resize);
     }
 
     if crossterm::event::poll(tick_rate)? {
@@ -1695,5 +1764,94 @@ fn sleep_for_fps_cap(max_fps: Option<u32>, render_elapsed: Duration) {
         if render_elapsed < target {
             std::thread::sleep(target - render_elapsed);
         }
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod run_loop_tests {
+    //! Issue #201 regression tests for the run-loop F12 / Shift+F12
+    //! keybinding handler. Exercises [`process_run_loop_event`] directly
+    //! so we don't need a real crossterm event source.
+    use super::*;
+
+    fn key(modifiers: event::KeyModifiers) -> Event {
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        })
+    }
+
+    #[test]
+    fn plain_f12_toggles_debug_mode() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        assert!(!state.diagnostics.debug_mode);
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(state.diagnostics.debug_mode);
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(!state.diagnostics.debug_mode);
+    }
+
+    #[test]
+    fn shift_f12_cycles_debug_layer_without_toggling_overlay() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        // Default layer is `All`; debug overlay starts off.
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::All);
+        assert!(!state.diagnostics.debug_mode);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::TopMost);
+        // Cycling does not flip the on/off state.
+        assert!(!state.diagnostics.debug_mode);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::BaseOnly);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::All);
+    }
+
+    #[test]
+    fn shift_f12_does_not_also_toggle_overlay() {
+        // Regression for the modifier disambiguation: pre-fix, the F12
+        // arm matched `..` modifiers so Shift+F12 would both cycle the
+        // layer AND toggle the overlay on the same press.
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        let before = state.diagnostics.debug_mode;
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(
+            state.diagnostics.debug_mode, before,
+            "Shift+F12 must not flip the on/off toggle"
+        );
+    }
+
+    #[test]
+    fn plain_f12_does_not_cycle_layer() {
+        // Symmetric guard: pressing plain F12 must not change the active
+        // layer, only the on/off flag.
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        let before = state.diagnostics.debug_layer;
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert_eq!(state.diagnostics.debug_layer, before);
     }
 }
