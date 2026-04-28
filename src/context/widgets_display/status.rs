@@ -69,6 +69,7 @@ impl Context {
         let mut is_yes = *result;
         let mut clicked = false;
 
+        // 1) Keyboard hit-test runs first so it can mutate `is_yes`.
         if focused {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
@@ -101,6 +102,42 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
+        // 2) Mouse hit-test runs *before* style computation and rendering so
+        // the visual feedback for `[Yes]` / `[No]` reflects the click in the
+        // same frame the click happened. Predict the row's interaction id
+        // (the next slot the row will allocate) and look up the previous
+        // frame's rect from `prev_hit_map`. On the first frame the row has
+        // no entry yet, so we fall back to assuming the row starts at (0,0)
+        // — same behaviour as the prior implementation.
+        let q_width = UnicodeWidthStr::width(question) as u32;
+        if !clicked {
+            if let Some((mx, my)) = self.click_pos {
+                let next_id = self.rollback.interaction_count;
+                let prev_rect = self.prev_hit_map.get(next_id).copied();
+                let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
+                let in_row_y = match prev_rect {
+                    Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
+                    _ => true,
+                };
+                if in_row_y {
+                    let yes_start = row_x + q_width + 1;
+                    let yes_end = yes_start + 5;
+                    let no_start = yes_end + 1;
+                    let no_end = no_start + 4; // "[No]" = 4 display columns
+                    if mx >= yes_start && mx < yes_end {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
+                    } else if mx >= no_start && mx < no_end {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
+                    }
+                }
+            }
+        }
+
+        // 3) Style computation reads the now-mutated `is_yes`.
         let yes_style = if is_yes {
             if focused {
                 Style::new().fg(self.theme.bg).bg(self.theme.success).bold()
@@ -120,7 +157,7 @@ impl Context {
             Style::new().fg(self.theme.text_dim)
         };
 
-        let q_width = UnicodeWidthStr::width(question) as u32;
+        // 4) Render with the post-hit-test styles.
         let mut response = self.row(|ui| {
             ui.text(question);
             ui.text(" ");
@@ -129,40 +166,9 @@ impl Context {
             ui.styled("[No]", no_style);
         });
 
-        if !clicked {
-            if let Some((mx, my)) = self.click_pos {
-                // Hit-test against the row's recorded rect when available.
-                // On the first frame the row has no entry in `prev_hit_map`
-                // yet, so `response.rect` is the zero rect. In that case we
-                // fall back to assuming the row starts at (0, 0): callers
-                // testing confirm() on the first frame still get correct
-                // x-axis hit-testing because the column layout begins at
-                // x=0 by default.
-                let row_x = response.rect.x;
-                let in_row_y = response.rect.height == 0
-                    || (my >= response.rect.y && my < response.rect.bottom());
-                if in_row_y {
-                    let yes_start = row_x + q_width + 1;
-                    let yes_end = yes_start + 5;
-                    let no_start = yes_end + 1;
-                    let no_end = no_start + 4; // "[No]" = 4 display columns
-                    if mx >= yes_start && mx < yes_end {
-                        is_yes = true;
-                        *result = true;
-                        clicked = true;
-                    } else if mx >= no_start && mx < no_end {
-                        is_yes = false;
-                        *result = false;
-                        clicked = true;
-                    }
-                }
-            }
-        }
-
         response.focused = focused;
         response.clicked = clicked;
         response.changed = clicked;
-        let _ = is_yes;
         response
     }
 
