@@ -738,6 +738,17 @@ pub(crate) fn wrap_segments(
     let mut cur_off: usize = 0;
     advance_past_empty(segments, &mut cur_seg, &mut cur_off);
 
+    // Issue #157: hoist the per-line scratch out of the outer loop so the
+    // capacity hint is paid once per call instead of once per output line.
+    // Each completed line is moved into `lines` via `mem::replace`, leaving
+    // `line_segs` as a fresh `Vec::with_capacity(scratch_hint)` — the hint is
+    // re-applied so the first push on the next line still skips the
+    // grow-from-zero path. Most lines hold a small handful of style runs, so
+    // the 16-cap clamp keeps over-allocation bounded when the input has a
+    // long segment list that wraps into many short lines.
+    let scratch_hint = segments.len().min(16);
+    let mut line_segs: Vec<(String, Style)> = Vec::with_capacity(scratch_hint);
+
     while cur_seg < segments.len() {
         // For non-first lines, skip any leading spaces (matching the original).
         if !lines.is_empty() {
@@ -762,11 +773,12 @@ pub(crate) fn wrap_segments(
             }
         }
 
-        // Capacity hint: most lines hold a small handful of style runs, so
-        // pre-size the scratch buffer to avoid the early Vec growth churn.
-        // The 16-cap clamp keeps over-allocation bounded when the input has
-        // a long segment list that wraps into many short lines (issue #157).
-        let mut line_segs: Vec<(String, Style)> = Vec::with_capacity(segments.len().min(16));
+        // `line_segs` is reused across iterations: at this point it is either
+        // the fresh `Vec::with_capacity(scratch_hint)` allocated above (first
+        // iteration) or the empty buffer left behind by the previous
+        // iteration's `mem::replace`. Either way, len == 0 and the capacity
+        // hint matches the issue #157 contract.
+        debug_assert!(line_segs.is_empty());
         let mut line_width: u32 = 0;
         // Snapshot of the most recent space boundary on the current line:
         // (line_segs.len(), last seg's byte-length, line_width, space_seg_idx, space_byte_off).
@@ -862,7 +874,12 @@ pub(crate) fn wrap_segments(
             }
         }
 
-        lines.push(line_segs);
+        // Move the finished line into `lines`. `mem::replace` hands `lines` a
+        // ready-to-own `Vec` (no clone, no per-element copy) and leaves
+        // `line_segs` empty with the capacity hint applied for the next
+        // iteration's first push (issue #157).
+        let line = std::mem::replace(&mut line_segs, Vec::with_capacity(scratch_hint));
+        lines.push(line);
     }
 
     if lines.is_empty() {
