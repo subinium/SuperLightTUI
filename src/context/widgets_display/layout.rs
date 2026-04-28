@@ -441,16 +441,66 @@ impl Context {
     /// # });
     /// ```
     pub fn modal(&mut self, f: impl FnOnce(&mut Context)) -> Response {
+        // Default `modal()` preserves legacy behavior (tab_trap = false).
+        // `modal_with(ModalOptions::default(), ...)` opts into the WCAG 2.1
+        // SC 2.4.3 focus-trap default. This split keeps existing callers
+        // bit-identical until they migrate.
+        self.modal_with(ModalOptions { tab_trap: false }, f)
+    }
+
+    /// Render content in a modal overlay with configurable options.
+    ///
+    /// Like [`modal`](Self::modal), but accepts a [`ModalOptions`] struct.
+    /// Use this to opt into focus trapping (`tab_trap: true`) or future
+    /// modal flags without breaking the bare `modal()` API.
+    ///
+    /// When `opts.tab_trap` is `true`, focus cannot escape the modal's
+    /// focusable range — Tab/Shift+Tab keep cycling within the modal even
+    /// if [`Context::set_focus_index`] or a mouse click moved focus to a
+    /// background widget. WCAG 2.1 SC 2.4.3 (Focus Order) recommends
+    /// trapping focus inside modal dialogs.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let mut show = true;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// if show {
+    ///     ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
+    ///         ui.text("Are you sure?");
+    ///         if ui.button("OK").clicked { show = false; }
+    ///     });
+    /// }
+    /// # });
+    /// ```
+    pub fn modal_with(&mut self, opts: ModalOptions, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
         self.commands.push(Command::BeginOverlay { modal: true });
         self.rollback.overlay_depth += 1;
         self.rollback.modal_active = true;
-        self.rollback.modal_focus_start = self.rollback.focus_count;
+        let modal_focus_start = self.rollback.focus_count;
+        self.rollback.modal_focus_start = modal_focus_start;
+
         f(self);
-        self.rollback.modal_focus_count = self
-            .rollback
-            .focus_count
-            .saturating_sub(self.rollback.modal_focus_start);
+        let modal_focus_count = self.rollback.focus_count.saturating_sub(modal_focus_start);
+        self.rollback.modal_focus_count = modal_focus_count;
+
+        // Tab trap: when enabled, ensure `focus_index` lies in this frame's
+        // modal range `[start, start + count)`. If `set_focus_index` from a
+        // previous frame (or a stale state) left focus pointing at a
+        // background widget, clamp it to the first modal focusable so the
+        // next [`process_focus_keys`] tick cycles cleanly within the modal.
+        //
+        // WCAG 2.1 SC 2.4.3 (Focus Order) requirement: the user must not be
+        // able to navigate to content outside an active modal dialog.
+        if opts.tab_trap && modal_focus_count > 0 {
+            let lo = modal_focus_start;
+            let hi = lo.saturating_add(modal_focus_count);
+            if self.focus_index < lo || self.focus_index >= hi {
+                self.focus_index = lo;
+            }
+        }
+
         self.rollback.overlay_depth = self.rollback.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.rollback.last_text_idx = None;
@@ -658,6 +708,7 @@ impl Context {
             };
 
             let lines = tooltip.lines;
+            let pad = self.theme.spacing.xs();
             let _ = self.overlay(|ui| {
                 let _ = ui.container().w(area_w).h(area_h).col(|ui| {
                     let _ = ui
@@ -668,7 +719,7 @@ impl Context {
                         .border(Border::Rounded)
                         .border_fg(border_color)
                         .bg(surface)
-                        .p(1)
+                        .p(pad)
                         .col(|ui| {
                             for line in &lines {
                                 ui.text(line.as_str()).fg(text_color);
@@ -744,6 +795,7 @@ impl Context {
             title: None,
             grow: 0,
             scroll_offset: None,
+            theme_override: None,
         }
     }
 

@@ -319,18 +319,20 @@ impl Context {
 
         let _ = self.modal(|ui| {
             let primary = ui.theme.primary;
+            let palette_pad = ui.theme.spacing.xs();
+            let palette_input_padx = ui.theme.spacing.xs();
             let _ = ui
                 .container()
                 .border(Border::Rounded)
                 .border_style(Style::new().fg(primary))
-                .p(1)
+                .p(palette_pad)
                 .max_w(60)
                 .col(|ui| {
                     let border_color = ui.theme.primary;
                     let _ = ui
                         .bordered(Border::Rounded)
                         .border_style(Style::new().fg(border_color))
-                        .px(1)
+                        .px(palette_input_padx)
                         .col(|ui| {
                             let display = if state.input.is_empty() {
                                 "Type to search...".to_string()
@@ -442,9 +444,10 @@ impl Context {
                     in_code_block = false;
                     let code_content = code_block_lines.join("\n");
                     let theme = self.theme;
+                    let code_pad = theme.spacing.xs();
                     let highlighted: Option<Vec<Vec<(String, Style)>>> =
                         crate::syntax::highlight_code(&code_content, &code_block_lang, &theme);
-                    let _ = self.container().bg(theme.surface).p(1).col(|ui| {
+                    let _ = self.container().bg(theme.surface).p(code_pad).col(|ui| {
                         if let Some(ref hl_lines) = highlighted {
                             for segs in hl_lines {
                                 if segs.is_empty() {

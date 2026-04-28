@@ -12,10 +12,11 @@ impl Context {
         }
 
         self.skip_interaction_slot();
+        let help_gap = self.theme.spacing.sm();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 2,
+                gap: help_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -55,10 +56,11 @@ impl Context {
         }
 
         self.skip_interaction_slot();
+        let help_gap = self.theme.spacing.sm();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 2,
+                gap: help_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

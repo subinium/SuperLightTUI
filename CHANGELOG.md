@@ -17,6 +17,14 @@
 - **`feat(anim)` — `Context::animate_bool` / `animate_value` shorthand** (#210) — Zero-boilerplate implicit animation keyed by `&'static str`, stored in `named_states`. `animate_bool(id, value) -> f64` returns 0.0..=1.0 over `DEFAULT_ANIMATE_TICKS` (12 ticks ≈ 200 ms @ 60 Hz). `animate_value(id, target, duration) -> f64` retargets smoothly from the current interpolated value; `duration_ticks == 0` snaps. First call snaps to target with no visible pop.
 - **`feat(container)` — `ContainerBuilder::fill()` shorthand** (#220) — Self-documenting alias for `.grow(1)` (CSS `flex: 1`, ratatui `Constraint::Fill(1)`). One-liner that improves readability of the most common flex case without changing semantics.
 - **`feat(rect)` — `Rect::center_in` / `center_horizontally_in` / `center_vertically_in`** (#221) — Position a sized rect centered inside a parent (the inverse of `Rect::centered`). Matches ratatui v0.30. Clamps to parent extent on oversize. `const fn` — usable in static contexts.
+- **`feat(modal)` — `ModalOptions` + `Context::modal_with`** (#225) — opt-in WCAG 2.1 SC 2.4.3 (Focus Order) compliance. `ModalOptions { tab_trap: true }` prevents focus escape when programmatic `set_focus_index` or a stray click lands focus outside the modal range. `ModalOptions::default()` enables `tab_trap`. Plain `Context::modal(...)` keeps the legacy non-trapping behavior unchanged for backward compatibility.
+- **`feat(theme)` — `ContainerBuilder::theme(theme)`** (#226) — per-subtree theme override. Swaps `ctx.theme` (and `dark_mode` flag) for the duration of the closure body, restoring on exit — including on panic. Nested `.theme(...)` calls compose correctly: outer theme resumes once the inner scope closes. Independent of `provide` / `use_context` (general-purpose context injection); this method directly mutates the active theme so every built-in widget (which reads `self.theme`) picks up the change without opt-in.
+- **`feat(theme)` — `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` density presets** (#227) — base spacings 1 / 2 / 3 respectively. Matches the existing `Spacing` scale (`xs` / `sm` / `md` / `lg` / `xl` / `xxl`). `compact()` is bit-identical to existing presets, preserving v0.19 visuals when adopted explicitly.
+- **`feat(theme)` — `Theme::with_spacing(spacing)`** (#227) — mutate spacing on any preset (Nord, Dracula, custom) without touching colors.
+
+### Changed
+
+- **`change(theme)` Built-in widgets now derive padding/gap from `theme.spacing`** (#227) — code_block, code_block_numbered, accordion, tooltip, help, help_colored, tabs, checkbox, toggle, select trigger, calendar header, text_input, suggestion box, command palette, markdown code blocks. Default theme spacing is unchanged (`Spacing::new(1)`), so every preset produces v0.19-identical output by default. To get larger paddings, use `Theme::comfortable()`/`Theme::spacious()` or set `theme.spacing` explicitly via `ThemeBuilder::spacing(...)`.
 
 ### Performance
 
@@ -48,6 +56,7 @@
 
   `serde` wire format changes: persisted `Constraints` JSON from v0.19 will not deserialize into v0.20 because the field shape is different. Re-export persisted data after upgrading.
 - **`State<T>` is no longer `Copy`** (#215) — required to support the `Keyed(String)` variant of the internal `StateKey` enum. `Clone` is still derived (cheap for `Indexed` / `Named`, allocates one `String` for `Keyed`). **Migration**: if you previously relied on implicit copy semantics — for example `let s = ui.use_state(...); use_a(s); use_b(s);` — call `s.clone()` explicitly: `use_a(s.clone()); use_b(s);`. An audit of every `State<T>` use site in `src/`, `tests/`, `examples/` showed **zero** sites depended on `Copy`; existing call sites borrow or move the handle and continue to compile unchanged.
+- **`break(theme)` Spacing scale activation may shift visuals** (#227) — if you customized themes with non-default spacing (e.g., `Spacing::new(2)`), affected widgets now respect that scale. Migration: set `Theme::spacing` explicitly via `ThemeBuilder::spacing(...)` or use `Theme::with_spacing(...)` to lock down the visual you depend on. The 10 stock presets still ship `Spacing::new(1)`, so upgraders who never touched the spacing field see no change.
 
 ## [0.19.3] — 2026-04-27
 
