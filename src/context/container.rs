@@ -1,5 +1,42 @@
 use super::*;
 
+/// Options for [`Context::modal_with`].
+///
+/// Controls focus behavior when a modal overlay is active.
+///
+/// # Example
+///
+/// ```no_run
+/// # let mut show = true;
+/// # slt::run(|ui: &mut slt::Context| {
+/// if show {
+///     ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
+///         ui.text("Are you sure?");
+///         if ui.button("OK").clicked { show = false; }
+///     });
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ModalOptions {
+    /// When `true`, Tab/Shift+Tab navigation cannot leave the modal's focus
+    /// range, even if [`Context::set_focus_index`] or a mouse click moved
+    /// focus outside.
+    ///
+    /// Default: `true` — aligned with WCAG 2.1 SC 2.4.3 (Focus Order),
+    /// which recommends trapping focus inside modal dialogs.
+    ///
+    /// Set to `false` to preserve the legacy behavior where focus could
+    /// escape via programmatic means.
+    pub tab_trap: bool,
+}
+
+impl Default for ModalOptions {
+    fn default() -> Self {
+        Self { tab_trap: true }
+    }
+}
+
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
 /// Obtain one via [`Context::container`] or [`Context::bordered`]. Chain the
@@ -45,6 +82,7 @@ pub struct ContainerBuilder<'a> {
     pub(crate) title: Option<(String, Style)>,
     pub(crate) grow: u16,
     pub(crate) scroll_offset: Option<u32>,
+    pub(crate) theme_override: Option<Theme>,
 }
 
 /// Drawing context for the [`Context::canvas`] widget.
@@ -1250,6 +1288,42 @@ impl<'a> ContainerBuilder<'a> {
         }
     }
 
+    /// Override the active theme for all widgets rendered inside this container.
+    ///
+    /// The override is scoped to the container body (the closure passed to
+    /// `.col()`, `.row()`, or `.line()`). The parent theme is restored when
+    /// the container closes — including on panic.
+    ///
+    /// All built-in widgets read `ctx.theme` directly for color decisions,
+    /// so this swap propagates through every nested widget without requiring
+    /// them to opt in. Nested `.theme(...)` calls correctly nest: the
+    /// innermost theme wins inside its own subtree, and the outer theme
+    /// resumes once it closes.
+    ///
+    /// Independent of [`Context::provide`] / [`Context::use_context`] —
+    /// this directly mutates the active theme used by SLT-owned widgets,
+    /// while `provide`/`use_context` is the general-purpose context
+    /// injection mechanism for user code.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Border, Theme};
+    /// ui.container()
+    ///     .theme(Theme::light())
+    ///     .border(Border::Rounded)
+    ///     .col(|ui| {
+    ///         ui.text("This subtree renders with the light theme");
+    ///         ui.button("Click me"); // also uses light theme colors
+    ///     });
+    /// # });
+    /// ```
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme_override = Some(theme);
+        self
+    }
+
     /// Apply `f` unconditionally. Useful for factoring out a block of builder
     /// modifier calls while keeping the fluent chain intact.
     ///
@@ -1522,10 +1596,31 @@ impl<'a> ContainerBuilder<'a> {
                 })));
         }
         self.ctx.rollback.text_color_stack.push(self.text_color);
-        f(self.ctx);
+        // Swap active theme if a per-subtree override was requested.
+        // The previous theme is restored after `f` returns — including on
+        // panic, so no widget ever sees a leaked override theme.
+        let theme_save = self.theme_override.map(|t| {
+            let prev = self.ctx.theme;
+            self.ctx.theme = t;
+            // Also keep dark_mode flag in sync so `dark_*` style variants
+            // resolve to the new theme's brightness, not the stale flag.
+            self.ctx.rollback.dark_mode = t.is_dark;
+            (prev, prev.is_dark)
+        });
+        // catch_unwind guards the restore path against panics inside `f`.
+        // The overlay/group bookkeeping that follows assumes `theme` reflects
+        // the parent scope, so we must restore before propagating the panic.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self.ctx)));
+        if let Some((prev, prev_dark)) = theme_save {
+            self.ctx.theme = prev;
+            self.ctx.rollback.dark_mode = prev_dark;
+        }
         self.ctx.rollback.text_color_stack.pop();
         self.ctx.commands.push(Command::EndContainer);
         self.ctx.rollback.last_text_idx = None;
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
 
         if is_group_container {
             self.ctx.rollback.group_stack.pop();

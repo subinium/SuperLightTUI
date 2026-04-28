@@ -256,7 +256,8 @@ impl Context {
         }
 
         if *open {
-            let _ = self.container().pl(2).col(f);
+            let indent = self.theme.spacing.sm();
+            let _ = self.container().pl(indent).col(f);
         }
 
         response.focused = focused;
@@ -433,12 +434,13 @@ impl Context {
     /// Render a code block with language-aware syntax highlighting.
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
         let theme = self.theme;
+        let pad = theme.spacing.xs();
         let highlighted: Option<Vec<Vec<(String, Style)>>> =
             crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .p(1)
+            .p(pad)
             .col(|ui| {
                 if let Some(ref lines) = highlighted {
                     render_tree_sitter_lines(ui, lines);
@@ -462,12 +464,13 @@ impl Context {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
         let theme = self.theme;
+        let pad = theme.spacing.xs();
         let highlighted: Option<Vec<Vec<(String, Style)>>> =
             crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .p(1)
+            .p(pad)
             .col(|ui| {
                 if let Some(ref hl_lines) = highlighted {
                     for (i, segs) in hl_lines.iter().enumerate() {

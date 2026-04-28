@@ -283,10 +283,11 @@ impl Context {
             colors.border.unwrap_or(self.theme.border)
         };
 
+        let input_padx = self.theme.spacing.xs();
         let mut response = self
             .bordered(Border::Rounded)
             .border_style(Style::new().fg(border_color))
-            .px(1)
+            .px(input_padx)
             .col(|ui| {
                 ui.styled_with_cursor(input_text, input_style, cursor_offset);
             });
@@ -322,10 +323,11 @@ impl Context {
             let start = state.suggestion_index.saturating_sub(4);
             let end = (start + 5).min(matched_suggestions.len());
             let suggestion_border = colors.border.unwrap_or(self.theme.border);
+            let suggestion_padx = self.theme.spacing.xs();
             let _ = self
                 .bordered(Border::Rounded)
                 .border_style(Style::new().fg(suggestion_border))
-                .px(1)
+                .px(suggestion_padx)
                 .col(|ui| {
                     for (idx, suggestion) in matched_suggestions[start..end].iter().enumerate() {
                         let actual_idx = start + idx;

@@ -461,10 +461,11 @@ impl Context {
                 group_name: None,
             })));
 
+        let cal_gap = self.theme.spacing.xs();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 1,
+                gap: cal_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

@@ -339,10 +339,11 @@ impl Context {
             self.consume_indices(consumed);
         }
 
+        let tabs_gap = self.theme.spacing.xs();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 1,
+                gap: tabs_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -602,10 +603,11 @@ impl Context {
         } else {
             None
         };
+        let cb_gap = self.theme.spacing.xs();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 1,
+                gap: cb_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -684,10 +686,11 @@ impl Context {
         } else {
             None
         };
+        let toggle_gap = self.theme.spacing.sm();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 2,
+                gap: toggle_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -855,10 +858,12 @@ impl Context {
         border_color: Color,
         colors: &WidgetColors,
     ) {
+        let trig_gap = self.theme.spacing.xs();
+        let trig_h = self.theme.spacing.xs();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 1,
+                gap: trig_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -867,8 +872,8 @@ impl Context {
                 border_style: Style::new().fg(border_color),
                 bg_color: None,
                 padding: Padding {
-                    left: 1,
-                    right: 1,
+                    left: trig_h,
+                    right: trig_h,
                     top: 0,
                     bottom: 0,
                 },
