@@ -980,6 +980,15 @@ impl Context {
                     mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
                 })
                 .unwrap_or(false);
+            // Issue #208: right-click hit-test uses the same rect as the
+            // existing left-click logic. Keeps modal suppression (the early
+            // return above) consistent for both buttons.
+            let right_clicked = self
+                .right_click_pos
+                .map(|(mx, my)| {
+                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
+                })
+                .unwrap_or(false);
             let hovered = self
                 .mouse_pos
                 .map(|(mx, my)| {
@@ -988,9 +997,12 @@ impl Context {
                 .unwrap_or(false);
             Response {
                 clicked,
+                right_clicked,
                 hovered,
                 changed: false,
                 focused: false,
+                gained_focus: false,
+                lost_focus: false,
                 rect: *rect,
             }
         } else {

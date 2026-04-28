@@ -552,6 +552,17 @@ pub(crate) struct FocusState {
     pub prev_modal_active: bool,
     pub prev_modal_focus_start: usize,
     pub prev_modal_focus_count: usize,
+    /// Issue #208: focus index at the end of the previous frame. `None` on
+    /// the first frame so widgets do not falsely report `gained_focus`.
+    pub prev_focus_index: Option<usize>,
+    /// Issue #217: persisted `name → focus_index` map from the most recent
+    /// completed frame. Used at frame start to resolve a pending
+    /// `focus_by_name(...)` against the previous render's registrations.
+    pub focus_name_map_prev: std::collections::HashMap<String, usize>,
+    /// Issue #217: a name passed to `focus_by_name(...)` that has not yet
+    /// been resolved. Consumed once the matching registration is found in
+    /// `focus_name_map_prev`.
+    pub pending_focus_name: Option<String>,
 }
 
 #[derive(Default)]
@@ -603,6 +614,10 @@ pub(crate) type FrameDeferredDrawSlot =
 pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
     pub named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
+    /// Issue #215: runtime-string-keyed parallel of `named_states`. Persisted
+    /// across frames; survives panics inside `error_boundary` (matching the
+    /// `named_states` policy).
+    pub keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1154,9 +1169,16 @@ pub(crate) fn run_frame_kernel(
     if ctx.should_quit {
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
+        state.keyed_states = ctx.keyed_states;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
+        // Issue #208 / #217: persist focus tracking state on quit so a later
+        // resumed run starts in a sensible place. (Real TUI exits before
+        // resuming, but tests reuse `FrameState` across calls.)
+        state.focus.prev_focus_index = Some(ctx.focus_index);
+        state.focus.focus_name_map_prev = ctx.focus_name_map;
+        state.focus.pending_focus_name = ctx.pending_focus_name;
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
         #[cfg(feature = "crossterm")]
@@ -1279,10 +1301,22 @@ pub(crate) fn run_frame_kernel(
     );
     state.hook_states = ctx.hook_states;
     state.named_states = ctx.named_states;
+    // Issue #215: hand the keyed-state map back to FrameState so the next
+    // frame can pick it up via `Context::new`. Mirrors the `named_states`
+    // round-trip exactly.
+    state.keyed_states = ctx.keyed_states;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
     state.diagnostics.debug_layer = ctx.debug_layer;
+    // Issue #208: remember the focus index that finished this frame so the
+    // next frame can compute `Response::gained_focus` / `lost_focus`.
+    state.focus.prev_focus_index = Some(ctx.focus_index);
+    // Issue #217: swap the freshly-built focus name map into the previous
+    // slot for next-frame resolution; carry forward any unresolved pending
+    // name (deferred until the named widget exists).
+    state.focus.focus_name_map_prev = ctx.focus_name_map;
+    state.focus.pending_focus_name = ctx.pending_focus_name;
 
     // Issue #204: reclaim the six per-frame `Vec`/`HashSet` allocations so the
     // next frame reuses the existing capacity instead of allocating fresh.
