@@ -1183,7 +1183,7 @@ fn render_v011(
             card(ui, |ui| {
                 ui.text("File Picker").bold().fg(theme.accent);
                 if ui.file_picker(file_picker).changed {
-                    if let Some(path) = file_picker.selected() {
+                    if let Some(path) = file_picker.selected_file() {
                         let name = path
                             .file_name()
                             .and_then(|s| s.to_str())

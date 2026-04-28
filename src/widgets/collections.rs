@@ -153,9 +153,40 @@ impl FilePickerState {
         self
     }
 
-    /// Return the currently selected file path.
-    pub fn selected(&self) -> Option<&PathBuf> {
+    /// Return the currently selected file path, if any.
+    ///
+    /// Disambiguates from the [`selected: usize`](Self::selected) field, which
+    /// is the entry index into [`entries`](Self::entries). This method returns
+    /// the resolved file path that the user picked via Enter — `None` until a
+    /// file (not a directory) is selected.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::FilePickerState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut state = FilePickerState::new(".");
+    /// if ui.file_picker(&mut state).changed {
+    ///     if let Some(path) = state.selected_file() {
+    ///         println!("picked: {}", path.display());
+    ///     }
+    /// }
+    /// # });
+    /// ```
+    pub fn selected_file(&self) -> Option<&PathBuf> {
         self.selected_file.as_ref()
+    }
+
+    /// Return the currently selected file path.
+    ///
+    /// Deprecated alias for [`selected_file`](Self::selected_file). The
+    /// shorter name conflicts visually with the [`selected: usize`](Self::selected)
+    /// field — a getter returning a path alongside a public field returning
+    /// an index made call sites ambiguous. Migrate to `selected_file()` for
+    /// new code; this stub stays callable until v1.0.
+    #[deprecated(since = "0.20.0", note = "use selected_file() — disambiguates from the `selected: usize` field index")]
+    pub fn selected(&self) -> Option<&PathBuf> {
+        self.selected_file()
     }
 
     /// Re-scan the current directory and rebuild entries.
