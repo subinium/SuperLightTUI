@@ -294,8 +294,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
         ui.quit();
     }
     {
-        let tw = ui.width() as u32;
-        let th = ui.height() as u32;
+        let tw = ui.width();
+        let th = ui.height();
         let grid_dim = slt::Style::new().fg(Color::Indexed(237));
 
         let _ = ui
