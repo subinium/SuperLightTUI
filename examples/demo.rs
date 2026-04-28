@@ -7,81 +7,344 @@ use slt::{
     ToastLevel, ToastState, ToolApprovalState, TreeNode, TreeState, Trend, WidgetColors,
 };
 
+/// Persistent state for the widget showcase demo.
+///
+/// All widget state and mode flags live on this struct so the runtime
+/// `main` loop can keep selections, scroll positions, form input, and
+/// theme indices stable across frames. The previous version constructed
+/// every widget state inline in `render`, which reset it every frame —
+/// that caused tab clicks to flash for a single frame and snap back to
+/// the first tab.
+pub struct DemoState {
+    // Top-level navigation / scroll
+    page_tabs: TabsState,
+    section_tabs: TabsState,
+    scroll: ScrollState,
+
+    // Core inputs / textareas
+    input: TextInputState,
+    textarea: TextareaState,
+    table_filter: TextInputState,
+    password: TextInputState,
+    list_filter_input: TextInputState,
+    ime_name: TextInputState,
+    ime_search: TextInputState,
+    ime_message: TextareaState,
+
+    // Lists / tables / trees
+    list: ListState,
+    table: TableState,
+    vlist: ListState,
+    list_with_filter: ListState,
+    tree: TreeState,
+    v13_list_a: ListState,
+    v13_list_b: ListState,
+    v132_zebra_table: TableState,
+    rich_log: RichLogState,
+    dir_tree: DirectoryTreeState,
+
+    // Selection widgets
+    select: SelectState,
+    radio: RadioState,
+    multi: MultiSelectState,
+
+    // Spinner (read-only frame state, but kept here for pattern consistency)
+    spinner: SpinnerState,
+
+    // Mode flags / counters / accumulators
+    accordion_general: bool,
+    accordion_advanced: bool,
+    alert_visible: bool,
+    progress: f64,
+    dark_mode: bool,
+    notifications: bool,
+    autosave: bool,
+    vim_mode: bool,
+    saves: u32,
+    show_modal: bool,
+    show_overlay: bool,
+    theme_idx: usize,
+    v8_dark_mode: bool,
+    v8_anim_done: bool,
+    v11_button_clicks: u32,
+    v11_volume: f64,
+    v11_brightness: f64,
+    v11_confirm_delete: bool,
+    v13_show_modal: bool,
+    v13_modal_message: String,
+    v13_palette_last: String,
+    v132_fuzzy_last: String,
+    v7_stream_tick: u64,
+
+    // Toasts / forms / palettes
+    toasts: ToastState,
+    form: FormState,
+    palette: CommandPaletteState,
+    v13_palette: CommandPaletteState,
+    v132_fuzzy_palette: CommandPaletteState,
+
+    // v0.7.0 widgets
+    v7_scroll: ScrollState,
+    v7_stream: StreamingTextState,
+    v7_tool: ToolApprovalState,
+
+    // Animation
+    v8_tween: slt::anim::Tween,
+
+    // v0.11 widgets
+    v11_autocomplete: TextInputState,
+    v11_validated: TextInputState,
+    v11_file_picker: FilePickerState,
+
+    // v0.13/v0.13.2 widgets
+    v13_debug_input: TextInputState,
+    v132_calendar: CalendarState,
+    v132_screens: ScreenState,
+
+    // v0.15.2 focus inputs
+    v152_focus_a: TextInputState,
+    v152_focus_b: TextInputState,
+    v152_search: TextInputState,
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        let mut table = TableState::new(
+            vec!["Name", "Lang", "Stars"],
+            vec![
+                vec!["SLT", "Rust", "500"],
+                vec!["Ratatui", "Rust", "12000"],
+                vec!["Bubbletea", "Go", "30000"],
+                vec!["Ink", "JS/TS", "8000"],
+                vec!["Textual", "Python", "26000"],
+                vec!["Cursive", "Rust", "4200"],
+            ],
+        );
+        table.page_size = 3;
+
+        let mut password = TextInputState::with_placeholder("Password");
+        password.masked = true;
+
+        let mut v11_autocomplete = TextInputState::with_placeholder("Try: hel / dev / rust");
+        v11_autocomplete.set_suggestions(vec![
+            "hello".to_string(),
+            "help".to_string(),
+            "helm".to_string(),
+            "developer".to_string(),
+            "device".to_string(),
+            "rust".to_string(),
+            "runner".to_string(),
+        ]);
+
+        let mut v11_validated = TextInputState::with_placeholder("username (>=3 chars, alnum)");
+        v11_validated.add_validator(|v| {
+            if v.len() >= 3 {
+                Ok(())
+            } else {
+                Err("Must be at least 3 characters".to_string())
+            }
+        });
+        v11_validated.add_validator(|v| {
+            if v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                Ok(())
+            } else {
+                Err("Only [a-zA-Z0-9_] allowed".to_string())
+            }
+        });
+
+        let mut v13_debug_input = TextInputState::with_placeholder("Type and mutate this state");
+        v13_debug_input.value = "seed".to_string();
+
+        let v13_list_a = ListState::new(vec!["Alpha", "Beta", "Gamma", "Delta"]);
+        let v13_list_b = v13_list_a.clone();
+
+        let mut v132_zebra_table = TableState::new(
+            vec!["Name", "Role", "Status"],
+            vec![
+                vec!["Alice", "Engineer", "Active"],
+                vec!["Bob", "Designer", "Away"],
+                vec!["Carol", "PM", "Active"],
+                vec!["Dave", "QA", "Busy"],
+                vec!["Eve", "DevOps", "Active"],
+            ],
+        );
+        v132_zebra_table.zebra = true;
+
+        Self {
+            page_tabs: TabsState::new(vec![
+                "Core Widgets",
+                "Data Viz",
+                "Layout",
+                "Forms",
+                "IME/CJK",
+                "Feedback",
+                "Advanced",
+                "v0.7.0",
+                "v0.8.0",
+                "v0.9.4",
+                "v0.11.0",
+                "v0.12.10",
+                "v0.13",
+                "v0.13.2",
+                "v0.14.0",
+                "v0.14.1",
+                "v0.15.2",
+            ]),
+            section_tabs: TabsState::new(vec!["Primary", "Secondary", "Accent"]),
+            scroll: ScrollState::new(),
+            input: TextInputState::with_placeholder("Type here..."),
+            textarea: TextareaState::new(),
+            table_filter: TextInputState::with_placeholder("Filter table..."),
+            password,
+            list_filter_input: TextInputState::with_placeholder("Filter list..."),
+            ime_name: TextInputState::with_placeholder("Type Korean/Japanese/Chinese..."),
+            ime_search: TextInputState::with_placeholder("Search CJK terms..."),
+            ime_message: TextareaState::new(),
+            list: ListState::new(vec!["Rust", "Go", "Python", "TypeScript", "Zig", "C++"]),
+            table,
+            vlist: ListState::new((0..100).map(|i| format!("Item {i}")).collect()),
+            list_with_filter: ListState::new(vec![
+                "Rust",
+                "Go",
+                "Python",
+                "TypeScript",
+                "JavaScript",
+                "C++",
+                "Zig",
+                "Haskell",
+            ]),
+            tree: TreeState::new(vec![
+                TreeNode::new("src").expanded().children(vec![
+                    TreeNode::new("lib.rs"),
+                    TreeNode::new("context.rs"),
+                    TreeNode::new("layout.rs"),
+                    TreeNode::new("style.rs"),
+                    TreeNode::new("widgets.rs"),
+                ]),
+                TreeNode::new("examples")
+                    .children(vec![TreeNode::new("demo.rs"), TreeNode::new("counter.rs")]),
+                TreeNode::new("tests").children(vec![
+                    TreeNode::new("widgets.rs"),
+                    TreeNode::new("snapshots.rs"),
+                ]),
+            ]),
+            v13_list_a,
+            v13_list_b,
+            v132_zebra_table,
+            rich_log: RichLogState::new(),
+            dir_tree: DirectoryTreeState::from_paths(&[
+                "src/lib.rs",
+                "src/context.rs",
+                "src/context/widgets_display.rs",
+                "src/context/widgets_interactive.rs",
+                "src/widgets.rs",
+                "Cargo.toml",
+                "README.md",
+            ]),
+            select: SelectState::new(vec!["Rounded", "Single", "Double", "Thick"]),
+            radio: RadioState::new(vec!["Dark", "Light", "System"]),
+            multi: MultiSelectState::new(vec![
+                "Vim motions",
+                "Mouse support",
+                "Clipboard",
+                "Unicode",
+                "Async",
+            ]),
+            spinner: SpinnerState::dots(),
+            accordion_general: true,
+            accordion_advanced: false,
+            alert_visible: true,
+            progress: 0.64_f64,
+            dark_mode: true,
+            notifications: true,
+            autosave: false,
+            vim_mode: false,
+            saves: 0,
+            show_modal: false,
+            show_overlay: true,
+            theme_idx: 0,
+            v8_dark_mode: false,
+            v8_anim_done: false,
+            v11_button_clicks: 0,
+            v11_volume: 35.0_f64,
+            v11_brightness: 72.0_f64,
+            v11_confirm_delete: false,
+            v13_show_modal: false,
+            v13_modal_message: String::from("No modal interaction yet"),
+            v13_palette_last: String::from("None"),
+            v132_fuzzy_last: String::from("None"),
+            v7_stream_tick: 0,
+            toasts: ToastState::new(),
+            form: FormState::new()
+                .field(FormField::new("Email").placeholder("you@example.com"))
+                .field(FormField::new("Password").placeholder("********")),
+            palette: CommandPaletteState::new(vec![
+                PaletteCommand::new("Switch Theme", "Cycle to next theme"),
+                PaletteCommand::new("Toggle Modal", "Show/hide modal dialog"),
+                PaletteCommand::new("Toggle Overlay", "Show/hide overlay"),
+                PaletteCommand::new("Quit", "Exit the application"),
+            ]),
+            v13_palette: CommandPaletteState::new(vec![
+                PaletteCommand::new("Build", "Run cargo check"),
+                PaletteCommand::new("Test", "Run cargo test"),
+                PaletteCommand::new("Format", "Run cargo fmt"),
+            ]),
+            v132_fuzzy_palette: CommandPaletteState::new(vec![
+                PaletteCommand::new("Save File", "Save the current document"),
+                PaletteCommand::new("Open Project", "Open a project folder"),
+                PaletteCommand::new("Find Replace", "Search and replace text"),
+                PaletteCommand::new("Git Commit", "Commit staged changes"),
+                PaletteCommand::new("Run Tests", "Execute test suite"),
+                PaletteCommand::new("Toggle Theme", "Switch dark/light mode"),
+            ]),
+            v7_scroll: ScrollState::new(),
+            v7_stream: StreamingTextState::new(),
+            v7_tool: ToolApprovalState::new("read_file", "Read contents of config.toml"),
+            v8_tween: slt::anim::Tween::new(0.0, 100.0, 120),
+            v11_autocomplete,
+            v11_validated,
+            v11_file_picker: FilePickerState::new(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            ),
+            v13_debug_input,
+            v132_calendar: CalendarState::new(),
+            v132_screens: ScreenState::new("main"),
+            v152_focus_a: TextInputState::with_placeholder("Input A (focusable #0)"),
+            v152_focus_b: TextInputState::with_placeholder("Input B (focusable #1)"),
+            v152_search: TextInputState::with_placeholder("Search fills remaining space..."),
+        }
+    }
+}
+
 fn main() -> std::io::Result<()> {
+    let mut state = DemoState::default();
     slt::run_with(
         RunConfig::default().mouse(true).kitty_keyboard(true),
-        render,
+        move |ui| render(ui, &mut state),
     )
 }
 
 /// Render one frame of the widget showcase demo.
 ///
-/// All widget state is constructed inside this function so it can be
-/// driven by both the runtime event loop in `main` and by visual snapshot
-/// tests in `tests/visual_snapshots.rs` without external setup.
-///
-/// Note: because state is rebuilt on every call, the runtime example
-/// resets per-widget state (selections, scroll positions, form input)
-/// at every frame. The frame-1 snapshot test does not care, and the
-/// trade-off keeps this entry point small enough for visual coverage
-/// without a 60-field state struct. Migrate to `Context::use_state`
-/// hooks when richer interactive persistence is needed.
-#[allow(unused_assignments)]
-pub fn render(ui: &mut Context) {
-    let mut page_tabs = TabsState::new(vec![
-        "Core Widgets",
-        "Data Viz",
-        "Layout",
-        "Forms",
-        "IME/CJK",
-        "Feedback",
-        "Advanced",
-        "v0.7.0",
-        "v0.8.0",
-        "v0.9.4",
-        "v0.11.0",
-        "v0.12.10",
-        "v0.13",
-        "v0.13.2",
-        "v0.14.0",
-        "v0.14.1",
-        "v0.15.2",
-    ]);
-    let mut section_tabs = TabsState::new(vec!["Primary", "Secondary", "Accent"]);
-    let mut scroll = ScrollState::new();
-    let mut input = TextInputState::with_placeholder("Type here...");
-    let mut textarea = TextareaState::new();
-    let mut list = ListState::new(vec!["Rust", "Go", "Python", "TypeScript", "Zig", "C++"]);
-    let mut table = TableState::new(
-        vec!["Name", "Lang", "Stars"],
-        vec![
-            vec!["SLT", "Rust", "500"],
-            vec!["Ratatui", "Rust", "12000"],
-            vec!["Bubbletea", "Go", "30000"],
-            vec!["Ink", "JS/TS", "8000"],
-            vec!["Textual", "Python", "26000"],
-            vec!["Cursive", "Rust", "4200"],
-        ],
-    );
-    table.page_size = 3;
-    let mut table_filter = TextInputState::with_placeholder("Filter table...");
-    let spinner = SpinnerState::dots();
-    let mut accordion_general = true;
-    let mut accordion_advanced = false;
-    let mut alert_visible = true;
-    let mut progress = 0.64_f64;
-    let mut dark_mode = true;
-    let mut notifications = true;
-    let mut autosave = false;
-    let mut vim_mode = false;
-    let mut saves: u32 = 0;
-    let mut show_modal = false;
-    let mut show_overlay = true;
-    let mut toasts = ToastState::new();
-    let mut form = FormState::new()
-        .field(FormField::new("Email").placeholder("you@example.com"))
-        .field(FormField::new("Password").placeholder("********"));
+/// State lives on the supplied [`DemoState`] so selections, scroll
+/// positions, theme indices, and form input persist across frames.
+/// The runtime `main` loop owns one [`DemoState`] for the lifetime of
+/// the process; visual snapshot tests use [`render_snapshot`] which
+/// constructs a fresh state per frame for determinism.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    body(ui, state);
+}
 
+/// Render one frame with fresh, default state — used by visual snapshot
+/// tests in `tests/visual_snapshots.rs`. Constructs a new [`DemoState`]
+/// every call so the rendered frame is deterministic regardless of the
+/// caller's history.
+pub fn render_snapshot(ui: &mut Context) {
+    let mut state = DemoState::default();
+    body(ui, &mut state);
+}
+
+fn body(ui: &mut Context, state: &mut DemoState) {
     let themes: [fn() -> Theme; 7] = [
         Theme::dark,
         Theme::light,
@@ -100,61 +363,6 @@ pub fn render(ui: &mut Context) {
         "Solarized",
         "Tokyo Night",
     ];
-    let mut theme_idx: usize = 0;
-    let mut select = SelectState::new(vec!["Rounded", "Single", "Double", "Thick"]);
-    let mut radio = RadioState::new(vec!["Dark", "Light", "System"]);
-    let mut multi = MultiSelectState::new(vec![
-        "Vim motions",
-        "Mouse support",
-        "Clipboard",
-        "Unicode",
-        "Async",
-    ]);
-    let mut tree = TreeState::new(vec![
-        TreeNode::new("src").expanded().children(vec![
-            TreeNode::new("lib.rs"),
-            TreeNode::new("context.rs"),
-            TreeNode::new("layout.rs"),
-            TreeNode::new("style.rs"),
-            TreeNode::new("widgets.rs"),
-        ]),
-        TreeNode::new("examples")
-            .children(vec![TreeNode::new("demo.rs"), TreeNode::new("counter.rs")]),
-        TreeNode::new("tests").children(vec![
-            TreeNode::new("widgets.rs"),
-            TreeNode::new("snapshots.rs"),
-        ]),
-    ]);
-    let mut vlist = ListState::new((0..100).map(|i| format!("Item {i}")).collect());
-    let mut password = TextInputState::with_placeholder("Password");
-    password.masked = true;
-    let mut palette = CommandPaletteState::new(vec![
-        PaletteCommand::new("Switch Theme", "Cycle to next theme"),
-        PaletteCommand::new("Toggle Modal", "Show/hide modal dialog"),
-        PaletteCommand::new("Toggle Overlay", "Show/hide overlay"),
-        PaletteCommand::new("Quit", "Exit the application"),
-    ]);
-    let mut v7_scroll = ScrollState::new();
-    let mut v7_stream = StreamingTextState::new();
-    let mut v7_tool = ToolApprovalState::new("read_file", "Read contents of config.toml");
-    let mut v7_stream_tick: u64 = 0;
-    let mut list_with_filter = ListState::new(vec![
-        "Rust",
-        "Go",
-        "Python",
-        "TypeScript",
-        "JavaScript",
-        "C++",
-        "Zig",
-        "Haskell",
-    ]);
-    let mut list_filter_input = TextInputState::with_placeholder("Filter list...");
-    let mut v8_dark_mode = false;
-    let mut v8_tween = slt::anim::Tween::new(0.0, 100.0, 120);
-    let mut v8_anim_done = false;
-    let mut ime_name = TextInputState::with_placeholder("Type Korean/Japanese/Chinese...");
-    let mut ime_search = TextInputState::with_placeholder("Search CJK terms...");
-    let mut ime_message = TextareaState::new();
     let ime_items: Vec<String> = vec![
         "한글 입력 테스트",
         "日本語テスト",
@@ -169,38 +377,6 @@ pub fn render(ui: &mut Context) {
     .into_iter()
     .map(str::to_string)
     .collect();
-    let mut v11_button_clicks: u32 = 0;
-    let mut v11_volume = 35.0_f64;
-    let mut v11_brightness = 72.0_f64;
-    let mut v11_confirm_delete = false;
-    let mut v11_autocomplete = TextInputState::with_placeholder("Try: hel / dev / rust");
-    v11_autocomplete.set_suggestions(vec![
-        "hello".to_string(),
-        "help".to_string(),
-        "helm".to_string(),
-        "developer".to_string(),
-        "device".to_string(),
-        "rust".to_string(),
-        "runner".to_string(),
-    ]);
-    let mut v11_validated = TextInputState::with_placeholder("username (>=3 chars, alnum)");
-    v11_validated.add_validator(|v| {
-        if v.len() >= 3 {
-            Ok(())
-        } else {
-            Err("Must be at least 3 characters".to_string())
-        }
-    });
-    v11_validated.add_validator(|v| {
-        if v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            Ok(())
-        } else {
-            Err("Only [a-zA-Z0-9_] allowed".to_string())
-        }
-    });
-    let mut v11_file_picker = FilePickerState::new(
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-    );
     let v11_keymap = KeyMap::new()
         .bind_mod('q', KeyModifiers::CONTROL, "quit")
         .bind_code(KeyCode::Tab, "focus next")
@@ -208,53 +384,6 @@ pub fn render(ui: &mut Context) {
         .bind_code(KeyCode::Right, "slider +")
         .bind('y', "confirm yes")
         .bind('n', "confirm no");
-    let mut v13_show_modal = false;
-    let mut v13_modal_message = String::from("No modal interaction yet");
-    let mut v13_palette = CommandPaletteState::new(vec![
-        PaletteCommand::new("Build", "Run cargo check"),
-        PaletteCommand::new("Test", "Run cargo test"),
-        PaletteCommand::new("Format", "Run cargo fmt"),
-    ]);
-    let mut v13_palette_last = String::from("None");
-    let mut v13_debug_input = TextInputState::with_placeholder("Type and mutate this state");
-    v13_debug_input.value = "seed".to_string();
-    let mut v13_list_a = ListState::new(vec!["Alpha", "Beta", "Gamma", "Delta"]);
-    let mut v13_list_b = v13_list_a.clone();
-    let mut v132_zebra_table = TableState::new(
-        vec!["Name", "Role", "Status"],
-        vec![
-            vec!["Alice", "Engineer", "Active"],
-            vec!["Bob", "Designer", "Away"],
-            vec!["Carol", "PM", "Active"],
-            vec!["Dave", "QA", "Busy"],
-            vec!["Eve", "DevOps", "Active"],
-        ],
-    );
-    v132_zebra_table.zebra = true;
-    let mut v132_calendar = CalendarState::new();
-    let mut v132_screens = ScreenState::new("main");
-    let mut v132_fuzzy_palette = CommandPaletteState::new(vec![
-        PaletteCommand::new("Save File", "Save the current document"),
-        PaletteCommand::new("Open Project", "Open a project folder"),
-        PaletteCommand::new("Find Replace", "Search and replace text"),
-        PaletteCommand::new("Git Commit", "Commit staged changes"),
-        PaletteCommand::new("Run Tests", "Execute test suite"),
-        PaletteCommand::new("Toggle Theme", "Switch dark/light mode"),
-    ]);
-    let mut v132_fuzzy_last = String::from("None");
-    let mut rich_log = RichLogState::new();
-    let mut dir_tree = DirectoryTreeState::from_paths(&[
-        "src/lib.rs",
-        "src/context.rs",
-        "src/context/widgets_display.rs",
-        "src/context/widgets_interactive.rs",
-        "src/widgets.rs",
-        "Cargo.toml",
-        "README.md",
-    ]);
-    let mut v152_focus_a = TextInputState::with_placeholder("Input A (focusable #0)");
-    let mut v152_focus_b = TextInputState::with_placeholder("Input B (focusable #1)");
-    let mut v152_search = TextInputState::with_placeholder("Search fills remaining space...");
 
     {
         let tick = ui.tick();
@@ -263,37 +392,115 @@ pub fn render(ui: &mut Context) {
             ui.quit();
         }
         if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-            theme_idx = (theme_idx + 1) % themes.len();
-            toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
+            state.theme_idx = (state.theme_idx + 1) % themes.len();
+            state
+                .toasts
+                .info(format!("Theme: {}", theme_names[state.theme_idx]), tick);
         }
         if ui.key_mod('h', slt::KeyModifiers::CONTROL) {
-            progress = (progress - 0.05).max(0.0);
+            state.progress = (state.progress - 0.05).max(0.0);
         }
         if ui.key_mod('l', slt::KeyModifiers::CONTROL) {
-            progress = (progress + 0.05).min(1.0);
+            state.progress = (state.progress + 0.05).min(1.0);
         }
         if ui.key_mod('m', slt::KeyModifiers::CONTROL) {
-            show_modal = !show_modal;
+            state.show_modal = !state.show_modal;
         }
         if ui.key_mod('o', slt::KeyModifiers::CONTROL) {
-            show_overlay = !show_overlay;
+            state.show_overlay = !state.show_overlay;
         }
         if ui.key_mod('p', slt::KeyModifiers::CONTROL) {
-            palette.open = !palette.open;
+            state.palette.open = !state.palette.open;
         }
         if ui.key_mod('g', slt::KeyModifiers::CONTROL) {
-            scroll.offset = 0;
+            state.scroll.offset = 0;
         }
         for i in 1..=9u8 {
             if ui.key_mod((b'0' + i) as char, slt::KeyModifiers::CONTROL) {
-                page_tabs.selected = (i - 1) as usize;
+                state.page_tabs.selected = (i - 1) as usize;
             }
         }
 
-        ui.set_theme(themes[theme_idx]());
-        ui.set_dark_mode(v8_dark_mode);
+        ui.set_theme(themes[state.theme_idx]());
+        ui.set_dark_mode(state.v8_dark_mode);
 
         let theme = *ui.theme();
+        let theme_label = theme_names[state.theme_idx];
+
+        // Destructure `state` into per-field mutable references so the
+        // dispatch closure below can borrow disjoint fields without
+        // running into nested-closure borrow conflicts. The reborrow
+        // (`&mut *state`) keeps `state` itself usable at the end of the
+        // block once these bindings go out of scope.
+        let DemoState {
+            page_tabs,
+            section_tabs,
+            scroll,
+            input,
+            textarea,
+            table_filter,
+            password,
+            list_filter_input,
+            ime_name,
+            ime_search,
+            ime_message,
+            list,
+            table,
+            vlist,
+            list_with_filter,
+            tree,
+            v13_list_a,
+            v13_list_b,
+            v132_zebra_table,
+            rich_log,
+            dir_tree,
+            select,
+            radio,
+            multi,
+            spinner,
+            accordion_general,
+            accordion_advanced,
+            alert_visible,
+            progress,
+            dark_mode,
+            notifications,
+            autosave,
+            vim_mode,
+            saves,
+            show_modal,
+            show_overlay,
+            theme_idx,
+            v8_dark_mode,
+            v8_anim_done,
+            v11_button_clicks,
+            v11_volume,
+            v11_brightness,
+            v11_confirm_delete,
+            v13_show_modal,
+            v13_modal_message,
+            v13_palette_last,
+            v132_fuzzy_last,
+            v7_stream_tick,
+            toasts,
+            form,
+            palette,
+            v13_palette,
+            v132_fuzzy_palette,
+            v7_scroll,
+            v7_stream,
+            v7_tool,
+            v8_tween,
+            v11_autocomplete,
+            v11_validated,
+            v11_file_picker,
+            v13_debug_input,
+            v132_calendar,
+            v132_screens,
+            v152_focus_a,
+            v152_focus_b,
+            v152_search,
+        } = &mut *state;
+
         let _ = ui
             .container()
             .border(Border::Rounded)
@@ -304,112 +511,80 @@ pub fn render(ui: &mut Context) {
                     ui.text("SuperLightTUI").bold().fg(theme.primary);
                     ui.text(" widget showcase").fg(theme.text);
                     ui.spacer();
-                    ui.text(theme_names[theme_idx]).fg(theme.text_dim);
+                    ui.text(theme_label).fg(theme.text_dim);
                 });
                 ui.text("All widgets follow active theme tokens.")
                     .fg(theme.text_dim);
                 ui.separator();
 
-                render_page_tabs(ui, &mut page_tabs);
+                render_page_tabs(ui, page_tabs);
                 ui.separator();
 
                 let _ = ui
-                    .scrollable(&mut scroll)
+                    .scrollable(scroll)
                     .grow(1)
                     .col(|ui| match page_tabs.selected {
                         0 => render_core(
                             ui,
-                            &mut section_tabs,
-                            &mut input,
-                            &mut textarea,
-                            &mut dark_mode,
-                            &mut notifications,
-                            &mut autosave,
-                            &mut vim_mode,
-                            &mut saves,
+                            section_tabs,
+                            input,
+                            textarea,
+                            dark_mode,
+                            notifications,
+                            autosave,
+                            vim_mode,
+                            saves,
                         ),
                         1 => render_dataviz(ui),
-                        2 => render_layout(
-                            ui,
-                            &mut list,
-                            &mut table,
-                            &mut table_filter,
-                            &mut show_overlay,
-                        ),
-                        3 => render_forms(ui, &mut form, &mut password),
-                        4 => render_ime(
-                            ui,
-                            &mut ime_name,
-                            &mut ime_search,
-                            &mut ime_message,
-                            &ime_items,
-                        ),
-                        5 => render_feedback(ui, &spinner, progress),
-                        6 => render_advanced(
-                            ui,
-                            &mut select,
-                            &mut radio,
-                            &mut multi,
-                            &mut tree,
-                            &mut vlist,
-                        ),
-                        7 => render_v070(
-                            ui,
-                            &mut v7_scroll,
-                            &mut v7_stream,
-                            &mut v7_tool,
-                            &mut v7_stream_tick,
-                        ),
+                        2 => render_layout(ui, list, table, table_filter, show_overlay),
+                        3 => render_forms(ui, form, password),
+                        4 => render_ime(ui, ime_name, ime_search, ime_message, &ime_items),
+                        5 => render_feedback(ui, spinner, *progress),
+                        6 => render_advanced(ui, select, radio, multi, tree, vlist),
+                        7 => render_v070(ui, v7_scroll, v7_stream, v7_tool, v7_stream_tick),
                         8 => render_v080(
                             ui,
-                            &mut list_with_filter,
-                            &mut list_filter_input,
-                            &mut v8_dark_mode,
-                            &mut v8_tween,
-                            &mut v8_anim_done,
+                            list_with_filter,
+                            list_filter_input,
+                            v8_dark_mode,
+                            v8_tween,
+                            v8_anim_done,
                             tick,
                         ),
-                        9 => render_v094(
-                            ui,
-                            &mut accordion_general,
-                            &mut accordion_advanced,
-                            &mut alert_visible,
-                        ),
+                        9 => render_v094(ui, accordion_general, accordion_advanced, alert_visible),
                         10 => render_v011(
                             ui,
-                            &mut v11_button_clicks,
-                            &mut v11_volume,
-                            &mut v11_brightness,
-                            &mut v11_confirm_delete,
-                            &mut v11_autocomplete,
-                            &mut v11_validated,
-                            &mut v11_file_picker,
+                            v11_button_clicks,
+                            v11_volume,
+                            v11_brightness,
+                            v11_confirm_delete,
+                            v11_autocomplete,
+                            v11_validated,
+                            v11_file_picker,
                             &v11_keymap,
                         ),
                         11 => render_v01210(ui),
                         12 => render_v013(
                             ui,
-                            &mut v13_show_modal,
-                            &mut v13_modal_message,
-                            &mut v13_palette,
-                            &mut v13_palette_last,
-                            &mut v13_debug_input,
-                            &mut v13_list_a,
-                            &mut v13_list_b,
+                            v13_show_modal,
+                            v13_modal_message,
+                            v13_palette,
+                            v13_palette_last,
+                            v13_debug_input,
+                            v13_list_a,
+                            v13_list_b,
                         ),
                         13 => render_v0132(
                             ui,
-                            &mut v132_zebra_table,
-                            &mut v132_calendar,
-                            &mut v132_screens,
-                            &mut v132_fuzzy_palette,
-                            &mut v132_fuzzy_last,
+                            v132_zebra_table,
+                            v132_calendar,
+                            v132_screens,
+                            v132_fuzzy_palette,
+                            v132_fuzzy_last,
                         ),
-                        14 => render_v014(ui, tick, &mut rich_log, &mut dir_tree),
+                        14 => render_v014(ui, tick, rich_log, dir_tree),
                         15 => render_v0141(ui),
-                        16 => {
-                            render_v0152(ui, &mut v152_focus_a, &mut v152_focus_b, &mut v152_search)
-                        }
+                        16 => render_v0152(ui, v152_focus_a, v152_focus_b, v152_search),
                         _ => {}
                     });
 
@@ -428,7 +603,7 @@ pub fn render(ui: &mut Context) {
                 ]);
             });
 
-        if show_modal {
+        if *show_modal {
             let _ = ui.modal(|ui| {
                 let theme = *ui.theme();
                 let _ = ui
@@ -442,23 +617,23 @@ pub fn render(ui: &mut Context) {
                             .fg(theme.surface_text);
                         ui.text("Press m or click close.").fg(theme.surface_text);
                         if ui.button("Close").clicked {
-                            show_modal = false;
+                            *show_modal = false;
                         }
                     });
             });
         }
 
-        ui.toast(&mut toasts);
+        ui.toast(toasts);
 
-        let _cp = ui.command_palette(&mut palette);
+        let _cp = ui.command_palette(palette);
         if let Some(idx) = palette.last_selected {
             match idx {
                 0 => {
-                    theme_idx = (theme_idx + 1) % themes.len();
-                    toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
+                    *theme_idx = (*theme_idx + 1) % themes.len();
+                    toasts.info(format!("Theme: {}", theme_names[*theme_idx]), tick);
                 }
-                1 => show_modal = !show_modal,
-                2 => show_overlay = !show_overlay,
+                1 => *show_modal = !*show_modal,
+                2 => *show_overlay = !*show_overlay,
                 3 => ui.quit(),
                 _ => {}
             }
@@ -1008,7 +1183,7 @@ fn render_v011(
             card(ui, |ui| {
                 ui.text("File Picker").bold().fg(theme.accent);
                 if ui.file_picker(file_picker).changed {
-                    if let Some(path) = file_picker.selected() {
+                    if let Some(path) = file_picker.selected_file() {
                         let name = path
                             .file_name()
                             .and_then(|s| s.to_str())
@@ -1194,10 +1369,10 @@ fn render_feedback(ui: &mut Context, spinner: &SpinnerState, progress: f64) {
         card(ui, |ui| {
             ui.text("Progress").bold().fg(theme.primary);
             let _ = ui.row(|ui| {
-                ui.spinner(spinner);
+                let _ = ui.spinner(spinner);
                 ui.text(" Loading...").fg(theme.surface_text);
             });
-            ui.progress(progress);
+            let _ = ui.progress(progress);
             ui.text(format!("{:.0}%", progress * 100.0))
                 .fg(theme.surface_text);
         });
@@ -1285,7 +1460,7 @@ fn render_v070(
                         ui.text(format!("  Line {i}")).fg(fg);
                     }
                 });
-                ui.scrollbar(scroll);
+                let _ = ui.scrollbar(scroll);
             });
         });
 
@@ -1618,7 +1793,7 @@ fn render_v080(
     card(ui, |ui| {
         let val = v8_tween.value(tick);
         let progress = val / 100.0;
-        ui.progress(progress);
+        let _ = ui.progress(progress);
 
         let _ = ui.row_gap(1, |ui| {
             ui.text(format!("Value: {:.0}", val));
@@ -2447,7 +2622,7 @@ fn render_v094(
     }
 
     let _ = ui.divider_text("Navigation");
-    ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
 
     let _ = ui.divider_text("Dashboard");
     let _ = ui.row(|ui| {

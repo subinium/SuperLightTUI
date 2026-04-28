@@ -325,7 +325,7 @@ fn diagnostic_demo_layout() {
 fn collect_focus_rects_from_markers() {
     use Style;
 
-    let commands = vec![
+    let mut commands = vec![
         Command::FocusMarker(0),
         Command::Text {
             content: "input1".into(),
@@ -352,7 +352,7 @@ fn collect_focus_rects_from_markers() {
         },
     ];
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     let area = crate::rect::Rect::new(0, 0, 40, 10);
     compute(&mut tree, area);
 
@@ -370,7 +370,7 @@ fn collect_focus_rects_from_markers() {
 fn focus_marker_tags_container() {
     use crate::style::{Border, Style};
 
-    let commands = vec![
+    let mut commands = vec![
         Command::FocusMarker(0),
         Command::BeginContainer(Box::new(BeginContainerArgs {
             direction: Direction::Column,
@@ -403,7 +403,7 @@ fn focus_marker_tags_container() {
         Command::EndContainer,
     ];
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     let area = crate::rect::Rect::new(0, 0, 40, 10);
     compute(&mut tree, area);
 
@@ -541,7 +541,7 @@ fn group_names_share_arc_across_focus_descendants() {
         commands.push(Command::EndContainer);
     }
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     let area = crate::rect::Rect::new(0, 0, 80, (N_GROUPS * FOCUSES_PER_GROUP) as u32 + 4);
     compute(&mut tree, area);
     let mut fd = FrameData::default();
@@ -621,7 +621,7 @@ fn flexbox_row_many_children_overflow_scratch() {
     }
     commands.push(Command::EndContainer);
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     compute(&mut tree, crate::rect::Rect::new(0, 0, 200, 4));
 
     let row = &tree.children[0];
@@ -673,7 +673,7 @@ fn flexbox_column_many_children_overflow_scratch() {
     }
     commands.push(Command::EndContainer);
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     compute(&mut tree, crate::rect::Rect::new(0, 0, 20, 50));
 
     let col = &tree.children[0];
@@ -696,7 +696,7 @@ fn flexbox_grow_with_max_width_no_gap() {
     // Child 1: grow:1, no constraint → starts at x=10, rendered ~30px.
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
-    let commands = vec![
+    let mut commands = vec![
         Command::BeginContainer(Box::new(BeginContainerArgs {
             direction: Direction::Row,
             gap: 0,
@@ -739,7 +739,7 @@ fn flexbox_grow_with_max_width_no_gap() {
         Command::EndContainer,
     ];
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     compute(&mut tree, crate::rect::Rect::new(0, 0, 40, 4));
 
     let row = &tree.children[0];
@@ -772,7 +772,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
     // to grow into.
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
-    let commands = vec![
+    let mut commands = vec![
         Command::BeginContainer(Box::new(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
@@ -815,7 +815,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
         Command::EndContainer,
     ];
 
-    let mut tree = build_tree(commands);
+    let mut tree = build_tree(&mut commands);
     compute(&mut tree, crate::rect::Rect::new(0, 0, 20, 20));
 
     let col = &tree.children[0];
@@ -909,8 +909,8 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert_eq!(node.margin.right, 2);
     assert_eq!(node.margin.bottom, 3);
     assert_eq!(node.margin.left, 4);
-    assert_eq!(node.constraints.min_width, Some(7));
-    assert_eq!(node.constraints.min_height, Some(2));
+    assert_eq!(node.constraints.min_width(), Some(7));
+    assert_eq!(node.constraints.min_height(), Some(2));
     assert_eq!(node.size, (7, 2), "size must seed from constraints minima");
     assert_eq!(node.pos, (0, 0));
     assert_eq!(node.focus_id, Some(11));
@@ -1256,4 +1256,183 @@ fn f12_debug_overlay_distinguishes_layers_by_color() {
     } else {
         panic!("Modal outline must be Color::Rgb; got {modal_fg:?}");
     }
+}
+
+#[test]
+fn build_tree_drains_in_place_preserving_capacity() {
+    // Regression for issue #150: `build_tree` must drain its input Vec via
+    // `&mut Vec<Command>` rather than consume by value, so the caller can
+    // recycle the allocation across frames. Pre-fix the function took
+    // `commands: Vec<Command>` and `into_iter()`d, dropping the buffer at
+    // the end of each frame.
+    let initial_cap = 64;
+    let mut commands: Vec<Command> = Vec::with_capacity(initial_cap);
+    commands.push(Command::Text {
+        content: "hello".into(),
+        cursor_offset: None,
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap: false,
+        truncate: false,
+        margin: Default::default(),
+        constraints: Default::default(),
+    });
+    commands.push(Command::Spacer { grow: 1 });
+
+    let cap_before = commands.capacity();
+    let _tree = build_tree(&mut commands);
+
+    assert_eq!(
+        commands.len(),
+        0,
+        "build_tree must drain the Vec to len = 0"
+    );
+    assert!(
+        commands.capacity() >= cap_before,
+        "build_tree must preserve at least the prior capacity (was {cap_before}, now {})",
+        commands.capacity()
+    );
+
+    // Second pass: same Vec, more commands. Capacity that already covers
+    // the new push count must not trigger a reallocation. This is the
+    // contract the frame loop relies on for steady-state zero-alloc.
+    let cap_after_first = commands.capacity();
+    for _ in 0..cap_after_first {
+        commands.push(Command::Spacer { grow: 0 });
+    }
+    let cap_after_pushes = commands.capacity();
+    assert_eq!(
+        cap_after_first, cap_after_pushes,
+        "pushing within the prior capacity must not realloc \
+         (was {cap_after_first}, now {cap_after_pushes})"
+    );
+    let _tree2 = build_tree(&mut commands);
+    assert_eq!(commands.len(), 0, "second drain must also leave len = 0");
+}
+
+// =====================================================================
+// #161 — opt-in proportional flex-shrink
+// =====================================================================
+//
+// Three regression tests cover the spec checklist from #161:
+//
+//   (a) no shrink   — output identical to pre-#161 (overflow-by-design).
+//   (b) all shrink  — every fixed child scales by `available / fixed_total`.
+//   (c) mixed       — only flagged children scale; the rest keep their size.
+
+/// Helper: push a Column container holding a single 20-char text.
+fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
+    if shrink {
+        commands.push(Command::ShrinkMarker);
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Column,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    commands.push(Command::Text {
+        content: "x".repeat(20),
+        cursor_offset: None,
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap: false,
+        truncate: false,
+        margin: Default::default(),
+        constraints: Default::default(),
+    });
+    commands.push(Command::EndContainer);
+}
+
+fn open_row(commands: &mut Vec<Command>) {
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Row,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+}
+
+#[test]
+fn flex_shrink_default_off_preserves_overflow() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, false);
+    push_textcol_20(&mut commands, false);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(!row.children[0].shrink);
+    assert!(!row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
+#[test]
+fn flex_shrink_all_children_proportional_distribution() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, true);
+    push_textcol_20(&mut commands, true);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(row.children[0].shrink);
+    assert!(row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 15);
+    assert_eq!(row.children[1].size.0, 15);
+}
+
+#[test]
+fn flex_shrink_mixed_only_flagged_scale() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, true);
+    push_textcol_20(&mut commands, false);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(row.children[0].shrink);
+    assert!(!row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 10);
+    assert_eq!(row.children[1].size.0, 20);
 }

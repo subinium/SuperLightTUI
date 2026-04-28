@@ -1,5 +1,42 @@
 use super::*;
 
+/// Options for [`Context::modal_with`].
+///
+/// Controls focus behavior when a modal overlay is active.
+///
+/// # Example
+///
+/// ```no_run
+/// # let mut show = true;
+/// # slt::run(|ui: &mut slt::Context| {
+/// if show {
+///     ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
+///         ui.text("Are you sure?");
+///         if ui.button("OK").clicked { show = false; }
+///     });
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ModalOptions {
+    /// When `true`, Tab/Shift+Tab navigation cannot leave the modal's focus
+    /// range, even if [`Context::set_focus_index`] or a mouse click moved
+    /// focus outside.
+    ///
+    /// Default: `true` — aligned with WCAG 2.1 SC 2.4.3 (Focus Order),
+    /// which recommends trapping focus inside modal dialogs.
+    ///
+    /// Set to `false` to preserve the legacy behavior where focus could
+    /// escape via programmatic means.
+    pub tab_trap: bool,
+}
+
+impl Default for ModalOptions {
+    fn default() -> Self {
+        Self { tab_trap: true }
+    }
+}
+
 /// Fluent builder for configuring containers before calling `.col()` or `.row()`.
 ///
 /// Obtain one via [`Context::container`] or [`Context::bordered`]. Chain the
@@ -44,7 +81,14 @@ pub struct ContainerBuilder<'a> {
     pub(crate) constraints: Constraints,
     pub(crate) title: Option<(String, Style)>,
     pub(crate) grow: u16,
+    /// Opt-in flex-shrink flag. Set via [`ContainerBuilder::shrink`].
+    ///
+    /// When `true`, this container participates in proportional shrinking
+    /// if its parent row/column overflows. Default `false` keeps the
+    /// historic overflow-by-design behavior. Closes #161.
+    pub(crate) shrink_flag: bool,
     pub(crate) scroll_offset: Option<u32>,
+    pub(crate) theme_override: Option<Theme>,
 }
 
 /// Drawing context for the [`Context::canvas`] widget.
@@ -674,30 +718,28 @@ impl<'a> ContainerBuilder<'a> {
             self.text_color = Some(v);
         }
         if let Some(w) = style.w {
-            self.constraints.min_width = Some(w);
-            self.constraints.max_width = Some(w);
+            self.constraints = self.constraints.w(w);
         }
         if let Some(h) = style.h {
-            self.constraints.min_height = Some(h);
-            self.constraints.max_height = Some(h);
+            self.constraints = self.constraints.h(h);
         }
         if let Some(v) = style.min_w {
-            self.constraints.min_width = Some(v);
+            self.constraints.set_min_width(Some(v));
         }
         if let Some(v) = style.max_w {
-            self.constraints.max_width = Some(v);
+            self.constraints.set_max_width(Some(v));
         }
         if let Some(v) = style.min_h {
-            self.constraints.min_height = Some(v);
+            self.constraints.set_min_height(Some(v));
         }
         if let Some(v) = style.max_h {
-            self.constraints.max_height = Some(v);
+            self.constraints.set_max_height(Some(v));
         }
         if let Some(v) = style.w_pct {
-            self.constraints.width_pct = Some(v);
+            self.constraints.set_width_pct(Some(v));
         }
         if let Some(v) = style.h_pct {
-            self.constraints.height_pct = Some(v);
+            self.constraints.set_height_pct(Some(v));
         }
         // Resolve ThemeColor fields against the active theme (overrides literal colors)
         if let Some(tc) = style.theme_bg {
@@ -937,8 +979,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set a fixed width (sets both min and max width).
     pub fn w(mut self, value: u32) -> Self {
-        self.constraints.min_width = Some(value);
-        self.constraints.max_width = Some(value);
+        self.constraints = self.constraints.w(value);
         self
     }
 
@@ -962,8 +1003,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set a fixed height (sets both min and max height).
     pub fn h(mut self, value: u32) -> Self {
-        self.constraints.min_height = Some(value);
-        self.constraints.max_height = Some(value);
+        self.constraints = self.constraints.h(value);
         self
     }
 
@@ -980,7 +1020,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
     pub fn min_w(mut self, value: u32) -> Self {
-        self.constraints.min_width = Some(value);
+        self.constraints.set_min_width(Some(value));
         self
     }
 
@@ -997,7 +1037,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
     pub fn max_w(mut self, value: u32) -> Self {
-        self.constraints.max_width = Some(value);
+        self.constraints.set_max_width(Some(value));
         self
     }
 
@@ -1014,7 +1054,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
     pub fn min_h(mut self, value: u32) -> Self {
-        self.constraints.min_height = Some(value);
+        self.constraints.set_min_height(Some(value));
         self
     }
 
@@ -1031,7 +1071,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the maximum height constraint. Shorthand for [`max_height`](Self::max_height).
     pub fn max_h(mut self, value: u32) -> Self {
-        self.constraints.max_height = Some(value);
+        self.constraints.set_max_height(Some(value));
         self
     }
 
@@ -1072,13 +1112,13 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set width as a percentage (1-100) of the parent container.
     pub fn w_pct(mut self, pct: u8) -> Self {
-        self.constraints.width_pct = Some(pct.min(100));
+        self.constraints.set_width_pct(Some(pct.min(100)));
         self
     }
 
     /// Set height as a percentage (1-100) of the parent container.
     pub fn h_pct(mut self, pct: u8) -> Self {
-        self.constraints.height_pct = Some(pct.min(100));
+        self.constraints.set_height_pct(Some(pct.min(100)));
         self
     }
 
@@ -1131,6 +1171,72 @@ impl<'a> ContainerBuilder<'a> {
     /// Set the flex-grow factor. `1` means the container expands to fill available space.
     pub fn grow(mut self, grow: u16) -> Self {
         self.grow = grow;
+        self
+    }
+
+    /// Expand to fill remaining space on the main axis. Shorthand for
+    /// [`grow(1)`](Self::grow).
+    ///
+    /// Equivalent to CSS `flex: 1` and ratatui's `Constraint::Fill(1)`.
+    /// This is the most common case in flex layouts and reads more
+    /// naturally than `grow(1)` for new readers — the abstract "grow
+    /// factor" terminology is replaced by a self-documenting verb.
+    ///
+    /// ```ignore
+    /// ui.container().fill().col(|ui| { ... });
+    /// // identical to:
+    /// ui.container().grow(1).col(|ui| { ... });
+    /// ```
+    ///
+    /// For other weights (e.g. a 2:1 split between two siblings), use
+    /// `grow(N)` directly.
+    pub fn fill(self) -> Self {
+        self.grow(1)
+    }
+
+    /// Opt this container into proportional flex-shrink.
+    ///
+    /// Marks this container as a shrink participant. When the parent
+    /// row / column overflows (its children's combined width or height
+    /// exceeds available space), shrink-flagged children scale their
+    /// fixed sizes by `available / fixed_total` (CSS `flex-shrink`-style).
+    /// Children without `.shrink()` keep their historic
+    /// overflow-by-design size and clip naturally.
+    ///
+    /// Default for every container is `false` — opt in per child.
+    /// Equivalent to CSS `flex-shrink: 1` (vs the SLT default of `0`).
+    /// Closes #161.
+    ///
+    /// # Example
+    ///
+    /// Two siblings with combined fixed width `60` placed inside a
+    /// `40`-cell row. Without `.shrink()`, the row overflows; with
+    /// `.shrink()` on both, each scales to `40 * 30/60 = 20`:
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Without shrink — overflows the parent.
+    /// ui.row(|ui| {
+    ///     ui.container().w(30).col(|ui| { ui.text("left"); });
+    ///     ui.container().w(30).col(|ui| { ui.text("right"); });
+    /// });
+    ///
+    /// // With shrink on both — proportional fit, no clipping.
+    /// ui.row(|ui| {
+    ///     ui.container().w(30).shrink().col(|ui| { ui.text("left"); });
+    ///     ui.container().w(30).shrink().col(|ui| { ui.text("right"); });
+    /// });
+    /// # });
+    /// ```
+    ///
+    /// # Layout
+    ///
+    /// Only fixed-width children with `grow == 0` participate. Grow
+    /// children already absorb leftover space and ignore the shrink
+    /// flag. Mixing shrink and non-shrink siblings is supported — only
+    /// the flagged ones contribute to the shrink budget.
+    pub fn shrink(mut self) -> Self {
+        self.shrink_flag = true;
         self
     }
 
@@ -1250,6 +1356,42 @@ impl<'a> ContainerBuilder<'a> {
         }
     }
 
+    /// Override the active theme for all widgets rendered inside this container.
+    ///
+    /// The override is scoped to the container body (the closure passed to
+    /// `.col()`, `.row()`, or `.line()`). The parent theme is restored when
+    /// the container closes — including on panic.
+    ///
+    /// All built-in widgets read `ctx.theme` directly for color decisions,
+    /// so this swap propagates through every nested widget without requiring
+    /// them to opt in. Nested `.theme(...)` calls correctly nest: the
+    /// innermost theme wins inside its own subtree, and the outer theme
+    /// resumes once it closes.
+    ///
+    /// Independent of [`Context::provide`] / [`Context::use_context`] —
+    /// this directly mutates the active theme used by SLT-owned widgets,
+    /// while `provide`/`use_context` is the general-purpose context
+    /// injection mechanism for user code.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::{Border, Theme};
+    /// ui.container()
+    ///     .theme(Theme::light())
+    ///     .border(Border::Rounded)
+    ///     .col(|ui| {
+    ///         ui.text("This subtree renders with the light theme");
+    ///         ui.button("Click me"); // also uses light theme colors
+    ///     });
+    /// # });
+    /// ```
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme_override = Some(theme);
+        self
+    }
+
     /// Apply `f` unconditionally. Useful for factoring out a block of builder
     /// modifier calls while keeping the fluent chain intact.
     ///
@@ -1278,7 +1420,13 @@ impl<'a> ContainerBuilder<'a> {
     /// This is a crate-internal helper; external callers should use
     /// [`Context::scrollable`] together with a [`ScrollState`].
     ///
+    /// Hidden from rustdoc with `#[doc(hidden)]` so it does not appear in the
+    /// public API surface, while remaining callable for backwards compatibility
+    /// (cargo-semver-checks still tracks the symbol). Promote to `pub(crate)`
+    /// at v1.0.
+    ///
     /// [`ScrollState`]: crate::widgets::ScrollState
+    #[doc(hidden)]
     pub fn scroll_offset(mut self, offset: u32) -> Self {
         self.scroll_offset = Some(offset);
         self
@@ -1480,6 +1628,16 @@ impl<'a> ContainerBuilder<'a> {
         let group_name = self.group_name.take();
         let is_group_container = group_name.is_some();
 
+        // Opt-in flex-shrink (#161). Push a marker the layout pass picks up
+        // and applies to the next `BeginContainer` / `BeginScrollable`,
+        // mirroring the existing `FocusMarker` / `InteractionMarker` pattern.
+        // This avoids touching every `BeginContainerArgs` construction site
+        // across the widget modules — only `ContainerBuilder.shrink()`
+        // emits the marker, and `LayoutNode::shrink` defaults to `false`.
+        if self.shrink_flag {
+            self.ctx.commands.push(Command::ShrinkMarker);
+        }
+
         if let Some(scroll_offset) = self.scroll_offset {
             self.ctx
                 .commands
@@ -1522,10 +1680,31 @@ impl<'a> ContainerBuilder<'a> {
                 })));
         }
         self.ctx.rollback.text_color_stack.push(self.text_color);
-        f(self.ctx);
+        // Swap active theme if a per-subtree override was requested.
+        // The previous theme is restored after `f` returns — including on
+        // panic, so no widget ever sees a leaked override theme.
+        let theme_save = self.theme_override.map(|t| {
+            let prev = self.ctx.theme;
+            self.ctx.theme = t;
+            // Also keep dark_mode flag in sync so `dark_*` style variants
+            // resolve to the new theme's brightness, not the stale flag.
+            self.ctx.rollback.dark_mode = t.is_dark;
+            (prev, prev.is_dark)
+        });
+        // catch_unwind guards the restore path against panics inside `f`.
+        // The overlay/group bookkeeping that follows assumes `theme` reflects
+        // the parent scope, so we must restore before propagating the panic.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self.ctx)));
+        if let Some((prev, prev_dark)) = theme_save {
+            self.ctx.theme = prev;
+            self.ctx.rollback.dark_mode = prev_dark;
+        }
         self.ctx.rollback.text_color_stack.pop();
         self.ctx.commands.push(Command::EndContainer);
         self.ctx.rollback.last_text_idx = None;
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
 
         if is_group_container {
             self.ctx.rollback.group_stack.pop();
@@ -1631,10 +1810,10 @@ mod hotfix_tests {
 
     // -- #149: scroll_offset visibility (compile-time check) -----------
 
-    /// The crate-internal `scroll_offset` helper must remain callable
-    /// from inside the crate. Resolving the function path under `pub(crate)`
-    /// is a compile-time guarantee — this test compiles only when the path
-    /// is reachable.
+    /// The `scroll_offset` helper must remain callable from inside the crate.
+    /// It is `#[doc(hidden)] pub` (Option B from the issue) so it is removed
+    /// from rustdoc but still semver-tracked; this test compiles only when
+    /// the path is reachable.
     #[test]
     fn scroll_offset_is_crate_internal_api() {
         let _ = ContainerBuilder::scroll_offset;

@@ -1,6 +1,168 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.0] - 2026-04-28
+
+### Added
+
+- **`feat(test-utils)` — `TestBackend::record_frames()` + `FrameRecord` history** (#229) — Opt-in frame recorder. Every `render()` call appends a `FrameRecord { snapshot, lines }` accessible via `tb.frames()`. `FrameRecord` exposes `assert_contains`, `to_string_trimmed`, and per-row text. Disabled by default → zero allocation overhead for tests that don't need history.
+- **`feat(test-utils)` — `TestBackend::sequence()` builder + `type_string` helper** (#230) — Multi-step interaction sequences without manual `focus_index` / `prev_focus_count` threading. Methods: `.tick()`, `.key(KeyCode)`, `.type_string(&str)`, `.events(Vec<Event>)`, `.run()`. Backend-level `tb.type_string("hi", render)` fires one frame per character.
+- **`feat(buffer)` — `Buffer::snapshot_format()`** (#231) — Stable styled-snapshot string for `insta::assert_snapshot!` compatibility. Named palette colors → short codes (`red`, `light_blue`); RGB → `#rrggbb`; indexed → `idx<N>`; canonical modifier order (`bold,dim,italic,underline,reversed,strikethrough`). Format guaranteed stable across patch and minor versions; locked by `tests/snapshot_format_stability.rs`.
+- **`feat(test-utils)` — `assert_not_contains` / `assert_line_not_contains` / `assert_empty_line` / `assert_style_at`** (#232) — Negative assertion helpers on `TestBackend`. Failures show offending row indices and full row contents; `assert_style_at` reports `(x, y, expected, actual)` on style mismatch.
+- **`feat(context)` — `Response::right_clicked` / `gained_focus` / `lost_focus`** (#208) — three new public bool fields on every widget `Response`. `right_clicked` mirrors the existing `clicked` logic for `MouseButton::Right`. `gained_focus` is `true` exactly on the frame focus moves to the widget; `lost_focus` is `true` exactly on the frame focus moves away. Mutually exclusive within a single Response. Hooked into `begin_widget_interaction` so all widgets that use the standard interaction path (button / table / select / radio / checkbox / toggle / tree etc.) populate the signals automatically.
+- **`feat(hooks)` — `Context::use_state_keyed` / `use_state_keyed_default`** (#215) — runtime-string-keyed persistent state. Accepts `impl Into<String>`, so `format!("item-{i}")` works in dynamic loops where `use_state_named` (which requires `&'static str`) does not. Stored in a parallel `keyed_states: HashMap<String, Box<dyn Any>>` on `Context` / `FrameState`. Mirrors the namespace-collision + per-frame-allocation caveats of `use_state_named`. **See breaking section below for the `State<T>` Copy removal.**
+- **`feat(hooks)` — `Context::use_effect`** (#216) — dependency-tracked side effects. `ui.use_effect(|deps| do_thing(deps), &deps)` runs the closure on the first frame and on every frame thereafter where `*deps != stored_deps`. Positional hook (same rules as `use_state` / `use_memo`). Fire-and-forget — no cleanup callback. Doc warns that `use_effect` inside `error_boundary` may re-fire on rollback.
+- **`feat(focus)` — `register_focusable_named` + `focus_by_name` + `focused_name`** (#217) — Ink-style named focus manager. `register_focusable_named(name)` is a drop-in replacement for `register_focusable()` that records `name → focus_index`. `focus_by_name(name)` requests focus on the named widget; resolution happens against the previous frame's map (deferred-command pattern). `focused_name()` returns the name of the currently focused widget, if any. Compatible with the existing positional Tab/Shift+Tab cycling.
+- **`feat(context)` — `Context::key_presses_when` + `Context::consume_event`** (#218) — public focus-gated key-press iterator and per-event consume helper. `key_presses_when(active)` returns an empty iterator when `active=false` and the same items as the internal `available_key_presses` when `active=true`. `consume_event(idx)` is the public counterpart of the crate-internal `consume_indices`, enabling user-land `Widget` impls to mark events handled. Out-of-range indices silently no-op.
+- **`feat(context)` — `Response::on_hover` / `on_hover_ui` chaining** (#209) — Attach a tooltip (or run an arbitrary tooltip-rendering closure) directly on a widget's `Response` without the order-sensitive `ui.tooltip(...)` post-call. Composes cleanly: `if ui.button("Save").on_hover(ui, "Saves the file").clicked { ... }`. Skips alloc when `hovered == false` or `text` is empty.
+- **`feat(anim)` — `Context::animate_bool` / `animate_value` shorthand** (#210) — Zero-boilerplate implicit animation keyed by `&'static str`, stored in `named_states`. `animate_bool(id, value) -> f64` returns 0.0..=1.0 over `DEFAULT_ANIMATE_TICKS` (12 ticks ≈ 200 ms @ 60 Hz). `animate_value(id, target, duration) -> f64` retargets smoothly from the current interpolated value; `duration_ticks == 0` snaps. First call snaps to target with no visible pop.
+- **`feat(container)` — `ContainerBuilder::fill()` shorthand** (#220) — Self-documenting alias for `.grow(1)` (CSS `flex: 1`, ratatui `Constraint::Fill(1)`). One-liner that improves readability of the most common flex case without changing semantics.
+- **`feat(rect)` — `Rect::center_in` / `center_horizontally_in` / `center_vertically_in`** (#221) — Position a sized rect centered inside a parent (the inverse of `Rect::centered`). Matches ratatui v0.30. Clamps to parent extent on oversize. `const fn` — usable in static contexts.
+- **`feat(modal)` — `ModalOptions` + `Context::modal_with`** (#225) — opt-in WCAG 2.1 SC 2.4.3 (Focus Order) compliance. `ModalOptions { tab_trap: true }` prevents focus escape when programmatic `set_focus_index` or a stray click lands focus outside the modal range. `ModalOptions::default()` enables `tab_trap`. Plain `Context::modal(...)` keeps the legacy non-trapping behavior unchanged for backward compatibility — i.e. `ui.modal(f)` and `ui.modal_with(ModalOptions::default(), f)` deliberately produce different focus semantics. Use `modal_with(ModalOptions::default(), f)` (or `ModalOptions { tab_trap: true, ..Default::default() }`) when you want the WCAG-aligned trap; keep `modal(f)` for the v0.19 escape-friendly behavior.
+- **`feat(theme)` — `ContainerBuilder::theme(theme)`** (#226) — per-subtree theme override. Swaps `ctx.theme` (and `dark_mode` flag) for the duration of the closure body, restoring on exit — including on panic. Nested `.theme(...)` calls compose correctly: outer theme resumes once the inner scope closes. Independent of `provide` / `use_context` (general-purpose context injection); this method directly mutates the active theme so every built-in widget (which reads `self.theme`) picks up the change without opt-in.
+- **`feat(theme)` — `Theme::compact()` / `Theme::comfortable()` / `Theme::spacious()` density presets** (#227) — base spacings 1 / 2 / 3 respectively. Matches the existing `Spacing` scale (`xs` / `sm` / `md` / `lg` / `xl` / `xxl`). `compact()` is bit-identical to existing presets, preserving v0.19 visuals when adopted explicitly.
+- **`feat(theme)` — `Theme::with_spacing(spacing)`** (#227) — mutate spacing on any preset (Nord, Dracula, custom) without touching colors.
+- **`feat(widgets-display)` — `split_pane` / `vsplit_pane`** (#223) — resizable horizontal/vertical split containers driven by `SplitPaneState`. Drag the 1-cell handle (`│` / `─`) with the mouse, or focus it (Tab) and use arrow keys to grow/shrink the first pane by 5% per press. `SplitPaneResponse` exposes `ratio` and `drag_active`.
+- **`feat(widgets-display)` — `gauge` (chainable builder)** (#224, builder finalized in v0.20.0 API consistency pass) — block-fill progress bar with optional centered inline label (e.g. `█████████ 60% ░░░░░░`). Chainable: `ui.gauge(ratio).label(s).width(n).color(c)`. Color-tiered by default (`success` < 50%, `warning` 50–80%, `error` ≥ 80%); `.color(c)` disables tiering. Auto-renders on `Drop`; call `.show()` for a `GaugeResponse` (derefs to `Response`). `ratio` is `f64` for parity with `animate_value`, chart APIs, and `progress_bar`.
+- **`feat(widgets-display)` — `line_gauge` (chainable builder)** (#224, builder finalized in v0.20.0 API consistency pass) — single-line gauge with configurable fill/empty characters and an optional trailing label. Chainable: `ui.line_gauge(ratio).label(s).width(n).filled(c).empty(c)`. Auto-renders on `Drop`; call `.show()` for a `GaugeResponse`.
+- **`feat(widgets-display)` — `scrollable_with_gutter` + `GutterOpts<G>`** (#235, signature finalized in v0.20.0 API consistency pass) — scrollable container variant rendering a per-line left gutter (line numbers, breakpoint markers, etc.) plus search-result highlight bands. The bookkeeping arguments collapse into `GutterOpts<G>`; use `GutterOpts::line_numbers(total, viewport)` for the 90% case or `GutterOpts::new(total, viewport, |i| ...)` for custom labels. Companion API on `ScrollState`: `set_highlights`, `highlight_next`, `highlight_previous`, `clear_highlights`, `current_highlight`. `HighlightRange` is re-exported at the crate root; use `HighlightRange::line(i)` for single-line and `HighlightRange::span(start, count)` for multi-line ranges. Returns `GutterResponse` carrying the current highlight index and total count.
+- **`feat(lib)` — `Context::static_log(line)`** (#233) — append-only scrollback widget API. Inside the frame closure, queue lines that get committed to the terminal's history above the inline dynamic area. Drains automatically through `slt::run_static` / `slt::run_static_with`; no-op (with a `cfg(debug_assertions)` warning) on full-screen and inline runtimes that have no scrollback channel. Inspired by Ink's `<Static>`. Companion accessor `Context::take_static_log()` exposes the same buffer to custom backends and `TestBackend` callers.
+- **`feat(keymap)` — `WidgetKeyHelp` trait + `Context::publish_keymap` / `published_keymaps` / `keymap_help_overlay`** (#236) — opt-in trait for widgets to publish their `&'static [(key, description)]` shortcut list. The framework aggregates every keymap registered this frame (cleared at frame start by `run_frame_kernel`) and `keymap_help_overlay(open)` renders an automatic modal listing all bindings — wire it to `?` / `F1` for instant discoverability. Standalone `PublishedKeymap` struct exposed for downstream widgets / palettes.
+- **`feat(lib)` — `RunConfig::handle_ctrl_c(bool)`** (#238) — opt-out for the auto-Ctrl+C-quits behavior. Defaults to `true` (preserves v0.19 contract). Setting `false` delivers Ctrl+C to the frame closure as a normal `Event::Key` with `KeyModifiers::CONTROL` — matches RataTUI's raw-mode semantics so users migrating code that already handles Ctrl+C explicitly do not need to fork SLT. Threaded through `run_with`, `run_inline_with`, `run_static_with`, and `run_async_loop`. `run()` rustdoc updated to note that wrapping with `crossterm::terminal::enable_raw_mode()` / `disable_raw_mode()` is redundant — SLT enters raw mode automatically.
+
+### Changed
+
+- **`change(theme)` Built-in widgets now derive padding/gap from `theme.spacing`** (#227) — code_block, code_block_numbered, accordion, tooltip, help, help_colored, tabs, checkbox, toggle, select trigger, calendar header, text_input, suggestion box, command palette, markdown code blocks. Default theme spacing is unchanged (`Spacing::new(1)`), so every preset produces v0.19-identical output by default. To get larger paddings, use `Theme::comfortable()`/`Theme::spacious()` or set `theme.spacing` explicitly via `ThemeBuilder::spacing(...)`.
+- **`change(examples)` Cargo example list compacted from 53 → 16** — `Cargo.toml` sets `autoexamples = false` and lists 16 explicit `[[example]]` entries: 6 tour binaries (`v020_tour`, `cookbook_tour`, `showcase_tour`, `canvas_tour`, `text_tour`, `system_tour`), 5 standalone demos (`hello`, `counter`, `demo`, plus 2 perf tools), 3 dev tools, and 2 v0.20 reports. Source files for the demos that compose into tours stay in `examples/` and are reached via `#[path = ...] mod` includes from the tour binaries — see `docs/DEMO_GUIDE.md` for the archetype rules.
+
+### Fixed
+
+- **`fix(focus)` — `register_focusable_named` now allocates a slot eagerly and reserves it for the next `register_focusable()` call** (#217 follow-up) — In v0.20.0-preview the call queued a name and waited for a following widget to drain it, which made `register_focusable_named("x")` a silent no-op when called standalone (the `name → slot` map never picked up the binding). The new behaviour allocates the slot on the named call itself and stores the slot id as a one-shot reservation: the very next `register_focusable()` reuses it instead of allocating a fresh slot, so widgets like `text_input`, `button`, and `tabs` placed immediately after still inherit the name. Both shapes work — "name + widget" (the common idiom) and "name alone" (custom focusable regions, unit tests). Verified by 24 tests in `tests/v020_hooks_focus.rs`.
+- **`fix(chart)` — Legend names and treemap labels are clipped with an ellipsis (`…`) instead of bare-truncated** — `crate::chart::truncate_label(text, max_cols)` is the new shared helper. Returns the original text when it fits, an ellipsis-suffixed prefix when it does not, and an empty string when `max_cols < 3` (drops the label entirely rather than emit a 1- or 2-cell garbled prefix). Used by `chart::render` for legend names (after the legend column budget is computed against y-axis width and a `MIN_PLOT_COLS = 4` reservation) and by `treemap` for cell labels. Pre-fix output showed `Memor` / `TypeS`; post-fix shows `Memo…` / `Type…` or drops the label.
+- **`fix(examples)` — Tab clicks in `cargo run --example demo` now persist** — `examples/demo.rs` lifted all per-frame `let mut state = ...` into a `pub struct DemoState` owned by `main()`. Previously every render re-created `TabsState`, `TextInputState`, etc., which made tab clicks visibly flash for ≈ 0.1 s before snapping back to the first tab. The same `pub fn render(ui, &mut state)` + `pub fn render_snapshot(ui)` split applied to `v020_keymap_help`, `v020_gutter_highlights`, `v020_ctrl_c_passthrough`, and `v020_dx_shortcuts` so they keep state across frames when embedded in `v020_tour` (per `docs/DEMO_GUIDE.md` §2).
+- **`fix(widgets-interactive)` — `virtual_list` keeps cursor mid-viewport instead of always anchored to the bottom** (#192) — Added `pub(crate) viewport_offset: usize` to `ListState` (`Default = 0`, additive). The `virtual_list` viewport now sticks to the cursor on entry/exit only, mirroring every other TUI library. Pre-fix moving up dragged the entire viewport because `start = selected - vh + 1`. Test: `virtual_list_cursor_not_anchored_to_viewport_bottom`.
+- **`fix(widgets-interactive)` — `calendar` `h`/`l` now move ±1 day; `[` / `]` move ±1 month** (#193) — Vim convention restored. Pre-fix `h`/`l` were aliased to `prev_month` / `next_month`, which contradicted the universal vim "single-cell move" mental model. `Left`/`Right` arrows still move ±1 day too. Calendar rustdoc carries a keybinding table; `WidgetKeyHelp` updated so the `?` overlay reflects the new bindings. Test: `calendar_h_l_move_by_day`.
+- **`refactor(widgets-input)` — `FilePickerState::selected_file()` disambiguates from `selected: usize`** (#98) — Added `pub fn selected_file(&self) -> Option<&PathBuf>`; the existing `selected()` method is `#[deprecated(since = "0.20.0")]` and delegates to `selected_file()`. The duplicate identifier (`pub selected: usize` field vs `pub fn selected() -> Option<&PathBuf>` method) was confusing readers. Migration: replace `state.selected()` with `state.selected_file()` to clear the deprecation warning.
+- **`feat(widgets-input)` — Textarea undo/redo (`Ctrl+Z` / `Ctrl+Y`)** (#102) — Pure additive. `TextareaState` now holds a `history: Vec<TextareaSnapshot>` (default cap 100, configurable via `history_max(cap)` builder) plus `history_index: usize`. Snapshots are pushed before destructive mutations (insert, Enter, Backspace, Delete, paste). Rapid character typing coalesces into a single undoable batch (one snapshot per "edit burst" rather than one per keystroke). 5 new tests in `tests/textarea_undo.rs`. Programmatic `set_value()` clears history (replacement is not undoable).
+- **`refactor(container)` — `ContainerBuilder::scroll_offset` hidden from rustdoc** (#149) — Added `#[doc(hidden)]` (Option B from the issue) so the implementation-detail builder method stops appearing in the public docs. `cargo-semver-checks` still tracks the symbol so promote to `pub(crate)` happens at v1.0. No behavior change.
+- **`feat(widgets-display)` — `scrollbar()` returns `Response`** (#184) — Reserves a future-compatible extension point for click-to-jump and drag handling without another breaking change. `Response::none()` for now. All in-crate call sites continue to compile (statement form, response ignored).
+- **`perf(layout)` — drain `commands` Vec in `build_tree` to reuse capacity across frames** (#150) — `build_tree(commands: Vec<Command>)` → `build_tree(&mut Vec<Command>)` using `drain(..)`. `run_frame_kernel` reclaims via `mem::take`. Steady-state allocation count for the per-frame command buffer drops -15% (1300 → 1100 over 100 frames in serial mode).
+- **`perf(layout)` — reuse `line_segs` scratch in `wrap_segments`** (#157) — Hoisted the per-line `Vec<Segment>` out of the outer loop; `mem::replace` returns an empty buffer with the previous capacity. Output byte-identical (existing `wrap_segments_*` tests + alloc-count budget hold). Internal-only, no public API change.
+- **`feat(flexbox)` — Opt-in proportional `.shrink()` flag for overflow handling** (#161) — `ContainerBuilder::shrink(self) -> Self` marks a child eligible for CSS-style proportional shrink when `fixed_width > available`. Default behaviour (no shrink, overflow-by-design) is preserved. Implementation uses a `Command::ShrinkMarker` indirection (mirrors `FocusMarker` / `InteractionMarker`) so `Constraints` size invariant (`_ASSERT_CONSTRAINTS_SIZE == 24`) is preserved. 3 new layout tests cover (a) default-off, (b) all-shrink, (c) mixed.
+- **`perf(terminal)` — Per-row hash skip in `flush_buffer_diff`** (#171) — Added `Buffer::line_hashes` + `line_dirty` (`pub(crate)`); rows with unchanged hash skip cell iteration. Bench `bench_flush_static_200x60`: **113–138 µs → 127 ns (~1000× speedup)** on fully-static screens. Sparse and full-redraw paths unchanged. Uses `std::collections::hash_map::DefaultHasher` — no new dep.
+- **`feat(layout)` — `DebugLayer` enum for F12 overlay opt-in** (#201) — Added `Shift+F12` keybinding that cycles `All → TopMost → BaseOnly → All`. Plain `F12` still toggles the overlay on/off. Per-variant rustdoc + `# Example` blocks on `DebugLayer`, `Context::debug_layer`, `Context::set_debug_layer`. The enum + getter/setter base shipped earlier in v0.20; this adds the missing keybinding and rustdoc.
+
+### Closed (verified already applied in v0.19.3)
+
+The following v0.19.x-milestoned issues had their fix land in PR #202 (v0.19.3 `0a56880`) ahead of this release. The fix is part of v0.20.0 transitively; no separate v0.20 commit was needed.
+
+- **#134** `screen_hook_map` cache-hit `String` alloc removed (verified at `src/context/widgets_display/layout.rs:226-232`).
+- **#146** `filled_circle` integer Newton's-method `isqrt`. (`u64::isqrt` would be cleaner but is gated behind MSRV 1.84+; SLT MSRV is 1.81. Tracked as a `TODO(msrv)` for v0.21+.)
+- **#147** Breakpoint variants for `min_h` / `max_h`.
+- **#148** `#[deprecated]` aliases for `pad` / `min_width` / `max_width` / `min_height` / `max_height` (canonical short forms `p` / `min_w` / `max_w` / `min_h` / `max_h`).
+- **#152** `LayoutNode::group_name` widened to `Option<Arc<str>>` (collect-time pointer-bump, not heap alloc).
+- **#153** `LayoutNode` text-only fields hoisted into `Box<TextNodeData>` — measured `size_of::<LayoutNode>()` 432 → 304 bytes (-29.6 %). `_ASSERT_LAYOUT_NODE_SIZE` const-asserts the upper bound.
+- **#155** `FrameData` re-use via `&mut` parameter (`collect_all(node, data)` + `mem::take` reclaim in `lib::run_frame_kernel`).
+- **#162** Viewport bound check before bottom-border corner render in `render_container_border`.
+
+### Known v0.21 migration notes
+
+A design-discipline audit of v0.20.0 surfaced four critical drifts that require a *breaking* change to fully resolve. They are intentionally deferred to v0.21.0 so v0.20.0 stays a single-bump migration:
+
+1. **Hook family naming asymmetry** — `use_state_named` (no init closure, requires `Default`) vs `use_state_named_with` (init closure) flips the suffix relative to `use_state_keyed` (init closure) vs `use_state_keyed_default` (no init, requires `Default`). v0.21 will pick the "no-suffix = init closure" convention (matches `use_state(init)`) and add `#[deprecated]` aliases.
+2. **`scrollbar()` and `separator()` return shape** — `scrollbar` already returns `Response::none()` in v0.20 (#184); `separator` / `separator_colored` still return `&mut Self` from a legacy text-chain pattern that doesn't carry chainable methods worth chaining. v0.21 promotes them to `Response` so the `M4 — no () returns` rule from `docs/ARCHITECTURE.md` is met everywhere.
+3. **`status` family fake `Response::none()` returns** — `badge` / `key_hint` / `stat` / `stat_colored` / `stat_trend` / `empty_state` return `Response::none()` for shape compatibility but never populate interaction fields. v0.21 will route them through `self.interaction()` so `.on_hover` / `.hovered` / `.gained_focus` work.
+4. **`ScrollState::progress() -> f32`** — outlier in the v0.20 ratio surface (every other ratio is `f64`: gauge, line_gauge, split_pane, animate_value, progress_bar). v0.21 adds `progress_ratio() -> f64` and `#[deprecated]`s the `f32` form.
+
+The audit also identified several *patch-safe* doc-only gaps (missing `# Example` / `# Panics` sections on hook methods, status family widgets, `vsplit_pane`) that will land as a follow-up in `0.20.x` rather than block this release.
+
+### Performance
+
+- **`perf(context)` reuse 6 per-frame `Vec`/`HashSet` allocations via `FrameState`** (#204) — `context_stack`, `deferred_draws`, `rollback.group_stack`, `rollback.text_color_stack`, `pending_tooltips`, `hovered_groups` now follow the `mem::take` pattern established by #150 / #155. Steady-state allocation count for a 100-frame loop drops from a baseline that scaled with these six fields to a tight per-frame budget (verified by `tests/v020_perf_alloc.rs::framestate_reuse_steady_state_alloc_count_low`).
+- **`perf(layout)` pre-size `wrap_segments` per-style-run `String` with `with_capacity`** (#205) — eliminates the realloc on the first character pushed at every style boundary in `wrap_segments`. Capacity is computed from the remaining bytes in the source segment, capped at `max_width * 4` to bound over-allocation. Output is byte-identical to the prior implementation (`tests/v020_perf_demo.rs::wrap_segments_with_capacity_preserves_byte_output`).
+- **`perf(terminal)` avoid `Vec<KittyPlacement>` clone in `InlineTerminal::flush`** (#206) — `KittyImageManager::flush` now accepts a `row_offset: u32` and applies it arithmetically at point of use. The `prev_placements` diff stores post-offset y values so resize-driven offset changes still re-emit. Eliminates one `Vec` allocation + N `Arc::clone`/`Arc::drop` round-trips per inline-mode frame with images (`tests/v020_perf_alloc.rs::kitty_placement_flush_alloc_count_low` confirms 1 alloc across 100 stable flushes).
+- **`perf(render)` modal-aware `dim_buffer_around` replaces full-buffer scan** (#228) — for the common modal-with-margin case, `render` now calls `dim_buffer_around(modal_rect)` which walks only the four strips outside the modal instead of the full O(W×H) buffer. The legacy `dim_entire_buffer` path is retained for the zero-size-modal fallback. Visible output is unchanged (`tests/v020_perf_demo.rs::modal_dim_path_preserves_modal_content`).
+
+### Breaking
+
+- **API consistency pass on new widgets** — `gauge` / `line_gauge` / `breadcrumb` and `scrollable_with_gutter` were unified onto a single design language so v0.20 does not ship five new widgets with five argument styles. The five mismatched signatures became three Egui-style chainable builders + one options struct. The new builders are the only public form; no deprecated shim wrappers ship in v0.20. v0.19 preview users who manually constructed the unstable `gauge_w` / `gauge_colored` / `line_gauge_with(LineGaugeOpts)` / `breadcrumb_sep` signatures should migrate to the builders:
+
+  ```rust
+  // before (v0.19.x preview)
+  ui.gauge(0.42, "CPU");                                       // 2 positional
+  ui.gauge_w(0.42, "CPU", 48);                                 // 3 positional
+  ui.gauge_colored(0.42, "CPU", 48, Color::Red);               // 4 positional
+  ui.line_gauge(0.42, LineGaugeOpts::default().width(48).label("CPU"));
+  ui.breadcrumb_sep(&["Home", "src"], " > ");
+  ui.scrollable_with_gutter(
+      &mut scroll, total, viewport, |i| line_label(i), |ui, i| { ... }
+  );
+
+  // after (v0.20.0)
+  ui.gauge(0.42).label("CPU");
+  ui.gauge(0.42).label("CPU").width(48);
+  ui.gauge(0.42).label("CPU").width(48).color(Color::Red);
+  ui.line_gauge(0.42).label("CPU").width(48);
+  ui.breadcrumb(&["Home", "src"]).separator(" > ");
+  ui.scrollable_with_gutter(
+      &mut scroll,
+      GutterOpts::line_numbers(total, viewport),    // 90% case shortcut
+      |ui, i| { ... },
+  );
+  ```
+
+  The new builders auto-render on `Drop` so a bare `ui.gauge(0.5).label("CPU");` is the idiomatic form when the response isn't needed; call `.show()` to capture a `GaugeResponse` / `BreadcrumbResponse`.
+
+- **`f32 → f64` unification on ratio APIs (`gauge` / `line_gauge` / `split_pane`)** — every public `f32` ratio in v0.20 is widened to `f64` to align with `Context::animate_value` (`f64`), chart APIs (`f64`), and `progress_bar` (`f64`). Touched APIs: `Context::gauge` / `line_gauge` argument, `GaugeResponse.ratio`, `SplitPaneState::{ratio, min_ratio, new, with_min_ratio, set_ratio}`, `SplitPaneResponse.ratio`, `DEFAULT_SPLIT_MIN_RATIO`. Most callers need no change because Rust auto-coerces float literals (`SplitPaneState::new(0.5)` works either way). Explicit `f32` casts (`ratio as f32`) at the call site must be removed; use `f64` arithmetic throughout, or cast `as f64` once at the boundary. The `f32` ratio inside `style/color.rs` blending math is intentional graphics-internal precision per `docs/API_DESIGN.md` Rule 2 exception.
+
+- **`refactor(widgets-display)` — `scrollable_with_gutter` now takes `GutterOpts<G>`** (#235 follow-up) — the four-positional signature `(state, total_lines, viewport_height, gutter_fn, body_fn)` was hard to read and easy to misorder. v0.20 collapses the bookkeeping arguments into a `GutterOpts<G>` struct: `pub fn scrollable_with_gutter(&mut self, state, opts: GutterOpts<G>, body_fn)`. The 90% case (1-based line numbers) gets a `GutterOpts::line_numbers(total, viewport)` shortcut so most callers never write the labeling closure. Use `GutterOpts::new(total, viewport, gutter_fn)` for custom labels (breakpoints, Git diff markers, fold indicators, etc.).
+
+- **`refactor(style)` — `Constraints` redesign with `WidthSpec`/`HeightSpec`** (#237 — closes #207, #219). The `Constraints` struct now holds two enum-typed fields, `width: WidthSpec` and `height: HeightSpec`, instead of the v0.19 trio of `Option<u32>` / `Option<u8>` fields per axis. Builder methods (`min_w`, `max_w`, `min_h`, `max_h`, `w`, `h`, `w_pct`, `h_pct`) are preserved as ergonomic shortcuts that set the appropriate variant. New: `w_ratio(num, den)` / `h_ratio(num, den)` for exact integer-fraction sizing — `Ratio(1, 3)` produces `area / 3` (floor division; for `area = 80, num = 1, den = 3` → `26`). `size_of::<Constraints>()` drops from 36 → 24 bytes (33 % reduction); `WidthSpec` and `HeightSpec` are 12 bytes each. The `MinMax` variant uses sentinel encoding (`min = 0` means "no minimum", `max = u32::MAX` means "no maximum") so the variant fits in 12 bytes.
+
+  Migration:
+
+  ```rust
+  // before (v0.19)
+  Constraints {
+      min_width: Some(10),
+      max_width: Some(40),
+      ..Default::default()
+  }
+  // after (v0.20)
+  Constraints::default().w_minmax(10, 40)
+  // or piecewise:
+  Constraints::default().min_w(10).max_w(40)
+  ```
+
+  Direct field reads (`c.min_width`, `c.max_width`, `c.width_pct`, …) become accessor calls (`c.min_width()`, `c.max_width()`, `c.width_pct()`, …) — they still return `Option<u32>` / `Option<u8>` so the receiving code typically only needs to add parentheses. For imperative mutation (rare; previously `c.min_width = Some(v)`), use the new setter methods (`set_min_width`, `set_max_width`, `set_width_pct`, …).
+
+  `serde` wire format changes: persisted `Constraints` JSON from v0.19 will not deserialize into v0.20 because the field shape is different. Re-export persisted data after upgrading.
+- **`State<T>` is no longer `Copy`** (#215) — required to support the `Keyed(String)` variant of the internal `StateKey` enum. `Clone` is still derived (cheap for `Indexed` / `Named`, allocates one `String` for `Keyed`). **Migration**: if you previously relied on implicit copy semantics — for example `let s = ui.use_state(...); use_a(s); use_b(s);` — call `s.clone()` explicitly: `use_a(s.clone()); use_b(s);`. An audit of every `State<T>` use site in `src/`, `tests/`, `examples/` showed **zero** sites depended on `Copy`; existing call sites borrow or move the handle and continue to compile unchanged.
+- **`break(theme)` Spacing scale activation may shift visuals** (#227) — if you customized themes with non-default spacing (e.g., `Spacing::new(2)`), affected widgets now respect that scale. Migration: set `Theme::spacing` explicitly via `ThemeBuilder::spacing(...)` or use `Theme::with_spacing(...)` to lock down the visual you depend on. The 10 stock presets still ship `Spacing::new(1)`, so upgraders who never touched the spacing field see no change.
+- **`refactor(widgets-display)` — `breadcrumb` is now a chainable builder (#213, builder finalized in v0.20.0 API consistency pass)** — replaced the four-variant API (`breadcrumb`, `breadcrumb_with`, `breadcrumb_response`, `breadcrumb_response_with`) with a chainable builder. `ui.breadcrumb(segments)` returns a `Breadcrumb<'_>` that auto-renders on `Drop`; chain `.separator(s)` or `.color(c)` and call `.show()` to capture a `BreadcrumbResponse` (derefs to `Response`, so `.hovered`, `.rect`, `.focused` work on `r`).
+
+  Migration:
+  ```rust
+  // before (v0.19):
+  let clicked = ui.breadcrumb(&segments);            // Option<usize>
+  let (resp, clicked) = ui.breadcrumb_response(&segments);
+  let clicked = ui.breadcrumb_with(&segments, " > ");
+
+  // after (v0.20):
+  ui.breadcrumb(&segments);                                 // simple
+  let r = ui.breadcrumb(&segments).show();                  // capture response
+  let clicked = r.clicked_segment;
+  let r = ui.breadcrumb(&segments).separator(" > ").show(); // custom separator
+  ```
+
+- **`refactor(widgets-input)` — `spinner` / `progress` / `progress_bar` / `progress_bar_colored` now return `Response` (#212)** — these widgets previously returned `&mut Self` (a builder-chain shim). They now return `Response` so callers can detect hover, attach tooltips, or implement click-to-set scrubbers. `toast` continues to return `&mut Self` (no meaningful single rect — purely visual overlay).
+
+  Migration: code that ignored the return value still compiles; the `#[must_use]` attribute on `Response` will warn at the call site. The recommended fix is `let _ = ui.progress(0.5);`. Code that chained builder-style methods (e.g. `ui.spinner(&s).fg(theme.primary)`) must split into two statements:
+  ```rust
+  // before:
+  ui.spinner(&s).fg(theme.primary);
+  // after:
+  let _ = ui.spinner(&s); // color is already theme.primary; if you need a different color, render manually.
+  ```
 
 ## [0.19.3] — 2026-04-27
 

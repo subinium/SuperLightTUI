@@ -83,7 +83,10 @@ fn snapshot_frame(name: &str, w: u32, h: u32, f: impl FnOnce(&mut slt::Context))
 
 #[test]
 fn visual_demo() {
-    snapshot_frame("demo", 80, 24, demo::render);
+    // demo.rs uses persistent `DemoState` for the runtime loop, so the
+    // snapshot path goes through `render_snapshot` which constructs a
+    // fresh `DemoState` every call (deterministic frame-1 output).
+    snapshot_frame("demo", 80, 24, demo::render_snapshot);
 }
 
 #[test]

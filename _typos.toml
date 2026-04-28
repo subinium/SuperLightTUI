@@ -9,6 +9,11 @@
 "Pn" = "Pn"
 "flate" = "flate"
 "flate2" = "flate2"
+# Intentional truncation-test prefixes used in tests/widgets.rs to verify
+# label-clipping behaviour. They look like typos because they ARE bare
+# truncations — that's the point of the assertions.
+"Pytho" = "Pytho"
+"Memor" = "Memor"
 
 [files]
 extend-exclude = [

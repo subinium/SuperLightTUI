@@ -1,11 +1,15 @@
-/// Pretext-style demo: text reflows around the mouse cursor trail in real time.
-///
-/// Inspired by <https://github.com/chenglou/pretext> — demonstrates how fast
-/// text relayout enables interactive, mouse-reactive typography in the terminal.
-///
-/// Move the mouse to create a caterpillar-shaped exclusion zone that text
-/// flows around. The trail follows the cursor with smooth interpolation and
-/// each segment pushes words aside independently.
+//! Pretext-style demo: text reflows around the mouse cursor trail in real time.
+//!
+//! Inspired by <https://github.com/chenglou/pretext> — demonstrates how fast
+//! text relayout enables interactive, mouse-reactive typography in the terminal.
+//!
+//! Move the mouse to create a caterpillar-shaped exclusion zone that text
+//! flows around. The trail follows the cursor with smooth interpolation and
+//! each segment pushes words aside independently.
+//!
+//! Archetype: Standard (full-canvas raw draw, no overlay, no scrollback).
+//! Composes into a tabbed tour by calling [`render`] with caller-owned state.
+
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -151,12 +155,292 @@ const MIN_TRAIL_DIST: f64 = 1.5;
 /// Smoothing factor for the cursor position.
 const SMOOTH: f64 = 0.05;
 
-fn main() {
-    let mut smooth_mx: f64 = -100.0;
-    let mut smooth_my: f64 = -100.0;
-    let mut first_mouse = true;
-    let mut trail: VecDeque<(f64, f64)> = VecDeque::with_capacity(TRAIL_LEN + 1);
+/// State persisted across frames. Owned by either the standalone `main` or
+/// the parent tour.
+pub struct DemoState {
+    pub smooth_mx: f64,
+    pub smooth_my: f64,
+    pub first_mouse: bool,
+    pub trail: VecDeque<(f64, f64)>,
+}
 
+impl Default for DemoState {
+    fn default() -> Self {
+        Self {
+            smooth_mx: -100.0,
+            smooth_my: -100.0,
+            first_mouse: true,
+            trail: VecDeque::with_capacity(TRAIL_LEN + 1),
+        }
+    }
+}
+
+/// Render one frame of the pretext demo. The caller owns `state` so the
+/// trail and smoothed cursor persist across frames.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    // Smooth mouse tracking.
+    if let Some((mx, my)) = ui.mouse_pos() {
+        let mx = mx as f64;
+        let my = my as f64;
+        if state.first_mouse {
+            state.smooth_mx = mx;
+            state.smooth_my = my;
+            state.first_mouse = false;
+        } else {
+            state.smooth_mx += (mx - state.smooth_mx) * (1.0 - SMOOTH);
+            state.smooth_my += (my - state.smooth_my) * (1.0 - SMOOTH);
+        }
+    }
+
+    // Record trail points with minimum distance threshold.
+    if let Some(&(last_x, last_y)) = state.trail.back() {
+        let dx = state.smooth_mx - last_x;
+        let dy = state.smooth_my - last_y;
+        if dx * dx + dy * dy >= MIN_TRAIL_DIST * MIN_TRAIL_DIST {
+            state.trail.push_back((state.smooth_mx, state.smooth_my));
+            if state.trail.len() > TRAIL_LEN {
+                state.trail.pop_front();
+            }
+        }
+    } else {
+        state.trail.push_back((state.smooth_mx, state.smooth_my));
+    }
+
+    let tick = ui.tick();
+    let trail_snap: Vec<(f64, f64)> = state.trail.iter().copied().collect();
+
+    ui.container()
+        .grow(1)
+        .draw(move |buf: &mut Buffer, rect: Rect| {
+            let words: Vec<&str> = SAMPLE_TEXT.split_whitespace().collect();
+            let word_widths: Vec<u32> = words
+                .iter()
+                .map(|w| {
+                    w.chars()
+                        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1) as u32)
+                        .sum()
+                })
+                .collect();
+
+            let area_x = rect.x + 1;
+            let area_y = rect.y + 1;
+            let area_w = rect.width.saturating_sub(2);
+            let area_h = rect.height.saturating_sub(2);
+
+            if area_w < 10 || area_h < 3 {
+                return;
+            }
+
+            // Draw subtle border.
+            let border_style = Style::new().fg(Color::Indexed(238));
+            for x in rect.x..rect.right() {
+                buf.set_char(x, rect.y, '─', border_style);
+                buf.set_char(x, rect.bottom().saturating_sub(1), '─', border_style);
+            }
+            for y in rect.y..rect.bottom() {
+                buf.set_char(rect.x, y, '│', border_style);
+                buf.set_char(rect.right().saturating_sub(1), y, '│', border_style);
+            }
+            buf.set_char(rect.x, rect.y, '╭', border_style);
+            buf.set_char(rect.right().saturating_sub(1), rect.y, '╮', border_style);
+            buf.set_char(rect.x, rect.bottom().saturating_sub(1), '╰', border_style);
+            buf.set_char(
+                rect.right().saturating_sub(1),
+                rect.bottom().saturating_sub(1),
+                '╯',
+                border_style,
+            );
+
+            // Title.
+            let title = " ✦ pretext reflow ";
+            let tx = area_x + (area_w.saturating_sub(title.len() as u32)) / 2;
+            buf.set_string(
+                tx,
+                rect.y,
+                title,
+                Style::new().fg(Color::Rgb(180, 140, 255)),
+            );
+
+            // Help text at bottom.
+            let help = " q: quit │ move mouse to push text ";
+            let hx = area_x + (area_w.saturating_sub(help.len() as u32)) / 2;
+            buf.set_string(
+                hx,
+                rect.bottom().saturating_sub(1),
+                help,
+                Style::new().fg(Color::Indexed(243)),
+            );
+
+            let trail_len = trail_snap.len();
+
+            let is_excluded = |px: f64, py: f64| -> bool {
+                for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
+                    let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
+                    let r = HEAD_RADIUS * (1.0 - age * 0.6);
+                    let r_sq = r * r;
+                    let dist_sq = (px - tx) * (px - tx) + (py - ty) * (py - ty) * 4.0;
+                    if dist_sq < r_sq {
+                        return true;
+                    }
+                }
+                false
+            };
+
+            let glow_at = |px: f64, py: f64| -> (f64, f64) {
+                let mut best_t = 1.0_f64;
+                let mut best_age = 1.0_f64;
+                for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
+                    let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
+                    let r = HEAD_RADIUS * (1.0 - age * 0.6);
+                    let r_sq = r * r;
+                    let dist_sq = (px - tx) * (px - tx) + (py - ty) * (py - ty) * 4.0;
+                    if dist_sq < r_sq {
+                        let t = (dist_sq / r_sq).sqrt();
+                        if t < best_t {
+                            best_t = t;
+                            best_age = age;
+                        }
+                    }
+                }
+                (best_t, best_age)
+            };
+
+            // Reflow text around the caterpillar trail.
+            let mut word_idx = 0;
+            let mut cy = area_y;
+            let total_words = words.len();
+
+            while cy < area_y + area_h {
+                let mut cx = area_x;
+                let row_end = area_x + area_w;
+
+                if word_idx >= total_words {
+                    word_idx = 0;
+                }
+
+                let row_start_word = word_idx;
+                let mut placed_any = false;
+
+                while cx < row_end {
+                    let wi = word_idx % total_words;
+                    let ww = word_widths[wi];
+                    let space_needed = if cx == area_x { ww } else { ww + 1 };
+
+                    let end_x = cx + space_needed;
+                    let mut blocked = false;
+                    for check_x in cx..end_x.min(row_end) {
+                        if is_excluded(check_x as f64, cy as f64) {
+                            blocked = true;
+                            break;
+                        }
+                    }
+
+                    if blocked {
+                        let mut skip_x = cx + 1;
+                        while skip_x < row_end {
+                            if !is_excluded(skip_x as f64, cy as f64) {
+                                break;
+                            }
+                            skip_x += 1;
+                        }
+
+                        if skip_x >= row_end || (row_end - skip_x) < ww {
+                            break;
+                        }
+                        cx = skip_x;
+                        continue;
+                    }
+
+                    if cx + space_needed > row_end {
+                        break;
+                    }
+
+                    if cx > area_x {
+                        cx += 1;
+                    }
+
+                    let progress = wi as f64 / total_words as f64;
+                    let wave = ((progress * 6.0 + tick as f64 * 0.02).sin() * 0.5 + 0.5) as f32;
+                    let r = (140.0 + wave * 80.0) as u8;
+                    let g = (160.0 + wave * 60.0) as u8;
+                    let b = (200.0 + wave * 55.0) as u8;
+                    let word_style = Style::new().fg(Color::Rgb(r, g, b));
+
+                    let mut wx = cx;
+                    for ch in words[wi].chars() {
+                        let cw = UnicodeWidthChar::width(ch).unwrap_or(1) as u32;
+                        if wx + cw <= row_end {
+                            buf.set_char(wx, cy, ch, word_style);
+                        }
+                        wx += cw;
+                    }
+
+                    cx = wx;
+                    word_idx += 1;
+                    placed_any = true;
+                }
+
+                if !placed_any && word_idx == row_start_word {
+                    word_idx += 1;
+                }
+
+                cy += 1;
+            }
+
+            // Draw the caterpillar glow overlay.
+            for dy in 0..area_h {
+                for dx in 0..area_w {
+                    let px = (area_x + dx) as f64;
+                    let py = (area_y + dy) as f64;
+                    let (t, age) = glow_at(px, py);
+                    if t < 1.0 {
+                        let brightness = ((1.0 - t) * 40.0) as u8;
+                        let head_mix = 1.0 - age;
+                        let r_c = (100.0 + brightness as f64 * 2.0 * head_mix) as u8;
+                        let g_c = (60.0 + brightness as f64 * head_mix * 0.5) as u8;
+                        let b_c = (140.0 + brightness as f64 * (1.0 + age)) as u8;
+                        let ch = if t < 0.3 {
+                            ' '
+                        } else if t < 0.6 {
+                            '·'
+                        } else {
+                            '∙'
+                        };
+                        buf.set_char(
+                            area_x + dx,
+                            area_y + dy,
+                            ch,
+                            Style::new().fg(Color::Rgb(r_c, g_c, b_c)),
+                        );
+                    }
+                }
+            }
+
+            // Draw trail segment centers (caterpillar spine).
+            for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
+                let sx = tx.round() as u32;
+                let sy = ty.round() as u32;
+                if sx >= area_x && sx < area_x + area_w && sy >= area_y && sy < area_y + area_h {
+                    let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
+                    let brightness = (255.0 * (1.0 - age * 0.7)) as u8;
+                    let ch = if i == trail_len - 1 { '◉' } else { '○' };
+                    buf.set_char(
+                        sx,
+                        sy,
+                        ch,
+                        Style::new().fg(Color::Rgb(
+                            brightness,
+                            (brightness as f64 * 0.7) as u8,
+                            255,
+                        )),
+                    );
+                }
+            }
+        });
+}
+
+fn main() {
+    let mut state = DemoState::default();
     let _ = slt::run_with(
         RunConfig::default()
             .mouse(true)
@@ -167,280 +451,7 @@ fn main() {
                 ui.quit();
                 return;
             }
-
-            // Smooth mouse tracking
-            if let Some((mx, my)) = ui.mouse_pos() {
-                let mx = mx as f64;
-                let my = my as f64;
-                if first_mouse {
-                    smooth_mx = mx;
-                    smooth_my = my;
-                    first_mouse = false;
-                } else {
-                    smooth_mx += (mx - smooth_mx) * (1.0 - SMOOTH);
-                    smooth_my += (my - smooth_my) * (1.0 - SMOOTH);
-                }
-            }
-
-            // Record trail points with minimum distance threshold
-            if let Some(&(last_x, last_y)) = trail.back() {
-                let dx = smooth_mx - last_x;
-                let dy = smooth_my - last_y;
-                if dx * dx + dy * dy >= MIN_TRAIL_DIST * MIN_TRAIL_DIST {
-                    trail.push_back((smooth_mx, smooth_my));
-                    if trail.len() > TRAIL_LEN {
-                        trail.pop_front();
-                    }
-                }
-            } else {
-                trail.push_back((smooth_mx, smooth_my));
-            }
-
-            let tick = ui.tick();
-            // Copy trail for the 'static closure
-            let trail_snap: Vec<(f64, f64)> = trail.iter().copied().collect();
-
-            ui.container()
-                .grow(1)
-                .draw(move |buf: &mut Buffer, rect: Rect| {
-                    let words: Vec<&str> = SAMPLE_TEXT.split_whitespace().collect();
-                    let word_widths: Vec<u32> = words
-                        .iter()
-                        .map(|w| {
-                            w.chars()
-                                .map(|c| UnicodeWidthChar::width(c).unwrap_or(1) as u32)
-                                .sum()
-                        })
-                        .collect();
-
-                    let area_x = rect.x + 1;
-                    let area_y = rect.y + 1;
-                    let area_w = rect.width.saturating_sub(2);
-                    let area_h = rect.height.saturating_sub(2);
-
-                    if area_w < 10 || area_h < 3 {
-                        return;
-                    }
-
-                    // Draw subtle border
-                    let border_style = Style::new().fg(Color::Indexed(238));
-                    for x in rect.x..rect.right() {
-                        buf.set_char(x, rect.y, '─', border_style);
-                        buf.set_char(x, rect.bottom().saturating_sub(1), '─', border_style);
-                    }
-                    for y in rect.y..rect.bottom() {
-                        buf.set_char(rect.x, y, '│', border_style);
-                        buf.set_char(rect.right().saturating_sub(1), y, '│', border_style);
-                    }
-                    buf.set_char(rect.x, rect.y, '╭', border_style);
-                    buf.set_char(rect.right().saturating_sub(1), rect.y, '╮', border_style);
-                    buf.set_char(rect.x, rect.bottom().saturating_sub(1), '╰', border_style);
-                    buf.set_char(
-                        rect.right().saturating_sub(1),
-                        rect.bottom().saturating_sub(1),
-                        '╯',
-                        border_style,
-                    );
-
-                    // Title
-                    let title = " ✦ pretext reflow ";
-                    let tx = area_x + (area_w.saturating_sub(title.len() as u32)) / 2;
-                    buf.set_string(
-                        tx,
-                        rect.y,
-                        title,
-                        Style::new().fg(Color::Rgb(180, 140, 255)),
-                    );
-
-                    // Help text at bottom
-                    let help = " q: quit │ move mouse to push text ";
-                    let hx = area_x + (area_w.saturating_sub(help.len() as u32)) / 2;
-                    buf.set_string(
-                        hx,
-                        rect.bottom().saturating_sub(1),
-                        help,
-                        Style::new().fg(Color::Indexed(243)),
-                    );
-
-                    let trail_len = trail_snap.len();
-
-                    // Exclusion test: is (px, py) inside any trail segment?
-                    // Each segment has a radius that shrinks toward the tail.
-                    let is_excluded = |px: f64, py: f64| -> bool {
-                        for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
-                            // Tail segments are smaller — linear falloff
-                            let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
-                            let r = HEAD_RADIUS * (1.0 - age * 0.6);
-                            let r_sq = r * r;
-                            let dist_sq = (px - tx) * (px - tx) + (py - ty) * (py - ty) * 4.0;
-                            if dist_sq < r_sq {
-                                return true;
-                            }
-                        }
-                        false
-                    };
-
-                    // Glow intensity at a point (0.0 = outside, up to 1.0 = center)
-                    let glow_at = |px: f64, py: f64| -> (f64, f64) {
-                        let mut best_t = 1.0_f64;
-                        let mut best_age = 1.0_f64;
-                        for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
-                            let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
-                            let r = HEAD_RADIUS * (1.0 - age * 0.6);
-                            let r_sq = r * r;
-                            let dist_sq = (px - tx) * (px - tx) + (py - ty) * (py - ty) * 4.0;
-                            if dist_sq < r_sq {
-                                let t = (dist_sq / r_sq).sqrt();
-                                if t < best_t {
-                                    best_t = t;
-                                    best_age = age;
-                                }
-                            }
-                        }
-                        (best_t, best_age)
-                    };
-
-                    // Reflow text around the caterpillar trail
-                    let mut word_idx = 0;
-                    let mut cy = area_y;
-                    let total_words = words.len();
-
-                    while cy < area_y + area_h {
-                        let mut cx = area_x;
-                        let row_end = area_x + area_w;
-
-                        if word_idx >= total_words {
-                            word_idx = 0;
-                        }
-
-                        let row_start_word = word_idx;
-                        let mut placed_any = false;
-
-                        while cx < row_end {
-                            let wi = word_idx % total_words;
-                            let ww = word_widths[wi];
-                            let space_needed = if cx == area_x { ww } else { ww + 1 };
-
-                            // Does this word span intersect any trail segment?
-                            let end_x = cx + space_needed;
-                            let mut blocked = false;
-                            for check_x in cx..end_x.min(row_end) {
-                                if is_excluded(check_x as f64, cy as f64) {
-                                    blocked = true;
-                                    break;
-                                }
-                            }
-
-                            if blocked {
-                                // Skip past the excluded region on this row
-                                let mut skip_x = cx + 1;
-                                while skip_x < row_end {
-                                    if !is_excluded(skip_x as f64, cy as f64) {
-                                        break;
-                                    }
-                                    skip_x += 1;
-                                }
-
-                                if skip_x >= row_end || (row_end - skip_x) < ww {
-                                    break;
-                                }
-                                cx = skip_x;
-                                continue;
-                            }
-
-                            if cx + space_needed > row_end {
-                                break;
-                            }
-
-                            if cx > area_x {
-                                cx += 1;
-                            }
-
-                            // Color: subtle gradient based on word position
-                            let progress = wi as f64 / total_words as f64;
-                            let wave =
-                                ((progress * 6.0 + tick as f64 * 0.02).sin() * 0.5 + 0.5) as f32;
-                            let r = (140.0 + wave * 80.0) as u8;
-                            let g = (160.0 + wave * 60.0) as u8;
-                            let b = (200.0 + wave * 55.0) as u8;
-                            let word_style = Style::new().fg(Color::Rgb(r, g, b));
-
-                            let mut wx = cx;
-                            for ch in words[wi].chars() {
-                                let cw = UnicodeWidthChar::width(ch).unwrap_or(1) as u32;
-                                if wx + cw <= row_end {
-                                    buf.set_char(wx, cy, ch, word_style);
-                                }
-                                wx += cw;
-                            }
-
-                            cx = wx;
-                            word_idx += 1;
-                            placed_any = true;
-                        }
-
-                        if !placed_any && word_idx == row_start_word {
-                            word_idx += 1;
-                        }
-
-                        cy += 1;
-                    }
-
-                    // Draw the caterpillar glow overlay
-                    for dy in 0..area_h {
-                        for dx in 0..area_w {
-                            let px = (area_x + dx) as f64;
-                            let py = (area_y + dy) as f64;
-                            let (t, age) = glow_at(px, py);
-                            if t < 1.0 {
-                                let brightness = ((1.0 - t) * 40.0) as u8;
-                                // Color shifts from purple (head) to blue (tail)
-                                let head_mix = 1.0 - age;
-                                let r_c = (100.0 + brightness as f64 * 2.0 * head_mix) as u8;
-                                let g_c = (60.0 + brightness as f64 * head_mix * 0.5) as u8;
-                                let b_c = (140.0 + brightness as f64 * (1.0 + age)) as u8;
-                                let ch = if t < 0.3 {
-                                    ' '
-                                } else if t < 0.6 {
-                                    '·'
-                                } else {
-                                    '∙'
-                                };
-                                buf.set_char(
-                                    area_x + dx,
-                                    area_y + dy,
-                                    ch,
-                                    Style::new().fg(Color::Rgb(r_c, g_c, b_c)),
-                                );
-                            }
-                        }
-                    }
-
-                    // Draw trail segment centers (caterpillar spine)
-                    for (i, &(tx, ty)) in trail_snap.iter().enumerate() {
-                        let sx = tx.round() as u32;
-                        let sy = ty.round() as u32;
-                        if sx >= area_x
-                            && sx < area_x + area_w
-                            && sy >= area_y
-                            && sy < area_y + area_h
-                        {
-                            let age = (trail_len - 1 - i) as f64 / TRAIL_LEN as f64;
-                            let brightness = (255.0 * (1.0 - age * 0.7)) as u8;
-                            let ch = if i == trail_len - 1 { '◉' } else { '○' };
-                            buf.set_char(
-                                sx,
-                                sy,
-                                ch,
-                                Style::new().fg(Color::Rgb(
-                                    brightness,
-                                    (brightness as f64 * 0.7) as u8,
-                                    255,
-                                )),
-                            );
-                        }
-                    }
-                });
+            render(ui, &mut state);
         },
     );
 }

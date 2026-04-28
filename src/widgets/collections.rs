@@ -10,6 +10,10 @@ pub struct ListState {
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     pub filter: String,
+    /// Top-row index of the visible viewport for `virtual_list`. Defaults to
+    /// `0` and is clamped each frame so `selected` stays inside the viewport
+    /// without forcing the cursor to the bottom row.
+    pub(crate) viewport_offset: usize,
     view_indices: Vec<usize>,
     /// Lowercase cache parallel to `items`, rebuilt only on `set_items` / `new`.
     /// Mirrors the `row_search_cache` pattern in `TableState`.
@@ -27,6 +31,7 @@ impl ListState {
             items,
             selected: 0,
             filter: String::new(),
+            viewport_offset: 0,
             view_indices: (0..len).collect(),
             item_search_cache,
         }
@@ -153,9 +158,40 @@ impl FilePickerState {
         self
     }
 
-    /// Return the currently selected file path.
-    pub fn selected(&self) -> Option<&PathBuf> {
+    /// Return the currently selected file path, if any.
+    ///
+    /// Disambiguates from the [`selected: usize`](Self::selected) field, which
+    /// is the entry index into [`entries`](Self::entries). This method returns
+    /// the resolved file path that the user picked via Enter — `None` until a
+    /// file (not a directory) is selected.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::FilePickerState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut state = FilePickerState::new(".");
+    /// if ui.file_picker(&mut state).changed {
+    ///     if let Some(path) = state.selected_file() {
+    ///         println!("picked: {}", path.display());
+    ///     }
+    /// }
+    /// # });
+    /// ```
+    pub fn selected_file(&self) -> Option<&PathBuf> {
         self.selected_file.as_ref()
+    }
+
+    /// Return the currently selected file path.
+    ///
+    /// Deprecated alias for [`selected_file`](Self::selected_file). The
+    /// shorter name conflicts visually with the [`selected: usize`](Self::selected)
+    /// field — a getter returning a path alongside a public field returning
+    /// an index made call sites ambiguous. Migrate to `selected_file()` for
+    /// new code; this stub stays callable until v1.0.
+    #[deprecated(since = "0.20.0", note = "use selected_file() — disambiguates from the `selected: usize` field index")]
+    pub fn selected(&self) -> Option<&PathBuf> {
+        self.selected_file()
     }
 
     /// Re-scan the current directory and rebuild entries.
@@ -562,6 +598,45 @@ impl TableState {
     }
 }
 
+/// A highlighted line range within a scrollable region.
+///
+/// Used with [`ScrollState::set_highlights`] to mark search results, error
+/// lines, or any per-line emphasis. The `scrollable_with_gutter` widget reads
+/// the active highlights and renders a background band on matching lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HighlightRange {
+    /// First line (0-based, relative to content top).
+    pub start_line: usize,
+    /// Number of lines in the range (1 = single line).
+    pub line_count: usize,
+}
+
+impl HighlightRange {
+    /// Create a single-line highlight at `line`.
+    ///
+    /// Field-name pairing: `start_line` + `line_count` → constructor named
+    /// `line`. Use [`Self::span`] for multi-line ranges.
+    pub fn line(line: usize) -> Self {
+        Self {
+            start_line: line,
+            line_count: 1,
+        }
+    }
+
+    /// Create a multi-line highlight starting at `start_line` covering `line_count` rows.
+    pub fn span(start_line: usize, line_count: usize) -> Self {
+        Self {
+            start_line,
+            line_count: line_count.max(1),
+        }
+    }
+
+    /// Check whether the given absolute line index falls within this range.
+    pub fn contains(&self, line: usize) -> bool {
+        line >= self.start_line && line < self.start_line + self.line_count
+    }
+}
+
 /// State for a scrollable container.
 ///
 /// Pass a mutable reference to `Context::scrollable` each frame. The context
@@ -573,6 +648,8 @@ pub struct ScrollState {
     pub offset: usize,
     content_height: u32,
     viewport_height: u32,
+    highlights: Vec<HighlightRange>,
+    current_highlight: Option<usize>,
 }
 
 impl ScrollState {
@@ -582,6 +659,8 @@ impl ScrollState {
             offset: 0,
             content_height: 0,
             viewport_height: 0,
+            highlights: Vec::new(),
+            current_highlight: None,
         }
     }
 
@@ -630,6 +709,94 @@ impl ScrollState {
         self.content_height = content_height;
         self.viewport_height = viewport_height;
     }
+
+    /// Set the active highlight ranges. Replaces any previous highlights.
+    ///
+    /// Selecting the first highlight automatically when the list is non-empty
+    /// matches the behavior of search-result navigation in code editors.
+    pub fn set_highlights(&mut self, ranges: &[HighlightRange]) {
+        self.highlights.clear();
+        self.highlights.extend_from_slice(ranges);
+        self.current_highlight = if self.highlights.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+    }
+
+    /// Read-only access to the active highlight ranges.
+    pub fn highlights(&self) -> &[HighlightRange] {
+        &self.highlights
+    }
+
+    /// Index of the currently focused highlight, if any.
+    pub fn current_highlight(&self) -> Option<usize> {
+        self.current_highlight
+    }
+
+    /// Clear all highlights and reset the current index.
+    pub fn clear_highlights(&mut self) {
+        self.highlights.clear();
+        self.current_highlight = None;
+    }
+
+    /// Advance to the next highlight, scrolling the viewport to show it.
+    /// Wraps from last to first.
+    pub fn highlight_next(&mut self) {
+        if self.highlights.is_empty() {
+            return;
+        }
+        let next = match self.current_highlight {
+            Some(i) => (i + 1) % self.highlights.len(),
+            None => 0,
+        };
+        self.current_highlight = Some(next);
+        self.scroll_to_current_highlight();
+    }
+
+    /// Move to the previous highlight, scrolling the viewport to show it.
+    /// Wraps from first to last.
+    pub fn highlight_previous(&mut self) {
+        if self.highlights.is_empty() {
+            return;
+        }
+        let next = match self.current_highlight {
+            Some(i) => {
+                if i == 0 {
+                    self.highlights.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.current_highlight = Some(next);
+        self.scroll_to_current_highlight();
+    }
+
+    /// Scroll the viewport so the currently focused highlight is visible
+    /// with one line of context above when possible.
+    pub fn scroll_to_current_highlight(&mut self) {
+        let Some(idx) = self.current_highlight else {
+            return;
+        };
+        let Some(range) = self.highlights.get(idx).copied() else {
+            return;
+        };
+        let target = range.start_line;
+        let viewport = self.viewport_height as usize;
+        let content = self.content_height as usize;
+        let max_offset = content.saturating_sub(viewport);
+        if target < self.offset {
+            self.offset = target.saturating_sub(1).min(max_offset);
+        } else if viewport > 0 && target >= self.offset + viewport {
+            let desired = target + 2;
+            let new_offset = desired.saturating_sub(viewport);
+            self.offset = new_offset.min(max_offset);
+        } else if self.offset > max_offset {
+            self.offset = max_offset;
+        }
+    }
 }
 
 impl Default for ScrollState {
@@ -638,7 +805,64 @@ impl Default for ScrollState {
     }
 }
 
-/// Column specification for [`Context::grid_with()`].
+/// State for a [`crate::Context::split_pane`] /
+/// [`crate::Context::vsplit_pane`] container.
+///
+/// Tracks the split ratio and drag state. Pass a mutable reference each frame
+/// — the widget updates `ratio` in place when the user drags the handle or
+/// presses arrow keys with the handle focused.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitPaneState {
+    /// Fraction of space given to the first pane. Clamped to
+    /// `[min_ratio, 1.0 - min_ratio]`.
+    pub ratio: f64,
+    /// Whether the handle is currently being dragged.
+    pub dragging: bool,
+    /// Minimum fraction allocated to either pane. Default: `0.10`.
+    pub min_ratio: f64,
+}
+
+/// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
+///
+/// Crate-internal: there is no public path that benefits from constructing
+/// with this constant — call [`SplitPaneState::new`] for the default (0.10)
+/// or [`SplitPaneState::with_min_ratio`] to override per-instance.
+pub(crate) const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
+
+impl SplitPaneState {
+    /// Create split state with the given initial ratio, clamped to
+    /// `[DEFAULT_SPLIT_MIN_RATIO, 1.0 - DEFAULT_SPLIT_MIN_RATIO]` (default
+    /// `[0.10, 0.90]`).
+    pub fn new(ratio: f64) -> Self {
+        let min_ratio = DEFAULT_SPLIT_MIN_RATIO;
+        let clamped = ratio.clamp(min_ratio, 1.0 - min_ratio);
+        Self {
+            ratio: clamped,
+            dragging: false,
+            min_ratio,
+        }
+    }
+
+    /// Override the minimum ratio for either pane (clamped to `[0.0, 0.49]`).
+    pub fn with_min_ratio(mut self, min: f64) -> Self {
+        self.min_ratio = min.clamp(0.0, 0.49);
+        self.ratio = self.ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
+        self
+    }
+
+    /// Set the ratio, clamped to `[min_ratio, 1.0 - min_ratio]`.
+    pub fn set_ratio(&mut self, ratio: f64) {
+        self.ratio = ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
+    }
+}
+
+impl Default for SplitPaneState {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+/// Column specification for [`crate::Context::grid_with()`].
 ///
 /// Controls the width allocation of individual columns in a grid layout.
 ///

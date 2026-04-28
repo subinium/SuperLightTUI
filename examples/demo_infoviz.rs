@@ -1,7 +1,53 @@
+//! Demo: information visualization (line/scatter/bar/heatmap/candlestick/
+//! treemap/canvas).
+//!
+//! Archetype: **Standard** (full-canvas, no overlay, no scrollback).
+//!
+//! §2 (Demo Guide): exposes `pub fn render(ui, &mut DemoState)` (via
+//! [`render_with_state`]) so a composing demo (e.g.
+//! `examples/showcase_tour.rs`) can preserve the selected tab across
+//! tab switches. The legacy stateless `pub fn render(ui)` (snapshot-
+//! style) is retained for visual snapshot tests in
+//! `tests/visual_snapshots.rs`.
+
 use slt::{
     Bar, BarDirection, BarGroup, Border, Candle, Color, Context, LegendPosition, Marker, TabsState,
     TreemapItem,
 };
+
+/// Persistent state for the infoviz demo: the selected tab.
+pub struct DemoState {
+    pub tabs: TabsState,
+}
+
+impl DemoState {
+    pub fn new() -> Self {
+        Self {
+            tabs: TabsState::new(vec![
+                "Overview",
+                "Lines",
+                "Scatter",
+                "Bars",
+                "Heatmap",
+                "Financial",
+                "Treemap",
+                "Canvas",
+            ]),
+        }
+    }
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Render one frame with caller-owned state — used by the showcase
+/// tour so the selected chart tab survives across tab switches.
+pub fn render_with_state(ui: &mut Context, state: &mut DemoState) {
+    render_frame(ui, &mut state.tabs);
+}
 
 fn main() -> std::io::Result<()> {
     let mut tabs = TabsState::new(vec![
@@ -294,8 +340,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
         ui.quit();
     }
     {
-        let tw = ui.width() as u32;
-        let th = ui.height() as u32;
+        let tw = ui.width();
+        let th = ui.height();
         let grid_dim = slt::Style::new().fg(Color::Indexed(237));
 
         let _ = ui

@@ -1,5 +1,7 @@
 //! demo_website — showcase example.
 //!
+//! Archetype: **Standard** (full-canvas, no overlay, no scrollback).
+//!
 //! Refactored in v0.19.0 to demonstrate:
 //!   - `ui.provide` / `ui.use_context::<T>()` for app-wide state injection
 //!   - `.with_if(cond, modifier)` for fluent conditional styling
@@ -7,6 +9,12 @@
 //! Mutation-heavy sections still receive explicit `&mut` params for clarity
 //! (hybrid approach): context for reads (`theme`, `tick`), explicit params
 //! for writes (toasts, form state, navigation intents, modal flags).
+//!
+//! §2 (Demo Guide): exposes `pub fn render(ui, &mut DemoState)` so a
+//! composing demo (e.g. `examples/showcase_tour.rs`) can preserve nav
+//! tab, scroll position, theme cursor, email input, blog view, toasts,
+//! subscribe flag, modal state, selected plan, and contact form across
+//! tab switches. The standalone `main()` is a thin wrapper.
 
 use slt::{
     Border, ButtonVariant, Color, Context, FormField, FormState, KeyCode, Padding, ScrollState,
@@ -27,150 +35,206 @@ struct AppState {
     tick: u64,
 }
 
-fn main() -> std::io::Result<()> {
-    let mut nav = TabsState::new(vec!["Home", "Docs", "Blog", "Pricing", "Contact"]);
-    let mut scroll = ScrollState::new();
-    let themes: [fn() -> Theme; 10] = [
-        Theme::dark,
-        Theme::light,
-        Theme::dracula,
-        Theme::catppuccin,
-        Theme::nord,
-        Theme::solarized_dark,
-        Theme::solarized_light,
-        Theme::tokyo_night,
-        Theme::gruvbox_dark,
-        Theme::one_dark,
-    ];
-    let theme_names = [
-        "Dark",
-        "Light",
-        "Dracula",
-        "Catppuccin",
-        "Nord",
-        "Solarized Dark",
-        "Solarized Light",
-        "Tokyo Night",
-        "Gruvbox",
-        "One Dark",
-    ];
-    let mut theme_idx: usize = 0;
-    let mut email = slt::TextInputState::with_placeholder("you@example.com");
-    let mut blog_view: Option<usize> = None;
-    let mut toasts = ToastState::new();
-    let mut subscribed = false;
-    let mut nav_target: Option<usize> = None;
-    let mut show_modal = false;
-    let mut selected_plan = String::new();
-    let mut contact_form = FormState::new()
-        .field(FormField::new("Name").placeholder("Jane Doe"))
-        .field(FormField::new("Email").placeholder("jane@example.com"))
-        .field(FormField::new("Message").placeholder("How can we help?"));
+const THEMES: [fn() -> Theme; 10] = [
+    Theme::dark,
+    Theme::light,
+    Theme::dracula,
+    Theme::catppuccin,
+    Theme::nord,
+    Theme::solarized_dark,
+    Theme::solarized_light,
+    Theme::tokyo_night,
+    Theme::gruvbox_dark,
+    Theme::one_dark,
+];
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        let tick = ui.tick();
+const THEME_NAMES: [&str; 10] = [
+    "Dark",
+    "Light",
+    "Dracula",
+    "Catppuccin",
+    "Nord",
+    "Solarized Dark",
+    "Solarized Light",
+    "Tokyo Night",
+    "Gruvbox",
+    "One Dark",
+];
 
-        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
-            ui.quit();
-        }
-        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-            theme_idx = (theme_idx + 1) % themes.len();
-            toasts.info(format!("Theme: {}", theme_names[theme_idx]), tick);
-        }
-        if ui.key_code(KeyCode::Esc) {
-            blog_view = None;
-        }
-        for (i, ch) in ['1', '2', '3', '4', '5'].iter().enumerate() {
-            if ui.key(*ch) {
-                nav_target = Some(i);
-            }
-        }
-        ui.set_theme(themes[theme_idx]());
+/// Persistent state for the website demo: every cross-frame value the
+/// pages mutate.
+pub struct DemoState {
+    pub nav: TabsState,
+    pub scroll: ScrollState,
+    pub theme_idx: usize,
+    pub email: slt::TextInputState,
+    pub blog_view: Option<usize>,
+    pub toasts: ToastState,
+    pub subscribed: bool,
+    pub nav_target: Option<usize>,
+    pub show_modal: bool,
+    pub selected_plan: String,
+    pub contact_form: FormState,
+}
 
-        if let Some(target) = nav_target.take() {
-            nav.selected = target;
-            scroll = ScrollState::new();
+impl DemoState {
+    pub fn new() -> Self {
+        Self {
+            nav: TabsState::new(vec!["Home", "Docs", "Blog", "Pricing", "Contact"]),
+            scroll: ScrollState::new(),
+            theme_idx: 0,
+            email: slt::TextInputState::with_placeholder("you@example.com"),
+            blog_view: None,
+            toasts: ToastState::new(),
+            subscribed: false,
+            nav_target: None,
+            show_modal: false,
+            selected_plan: String::new(),
+            contact_form: FormState::new()
+                .field(FormField::new("Name").placeholder("Jane Doe"))
+                .field(FormField::new("Email").placeholder("jane@example.com"))
+                .field(FormField::new("Message").placeholder("How can we help?")),
         }
+    }
+}
 
-        // Inject AppState for the rest of the frame. Every render_* helper
-        // below reads `theme`/`tick` via `ui.use_context::<AppState>()`.
-        let app = AppState {
-            theme: *ui.theme(),
-            tick,
-        };
-        ui.provide(app, |ui| {
-            let theme = app.theme;
+impl Default for DemoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-            let _ = ui.container().grow(1).col(|ui| {
-                // ── navbar ──
+/// Render one frame of the website demo. Caller owns `DemoState` so
+/// nav tab, scroll, theme cursor, modal flags, and form values persist
+/// across frames.
+///
+/// Quit handling is intentionally NOT performed here — callers (the
+/// standalone `main` and the showcase tour) own the quit triple.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    let tick = ui.tick();
+
+    if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+        state.theme_idx = (state.theme_idx + 1) % THEMES.len();
+        state
+            .toasts
+            .info(format!("Theme: {}", THEME_NAMES[state.theme_idx]), tick);
+    }
+    if ui.key_code(KeyCode::Esc) {
+        state.blog_view = None;
+    }
+    for (i, ch) in ['1', '2', '3', '4', '5'].iter().enumerate() {
+        if ui.key(*ch) {
+            state.nav_target = Some(i);
+        }
+    }
+    ui.set_theme(THEMES[state.theme_idx]());
+
+    if let Some(target) = state.nav_target.take() {
+        state.nav.selected = target;
+        state.scroll = ScrollState::new();
+    }
+
+    // Inject AppState for the rest of the frame. Every render_* helper
+    // below reads `theme`/`tick` via `ui.use_context::<AppState>()`.
+    let app = AppState {
+        theme: *ui.theme(),
+        tick,
+    };
+    ui.provide(app, |ui| {
+        let theme = app.theme;
+
+        let _ = ui.container().grow(1).col(|ui| {
+            // ── navbar ──
+            let _ = ui
+                .container()
+                .bg(theme.surface)
+                .padding(Padding::xy(2, 0))
+                .col(|ui| {
+                    let _ = ui.row(|ui| {
+                        ui.text("SLT").bold().fg(theme.primary);
+                        ui.text(" ").fg(theme.text_dim);
+                        ui.spacer();
+                        let _ = ui.tabs(&mut state.nav);
+                        ui.styled(
+                            format!(" {} ", THEME_NAMES[state.theme_idx]),
+                            Style::new().fg(theme.text).bg(theme.surface_hover),
+                        );
+                    });
+                });
+
+            let selected = state.nav.selected;
+            let _ = ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
+                match selected {
+                    0 => render_home(
+                        ui,
+                        &mut state.email,
+                        &mut state.nav_target,
+                        &mut state.toasts,
+                        &mut state.subscribed,
+                    ),
+                    1 => render_docs(ui),
+                    2 => render_blog(ui, &mut state.blog_view),
+                    3 => render_pricing(
+                        ui,
+                        &mut state.toasts,
+                        &mut state.show_modal,
+                        &mut state.selected_plan,
+                    ),
+                    _ => render_contact(
+                        ui,
+                        &mut state.nav_target,
+                        &mut state.contact_form,
+                        &mut state.toasts,
+                    ),
+                }
+
+                // ── footer ──
                 let _ = ui
                     .container()
                     .bg(theme.surface)
-                    .padding(Padding::xy(2, 0))
+                    .padding(Padding::xy(2, 1))
                     .col(|ui| {
                         let _ = ui.row(|ui| {
                             ui.text("SLT").bold().fg(theme.primary);
-                            ui.text(" ").fg(theme.text_dim);
+                            ui.text("Framework").fg(theme.surface_text);
                             ui.spacer();
-                            let _ = ui.tabs(&mut nav);
-                            ui.styled(
-                                format!(" {} ", theme_names[theme_idx]),
-                                Style::new().fg(theme.text).bg(theme.surface_hover),
-                            );
+                            ui.text("MIT License").fg(theme.surface_text);
+                        });
+                        ui.text("");
+                        let _ = ui.row(|ui| {
+                            ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
+                            ui.link("Docs", "https://docs.rs/superlighttui");
+                            ui.link("Discord", "https://discord.gg/slt");
+                            ui.spacer();
+                            ui.text("v0.5.0").fg(theme.surface_text);
                         });
                     });
-
-                let selected = nav.selected;
-                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
-                    match selected {
-                        0 => render_home(
-                            ui,
-                            &mut email,
-                            &mut nav_target,
-                            &mut toasts,
-                            &mut subscribed,
-                        ),
-                        1 => render_docs(ui),
-                        2 => render_blog(ui, &mut blog_view),
-                        3 => render_pricing(ui, &mut toasts, &mut show_modal, &mut selected_plan),
-                        _ => render_contact(ui, &mut nav_target, &mut contact_form, &mut toasts),
-                    }
-
-                    // ── footer ──
-                    let _ = ui
-                        .container()
-                        .bg(theme.surface)
-                        .padding(Padding::xy(2, 1))
-                        .col(|ui| {
-                            let _ = ui.row(|ui| {
-                                ui.text("SLT").bold().fg(theme.primary);
-                                ui.text("Framework").fg(theme.surface_text);
-                                ui.spacer();
-                                ui.text("MIT License").fg(theme.surface_text);
-                            });
-                            ui.text("");
-                            let _ = ui.row(|ui| {
-                                ui.link("GitHub", "https://github.com/subinium/SuperLightTUI");
-                                ui.link("Docs", "https://docs.rs/superlighttui");
-                                ui.link("Discord", "https://discord.gg/slt");
-                                ui.spacer();
-                                ui.text("v0.5.0").fg(theme.surface_text);
-                            });
-                        });
-                });
-
-                ui.toast(&mut toasts);
-
-                let _ = ui.help(&[
-                    ("Ctrl+Q", "quit"),
-                    ("Ctrl+T", "theme"),
-                    ("1-5", "tabs"),
-                    ("Esc", "back"),
-                    ("Tab", "focus"),
-                ]);
             });
+
+            ui.toast(&mut state.toasts);
+
+            let _ = ui.help(&[
+                ("Ctrl+Q", "quit"),
+                ("Ctrl+T", "theme"),
+                ("1-5", "tabs"),
+                ("Esc", "back"),
+                ("Tab", "focus"),
+            ]);
         });
-    })
+    });
+}
+
+fn main() -> std::io::Result<()> {
+    let mut state = DemoState::new();
+    slt::run_with(
+        slt::RunConfig::default().mouse(true),
+        move |ui: &mut Context| {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+                ui.quit();
+            }
+            render(ui, &mut state);
+        },
+    )
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

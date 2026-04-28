@@ -805,7 +805,7 @@ fn calendar_renders_month_title() {
 fn progress_renders() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.progress(0.5);
+        let _ = ui.progress(0.5);
     });
     tb.assert_contains("█");
     tb.assert_contains("░");
@@ -816,7 +816,7 @@ fn spinner_renders() {
     let mut tb = TestBackend::new(40, 5);
     let spinner = SpinnerState::dots();
     tb.render(|ui| {
-        ui.spinner(&spinner);
+        let _ = ui.spinner(&spinner);
     });
     tb.assert_contains("⠋");
 }
@@ -1161,6 +1161,96 @@ fn confirm_tab_toggles_choice_before_focus_processing() {
     assert!(answer);
 }
 
+// Regression: clicking [Yes] must update `result` in the SAME frame (not lag
+// one frame). The previous implementation mutated `*result` correctly but
+// computed `[Yes]/[No]` styles before the mouse hit-test, leaking a visual
+// one-frame lag and forcing a `let _ = is_yes;` dead-write silencer. After
+// the fix, both the outparam and the rendered visual feedback land together.
+#[test]
+fn confirm_click_yes_updates_answer_in_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    // Frame 0: render once so the row enters `prev_hit_map`.
+    let mut answer = false;
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+    assert!(!answer, "default state should be No");
+
+    // Frame 1: click on [Yes]. "Continue?" is 9 columns, then a space, so
+    // [Yes] starts at x=10 and runs through x=14.
+    let events = slt::EventBuilder::new().click(11, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+        if answer {
+            // Render this only when the click landed; an extra row guarantees
+            // the assertion below tests current-frame behaviour, not next.
+            ui.text("YES SELECTED");
+        }
+    });
+    assert!(answer, "click on [Yes] must update outparam in same frame");
+    tb.assert_contains("YES SELECTED");
+}
+
+#[test]
+fn confirm_click_no_updates_answer_in_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    // Default is `false`, so start in the Yes state to verify the click flips
+    // the answer back to No within a single frame.
+    let mut answer = true;
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // [No] sits one space after [Yes]. With "Continue?" = 9 columns:
+    //   row_x=0, q_width=9, yes_start=10, yes_end=15, no_start=16, no_end=20.
+    let events = slt::EventBuilder::new().click(17, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+        if !answer {
+            ui.text("NO SELECTED");
+        }
+    });
+    assert!(!answer, "click on [No] must update outparam in same frame");
+    tb.assert_contains("NO SELECTED");
+}
+
+// Visual-feedback regression: when a click lands on [Yes], the rendered row
+// in the *same* frame must show `[Yes]` with the selected (focused) style
+// applied — i.e. the foreground colour for `[Yes]` is the theme's `bg` (the
+// reverse of unselected). The old implementation computed styles before the
+// hit-test, so `[Yes]` painted as unselected on the click frame.
+#[test]
+fn confirm_click_yes_renders_selected_style_same_frame() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut answer = false;
+    // Prime `prev_hit_map`.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // Snapshot the cell at the 'Y' of "[Yes]" before the click. With default
+    // `is_yes = false`, [Yes] is painted in `text_dim`, not the bold/bg-swap
+    // selected style.
+    let style_before = tb.buffer().get(11, 0).style;
+
+    let events = slt::EventBuilder::new().click(11, 0).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.confirm("Continue?", &mut answer);
+    });
+
+    // After the click, [Yes] should be rendered in the selected style (bold +
+    // bg swapped to theme.success). The simplest check that catches the old
+    // bug: the cell's style must have changed compared to the unselected
+    // frame. The previous-frame render painted [Yes] dim; the current-frame
+    // render after the fix paints [Yes] with the success-on-bg style.
+    let style_after = tb.buffer().get(11, 0).style;
+    assert!(answer, "outparam should track the click");
+    assert_ne!(
+        style_before, style_after,
+        "[Yes] style must change in the click frame, not lag by one frame"
+    );
+}
+
 #[test]
 fn notify_renders_without_toast_state() {
     let mut tb = TestBackend::new(80, 5);
@@ -1229,6 +1319,50 @@ fn chart_empty_data_no_panic() {
     tb.render(|ui| {
         ui.chart(|_c| {}, 30, 8);
     });
+}
+
+/// Legend names must not bleed past the chart's allotted width. Long
+/// names get an ellipsis; very narrow charts drop the legend entirely
+/// rather than emit a garbled prefix. (v0.20 fix.)
+#[test]
+fn chart_legend_truncates_with_ellipsis_when_narrow() {
+    // 16-cell-wide chart with a long legend name + axis labels. The
+    // full "Memory" legend wants 4+6 = 10 cells, but with the y-axis
+    // taking ~6 cells and a min-plot reservation of 4, the legend is
+    // capped down and must truncate the name with an ellipsis.
+    let mut tb = TestBackend::new(20, 8);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.line(&[(0.0, 1.0), (1.0, 2.0)])
+                    .label("Memory")
+                    .color(slt::Color::Cyan);
+                c.legend(slt::LegendPosition::TopRight);
+                c.grid(false);
+            },
+            16,
+            6,
+        );
+    });
+    let out = tb.to_string();
+    let has_full = out.contains("Memory");
+    let has_ellipsis = out.contains('\u{2026}');
+    let has_no_legend = !out.contains("Memory") && !out.contains('M');
+    assert!(
+        has_full || has_ellipsis || has_no_legend,
+        "expected full label, ellipsis-truncated label, or dropped legend; got:\n{out}"
+    );
+    for bad in ["Memor", "Memo", "Mem", "Me", "M"] {
+        if out.contains(bad) {
+            let with_full = out.contains("Memory");
+            let with_ell = out.contains(&format!("{bad}\u{2026}"));
+            assert!(
+                with_full || with_ell,
+                "legend contains bare-truncated prefix {bad:?} \
+                 (no ellipsis, no full label):\n{out}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -3057,7 +3191,7 @@ fn alert_consumes_dismiss_key() {
 fn breadcrumb_renders_segments() {
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let _ = ui.breadcrumb(&["Home", "Settings", "Profile"]);
     });
     let output = tb.to_string();
     assert!(output.contains("Home"));
@@ -3070,7 +3204,10 @@ fn breadcrumb_enter_activates_focused_segment() {
     let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
     let mut clicked = None;
     tb.render_with_events(events, 0, 1, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        clicked = ui
+            .breadcrumb(&["Home", "Settings", "Profile"])
+            .show()
+            .clicked_segment;
     });
     assert_eq!(clicked, Some(0));
 }
@@ -3085,7 +3222,10 @@ fn breadcrumb_mouse_click_activates_segment() {
     let events = slt::EventBuilder::new().click(1, 0).build();
     let mut clicked = None;
     tb.render_with_events(events, 0, 0, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        clicked = ui
+            .breadcrumb(&["Home", "Settings", "Profile"])
+            .show()
+            .clicked_segment;
     });
 
     assert_eq!(clicked, Some(0));
@@ -3257,7 +3397,7 @@ fn demo_v094_content_does_not_panic() {
             ui.alert("Test alert", AlertLevel::Success);
         }
         ui.divider_text("Nav");
-        ui.breadcrumb(&["Home", "Settings"]);
+        let _ = ui.breadcrumb(&["Home", "Settings"]);
         ui.stat("Uptime", "14d");
         ui.stat_trend("Revenue", "$12,400", Trend::Up);
         ui.stat_colored("CPU", "72%", Color::Yellow);
@@ -3529,6 +3669,36 @@ fn treemap_filters_tiny_items() {
         !output.contains("Tiny"),
         "tiny items should be filtered out"
     );
+}
+
+/// When a treemap cell is narrower than its label, the label must be
+/// truncated with an ellipsis ("…"), never bare-truncated mid-character.
+/// (v0.20 fix: pre-fix output showed "Pytho"/"TypeS" instead of
+/// "Pyth…"/"Type…".)
+#[test]
+fn treemap_truncates_label_with_ellipsis() {
+    let mut tb = TestBackend::new(30, 5);
+    let items = vec![
+        slt::TreemapItem::new("Rust", 40.0, slt::Color::Cyan),
+        slt::TreemapItem::new("Python", 20.0, slt::Color::Yellow),
+        slt::TreemapItem::new("TypeScript", 10.0, slt::Color::Blue),
+        slt::TreemapItem::new("Go", 25.0, slt::Color::Green),
+    ];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    let output = tb.to_string();
+    for bad in ["Pytho", "Pyth", "TypeS", "Types", "TypeSc"] {
+        if output.contains(bad) {
+            let with_full =
+                bad == "Pyth" && output.contains("Python") || output.contains("TypeScript");
+            let with_ell = output.contains(&format!("{bad}\u{2026}"));
+            assert!(
+                with_full || with_ell,
+                "treemap contains bare-truncated label {bad:?} (no ellipsis, no full label):\n{output}"
+            );
+        }
+    }
 }
 
 // ── Heatmap Halfblock ───────────────────────────────────────────
@@ -4086,7 +4256,7 @@ fn definition_list_empty_key_renders_only_padding() {
     assert!(output.contains("—"));
 }
 
-// ── #182: breadcrumb_response returns (Response, Option<usize>) ───────────
+// ── v0.20.0 #213: breadcrumb collapsed to BreadcrumbResponse ─────────────
 
 #[test]
 fn breadcrumb_response_exposes_rect() {
@@ -4094,15 +4264,15 @@ fn breadcrumb_response_exposes_rect() {
     let mut rect = slt::Rect::default();
     let mut idx: Option<usize> = None;
     tb.render(|ui| {
-        let (resp, clicked) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        rect = resp.rect;
-        idx = clicked;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
+        rect = r.rect;
+        idx = r.clicked_segment;
     });
     // First frame has no prev_hit_map entry yet, so rect may be zero — render
     // a second frame so the response carries a real rect.
     tb.render(|ui| {
-        let (resp, _) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        rect = resp.rect;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
+        rect = r.rect;
     });
     assert!(
         rect.width > 0,
@@ -4121,29 +4291,32 @@ fn breadcrumb_response_returns_clicked_index_on_enter() {
     let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
     let mut clicked: Option<usize> = None;
     tb.render_with_events(events, 0, 1, |ui| {
-        let (_resp, idx) = ui.breadcrumb_response(&["Home", "Settings", "Profile"]);
-        clicked = idx;
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
+        clicked = r.clicked_segment;
     });
     assert_eq!(clicked, Some(0));
 }
 
 #[test]
-fn breadcrumb_legacy_api_still_returns_index() {
-    // The non-Response variant must keep working unchanged.
-    let mut tb = TestBackend::new(60, 3);
-    let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
-    let mut clicked: Option<usize> = None;
-    tb.render_with_events(events, 0, 1, |ui| {
-        clicked = ui.breadcrumb(&["Home", "Settings", "Profile"]);
-    });
-    assert_eq!(clicked, Some(0));
-}
-
-#[test]
-fn breadcrumb_response_with_custom_separator() {
+fn breadcrumb_response_derefs_to_response() {
+    // BreadcrumbResponse derefs into Response, so .hovered/.rect work directly.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let (_resp, _idx) = ui.breadcrumb_response_with(&["A", "B", "C"], " > ");
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
+        // Must compile via Deref impl.
+        let _ = r.hovered;
+        let _ = r.rect;
+        let _ = r.focused;
+    });
+}
+
+#[test]
+fn breadcrumb_builder_separator_uses_custom_string() {
+    // The chainable `.separator(...)` is the only public form for custom
+    // breadcrumb separators in v0.20.0+.
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.breadcrumb(&["A", "B", "C"]).separator(" > ");
     });
     let output = tb.to_string();
     assert!(output.contains(" > "));
@@ -4973,4 +5146,121 @@ fn markdown_byte_index_empty_bold_marker() {
         ui.markdown("a****b");
     });
     tb.assert_contains("ab");
+}
+
+#[test]
+fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
+    // Regression for #192: previously `start = selected - vh + 1` always
+    // pinned the cursor to the bottom of the viewport. The sticky-viewport
+    // fix keeps the cursor mid-viewport when the user scrolls up.
+    let mut tb = TestBackend::new(40, 12);
+    let items: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
+    let mut state = ListState::new(items);
+    let visible_height: u32 = 5;
+
+    // Frame 1: scroll the cursor to row 10. The viewport snaps so that
+    // `Item 10` is the last visible row (start = 6).
+    state.selected = 10;
+    tb.render(|ui| {
+        ui.virtual_list(&mut state, visible_height, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    tb.assert_contains("Item 10");
+
+    // Frame 2: move the cursor up by one. With the bug the viewport would
+    // also slide up by one (start = 5) so `Item 10` would no longer be
+    // visible. With the fix the viewport stays put and `Item 10` is still
+    // on screen — the cursor moved off the bottom row instead of dragging
+    // the viewport with it.
+    state.selected = 9;
+    tb.render(|ui| {
+        ui.virtual_list(&mut state, visible_height, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    let out = tb.to_string();
+    assert!(
+        out.contains("Item 10"),
+        "viewport should stay put when cursor moves up, but Item 10 disappeared: {out:?}"
+    );
+    assert!(
+        !out.contains("Item 5"),
+        "viewport should not have followed the cursor up, but Item 5 became visible: {out:?}"
+    );
+}
+
+#[test]
+fn calendar_h_l_move_by_day() {
+    // Regression for #193: `h`/`l` previously navigated months, which
+    // contradicted vim convention (h/l = cursor ±1 unit). They now move
+    // the cursor by one day, and `[`/`]` navigate months instead.
+    let mut tb = TestBackend::new(40, 12);
+    let mut state = CalendarState::from_ym(2024, 6);
+
+    // Walk the cursor to June 15 with arrow keys so we can observe `h`/`l`
+    // from a known mid-month position. Pressing Enter at the end commits
+    // the cursor to `selected_day`, which the test reads via the public
+    // `selected_date()` getter (`cursor_day` is crate-private).
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..14 {
+        walk = walk.key_code(slt::KeyCode::Right);
+    }
+    let setup = walk.key_code(slt::KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 15)),
+        "setup precondition: cursor walked to June 15"
+    );
+
+    // `h` must move the cursor one day backward inside the same month,
+    // not jump to the previous month. The bug fixed in #193 used to map
+    // `h` to `prev_month()`, which would land us in May.
+    let h = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('h'))
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(h, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 14)),
+        "h should move cursor one day back, staying in June"
+    );
+
+    // `l` must move the cursor one day forward inside the same month.
+    let l = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('l'))
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(l, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 15)),
+        "l should move cursor one day forward, staying in June"
+    );
+
+    // `[` is the new month-back binding.
+    let lb = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('['))
+        .build();
+    tb.render_with_events(lb, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!((state.year, state.month), (2024, 5));
+
+    // `]` is the new month-forward binding.
+    let rb = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char(']'))
+        .build();
+    tb.render_with_events(rb, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!((state.year, state.month), (2024, 6));
 }

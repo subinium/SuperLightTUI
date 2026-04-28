@@ -537,6 +537,93 @@ impl Theme {
         }
     }
 
+    /// Compact density preset — base spacing = 1 (matches v0.19 default behavior).
+    ///
+    /// Use when terminal space is tight or you want maximum information
+    /// density. Built on [`Theme::dark()`] colors with `Spacing::new(1)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Theme;
+    ///
+    /// let theme = Theme::compact();
+    /// assert_eq!(theme.spacing.xs(), 1);
+    /// ```
+    pub const fn compact() -> Self {
+        let base = Self::dark();
+        Self {
+            spacing: Spacing::new(1),
+            ..base
+        }
+    }
+
+    /// Comfortable density preset — base spacing = 2.
+    ///
+    /// Widgets use roughly twice the padding/margin of [`Theme::compact`],
+    /// improving readability in spacious terminals at the cost of fitting
+    /// less content per screen.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Theme;
+    ///
+    /// let theme = Theme::comfortable();
+    /// assert_eq!(theme.spacing.xs(), 2);
+    /// assert_eq!(theme.spacing.sm(), 4);
+    /// ```
+    pub const fn comfortable() -> Self {
+        let base = Self::dark();
+        Self {
+            spacing: Spacing::new(2),
+            ..base
+        }
+    }
+
+    /// Spacious density preset — base spacing = 3.
+    ///
+    /// Tripled padding/margin compared to [`Theme::compact`] — best for
+    /// presentations, demos, or very wide terminals where "breathing room"
+    /// matters more than density.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Theme;
+    ///
+    /// let theme = Theme::spacious();
+    /// assert_eq!(theme.spacing.xs(), 3);
+    /// assert_eq!(theme.spacing.sm(), 6);
+    /// ```
+    pub const fn spacious() -> Self {
+        let base = Self::dark();
+        Self {
+            spacing: Spacing::new(3),
+            ..base
+        }
+    }
+
+    /// Apply a [`Spacing`] scale on top of the current theme, returning a new theme.
+    ///
+    /// All other fields are preserved. Useful to adapt any preset (Nord,
+    /// Dracula, custom) to a new density without rebuilding the colors.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Spacing, Theme};
+    ///
+    /// let dense_nord = Theme::nord().with_spacing(Spacing::new(2));
+    /// assert_eq!(dense_nord.spacing.xs(), 2);
+    /// // Nord colors preserved.
+    /// assert_eq!(dense_nord.bg, Theme::nord().bg);
+    /// ```
+    pub const fn with_spacing(mut self, spacing: Spacing) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
     /// One Dark theme (Atom) — cool blues and purples on dark gray.
     pub fn one_dark() -> Self {
         Self {
@@ -1061,6 +1148,6 @@ mod tests {
     fn light_builder_is_const_evaluable() {
         assert_eq!(_CONST_LIGHT.primary, Color::Rgb(1, 2, 3));
         assert_eq!(_CONST_LIGHT.bg, Theme::light().bg);
-        assert!(!_CONST_LIGHT.is_dark);
+        const { assert!(!_CONST_LIGHT.is_dark) };
     }
 }

@@ -1,3 +1,12 @@
+//! Interactive widgets — tables, tabs, lists, trees, command palettes,
+//! buttons, toggles, checkboxes, and the keyboard / mouse / theme /
+//! quit helpers.
+//!
+//! Layer 3 widgets that consume events. State types live in
+//! [`crate::widgets`] (e.g. [`crate::widgets::TableState`],
+//! [`crate::widgets::TreeState`]). For pure display see
+//! [`super::widgets_display`].
+
 use super::*;
 
 mod collections;

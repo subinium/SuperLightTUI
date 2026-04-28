@@ -69,6 +69,7 @@ impl Context {
         let mut is_yes = *result;
         let mut clicked = false;
 
+        // 1) Keyboard hit-test runs first so it can mutate `is_yes`.
         if focused {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
@@ -101,6 +102,42 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
+        // 2) Mouse hit-test runs *before* style computation and rendering so
+        // the visual feedback for `[Yes]` / `[No]` reflects the click in the
+        // same frame the click happened. Predict the row's interaction id
+        // (the next slot the row will allocate) and look up the previous
+        // frame's rect from `prev_hit_map`. On the first frame the row has
+        // no entry yet, so we fall back to assuming the row starts at (0,0)
+        // — same behaviour as the prior implementation.
+        let q_width = UnicodeWidthStr::width(question) as u32;
+        if !clicked {
+            if let Some((mx, my)) = self.click_pos {
+                let next_id = self.rollback.interaction_count;
+                let prev_rect = self.prev_hit_map.get(next_id).copied();
+                let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
+                let in_row_y = match prev_rect {
+                    Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
+                    _ => true,
+                };
+                if in_row_y {
+                    let yes_start = row_x + q_width + 1;
+                    let yes_end = yes_start + 5;
+                    let no_start = yes_end + 1;
+                    let no_end = no_start + 4; // "[No]" = 4 display columns
+                    if mx >= yes_start && mx < yes_end {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
+                    } else if mx >= no_start && mx < no_end {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
+                    }
+                }
+            }
+        }
+
+        // 3) Style computation reads the now-mutated `is_yes`.
         let yes_style = if is_yes {
             if focused {
                 Style::new().fg(self.theme.bg).bg(self.theme.success).bold()
@@ -120,7 +157,7 @@ impl Context {
             Style::new().fg(self.theme.text_dim)
         };
 
-        let q_width = UnicodeWidthStr::width(question) as u32;
+        // 4) Render with the post-hit-test styles.
         let mut response = self.row(|ui| {
             ui.text(question);
             ui.text(" ");
@@ -129,98 +166,39 @@ impl Context {
             ui.styled("[No]", no_style);
         });
 
-        if !clicked {
-            if let Some((mx, my)) = self.click_pos {
-                // Hit-test against the row's recorded rect when available.
-                // On the first frame the row has no entry in `prev_hit_map`
-                // yet, so `response.rect` is the zero rect. In that case we
-                // fall back to assuming the row starts at (0, 0): callers
-                // testing confirm() on the first frame still get correct
-                // x-axis hit-testing because the column layout begins at
-                // x=0 by default.
-                let row_x = response.rect.x;
-                let in_row_y = response.rect.height == 0
-                    || (my >= response.rect.y && my < response.rect.bottom());
-                if in_row_y {
-                    let yes_start = row_x + q_width + 1;
-                    let yes_end = yes_start + 5;
-                    let no_start = yes_end + 1;
-                    let no_end = no_start + 4; // "[No]" = 4 display columns
-                    if mx >= yes_start && mx < yes_end {
-                        is_yes = true;
-                        *result = true;
-                        clicked = true;
-                    } else if mx >= no_start && mx < no_end {
-                        is_yes = false;
-                        *result = false;
-                        clicked = true;
-                    }
-                }
-            }
-        }
-
         response.focused = focused;
         response.clicked = clicked;
         response.changed = clicked;
-        let _ = is_yes;
         response
     }
 
-    /// Render a breadcrumb navigation bar. Returns the clicked segment index.
-    pub fn breadcrumb(&mut self, segments: &[&str]) -> Option<usize> {
-        self.breadcrumb_with(segments, " › ")
-    }
-
-    /// Render a breadcrumb with a custom separator string.
-    pub fn breadcrumb_with(&mut self, segments: &[&str], separator: &str) -> Option<usize> {
-        self.breadcrumb_response_with(segments, separator).1
-    }
-
-    /// Render a breadcrumb and return both the row [`Response`] and the
-    /// clicked segment index.
+    /// Begin building a breadcrumb navigation bar with the default separator
+    /// (` › `).
     ///
-    /// The `Response` exposes hover/focus state and the widget rectangle, while
-    /// the `Option<usize>` carries the clicked segment index (same value as
-    /// [`Self::breadcrumb`]).
-    pub fn breadcrumb_response(&mut self, segments: &[&str]) -> (Response, Option<usize>) {
-        self.breadcrumb_response_with(segments, " › ")
-    }
-
-    /// Render a breadcrumb with a custom separator and return both the row
-    /// [`Response`] and the clicked segment index.
-    pub fn breadcrumb_response_with(
-        &mut self,
-        segments: &[&str],
-        separator: &str,
-    ) -> (Response, Option<usize>) {
-        let theme = self.theme;
-        let last_idx = segments.len().saturating_sub(1);
-        let mut clicked_idx: Option<usize> = None;
-
-        let response = self.row(|ui| {
-            for (i, segment) in segments.iter().enumerate() {
-                let is_last = i == last_idx;
-                if is_last {
-                    ui.text(*segment).bold();
-                } else {
-                    let focused = ui.register_focusable();
-                    let resp = ui.interaction();
-                    let activated = resp.clicked || ui.consume_activation_keys(focused);
-                    let color = if resp.hovered || focused {
-                        theme.accent
-                    } else {
-                        theme.primary
-                    };
-                    ui.text(*segment).fg(color).underline();
-                    if activated {
-                        clicked_idx = Some(i);
-                    }
-                    ui.text(separator).dim();
-                }
-            }
-        });
-
-        (response, clicked_idx)
+    /// Returns a [`Breadcrumb`] builder that auto-renders on `Drop`. Chain
+    /// `.separator(s)` for a custom separator and `.color(c)` for a custom
+    /// link color. Call `.show()` to render and obtain a
+    /// [`BreadcrumbResponse`] carrying `clicked_segment` and `Deref<Response>`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // simple
+    /// ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    ///
+    /// // with custom separator + color, capturing the response
+    /// let r = ui
+    ///     .breadcrumb(&["Home", "src", "lib.rs"])
+    ///     .separator(" > ")
+    ///     .show();
+    /// if let Some(i) = r.clicked_segment {
+    ///     // navigate to segment `i`
+    /// }
+    /// # });
+    /// ```
+    pub fn breadcrumb<'a>(&'a mut self, segments: &'a [&'a str]) -> Breadcrumb<'a> {
+        Breadcrumb::new(self, segments)
     }
 
     /// Collapsible section that toggles on click, Enter, or Space.
@@ -256,7 +234,8 @@ impl Context {
         }
 
         if *open {
-            let _ = self.container().pl(2).col(f);
+            let indent = self.theme.spacing.sm();
+            let _ = self.container().pl(indent).col(f);
         }
 
         response.focused = focused;
@@ -433,18 +412,19 @@ impl Context {
     /// Render a code block with language-aware syntax highlighting.
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
         let theme = self.theme;
+        let pad = theme.spacing.xs();
         let highlighted: Option<Vec<Vec<(String, Style)>>> =
             crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .p(1)
+            .p(pad)
             .col(|ui| {
                 if let Some(ref lines) = highlighted {
                     render_tree_sitter_lines(ui, lines);
                 } else {
                     for line in code.lines() {
-                        render_highlighted_line(ui, line);
+                        ui.line(|ui| render_highlighted_line(ui, line));
                     }
                 }
             });
@@ -462,12 +442,13 @@ impl Context {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
         let theme = self.theme;
+        let pad = theme.spacing.xs();
         let highlighted: Option<Vec<Vec<(String, Style)>>> =
             crate::syntax::highlight_code(code, lang, &theme);
         let _ = self
             .bordered(Border::Rounded)
             .bg(theme.surface)
-            .p(1)
+            .p(pad)
             .col(|ui| {
                 if let Some(ref hl_lines) = highlighted {
                     for (i, segs) in hl_lines.iter().enumerate() {
@@ -491,5 +472,98 @@ impl Context {
             });
 
         Response::none()
+    }
+}
+
+/// Breadcrumb navigation bar builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::breadcrumb`]. Chain `.separator(s)` to override
+/// the default ` › ` separator and `.color(c)` to override the link color.
+/// Drop the value to render without capturing a response, or call
+/// [`Self::show`] to render and obtain a [`BreadcrumbResponse`].
+///
+/// `Drop` is intentional: `ui.breadcrumb(&["Home", "src"]).separator(" > ");`
+/// is the idiomatic form when the response isn't needed.
+pub struct Breadcrumb<'a> {
+    ctx: Option<&'a mut Context>,
+    segments: &'a [&'a str],
+    separator: &'a str,
+    color: Option<Color>,
+}
+
+impl<'a> Breadcrumb<'a> {
+    pub(super) fn new(ctx: &'a mut Context, segments: &'a [&'a str]) -> Self {
+        Self {
+            ctx: Some(ctx),
+            segments,
+            separator: " › ",
+            color: None,
+        }
+    }
+
+    /// Set the separator string between segments (default: ` › `).
+    pub fn separator(mut self, sep: &'a str) -> Self {
+        self.separator = sep;
+        self
+    }
+
+    /// Override the link (clickable segment) color. Defaults to `theme.primary`.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Render now and return the [`BreadcrumbResponse`].
+    pub fn show(mut self) -> BreadcrumbResponse {
+        let ctx = self.ctx.take().expect("Breadcrumb::show called twice");
+        render_breadcrumb(ctx, self.segments, self.separator, self.color)
+    }
+}
+
+impl Drop for Breadcrumb<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_breadcrumb(ctx, self.segments, self.separator, self.color);
+        }
+    }
+}
+
+fn render_breadcrumb(
+    ctx: &mut Context,
+    segments: &[&str],
+    separator: &str,
+    color_override: Option<Color>,
+) -> BreadcrumbResponse {
+    let theme = ctx.theme;
+    let last_idx = segments.len().saturating_sub(1);
+    let mut clicked_segment: Option<usize> = None;
+    let link_color = color_override.unwrap_or(theme.primary);
+
+    let response = ctx.row(|ui| {
+        for (i, segment) in segments.iter().enumerate() {
+            let is_last = i == last_idx;
+            if is_last {
+                ui.text(*segment).bold();
+            } else {
+                let focused = ui.register_focusable();
+                let resp = ui.interaction();
+                let activated = resp.clicked || ui.consume_activation_keys(focused);
+                let color = if resp.hovered || focused {
+                    theme.accent
+                } else {
+                    link_color
+                };
+                ui.text(*segment).fg(color).underline();
+                if activated {
+                    clicked_segment = Some(i);
+                }
+                ui.text(separator).dim();
+            }
+        }
+    });
+
+    BreadcrumbResponse {
+        response,
+        clicked_segment,
     }
 }

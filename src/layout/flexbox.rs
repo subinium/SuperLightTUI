@@ -99,6 +99,47 @@ impl Iterator for U32StackIter<'_> {
     }
 }
 
+/// Resolve `Pct` and `Ratio` width/height variants against a parent area
+/// into concrete `Fixed` widths/heights.
+///
+/// Single match per axis (the v0.20 successor to the previous three
+/// `if let Some(pct)` blocks). [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
+/// [`WidthSpec::MinMax`] pass through unchanged. A `Ratio` with `den == 0`
+/// is treated as no constraint (`Auto`).
+#[inline]
+pub(crate) fn resolve_axis_specs(c: &mut Constraints, area: Rect) {
+    match c.width {
+        WidthSpec::Pct(pct) => {
+            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
+            c.width = WidthSpec::Fixed(resolved);
+        }
+        WidthSpec::Ratio(num, den) => {
+            let resolved = if den == 0 {
+                area.width
+            } else {
+                (area.width as u64 * num as u64 / den as u64) as u32
+            };
+            c.width = WidthSpec::Fixed(resolved);
+        }
+        WidthSpec::Auto | WidthSpec::Fixed(_) | WidthSpec::MinMax { .. } => {}
+    }
+    match c.height {
+        HeightSpec::Pct(pct) => {
+            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
+            c.height = HeightSpec::Fixed(resolved);
+        }
+        HeightSpec::Ratio(num, den) => {
+            let resolved = if den == 0 {
+                area.height
+            } else {
+                (area.height as u64 * num as u64 / den as u64) as u32
+            };
+            c.height = HeightSpec::Fixed(resolved);
+        }
+        HeightSpec::Auto | HeightSpec::Fixed(_) | HeightSpec::MinMax { .. } => {}
+    }
+}
+
 pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     compute_inner(node, area, 0);
 }
@@ -118,29 +159,20 @@ fn compute_inner(node: &mut LayoutNode, area: Rect, depth: usize) {
 }
 
 fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
-    if let Some(pct) = node.constraints.width_pct {
-        let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-        node.constraints.min_width = Some(resolved);
-        node.constraints.max_width = Some(resolved);
-        node.constraints.width_pct = None;
-    }
-    if let Some(pct) = node.constraints.height_pct {
-        let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-        node.constraints.min_height = Some(resolved);
-        node.constraints.max_height = Some(resolved);
-        node.constraints.height_pct = None;
-    }
+    resolve_axis_specs(&mut node.constraints, area);
 
+    let (min_w, max_w) = (
+        node.constraints.min_width().unwrap_or(0),
+        node.constraints.max_width().unwrap_or(u32::MAX),
+    );
+    let (min_h, max_h) = (
+        node.constraints.min_height().unwrap_or(0),
+        node.constraints.max_height().unwrap_or(u32::MAX),
+    );
     node.pos = (area.x, area.y);
     node.size = (
-        area.width.clamp(
-            node.constraints.min_width.unwrap_or(0),
-            node.constraints.max_width.unwrap_or(u32::MAX),
-        ),
-        area.height.clamp(
-            node.constraints.min_height.unwrap_or(0),
-            node.constraints.max_height.unwrap_or(u32::MAX),
-        ),
+        area.width.clamp(min_w, max_w),
+        area.height.clamp(min_h, max_h),
     );
 
     if matches!(node.kind, NodeKind::Text) && node.wrap {
@@ -335,18 +367,7 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for child in &mut node.children {
-        if let Some(pct) = child.constraints.width_pct {
-            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_width = Some(resolved);
-            child.constraints.max_width = Some(resolved);
-            child.constraints.width_pct = None;
-        }
-        if let Some(pct) = child.constraints.height_pct {
-            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_height = Some(resolved);
-            child.constraints.max_height = Some(resolved);
-            child.constraints.height_pct = None;
-        }
+        resolve_axis_specs(&mut child.constraints, area);
     }
 
     let n = node.children.len() as u32;
@@ -368,6 +389,32 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         }
     }
 
+    // Opt-in proportional flex-shrink (#161). When the row's fixed children
+    // overflow the available width, scale shrink-flagged children by
+    // `available / fixed_width` so the row no longer overflows. Children
+    // without `.shrink()` keep the historic overflow-by-design behavior.
+    //
+    // Only `grow == 0` children participate (grow children consume
+    // leftover, not fixed). The scale factor follows the spec in #161:
+    // `min(available, shrink_total) / fixed_width`.
+    let shrink_scale: Option<f64> = if fixed_width > available && available > 0 {
+        let shrink_total: u32 = node
+            .children
+            .iter()
+            .zip(min_widths.iter())
+            .filter(|(c, _)| c.shrink && c.grow == 0)
+            .map(|(_, mw)| mw)
+            .sum();
+        if shrink_total > 0 {
+            let numerator = (available as f64).min(shrink_total as f64);
+            Some(numerator / fixed_width as f64)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut flex_space = available.saturating_sub(fixed_width);
     let mut remaining_grow = total_grow;
 
@@ -381,7 +428,11 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_widths.get(i).min(available)
+            let raw = min_widths.get(i).min(available);
+            match shrink_scale {
+                Some(scale) if child.shrink => ((raw as f64) * scale).floor() as u32,
+                _ => raw,
+            }
         };
         child_widths.push(w);
     }
@@ -425,18 +476,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for child in &mut node.children {
-        if let Some(pct) = child.constraints.width_pct {
-            let resolved = (area.width as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_width = Some(resolved);
-            child.constraints.max_width = Some(resolved);
-            child.constraints.width_pct = None;
-        }
-        if let Some(pct) = child.constraints.height_pct {
-            let resolved = (area.height as u64 * pct.min(100) as u64 / 100) as u32;
-            child.constraints.min_height = Some(resolved);
-            child.constraints.max_height = Some(resolved);
-            child.constraints.height_pct = None;
-        }
+        resolve_axis_specs(&mut child.constraints, area);
     }
 
     let n = node.children.len() as u32;
@@ -458,6 +498,26 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
         }
     }
 
+    // Opt-in proportional flex-shrink (#161). Cross-axis sibling of the
+    // `layout_row` block above — same scale formula on the height axis.
+    let shrink_scale: Option<f64> = if fixed_height > available && available > 0 {
+        let shrink_total: u32 = node
+            .children
+            .iter()
+            .zip(min_heights.iter())
+            .filter(|(c, _)| c.shrink && c.grow == 0)
+            .map(|(_, mh)| mh)
+            .sum();
+        if shrink_total > 0 {
+            let numerator = (available as f64).min(shrink_total as f64);
+            Some(numerator / fixed_height as f64)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut flex_space = available.saturating_sub(fixed_height);
     let mut remaining_grow = total_grow;
 
@@ -471,7 +531,11 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_heights.get(i).min(available)
+            let raw = min_heights.get(i).min(available);
+            match shrink_scale {
+                Some(scale) if child.shrink => ((raw as f64) * scale).floor() as u32,
+                _ => raw,
+            }
         };
         child_heights.push(h);
     }

@@ -1,0 +1,21 @@
+---
+source: tests/v020_dx_shortcuts_demo.rs
+assertion_line: 38
+---
+╭─v0.20 DX Shorthand Demo──────────────────────────────────────────────────────╮
+│                                                                              │
+│ Press Space to toggle the panel, hover Save for a tooltip,                   │
+│                                                                              │
+│ press ? for the centered help overlay, q / Esc / Ctrl-Q to quit.             │
+│                                                                              │
+│ Actions         ············································───────────────┐ │
+│                 ·           │                              ·               │ │
+│ [ Save ]        ·           │ Status                       ·               │ │
+│                 ·      Help (centered via center_in)about r·ading code, no │ │
+│ [ Open ]        ·           │ writing it. fill() == grow(1)·— but plain En │ │
+│                 ·           │                              ·               │ │
+│ [ Toggle Panel ]············································               │ │
+│                             │                                              │ │
+│ panel_alpha = 0.00          └──────────────────────────────────────────────┘ │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯

@@ -1,3 +1,24 @@
+//! SuperLightTUI — an immediate-mode flexbox-layout terminal UI library.
+//!
+//! Build a TUI as easily as a web page: write a closure, SLT calls it
+//! every frame. State lives in your code; layout is described every
+//! frame; styling uses Tailwind-inspired shorthand; focus and events are
+//! threaded through a single [`Context`] parameter.
+//!
+//! See `docs/QUICK_START.md` for a 5-minute introduction and
+//! `docs/DESIGN_PRINCIPLES.md` for the principles every public API
+//! follows.
+//!
+//! # Example
+//!
+//! ```no_run
+//! fn main() -> std::io::Result<()> {
+//!     slt::run(|ui| {
+//!         ui.text("hello, world");
+//!     })
+//! }
+//! ```
+
 // Safety
 #![forbid(unsafe_code)]
 // Documentation
@@ -106,15 +127,25 @@ use std::io::Write;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+#[doc(hidden)]
+pub use layout::__bench_dim_buffer_around;
+#[doc(hidden)]
+pub use layout::__bench_wrap_segments;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::__bench_flush_buffer_diff;
+#[cfg(feature = "crossterm")]
+#[doc(hidden)]
+pub use terminal::__bench_flush_buffer_diff_mut;
+#[cfg(feature = "crossterm")]
+#[doc(hidden)]
+pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
 #[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};
 
-pub use crate::test_utils::{EventBuilder, TestBackend};
+pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence};
 // Animation primitives (builder types) are re-exported at crate root for
 // ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
 // live under `slt::anim::*` — they are rarely imported in isolation and
@@ -127,29 +158,31 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder, Context,
-    Response, State, TreemapItem, Widget,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
+    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
 };
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
 };
 pub use halfblock::HalfBlockImage;
-pub use keymap::{Binding, KeyMap};
+pub use keymap::{Binding, KeyMap, PublishedKeymap, WidgetKeyHelp};
 pub use layout::Direction;
 pub use palette::Palette;
 pub use rect::Rect;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder, ThemeColor,
-    WidgetColors, WidgetTheme,
+    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
+    ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
 pub use widgets::{
-    AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState, ContextItem,
-    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GridColumn, ListState,
-    ModeState, MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState,
-    ScreenState, ScrollState, SelectState, SpinnerState, StaticOutput, StreamingMarkdownState,
-    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
-    ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
+    CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
+    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
+    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
+    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    Trend,
 };
 
 /// Rendering backend for SLT.
@@ -446,6 +479,32 @@ pub struct RunConfig {
     /// Per-callsite `_colored()` overrides still take precedence.
     /// Defaults to all-`None` (use theme colors).
     pub widget_theme: style::WidgetTheme,
+    /// Whether the runtime intercepts Ctrl+C and exits the loop cleanly.
+    ///
+    /// When `true` (the default), Ctrl+C is treated as a quit signal —
+    /// matching the v0.19 behavior. When `false`, the Ctrl+C key event flows
+    /// through to the frame closure as a regular [`Event::Key`], matching
+    /// RataTUI's raw-mode semantics. The user is then responsible for
+    /// deciding whether to call [`Context::quit`] or treat it as any other
+    /// shortcut (e.g. clear input, cancel current operation).
+    ///
+    /// Set this to `false` when migrating code from RataTUI that already
+    /// handles Ctrl+C explicitly, or when implementing a graceful-shutdown
+    /// prompt (e.g. "save unsaved changes?").
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::{KeyCode, KeyModifiers, RunConfig};
+    /// slt::run_with(RunConfig::default().handle_ctrl_c(false), |ui| {
+    ///     // Ctrl+C now reaches your closure as a normal key event.
+    ///     if ui.key_mod('c', KeyModifiers::CONTROL) {
+    ///         // Decide what to do — clear input, prompt to save, quit, etc.
+    ///         ui.quit();
+    ///     }
+    /// }).unwrap();
+    /// ```
+    pub handle_ctrl_c: bool,
 }
 
 impl Default for RunConfig {
@@ -460,6 +519,7 @@ impl Default for RunConfig {
             scroll_speed: 1,
             title: None,
             widget_theme: style::WidgetTheme::new(),
+            handle_ctrl_c: true,
         }
     }
 }
@@ -536,6 +596,24 @@ impl RunConfig {
         self.widget_theme = widget_theme;
         self
     }
+
+    /// Configure whether the runtime auto-exits on Ctrl+C.
+    ///
+    /// Defaults to `true` (current v0.19 behavior). Set to `false` to
+    /// receive Ctrl+C as a regular [`Event::Key`] inside the frame closure
+    /// — see [`RunConfig::handle_ctrl_c`] for the full migration story.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().handle_ctrl_c(false);
+    /// assert!(!cfg.handle_ctrl_c);
+    /// ```
+    pub fn handle_ctrl_c(mut self, enabled: bool) -> Self {
+        self.handle_ctrl_c = enabled;
+        self
+    }
 }
 
 #[derive(Default)]
@@ -545,6 +623,17 @@ pub(crate) struct FocusState {
     pub prev_modal_active: bool,
     pub prev_modal_focus_start: usize,
     pub prev_modal_focus_count: usize,
+    /// Issue #208: focus index at the end of the previous frame. `None` on
+    /// the first frame so widgets do not falsely report `gained_focus`.
+    pub prev_focus_index: Option<usize>,
+    /// Issue #217: persisted `name → focus_index` map from the most recent
+    /// completed frame. Used at frame start to resolve a pending
+    /// `focus_by_name(...)` against the previous render's registrations.
+    pub focus_name_map_prev: std::collections::HashMap<String, usize>,
+    /// Issue #217: a name passed to `focus_by_name(...)` that has not yet
+    /// been resolved. Consumed once the matching registration is found in
+    /// `focus_name_map_prev`.
+    pub pending_focus_name: Option<String>,
 }
 
 #[derive(Default)]
@@ -575,21 +664,67 @@ pub(crate) struct DiagnosticsState {
 /// the renderer is producing this frame." `TopMost` only outlines the
 /// topmost overlay (or the base if no overlay is active), and `BaseOnly`
 /// keeps the legacy pre-fix behavior of skipping overlays entirely.
+///
+/// At runtime, **Shift+F12** cycles `All → TopMost → BaseOnly → All` so a
+/// developer debugging a stacked modal can shrink the visible outlines to
+/// just the layer they care about without leaving the keyboard. Plain
+/// **F12** independently toggles the overlay on/off.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{Context, DebugLayer};
+///
+/// slt::run(|ui: &mut Context| {
+///     // Match on the current layer to drive bespoke debug UI.
+///     let label = match ui.debug_layer() {
+///         DebugLayer::All => "showing base + overlays",
+///         DebugLayer::TopMost => "showing topmost overlay only",
+///         DebugLayer::BaseOnly => "showing base layer only",
+///     };
+///     ui.text(label);
+/// })
+/// .unwrap();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DebugLayer {
-    /// Outline base + all overlays (default — matches reporter expectation).
+    /// Outline both the base tree and every active overlay/modal.
+    ///
+    /// Default. Matches the reporter expectation that F12 reflects
+    /// everything the renderer is producing this frame. Each layer family
+    /// gets its own hue so a glance distinguishes base, overlay, and modal
+    /// containers.
     #[default]
     All,
-    /// Outline only the topmost overlay, or the base if none.
+    /// Outline only the topmost overlay (or the base if no overlay is
+    /// active).
+    ///
+    /// Useful when modals or popovers stack and you only care about the
+    /// active dialog — base-tree outlines become noise underneath an open
+    /// modal.
     TopMost,
-    /// Outline only the base layer (legacy behavior).
+    /// Outline only the base layer (legacy v0.19.x behavior).
+    ///
+    /// Skips overlays and modals entirely. Use when an overlay is
+    /// confirmed correct and you want to inspect the base layout
+    /// underneath it.
     BaseOnly,
 }
+
+/// Type alias matching `context::core::RawDrawCallback` (private over there);
+/// used inside `FrameState` for the recycled-Vec field for issue #204. Kept
+/// in lib.rs to avoid leaking a public type alias.
+pub(crate) type FrameDeferredDrawSlot =
+    Option<Box<dyn FnOnce(&mut crate::buffer::Buffer, crate::rect::Rect)>>;
 
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub hook_states: Vec<Box<dyn std::any::Any>>,
     pub named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
+    /// Issue #215: runtime-string-keyed parallel of `named_states`. Persisted
+    /// across frames; survives panics inside `error_boundary` (matching the
+    /// `named_states` policy).
+    pub keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -601,6 +736,24 @@ pub(crate) struct FrameState {
     /// Recycled per-frame layout collection scratch (issue #155). Same
     /// pattern as `commands_buf`: clear before use, restore after.
     pub frame_data: crate::layout::FrameData,
+    /// Recycled `Context::context_stack` Vec (issue #204). Empty/cleared at
+    /// frame end (same pattern as `commands_buf`).
+    pub context_stack_buf: Vec<Box<dyn std::any::Any>>,
+    /// Recycled `Context::deferred_draws` Vec (issue #204). Slots are emptied
+    /// (set to `None`) when callbacks fire; we clear before reuse.
+    pub deferred_draws_buf: Vec<FrameDeferredDrawSlot>,
+    /// Recycled `rollback.group_stack` Vec (issue #204). Asserted empty at
+    /// frame end before reclamation.
+    pub group_stack_buf: Vec<std::sync::Arc<str>>,
+    /// Recycled `rollback.text_color_stack` Vec (issue #204). Asserted empty
+    /// at frame end before reclamation.
+    pub text_color_stack_buf: Vec<Option<crate::style::Color>>,
+    /// Recycled `Context::pending_tooltips` Vec (issue #204). Asserted empty
+    /// at frame end before reclamation.
+    pub pending_tooltips_buf: Vec<context::PendingTooltip>,
+    /// Recycled `Context::hovered_groups` set (issue #204). Cleared at the
+    /// start of each frame by `build_hovered_groups`.
+    pub hovered_groups_buf: std::collections::HashSet<std::sync::Arc<str>>,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
@@ -609,6 +762,42 @@ pub(crate) struct FrameState {
 ///
 /// Enters alternate screen mode, runs `f` each frame, and exits cleanly on
 /// Ctrl+C or when [`Context::quit`] is called.
+///
+/// # Raw mode is handled for you
+///
+/// SLT enters raw mode automatically inside [`run`] / [`run_with`] /
+/// [`run_inline`] / [`run_async`]. Wrapping these with manual
+/// `crossterm::terminal::enable_raw_mode()` and `disable_raw_mode()` is
+/// **redundant** — the calls are idempotent so no harm comes of it, but it
+/// suggests a misunderstood lifecycle. Drop the wrapper calls:
+///
+/// ```no_run
+/// // Don't do this — it's already handled internally:
+/// // crossterm::terminal::enable_raw_mode()?;
+/// slt::run(|ui| { ui.text("hi"); })?;
+/// // crossterm::terminal::disable_raw_mode()?;
+/// # Ok::<_, std::io::Error>(())
+/// ```
+///
+/// # Ctrl+C opt-out (issue #238)
+///
+/// By default, Ctrl+C exits the loop cleanly — matching the v0.19 contract
+/// and the convention most TUIs follow. To match RataTUI's raw-mode
+/// semantics (Ctrl+C delivered as a regular `Event::Key`), set
+/// [`RunConfig::handle_ctrl_c(false)`](RunConfig::handle_ctrl_c) and decide
+/// inside the frame closure whether to call [`Context::quit`]:
+///
+/// ```no_run
+/// use slt::{KeyModifiers, RunConfig};
+///
+/// slt::run_with(RunConfig::default().handle_ctrl_c(false), |ui| {
+///     if ui.key_mod('c', KeyModifiers::CONTROL) {
+///         // e.g. clear input, prompt to save, then quit:
+///         ui.quit();
+///     }
+/// })?;
+/// # Ok::<_, std::io::Error>(())
+/// ```
 ///
 /// # Example
 ///
@@ -686,11 +875,19 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         )? {
             break;
         }
+        // Issue #233: full-screen mode has no scrollback channel — warn and
+        // drop any `ui.static_log(...)` lines so they do not leak into the
+        // next frame's named_states.
+        discard_static_log(&mut state, "full-screen run()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -795,11 +992,18 @@ fn run_async_loop<M: Send + 'static>(
         )? {
             break;
         }
+        // Issue #233: full-screen async mode has no scrollback channel — warn
+        // and drop any pending static_log lines.
+        discard_static_log(&mut state, "run_async()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -873,11 +1077,18 @@ pub fn run_inline_with(
         )? {
             break;
         }
+        // Issue #233: inline mode without `StaticOutput` has no scrollback
+        // channel either — warn and drop any pending lines.
+        discard_static_log(&mut state, "run_inline()");
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -958,11 +1169,21 @@ pub fn run_static_with(
         )? {
             break;
         }
+        // Issue #233: drain any `ui.static_log(...)` lines queued during the
+        // frame closure into `output`; the next loop iteration flushes them
+        // above the inline area via `write_static_lines`.
+        for line in drain_static_log(&mut state) {
+            output.println(line);
+        }
         let render_elapsed = frame_start.elapsed();
 
-        if !poll_events(&mut events, &mut state, config.tick_rate, &mut || {
-            term.handle_resize()
-        })? {
+        if !poll_events(
+            &mut events,
+            &mut state,
+            config.tick_rate,
+            &mut || term.handle_resize(),
+            config.handle_ctrl_c,
+        )? {
             break;
         }
 
@@ -986,43 +1207,144 @@ fn write_static_lines(lines: &[String]) -> io::Result<()> {
     stdout.flush()
 }
 
+/// Reserved sentinel key used by [`Context::static_log`] (issue #233).
+/// Re-exported into `context::runtime` so reads/writes never drift.
+pub(crate) const STATIC_LOG_NAMED_STATE_KEY: &str = "__slt_static_log_pending";
+
+/// Reserved sentinel key used by [`Context::publish_keymap`] (issue #236).
+/// Re-exported into `context::runtime` so reads/writes never drift.
+pub(crate) const KEYMAP_REGISTRY_NAMED_STATE_KEY: &str = "__slt_keymap_registry";
+
+/// Clear the per-frame keymap registry stored in [`FrameState::named_states`]
+/// (issue #236). Called at the start of every kernel iteration so that
+/// `Context::publish_keymap` always sees a fresh empty buffer. Capacity is
+/// preserved by clearing the inner `Vec` rather than removing the entry.
+pub(crate) fn clear_keymap_registry(state: &mut FrameState) {
+    if let Some(boxed) = state.named_states.get_mut(KEYMAP_REGISTRY_NAMED_STATE_KEY) {
+        if let Some(vec) = boxed.downcast_mut::<Vec<crate::keymap::PublishedKeymap>>() {
+            vec.clear();
+        }
+    }
+}
+
+/// Drain any [`Context::static_log`] lines accumulated during the most recent
+/// frame from the persisted [`FrameState`] (issue #233).
+///
+/// After [`run_frame_kernel`] returns, `state.named_states` owns the buffer.
+/// This helper drains it back to a `Vec<String>` so the runtime can flush
+/// the lines through whichever scrollback mechanism is appropriate
+/// (`run_static_with` writes them above the inline region; other run modes
+/// drop them with a debug warning).
+#[cfg(feature = "crossterm")]
+pub(crate) fn drain_static_log(state: &mut FrameState) -> Vec<String> {
+    if let Some(boxed) = state.named_states.get_mut(STATIC_LOG_NAMED_STATE_KEY) {
+        if let Some(buf) = boxed.downcast_mut::<Vec<String>>() {
+            return std::mem::take(buf);
+        }
+    }
+    Vec::new()
+}
+
+/// Discard any [`Context::static_log`] lines that accumulated during the
+/// most recent frame and emit a debug warning (issue #233).
+///
+/// Used by run modes that have no scrollback channel (full-screen,
+/// inline-without-static, async). Release builds silently drop the buffer.
+#[cfg(feature = "crossterm")]
+fn discard_static_log(state: &mut FrameState, mode: &str) {
+    let drained = drain_static_log(state);
+    #[cfg(debug_assertions)]
+    if !drained.is_empty() {
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[slt] {} static_log lines were dropped: {} runtime has no scrollback channel; use slt::run_static for streaming output",
+                drained.len(),
+                mode
+            );
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (drained, mode);
+    }
+}
+
+/// Apply a single terminal event to `FrameState`, mutating tracked
+/// diagnostics fields (debug overlay toggle, mouse position cache,
+/// resize flag) accordingly.
+///
+/// Issue #201: handles **F12** (toggle overlay on/off) and **Shift+F12**
+/// (cycle [`DebugLayer`] across `All → TopMost → BaseOnly`). The two
+/// keybindings are independent — toggling the overlay does not change
+/// the active layer.
+///
+/// Extracted from `poll_events` so the keybinding behavior can be
+/// exercised by unit tests without standing up a real crossterm event
+/// stream.
+#[cfg(feature = "crossterm")]
+pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
+    match ev {
+        Event::Mouse(m) => {
+            state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
+        }
+        Event::FocusLost => {
+            state.layout_feedback.last_mouse_pos = None;
+        }
+        // Issue #201: Shift+F12 cycles the active `DebugLayer`. Match
+        // before the plain-F12 arm so the modifier branch wins. Plain
+        // F12 keeps its legacy on/off toggle when no modifiers are
+        // held; we explicitly require `KeyModifiers::NONE` so the two
+        // arms do not double-fire on the same press.
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if modifiers.contains(event::KeyModifiers::SHIFT) => {
+            state.diagnostics.debug_layer = match state.diagnostics.debug_layer {
+                DebugLayer::All => DebugLayer::TopMost,
+                DebugLayer::TopMost => DebugLayer::BaseOnly,
+                DebugLayer::BaseOnly => DebugLayer::All,
+            };
+        }
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if *modifiers == event::KeyModifiers::NONE => {
+            state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
+        }
+        Event::Resize(_, _) => {
+            *has_resize = true;
+        }
+        _ => {}
+    }
+}
+
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
+///
+/// `handle_ctrl_c` controls whether Ctrl+C exits the loop (`true`, default
+/// v0.19 behavior) or is delivered to the frame closure as a regular key
+/// event (`false`, RataTUI parity, issue #238).
 #[cfg(feature = "crossterm")]
 fn poll_events(
     events: &mut Vec<Event>,
     state: &mut FrameState,
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
+    handle_ctrl_c: bool,
 ) -> io::Result<bool> {
     let mut has_resize = false;
 
     fn process_ev(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
-        match ev {
-            Event::Mouse(m) => {
-                state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
-            }
-            Event::FocusLost => {
-                state.layout_feedback.last_mouse_pos = None;
-            }
-            Event::Key(event::KeyEvent {
-                code: KeyCode::F(12),
-                kind: event::KeyEventKind::Press,
-                ..
-            }) => {
-                state.diagnostics.debug_mode = !state.diagnostics.debug_mode;
-            }
-            Event::Resize(_, _) => {
-                *has_resize = true;
-            }
-            _ => {}
-        }
+        process_run_loop_event(ev, state, has_resize);
     }
 
     if crossterm::event::poll(tick_rate)? {
         let raw = crossterm::event::read()?;
         if let Some(ev) = event::from_crossterm(raw) {
-            if is_ctrl_c(&ev) {
+            if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
             if matches!(ev, Event::Resize(_, _)) {
@@ -1035,7 +1357,7 @@ fn poll_events(
         while crossterm::event::poll(Duration::ZERO)? {
             let raw = crossterm::event::read()?;
             if let Some(ev) = event::from_crossterm(raw) {
-                if is_ctrl_c(&ev) {
+                if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
                 }
                 if matches!(ev, Event::Resize(_, _)) {
@@ -1089,6 +1411,11 @@ pub(crate) fn run_frame_kernel(
 ) -> FrameKernelResult {
     let frame_start = Instant::now();
     let (w, h) = size;
+    // Issue #236: reset the per-frame keymap registry before constructing
+    // `Context`. Widgets that call `publish_keymap` accumulate fresh
+    // entries; entries from the previous frame must not leak through
+    // `named_states` persistence.
+    clear_keymap_registry(state);
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
     ctx.set_scroll_speed(config.scroll_speed);
@@ -1123,9 +1450,35 @@ pub(crate) fn run_frame_kernel(
     if ctx.should_quit {
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
+        state.keyed_states = ctx.keyed_states;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
+        // Issue #208 / #217: persist focus tracking state on quit so a later
+        // resumed run starts in a sensible place. (Real TUI exits before
+        // resuming, but tests reuse `FrameState` across calls.)
+        state.focus.prev_focus_index = Some(ctx.focus_index);
+        state.focus.focus_name_map_prev = ctx.focus_name_map;
+        state.focus.pending_focus_name = ctx.pending_focus_name;
+        // Issue #204: reclaim the 6 alloc-reuse buffers on the quit path
+        // too. Real TUI exits ignore this, but TestBackend reuses the same
+        // FrameState across `render()` calls — without the reclaim the next
+        // frame's `Context::new` `mem::take`s an empty Vec and silently
+        // reverts to v0.19 per-frame allocation.
+        ctx.deferred_draws.clear();
+        state.context_stack_buf = std::mem::take(&mut ctx.context_stack);
+        state.deferred_draws_buf = std::mem::take(&mut ctx.deferred_draws);
+        state.group_stack_buf = std::mem::take(&mut ctx.rollback.group_stack);
+        state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
+        state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
+        state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+        // Issue #150: reclaim `commands` on quit too (TestBackend reuses
+        // `FrameState` across `render()` calls — same rationale as #204).
+        // The Vec was never `build_tree`'d on the quit path so it may still
+        // hold the recorded commands; clearing here drops them and keeps
+        // capacity for the next frame.
+        ctx.commands.clear();
+        state.commands_buf = std::mem::take(&mut ctx.commands);
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
         #[cfg(feature = "crossterm")]
@@ -1180,12 +1533,12 @@ pub(crate) fn run_frame_kernel(
     // Issue #150: `state.commands_buf` is swapped into `ctx.commands` on
     // entry (see `Context::new`), so the per-frame `Vec::new()` allocation
     // for the command list is amortized to one allocation across the
-    // session. Build_tree consumes the Vec by-value here — the empty placeholder
-    // returns to `state.commands_buf` via the `Default` shell from `mem::take`,
-    // and full capacity reclamation will land when build_tree's signature is
-    // refactored to drain (tracked separately; tree.rs is owned by another agent).
-    let commands = std::mem::take(&mut ctx.commands);
-    let mut tree = layout::build_tree(commands);
+    // session. `build_tree` now takes `&mut Vec<Command>` and `drain`s it,
+    // leaving the Vec at `len == 0` with capacity preserved. We reclaim
+    // that Vec into `state.commands_buf` after the frame so the next call
+    // to `Context::new` can pick it up via `mem::take` (matches the #204
+    // pattern for the other six recycled buffers).
+    let mut tree = layout::build_tree(&mut ctx.commands);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
 
@@ -1248,10 +1601,58 @@ pub(crate) fn run_frame_kernel(
     );
     state.hook_states = ctx.hook_states;
     state.named_states = ctx.named_states;
+    // Issue #215: hand the keyed-state map back to FrameState so the next
+    // frame can pick it up via `Context::new`. Mirrors the `named_states`
+    // round-trip exactly.
+    state.keyed_states = ctx.keyed_states;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
     state.diagnostics.debug_layer = ctx.debug_layer;
+    // Issue #208: remember the focus index that finished this frame so the
+    // next frame can compute `Response::gained_focus` / `lost_focus`.
+    state.focus.prev_focus_index = Some(ctx.focus_index);
+    // Issue #217: swap the freshly-built focus name map into the previous
+    // slot for next-frame resolution; carry forward any unresolved pending
+    // name (deferred until the named widget exists).
+    state.focus.focus_name_map_prev = ctx.focus_name_map;
+    state.focus.pending_focus_name = ctx.pending_focus_name;
+
+    // Issue #204: reclaim the six per-frame `Vec`/`HashSet` allocations so the
+    // next frame reuses the existing capacity instead of allocating fresh.
+    // Frame-end invariants (asserted above at lines 1102–1121):
+    //   - `rollback.group_stack` and `rollback.text_color_stack` are empty
+    //   - `pending_tooltips` is empty
+    // `context_stack` is asserted-empty by the consumers in `widgets_*`
+    // modules (provider/use_context); on the rare panic-rollback path the
+    // checkpoint truncates it back to the saved length, so we still
+    // recover capacity.
+    //
+    // `deferred_draws`: most slots are emptied by the `take()` above, but
+    // entries whose `RawDrawRect` had `width == 0 || height == 0` are
+    // skipped at the loop guard and remain `Some(_)`. We explicitly
+    // `clear()` to drop those callbacks here so they don't outlive the
+    // frame; capacity is preserved. (Leaving them would not cause UB —
+    // `Context::new` calls `.clear()` on the reclaimed Vec — but dropping
+    // promptly matches user expectation that one-shot callbacks don't
+    // survive past their frame.)
+    //
+    // `hovered_groups`: `clear()`-ed at the start of every frame inside
+    // `build_hovered_groups`, so the existing entries are harmless to
+    // reclaim with content; capacity is preserved.
+    ctx.deferred_draws.clear();
+    state.context_stack_buf = std::mem::take(&mut ctx.context_stack);
+    state.deferred_draws_buf = std::mem::take(&mut ctx.deferred_draws);
+    state.group_stack_buf = std::mem::take(&mut ctx.rollback.group_stack);
+    state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
+    state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
+    state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+    // Issue #150: reclaim the drained command Vec so the next `Context::new`
+    // picks it up via `mem::take(&mut state.commands_buf)`. After
+    // `build_tree(&mut ctx.commands)` the Vec is at `len == 0` with capacity
+    // preserved; mirror the #204 reclamation pattern for the other six
+    // per-frame buffers.
+    state.commands_buf = std::mem::take(&mut ctx.commands);
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
@@ -1363,5 +1764,94 @@ fn sleep_for_fps_cap(max_fps: Option<u32>, render_elapsed: Duration) {
         if render_elapsed < target {
             std::thread::sleep(target - render_elapsed);
         }
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod run_loop_tests {
+    //! Issue #201 regression tests for the run-loop F12 / Shift+F12
+    //! keybinding handler. Exercises [`process_run_loop_event`] directly
+    //! so we don't need a real crossterm event source.
+    use super::*;
+
+    fn key(modifiers: event::KeyModifiers) -> Event {
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        })
+    }
+
+    #[test]
+    fn plain_f12_toggles_debug_mode() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        assert!(!state.diagnostics.debug_mode);
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(state.diagnostics.debug_mode);
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(!state.diagnostics.debug_mode);
+    }
+
+    #[test]
+    fn shift_f12_cycles_debug_layer_without_toggling_overlay() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        // Default layer is `All`; debug overlay starts off.
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::All);
+        assert!(!state.diagnostics.debug_mode);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::TopMost);
+        // Cycling does not flip the on/off state.
+        assert!(!state.diagnostics.debug_mode);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::BaseOnly);
+
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(state.diagnostics.debug_layer, DebugLayer::All);
+    }
+
+    #[test]
+    fn shift_f12_does_not_also_toggle_overlay() {
+        // Regression for the modifier disambiguation: pre-fix, the F12
+        // arm matched `..` modifiers so Shift+F12 would both cycle the
+        // layer AND toggle the overlay on the same press.
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        let before = state.diagnostics.debug_mode;
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert_eq!(
+            state.diagnostics.debug_mode, before,
+            "Shift+F12 must not flip the on/off toggle"
+        );
+    }
+
+    #[test]
+    fn plain_f12_does_not_cycle_layer() {
+        // Symmetric guard: pressing plain F12 must not change the active
+        // layer, only the on/off flag.
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        let before = state.diagnostics.debug_layer;
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert_eq!(state.diagnostics.debug_layer, before);
     }
 }

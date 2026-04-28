@@ -124,12 +124,31 @@ pub struct Buffer {
     /// closures. The top entry is the active clip; nested raw-draw regions
     /// push and pop without losing the outer clip.
     pub(crate) kitty_clip_info_stack: Vec<KittyClipInfo>,
+    /// Per-row digest of every cell on row `y`, used by `flush_buffer_diff`
+    /// to skip the per-cell scan when both the dirty flag and the hash
+    /// match the previous frame (issue #171).
+    ///
+    /// Length equals `area.height`. Stale until
+    /// [`Buffer::recompute_line_hashes`] is called — `flush_buffer_diff` is
+    /// the only call site that relies on these being up to date.
+    pub(crate) line_hashes: Vec<u64>,
+    /// Per-row dirty flag. Set by every cell-write path
+    /// ([`Buffer::set_string`], [`Buffer::set_string_linked`],
+    /// [`Buffer::set_char`], [`Buffer::reset`], [`Buffer::reset_with_bg`]).
+    /// Cleared by [`Buffer::recompute_line_hashes`] after the row hash is
+    /// refreshed.
+    ///
+    /// A `false` entry means the row has not been touched since the last
+    /// hash refresh, so `flush_buffer_diff` can short-circuit the cell
+    /// scan when its hash also matches `previous.line_hashes[y]`.
+    pub(crate) line_dirty: Vec<bool>,
 }
 
 impl Buffer {
     /// Create a buffer filled with blank cells covering `area`.
     pub fn empty(area: Rect) -> Self {
         let size = area.area() as usize;
+        let height = area.height as usize;
         Self {
             area,
             content: vec![Cell::default(); size],
@@ -138,6 +157,11 @@ impl Buffer {
             kitty_placements: Vec::new(),
             cursor_pos: None,
             kitty_clip_info_stack: Vec::new(),
+            // Empty buffers start with default cells on every row; their
+            // hashes are equal across two empty buffers, so initialise to
+            // 0 with `line_dirty=true` so the first flush still recomputes.
+            line_hashes: vec![0; height],
+            line_dirty: vec![true; height],
         }
     }
 
@@ -343,6 +367,11 @@ impl Buffer {
         if y >= self.area.bottom() {
             return;
         }
+        // Issue #171: mark this row dirty so the next flush refreshes its
+        // hash. Marking unconditionally here keeps the write paths cheap;
+        // false positives only cost one redundant hash recompute, never a
+        // correctness issue.
+        self.mark_row_dirty(y);
         let clip = self.effective_clip().copied();
         for ch in s.chars() {
             if x >= self.area.right() {
@@ -409,9 +438,107 @@ impl Buffer {
         if !self.in_bounds(x, y) || !in_clip {
             return;
         }
+        // Issue #171: mark this row dirty so the next flush refreshes its
+        // hash before deciding whether to skip the per-cell scan.
+        self.mark_row_dirty(y);
         let cell = self.get_mut(x, y);
         cell.set_char(ch);
         cell.set_style(style);
+    }
+
+    /// Mark row `y` as dirty so the next flush recomputes its line hash.
+    ///
+    /// `y` is in the buffer's coordinate space (i.e. `area.y..area.bottom()`).
+    /// Out-of-range values are ignored so callers don't need to bounds-check
+    /// before invoking this on every cell write.
+    #[inline]
+    pub(crate) fn mark_row_dirty(&mut self, y: u32) {
+        if y < self.area.y {
+            return;
+        }
+        let idx = (y - self.area.y) as usize;
+        if let Some(slot) = self.line_dirty.get_mut(idx) {
+            *slot = true;
+        }
+    }
+
+    /// Recompute the per-row digest for every row currently flagged dirty.
+    ///
+    /// This is the only call site that updates [`Self::line_hashes`]; once
+    /// a row's hash is refreshed its `line_dirty` entry is cleared. Hashes
+    /// derive from each cell's `(symbol, style, hyperlink)` tuple via
+    /// [`std::collections::hash_map::DefaultHasher`] — sufficient for
+    /// equality detection with no extra dependency.
+    ///
+    /// Called by `flush_buffer_diff` once per frame, before the per-row
+    /// skip check (issue #171).
+    pub(crate) fn recompute_line_hashes(&mut self) {
+        let height = self.area.height;
+        if height == 0 {
+            return;
+        }
+        // `line_hashes` / `line_dirty` are sized at construction / resize;
+        // an interior mutation (e.g. resize before reset) could leave them
+        // out of step with `area.height`. Repair lazily here so callers
+        // never observe a stale length.
+        let expected_len = height as usize;
+        if self.line_hashes.len() != expected_len {
+            self.line_hashes.resize(expected_len, 0);
+        }
+        if self.line_dirty.len() != expected_len {
+            self.line_dirty.resize(expected_len, true);
+        }
+
+        let width = self.area.width as usize;
+        for (idx, dirty) in self.line_dirty.iter_mut().enumerate() {
+            if !*dirty {
+                continue;
+            }
+            let row_start = idx * width;
+            let row_end = row_start + width;
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for cell in &self.content[row_start..row_end] {
+                cell.symbol.as_str().hash(&mut hasher);
+                cell.style.hash(&mut hasher);
+                cell.hyperlink.as_deref().hash(&mut hasher);
+            }
+            self.line_hashes[idx] = hasher.finish();
+            *dirty = false;
+        }
+    }
+
+    /// Returns `true` if row `y` (buffer-space) was not touched since the
+    /// last [`Self::recompute_line_hashes`] call.
+    ///
+    /// Used by `flush_buffer_diff` to short-circuit the per-cell scan when
+    /// combined with a hash match against the previous frame (issue #171).
+    /// Out-of-range rows report as dirty so callers fall back to the
+    /// existing per-cell path on edge inputs.
+    #[inline]
+    pub(crate) fn row_clean(&self, y: u32) -> bool {
+        if y < self.area.y {
+            return false;
+        }
+        let idx = (y - self.area.y) as usize;
+        self.line_dirty
+            .get(idx)
+            .copied()
+            .map(|d| !d)
+            .unwrap_or(false)
+    }
+
+    /// Read row `y`'s cached digest, or `None` if out of range.
+    ///
+    /// Pairs with [`Self::row_clean`] inside `flush_buffer_diff`: only the
+    /// hash for clean rows is used as a short-circuit signal, so callers
+    /// must check `row_clean` first.
+    #[inline]
+    pub(crate) fn row_hash(&self, y: u32) -> Option<u64> {
+        if y < self.area.y {
+            return None;
+        }
+        let idx = (y - self.area.y) as usize;
+        self.line_hashes.get(idx).copied()
     }
 
     /// Compute the diff between `self` (current) and `other` (previous).
@@ -455,6 +582,11 @@ impl Buffer {
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
+        // Issue #171: every row is now blank — flag them all dirty so the
+        // next flush refreshes the digest before any skip check.
+        for d in &mut self.line_dirty {
+            *d = true;
+        }
     }
 
     /// Reset every cell and apply a background color to all cells.
@@ -468,6 +600,10 @@ impl Buffer {
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
+        // Issue #171: every cell was just rewritten — mark all rows dirty.
+        for d in &mut self.line_dirty {
+            *d = true;
+        }
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
@@ -478,7 +614,214 @@ impl Buffer {
         self.area = area;
         let size = area.area() as usize;
         self.content.resize(size, Cell::default());
+        // Issue #171: keep the per-row tracking arrays sized to the new
+        // height. `reset()` re-marks every row dirty so initial values
+        // here don't affect correctness.
+        let height = area.height as usize;
+        self.line_hashes.resize(height, 0);
+        self.line_dirty.resize(height, true);
         self.reset();
+    }
+
+    /// Serialize the buffer into a stable, styled-snapshot format suitable for
+    /// snapshot testing (e.g. with `insta::assert_snapshot!`).
+    ///
+    /// # Format
+    ///
+    /// One line per buffer row, joined with `\n`. Within a row, runs of cells
+    /// that share an identical [`Style`] are grouped. The default style (no
+    /// foreground, no background, no modifiers) emits **unannotated** text —
+    /// no `[...]` markers. Any non-default run is wrapped:
+    ///
+    /// ```text
+    /// [fg=...,bg=...,mods]"text"[/]
+    /// ```
+    ///
+    /// Trailing whitespace per row is preserved in the styled segment but
+    /// trailing default-style spaces at the end of a row are emitted verbatim
+    /// (they are visually invisible in diffs). Empty cells render as a single
+    /// space. The terminating `[/]` marker only appears when a styled run is
+    /// in effect at the end of a row.
+    ///
+    /// # Color formatting
+    ///
+    /// Named palette colors use short lowercase codes:
+    /// `reset`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
+    /// `white`, `dark_gray`, `light_red`, `light_green`, `light_yellow`,
+    /// `light_blue`, `light_magenta`, `light_cyan`, `light_white`. RGB colors
+    /// emit `#rrggbb`. Indexed palette colors emit `idx<N>` (decimal).
+    ///
+    /// # Modifier formatting
+    ///
+    /// Modifiers are emitted as comma-separated lowercase tokens in a fixed
+    /// canonical order: `bold`, `dim`, `italic`, `underline`, `reversed`,
+    /// `strikethrough`. Order is independent of the bit pattern, so two
+    /// equivalent `Modifiers` values always serialize identically.
+    ///
+    /// # Stability
+    ///
+    /// The output format is stable across patch and minor versions of SLT.
+    /// Names use a hand-rolled formatter (not `Debug`) so derives changing
+    /// upstream cannot accidentally break locked snapshots. A breaking change
+    /// to the format would be reserved for a major version bump.
+    ///
+    /// # Determinism
+    ///
+    /// Identical input buffers always produce byte-equal output. This is a
+    /// hard requirement — snapshot tests rely on it.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Buffer, Color, Rect, Style};
+    ///
+    /// let mut buf = Buffer::empty(Rect::new(0, 0, 5, 1));
+    /// buf.set_string(0, 0, "ab", Style::new().fg(Color::Red).bold());
+    /// buf.set_string(2, 0, "cd", Style::new());
+    /// let snap = buf.snapshot_format();
+    /// assert!(snap.starts_with("[fg=red,bold]\"ab\"[/]cd"));
+    /// ```
+    pub fn snapshot_format(&self) -> String {
+        let mut out = String::new();
+        let width = self.area.width;
+        let height = self.area.height;
+        if width == 0 || height == 0 {
+            return out;
+        }
+
+        for y in self.area.y..self.area.bottom() {
+            if y > self.area.y {
+                out.push('\n');
+            }
+
+            // Walk the row, grouping consecutive cells by Style.
+            let mut current_style: Option<Style> = None;
+            let mut run_text = String::new();
+
+            for x in self.area.x..self.area.right() {
+                let cell = self.get(x, y);
+                let style = cell.style;
+                // Empty cell symbol → single space (e.g. trailing wide-char cell).
+                let sym: &str = if cell.symbol.is_empty() {
+                    " "
+                } else {
+                    cell.symbol.as_str()
+                };
+
+                match current_style {
+                    Some(s) if s == style => {
+                        run_text.push_str(sym);
+                    }
+                    _ => {
+                        if let Some(s) = current_style.take() {
+                            flush_run(&mut out, s, &run_text);
+                            run_text.clear();
+                        }
+                        current_style = Some(style);
+                        run_text.push_str(sym);
+                    }
+                }
+            }
+
+            if let Some(s) = current_style {
+                flush_run(&mut out, s, &run_text);
+            }
+        }
+
+        out
+    }
+}
+
+/// Flush a single style-run into the snapshot output.
+///
+/// Default style → unannotated raw text (no markers, escape only embedded `"`).
+/// Non-default style → `[fg=...,bg=...,mods]"text"[/]` form. Embedded `"` and
+/// `\` characters in cell symbols are escaped so the snapshot remains
+/// unambiguous.
+fn flush_run(out: &mut String, style: Style, text: &str) {
+    if style == Style::default() {
+        out.push_str(text);
+        return;
+    }
+    out.push('[');
+    let mut first = true;
+    if let Some(fg) = style.fg {
+        out.push_str("fg=");
+        write_color(out, fg);
+        first = false;
+    }
+    if let Some(bg) = style.bg {
+        if !first {
+            out.push(',');
+        }
+        out.push_str("bg=");
+        write_color(out, bg);
+        first = false;
+    }
+    let mods = style.modifiers;
+    // Canonical order: bold, dim, italic, underline, reversed, strikethrough.
+    let pairs: [(crate::style::Modifiers, &str); 6] = [
+        (crate::style::Modifiers::BOLD, "bold"),
+        (crate::style::Modifiers::DIM, "dim"),
+        (crate::style::Modifiers::ITALIC, "italic"),
+        (crate::style::Modifiers::UNDERLINE, "underline"),
+        (crate::style::Modifiers::REVERSED, "reversed"),
+        (crate::style::Modifiers::STRIKETHROUGH, "strikethrough"),
+    ];
+    for (bit, name) in pairs {
+        if mods.contains(bit) {
+            if !first {
+                out.push(',');
+            }
+            out.push_str(name);
+            first = false;
+        }
+    }
+    out.push(']');
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out.push_str("[/]");
+}
+
+/// Format a [`crate::style::Color`] using the stable snapshot vocabulary.
+///
+/// Hand-rolled instead of `Debug` so upstream derive changes can't silently
+/// break snapshot stability.
+fn write_color(out: &mut String, color: crate::style::Color) {
+    use crate::style::Color;
+    match color {
+        Color::Reset => out.push_str("reset"),
+        Color::Black => out.push_str("black"),
+        Color::Red => out.push_str("red"),
+        Color::Green => out.push_str("green"),
+        Color::Yellow => out.push_str("yellow"),
+        Color::Blue => out.push_str("blue"),
+        Color::Magenta => out.push_str("magenta"),
+        Color::Cyan => out.push_str("cyan"),
+        Color::White => out.push_str("white"),
+        Color::DarkGray => out.push_str("dark_gray"),
+        Color::LightRed => out.push_str("light_red"),
+        Color::LightGreen => out.push_str("light_green"),
+        Color::LightYellow => out.push_str("light_yellow"),
+        Color::LightBlue => out.push_str("light_blue"),
+        Color::LightMagenta => out.push_str("light_magenta"),
+        Color::LightCyan => out.push_str("light_cyan"),
+        Color::LightWhite => out.push_str("light_white"),
+        Color::Rgb(r, g, b) => {
+            use std::fmt::Write;
+            let _ = write!(out, "#{:02x}{:02x}{:02x}", r, g, b);
+        }
+        Color::Indexed(idx) => {
+            use std::fmt::Write;
+            let _ = write!(out, "idx{}", idx);
+        }
     }
 }
 
@@ -763,5 +1106,235 @@ mod tests {
     fn kitty_clip_pop_on_empty_stack_is_none() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
         assert!(buf.pop_kitty_clip().is_none());
+    }
+
+    // ---- snapshot_format tests (#231) -------------------------------------
+
+    #[test]
+    fn snapshot_format_default_style_unannotated() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 5, 1));
+        buf.set_string(0, 0, "abc", Style::new());
+        // Two trailing default cells render as raw spaces.
+        assert_eq!(buf.snapshot_format(), "abc  ");
+    }
+
+    #[test]
+    fn snapshot_format_color_runs_grouped() {
+        use crate::style::Color;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "abc", Style::new().fg(Color::Red));
+        buf.set_string(3, 0, "def", Style::new().fg(Color::Blue));
+        let snap = buf.snapshot_format();
+        assert_eq!(snap, "[fg=red]\"abc\"[/][fg=blue]\"def\"[/]");
+    }
+
+    #[test]
+    fn snapshot_format_modifier_transitions() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "ab", Style::new().bold());
+        // gap with default style
+        buf.set_string(2, 0, "cd", Style::new());
+        buf.set_string(4, 0, "ef", Style::new().bold());
+        let snap = buf.snapshot_format();
+        assert_eq!(snap, "[bold]\"ab\"[/]cd[bold]\"ef\"[/]");
+    }
+
+    #[test]
+    fn snapshot_format_deterministic() {
+        use crate::style::Color;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 2));
+        buf.set_string(0, 0, "hello", Style::new().fg(Color::Cyan).bold());
+        buf.set_string(0, 1, "world", Style::new().bg(Color::Rgb(10, 20, 30)));
+        let a = buf.snapshot_format();
+        let b = buf.snapshot_format();
+        assert_eq!(a, b, "snapshot_format must be deterministic");
+        // Verify byte length equality as a stronger anti-flake guarantee.
+        assert_eq!(a.len(), b.len());
+    }
+
+    #[test]
+    fn snapshot_format_empty_buffer_is_spaces() {
+        let buf = Buffer::empty(Rect::new(0, 0, 4, 2));
+        // 4 default-style spaces per row, joined by '\n'.
+        assert_eq!(buf.snapshot_format(), "    \n    ");
+    }
+
+    #[test]
+    fn snapshot_format_zero_dim_returns_empty() {
+        let buf_a = Buffer::empty(Rect::new(0, 0, 0, 4));
+        let buf_b = Buffer::empty(Rect::new(0, 0, 4, 0));
+        assert_eq!(buf_a.snapshot_format(), "");
+        assert_eq!(buf_b.snapshot_format(), "");
+    }
+
+    #[test]
+    fn snapshot_format_rgb_uses_hex_codes() {
+        use crate::style::Color;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 1));
+        buf.set_string(0, 0, "x", Style::new().fg(Color::Rgb(0xff, 0x00, 0xab)));
+        let snap = buf.snapshot_format();
+        assert!(
+            snap.contains("fg=#ff00ab"),
+            "expected hex RGB code, got {snap:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_format_indexed_color() {
+        use crate::style::Color;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 1));
+        buf.set_string(0, 0, "x", Style::new().fg(Color::Indexed(42)));
+        assert!(buf.snapshot_format().contains("fg=idx42"));
+    }
+
+    #[test]
+    fn snapshot_format_modifiers_canonical_order() {
+        // Insert in reverse order; output must still be canonical.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+        let style = Style::new().strikethrough().italic().bold();
+        buf.set_string(0, 0, "x", style);
+        let snap = buf.snapshot_format();
+        // Order in output: bold, italic, strikethrough.
+        let bold_idx = snap.find("bold").expect("bold present");
+        let italic_idx = snap.find("italic").expect("italic present");
+        let strike_idx = snap.find("strikethrough").expect("strikethrough present");
+        assert!(bold_idx < italic_idx);
+        assert!(italic_idx < strike_idx);
+    }
+
+    #[test]
+    fn snapshot_format_escapes_quote_and_backslash() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string(0, 0, "a\"b\\", Style::new().bold());
+        let snap = buf.snapshot_format();
+        // Embedded quote → \" and backslash → \\
+        assert!(
+            snap.contains("\"a\\\"b\\\\\""),
+            "expected escapes, got {snap:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_format_multi_row_uses_newlines() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 3, 3));
+        buf.set_string(0, 0, "aaa", Style::new());
+        buf.set_string(0, 1, "bbb", Style::new());
+        buf.set_string(0, 2, "ccc", Style::new());
+        assert_eq!(buf.snapshot_format(), "aaa\nbbb\nccc");
+    }
+
+    // ---- per-row hash skip (#171) -----------------------------------------
+
+    #[test]
+    fn line_dirty_initial_state_is_all_dirty() {
+        // Fresh buffer must start with every row dirty so the first flush
+        // refreshes hashes before the per-row skip ever fires.
+        let buf = Buffer::empty(Rect::new(0, 0, 4, 3));
+        assert_eq!(buf.line_dirty.len(), 3);
+        assert!(buf.line_dirty.iter().all(|d| *d));
+    }
+
+    #[test]
+    fn set_string_marks_row_dirty() {
+        // After a recompute every row is clean. A subsequent write must
+        // re-mark the touched row as dirty so its hash gets refreshed.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 4));
+        buf.recompute_line_hashes();
+        assert!(buf.line_dirty.iter().all(|d| !*d));
+
+        buf.set_string(0, 1, "hello", Style::new());
+        assert!(!buf.line_dirty[0]);
+        assert!(buf.line_dirty[1]);
+        assert!(!buf.line_dirty[2]);
+        assert!(!buf.line_dirty[3]);
+    }
+
+    #[test]
+    fn set_char_marks_row_dirty() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 3));
+        buf.recompute_line_hashes();
+        buf.set_char(2, 2, 'X', Style::new());
+        assert!(!buf.line_dirty[0]);
+        assert!(!buf.line_dirty[1]);
+        assert!(buf.line_dirty[2]);
+    }
+
+    #[test]
+    fn recompute_line_hashes_clears_dirty_and_caches_hashes() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
+        buf.set_string(0, 0, "abcd", Style::new());
+        buf.set_string(0, 1, "wxyz", Style::new());
+        buf.recompute_line_hashes();
+
+        assert!(buf.line_dirty.iter().all(|d| !*d));
+        // Different content → different hashes.
+        assert_ne!(buf.line_hashes[0], buf.line_hashes[1]);
+        assert!(buf.row_clean(0));
+        assert!(buf.row_clean(1));
+    }
+
+    #[test]
+    fn row_clean_returns_false_for_unrecomputed_or_dirty_row() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
+        // Initial state — every row dirty until recompute.
+        assert!(!buf.row_clean(0));
+        buf.recompute_line_hashes();
+        assert!(buf.row_clean(0));
+        // Touching the row re-marks it dirty.
+        buf.set_string(0, 0, "z", Style::new());
+        assert!(!buf.row_clean(0));
+    }
+
+    #[test]
+    fn identical_buffers_share_line_hashes_after_recompute() {
+        // Foundation of the flush short-circuit: two buffers with the same
+        // cells must produce equal per-row digests.
+        let area = Rect::new(0, 0, 5, 3);
+        let mut a = Buffer::empty(area);
+        let mut b = Buffer::empty(area);
+        a.set_string(0, 0, "hello", Style::new());
+        b.set_string(0, 0, "hello", Style::new());
+        a.set_string(0, 1, "world", Style::new());
+        b.set_string(0, 1, "world", Style::new());
+        a.recompute_line_hashes();
+        b.recompute_line_hashes();
+
+        assert_eq!(a.row_hash(0), b.row_hash(0));
+        assert_eq!(a.row_hash(1), b.row_hash(1));
+        // Untouched row 2 — both buffers have it as default-cell row.
+        assert_eq!(a.row_hash(2), b.row_hash(2));
+    }
+
+    #[test]
+    fn different_styles_yield_different_line_hashes() {
+        // Identical glyph but different style must still hash distinctly —
+        // the flush would otherwise emit the wrong style if it skipped a
+        // "matching" row.
+        use crate::style::Color;
+        let area = Rect::new(0, 0, 3, 1);
+        let mut a = Buffer::empty(area);
+        let mut b = Buffer::empty(area);
+        a.set_string(0, 0, "abc", Style::new().fg(Color::Red));
+        b.set_string(0, 0, "abc", Style::new().fg(Color::Blue));
+        a.recompute_line_hashes();
+        b.recompute_line_hashes();
+
+        assert_ne!(a.row_hash(0), b.row_hash(0));
+    }
+
+    #[test]
+    fn resize_keeps_line_arrays_in_sync() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 3));
+        buf.recompute_line_hashes();
+        // Grow → all rows dirty + arrays sized to new height.
+        buf.resize(Rect::new(0, 0, 4, 5));
+        assert_eq!(buf.line_dirty.len(), 5);
+        assert_eq!(buf.line_hashes.len(), 5);
+        assert!(buf.line_dirty.iter().all(|d| *d));
+        // Shrink — same invariants.
+        buf.resize(Rect::new(0, 0, 4, 2));
+        assert_eq!(buf.line_dirty.len(), 2);
+        assert_eq!(buf.line_hashes.len(), 2);
+        assert!(buf.line_dirty.iter().all(|d| *d));
     }
 }

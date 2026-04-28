@@ -56,6 +56,14 @@ pub(crate) struct LayoutNode {
     pub(crate) text_data: Option<Box<TextNodeData>>,
     pub(crate) style: Style,
     pub(crate) grow: u16,
+    /// Opt-in flex-shrink flag. Default `false`.
+    ///
+    /// Set by `build_children` when a [`Command::ShrinkMarker`] precedes the
+    /// node's `Begin*` command. Read by [`super::flexbox::layout_row`] /
+    /// `layout_column` to scale this child's contribution proportionally
+    /// when the parent overflows. Children without the flag keep their
+    /// historic overflow-by-design width / height. Closes #161.
+    pub(crate) shrink: bool,
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
@@ -147,6 +155,7 @@ impl LayoutNode {
             })),
             style,
             grow,
+            shrink: false,
             align,
             align_self: None,
             justify: Justify::Start,
@@ -194,6 +203,7 @@ impl LayoutNode {
             })),
             style: Style::new(),
             grow: 0,
+            shrink: false,
             align,
             align_self: None,
             justify: Justify::Start,
@@ -228,6 +238,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow: config.grow,
+            shrink: false,
             align: config.align,
             align_self: config.align_self,
             justify: config.justify,
@@ -277,6 +288,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow,
+            shrink: false,
             align: Align::Start,
             align_self: None,
             justify: Justify::Start,
@@ -294,8 +306,8 @@ impl LayoutNode {
             children: Vec::new(),
             pos: (0, 0),
             size: (
-                constraints.min_width.unwrap_or(0),
-                constraints.min_height.unwrap_or(0),
+                constraints.min_width().unwrap_or(0),
+                constraints.min_height().unwrap_or(0),
             ),
             is_scrollable: false,
             scroll_offset: 0,
@@ -314,6 +326,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow,
+            shrink: false,
             align: Align::Start,
             align_self: None,
             justify: Justify::Start,
@@ -413,8 +426,8 @@ impl LayoutNode {
             }
         };
 
-        let width = width.max(self.constraints.min_width.unwrap_or(0));
-        let width = match self.constraints.max_width {
+        let width = width.max(self.constraints.min_width().unwrap_or(0));
+        let width = match self.constraints.max_width() {
             Some(max_w) => width.min(max_w),
             None => width,
         };
@@ -444,7 +457,7 @@ impl LayoutNode {
             }
         };
 
-        let height = height.max(self.constraints.min_height.unwrap_or(0));
+        let height = height.max(self.constraints.min_height().unwrap_or(0));
         height.saturating_add(self.margin.vertical())
     }
 
@@ -738,6 +751,17 @@ pub(crate) fn wrap_segments(
     let mut cur_off: usize = 0;
     advance_past_empty(segments, &mut cur_seg, &mut cur_off);
 
+    // Issue #157: hoist the per-line scratch out of the outer loop so the
+    // capacity hint is paid once per call instead of once per output line.
+    // Each completed line is moved into `lines` via `mem::replace`, leaving
+    // `line_segs` as a fresh `Vec::with_capacity(scratch_hint)` — the hint is
+    // re-applied so the first push on the next line still skips the
+    // grow-from-zero path. Most lines hold a small handful of style runs, so
+    // the 16-cap clamp keeps over-allocation bounded when the input has a
+    // long segment list that wraps into many short lines.
+    let scratch_hint = segments.len().min(16);
+    let mut line_segs: Vec<(String, Style)> = Vec::with_capacity(scratch_hint);
+
     while cur_seg < segments.len() {
         // For non-first lines, skip any leading spaces (matching the original).
         if !lines.is_empty() {
@@ -762,11 +786,12 @@ pub(crate) fn wrap_segments(
             }
         }
 
-        // Capacity hint: most lines hold a small handful of style runs, so
-        // pre-size the scratch buffer to avoid the early Vec growth churn.
-        // The 16-cap clamp keeps over-allocation bounded when the input has
-        // a long segment list that wraps into many short lines (issue #157).
-        let mut line_segs: Vec<(String, Style)> = Vec::with_capacity(segments.len().min(16));
+        // `line_segs` is reused across iterations: at this point it is either
+        // the fresh `Vec::with_capacity(scratch_hint)` allocated above (first
+        // iteration) or the empty buffer left behind by the previous
+        // iteration's `mem::replace`. Either way, len == 0 and the capacity
+        // hint matches the issue #157 contract.
+        debug_assert!(line_segs.is_empty());
         let mut line_width: u32 = 0;
         // Snapshot of the most recent space boundary on the current line:
         // (line_segs.len(), last seg's byte-length, line_width, space_seg_idx, space_byte_off).
@@ -807,16 +832,30 @@ pub(crate) fn wrap_segments(
             }
 
             // Extend the last run if the style matches, otherwise start a new run.
+            //
+            // Issue #205: pre-size new style-run `String`s with
+            // `with_capacity` so the first `push` does not realloc. We use
+            // the byte count remaining in the source segment (`cur_off..len`)
+            // capped at `max_width * 4` (worst-case UTF-8 bytes for a single
+            // wrap-width line) to avoid over-allocation when one
+            // same-style segment spans many wrap widths. The clamp is in
+            // bytes — `String::with_capacity` is bytes — and the `.max(1)`
+            // guarantees we never request a zero-capacity `String` (which
+            // would re-trigger the very alloc we are eliminating).
+            let segment_remaining = segments[cur_seg].0.len().saturating_sub(cur_off);
+            let cap = segment_remaining
+                .min((max_width as usize).saturating_mul(4))
+                .max(1);
             if let Some(last) = line_segs.last_mut() {
                 if last.1 == style {
                     last.0.push(ch);
                 } else {
-                    let mut nw = String::new();
+                    let mut nw = String::with_capacity(cap);
                     nw.push(ch);
                     line_segs.push((nw, style));
                 }
             } else {
-                let mut nw = String::new();
+                let mut nw = String::with_capacity(cap);
                 nw.push(ch);
                 line_segs.push((nw, style));
             }
@@ -848,7 +887,12 @@ pub(crate) fn wrap_segments(
             }
         }
 
-        lines.push(line_segs);
+        // Move the finished line into `lines`. `mem::replace` hands `lines` a
+        // ready-to-own `Vec` (no clone, no per-element copy) and leaves
+        // `line_segs` empty with the capacity hint applied for the next
+        // iteration's first push (issue #157).
+        let line = std::mem::replace(&mut line_segs, Vec::with_capacity(scratch_hint));
+        lines.push(line);
     }
 
     if lines.is_empty() {
@@ -867,11 +911,19 @@ pub(crate) fn wrap_segments(
 /// SIGSEGV. Normal TUI trees reach depth 5–15.
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 512;
 
-pub(crate) fn build_tree(commands: Vec<Command>) -> LayoutNode {
+/// Build the layout tree from a recorded command stream.
+///
+/// Takes `&mut Vec<Command>` and consumes the contents via `drain(..)` so the
+/// caller retains ownership of the allocation; after this returns,
+/// `commands.len() == 0` but `commands.capacity()` is preserved. Callers that
+/// route through [`crate::FrameState::commands_buf`] reclaim that capacity at
+/// frame end (issue #150) so the per-frame `Vec::new` allocation churn is
+/// amortized to one allocation across the session.
+pub(crate) fn build_tree(commands: &mut Vec<Command>) -> LayoutNode {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut overlays: Vec<OverlayLayer> = Vec::new();
-    let mut commands = commands.into_iter();
-    build_children(&mut root, &mut commands, &mut overlays, false, 0);
+    let mut iter = commands.drain(..);
+    build_children(&mut root, &mut iter, &mut overlays, false, 0);
     root.overlays = overlays;
     root
 }
@@ -896,7 +948,7 @@ pub(crate) fn default_container_config() -> ContainerConfig {
 
 fn build_children(
     parent: &mut LayoutNode,
-    commands: &mut std::vec::IntoIter<Command>,
+    commands: &mut std::vec::Drain<'_, Command>,
     overlays: &mut Vec<OverlayLayer>,
     stop_on_end_overlay: bool,
     depth: usize,
@@ -909,10 +961,14 @@ fn build_children(
     }
     let mut pending_focus_id: Option<usize> = None;
     let mut pending_interaction_id: Option<usize> = None;
+    // ShrinkMarker is buffered into `pending_shrink` and consumed by the next
+    // container / scrollable node. Closes #161.
+    let mut pending_shrink: bool = false;
     while let Some(command) = commands.next() {
         match command {
             Command::FocusMarker(id) => pending_focus_id = Some(id),
             Command::InteractionMarker(id) => pending_interaction_id = Some(id),
+            Command::ShrinkMarker => pending_shrink = true,
             Command::Text {
                 content,
                 cursor_offset,
@@ -1009,6 +1065,10 @@ fn build_children(
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
+                if pending_shrink {
+                    node.shrink = true;
+                    pending_shrink = false;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
@@ -1053,6 +1113,10 @@ fn build_children(
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
+                if pending_shrink {
+                    node.shrink = true;
+                    pending_shrink = false;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }

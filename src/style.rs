@@ -295,10 +295,118 @@ impl Margin {
     }
 }
 
+/// Width specification for a flexbox item.
+///
+/// Replaces the previous trio of `Option`-typed fields (`min_width`,
+/// `max_width`, `width_pct`) with a single tagged enum. Resolution at
+/// layout time dispatches on the variant.
+///
+/// `Constraints::default()` produces [`WidthSpec::Auto`].
+///
+/// # Variant semantics
+///
+/// - [`Auto`](Self::Auto) — no width constraint; the element sizes from
+///   content and available space.
+/// - [`Fixed(n)`](Self::Fixed) — exact cell width. Equivalent to
+///   `MinMax { min: Some(n), max: Some(n) }`.
+/// - [`Pct(p)`](Self::Pct) — percentage of parent width (clamped to 0..=100).
+/// - [`Ratio(num, den)`](Self::Ratio) — exact integer fraction. For example
+///   `Ratio(1, 3)` produces `area / 3`. Floor division: `area = 80, num = 1,
+///   den = 3` → `26`. A `den` of `0` is treated as no constraint.
+/// - [`MinMax { min, max }`](Self::MinMax) — bounds on each side independently.
+///
+/// # Example
+///
+/// ```
+/// use slt::{Constraints, WidthSpec};
+///
+/// let c = Constraints::default().w_ratio(1, 3);
+/// assert_eq!(c.width, WidthSpec::Ratio(1, 3));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum WidthSpec {
+    /// Unconstrained — sizes from content and available space.
+    Auto,
+    /// Exact cell width.
+    Fixed(u32),
+    /// Percentage of parent width (`0..=100`).
+    Pct(u8),
+    /// Exact integer fraction of parent (numerator, denominator).
+    ///
+    /// `Ratio(1, 3)` produces `area / 3`. Floor division — for
+    /// `area = 80, num = 1, den = 3` → `26`. A `den` of `0` is treated as
+    /// no constraint.
+    Ratio(u16, u16),
+    /// Min and/or max bounds. Sentinels are used so that the variant fits
+    /// in 12 bytes (24 bytes total for the two-axis [`Constraints`] struct):
+    ///
+    /// - `min = 0` means "no minimum" (equivalent to `Option::None`); since
+    ///   a min of 0 is the same as no minimum, using `0` as the sentinel
+    ///   does not lose any expressible state.
+    /// - `max = u32::MAX` means "no maximum" (the natural `infinity`).
+    ///
+    /// Use the [`Constraints::min_w`] / [`Constraints::max_w`] /
+    /// [`Constraints::w_minmax`] builders to construct this variant
+    /// without thinking about sentinels.
+    MinMax {
+        /// Minimum width. `0` means unbounded below.
+        min: u32,
+        /// Maximum width. `u32::MAX` means unbounded above.
+        max: u32,
+    },
+}
+
+impl Default for WidthSpec {
+    #[inline]
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+/// Height specification for a flexbox item.
+///
+/// Mirror of [`WidthSpec`] for the cross axis. See [`WidthSpec`] for full
+/// variant semantics, including the sentinel encoding of [`Self::MinMax`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum HeightSpec {
+    /// Unconstrained — sizes from content and available space.
+    Auto,
+    /// Exact cell height.
+    Fixed(u32),
+    /// Percentage of parent height (`0..=100`).
+    Pct(u8),
+    /// Exact integer fraction of parent (numerator, denominator).
+    ///
+    /// `Ratio(1, 3)` produces `area / 3`. Floor division — for
+    /// `area = 80, num = 1, den = 3` → `26`. A `den` of `0` is treated as
+    /// no constraint.
+    Ratio(u16, u16),
+    /// Min and/or max bounds. Sentinels: `min = 0` and `max = u32::MAX`
+    /// represent "no bound". See [`WidthSpec::MinMax`] for full rationale.
+    MinMax {
+        /// Minimum height. `0` means unbounded below.
+        min: u32,
+        /// Maximum height. `u32::MAX` means unbounded above.
+        max: u32,
+    },
+}
+
+impl Default for HeightSpec {
+    #[inline]
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 /// Size constraints for layout computation.
 ///
-/// All fields are optional. Unset constraints are unconstrained. Use the
-/// builder methods to set individual bounds in a fluent style.
+/// Holds a [`WidthSpec`] and a [`HeightSpec`] for the two axes. Use the
+/// builder methods on `Constraints` to set individual bounds in a fluent
+/// style; the builders pick the appropriate variant for you.
 ///
 /// # Example
 ///
@@ -311,55 +419,318 @@ impl Margin {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[must_use = "configure constraints using the returned value"]
 pub struct Constraints {
-    /// Minimum width in terminal columns, if any.
-    pub min_width: Option<u32>,
-    /// Maximum width in terminal columns, if any.
-    pub max_width: Option<u32>,
-    /// Minimum height in terminal rows, if any.
-    pub min_height: Option<u32>,
-    /// Maximum height in terminal rows, if any.
-    pub max_height: Option<u32>,
-    /// Width as a percentage (1-100) of the parent container.
-    pub width_pct: Option<u8>,
-    /// Height as a percentage (1-100) of the parent container.
-    pub height_pct: Option<u8>,
+    /// Width specification.
+    pub width: WidthSpec,
+    /// Height specification.
+    pub height: HeightSpec,
 }
 
+/// Compile-time regression guard for `Constraints` size.
+///
+/// The unified `WidthSpec`/`HeightSpec` representation is required to fit
+/// in 24 bytes (12 + 12) — half the size of the v0.19 representation
+/// (36 bytes). Layout state stores this struct on every `LayoutNode`, so
+/// the cache footprint compounds.
+const _ASSERT_CONSTRAINTS_SIZE: () = assert!(
+    std::mem::size_of::<Constraints>() == 24,
+    "Constraints must be 24 bytes"
+);
+
 impl Constraints {
+    // ─── builder methods (preserved from v0.19, dispatch into enum) ───
+
     /// Set the minimum width constraint.
+    ///
+    /// If the current variant is [`WidthSpec::MinMax`], updates only the
+    /// `min` side. Otherwise replaces the variant with `MinMax { min:
+    /// min_width, max: u32::MAX }`.
     pub const fn min_w(mut self, min_width: u32) -> Self {
-        self.min_width = Some(min_width);
+        let max = match self.width {
+            WidthSpec::MinMax { max, .. } => max,
+            WidthSpec::Fixed(v) => v,
+            _ => u32::MAX,
+        };
+        self.width = WidthSpec::MinMax {
+            min: min_width,
+            max,
+        };
         self
     }
 
     /// Set the maximum width constraint.
+    ///
+    /// If the current variant is [`WidthSpec::MinMax`], updates only the
+    /// `max` side. Otherwise replaces the variant with `MinMax { min: 0,
+    /// max: max_width }`.
     pub const fn max_w(mut self, max_width: u32) -> Self {
-        self.max_width = Some(max_width);
+        let min = match self.width {
+            WidthSpec::MinMax { min, .. } => min,
+            WidthSpec::Fixed(v) => v,
+            _ => 0,
+        };
+        self.width = WidthSpec::MinMax {
+            min,
+            max: max_width,
+        };
         self
     }
 
     /// Set the minimum height constraint.
+    ///
+    /// If the current variant is [`HeightSpec::MinMax`], updates only the
+    /// `min` side. Otherwise replaces the variant with `MinMax { min:
+    /// min_height, max: u32::MAX }`.
     pub const fn min_h(mut self, min_height: u32) -> Self {
-        self.min_height = Some(min_height);
+        let max = match self.height {
+            HeightSpec::MinMax { max, .. } => max,
+            HeightSpec::Fixed(v) => v,
+            _ => u32::MAX,
+        };
+        self.height = HeightSpec::MinMax {
+            min: min_height,
+            max,
+        };
         self
     }
 
     /// Set the maximum height constraint.
+    ///
+    /// If the current variant is [`HeightSpec::MinMax`], updates only the
+    /// `max` side. Otherwise replaces the variant with `MinMax { min: 0,
+    /// max: max_height }`.
     pub const fn max_h(mut self, max_height: u32) -> Self {
-        self.max_height = Some(max_height);
+        let min = match self.height {
+            HeightSpec::MinMax { min, .. } => min,
+            HeightSpec::Fixed(v) => v,
+            _ => 0,
+        };
+        self.height = HeightSpec::MinMax {
+            min,
+            max: max_height,
+        };
         self
     }
 
-    /// Set width as a percentage (1-100) of the parent container.
+    /// Set min and max width together.
+    ///
+    /// Equivalent to chaining `min_w(min)` and `max_w(max)` but in a single
+    /// call, replacing the variant with `WidthSpec::MinMax`.
+    pub const fn w_minmax(mut self, min: u32, max: u32) -> Self {
+        self.width = WidthSpec::MinMax { min, max };
+        self
+    }
+
+    /// Set min and max height together.
+    pub const fn h_minmax(mut self, min: u32, max: u32) -> Self {
+        self.height = HeightSpec::MinMax { min, max };
+        self
+    }
+
+    /// Set a fixed width (replaces any existing width spec).
+    pub const fn w(mut self, width: u32) -> Self {
+        self.width = WidthSpec::Fixed(width);
+        self
+    }
+
+    /// Set a fixed height (replaces any existing height spec).
+    pub const fn h(mut self, height: u32) -> Self {
+        self.height = HeightSpec::Fixed(height);
+        self
+    }
+
+    /// Set width as a percentage (`0..=100`) of the parent container.
     pub const fn w_pct(mut self, pct: u8) -> Self {
-        self.width_pct = Some(pct);
+        self.width = WidthSpec::Pct(pct);
         self
     }
 
-    /// Set height as a percentage (1-100) of the parent container.
+    /// Set height as a percentage (`0..=100`) of the parent container.
     pub const fn h_pct(mut self, pct: u8) -> Self {
-        self.height_pct = Some(pct);
+        self.height = HeightSpec::Pct(pct);
         self
+    }
+
+    /// Set width as an exact integer fraction of the parent (numerator, denominator).
+    ///
+    /// `w_ratio(1, 3)` produces `area / 3` — floor division. For `area = 80,
+    /// num = 1, den = 3` → `26`.
+    pub const fn w_ratio(mut self, num: u16, den: u16) -> Self {
+        self.width = WidthSpec::Ratio(num, den);
+        self
+    }
+
+    /// Set height as an exact integer fraction of the parent (numerator, denominator).
+    ///
+    /// `h_ratio(1, 3)` produces `area / 3` — floor division.
+    pub const fn h_ratio(mut self, num: u16, den: u16) -> Self {
+        self.height = HeightSpec::Ratio(num, den);
+        self
+    }
+
+    // ─── derived accessors used by layout & widget code ────────────────
+
+    /// Minimum width derived from the current [`WidthSpec`].
+    ///
+    /// Returns `Some(n)` for [`WidthSpec::Fixed`] (both min and max are `n`)
+    /// and for [`WidthSpec::MinMax`] when the `min` side is non-zero.
+    /// Returns `None` for [`WidthSpec::Auto`], [`WidthSpec::Pct`],
+    /// [`WidthSpec::Ratio`], and for `MinMax { min: 0, .. }` (sentinel for
+    /// "no minimum").
+    pub const fn min_width(&self) -> Option<u32> {
+        match self.width {
+            WidthSpec::Fixed(v) => Some(v),
+            WidthSpec::MinMax { min, .. } if min > 0 => Some(min),
+            _ => None,
+        }
+    }
+
+    /// Maximum width derived from the current [`WidthSpec`].
+    ///
+    /// Returns `Some(n)` for [`WidthSpec::Fixed`] and for
+    /// [`WidthSpec::MinMax`] when the `max` side is not the sentinel
+    /// `u32::MAX`. Returns `None` otherwise.
+    pub const fn max_width(&self) -> Option<u32> {
+        match self.width {
+            WidthSpec::Fixed(v) => Some(v),
+            WidthSpec::MinMax { max, .. } if max < u32::MAX => Some(max),
+            _ => None,
+        }
+    }
+
+    /// Minimum height derived from the current [`HeightSpec`].
+    ///
+    /// Mirror of [`min_width`](Self::min_width) for the cross axis.
+    pub const fn min_height(&self) -> Option<u32> {
+        match self.height {
+            HeightSpec::Fixed(v) => Some(v),
+            HeightSpec::MinMax { min, .. } if min > 0 => Some(min),
+            _ => None,
+        }
+    }
+
+    /// Maximum height derived from the current [`HeightSpec`].
+    ///
+    /// Mirror of [`max_width`](Self::max_width) for the cross axis.
+    pub const fn max_height(&self) -> Option<u32> {
+        match self.height {
+            HeightSpec::Fixed(v) => Some(v),
+            HeightSpec::MinMax { max, .. } if max < u32::MAX => Some(max),
+            _ => None,
+        }
+    }
+
+    /// Width percentage if the variant is [`WidthSpec::Pct`].
+    pub const fn width_pct(&self) -> Option<u8> {
+        match self.width {
+            WidthSpec::Pct(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Height percentage if the variant is [`HeightSpec::Pct`].
+    pub const fn height_pct(&self) -> Option<u8> {
+        match self.height {
+            HeightSpec::Pct(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    // ─── imperative setters ─────────────────────────────────────────────
+    //
+    // These mutate `&mut Constraints` in-place. They exist alongside the
+    // owning builder methods (`min_w`, `max_w`, …) for call sites that hold
+    // a mutable borrow to a `Constraints` field embedded in a larger struct
+    // — for those the builder's `mut self -> Self` shape would force a
+    // `*c = c.min_w(v)` deref-assign. The setters keep that ergonomic.
+    //
+    // # Compatibility
+    //
+    // Public for downstream callers that adopted these from v0.19. New code
+    // that owns a `Constraints` value should prefer the chainable builders
+    // (`Constraints::default().min_w(10).max_w(40)`).
+
+    /// Set the minimum width as `Option<u32>`.
+    ///
+    /// Promotes the variant to [`WidthSpec::MinMax`] preserving any existing
+    /// `max` side. Passing `None` clears the minimum (sets it to `0`); if the
+    /// resulting `MinMax` has no effective bounds (`min == 0` and
+    /// `max == u32::MAX`) the variant collapses back to [`WidthSpec::Auto`].
+    ///
+    /// Prefer [`Constraints::min_w`] when you own the value; this setter is
+    /// for in-place mutation through `&mut Constraints`.
+    pub fn set_min_width(&mut self, value: Option<u32>) {
+        let max = match self.width {
+            WidthSpec::MinMax { max, .. } => max,
+            WidthSpec::Fixed(v) => v,
+            _ => u32::MAX,
+        };
+        let min = value.unwrap_or(0);
+        self.width = if min == 0 && max == u32::MAX {
+            WidthSpec::Auto
+        } else {
+            WidthSpec::MinMax { min, max }
+        };
+    }
+
+    /// Set the maximum width as `Option<u32>`.
+    pub fn set_max_width(&mut self, value: Option<u32>) {
+        let min = match self.width {
+            WidthSpec::MinMax { min, .. } => min,
+            WidthSpec::Fixed(v) => v,
+            _ => 0,
+        };
+        let max = value.unwrap_or(u32::MAX);
+        self.width = if min == 0 && max == u32::MAX {
+            WidthSpec::Auto
+        } else {
+            WidthSpec::MinMax { min, max }
+        };
+    }
+
+    /// Set the minimum height as `Option<u32>`.
+    pub fn set_min_height(&mut self, value: Option<u32>) {
+        let max = match self.height {
+            HeightSpec::MinMax { max, .. } => max,
+            HeightSpec::Fixed(v) => v,
+            _ => u32::MAX,
+        };
+        let min = value.unwrap_or(0);
+        self.height = if min == 0 && max == u32::MAX {
+            HeightSpec::Auto
+        } else {
+            HeightSpec::MinMax { min, max }
+        };
+    }
+
+    /// Set the maximum height as `Option<u32>`.
+    pub fn set_max_height(&mut self, value: Option<u32>) {
+        let min = match self.height {
+            HeightSpec::MinMax { min, .. } => min,
+            HeightSpec::Fixed(v) => v,
+            _ => 0,
+        };
+        let max = value.unwrap_or(u32::MAX);
+        self.height = if min == 0 && max == u32::MAX {
+            HeightSpec::Auto
+        } else {
+            HeightSpec::MinMax { min, max }
+        };
+    }
+
+    /// Set the width percentage as `Option<u8>`.
+    pub fn set_width_pct(&mut self, value: Option<u8>) {
+        self.width = match value {
+            Some(p) => WidthSpec::Pct(p),
+            None => WidthSpec::Auto,
+        };
+    }
+
+    /// Set the height percentage as `Option<u8>`.
+    pub fn set_height_pct(&mut self, value: Option<u8>) {
+        self.height = match value {
+            Some(p) => HeightSpec::Pct(p),
+            None => HeightSpec::Auto,
+        };
     }
 }
 
@@ -1303,17 +1674,62 @@ mod tests {
             .max_w(40)
             .min_h(5)
             .max_h(20);
-        assert_eq!(c.min_width, Some(10));
-        assert_eq!(c.max_width, Some(40));
-        assert_eq!(c.min_height, Some(5));
-        assert_eq!(c.max_height, Some(20));
+        assert_eq!(c.min_width(), Some(10));
+        assert_eq!(c.max_width(), Some(40));
+        assert_eq!(c.min_height(), Some(5));
+        assert_eq!(c.max_height(), Some(20));
+        assert_eq!(c.width, WidthSpec::MinMax { min: 10, max: 40 });
     }
 
     #[test]
     fn constraints_percentage_builder_sets_values() {
         let c = Constraints::default().w_pct(50).h_pct(80);
-        assert_eq!(c.width_pct, Some(50));
-        assert_eq!(c.height_pct, Some(80));
+        assert_eq!(c.width_pct(), Some(50));
+        assert_eq!(c.height_pct(), Some(80));
+        assert_eq!(c.width, WidthSpec::Pct(50));
+        assert_eq!(c.height, HeightSpec::Pct(80));
+    }
+
+    #[test]
+    fn constraints_default_is_auto() {
+        let c = Constraints::default();
+        assert_eq!(c.width, WidthSpec::Auto);
+        assert_eq!(c.height, HeightSpec::Auto);
+    }
+
+    #[test]
+    fn constraints_fixed_w_h() {
+        let c = Constraints::default().w(20).h(10);
+        assert_eq!(c.width, WidthSpec::Fixed(20));
+        assert_eq!(c.height, HeightSpec::Fixed(10));
+        assert_eq!(c.min_width(), Some(20));
+        assert_eq!(c.max_width(), Some(20));
+    }
+
+    #[test]
+    fn constraints_size_24_bytes() {
+        assert_eq!(std::mem::size_of::<Constraints>(), 24);
+    }
+
+    #[test]
+    fn constraints_set_min_width_promotes_to_minmax() {
+        let mut c = Constraints::default();
+        c.set_min_width(Some(10));
+        assert_eq!(
+            c.width,
+            WidthSpec::MinMax {
+                min: 10,
+                max: u32::MAX,
+            }
+        );
+        c.set_max_width(Some(40));
+        assert_eq!(c.width, WidthSpec::MinMax { min: 10, max: 40 });
+    }
+
+    #[test]
+    fn constraints_w_ratio_builder() {
+        let c = Constraints::default().w_ratio(1, 3);
+        assert_eq!(c.width, WidthSpec::Ratio(1, 3));
     }
 
     #[test]

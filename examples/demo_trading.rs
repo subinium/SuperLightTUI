@@ -1,3 +1,16 @@
+//! Demo: trading dashboard mockup (BTC/USDT order book, candlestick
+//! chart, order form, positions table).
+//!
+//! Archetype: **Standard** (full-canvas, no overlay, no scrollback).
+//!
+//! §2 (Demo Guide): exposes `pub fn render(ui, &mut DemoState)` so a
+//! composing demo (e.g. `examples/showcase_tour.rs`) can preserve the
+//! random-walk price feed, candle history, order book, recent trades,
+//! orders/positions tables, and order-form inputs across tab switches.
+//! `DemoState` is a public newtype wrapper around the private `St`
+//! struct so the trading demo's many private types (`OB`, `Trade`,
+//! `Order`, `Pos`, `Rng`, `PendingOrder`) stay private.
+
 use std::collections::VecDeque;
 
 use slt::*;
@@ -116,81 +129,112 @@ impl Rng {
 
 // ── entry ───────────────────────────────────────────────────────
 
-fn main() -> std::io::Result<()> {
-    let mut s = St::new();
+/// Public newtype wrapper around the private `St` struct so a tour can
+/// own the trading state across frames without exposing internal
+/// types (`OB`, `Trade`, `Order`, `Pos`, `Rng`, `PendingOrder`).
+pub struct DemoState(St);
 
+impl DemoState {
+    pub fn new() -> Self {
+        Self(St::new())
+    }
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Render one frame of the trading demo. Caller owns `DemoState` so
+/// the random-walk price feed, candle history, order book, and recent
+/// trades all keep ticking across tab switches.
+///
+/// Quit handling is intentionally NOT performed here — callers (the
+/// standalone `main` and the showcase tour) own the quit triple so
+/// embedded use can let the host swallow Esc/Ctrl-Q without the trading
+/// demo grabbing it.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    let s = &mut state.0;
+    hotkeys(ui, s);
+    if let Some(ord) = s.pending.take() {
+        submit(s, ord.side, ord.price, ord.amount, ord.is_limit);
+    }
+    tick(s);
+
+    let _ = ui.container().grow(1).gap(0).col(|ui| {
+        // header
+        header(ui, s);
+        // main 3-col
+        let _ = ui.container().grow(1).gap(0).row(|ui| {
+            // LEFT: order book
+            let _ = ui
+                .bordered(Border::Single)
+                .title("Order Book")
+                .w_pct(25)
+                .col(|ui| {
+                    order_book(ui, s);
+                });
+            // CENTER: chart + trades
+            let _ = ui.container().w_pct(50).gap(0).col(|ui| {
+                let old_tf = s.tab_tf.selected;
+                let _ = ui.tabs(&mut s.tab_tf);
+                if s.tab_tf.selected != old_tf {
+                    s.candle_interval = tf_interval(s.tab_tf.selected);
+                    regen_candles(s);
+                }
+                let tf_label = ["1m", "5m", "15m", "1H", "4H", "1D"][s.tab_tf.selected.min(5)];
+                let _ = ui
+                    .bordered(Border::Single)
+                    .title(format!("BTC/USDT {tf_label}"))
+                    .grow(2)
+                    .col(|ui| {
+                        chart(ui, s);
+                    });
+                let _ = ui
+                    .bordered(Border::Single)
+                    .title("Recent Trades")
+                    .grow(1)
+                    .col(|ui| {
+                        trades(ui, s);
+                    });
+            });
+            // RIGHT: order form + balance
+            let _ = ui.container().w_pct(25).gap(0).col(|ui| {
+                let _ = ui
+                    .bordered(Border::Single)
+                    .title("Order")
+                    .grow(1)
+                    .col(|ui| {
+                        order_form(ui, s);
+                    });
+                let _ = ui.bordered(Border::Single).title("Balance").h(6).col(|ui| {
+                    balance(ui, s);
+                });
+            });
+        });
+        // bottom
+        let _ = ui
+            .bordered(Border::Single)
+            .title("Orders & Positions")
+            .h(10)
+            .col(|ui| {
+                bottom(ui, s);
+            });
+        // status
+        status_bar(ui, s);
+    });
+}
+
+fn main() -> std::io::Result<()> {
+    let mut state = DemoState::new();
     slt::run_with(
         RunConfig::default().mouse(true).theme(Theme::dark()),
         move |ui: &mut Context| {
-            hotkeys(ui, &mut s);
-            if let Some(ord) = s.pending.take() {
-                submit(&mut s, ord.side, ord.price, ord.amount, ord.is_limit);
+            if ui.key('q') || ui.key_code(KeyCode::Esc) {
+                ui.quit();
             }
-            tick(&mut s);
-
-            let _ = ui.container().grow(1).gap(0).col(|ui| {
-                // header
-                header(ui, &s);
-                // main 3-col
-                let _ = ui.container().grow(1).gap(0).row(|ui| {
-                    // LEFT: order book
-                    let _ = ui
-                        .bordered(Border::Single)
-                        .title("Order Book")
-                        .w_pct(25)
-                        .col(|ui| {
-                            order_book(ui, &s);
-                        });
-                    // CENTER: chart + trades
-                    let _ = ui.container().w_pct(50).gap(0).col(|ui| {
-                        let old_tf = s.tab_tf.selected;
-                        let _ = ui.tabs(&mut s.tab_tf);
-                        if s.tab_tf.selected != old_tf {
-                            s.candle_interval = tf_interval(s.tab_tf.selected);
-                            regen_candles(&mut s);
-                        }
-                        let tf_label =
-                            ["1m", "5m", "15m", "1H", "4H", "1D"][s.tab_tf.selected.min(5)];
-                        let _ = ui
-                            .bordered(Border::Single)
-                            .title(format!("BTC/USDT {tf_label}"))
-                            .grow(2)
-                            .col(|ui| {
-                                chart(ui, &s);
-                            });
-                        let _ = ui
-                            .bordered(Border::Single)
-                            .title("Recent Trades")
-                            .grow(1)
-                            .col(|ui| {
-                                trades(ui, &s);
-                            });
-                    });
-                    // RIGHT: order form + balance
-                    let _ = ui.container().w_pct(25).gap(0).col(|ui| {
-                        let _ = ui
-                            .bordered(Border::Single)
-                            .title("Order")
-                            .grow(1)
-                            .col(|ui| {
-                                order_form(ui, &mut s);
-                            });
-                        let _ = ui.bordered(Border::Single).title("Balance").h(6).col(|ui| {
-                            balance(ui, &s);
-                        });
-                    });
-                });
-                // bottom
-                let _ = ui
-                    .bordered(Border::Single)
-                    .title("Orders & Positions")
-                    .h(10)
-                    .col(|ui| {
-                        bottom(ui, &mut s);
-                    });
-                // status
-                status_bar(ui, &s);
-            });
+            render(ui, &mut state);
         },
     )
 }
@@ -349,12 +393,9 @@ impl St {
 // ── hotkeys ─────────────────────────────────────────────────────
 
 fn hotkeys(ui: &mut Context, s: &mut St) {
-    if ui.key('q') {
-        ui.quit();
-    }
-    if ui.key_code(KeyCode::Esc) {
-        ui.quit();
-    }
+    // Quit handling is owned by the caller (standalone `main` or the
+    // showcase tour) so embedded use can let the host swallow Esc /
+    // Ctrl-Q without the trading demo grabbing them.
     if ui.key('1') {
         s.tab_bottom.selected = 0;
     }

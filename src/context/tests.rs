@@ -480,8 +480,8 @@ fn grid_with_fixed_columns_emit_constraints() {
     // Verify that fixed column got min_w == max_w == 10 and grow: 0
     let fixed_container = ctx.commands.iter().find(|c| {
         matches!(c, Command::BeginContainer(args)
-            if args.constraints.min_width == Some(10)
-                && args.constraints.max_width == Some(10)
+            if args.constraints.min_width() == Some(10)
+                && args.constraints.max_width() == Some(10)
                 && args.grow == 0)
     });
     assert!(
@@ -493,8 +493,8 @@ fn grid_with_fixed_columns_emit_constraints() {
     let grow_container = ctx.commands.iter().find(|c| {
         matches!(c, Command::BeginContainer(args)
             if args.grow == 2
-                && args.constraints.min_width.is_none()
-                && args.constraints.max_width.is_none())
+                && args.constraints.min_width().is_none()
+                && args.constraints.max_width().is_none())
     });
     assert!(
         grow_container.is_some(),

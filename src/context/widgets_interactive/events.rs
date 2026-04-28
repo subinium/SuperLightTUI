@@ -12,10 +12,11 @@ impl Context {
         }
 
         self.skip_interaction_slot();
+        let help_gap = self.theme.spacing.sm();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 2,
+                gap: help_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -55,10 +56,11 @@ impl Context {
         }
 
         self.skip_interaction_slot();
+        let help_gap = self.theme.spacing.sm();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 2,
+                gap: help_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -616,20 +618,60 @@ impl Context {
 
     /// Return which layers the F12 debug overlay outlines (issue #201).
     ///
-    /// Default is [`DebugLayer::All`], which outlines the base tree plus any
-    /// active overlays/modals. See [`set_debug_layer`](Self::set_debug_layer)
-    /// to narrow the outline to a specific layer.
+    /// Default is [`crate::DebugLayer::All`], which outlines the base tree
+    /// plus any active overlays/modals. See
+    /// [`set_debug_layer`](Self::set_debug_layer) to narrow the outline to
+    /// a specific layer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Context, DebugLayer};
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     // Read the current layer to drive a UI badge or debug toolbar.
+    ///     match ui.debug_layer() {
+    ///         DebugLayer::All => ui.text("layer: all"),
+    ///         DebugLayer::TopMost => ui.text("layer: topmost"),
+    ///         DebugLayer::BaseOnly => ui.text("layer: base"),
+    ///     };
+    /// }).unwrap();
+    /// ```
     pub fn debug_layer(&self) -> crate::DebugLayer {
         self.debug_layer
     }
 
     /// Choose which layers the F12 debug overlay outlines (issue #201).
     ///
-    /// Persists across frames. The default ([`DebugLayer::All`]) matches the
-    /// reporter's expectation that F12 reflects everything the renderer is
-    /// drawing. Use [`DebugLayer::TopMost`] to focus on the active modal /
-    /// overlay only, or [`DebugLayer::BaseOnly`] to keep the legacy behavior
-    /// of skipping overlays.
+    /// Persists across frames. The default ([`crate::DebugLayer::All`])
+    /// matches the reporter's expectation that F12 reflects everything the
+    /// renderer is drawing. Use [`crate::DebugLayer::TopMost`] to focus on
+    /// the active modal / overlay only, or [`crate::DebugLayer::BaseOnly`]
+    /// to keep the legacy behavior of skipping overlays.
+    ///
+    /// # Runtime keybinding
+    ///
+    /// At runtime, **Shift+F12** cycles through `All` → `TopMost` →
+    /// `BaseOnly` → `All`. Plain F12 still toggles the overlay on/off.
+    /// The two keys are independent: enabling the overlay does not change
+    /// the active layer, and cycling layers does not enable the overlay.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Context, DebugLayer};
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     // Toggle between viewing only the base tree and viewing all
+    ///     // layers, e.g. from a custom debug menu.
+    ///     let next = match ui.debug_layer() {
+    ///         DebugLayer::All => DebugLayer::BaseOnly,
+    ///         DebugLayer::BaseOnly => DebugLayer::TopMost,
+    ///         DebugLayer::TopMost => DebugLayer::All,
+    ///     };
+    ///     ui.set_debug_layer(next);
+    /// }).unwrap();
+    /// ```
     pub fn set_debug_layer(&mut self, layer: crate::DebugLayer) {
         self.debug_layer = layer;
     }

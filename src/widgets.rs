@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthStr;
 
+use crate::context::Response;
 use crate::Style;
 
 type FormValidator = fn(&str) -> Result<(), String>;
@@ -20,6 +21,7 @@ include!("widgets/collections.rs");
 include!("widgets/feedback.rs");
 include!("widgets/selection.rs");
 include!("widgets/commanding.rs");
+include!("widgets/responses.rs");
 
 #[cfg(test)]
 mod tests;

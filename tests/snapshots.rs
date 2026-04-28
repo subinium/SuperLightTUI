@@ -48,7 +48,7 @@ fn snapshot_button() {
 fn snapshot_progress() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.progress(0.5);
+        let _ = ui.progress(0.5);
     });
     insta::assert_snapshot!(tb.to_string_trimmed());
 }

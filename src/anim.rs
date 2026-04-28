@@ -201,6 +201,58 @@ impl Tween {
     }
 }
 
+/// Default animation duration in ticks used by
+/// [`Context::animate_bool`](crate::Context::animate_bool) and
+/// [`Context::animate_value`](crate::Context::animate_value) when no explicit
+/// duration is supplied.
+///
+/// 12 ticks at the default 60 Hz tick rate is roughly 200 ms — short enough
+/// to feel snappy, long enough to read as motion.
+pub const DEFAULT_ANIMATE_TICKS: u64 = 12;
+
+/// Internal state used by [`Context::animate_value`] /
+/// [`Context::animate_bool`] to drive an implicit
+/// `Tween` keyed in `Context::named_states`.
+///
+/// Stores the most recently seen `target` so the tween can smoothly retarget
+/// when the caller changes the goal mid-animation. Not part of the public
+/// API; users keying their own animation state should construct a [`Tween`]
+/// directly.
+pub(crate) struct AnimState {
+    pub(crate) tween: Tween,
+    pub(crate) last_target: f64,
+}
+
+impl AnimState {
+    /// Initialize with the tween already at its target so the first sample
+    /// has no visible animation pop.
+    pub(crate) fn new(target: f64, tick: u64) -> Self {
+        let mut tween = Tween::new(target, target, 0);
+        tween.reset(tick);
+        Self {
+            tween,
+            last_target: target,
+        }
+    }
+
+    /// Sample the current value, retargeting if the goal changed.
+    ///
+    /// On retarget the new tween starts from the current interpolated value,
+    /// avoiding a visible jump when the target flips mid-flight. A
+    /// `duration_ticks` of 0 snaps to the new target immediately.
+    pub(crate) fn sample(&mut self, target: f64, duration_ticks: u64, tick: u64) -> f64 {
+        // Compare bit patterns so two NaNs are treated as equal — avoids
+        // re-resetting forever if a caller threads NaN through.
+        if self.last_target.to_bits() != target.to_bits() {
+            let current = self.tween.value(tick);
+            self.tween = Tween::new(current, target, duration_ticks);
+            self.tween.reset(tick);
+            self.last_target = target;
+        }
+        self.tween.value(tick)
+    }
+}
+
 /// Defines how an animation behaves after reaching its end.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

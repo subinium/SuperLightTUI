@@ -202,6 +202,107 @@ impl Rect {
 
         (y_start..y_end).flat_map(move |y| (x_start..x_end).map(move |x| (x, y)))
     }
+
+    /// Position `self` centered both horizontally and vertically inside `parent`.
+    ///
+    /// Returns a [`Rect`] with the same `width`/`height` as `self`, but with
+    /// `x`/`y` adjusted so the result is centered within `parent`. If `self`
+    /// is wider or taller than `parent` on either axis, the corresponding
+    /// dimension is clamped to `parent`'s extent on that axis (matching
+    /// [`Rect::centered`]'s clamp policy). Self's existing `x`/`y` are
+    /// ignored — only its dimensions matter.
+    ///
+    /// This is the inverse of [`Rect::centered`]: `centered` answers "give
+    /// me an inner rect of size W×H centered in me," whereas `center_in`
+    /// answers "position me centered inside parent."
+    ///
+    /// # Example
+    /// ```
+    /// use slt::Rect;
+    /// let dialog = Rect::new(0, 0, 40, 10);
+    /// let screen = Rect::new(0, 0, 120, 40);
+    /// let r = dialog.center_in(screen);
+    /// assert_eq!(r, Rect::new(40, 15, 40, 10));
+    /// ```
+    #[inline]
+    pub const fn center_in(self, parent: Rect) -> Rect {
+        let w = if self.width < parent.width {
+            self.width
+        } else {
+            parent.width
+        };
+        let h = if self.height < parent.height {
+            self.height
+        } else {
+            parent.height
+        };
+        let x = parent.x + parent.width.saturating_sub(w) / 2;
+        let y = parent.y + parent.height.saturating_sub(h) / 2;
+        Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+
+    /// Position `self` centered horizontally inside `parent`; preserve `self.y` and `self.height`.
+    ///
+    /// If `self.width` exceeds `parent.width`, the returned rect's width is
+    /// clamped to `parent.width` (matching [`Rect::centered`]).
+    ///
+    /// # Example
+    /// ```
+    /// use slt::Rect;
+    /// let banner = Rect::new(0, 5, 30, 3);
+    /// let screen = Rect::new(0, 0, 120, 40);
+    /// let r = banner.center_horizontally_in(screen);
+    /// assert_eq!(r, Rect::new(45, 5, 30, 3));
+    /// ```
+    #[inline]
+    pub const fn center_horizontally_in(self, parent: Rect) -> Rect {
+        let w = if self.width < parent.width {
+            self.width
+        } else {
+            parent.width
+        };
+        let x = parent.x + parent.width.saturating_sub(w) / 2;
+        Rect {
+            x,
+            y: self.y,
+            width: w,
+            height: self.height,
+        }
+    }
+
+    /// Position `self` centered vertically inside `parent`; preserve `self.x` and `self.width`.
+    ///
+    /// If `self.height` exceeds `parent.height`, the returned rect's height
+    /// is clamped to `parent.height` (matching [`Rect::centered`]).
+    ///
+    /// # Example
+    /// ```
+    /// use slt::Rect;
+    /// let sidebar = Rect::new(2, 0, 20, 10);
+    /// let screen = Rect::new(0, 0, 120, 40);
+    /// let r = sidebar.center_vertically_in(screen);
+    /// assert_eq!(r, Rect::new(2, 15, 20, 10));
+    /// ```
+    #[inline]
+    pub const fn center_vertically_in(self, parent: Rect) -> Rect {
+        let h = if self.height < parent.height {
+            self.height
+        } else {
+            parent.height
+        };
+        let y = parent.y + parent.height.saturating_sub(h) / 2;
+        Rect {
+            x: self.x,
+            y,
+            width: self.width,
+            height: h,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -372,5 +473,72 @@ mod tests {
         // Concrete case from issue #166: 65536 * 65536 wraps to 0 without fix
         let r2 = Rect::new(0, 0, 65536, 65536);
         assert_eq!(r2.area(), u32::MAX);
+    }
+
+    #[test]
+    fn test_center_in_basic() {
+        let dialog = Rect::new(0, 0, 40, 10);
+        let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(dialog.center_in(screen), Rect::new(40, 15, 40, 10));
+    }
+
+    #[test]
+    fn test_center_in_self_bigger_clamps() {
+        // self larger than parent on both axes -> clamp to parent extent.
+        let oversize = Rect::new(0, 0, 200, 80);
+        let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(oversize.center_in(screen), Rect::new(0, 0, 120, 40));
+    }
+
+    #[test]
+    fn test_center_in_offset_parent() {
+        // Parent at (10, 5) with size 100 x 30; centering 40 x 10 ->
+        // x = 10 + (100 - 40) / 2 = 40, y = 5 + (30 - 10) / 2 = 15
+        let dialog = Rect::new(999, 999, 40, 10); // self.x/self.y ignored
+        let parent = Rect::new(10, 5, 100, 30);
+        assert_eq!(dialog.center_in(parent), Rect::new(40, 15, 40, 10));
+    }
+
+    #[test]
+    fn test_center_in_self_position_ignored() {
+        // self.x/self.y must NOT influence the result — only dimensions.
+        let a = Rect::new(0, 0, 10, 4).center_in(Rect::new(0, 0, 20, 10));
+        let b = Rect::new(99, 99, 10, 4).center_in(Rect::new(0, 0, 20, 10));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_center_horizontally_in_preserves_y_height() {
+        let banner = Rect::new(0, 5, 30, 3);
+        let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(
+            banner.center_horizontally_in(screen),
+            Rect::new(45, 5, 30, 3)
+        );
+    }
+
+    #[test]
+    fn test_center_horizontally_in_clamps_width() {
+        let wide = Rect::new(0, 4, 200, 3);
+        let screen = Rect::new(0, 0, 120, 40);
+        // width clamped, x = 0 (saturating_sub(120, 120) = 0)
+        assert_eq!(wide.center_horizontally_in(screen), Rect::new(0, 4, 120, 3));
+    }
+
+    #[test]
+    fn test_center_vertically_in_preserves_x_width() {
+        let sidebar = Rect::new(2, 0, 20, 10);
+        let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(
+            sidebar.center_vertically_in(screen),
+            Rect::new(2, 15, 20, 10)
+        );
+    }
+
+    #[test]
+    fn test_center_vertically_in_clamps_height() {
+        let tall = Rect::new(3, 0, 8, 200);
+        let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(tall.center_vertically_in(screen), Rect::new(3, 0, 8, 40));
     }
 }

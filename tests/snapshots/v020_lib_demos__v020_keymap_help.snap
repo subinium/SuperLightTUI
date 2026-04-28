@@ -1,0 +1,18 @@
+---
+source: tests/v020_lib_demos.rs
+---
+Keymap publishing demo
+
+Counter: 3
+                   Keyboard shortcuts
+Press ? to view the auto-help overlay
+Press q to quit    global
+                     ?               toggle this help overlay
+                     q               quit
+
+                   counter
+                     k / Up          increment
+                     j / Down        decrement
+                     r               reset to zero
+
+                   Press Esc / ? to close

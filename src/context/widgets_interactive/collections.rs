@@ -187,22 +187,9 @@ impl Context {
                 let spec = columns.get(col_idx).copied().unwrap_or(GridColumn::Auto);
                 let (grow, constraints) = match spec {
                     GridColumn::Auto => (1, Constraints::default()),
-                    GridColumn::Fixed(w) => (
-                        0,
-                        Constraints {
-                            min_width: Some(w),
-                            max_width: Some(w),
-                            ..Constraints::default()
-                        },
-                    ),
+                    GridColumn::Fixed(w) => (0, Constraints::default().w(w)),
                     GridColumn::Grow(g) => (g, Constraints::default()),
-                    GridColumn::Percent(p) => (
-                        0,
-                        Constraints {
-                            width_pct: Some(p),
-                            ..Constraints::default()
-                        },
-                    ),
+                    GridColumn::Percent(p) => (0, Constraints::default().w_pct(p)),
                 };
 
                 self.skip_interaction_slot();
@@ -340,6 +327,22 @@ impl Context {
     }
 
     /// Render a calendar date picker with month navigation.
+    ///
+    /// # Keybindings (when focused)
+    ///
+    /// | Key | Action |
+    /// |-----|--------|
+    /// | `Left` / `h` | Previous day |
+    /// | `Right` / `l` | Next day |
+    /// | `Up` | Previous week (−7 days) |
+    /// | `Down` | Next week (+7 days) |
+    /// | `[` | Previous month |
+    /// | `]` | Next month |
+    /// | `Enter` / `Space` | Select cursor day |
+    ///
+    /// `h`/`l` follow vim convention (cursor by one day). Use `[`/`]` for
+    /// month navigation. Mouse clicks on the title row navigate months and
+    /// clicks inside the day grid select that day.
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -372,10 +375,18 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('h') => {
-                        state.prev_month();
+                        calendar_move_cursor_by_days(state, -1);
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('l') => {
+                        calendar_move_cursor_by_days(state, 1);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('[') => {
+                        state.prev_month();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(']') => {
                         state.next_month();
                         consumed_indices.push(i);
                     }
@@ -461,10 +472,11 @@ impl Context {
                 group_name: None,
             })));
 
+        let cal_gap = self.theme.spacing.xs();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: 1,
+                gap: cal_gap,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

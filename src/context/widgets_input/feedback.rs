@@ -1,15 +1,23 @@
 use super::*;
 
 impl Context {
+    /// Render an animated spinner.
     ///
     /// The spinner advances one frame per tick. Use [`SpinnerState::dots`] or
-    /// [`SpinnerState::line`] to create the state, then chain style methods to
-    /// color it.
-    pub fn spinner(&mut self, state: &SpinnerState) -> &mut Self {
+    /// [`SpinnerState::line`] to create the state.
+    ///
+    /// Returns a [`Response`] with `hovered` populated correctly so callers
+    /// can attach tooltips or react to mouse interaction. Prior to v0.20.0
+    /// this returned `&mut Self`; existing code that ignores the return value
+    /// keeps compiling, though the `#[must_use]` attribute on `Response`
+    /// surfaces a warning that nudges callers to handle interaction state.
+    pub fn spinner(&mut self, state: &SpinnerState) -> Response {
+        let response = self.interaction();
         self.styled(
             state.frame(self.tick).to_string(),
             Style::new().fg(self.theme.primary),
-        )
+        );
+        response
     }
 
     /// Render toast notifications. Calls `state.cleanup(tick)` automatically.

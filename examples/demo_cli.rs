@@ -1,4 +1,12 @@
-use slt::{Border, Color, Context, ListState, ScrollState, SpinnerState, TextInputState, Theme};
+//! Demo: cargo-style CLI / package manager UI with search, install, and an
+//! output log scrolling region.
+//!
+//! Archetype: Standard. No overlays; uses theming via `set_theme` in the
+//! standalone `main`. The composable [`render`] keeps theme decisions to the
+//! caller so a parent tour's theme stays in charge.
+
+use slt::widgets::{ListState, ScrollState, SpinnerState, TextInputState};
+use slt::{Border, Color, Context, Theme};
 
 struct PackageInfo {
     name: &'static str,
@@ -121,227 +129,251 @@ const PACKAGES: &[PackageInfo] = &[
     },
 ];
 
-fn main() -> std::io::Result<()> {
-    let mut search = TextInputState::with_placeholder("Search packages...");
-    let mut pkg_list = ListState::new(
-        PACKAGES
-            .iter()
-            .map(|p| p.name.to_string())
-            .collect::<Vec<_>>(),
-    );
-    let mut output_scroll = ScrollState::new();
-    let spinner = SpinnerState::dots();
-    let mut installing = false;
-    let mut install_progress = 0.0_f64;
-    let mut output_lines: Vec<(Color, String)> = vec![
-        (Color::Indexed(245), "cargo-slt v0.1.0".into()),
-        (
-            Color::Indexed(245),
-            "Type to search, Enter to install/update".into(),
-        ),
-    ];
-    let mut dark_mode = true;
+/// State persisted across frames for the CLI demo.
+pub struct DemoState {
+    pub search: TextInputState,
+    pub pkg_list: ListState,
+    pub output_scroll: ScrollState,
+    pub spinner: SpinnerState,
+    pub installing: bool,
+    pub install_progress: f64,
+    pub output_lines: Vec<(Color, String)>,
+}
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', slt::KeyModifiers::CONTROL) {
-            ui.quit();
+impl Default for DemoState {
+    fn default() -> Self {
+        Self {
+            search: TextInputState::with_placeholder("Search packages..."),
+            pkg_list: ListState::new(
+                PACKAGES
+                    .iter()
+                    .map(|p| p.name.to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            output_scroll: ScrollState::new(),
+            spinner: SpinnerState::dots(),
+            installing: false,
+            install_progress: 0.0,
+            output_lines: vec![
+                (Color::Indexed(245), "cargo-slt v0.1.0".into()),
+                (
+                    Color::Indexed(245),
+                    "Type to search, Enter to install/update".into(),
+                ),
+            ],
         }
-        if ui.key_code(slt::KeyCode::Esc) {
-            installing = false;
-            install_progress = 0.0;
-        }
-        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-            dark_mode = !dark_mode;
-        }
-        ui.set_theme(if dark_mode {
-            Theme::dark()
-        } else {
-            Theme::light()
-        });
+    }
+}
 
-        let filtered: Vec<usize> = PACKAGES
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| {
-                search.value.is_empty() || p.name.contains(&search.value.to_lowercase())
-            })
-            .map(|(i, _)| i)
-            .collect();
+/// Render one frame of the CLI / package-manager demo.
+///
+/// Theming is left to the caller — a parent tour can wrap this in a
+/// `container().theme(...)` subtree, and the standalone `main` toggles
+/// the global theme directly.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    let filtered: Vec<usize> = PACKAGES
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            state.search.value.is_empty() || p.name.contains(&state.search.value.to_lowercase())
+        })
+        .map(|(i, _)| i)
+        .collect();
 
-        if filtered.is_empty() {
-            pkg_list.selected = 0;
-        } else {
-            pkg_list.selected = pkg_list.selected.min(filtered.len().saturating_sub(1));
-        }
+    if filtered.is_empty() {
+        state.pkg_list.selected = 0;
+    } else {
+        state.pkg_list.selected = state
+            .pkg_list
+            .selected
+            .min(filtered.len().saturating_sub(1));
+    }
 
-        if installing {
-            install_progress = (install_progress + 0.02).min(1.0);
-            if install_progress >= 1.0 {
-                installing = false;
-                if let Some(&pkg_idx) = filtered.get(pkg_list.selected) {
-                    let pkg = &PACKAGES[pkg_idx];
-                    output_lines.push((
-                        Color::Green,
-                        format!("Installed {} v{}", pkg.name, pkg.version),
-                    ));
-                }
-                install_progress = 0.0;
+    if state.installing {
+        state.install_progress = (state.install_progress + 0.02).min(1.0);
+        if state.install_progress >= 1.0 {
+            state.installing = false;
+            if let Some(&pkg_idx) = filtered.get(state.pkg_list.selected) {
+                let pkg = &PACKAGES[pkg_idx];
+                state.output_lines.push((
+                    Color::Green,
+                    format!("Installed {} v{}", pkg.name, pkg.version),
+                ));
             }
+            state.install_progress = 0.0;
         }
+    }
 
-        let _ = ui
-            .bordered(Border::Rounded)
-            .title("cargo-slt")
-            .p(1)
-            .grow(1)
-            .col(|ui| {
-                let _ = ui.row(|ui| {
-                    ui.text("cargo-slt").bold().fg(Color::Cyan);
-                    ui.spacer();
-                    ui.text(format!("{} packages", PACKAGES.len())).dim();
-                });
-                ui.separator();
+    let _ = ui
+        .bordered(Border::Rounded)
+        .title("cargo-slt")
+        .p(1)
+        .grow(1)
+        .col(|ui| {
+            let _ = ui.row(|ui| {
+                ui.text("cargo-slt").bold().fg(Color::Cyan);
+                ui.spacer();
+                ui.text(format!("{} packages", PACKAGES.len())).dim();
+            });
+            ui.separator();
 
-                let _ = ui.container().grow(1).row(|ui| {
-                    // left: search + list
+            let _ = ui.container().grow(1).row(|ui| {
+                // left: search + list
+                let _ = ui
+                    .bordered(Border::Rounded)
+                    .title("Packages")
+                    .p(1)
+                    .grow(1)
+                    .col(|ui| {
+                        let _ = ui.text_input(&mut state.search);
+                        ui.separator();
+                        if filtered.is_empty() {
+                            ui.text("No packages found").dim();
+                        } else {
+                            let items: Vec<String> = filtered
+                                .iter()
+                                .map(|&i| {
+                                    let p = &PACKAGES[i];
+                                    let marker = match p.status {
+                                        "outdated" => "↑",
+                                        "not installed" => "○",
+                                        _ => "●",
+                                    };
+                                    format!(
+                                        "{marker} {:<12} {:<10} {}",
+                                        p.name, p.version, p.status
+                                    )
+                                })
+                                .collect();
+                            state.pkg_list.set_items(items);
+                            let _ = ui.list(&mut state.pkg_list);
+                        }
+                    });
+
+                // right: detail + output
+                let _ = ui.container().grow(1).col(|ui| {
+                    let sel = filtered.get(state.pkg_list.selected).copied().unwrap_or(0);
+                    let pkg = &PACKAGES[sel];
+
                     let _ = ui
                         .bordered(Border::Rounded)
-                        .title("Packages")
+                        .title("Details")
                         .p(1)
-                        .grow(1)
                         .col(|ui| {
-                            let _ = ui.text_input(&mut search);
+                            ui.text(pkg.name).bold().fg(Color::Cyan);
+                            ui.text(format!("v{}", pkg.version)).dim();
                             ui.separator();
-                            if filtered.is_empty() {
-                                ui.text("No packages found").dim();
+                            ui.text(pkg.desc);
+                            let _ = ui.row(|ui| {
+                                ui.text("License:").dim();
+                                ui.text(pkg.license);
+                            });
+                            let _ = ui.row(|ui| {
+                                ui.text("Dependencies:").dim();
+                                ui.text(format!("{}", pkg.deps));
+                            });
+                            let _ = ui.row(|ui| {
+                                ui.text("Size:").dim();
+                                ui.text(pkg.size);
+                            });
+                            let _ = ui.row(|ui| {
+                                ui.text("Status:").dim();
+                                let (label, color) = match pkg.status {
+                                    "installed" => ("installed", Color::Green),
+                                    "outdated" => ("update available", Color::Yellow),
+                                    _ => ("not installed", Color::Indexed(245)),
+                                };
+                                ui.text(label).fg(color);
+                            });
+
+                            if state.installing {
+                                ui.separator();
+                                let _ = ui.row(|ui| {
+                                    let _ = ui.spinner(&state.spinner);
+                                    ui.text(format!(
+                                        " Installing... {:.0}%",
+                                        state.install_progress * 100.0
+                                    ))
+                                    .fg(Color::Yellow);
+                                });
+                                let _ = ui.progress(state.install_progress);
                             } else {
-                                let items: Vec<String> = filtered
-                                    .iter()
-                                    .map(|&i| {
-                                        let p = &PACKAGES[i];
-                                        let marker = match p.status {
-                                            "outdated" => "↑",
-                                            "not installed" => "○",
-                                            _ => "●",
-                                        };
-                                        let color_char = match p.status {
-                                            "outdated" => '!',
-                                            "not installed" => ' ',
-                                            _ => ' ',
-                                        };
-                                        let _ = color_char;
-                                        format!(
-                                            "{marker} {:<12} {:<10} {}",
-                                            p.name, p.version, p.status
-                                        )
-                                    })
-                                    .collect();
-                                pkg_list.set_items(items);
-                                let _ = ui.list(&mut pkg_list);
+                                ui.separator();
+                                let _ = ui.row(|ui| {
+                                    let action = match pkg.status {
+                                        "installed" => "Reinstall",
+                                        "outdated" => "Update",
+                                        _ => "Install",
+                                    };
+                                    if ui.button(action).clicked {
+                                        state.installing = true;
+                                        state.install_progress = 0.0;
+                                        state.output_lines.push((
+                                            Color::Yellow,
+                                            format!("Installing {} v{}...", pkg.name, pkg.version),
+                                        ));
+                                    }
+                                    if (pkg.status == "installed" || pkg.status == "outdated")
+                                        && ui.button("Remove").clicked
+                                    {
+                                        state
+                                            .output_lines
+                                            .push((Color::Red, format!("Removed {}", pkg.name)));
+                                    }
+                                });
                             }
                         });
 
-                    // right: detail + output
-                    let _ = ui.container().grow(1).col(|ui| {
-                        let sel = filtered.get(pkg_list.selected).copied().unwrap_or(0);
-                        let pkg = &PACKAGES[sel];
-
-                        let _ = ui
-                            .bordered(Border::Rounded)
-                            .title("Details")
-                            .p(1)
-                            .col(|ui| {
-                                ui.text(pkg.name).bold().fg(Color::Cyan);
-                                ui.text(format!("v{}", pkg.version)).dim();
-                                ui.separator();
-                                ui.text(pkg.desc);
-                                let _ = ui.row(|ui| {
-                                    ui.text("License:").dim();
-                                    ui.text(pkg.license);
-                                });
-                                let _ = ui.row(|ui| {
-                                    ui.text("Dependencies:").dim();
-                                    ui.text(format!("{}", pkg.deps));
-                                });
-                                let _ = ui.row(|ui| {
-                                    ui.text("Size:").dim();
-                                    ui.text(pkg.size);
-                                });
-                                let _ = ui.row(|ui| {
-                                    ui.text("Status:").dim();
-                                    let (label, color) = match pkg.status {
-                                        "installed" => ("installed", Color::Green),
-                                        "outdated" => ("update available", Color::Yellow),
-                                        _ => ("not installed", Color::Indexed(245)),
-                                    };
-                                    ui.text(label).fg(color);
-                                });
-
-                                if installing {
-                                    ui.separator();
-                                    let _ = ui.row(|ui| {
-                                        ui.spinner(&spinner);
-                                        ui.text(format!(
-                                            " Installing... {:.0}%",
-                                            install_progress * 100.0
-                                        ))
-                                        .fg(Color::Yellow);
-                                    });
-                                    ui.progress(install_progress);
-                                } else {
-                                    ui.separator();
-                                    let _ = ui.row(|ui| {
-                                        let action = match pkg.status {
-                                            "installed" => "Reinstall",
-                                            "outdated" => "Update",
-                                            _ => "Install",
-                                        };
-                                        if ui.button(action).clicked {
-                                            installing = true;
-                                            install_progress = 0.0;
-                                            output_lines.push((
-                                                Color::Yellow,
-                                                format!(
-                                                    "Installing {} v{}...",
-                                                    pkg.name, pkg.version
-                                                ),
-                                            ));
-                                        }
-                                        if (pkg.status == "installed" || pkg.status == "outdated")
-                                            && ui.button("Remove").clicked
-                                        {
-                                            output_lines.push((
-                                                Color::Red,
-                                                format!("Removed {}", pkg.name),
-                                            ));
-                                        }
-                                    });
+                    let _ = ui
+                        .bordered(Border::Rounded)
+                        .title("Output")
+                        .p(1)
+                        .grow(1)
+                        .col(|ui| {
+                            let _ = ui.scrollable(&mut state.output_scroll).grow(1).col(|ui| {
+                                for (color, line) in &state.output_lines {
+                                    ui.text(line.as_str()).fg(*color);
                                 }
                             });
-
-                        let _ = ui
-                            .bordered(Border::Rounded)
-                            .title("Output")
-                            .p(1)
-                            .grow(1)
-                            .col(|ui| {
-                                let _ = ui.scrollable(&mut output_scroll).grow(1).col(|ui| {
-                                    for (color, line) in &output_lines {
-                                        ui.text(line.as_str()).fg(*color);
-                                    }
-                                });
-                            });
-                    });
+                        });
                 });
-
-                ui.separator();
-                let _ = ui.help(&[
-                    ("Ctrl+Q", "quit"),
-                    ("Ctrl+T", "theme"),
-                    ("Tab", "focus"),
-                    ("Enter", "action"),
-                    ("Esc", "cancel"),
-                ]);
             });
-    })
+
+            ui.separator();
+            let _ = ui.help(&[
+                ("Ctrl+Q", "quit"),
+                ("Ctrl+T", "theme"),
+                ("Tab", "focus"),
+                ("Enter", "action"),
+                ("Esc", "cancel"),
+            ]);
+        });
+}
+
+fn main() -> std::io::Result<()> {
+    let mut state = DemoState::default();
+    let mut dark_mode = true;
+
+    slt::run_with(
+        slt::RunConfig::default().mouse(true),
+        move |ui: &mut Context| {
+            if ui.key_mod('q', slt::KeyModifiers::CONTROL) {
+                ui.quit();
+            }
+            if ui.key_code(slt::KeyCode::Esc) {
+                state.installing = false;
+                state.install_progress = 0.0;
+            }
+            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+                dark_mode = !dark_mode;
+            }
+            ui.set_theme(if dark_mode {
+                Theme::dark()
+            } else {
+                Theme::light()
+            });
+
+            render(ui, &mut state);
+        },
+    )
 }

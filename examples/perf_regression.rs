@@ -24,7 +24,7 @@ fn main() {
 
     let start = Instant::now();
     for frame in 0..200 {
-        input.cursor = (frame as usize) % input.value.chars().count().max(1);
+        input.cursor = frame % input.value.chars().count().max(1);
         textarea.scroll_offset = frame % 20;
         tb.render(|ui| {
             let _ = ui

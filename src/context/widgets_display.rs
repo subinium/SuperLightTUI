@@ -1,18 +1,33 @@
+//! Display widgets — text, alerts, badges, gauges, code blocks,
+//! breadcrumbs, gutters, splits, and the `bordered`/`col`/`row` layout
+//! shortcuts.
+//!
+//! These are Layer 3 widgets that produce visual output without
+//! consuming events. For event-consuming widgets see
+//! [`super::widgets_interactive`]; for input widgets see
+//! [`super::widgets_input`].
+
 use super::*;
 
+mod gauge;
+mod gutter;
 mod layout;
 mod rich_output;
+mod split;
 mod status;
 mod text;
 
+pub use gauge::{Gauge, LineGauge};
+pub use gutter::GutterOpts;
 pub use layout::Anchor;
+pub use status::Breadcrumb;
 
 #[cfg(test)]
 mod line_wrap_tests;
 #[cfg(test)]
 mod tests;
 
-fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec<String> {
+pub(super) fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec<String> {
     let max_width = max_width.max(1);
     let mut lines = Vec::new();
 

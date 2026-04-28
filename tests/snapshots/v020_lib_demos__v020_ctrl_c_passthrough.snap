@@ -1,0 +1,13 @@
+---
+source: tests/v020_lib_demos.rs
+---
+Ctrl+C passthrough demo (issue #238)
+
+Ctrl+C / Ctrl+G observed: 1 / 3
+
+Note: macOS terminals bind Ctrl+C to Copy by default.
+Use Ctrl+G to test pass-through, or click the button below.
+
+[ Send Ctrl+C ]
+
+(With handle_ctrl_c(false), real Ctrl+C arrives as a normal key event.)
