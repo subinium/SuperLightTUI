@@ -4,7 +4,6 @@
 
 ### Added
 
-<<<<<<< HEAD
 - **`feat(test-utils)` — `TestBackend::record_frames()` + `FrameRecord` history** (#229) — Opt-in frame recorder. Every `render()` call appends a `FrameRecord { snapshot, lines }` accessible via `tb.frames()`. `FrameRecord` exposes `assert_contains`, `to_string_trimmed`, and per-row text. Disabled by default → zero allocation overhead for tests that don't need history.
 - **`feat(test-utils)` — `TestBackend::sequence()` builder + `type_string` helper** (#230) — Multi-step interaction sequences without manual `focus_index` / `prev_focus_count` threading. Methods: `.tick()`, `.key(KeyCode)`, `.type_string(&str)`, `.events(Vec<Event>)`, `.run()`. Backend-level `tb.type_string("hi", render)` fires one frame per character.
 - **`feat(buffer)` — `Buffer::snapshot_format()`** (#231) — Stable styled-snapshot string for `insta::assert_snapshot!` compatibility. Named palette colors → short codes (`red`, `light_blue`); RGB → `#rrggbb`; indexed → `idx<N>`; canonical modifier order (`bold,dim,italic,underline,reversed,strikethrough`). Format guaranteed stable across patch and minor versions; locked by `tests/snapshot_format_stability.rs`.
