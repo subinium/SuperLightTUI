@@ -1321,6 +1321,50 @@ fn chart_empty_data_no_panic() {
     });
 }
 
+/// Legend names must not bleed past the chart's allotted width. Long
+/// names get an ellipsis; very narrow charts drop the legend entirely
+/// rather than emit a garbled prefix. (v0.20 fix.)
+#[test]
+fn chart_legend_truncates_with_ellipsis_when_narrow() {
+    // 16-cell-wide chart with a long legend name + axis labels. The
+    // full "Memory" legend wants 4+6 = 10 cells, but with the y-axis
+    // taking ~6 cells and a min-plot reservation of 4, the legend is
+    // capped down and must truncate the name with an ellipsis.
+    let mut tb = TestBackend::new(20, 8);
+    tb.render(|ui| {
+        ui.chart(
+            |c| {
+                c.line(&[(0.0, 1.0), (1.0, 2.0)])
+                    .label("Memory")
+                    .color(slt::Color::Cyan);
+                c.legend(slt::LegendPosition::TopRight);
+                c.grid(false);
+            },
+            16,
+            6,
+        );
+    });
+    let out = tb.to_string();
+    let has_full = out.contains("Memory");
+    let has_ellipsis = out.contains('\u{2026}');
+    let has_no_legend = !out.contains("Memory") && !out.contains('M');
+    assert!(
+        has_full || has_ellipsis || has_no_legend,
+        "expected full label, ellipsis-truncated label, or dropped legend; got:\n{out}"
+    );
+    for bad in ["Memor", "Memo", "Mem", "Me", "M"] {
+        if out.contains(bad) {
+            let with_full = out.contains("Memory");
+            let with_ell = out.contains(&format!("{bad}\u{2026}"));
+            assert!(
+                with_full || with_ell,
+                "legend contains bare-truncated prefix {bad:?} \
+                 (no ellipsis, no full label):\n{out}"
+            );
+        }
+    }
+}
+
 #[test]
 fn histogram_renders() {
     let mut tb = TestBackend::new(50, 15);
@@ -3625,6 +3669,36 @@ fn treemap_filters_tiny_items() {
         !output.contains("Tiny"),
         "tiny items should be filtered out"
     );
+}
+
+/// When a treemap cell is narrower than its label, the label must be
+/// truncated with an ellipsis ("…"), never bare-truncated mid-character.
+/// (v0.20 fix: pre-fix output showed "Pytho"/"TypeS" instead of
+/// "Pyth…"/"Type…".)
+#[test]
+fn treemap_truncates_label_with_ellipsis() {
+    let mut tb = TestBackend::new(30, 5);
+    let items = vec![
+        slt::TreemapItem::new("Rust", 40.0, slt::Color::Cyan),
+        slt::TreemapItem::new("Python", 20.0, slt::Color::Yellow),
+        slt::TreemapItem::new("TypeScript", 10.0, slt::Color::Blue),
+        slt::TreemapItem::new("Go", 25.0, slt::Color::Green),
+    ];
+    tb.render(|ui| {
+        ui.treemap(&items);
+    });
+    let output = tb.to_string();
+    for bad in ["Pytho", "Pyth", "TypeS", "Types", "TypeSc"] {
+        if output.contains(bad) {
+            let with_full =
+                bad == "Pyth" && output.contains("Python") || output.contains("TypeScript");
+            let with_ell = output.contains(&format!("{bad}\u{2026}"));
+            assert!(
+                with_full || with_ell,
+                "treemap contains bare-truncated label {bad:?} (no ellipsis, no full label):\n{output}"
+            );
+        }
+    }
 }
 
 // ── Heatmap Halfblock ───────────────────────────────────────────

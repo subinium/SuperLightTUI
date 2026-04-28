@@ -127,6 +127,7 @@ pub fn render(
         .title("v0.20 Showcase")
         .p(pad)
         .gap(pad)
+        .grow(1)
         .col(|ui| {
             // Row 1 — breadcrumb (#213, builder API).
             // The new chainable form: `.separator(s).color(c)`. The Drop

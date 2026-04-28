@@ -1,3 +1,14 @@
+//! Demo: system dashboard (metric cards, processes, log stream, toasts).
+//!
+//! Archetype: **Standard** (full-canvas, no overlay, no scrollback).
+//!
+//! §2 (Demo Guide): exposes `pub fn render(ui, &mut DemoState)` so a
+//! composing demo (e.g. `examples/showcase_tour.rs`) can preserve the
+//! spinner phase, log scroll position, process-table cursor, theme
+//! toggle, and toast queue across tab switches. The legacy stateless
+//! `pub fn render(ui)` (snapshot-style) is retained for visual snapshot
+//! tests in `tests/visual_snapshots.rs`.
+
 use slt::{
     Border, Color, Context, ScrollState, SpinnerState, Style, TableState, Theme, ToastState, Trend,
 };
@@ -52,6 +63,53 @@ pub fn render(ui: &mut Context) {
         &mut dark_mode,
         &mut toasts,
         &logs,
+    );
+}
+
+/// Persistent dashboard state. Owns the spinner phase, log scroll
+/// position, process-table cursor, theme toggle, and the toast queue
+/// so they all survive across frames in the showcase tour.
+pub struct DemoState {
+    pub spinner: SpinnerState,
+    pub log_scroll: ScrollState,
+    pub proc_table: TableState,
+    pub dark_mode: bool,
+    pub toasts: ToastState,
+    pub logs: Vec<(&'static str, &'static str, &'static str)>,
+}
+
+impl DemoState {
+    pub fn new() -> Self {
+        Self {
+            spinner: SpinnerState::dots(),
+            log_scroll: ScrollState::new(),
+            proc_table: make_proc_table(),
+            dark_mode: true,
+            toasts: ToastState::new(),
+            logs: make_logs(),
+        }
+    }
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Render one frame of the dashboard with caller-owned state — used by
+/// the showcase tour so the spinner phase, log scroll, table cursor,
+/// theme toggle, and toast queue survive across frames. Snapshot tests
+/// use [`render`] (which constructs fresh state each call).
+pub fn render_with_state(ui: &mut Context, state: &mut DemoState) {
+    render_frame(
+        ui,
+        &state.spinner,
+        &mut state.log_scroll,
+        &mut state.proc_table,
+        &mut state.dark_mode,
+        &mut state.toasts,
+        &state.logs,
     );
 }
 

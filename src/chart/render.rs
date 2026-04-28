@@ -76,10 +76,12 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         config.legend,
         LegendPosition::TopRight | LegendPosition::BottomRight
     );
-    let legend_width = if legend_on_right && !legend_items.is_empty() {
+    // Each legend row is `"  X name"` (2 spaces, 1-cell symbol, 1 space, name).
+    const LEGEND_PREFIX_COLS: usize = 4;
+    let legend_width_uncapped = if legend_on_right && !legend_items.is_empty() {
         legend_items
             .iter()
-            .map(|(_, name, _)| 4 + UnicodeWidthStr::width(name.as_str()))
+            .map(|(_, name, _)| LEGEND_PREFIX_COLS + UnicodeWidthStr::width(name.as_str()))
             .max()
             .unwrap_or(0)
     } else {
@@ -134,6 +136,20 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         width.saturating_sub(2)
     } else {
         width
+    };
+    // Cap the legend so it never starves the plot. Reserve at least
+    // `MIN_PLOT_COLS` for the plot itself; if the leftover budget is smaller
+    // than `LEGEND_PREFIX_COLS + 1` we drop the legend entirely (a label of 0
+    // cells would render as just the colored prefix and confuse readers).
+    const MIN_PLOT_COLS: usize = 4;
+    let legend_budget = inner_width
+        .saturating_sub(y_label_col_width)
+        .saturating_sub(y_axis_width)
+        .saturating_sub(MIN_PLOT_COLS);
+    let legend_width = if legend_on_right && legend_budget > LEGEND_PREFIX_COLS {
+        legend_width_uncapped.min(legend_budget)
+    } else {
+        0
     };
     let plot_width = inner_width
         .saturating_sub(y_label_col_width)
@@ -352,7 +368,9 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 _ => usize::MAX,
             };
             if let Some((symbol, name, color)) = legend_items.get(legend_row) {
-                let raw = format!("  {symbol} {name}");
+                let name_budget = legend_width.saturating_sub(LEGEND_PREFIX_COLS);
+                let display_name = truncate_label(name, name_budget);
+                let raw = format!("  {symbol} {display_name}");
                 let raw_w = UnicodeWidthStr::width(raw.as_str());
                 let pad = legend_width.saturating_sub(raw_w);
                 let text = format!("{raw}{}", " ".repeat(pad));

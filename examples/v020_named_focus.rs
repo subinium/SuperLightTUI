@@ -74,6 +74,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("register_focusable_named + focus_by_name")
         .p(pad)
         .gap(gap)
+        .grow(1)
         .col(|ui| {
             ui.text("Tab/Shift+Tab cycle   1/2/3 or click row jumps by name   Esc / Ctrl+Q quit")
                 .dim();
@@ -118,10 +119,21 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
     let _ = ui.col(|ui| {
         let row_gap = ui.spacing().xs();
 
+        // The wrapping `container().fill().col()` has its own hit area, so
+        // we read its `clicked` from inside the row closure (via the
+        // returned Response) rather than the row's. The outer
+        // `row_gap(...)` Response also captures clicks on the bare
+        // "Name:"/"Email:"/"City:" label cells outside the input box,
+        // routing them through the same `focus_by_name` call.
         let name_row = ui.row_gap(row_gap, |ui| {
             ui.text("Name: ");
             let _ = ui.register_focusable_named("name");
-            let _ = ui.text_input(&mut state.name);
+            let r = ui.container().fill().col(|ui| {
+                let _ = ui.text_input(&mut state.name);
+            });
+            if r.clicked {
+                let _ = ui.focus_by_name("name");
+            }
         });
         if name_row.clicked {
             let _ = ui.focus_by_name("name");
@@ -130,7 +142,12 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
         let email_row = ui.row_gap(row_gap, |ui| {
             ui.text("Email:");
             let _ = ui.register_focusable_named("email");
-            let _ = ui.text_input(&mut state.email);
+            let r = ui.container().fill().col(|ui| {
+                let _ = ui.text_input(&mut state.email);
+            });
+            if r.clicked {
+                let _ = ui.focus_by_name("email");
+            }
         });
         if email_row.clicked {
             let _ = ui.focus_by_name("email");
@@ -139,7 +156,12 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
         let city_row = ui.row_gap(row_gap, |ui| {
             ui.text("City: ");
             let _ = ui.register_focusable_named("city");
-            let _ = ui.text_input(&mut state.city);
+            let r = ui.container().fill().col(|ui| {
+                let _ = ui.text_input(&mut state.city);
+            });
+            if r.clicked {
+                let _ = ui.focus_by_name("city");
+            }
         });
         if city_row.clicked {
             let _ = ui.focus_by_name("city");

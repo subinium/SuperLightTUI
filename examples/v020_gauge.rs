@@ -50,6 +50,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("v0.20.0 #224: gauge / line_gauge")
         .p(sp.xs())
         .gap(sp.xs())
+        .grow(1)
         .col(|ui| {
             ui.text("Block-style gauge with inline label (color-tiered, animated):")
                 .fg(Color::Cyan);

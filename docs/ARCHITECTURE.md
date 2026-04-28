@@ -1,7 +1,10 @@
 # SLT Architecture
 
-This document describes how the code is organized and how data flows through the system.
-For design philosophy and conventions, see [Design Principles](DESIGN_PRINCIPLES.md).
+This document describes how the code is organized and how data flows
+through the system. It is the **Macro tier** of SLT's convention stack —
+see [`DESIGN_PRINCIPLES.md`](DESIGN_PRINCIPLES.md) §4 for the full
+4-tier map. For naming and signature conventions, see
+[`NAMING.md`](NAMING.md) and [`API_DESIGN.md`](API_DESIGN.md).
 
 Related docs:
 - [QUICK_START.md](QUICK_START.md)
@@ -11,6 +14,174 @@ Related docs:
 - [BACKENDS.md](BACKENDS.md)
 - [DEBUGGING.md](DEBUGGING.md)
 - [TESTING.md](TESTING.md)
+
+---
+
+## The 5 Layers
+
+Every public method belongs to exactly one of five layers. The layer
+determines the file the method lives in, what it can mutate, and what
+shape it returns.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 1. Context                  (frame state + events)       │
+│    └── 2. ContainerBuilder  (layout + style chain)       │
+│         └── 3. Widget       (text, button, gauge, ...)   │
+│              └── 4. State   (XxxState; persists)         │
+│                   └── 5. Response (XxxResponse: Deref)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+The arrow is "calls into" — Context creates ContainerBuilders,
+ContainerBuilders host Widgets, Widgets read & write State, Widgets
+return Response.
+
+### Layer 1: Context
+
+**Owns**: frame buffer, hooks (`use_state`, `use_effect`), focus state,
+event queue, theme + spacing, command list, modal stack, name maps.
+
+**Methods belong here when**: they affect frame-level state (not visual
+output) or they orchestrate (focus, quit, notify).
+
+**Source**: `src/context/core.rs`, `src/context/runtime.rs`.
+
+**Examples**:
+
+```rust
+ui.quit();
+ui.notify("saved", ToastLevel::Success);
+ui.register_focusable_named("search");
+ui.focus_by_name("search");
+let count = ui.use_state(|| 0);
+let theme = ui.theme();
+```
+
+### Layer 2: ContainerBuilder
+
+**Owns**: layout configuration (col/row/line direction, gap, grow),
+styling (border, padding, background, foreground), per-subtree theme
+override, alignment.
+
+**Lifecycle**: created via `ui.container()` or shortcut entry points
+(`ui.bordered(B)`, `ui.col(...)`, `ui.row(...)`, `ui.row_gap(g, ...)`),
+mutated via chained methods, finalized by `.col(closure)` /
+`.row(closure)` / `.line(closure)` / `Drop`.
+
+**Source**: `src/context/container.rs`.
+
+**Examples**:
+
+```rust
+ui.container().border(Border::Rounded).p(2).gap(1).grow(1).col(|ui| { /* ... */ });
+ui.bordered(Border::Single).title("Settings").p(1).col(|ui| { /* ... */ });
+ui.container().theme(Theme::dark()).fill().col(|ui| { /* ... */ });
+```
+
+### Layer 3: Widget
+
+**Owns**: rendering primitives — text, buttons, gauges, tables, charts,
+inputs.
+
+**Source**: `src/context/widgets_*/*.rs`. The directory encodes family:
+- `widgets_display/` — text, alerts, badges, code blocks
+- `widgets_input/` — text input, textarea, sliders, spinners
+- `widgets_interactive/` — tables, lists, tabs, palettes
+- `widgets_viz/` — charts, sparklines, heatmaps
+
+**Stateless widgets** take primitive args:
+```rust
+ui.text("hello");
+ui.gauge(0.6).label("60%").width(24);
+ui.button("Save");
+```
+
+**Stateful widgets** take `&mut <Widget>State`:
+```rust
+let mut input = TextInputState::default();
+ui.text_input(&mut input);
+```
+
+### Layer 4: State
+
+**Owns**: persistent per-widget state.
+
+**Pattern**: `pub struct <Widget>State { ... }` with `Default` impl. Field
+visibility is `pub` for trivial fields and `pub(crate)` for invariants.
+
+**Source**: `src/widgets/*.rs` (grouped by family).
+
+**Examples**: `TextInputState`, `TextareaState`, `TabsState`,
+`ScrollState`, `SplitPaneState`, `TreeState`.
+
+### Layer 5: Response
+
+**Owns**: interaction results.
+
+**Pattern**: every interactive widget returns `Response` or a compound
+`<Widget>Response: Deref<Target = Response>`.
+
+**Source**: `src/widgets/responses.rs` (compound types).
+
+**Why Deref**: callers can write `r.hovered`, `r.rect` regardless of
+whether `r` is `Response` or `BreadcrumbResponse`. The compound fields
+(`r.clicked_segment`) are accessed normally.
+
+---
+
+## Layer Cross-Cutting Rules
+
+### M1 — One method, one layer
+
+A method must not exist on more than one layer with the same name and
+similar semantics. Where SLT currently has duplicates, the rule is
+documented but not yet enforced.
+
+**Currently allowed (documented exceptions)**:
+
+| Name | Context | Builder | Resolution |
+|------|---------|---------|------------|
+| `text` | unbordered shortcut | inside-builder form | both keep |
+| `theme` | getter | per-subtree override | both keep (different semantics) |
+
+**Currently disallowed (planned removal in v0.22)**:
+
+| Name | Context | Builder |
+|------|---------|---------|
+| `bordered` (shortcut) vs `container().border()` (explicit) | shortcut wins | explicit deprecated |
+
+### M2 — Composition, not inheritance
+
+A widget that wants container-like behaviour uses `ContainerBuilder` via
+`ui.container()`, not by re-implementing layout. Compound widgets like
+`code_block` internally call `self.bordered(...).col(|ui| ...)`.
+
+### M3 — State is `&mut` always
+
+No widget mutates frame state through `&self`. State changes go through
+the `&mut Context` parameter or `&mut <Widget>State`.
+
+### M4 — Response is the only return shape
+
+Interactive widgets return `Response` or a compound `<Widget>Response: Deref`.
+Stateless rendering returns `Response::none()` — no `()` returns.
+
+---
+
+## Adding a new widget — checklist
+
+1. **Family**: display, input, interactive, or viz?
+2. **Stateful**: needs persistence? If yes, create `<Widget>State` in
+   `src/widgets/<family>.rs`.
+3. **Return shape**: simple `Response` or compound `<Widget>Response`?
+4. **Builder vs immediate**: see [API_DESIGN.md](API_DESIGN.md) rule 1
+   (builder when ≥4 optional fields).
+5. **Implement** in `src/context/widgets_<family>/<file>.rs`.
+6. **Document** per [RUSTDOC_GUIDE.md](RUSTDOC_GUIDE.md) — 4-part
+   docstring with at least one runnable example.
+7. **Audit**: run `scripts/api_audit.sh`. Update DESIGN_PRINCIPLES.md
+   matrix if the new widget changes a cell's status.
 
 ---
 

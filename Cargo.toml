@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.19.3"
+version = "0.20.0"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -15,6 +15,14 @@ keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
 categories = ["command-line-interface"]
 rust-version = "1.81"
 exclude = ["examples/", ".github/", "assets/", "AUDIT-REPORT.md", "CLAUDE.md"]
+# Disable cargo's `examples/*.rs` auto-discovery: only the binaries listed
+# below as `[[example]]` are exposed via `cargo run --example`. Source
+# demos that compose into a tour (v020_*, cookbook_*, most demo_*,
+# anim, async_demo, inline, error_boundary_demo) stay in examples/ but
+# are reached only via `#[path = ...] mod` includes from the tour
+# binaries. See `docs/DEMO_GUIDE.md` for the archetype rules and the
+# v0.20 release notes for why these were merged into tours.
+autoexamples = false
 
 [lib]
 name = "slt"
@@ -98,6 +106,37 @@ full = ["crossterm", "async", "serde", "image", "qrcode", "kitty-compress"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+# ── Tour binaries (6) — integrated demos covering v0.20 features and
+#    domain showcases. Each tour bundles 4–10 source demos via the
+#    DEMO_GUIDE.md archetype rules. Run these for end-to-end review.
+
+[[example]]
+name = "v020_tour"
+path = "examples/v020_tour.rs"
+
+[[example]]
+name = "cookbook_tour"
+path = "examples/cookbook_tour.rs"
+
+[[example]]
+name = "showcase_tour"
+path = "examples/showcase_tour.rs"
+
+[[example]]
+name = "canvas_tour"
+path = "examples/canvas_tour.rs"
+
+[[example]]
+name = "text_tour"
+path = "examples/text_tour.rs"
+
+[[example]]
+name = "system_tour"
+path = "examples/system_tour.rs"
+required-features = ["async"]
+
+# ── Standalone — entry / how-to-start (3)
+
 [[example]]
 name = "hello"
 path = "examples/hello.rs"
@@ -110,78 +149,41 @@ path = "examples/counter.rs"
 name = "demo"
 path = "examples/demo.rs"
 
-[[example]]
-name = "anim"
-path = "examples/anim.rs"
+# ── Standalone — performance measurement (2)
 
 [[example]]
-name = "inline"
-path = "examples/inline.rs"
+name = "perf_interactive"
+path = "examples/perf_interactive.rs"
 
 [[example]]
-name = "async_demo"
-path = "examples/async_demo.rs"
-required-features = ["async"]
+name = "perf_regression"
+path = "examples/perf_regression.rs"
+
+# ── Standalone — development tools (3)
 
 [[example]]
-name = "demo_dashboard"
-path = "examples/demo_dashboard.rs"
+name = "debug_selection"
+path = "examples/debug_selection.rs"
 
 [[example]]
-name = "demo_cli"
-path = "examples/demo_cli.rs"
+name = "test_mouse"
+path = "examples/test_mouse.rs"
 
 [[example]]
-name = "demo_spreadsheet"
-path = "examples/demo_spreadsheet.rs"
+name = "demo_key_test"
+path = "examples/demo_key_test.rs"
+
+# ── v0.20 non-interactive reports (2) — kept standalone because they
+#    print to stdout rather than render a TUI, so they don't compose
+#    into v020_tour.
 
 [[example]]
-name = "demo_website"
-path = "examples/demo_website.rs"
+name = "v020_perf_audit"
+path = "examples/v020_perf_audit.rs"
 
 [[example]]
-name = "demo_infoviz"
-path = "examples/demo_infoviz.rs"
-
-[[example]]
-name = "cookbook_dashboard"
-path = "examples/cookbook_dashboard.rs"
-
-[[example]]
-name = "cookbook_file_picker"
-path = "examples/cookbook_file_picker.rs"
-
-[[example]]
-name = "cookbook_login"
-path = "examples/cookbook_login.rs"
-
-[[example]]
-name = "cookbook_modal_toast"
-path = "examples/cookbook_modal_toast.rs"
-
-[[example]]
-name = "cookbook_table"
-path = "examples/cookbook_table.rs"
-
-[[example]]
-name = "demo_fire"
-path = "examples/demo_fire.rs"
-
-[[example]]
-name = "demo_game"
-path = "examples/demo_game.rs"
-
-[[example]]
-name = "demo_kitty_image"
-path = "examples/demo_kitty_image.rs"
-
-[[example]]
-name = "demo_cjk"
-path = "examples/demo_cjk.rs"
-
-[[example]]
-name = "demo_overlay_anchor"
-path = "examples/demo_overlay_anchor.rs"
+name = "v020_test_utils"
+path = "examples/v020_test_utils.rs"
 
 [[bench]]
 name = "benchmarks"

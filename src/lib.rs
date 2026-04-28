@@ -1,3 +1,24 @@
+//! SuperLightTUI — an immediate-mode flexbox-layout terminal UI library.
+//!
+//! Build a TUI as easily as a web page: write a closure, SLT calls it
+//! every frame. State lives in your code; layout is described every
+//! frame; styling uses Tailwind-inspired shorthand; focus and events are
+//! threaded through a single [`Context`] parameter.
+//!
+//! See `docs/QUICK_START.md` for a 5-minute introduction and
+//! `docs/DESIGN_PRINCIPLES.md` for the principles every public API
+//! follows.
+//!
+//! # Example
+//!
+//! ```no_run
+//! fn main() -> std::io::Result<()> {
+//!     slt::run(|ui| {
+//!         ui.text("hello, world");
+//!     })
+//! }
+//! ```
+
 // Safety
 #![forbid(unsafe_code)]
 // Documentation

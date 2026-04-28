@@ -84,6 +84,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("use_state_keyed: per-item counters")
         .p(pad)
         .gap(gap)
+        .grow(1)
         .col(|ui| {
             ui.text(
                 "Each row owns its own state via use_state_keyed(format!(\"counter-{i}\"), …).",

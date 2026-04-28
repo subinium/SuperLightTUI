@@ -113,10 +113,35 @@ fn body(ui: &mut Context, state: &mut State) {
     }
 }
 
-/// One-frame deterministic render entry point used by snapshot tests.
-/// Renders the modal-open state because that is the interesting case
-/// — the closed-modal frame is just the bordered base view.
-pub fn render(ui: &mut Context) {
+/// Per-frame entry point. Handles M-to-open, Esc-to-dismiss, and the
+/// modal body. Caller owns the [`State`] so user clicks on Yes/No
+/// persist across frames — that is the difference between this and
+/// [`render_snapshot`] (which is for one-shot tests only and should not
+/// be used as the live entry).
+pub fn render(ui: &mut Context, state: &mut State) {
+    // M opens the modal (keyboard-accessible alternative to clicking the
+    // "Open modal" button below). Blocked automatically while a modal is
+    // already open via the same overlay guard.
+    if ui.key('m') || ui.key('M') {
+        state.show_modal = true;
+        state.answered = None;
+    }
+
+    body(ui, state);
+
+    // Modal-scoped Esc-to-dismiss. raw_key_code bypasses focus filtering
+    // so Esc still works even when a modal button has focus.
+    if state.show_modal && ui.raw_key_code(KeyCode::Esc) {
+        state.show_modal = false;
+    }
+}
+
+/// One-frame deterministic snapshot render. Constructs a fresh
+/// modal-open state every call, which is what snapshot tests want but
+/// is NOT what an interactive embedding wants — clicks would be reset
+/// next frame. Live embeddings should call [`render`] with their own
+/// `&mut State`.
+pub fn render_snapshot(ui: &mut Context) {
     let mut state = State {
         show_modal: true,
         answered: None,
@@ -127,7 +152,7 @@ pub fn render(ui: &mut Context) {
 fn main() -> std::io::Result<()> {
     let mut state = State::new();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
         // Quit keys only fire when no modal is open. macOS Ctrl-C is bound to
         // copy in many terminals — bind quit to plain `q`, Esc, and Ctrl-Q so
         // the demo is escape-able under every common setup.
@@ -142,20 +167,6 @@ fn main() -> std::io::Result<()> {
             ui.quit();
         }
 
-        // M opens the modal (keyboard-accessible alternative to clicking the
-        // "Open modal" button below). Blocked automatically while a modal is
-        // already open via the same overlay guard.
-        if ui.key('m') || ui.key('M') {
-            state.show_modal = true;
-            state.answered = None;
-        }
-
-        body(ui, &mut state);
-
-        // Modal-scoped Esc-to-dismiss. raw_key_code bypasses focus filtering
-        // so Esc still works even when a modal button has focus.
-        if state.show_modal && ui.raw_key_code(KeyCode::Esc) {
-            state.show_modal = false;
-        }
+        render(ui, &mut state);
     })
 }

@@ -119,6 +119,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("use_effect: dep-tracked side effects")
         .p(pad)
         .gap(gap)
+        .grow(1)
         .col(|ui| {
             ui.text("k/Up = count++   j/Down = count--   Space = toggle log   q quit")
                 .dim();

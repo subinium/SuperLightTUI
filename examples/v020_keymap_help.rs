@@ -54,6 +54,24 @@ impl WidgetKeyHelp for GlobalKeys {
 /// `tests/snapshots/v020_lib_demos__v020_keymap_help.snap`.
 const SNAPSHOT_COUNT: i32 = 3;
 
+/// Persistent state for the keymap-help demo.
+///
+/// Counter increments survive across frames; `help_open` controls whether
+/// the auto-generated overlay is rendered.
+pub struct DemoState {
+    pub count: i32,
+    pub help_open: bool,
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            help_open: false,
+        }
+    }
+}
+
 /// Shared body. Every focusable widget publishes its bindings BEFORE the
 /// overlay call — the overlay reads the per-frame keymap registry so order
 /// matters for deterministic snapshots.
@@ -76,45 +94,65 @@ fn body(ui: &mut Context, count: i32, help_open: bool) {
     ui.keymap_help_overlay(help_open);
 }
 
+/// Per-frame entry point. Handles k/j/r counter updates and the `?`/Esc
+/// overlay toggle, then renders the body. Caller owns [`DemoState`] so
+/// counter and overlay state persist across frames — this is the path
+/// the tour uses.
+///
+/// `?` and Esc go through `raw_key_*` because once the overlay is open it
+/// counts as a modal and the regular `key()` checks are blocked by the
+/// modal guard.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    // Toggle help overlay. Use `raw_key_mod` so '?' keeps toggling
+    // even after the overlay opens — the regular `key('?')` is
+    // blocked by the overlay's modal guard.
+    if ui.raw_key_mod('?', KeyModifiers::NONE) {
+        state.help_open = !state.help_open;
+    }
+    // Close overlay on Esc as well (also via `raw_*` to bypass the
+    // modal guard).
+    if state.help_open && ui.raw_key_code(KeyCode::Esc) {
+        state.help_open = false;
+    }
+    if ui.key('k') || ui.key_code(KeyCode::Up) {
+        state.count = state.count.saturating_add(1);
+    }
+    if ui.key('j') || ui.key_code(KeyCode::Down) {
+        state.count = state.count.saturating_sub(1);
+    }
+    if ui.key('r') {
+        state.count = 0;
+    }
+
+    body(ui, state.count, state.help_open);
+}
+
 /// One-frame deterministic render entry point used by snapshot tests
 /// (`tests/v020_lib_demos.rs`). Pins the help overlay open so the snapshot
 /// covers both the main view and the auto-generated overlay.
-pub fn render(ui: &mut Context) {
+///
+/// NEVER call this from a live loop or from another demo — clicks and
+/// counter mutations are silently dropped because state never persists.
+/// Live embeddings should call [`render`] with their own `&mut DemoState`.
+pub fn render_snapshot(ui: &mut Context) {
     body(ui, SNAPSHOT_COUNT, true);
 }
 
 fn main() -> std::io::Result<()> {
-    let mut count: i32 = 0;
-    let mut help_open = false;
+    let mut state = DemoState::default();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
         // Quit. Ctrl-Q is the portable alternative to Ctrl-C, which is
-        // intercepted as Copy on macOS terminals.
+        // intercepted as Copy on macOS terminals. Esc is gated on
+        // `!help_open` so the overlay's Esc-to-dismiss takes precedence.
         if ui.key('q') || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
-        // Toggle help overlay. Use `raw_key_mod` so '?' keeps toggling
-        // even after the overlay opens — the regular `key('?')` is
-        // blocked by the overlay's modal guard.
-        if ui.raw_key_mod('?', KeyModifiers::NONE) {
-            help_open = !help_open;
-        }
-        // Close overlay on Esc as well (also via `raw_*` to bypass the
-        // modal guard).
-        if help_open && ui.raw_key_code(KeyCode::Esc) {
-            help_open = false;
-        }
-        if ui.key('k') || ui.key_code(KeyCode::Up) {
-            count = count.saturating_add(1);
-        }
-        if ui.key('j') || ui.key_code(KeyCode::Down) {
-            count = count.saturating_sub(1);
-        }
-        if ui.key('r') {
-            count = 0;
+        if !state.help_open && ui.key_code(KeyCode::Esc) {
+            ui.quit();
         }
 
-        body(ui, count, help_open);
+        render(ui, &mut state);
     })?;
 
     Ok(())

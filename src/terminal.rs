@@ -43,6 +43,7 @@ pub(crate) struct KittyImageManager {
 }
 
 impl KittyImageManager {
+    /// Construct a new image manager with no uploaded images.
     pub fn new() -> Self {
         Self {
             next_id: 1,
@@ -379,6 +380,9 @@ impl TerminalSessionGuard {
 }
 
 impl Terminal {
+    /// Construct a fullscreen terminal backend; enters raw mode and the
+    /// alternate screen and optionally enables mouse capture and the
+    /// kitty keyboard protocol.
     pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
@@ -403,14 +407,19 @@ impl Terminal {
         })
     }
 
+    /// Return the fullscreen terminal's current `(cols, rows)`.
     pub fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
+    /// Mutable access to the back buffer used by the next render pass.
     pub fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
+    /// Diff the back buffer against the front buffer, write the changed
+    /// cells to stdout under a synchronized-output guard, then swap
+    /// front and back buffers.
     pub fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
@@ -453,6 +462,8 @@ impl Terminal {
         Ok(())
     }
 
+    /// Re-query the terminal size and resize the front and back buffers
+    /// to match. Called from the SIGWINCH handler.
     pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
@@ -482,6 +493,9 @@ impl crate::Backend for Terminal {
 }
 
 impl InlineTerminal {
+    /// Construct an inline terminal backend that renders `height` rows
+    /// below the current cursor without entering the alternate screen.
+    /// Optionally enables mouse capture and the kitty keyboard protocol.
     pub fn new(
         height: u32,
         mouse: bool,
@@ -521,14 +535,19 @@ impl InlineTerminal {
         })
     }
 
+    /// Return the inline terminal's current `(cols, rows)`.
     pub fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
+    /// Mutable access to the back buffer used by the next render pass.
     pub fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
+    /// Diff the back buffer against the front buffer, write changed
+    /// cells to stdout under a synchronized-output guard at the
+    /// inline rows reserved below the cursor, then swap buffers.
     pub fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
@@ -586,6 +605,8 @@ impl InlineTerminal {
         Ok(())
     }
 
+    /// Re-query the terminal size and resize the inline buffers to match
+    /// the new column count, preserving the inline row height.
     pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, _) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, self.height);

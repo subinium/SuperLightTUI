@@ -27,11 +27,21 @@
 
 use slt::{Border, Color, Context, KeyCode, KeyModifiers, Rect, Style};
 
-// Demo screen state. Pulled out so `render` and `render_demo` share a
-// single owner and the snapshot test can pin a deterministic frame.
-struct State {
-    panel_open: bool,
-    show_help: bool,
+/// Persistent state for the DX shorthand demo. Public so the v0.20 tour
+/// can own a single [`DemoState`] across frames — clicks on the help
+/// overlay or panel toggle would otherwise reset every frame.
+pub struct DemoState {
+    pub panel_open: bool,
+    pub show_help: bool,
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self {
+            panel_open: false,
+            show_help: false,
+        }
+    }
 }
 
 // Layout constants. Pinned here so the help overlay and the action column
@@ -48,45 +58,58 @@ const PANEL_ALPHA_HIGH: f64 = 0.5;
 const PANEL_ALPHA_MID: f64 = 0.25;
 
 fn main() -> std::io::Result<()> {
-    let mut state = State {
-        panel_open: false,
-        show_help: false,
-    };
+    let mut state = DemoState::default();
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
-        // intentionally NOT bound — many terminals (e.g. macOS Terminal,
-        // iTerm2 with default copy-shortcut) intercept Ctrl-C, so it never
-        // reaches the app reliably.
-        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
-            ui.quit();
-        }
-        if ui.key(' ') {
-            state.panel_open = !state.panel_open;
-        }
-        if ui.key('?') || ui.key('h') {
-            state.show_help = !state.show_help;
-        }
+    slt::run_with(
+        slt::RunConfig::default().mouse(true),
+        move |ui: &mut Context| {
+            // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+            // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+            // iTerm2 with default copy-shortcut) intercept Ctrl-C, so it never
+            // reaches the app reliably.
+            if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
+                ui.quit();
+            }
 
-        render_demo(ui, &state);
-    })
+            render(ui, &mut state);
+        },
+    )
 }
 
-/// Render the demo screen for the snapshot test.
+/// Per-frame entry point. Handles Space (panel toggle) and ?/h (help
+/// overlay toggle), then renders the demo body. Caller owns [`DemoState`]
+/// so toggles persist across frames — this is the path the tour uses.
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    if ui.key(' ') {
+        state.panel_open = !state.panel_open;
+    }
+    if ui.key('?') || ui.key('h') {
+        state.show_help = !state.show_help;
+    }
+
+    body(ui, state);
+}
+
+/// One-frame deterministic render entry point used by snapshot tests
+/// (`tests/v020_dx_shortcuts_demo.rs`).
 ///
 /// Stable defaults: panel closed, help overlay on. Reviewers can see the
 /// centered help dialog (#221), the chained tooltip helpers (#209), and
 /// the `fill()` status column (#220) all in one frame. The animated panel
 /// alpha (#210) is exercised by the unit tests.
-pub fn render(ui: &mut Context) {
-    let snapshot = State {
+///
+/// NEVER call this from a live loop or from another demo — toggles are
+/// silently dropped because state never persists. Live embeddings should
+/// call [`render`] with their own `&mut DemoState`.
+pub fn render_snapshot(ui: &mut Context) {
+    let mut snapshot = DemoState {
         panel_open: false,
         show_help: true,
     };
-    render_demo(ui, &snapshot);
+    body(ui, &mut snapshot);
 }
 
-fn render_demo(ui: &mut Context, state: &State) {
+fn body(ui: &mut Context, state: &mut DemoState) {
     let theme = ui.theme();
     let pad = theme.spacing.xs();
     let gap = theme.spacing.xs();

@@ -1,5 +1,5 @@
 use super::*;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(super) struct GridSpec<'a> {
     pub(super) x_ticks: &'a [f64],
@@ -230,4 +230,83 @@ pub(super) fn sturges_bin_count(n: usize) -> usize {
         return 1;
     }
     (1.0 + (n as f64).log2()).ceil() as usize
+}
+
+/// Fit `text` into at most `max_cols` terminal cells, replacing the tail with
+/// a single-cell ellipsis (`…`) when it would otherwise be clipped.
+///
+/// Width is measured in unicode display cells (CJK = 2). Returns the original
+/// string when it already fits, an ellipsis-truncated prefix when it does not,
+/// and an empty string when `max_cols < 3` (a 1- or 2-cell budget cannot fit
+/// any meaningful prefix plus an ellipsis, so we drop the label entirely
+/// rather than emit a single garbled character).
+pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
+    if max_cols == 0 {
+        return String::new();
+    }
+    let total: usize = text
+        .chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum();
+    if total <= max_cols {
+        return text.to_string();
+    }
+    if max_cols < 3 {
+        return String::new();
+    }
+    let target = max_cols - 1;
+    let mut result = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + cw > target {
+            break;
+        }
+        result.push(ch);
+        width += cw;
+    }
+    result.push('\u{2026}');
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_label;
+
+    #[test]
+    fn keeps_short_label_unchanged() {
+        assert_eq!(truncate_label("CPU", 10), "CPU");
+        assert_eq!(truncate_label("CPU", 3), "CPU");
+    }
+
+    #[test]
+    fn adds_ellipsis_when_truncated() {
+        // "Python" is 6 cells; budget 5 → "Pyth" + "…" = 5 cells.
+        assert_eq!(truncate_label("Python", 5), "Pyth\u{2026}");
+        // budget 4 → "Pyt" + "…" = 4 cells.
+        assert_eq!(truncate_label("Python", 4), "Pyt\u{2026}");
+        // budget 3 → "Py" + "…" = 3 cells.
+        assert_eq!(truncate_label("Python", 3), "Py\u{2026}");
+    }
+
+    #[test]
+    fn drops_label_when_too_narrow() {
+        assert_eq!(truncate_label("Python", 0), "");
+        assert_eq!(truncate_label("Python", 1), "");
+        assert_eq!(truncate_label("Python", 2), "");
+    }
+
+    #[test]
+    fn handles_cjk_double_width() {
+        // "한글" is 4 cells (each char = 2). Budget 4 → fits.
+        assert_eq!(truncate_label("한글", 4), "한글");
+        // Budget 3 → can't fit one CJK + ellipsis (would need 3 cells exactly:
+        // 2 + 1) so it works: "한…" is 3 cells.
+        assert_eq!(truncate_label("한글", 3), "한\u{2026}");
+        // Budget 2 → falls through to drop (max_cols < 3).
+        // (We could fit "…" but the policy is: prefer dropping over a lone
+        // ellipsis, since that conveys no information.)
+        // Actually max_cols=2 IS >= 3? No, 2 < 3, so dropped.
+        assert_eq!(truncate_label("한글파일", 2), "");
+    }
 }

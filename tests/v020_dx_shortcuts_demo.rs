@@ -28,7 +28,7 @@ mod v020_dx_shortcuts;
 #[test]
 fn visual_v020_dx_shortcuts() {
     let mut tb = TestBackend::new(80, 20);
-    tb.render(v020_dx_shortcuts::render);
+    tb.render(v020_dx_shortcuts::render_snapshot);
     let body = tb.to_string_trimmed();
     insta::with_settings!({
         snapshot_path => "snapshots",

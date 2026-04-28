@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.0] - 2026-04-28
 
 ### Added
 
@@ -32,6 +32,13 @@
 ### Changed
 
 - **`change(theme)` Built-in widgets now derive padding/gap from `theme.spacing`** (#227) — code_block, code_block_numbered, accordion, tooltip, help, help_colored, tabs, checkbox, toggle, select trigger, calendar header, text_input, suggestion box, command palette, markdown code blocks. Default theme spacing is unchanged (`Spacing::new(1)`), so every preset produces v0.19-identical output by default. To get larger paddings, use `Theme::comfortable()`/`Theme::spacious()` or set `theme.spacing` explicitly via `ThemeBuilder::spacing(...)`.
+- **`change(examples)` Cargo example list compacted from 53 → 16** — `Cargo.toml` sets `autoexamples = false` and lists 16 explicit `[[example]]` entries: 6 tour binaries (`v020_tour`, `cookbook_tour`, `showcase_tour`, `canvas_tour`, `text_tour`, `system_tour`), 5 standalone demos (`hello`, `counter`, `demo`, plus 2 perf tools), 3 dev tools, and 2 v0.20 reports. Source files for the demos that compose into tours stay in `examples/` and are reached via `#[path = ...] mod` includes from the tour binaries — see `docs/DEMO_GUIDE.md` for the archetype rules.
+
+### Fixed
+
+- **`fix(focus)` — `register_focusable_named` now allocates a slot eagerly and reserves it for the next `register_focusable()` call** (#217 follow-up) — In v0.20.0-preview the call queued a name and waited for a following widget to drain it, which made `register_focusable_named("x")` a silent no-op when called standalone (the `name → slot` map never picked up the binding). The new behaviour allocates the slot on the named call itself and stores the slot id as a one-shot reservation: the very next `register_focusable()` reuses it instead of allocating a fresh slot, so widgets like `text_input`, `button`, and `tabs` placed immediately after still inherit the name. Both shapes work — "name + widget" (the common idiom) and "name alone" (custom focusable regions, unit tests). Verified by 24 tests in `tests/v020_hooks_focus.rs`.
+- **`fix(chart)` — Legend names and treemap labels are clipped with an ellipsis (`…`) instead of bare-truncated** — `crate::chart::truncate_label(text, max_cols)` is the new shared helper. Returns the original text when it fits, an ellipsis-suffixed prefix when it does not, and an empty string when `max_cols < 3` (drops the label entirely rather than emit a 1- or 2-cell garbled prefix). Used by `chart::render` for legend names (after the legend column budget is computed against y-axis width and a `MIN_PLOT_COLS = 4` reservation) and by `treemap` for cell labels. Pre-fix output showed `Memor` / `TypeS`; post-fix shows `Memo…` / `Type…` or drops the label.
+- **`fix(examples)` — Tab clicks in `cargo run --example demo` now persist** — `examples/demo.rs` lifted all per-frame `let mut state = ...` into a `pub struct DemoState` owned by `main()`. Previously every render re-created `TabsState`, `TextInputState`, etc., which made tab clicks visibly flash for ≈ 0.1 s before snapping back to the first tab. The same `pub fn render(ui, &mut state)` + `pub fn render_snapshot(ui)` split applied to `v020_keymap_help`, `v020_gutter_highlights`, `v020_ctrl_c_passthrough`, and `v020_dx_shortcuts` so they keep state across frames when embedded in `v020_tour` (per `docs/DEMO_GUIDE.md` §2).
 
 ### Performance
 

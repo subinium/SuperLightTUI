@@ -13,6 +13,7 @@ mod grid;
 mod render;
 
 pub(crate) use bar::build_histogram_config;
+pub(crate) use grid::truncate_label;
 pub(crate) use render::render_chart;
 
 use axis::{build_tui_ticks, format_number, resolve_bounds, TickSpec};

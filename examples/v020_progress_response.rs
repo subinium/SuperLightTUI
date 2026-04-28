@@ -110,6 +110,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("v0.20.0 #212: Response from progress / spinner")
         .p(sp.xs())
         .gap(sp.xs())
+        .grow(1)
         .col(|ui| {
             ui.text("Hover the spinner or the progress bar to see Response in action.")
                 .fg(Color::Cyan);

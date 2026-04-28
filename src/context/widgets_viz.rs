@@ -1,3 +1,10 @@
+//! Visualization widgets — charts, sparklines, heatmaps, treemaps,
+//! candlesticks, stacked bars, canvases, and QR codes.
+//!
+//! Layer 3 widgets that render dense numeric or geometric data. Most
+//! draw via the chart kernel ([`crate::chart`]) or the buffer-level
+//! drawing primitives in `super::container`.
+
 use super::*;
 
 struct VerticalBarLayout {
@@ -1851,20 +1858,12 @@ impl Context {
 
                 let text_color = treemap_label_color(item.color);
 
-                // Label: truncate to fit, center in cell (unicode-safe, fix #112)
+                // Label: truncate to fit with ellipsis, center in cell
+                // (unicode-safe, fix #112; ellipsis fix for fix #v020-truncate)
                 if cell_w >= 2 {
                     let max_label_w = cell_w.saturating_sub(1);
-                    let mut used_w = 0usize;
-                    let mut last_byte = 0usize;
-                    for (idx, ch) in item.label.char_indices() {
-                        let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
-                        if used_w + cw > max_label_w {
-                            break;
-                        }
-                        used_w += cw;
-                        last_byte = idx + ch.len_utf8();
-                    }
-                    let label = &item.label[..last_byte];
+                    let label_owned = crate::chart::truncate_label(&item.label, max_label_w);
+                    let label = label_owned.as_str();
                     let label_unicode_w = UnicodeWidthStr::width(label);
                     let label_y = y0 + cell_h / 2;
                     let label_x = x0 + (cell_w.saturating_sub(label_unicode_w)) / 2;

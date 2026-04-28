@@ -48,7 +48,12 @@ fn snapshot_v020_static_log() {
 
 #[test]
 fn snapshot_v020_keymap_help() {
-    snapshot_frame("v020_keymap_help", 80, 18, v020_keymap_help::render);
+    snapshot_frame(
+        "v020_keymap_help",
+        80,
+        18,
+        v020_keymap_help::render_snapshot,
+    );
 }
 
 #[test]
@@ -57,6 +62,6 @@ fn snapshot_v020_ctrl_c_passthrough() {
         "v020_ctrl_c_passthrough",
         80,
         10,
-        v020_ctrl_c_passthrough::render,
+        v020_ctrl_c_passthrough::render_snapshot,
     );
 }

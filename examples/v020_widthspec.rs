@@ -58,6 +58,7 @@ pub fn render(ui: &mut Context) {
         .bordered(Border::Rounded)
         .title("WidthSpec showcase")
         .p(pad)
+        .grow(1)
         .col(|ui| {
             ui.text("Each row demonstrates a WidthSpec variant.")
                 .fg(Color::Cyan)

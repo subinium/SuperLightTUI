@@ -1,3 +1,12 @@
+//! `Context` — the per-frame handle threaded into every render closure.
+//!
+//! This file defines the [`Context`] struct itself plus the dispatching
+//! facade that imports widget impl blocks from the `widgets_display`,
+//! `widgets_input`, `widgets_interactive`, and `widgets_viz` sub-modules.
+//! See [`crate`] root for the entry-point [`crate::run`] / [`crate::frame`]
+//! functions and `docs/ARCHITECTURE.md` for the 5-layer model that
+//! organizes which method lives where.
+
 use crate::chart::{build_histogram_config, render_chart, Candle, ChartBuilder, HistogramBuilder};
 use crate::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseKind};
 use crate::halfblock::HalfBlockImage;

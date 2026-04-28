@@ -1,3 +1,12 @@
+//! Display widgets — text, alerts, badges, gauges, code blocks,
+//! breadcrumbs, gutters, splits, and the `bordered`/`col`/`row` layout
+//! shortcuts.
+//!
+//! These are Layer 3 widgets that produce visual output without
+//! consuming events. For event-consuming widgets see
+//! [`super::widgets_interactive`]; for input widgets see
+//! [`super::widgets_input`].
+
 use super::*;
 
 mod gauge;

@@ -63,6 +63,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .title("v0.20.0 #213: BreadcrumbResponse")
         .p(sp.xs())
         .gap(sp.xs())
+        .grow(1)
         .col(|ui| {
             ui.text("Tab / Shift-Tab focuses a segment; Enter, Space, or click activates it. 'r' resets the path.")
                 .fg(Color::Cyan);

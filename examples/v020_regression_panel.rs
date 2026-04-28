@@ -151,6 +151,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             .title("v0.20 Regression Panel")
             .p(pad)
             .gap(pad)
+            .grow(1)
             .col(|ui| {
                 // Row 1: gauges (#224 — builder API).
                 let _ = ui.row(|ui| {

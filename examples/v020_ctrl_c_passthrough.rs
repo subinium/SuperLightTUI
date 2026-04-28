@@ -65,11 +65,28 @@ use slt::{Color, Context, KeyCode, KeyModifiers, RunConfig, Style};
 /// "interrupt three times to leave" muscle memory.
 const QUIT_STRIKES: u32 = 3;
 
+/// Snapshot fixture strike count. Matches the saved snapshot under
+/// `tests/snapshots/v020_lib_demos__v020_ctrl_c_passthrough.snap`.
+const SNAPSHOT_COUNT: u32 = 1;
+
+/// Persistent strike counter for the passthrough demo. Survives across
+/// frames so a real Ctrl+C/Ctrl+G keypress (or a button click) advances
+/// the counter the same way every time the demo is rendered.
+pub struct DemoState {
+    pub ctrl_c_count: u32,
+}
+
+impl Default for DemoState {
+    fn default() -> Self {
+        Self { ctrl_c_count: 0 }
+    }
+}
+
 /// Shared body. The count is the only varying input — keeping the visible
 /// text identical between snapshot and live loop avoids documentation drift.
 ///
 /// Returns `true` when the embedded button was clicked this frame, so
-/// `main` can fold the click into the same strike counter that real
+/// `render` can fold the click into the same strike counter that real
 /// Ctrl+C / Ctrl+G presses advance.
 fn body(ui: &mut Context, ctrl_c_count: u32) -> bool {
     let mut button_clicked = false;
@@ -108,45 +125,59 @@ fn body(ui: &mut Context, ctrl_c_count: u32) -> bool {
     button_clicked
 }
 
+/// Per-frame entry point. Folds Ctrl+C / Ctrl+G keypresses and the
+/// "Send Ctrl+C" button click into the same strike counter so embedding
+/// surfaces (the v0.20 tour) react to user input the same way the
+/// standalone binary does.
+///
+/// Caller owns [`DemoState`] so the strike count survives across frames.
+/// Reaching `QUIT_STRIKES` does NOT auto-quit here — quit policy is the
+/// caller's responsibility (the standalone `main` opts in below; the tour
+/// keeps running).
+pub fn render(ui: &mut Context, state: &mut DemoState) {
+    let mut strike = false;
+    if ui.key_mod('c', KeyModifiers::CONTROL) {
+        strike = true;
+    }
+    if ui.key_mod('g', KeyModifiers::CONTROL) {
+        strike = true;
+    }
+
+    // Render the body first; it returns whether the embedded button was
+    // clicked this frame.
+    if body(ui, state.ctrl_c_count) {
+        strike = true;
+    }
+
+    if strike {
+        state.ctrl_c_count = state.ctrl_c_count.saturating_add(1);
+    }
+}
+
 /// One-frame deterministic render entry point used by snapshot tests
 /// (`tests/v020_lib_demos.rs`). Pins the strike count at one so the
 /// snapshot shows the mid-quit state instead of a fresh-counter zero.
-pub fn render(ui: &mut Context) {
-    let _ = body(ui, 1);
+///
+/// NEVER call this from a live loop or from another demo — strikes and
+/// clicks are silently dropped because state never persists. Live
+/// embeddings should call [`render`] with their own `&mut DemoState`.
+pub fn render_snapshot(ui: &mut Context) {
+    let _ = body(ui, SNAPSHOT_COUNT);
 }
 
 fn main() -> std::io::Result<()> {
-    let mut ctrl_c_count: u32 = 0;
+    let mut state = DemoState::default();
 
     // Opt out of the default ctrl-c-quits behaviour so the loop can decide
     // when (and after how many strikes) to exit. Mouse on so the
     // "Send Ctrl+C" button can be clicked.
     let config = RunConfig::default().handle_ctrl_c(false).mouse(true);
 
-    slt::run_with(config, |ui: &mut Context| {
-        // Single shared "register a strike" handler. Everything that should
-        // behave like a real Ctrl+C — actual Ctrl+C (when the terminal lets
-        // it through), Ctrl+G fallback, and the synthesized button click —
-        // funnels through the same counter.
-        let mut strike = false;
-        if ui.key_mod('c', KeyModifiers::CONTROL) {
-            strike = true;
-        }
-        if ui.key_mod('g', KeyModifiers::CONTROL) {
-            strike = true;
-        }
+    slt::run_with(config, move |ui: &mut Context| {
+        render(ui, &mut state);
 
-        // Render the body first; it returns whether the embedded button
-        // was clicked this frame.
-        if body(ui, ctrl_c_count) {
-            strike = true;
-        }
-
-        if strike {
-            ctrl_c_count = ctrl_c_count.saturating_add(1);
-            if ctrl_c_count >= QUIT_STRIKES {
-                ui.quit();
-            }
+        if state.ctrl_c_count >= QUIT_STRIKES {
+            ui.quit();
         }
 
         // Quit — Ctrl-Q is the portable alternative to Ctrl-C on macOS.

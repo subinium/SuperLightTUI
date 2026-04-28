@@ -145,6 +145,7 @@ impl Context {
                 last_text_idx: None,
                 focus_count: 0,
                 last_focusable_id: None,
+                pending_focusable_id: None,
                 interaction_count: 0,
                 scroll_count: 0,
                 group_count: 0,
@@ -552,20 +553,45 @@ impl Context {
     ///
     /// Call this in custom widgets that need keyboard focus. Each call increments
     /// the internal focus counter, so the call order must be stable across frames.
+    ///
+    /// # Slot reservation by `register_focusable_named`
+    ///
+    /// If [`register_focusable_named`](Self::register_focusable_named) was
+    /// called immediately before this call, it has already allocated a
+    /// slot and bound a name to it; this call **reuses** that slot
+    /// instead of allocating a fresh one. That keeps the name binding
+    /// pointed at the widget the user sees rather than at a dummy slot.
     pub fn register_focusable(&mut self) -> bool {
         if (self.rollback.modal_active || self.prev_modal_active)
             && self.rollback.overlay_depth == 0
         {
             self.rollback.last_focusable_id = None;
+            // Drop any pending reservation: the suppressed widget never
+            // attached, so reusing the reserved id from a later widget in
+            // the same frame would silently rebind the name to the wrong
+            // slot.
+            self.rollback.pending_focusable_id = None;
             return false;
         }
-        let id = self.rollback.focus_count;
-        self.rollback.focus_count += 1;
+        // Issue #217 follow-up: if `register_focusable_named` reserved a
+        // slot for us, reuse it (and skip the FocusMarker push — it was
+        // already emitted when the reservation was made). Otherwise,
+        // allocate a fresh slot the normal way.
+        let (id, freshly_allocated) =
+            if let Some(reserved) = self.rollback.pending_focusable_id.take() {
+                (reserved, false)
+            } else {
+                let id = self.rollback.focus_count;
+                self.rollback.focus_count += 1;
+                (id, true)
+            };
         // Issue #208: remember this widget's focus id so the immediately
         // following `begin_widget_interaction` call can compare against
         // `prev_focus_index` and emit gained/lost focus signals.
         self.rollback.last_focusable_id = Some(id);
-        self.commands.push(Command::FocusMarker(id));
+        if freshly_allocated {
+            self.commands.push(Command::FocusMarker(id));
+        }
         if self.prev_modal_active
             && self.prev_modal_focus_count > 0
             && self.rollback.modal_active
@@ -1034,40 +1060,100 @@ impl Context {
         }
     }
 
-    /// Register a widget as focusable with a stable string name.
+    /// Register a focusable slot bound to a stable string name.
     ///
-    /// Returns `true` if this widget currently has focus. Identical to
-    /// [`register_focusable`](Self::register_focusable) except it also
-    /// records the `name → current_index` mapping so other code can later
-    /// call [`focus_by_name`](Self::focus_by_name).
+    /// Returns `true` if the registered slot currently has focus, exactly
+    /// like [`register_focusable`](Self::register_focusable) — but also
+    /// records the `name → slot` mapping so other code can later call
+    /// [`focus_by_name`](Self::focus_by_name) and
+    /// [`focused_name`](Self::focused_name).
     ///
-    /// The name must be unique per frame. Duplicate names in the same
-    /// frame are silently ignored (first registration wins).
+    /// # How the slot is shared with the widget that follows
     ///
-    /// Names must be re-registered each frame (the map is rebuilt every
-    /// frame), the same model as
-    /// [`use_state_named`](Self::use_state_named).
+    /// Every SLT widget that takes focus (`button`, `text_input`,
+    /// `tabs`, …) internally calls `register_focusable()` to claim its
+    /// own slot. To keep the name pointed at the **widget the user
+    /// sees**, this call:
     ///
-    /// # Example
+    /// 1. allocates a slot eagerly (so the name binding works even when
+    ///    no widget follows — useful for tests and for custom focusable
+    ///    regions),
+    /// 2. records the `name → slot` mapping into the frame's
+    ///    `focus_name_map` (first-write-wins on duplicate names within
+    ///    a frame),
+    /// 3. **reserves** the slot id so the next `register_focusable()`
+    ///    on the same frame *reuses* it instead of allocating a fresh
+    ///    slot — that's how `text_input(&mut state)` placed right after
+    ///    inherits the name.
+    ///
+    /// Names are re-registered each frame; the previous frame's map is
+    /// kept under `focus_name_map_prev` so [`focus_by_name`] can resolve
+    /// a name that has already been registered.
+    ///
+    /// # Two valid usage shapes
+    ///
+    /// **Shape A — name a widget that follows immediately** (the common
+    /// pattern; the widget reuses the reserved slot):
     ///
     /// ```ignore
-    /// let focused = ui.register_focusable_named("search");
-    /// // ... draw search box ...
+    /// let _ = ui.register_focusable_named("search");
+    /// let _ = ui.text_input(&mut search_state);
+    /// // later: ui.focus_by_name("search") jumps to the text_input
+    /// ```
+    ///
+    /// **Shape B — register a named focusable region with no inner
+    /// widget** (e.g. a custom render area that handles its own keys
+    /// when focused):
+    ///
+    /// ```ignore
+    /// let focused = ui.register_focusable_named("canvas");
+    /// if focused { /* react to keys via key_presses_when */ }
     /// ```
     pub fn register_focusable_named(&mut self, name: &str) -> bool {
-        let focused = self.register_focusable();
-        // Use the focus id captured by `register_focusable` (or recompute
-        // the most-recently-assigned slot when the modal suppression path
-        // skipped recording). This keeps the map aligned with the same
-        // index space `Tab` cycling uses.
-        if let Some(this_id) = self.rollback.last_focusable_id {
-            // First-write-wins so duplicate names in the same frame are
-            // silent no-ops (rather than aliasing into the second slot).
-            self.focus_name_map
-                .entry(name.to_string())
-                .or_insert(this_id);
+        // Modal/overlay suppression: when a modal is active and we're not
+        // inside it, focusables outside the modal must be invisible to
+        // tab/click cycling. Drop the registration entirely (no slot
+        // allocation, no name binding, no reservation leak).
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            self.rollback.pending_focusable_id = None;
+            return false;
         }
-        focused
+        // Eagerly allocate the slot — symmetric with `register_focusable`,
+        // so the slot exists even when no widget follows.
+        let id = self.rollback.focus_count;
+        self.rollback.focus_count += 1;
+        self.rollback.last_focusable_id = Some(id);
+        self.commands.push(Command::FocusMarker(id));
+        // First-write-wins on duplicate names within a single frame —
+        // a second `register_focusable_named("dup")` keeps the first
+        // slot bound to the name and orphans its own slot's name binding.
+        self.focus_name_map.entry(name.to_string()).or_insert(id);
+        // Reserve `id` for the very next `register_focusable()` call to
+        // reuse, so widgets like `text_input` placed immediately after
+        // share the named slot rather than allocating a fresh one.
+        // Last-write-wins on the reservation: stacking two
+        // `register_focusable_named` calls without an intervening widget
+        // leaves the second slot reserved (the first slot stays bound to
+        // its name in `focus_name_map`, just without a widget attached).
+        self.rollback.pending_focusable_id = Some(id);
+        // Same focus-index prediction as `register_focusable`.
+        if self.prev_modal_active
+            && self.prev_modal_focus_count > 0
+            && self.rollback.modal_active
+            && self.rollback.overlay_depth > 0
+        {
+            let mut modal_local_id = id.saturating_sub(self.rollback.modal_focus_start);
+            modal_local_id %= self.prev_modal_focus_count;
+            let mut modal_focus_idx = self.focus_index.saturating_sub(self.prev_modal_focus_start);
+            modal_focus_idx %= self.prev_modal_focus_count;
+            return modal_local_id == modal_focus_idx;
+        }
+        if self.prev_focus_count == 0 {
+            return true;
+        }
+        self.focus_index % self.prev_focus_count == id
     }
 
     /// Request focus on the named widget.

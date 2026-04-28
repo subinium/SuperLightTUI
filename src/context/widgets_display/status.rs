@@ -424,7 +424,7 @@ impl Context {
                     render_tree_sitter_lines(ui, lines);
                 } else {
                     for line in code.lines() {
-                        render_highlighted_line(ui, line);
+                        ui.line(|ui| render_highlighted_line(ui, line));
                     }
                 }
             });

@@ -62,21 +62,6 @@ fn main() -> std::io::Result<()> {
         if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
-        if ui.key('n') {
-            state.scroll.highlight_next();
-        }
-        if ui.key('p') {
-            state.scroll.highlight_previous();
-        }
-        if ui.key('1') {
-            state.set_query("ERROR");
-        }
-        if ui.key('2') {
-            state.set_query("WARN");
-        }
-        if ui.key('3') {
-            state.set_query("INFO");
-        }
         render(ui, &mut state);
     })
 }
@@ -126,7 +111,27 @@ impl Default for DemoState {
 }
 
 /// Render one frame. Stable signature for snapshot tests.
+///
+/// Handles n/p navigation and 1/2/3 filter swaps so the tour-embedded
+/// version reacts to keystrokes the same way the standalone binary does.
+/// `main` only handles quit; everything else lives here.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
+    if ui.key('n') {
+        state.scroll.highlight_next();
+    }
+    if ui.key('p') {
+        state.scroll.highlight_previous();
+    }
+    if ui.key('1') {
+        state.set_query("ERROR");
+    }
+    if ui.key('2') {
+        state.set_query("WARN");
+    }
+    if ui.key('3') {
+        state.set_query("INFO");
+    }
+
     let sp = ui.spacing();
 
     let _ = ui

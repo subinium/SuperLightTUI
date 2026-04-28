@@ -100,6 +100,29 @@ pub(crate) struct ContextRollbackState {
     /// don't pair `register_focusable` with `begin_widget_interaction`
     /// still get correct behavior.
     pub(crate) last_focusable_id: Option<usize>,
+    /// Issue #217 follow-up: slot id reserved by the most-recent
+    /// `register_focusable_named(name)` for the next `register_focusable()`
+    /// to *reuse* instead of allocating a fresh slot.
+    ///
+    /// `register_focusable_named` allocates the slot eagerly (so the name
+    /// is already bound in `focus_name_map` and `focused_name()` works
+    /// even when no widget follows), and stores the slot id here. When a
+    /// SLT widget like `text_input` / `button` / `tabs` calls
+    /// `register_focusable()` immediately after — every such widget does
+    /// — the call drains this reservation and reuses the same slot, so
+    /// the name binds to the slot the widget actually occupies rather
+    /// than to a dummy slot allocated by `register_focusable_named`.
+    ///
+    /// Cleared in three cases:
+    ///   1. drained by the next `register_focusable()` and reused (common
+    ///      path: named widget),
+    ///   2. overwritten by a second `register_focusable_named()` that
+    ///      runs without an intervening widget (last-write-wins on the
+    ///      reservation; the first slot is left orphaned but harmless,
+    ///      its name binding already lives in `focus_name_map`),
+    ///   3. dropped by the modal/overlay suppression branch when the
+    ///      named registration itself is suppressed.
+    pub(crate) pending_focusable_id: Option<usize>,
     pub(crate) interaction_count: usize,
     pub(crate) scroll_count: usize,
     pub(crate) group_count: usize,
