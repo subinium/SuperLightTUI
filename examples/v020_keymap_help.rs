@@ -1,15 +1,28 @@
-//! v0.20.0 demo: widget keymap publishing + auto help overlay (issue #236).
+//! v0.20.0 keymap-help demo — auto-generated help overlay from per-widget
+//! key bindings.
 //!
-//! Run with: `cargo run --example v020_keymap_help`
+//! Demonstrates: #236.
 //!
-//! Each focusable widget publishes its [`WidgetKeyHelp`] bindings via
-//! [`Context::publish_keymap`]. Press `?` to render an automatic
-//! [`Context::keymap_help_overlay`] listing every binding registered this
-//! frame.
+//! Run: `cargo run --example v020_keymap_help`
+//!
+//! Keys:
+//!   k / Up        — increment counter
+//!   j / Down      — decrement counter
+//!   r             — reset counter to zero
+//!   ?             — toggle the auto-help overlay
+//!   Ctrl-Q / Esc  — quit
+//!
+//! Layout:
+//!   ┌──────── main view ────────┐
+//!   │ Keymap publishing demo    │       ┌── help overlay (on '?') ──┐
+//!   │ Counter: N                │       │ global: ?, q              │
+//!   │ Press ? for help…         │       │ counter: k/Up, j/Down, r  │
+//!   └───────────────────────────┘       └───────────────────────────┘
 
-use slt::keymap::WidgetKeyHelp;
-use slt::{Color, Context, KeyCode, Style};
+use slt::{Color, Context, KeyCode, Style, WidgetKeyHelp};
 
+/// Counter widget bindings — published every frame the widget renders, so
+/// the help overlay only lists keys that are actually live.
 struct CounterWidget;
 impl WidgetKeyHelp for CounterWidget {
     fn key_help(&self) -> &'static [(&'static str, &'static str)] {
@@ -22,6 +35,7 @@ impl WidgetKeyHelp for CounterWidget {
     }
 }
 
+/// Always-visible global bindings (quit, help toggle).
 struct GlobalKeys;
 impl WidgetKeyHelp for GlobalKeys {
     fn key_help(&self) -> &'static [(&'static str, &'static str)] {
@@ -30,10 +44,14 @@ impl WidgetKeyHelp for GlobalKeys {
     }
 }
 
-/// One-frame render entry point used by snapshot tests
-/// (`tests/v020_lib_demos.rs`). Renders the keymap help overlay open.
-pub fn render(ui: &mut Context) {
-    let count: i32 = 3;
+/// Snapshot fixture counter value. Matches the saved snapshot under
+/// `tests/snapshots/v020_lib_demos__v020_keymap_help.snap`.
+const SNAPSHOT_COUNT: i32 = 3;
+
+/// Shared body. Every focusable widget publishes its bindings BEFORE the
+/// overlay call — the overlay reads the per-frame keymap registry so order
+/// matters for deterministic snapshots.
+fn body(ui: &mut Context, count: i32, help_open: bool) {
     ui.publish_keymap("global", GlobalKeys.key_help());
     ui.publish_keymap("counter", CounterWidget.key_help());
 
@@ -49,7 +67,14 @@ pub fn render(ui: &mut Context) {
         ui.styled("Press q to quit", Style::new().dim());
     });
 
-    ui.keymap_help_overlay(true);
+    ui.keymap_help_overlay(help_open);
+}
+
+/// One-frame deterministic render entry point used by snapshot tests
+/// (`tests/v020_lib_demos.rs`). Pins the help overlay open so the snapshot
+/// covers both the main view and the auto-generated overlay.
+pub fn render(ui: &mut Context) {
+    body(ui, SNAPSHOT_COUNT, true);
 }
 
 fn main() -> std::io::Result<()> {
@@ -57,20 +82,12 @@ fn main() -> std::io::Result<()> {
     let mut help_open = false;
 
     slt::run(|ui: &mut Context| {
-        // Publish bindings for each "widget" rendered this frame. The
-        // overlay below picks them up automatically.
-        ui.publish_keymap("global", GlobalKeys.key_help());
-        ui.publish_keymap("counter", CounterWidget.key_help());
-
-        // Global key handling.
         if ui.key('q') {
             ui.quit();
         }
         if ui.key('?') {
             help_open = !help_open;
         }
-
-        // Counter widget key handling — declared keys match the published help.
         if ui.key('k') || ui.key_code(KeyCode::Up) {
             count = count.saturating_add(1);
         }
@@ -81,21 +98,7 @@ fn main() -> std::io::Result<()> {
             count = 0;
         }
 
-        // Main UI.
-        let _ = ui.col(|ui| {
-            ui.styled(
-                "Keymap publishing demo",
-                Style::new().bold().fg(Color::Cyan),
-            );
-            ui.text("");
-            ui.styled(format!("Counter: {count}"), Style::new().bold());
-            ui.text("");
-            ui.styled("Press ? to view the auto-help overlay", Style::new().dim());
-            ui.styled("Press q to quit", Style::new().dim());
-        });
-
-        // Auto-rendered help overlay.
-        ui.keymap_help_overlay(help_open);
+        body(ui, count, help_open);
     })?;
 
     Ok(())

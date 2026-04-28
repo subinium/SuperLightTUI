@@ -1,28 +1,33 @@
-//! v0.20.0 demo: `ui.static_log(...)` — append-only scrollback above an
-//! inline TUI (issue #233).
+//! v0.20.0 static-log demo — append-only scrollback above an inline TUI.
 //!
-//! Run with: `cargo run --example v020_static_log`
+//! Demonstrates: #233.
 //!
-//! The dynamic inline area shows a counter and live status. Each tick, the
-//! demo also commits a line to terminal scrollback via
-//! [`Context::static_log`]. Lines never re-render — they accumulate in the
-//! terminal's history exactly like `println!` from a normal CLI tool.
+//! Run: `cargo run --example v020_static_log`
 //!
-//! Key bindings:
-//! - `Space` / Enter — bump the counter
-//! - `q` — quit
-//! - `Ctrl+C` — quit (default)
+//! Keys:
+//!   Space / Enter — bump the counter
+//!   Ctrl-Q / Esc  — quit
+//!
+//! Layout:
+//!   ┌──────────────────────────────────┐
+//!   │ scrollback (println-like, frozen)│
+//!   │   [tick] counter reached 5       │
+//!   │   [tick] counter reached 10      │
+//!   ├──────────────────────────────────┤  ← inline frame redraws here
+//!   │ Counter: N                       │
+//!   │ Space/Enter: bump counter | q…   │
+//!   └──────────────────────────────────┘
 
 use slt::{Color, Context, KeyCode, StaticOutput, Style};
 
-/// One-frame render entry point used by snapshot tests
-/// (`tests/v020_lib_demos.rs`). Mirrors what `main` would render when the
-/// counter is at 5 and a static-log line was just queued.
-pub fn render(ui: &mut Context) {
-    // Sample state — non-interactive, deterministic for snapshots.
-    let count: u32 = 5;
-    ui.static_log(format!("[tick] counter reached {count}"));
+/// Counter increment that triggers a scrollback log entry. Five matches the
+/// snapshot fixture below — keeping it as a constant avoids a magic number
+/// drifting between `render` and `main` if either is later edited.
+const LOG_EVERY: u32 = 5;
 
+/// Shared inline-area body. Used by both `render` (one-frame snapshot) and
+/// `main` (live loop) so the visible UI stays identical across both paths.
+fn inline_body(ui: &mut Context, count: u32) {
     let _ = ui.col(|ui| {
         ui.styled(
             format!("Counter: {count}"),
@@ -34,6 +39,17 @@ pub fn render(ui: &mut Context) {
             Style::new().dim(),
         );
     });
+}
+
+/// One-frame deterministic render entry point used by snapshot tests
+/// (`tests/v020_lib_demos.rs`). Mirrors the state right after the fifth
+/// counter bump, when the next scrollback line was just queued.
+pub fn render(ui: &mut Context) {
+    let count: u32 = LOG_EVERY;
+    // Queue a scrollback line so the snapshot also exercises the
+    // static_log code path, not just the inline body.
+    ui.static_log(format!("[tick] counter reached {count}"));
+    inline_body(ui, count);
 }
 
 fn main() -> std::io::Result<()> {
@@ -51,24 +67,14 @@ fn main() -> std::io::Result<()> {
             count = count.saturating_add(1);
         }
 
-        // Only log on every 5th increment so the demo doesn't spam scrollback.
-        if count != last_logged && count % 5 == 0 {
+        // Throttle so a held key cannot flood scrollback faster than the
+        // user can read it.
+        if count != last_logged && count % LOG_EVERY == 0 {
             ui.static_log(format!("[tick] counter reached {count}"));
             last_logged = count;
         }
 
-        // Dynamic inline area.
-        let _ = ui.col(|ui| {
-            ui.styled(
-                format!("Counter: {count}"),
-                Style::new().bold().fg(Color::Cyan),
-            );
-            ui.text("Space/Enter: bump counter | q: quit");
-            ui.styled(
-                "Lines logged to scrollback every 5 ticks via ui.static_log()",
-                Style::new().dim(),
-            );
-        });
+        inline_body(ui, count);
     })?;
     Ok(())
 }
