@@ -1400,6 +1400,13 @@ pub(crate) fn run_frame_kernel(
         state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
         state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
         state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+        // Issue #150: reclaim `commands` on quit too (TestBackend reuses
+        // `FrameState` across `render()` calls — same rationale as #204).
+        // The Vec was never `build_tree`'d on the quit path so it may still
+        // hold the recorded commands; clearing here drops them and keeps
+        // capacity for the next frame.
+        ctx.commands.clear();
+        state.commands_buf = std::mem::take(&mut ctx.commands);
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
         #[cfg(feature = "crossterm")]
@@ -1454,12 +1461,12 @@ pub(crate) fn run_frame_kernel(
     // Issue #150: `state.commands_buf` is swapped into `ctx.commands` on
     // entry (see `Context::new`), so the per-frame `Vec::new()` allocation
     // for the command list is amortized to one allocation across the
-    // session. Build_tree consumes the Vec by-value here — the empty placeholder
-    // returns to `state.commands_buf` via the `Default` shell from `mem::take`,
-    // and full capacity reclamation will land when build_tree's signature is
-    // refactored to drain (tracked separately; tree.rs is owned by another agent).
-    let commands = std::mem::take(&mut ctx.commands);
-    let mut tree = layout::build_tree(commands);
+    // session. `build_tree` now takes `&mut Vec<Command>` and `drain`s it,
+    // leaving the Vec at `len == 0` with capacity preserved. We reclaim
+    // that Vec into `state.commands_buf` after the frame so the next call
+    // to `Context::new` can pick it up via `mem::take` (matches the #204
+    // pattern for the other six recycled buffers).
+    let mut tree = layout::build_tree(&mut ctx.commands);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
 
@@ -1568,6 +1575,12 @@ pub(crate) fn run_frame_kernel(
     state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
     state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
     state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+    // Issue #150: reclaim the drained command Vec so the next `Context::new`
+    // picks it up via `mem::take(&mut state.commands_buf)`. After
+    // `build_tree(&mut ctx.commands)` the Vec is at `len == 0` with capacity
+    // preserved; mirror the #204 reclamation pattern for the other six
+    // per-frame buffers.
+    state.commands_buf = std::mem::take(&mut ctx.commands);
 
     let frame_time = frame_start.elapsed();
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;

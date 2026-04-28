@@ -898,11 +898,19 @@ pub(crate) fn wrap_segments(
 /// SIGSEGV. Normal TUI trees reach depth 5–15.
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 512;
 
-pub(crate) fn build_tree(commands: Vec<Command>) -> LayoutNode {
+/// Build the layout tree from a recorded command stream.
+///
+/// Takes `&mut Vec<Command>` and consumes the contents via `drain(..)` so the
+/// caller retains ownership of the allocation; after this returns,
+/// `commands.len() == 0` but `commands.capacity()` is preserved. Callers that
+/// route through [`crate::FrameState::commands_buf`] reclaim that capacity at
+/// frame end (issue #150) so the per-frame `Vec::new` allocation churn is
+/// amortized to one allocation across the session.
+pub(crate) fn build_tree(commands: &mut Vec<Command>) -> LayoutNode {
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
     let mut overlays: Vec<OverlayLayer> = Vec::new();
-    let mut commands = commands.into_iter();
-    build_children(&mut root, &mut commands, &mut overlays, false, 0);
+    let mut iter = commands.drain(..);
+    build_children(&mut root, &mut iter, &mut overlays, false, 0);
     root.overlays = overlays;
     root
 }
@@ -927,7 +935,7 @@ pub(crate) fn default_container_config() -> ContainerConfig {
 
 fn build_children(
     parent: &mut LayoutNode,
-    commands: &mut std::vec::IntoIter<Command>,
+    commands: &mut std::vec::Drain<'_, Command>,
     overlays: &mut Vec<OverlayLayer>,
     stop_on_end_overlay: bool,
     depth: usize,

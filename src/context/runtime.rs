@@ -80,9 +80,12 @@ impl Context {
 
         // Reuse `commands_buf` capacity from the previous frame (issue #150).
         // `mem::take` swaps an empty Vec into `state.commands_buf`; we then
-        // clear (no-op since len==0) and reuse the reclaimed allocation. After
-        // `build_tree` consumes commands, the empty Vec is returned to
-        // `state.commands_buf` for the next frame in `run_frame_kernel`.
+        // clear (no-op when reclaimed from a `build_tree` drain, defensive
+        // when reclaimed from the quit path that ran without `build_tree`)
+        // and reuse the allocation. After `build_tree(&mut ctx.commands)`
+        // drains the Vec in place, the empty (but capacity-bearing) Vec is
+        // moved back into `state.commands_buf` at frame end inside
+        // `run_frame_kernel`.
         let mut commands = std::mem::take(&mut state.commands_buf);
         commands.clear();
 
