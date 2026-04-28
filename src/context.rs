@@ -10,10 +10,9 @@ use crate::style::{
 use crate::widgets::{
     ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, CommandPaletteState,
     ContextItem, FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, LineGaugeOpts, ListState, MultiSelectState, RadioState, ScreenState,
-    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState,
-    TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastState,
-    ToolApprovalState, TreeState,
+    HighlightRange, ListState, MultiSelectState, RadioState, ScreenState, ScrollState, SelectState,
+    SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -28,7 +27,7 @@ fn slt_assert(condition: bool, msg: &str) {
 #[cfg(debug_assertions)]
 #[allow(dead_code, clippy::print_stderr)]
 fn slt_warn(msg: &str) {
-    eprintln!("[33m[SLT warning][0m {}", msg);
+    eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
 }
 
 #[cfg(not(debug_assertions))]

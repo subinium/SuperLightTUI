@@ -106,8 +106,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             ui.text(format!(
                 "ratio = {:.2}    drag_active = {}",
-                f64::from(r.ratio),
-                r.drag_active
+                r.ratio, r.drag_active
             ))
             .dim();
             ui.text("Ctrl-Q / Esc quits.").dim();

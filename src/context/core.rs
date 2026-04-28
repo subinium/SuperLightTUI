@@ -40,7 +40,6 @@ pub struct Context {
     pub(crate) prev_hit_map: Vec<Rect>,
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
     pub(crate) prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
-    pub(crate) _prev_focus_rects: Vec<(usize, Rect)>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
     pub(crate) click_pos: Option<(u32, u32)>,
     /// Issue #208: position of the most recent `MouseButton::Right` `Down`

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates the **new builder APIs** introduced by the v0.20.0 API
 //! consistency pass: chainable `gauge` / `line_gauge` / `breadcrumb`,
-//! `GutterOpts::line_numbers`, `HighlightRange::single`, plus widthspec /
+//! `GutterOpts::line_numbers`, `HighlightRange::line`, plus widthspec /
 //! theme override / animate_bool / on_hover / named_focus that ship in
 //! v0.20.
 //!
@@ -58,7 +58,7 @@ fn highlights() -> Vec<HighlightRange> {
         .iter()
         .enumerate()
         .filter(|(_, line)| line.starts_with("ERROR") || line.starts_with("WARN"))
-        .map(|(i, _)| HighlightRange::single(i))
+        .map(|(i, _)| HighlightRange::line(i))
         .collect()
 }
 

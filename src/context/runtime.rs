@@ -131,7 +131,6 @@ impl Context {
             prev_hit_map: std::mem::take(&mut layout_feedback.prev_hit_map),
             prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
             prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
-            _prev_focus_rects: std::mem::take(&mut layout_feedback.prev_focus_rects),
             mouse_pos,
             click_pos,
             right_click_pos,

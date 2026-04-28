@@ -67,7 +67,8 @@ fn issue_213_breadcrumb_response_derefs_to_response() {
 
 #[test]
 fn issue_213_breadcrumb_builder_separator_uses_custom_string() {
-    // v0.20.0 builder replacement for the deprecated `breadcrumb_sep` shim.
+    // The chainable `.separator(...)` is the only public form for custom
+    // breadcrumb separators in v0.20.0+.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
         ui.breadcrumb(&["A", "B", "C"]).separator(" >> ");
@@ -271,31 +272,6 @@ fn issue_224_line_gauge_filled_char_override() {
     assert!(output.contains('.'), "custom empty char: {output}");
 }
 
-#[test]
-#[allow(deprecated)]
-fn issue_224_deprecated_gauge_w_still_works() {
-    // Deprecated shim must keep rendering identically through one minor cycle.
-    let mut tb = TestBackend::new(40, 3);
-    tb.render(|ui| {
-        let r = ui.gauge_w(0.5, "50%", 24);
-        assert!((r.ratio - 0.5).abs() < f64::EPSILON);
-    });
-    let output = tb.to_string_trimmed();
-    assert!(output.contains("50%"));
-}
-
-#[test]
-#[allow(deprecated)]
-fn issue_224_deprecated_line_gauge_with_still_works() {
-    use slt::LineGaugeOpts;
-    let mut tb = TestBackend::new(40, 3);
-    tb.render(|ui| {
-        let _ = ui.line_gauge_with(0.6, LineGaugeOpts::default().label("60%").width(24));
-    });
-    let output = tb.to_string_trimmed();
-    assert!(output.contains("60%"));
-}
-
 // ── #235: scrollable gutter + highlight_next/prev ────────────────────────
 
 #[test]
@@ -389,8 +365,7 @@ fn issue_235_scrollable_with_gutter_line_numbers_shortcut() {
 fn issue_235_scrollable_with_gutter_highlight_marks_line() {
     let mut tb = TestBackend::new(40, 6);
     let mut state = ScrollState::new();
-    // Use HighlightRange::single (idiomatic v0.20.0 alias).
-    state.set_highlights(&[HighlightRange::single(1)]);
+    state.set_highlights(&[HighlightRange::line(1)]);
     let lines: Vec<String> = (0..10).map(|i| format!("L{i}")).collect();
     tb.render(|ui| {
         let r = ui.scrollable_with_gutter(
@@ -405,12 +380,6 @@ fn issue_235_scrollable_with_gutter_highlight_marks_line() {
         assert_eq!(r.total_highlights, 1);
         assert_eq!(r.current_highlight, Some(0));
     });
-}
-
-#[test]
-fn issue_235_highlight_range_single_aliases_line() {
-    // `single(i)` and `line(i)` produce identical ranges.
-    assert_eq!(HighlightRange::single(7), HighlightRange::line(7));
 }
 
 #[test]
