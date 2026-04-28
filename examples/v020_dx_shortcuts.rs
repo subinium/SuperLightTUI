@@ -1,61 +1,102 @@
-//! v0.20.0 DX shorthand demo — exercises all four ergonomic helpers in a
-//! single screen so reviewers can verify the API surface side-by-side.
+//! v0.20.0 DX shorthand demo — four ergonomic helpers on a single screen.
 //!
-//! Features demoed:
-//! 1. `Response::on_hover` — hover the "Save" button to see a chained tooltip.
-//! 2. `Context::animate_bool` — press `Space` to toggle a panel; the visibility
-//!    smoothly fades 0..1 over the default 12-tick duration.
-//! 3. `ContainerBuilder::fill()` — the right-hand stats column uses `.fill()`
-//!    instead of `.grow(1)` to claim the remaining width.
-//! 4. `Rect::center_in` — the help-overlay rectangle is positioned via
-//!    `dialog_rect.center_in(area)` inside a `draw_raw` callback.
+//! Demonstrates: #209 (Response::on_hover), #210 (animate_bool),
+//! #220 (ContainerBuilder::fill), #221 (Rect::center_in).
 //!
-//! Run with: `cargo run --example v020_dx_shortcuts`
+//! Run: `cargo run --example v020_dx_shortcuts`
+//!
+//! Keys:
+//!   Space      — toggle the animated side panel (drives animate_bool)
+//!   ? / h      — toggle the centered help overlay (drives Rect::center_in)
+//!   Hover Save — show the chained tooltip (drives Response::on_hover)
+//!   Ctrl-Q / Esc — quit
+//!
+//! Layout (80x24 minimum):
+//!
+//! ```text
+//! +- v0.20 DX Shorthand Demo --------------------------------------+
+//! | Press Space to toggle the panel, hover Save for a tooltip,     |
+//! | press ? for the centered help overlay, Ctrl-Q to quit.         |
+//! | +- Actions ----+ +- Status ---------------------------------+  |
+//! | | [Save]       | | Shorthand helpers are about reading code |  |
+//! | | [Open]       | | not writing it. fill() == grow(1).       |  |
+//! | | panel_alpha  | |                                          |  |
+//! | +--------------+ +------------------------------------------+  |
+//! +----------------------------------------------------------------+
+//! ```
 
 use slt::{Border, Color, Context, KeyCode, KeyModifiers, Rect, Style};
 
+// Demo screen state. Pulled out so `render` and `render_demo` share a
+// single owner and the snapshot test can pin a deterministic frame.
+struct State {
+    panel_open: bool,
+    show_help: bool,
+}
+
+// Layout constants. Pinned here so the help overlay and the action column
+// never drift between this demo, the snapshot test, and the doc-comment
+// ASCII layout above.
+const ACTIONS_W: u32 = 28;
+const HELP_DIALOG_W: u32 = 44;
+const HELP_DIALOG_H: u32 = 7;
+
+// animate_bool fade thresholds. The color tier mirrors the standard
+// "alarm-yellow-green" gauge palette so the demo composes cleanly with
+// the showcase example.
+const PANEL_ALPHA_HIGH: f64 = 0.5;
+const PANEL_ALPHA_MID: f64 = 0.25;
+
 fn main() -> std::io::Result<()> {
-    let mut panel_open = false;
-    let mut show_help = false;
+    let mut state = State {
+        panel_open: false,
+        show_help: false,
+    };
 
     slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
         if ui.key(' ') {
-            panel_open = !panel_open;
+            state.panel_open = !state.panel_open;
         }
         if ui.key('?') || ui.key('h') {
-            show_help = !show_help;
+            state.show_help = !state.show_help;
         }
 
-        render_demo(ui, panel_open, show_help);
+        render_demo(ui, &state);
     })
 }
 
-/// Render the demo screen for a given toggle state.
+/// Render the demo screen for the snapshot test.
 ///
-/// Exposed so the visual-snapshot test in `tests/v020_dx_shortcuts_demo.rs`
-/// can pin a representative frame without touching the runtime event loop.
+/// Stable defaults: panel closed, help overlay on. Reviewers can see the
+/// centered help dialog (#221), the chained tooltip helpers (#209), and
+/// the `fill()` status column (#220) all in one frame. The animated panel
+/// alpha (#210) is exercised by the unit tests.
 pub fn render(ui: &mut Context) {
-    // Stable defaults for the snapshot: panel closed, help overlay on.
-    // Reviewers can see the centered help dialog (#221), the chained
-    // tooltip helpers (#209), and the fill() status column (#220) all in
-    // one frame. The animated panel alpha (#210) is exercised by the
-    // unit test suite.
-    render_demo(ui, false, true);
+    let snapshot = State {
+        panel_open: false,
+        show_help: true,
+    };
+    render_demo(ui, &snapshot);
 }
 
-fn render_demo(ui: &mut Context, panel_open: bool, show_help: bool) {
-    // #210 — animate_bool: smooth 0..1 progress driving the side-panel
-    // alpha and width contribution.
-    let panel_alpha = ui.animate_bool("dx_demo::panel_open", panel_open);
+fn render_demo(ui: &mut Context, state: &State) {
+    let theme = ui.theme();
+    let pad = theme.spacing.xs();
+    let gap = theme.spacing.xs();
+
+    // #210 — animate_bool: smooth 0..1 progress drives panel alpha and
+    // width contribution. The id is keyed by demo so multiple animate_bool
+    // calls in the same app don't collide.
+    let panel_alpha = ui.animate_bool("dx_demo::panel_open", state.panel_open);
 
     let _ = ui
         .bordered(Border::Rounded)
         .title("v0.20 DX Shorthand Demo")
-        .p(1)
-        .gap(1)
+        .p(pad)
+        .gap(gap)
         .col(|ui| {
             ui.text("Press Space to toggle the panel, hover Save for a tooltip,")
                 .dim();
@@ -63,85 +104,97 @@ fn render_demo(ui: &mut Context, panel_open: bool, show_help: bool) {
                 .dim();
 
             let _ = ui.row(|ui| {
-                // Left column: fixed width with the interactive button row.
-                let _ = ui.container().w(28).gap(1).col(|ui| {
-                    ui.text("Actions").bold();
-                    // #209 — on_hover: tooltip chained directly onto the
-                    // button response.
-                    let _ = ui
-                        .button("Save")
-                        .on_hover(ui, "Saves the current document to disk.");
-                    let _ = ui
-                        .button("Open")
-                        .on_hover(ui, "Open an existing file from your project.");
-                    let _ = ui.button("Toggle Panel");
-                    ui.text(format!("panel_alpha = {:.2}", panel_alpha)).dim();
-                });
-
-                // #220 — fill(): the right-hand status column claims all
-                // remaining width without writing `grow(1)`.
-                let _ = ui.container().fill().border(Border::Single).p(1).col(|ui| {
-                    ui.text("Status").bold();
-                    ui.text("Shorthand helpers are about reading code, not");
-                    ui.text("writing it. fill() == grow(1) — but plain English.");
-
-                    if panel_alpha > 0.0 {
-                        let _ = ui.container().mt(1).p(1).col(|ui| {
-                            let alpha_color = if panel_alpha > 0.5 {
-                                Color::Green
-                            } else if panel_alpha > 0.25 {
-                                Color::Yellow
-                            } else {
-                                Color::DarkGray
-                            };
-                            ui.text(format!("Animated panel ({:.0}%)", panel_alpha * 100.0))
-                                .fg(alpha_color)
-                                .bold();
-                            ui.text("Smoothly tweened via animate_bool.");
-                        });
-                    }
-                });
+                render_actions_column(ui, panel_alpha);
+                render_status_column(ui, panel_alpha);
             });
         });
 
+    if state.show_help {
+        render_centered_help(ui);
+    }
+}
+
+fn render_actions_column(ui: &mut Context, panel_alpha: f64) {
+    let _ = ui.container().w(ACTIONS_W).gap(1).col(|ui| {
+        ui.text("Actions").bold();
+
+        // #209 — on_hover: tooltip chained directly onto the button response.
+        let _ = ui
+            .button("Save")
+            .on_hover(ui, "Saves the current document to disk.");
+        let _ = ui
+            .button("Open")
+            .on_hover(ui, "Open an existing file from your project.");
+        let _ = ui.button("Toggle Panel");
+
+        ui.text(format!("panel_alpha = {panel_alpha:.2}")).dim();
+    });
+}
+
+fn render_status_column(ui: &mut Context, panel_alpha: f64) {
+    // #220 — fill(): the right-hand column claims all remaining width
+    // without writing `grow(1)`. Reads as plain English at the call site.
+    let _ = ui.container().fill().border(Border::Single).p(1).col(|ui| {
+        ui.text("Status").bold();
+        ui.text("Shorthand helpers are about reading code, not");
+        ui.text("writing it. fill() == grow(1) — but plain English.");
+
+        if panel_alpha > 0.0 {
+            let _ = ui.container().mt(1).p(1).col(|ui| {
+                let alpha_color = if panel_alpha > PANEL_ALPHA_HIGH {
+                    Color::Green
+                } else if panel_alpha > PANEL_ALPHA_MID {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                ui.text(format!("Animated panel ({:.0}%)", panel_alpha * 100.0))
+                    .fg(alpha_color)
+                    .bold();
+                ui.text("Smoothly tweened via animate_bool.");
+            });
+        }
+    });
+}
+
+fn render_centered_help(ui: &mut Context) {
     // #221 — center_in: position a fixed-size help dialog dead-center on
     // the viewport using a raw-draw closure. The dotted outline shows the
-    // geometry returned by `Rect::center_in`; in real apps you would draw
-    // the help text inside that rect via `buf.set_char` or by calling
-    // back into `Context` widgets.
-    if show_help {
-        let area_w = ui.width();
-        let area_h = ui.height();
-        let dot_style = Style::new().fg(Color::DarkGray);
-        let label_style = Style::new().fg(Color::Cyan);
-        let _ = ui.overlay(|ui| {
-            ui.container().w(area_w).h(area_h).draw(move |buf, area| {
-                let dialog = Rect::new(0, 0, 44, 7);
-                let positioned = dialog.center_in(area);
-                // Dotted outline shows where center_in placed the rect.
-                for y in positioned.rows() {
-                    for x in positioned.x..positioned.right() {
-                        let on_edge = y == positioned.y
-                            || y + 1 == positioned.bottom()
-                            || x == positioned.x
-                            || x + 1 == positioned.right();
-                        if on_edge {
-                            buf.set_char(x, y, '·', dot_style);
-                        }
+    // geometry returned by `Rect::center_in`; in real apps the inner area
+    // would host real widgets, but raw_draw keeps the demo geometry-only.
+    let area_w = ui.width();
+    let area_h = ui.height();
+    let dot_style = Style::new().fg(Color::DarkGray);
+    let label_style = Style::new().fg(Color::Cyan);
+
+    let _ = ui.overlay(|ui| {
+        ui.container().w(area_w).h(area_h).draw(move |buf, area| {
+            let dialog = Rect::new(0, 0, HELP_DIALOG_W, HELP_DIALOG_H);
+            let positioned = dialog.center_in(area);
+
+            // Dotted outline traces the rect produced by center_in.
+            for y in positioned.rows() {
+                for x in positioned.x..positioned.right() {
+                    let on_edge = y == positioned.y
+                        || y + 1 == positioned.bottom()
+                        || x == positioned.x
+                        || x + 1 == positioned.right();
+                    if on_edge {
+                        buf.set_char(x, y, '·', dot_style);
                     }
                 }
-                // Render a label inside the centered rect so reviewers
-                // can confirm the geometry is what they expect.
-                let label = "Help (centered via center_in)";
-                let label_w = label.chars().count() as u32;
-                if positioned.width >= label_w + 2 && positioned.height >= 3 {
-                    let lx = positioned.x + (positioned.width - label_w) / 2;
-                    let ly = positioned.y + positioned.height / 2;
-                    for (i, ch) in label.chars().enumerate() {
-                        buf.set_char(lx + i as u32, ly, ch, label_style);
-                    }
+            }
+
+            // Inner label — confirms the geometry visually.
+            let label = "Help (centered via center_in)";
+            let label_w = label.chars().count() as u32;
+            if positioned.width >= label_w + 2 && positioned.height >= 3 {
+                let lx = positioned.x + (positioned.width - label_w) / 2;
+                let ly = positioned.y + positioned.height / 2;
+                for (i, ch) in label.chars().enumerate() {
+                    buf.set_char(lx + i as u32, ly, ch, label_style);
                 }
-            });
+            }
         });
-    }
+    });
 }
