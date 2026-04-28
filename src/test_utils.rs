@@ -513,10 +513,11 @@ impl TestBackend {
 
     /// Begin building a multi-step interaction sequence.
     ///
-    /// Each [`step`](TestSequence::step) appends an event batch + render
-    /// closure pair. [`run`](TestSequence::run) executes them in order,
-    /// advancing `FrameState` naturally between steps so callers don't need
-    /// to thread `focus_index` / `prev_focus_count` manually.
+    /// Each [`tick`](TestSequence::tick) (or [`key`](TestSequence::key))
+    /// appends an event batch + render closure pair.
+    /// [`run`](TestSequence::run) executes them in order, advancing
+    /// `FrameState` naturally between steps so callers don't need to thread
+    /// `focus_index` / `prev_focus_count` manually.
     ///
     /// # Example
     ///

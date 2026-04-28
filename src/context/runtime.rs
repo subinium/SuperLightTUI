@@ -671,10 +671,10 @@ impl Context {
     /// ≈ 200 ms at 60 Hz). Use [`Context::animate_value`] for custom duration
     /// or non-binary targets.
     ///
-    /// State is stored in [`Context::named_states`](Self::named_states) under
-    /// `id`. The id is `&'static str` (single global namespace per context),
-    /// matching [`Context::use_state_named`]. Pick a unique key per call site
-    /// — two `animate_bool` calls with the same id share state.
+    /// State is stored in the per-context named-state map under `id`. The
+    /// id is `&'static str` (single global namespace per context), matching
+    /// [`Context::use_state_named`]. Pick a unique key per call site — two
+    /// `animate_bool` calls with the same id share state.
     ///
     /// On the first call, the value snaps to the target with no visible
     /// transition (so widgets that mount in their final state don't pop).
@@ -691,13 +691,12 @@ impl Context {
 
     /// Smoothly animate a `f64` value toward `target` over `duration_ticks`.
     ///
-    /// Uses a linear-easing [`Tween`] stored implicitly in
-    /// [`Context::named_states`](Self::named_states) under `id`. Returns the
-    /// current interpolated value. On the first call the value snaps to
-    /// `target` with no visible transition; on subsequent calls when
-    /// `target` changes the tween is rebuilt starting from the current
-    /// interpolated value, so retargeting mid-flight does not produce a
-    /// jump.
+    /// Uses a linear-easing [`crate::Tween`] stored implicitly in the
+    /// per-context named-state map under `id`. Returns the current
+    /// interpolated value. On the first call the value snaps to `target`
+    /// with no visible transition; on subsequent calls when `target`
+    /// changes the tween is rebuilt starting from the current interpolated
+    /// value, so retargeting mid-flight does not produce a jump.
     ///
     /// `duration_ticks == 0` snaps immediately to the new target.
     ///
@@ -710,7 +709,7 @@ impl Context {
     /// # Comparison with `Tween`
     /// Use this shorthand when you want zero boilerplate and linear easing
     /// is acceptable. For custom easing, a non-static key, or
-    /// non-tick-based control, construct a [`Tween`] explicitly via
+    /// non-tick-based control, construct a [`crate::Tween`] explicitly via
     /// [`Context::use_state_named_with`](Self::use_state_named_with).
     pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
         let tick = self.tick;
@@ -1212,10 +1211,9 @@ impl Context {
     /// no scrollback area to write to.
     ///
     /// The headless [`crate::TestBackend`] accumulates the lines into the
-    /// frame state where they can be inspected by tests via
-    /// [`crate::TestBackend::static_log_lines`] (or by reading the buffer
-    /// returned by [`Context::take_static_log_pending`] when constructing a
-    /// custom backend).
+    /// frame state where they can be drained by tests via
+    /// [`Context::take_static_log`] (or by inspecting the buffer when
+    /// constructing a custom backend).
     ///
     /// # Order
     ///
