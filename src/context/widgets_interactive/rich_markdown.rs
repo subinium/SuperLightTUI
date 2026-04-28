@@ -198,11 +198,15 @@ impl Context {
         }
 
         let vh = visible_height as usize;
-        let start = if state.selected >= vh {
-            state.selected - vh + 1
-        } else {
-            0
-        };
+        // Clamp viewport_offset so `selected` stays inside [offset, offset + vh)
+        // without forcing the cursor onto the bottom row when scrolling down.
+        if state.selected < state.viewport_offset {
+            state.viewport_offset = state.selected;
+        }
+        if vh > 0 && state.selected >= state.viewport_offset + vh {
+            state.viewport_offset = state.selected - vh + 1;
+        }
+        let start = state.viewport_offset;
         let end = (start + vh).min(state.items.len());
 
         self.commands

@@ -5147,3 +5147,45 @@ fn markdown_byte_index_empty_bold_marker() {
     });
     tb.assert_contains("ab");
 }
+
+#[test]
+fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
+    // Regression for #192: previously `start = selected - vh + 1` always
+    // pinned the cursor to the bottom of the viewport. The sticky-viewport
+    // fix keeps the cursor mid-viewport when the user scrolls up.
+    let mut tb = TestBackend::new(40, 12);
+    let items: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
+    let mut state = ListState::new(items);
+    let visible_height: u32 = 5;
+
+    // Frame 1: scroll the cursor to row 10. The viewport snaps so that
+    // `Item 10` is the last visible row (start = 6).
+    state.selected = 10;
+    tb.render(|ui| {
+        ui.virtual_list(&mut state, visible_height, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    tb.assert_contains("Item 10");
+
+    // Frame 2: move the cursor up by one. With the bug the viewport would
+    // also slide up by one (start = 5) so `Item 10` would no longer be
+    // visible. With the fix the viewport stays put and `Item 10` is still
+    // on screen — the cursor moved off the bottom row instead of dragging
+    // the viewport with it.
+    state.selected = 9;
+    tb.render(|ui| {
+        ui.virtual_list(&mut state, visible_height, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    let out = tb.to_string();
+    assert!(
+        out.contains("Item 10"),
+        "viewport should stay put when cursor moves up, but Item 10 disappeared: {out:?}"
+    );
+    assert!(
+        !out.contains("Item 5"),
+        "viewport should not have followed the cursor up, but Item 5 became visible: {out:?}"
+    );
+}

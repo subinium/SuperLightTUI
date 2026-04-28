@@ -10,6 +10,10 @@ pub struct ListState {
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     pub filter: String,
+    /// Top-row index of the visible viewport for `virtual_list`. Defaults to
+    /// `0` and is clamped each frame so `selected` stays inside the viewport
+    /// without forcing the cursor to the bottom row.
+    pub(crate) viewport_offset: usize,
     view_indices: Vec<usize>,
     /// Lowercase cache parallel to `items`, rebuilt only on `set_items` / `new`.
     /// Mirrors the `row_search_cache` pattern in `TableState`.
@@ -27,6 +31,7 @@ impl ListState {
             items,
             selected: 0,
             filter: String::new(),
+            viewport_offset: 0,
             view_indices: (0..len).collect(),
             item_search_cache,
         }
