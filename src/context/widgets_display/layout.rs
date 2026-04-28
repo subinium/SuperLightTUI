@@ -296,6 +296,15 @@ impl Context {
     /// Create a vertical (column) container with a gap between children.
     ///
     /// `gap` is the number of blank rows inserted between each child.
+    ///
+    /// **Deprecated since 0.20.1**: the name collides with
+    /// [`ContainerBuilder::col_gap`], which sets the *row-finalize* main-axis
+    /// gap (Tailwind `gap-x` axis convention) and so means the opposite thing.
+    /// Use `ui.container().gap(n).col(f)` instead — same output, no collision.
+    #[deprecated(
+        since = "0.20.1",
+        note = "Use `ui.container().gap(n).col(f)` instead — same output, no name collision with `ContainerBuilder::col_gap`."
+    )]
     pub fn col_gap(&mut self, gap: u32, f: impl FnOnce(&mut Context)) -> Response {
         self.push_container(Direction::Column, gap, f)
     }
@@ -323,6 +332,16 @@ impl Context {
     /// Create a horizontal (row) container with a gap between children.
     ///
     /// `gap` is the number of blank columns inserted between each child.
+    ///
+    /// **Deprecated since 0.20.1**: the name collides with
+    /// [`ContainerBuilder::row_gap`], which sets the *column-finalize*
+    /// main-axis gap (Tailwind `gap-y` axis convention) and so means the
+    /// opposite thing. Use `ui.container().gap(n).row(f)` instead — same
+    /// output, no collision.
+    #[deprecated(
+        since = "0.20.1",
+        note = "Use `ui.container().gap(n).row(f)` instead — same output, no name collision with `ContainerBuilder::row_gap`."
+    )]
     pub fn row_gap(&mut self, gap: u32, f: impl FnOnce(&mut Context)) -> Response {
         self.push_container(Direction::Row, gap, f)
     }

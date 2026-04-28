@@ -119,7 +119,7 @@ pub fn render(ui: &mut Context) {
 // box starts at the same x — readers can compare resolved widths visually
 // without measuring against a moving baseline.
 fn row<F: FnOnce(&mut Context)>(ui: &mut Context, label: &str, content: F) {
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<width$}", width = LABEL_W)).bold();
         content(ui);
     });

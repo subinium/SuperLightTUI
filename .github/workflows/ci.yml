@@ -38,12 +38,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # `--test-threads=1` is required because `tests/v020_perf_alloc.rs`
-      # uses a global allocation counter; CI's higher parallelism than a
-      # local laptop causes other parallel tests to contaminate the count
-      # and trip its single-thread budget. Single-threaded execution adds
-      # ~10s but keeps the perf-budget asserts meaningful.
-      - run: cargo test --all-features -- --test-threads=1
+      # `tests/v020_perf_alloc.rs` serialises every `#[test]` in the binary
+      # via the file-wide `measure_lock` mutex (see
+      # `tests/v020_perf_alloc.rs::enter_perf_test`), so the parallel test
+      # runner is safe — the previous `--test-threads=1` workaround was
+      # removed in v0.20.1 (#240) once the global-allocator-counter
+      # cross-test contamination was fixed at the source.
+      - run: cargo test --all-features
 
   clippy:
     name: Clippy

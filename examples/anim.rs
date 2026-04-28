@@ -170,7 +170,7 @@ fn main() -> std::io::Result<()> {
                 if cb_tween.is_done() && !cb_fired {
                     cb_fired = true;
                 }
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     if cb_fired {
                         ui.text("on_complete fired!").fg(Color::Green);
                     }

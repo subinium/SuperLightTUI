@@ -651,7 +651,7 @@ fn render_page_tabs(ui: &mut Context, page_tabs: &mut TabsState) {
 
     for (row_idx, labels) in page_tabs.labels.chunks(split_at).enumerate() {
         let row_start = row_idx * split_at;
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             for (offset, label) in labels.iter().enumerate() {
                 let tab_idx = row_start + offset;
                 let clicked = if page_tabs.selected == tab_idx {
@@ -1615,7 +1615,7 @@ fn render_v080(
         const ACCENT: slt::ContainerStyle =
             slt::ContainerStyle::new().bg(Color::Rgb(255, 107, 107));
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
                 ui.text("Base card").bold();
                 ui.text("ContainerStyle::new().border(..).p(1)").dim();
@@ -1633,7 +1633,7 @@ fn render_v080(
     }
 
     section(ui, "ERROR BOUNDARY");
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .container()
             .grow(1)
@@ -1664,7 +1664,7 @@ fn render_v080(
 
     section(ui, "DARK MODE");
     card(ui, |ui| {
-        let _ = ui.row_gap(2, |ui| {
+        let _ = ui.container().gap(2).row(|ui| {
             let _ = ui
                 .container()
                 .bg(Color::Rgb(240, 240, 240))
@@ -1688,7 +1688,7 @@ fn render_v080(
     section(ui, "RESPONSIVE LAYOUT");
     card(ui, |ui| {
         ui.text(format!("Breakpoint: {:?}", ui.breakpoint())).dim();
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .container()
                 .w(20)
@@ -1759,7 +1759,7 @@ fn render_v080(
         let idx = *idx_state.get(ui);
         let (_name, ref custom) = presets[idx % presets.len()];
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             for (i, (label, _)) in presets.iter().enumerate() {
                 if i == idx {
                     ui.text(format!("● {label}")).bold().fg(custom.primary);
@@ -1769,7 +1769,7 @@ fn render_v080(
             }
             ui.text("  →  applies to entire app").dim();
         });
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             ui.text("■ Primary").fg(custom.primary);
             ui.text("■ Secondary").fg(custom.secondary);
             ui.text("■ Accent").fg(custom.accent);
@@ -1795,7 +1795,7 @@ fn render_v080(
         let progress = val / 100.0;
         let _ = ui.progress(progress);
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             ui.text(format!("Value: {:.0}", val));
             if *v8_anim_done {
                 ui.text("✓ on_complete fired!").fg(theme.success).bold();
@@ -1812,7 +1812,7 @@ fn render_v080(
     });
 
     section(ui, "GROUP HOVER");
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         for name in &["Card A", "Card B", "Card C"] {
             let _ = ui
                 .group(name)
@@ -1833,7 +1833,7 @@ fn render_v080(
         let count_val = *counter.get(ui);
         let doubled = *ui.use_memo(&count_val, |c| c * 2);
         let tripled = *ui.use_memo(&count_val, |c| c * 3);
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             ui.text(format!("Count: {count_val}"));
             ui.text(format!("×2 = {doubled}")).fg(theme.primary);
             ui.text(format!("×3 = {tripled}")).fg(theme.success);
@@ -2184,7 +2184,7 @@ fn render_v014(
         rich_log.max_entries = Some(100);
     }
 
-    let _ = ui.col_gap(1, |ui| {
+    let _ = ui.container().gap(1).col(|ui| {
         let _ = ui
             .bordered(slt::Border::Rounded)
             .title("Gradient Text")
@@ -2254,8 +2254,8 @@ fn render_v0141(ui: &mut Context) {
         .dim();
     ui.text("");
 
-    let _ = ui.col_gap(1, |ui| {
-        let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).col(|ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("Rust")
@@ -2275,7 +2275,7 @@ fn render_v0141(ui: &mut Context) {
                 });
         });
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("TypeScript")
@@ -2295,7 +2295,7 @@ fn render_v0141(ui: &mut Context) {
                 });
         });
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("C++")
@@ -2315,7 +2315,7 @@ fn render_v0141(ui: &mut Context) {
                 });
         });
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("Bash")
@@ -2335,7 +2335,7 @@ fn render_v0141(ui: &mut Context) {
                 });
         });
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("JSON")
@@ -2364,7 +2364,7 @@ fn render_v0141(ui: &mut Context) {
                 });
         });
 
-        let _ = ui.row_gap(1, |ui| {
+        let _ = ui.container().gap(1).row(|ui| {
             let _ = ui
                 .bordered(slt::Border::Rounded)
                 .title("HTML")
@@ -2698,7 +2698,7 @@ fn render_v0152(
         .dim();
     ui.text("");
 
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Table in Markdown")
@@ -2745,7 +2745,7 @@ fn render_v0152(
         .dim();
     ui.text("");
 
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Links")
@@ -2785,7 +2785,7 @@ fn render_v0152(
 
     let focus_idx = ui.focus_index();
     let focus_cnt = ui.focus_count();
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Focus State")
@@ -2833,7 +2833,7 @@ fn render_v0152(
     // ── Markdown complex cases ──────────────────────────────────────
     let _ = ui.divider_text("Markdown — Complex Cases (v0.15.3+)");
 
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Wrapping + Links")
@@ -2861,7 +2861,7 @@ fn render_v0152(
             });
     });
 
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Table with formatting")

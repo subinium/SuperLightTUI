@@ -972,7 +972,7 @@ fn render_intro(ui: &mut Context) {
 }
 
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<10}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });
@@ -1431,7 +1431,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
@@ -1509,7 +1509,7 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
@@ -1561,7 +1561,7 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
@@ -1973,7 +1973,7 @@ fn render_anim(ui: &mut Context, state: &mut AnimState) {
             if state.cb_tween.is_done() && !state.cb_fired {
                 state.cb_fired = true;
             }
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 if state.cb_fired {
                     ui.text("on_complete fired!").fg(Color::Green);
                 }

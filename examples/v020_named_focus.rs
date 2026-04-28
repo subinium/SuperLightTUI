@@ -125,7 +125,7 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
         // `row_gap(...)` Response also captures clicks on the bare
         // "Name:"/"Email:"/"City:" label cells outside the input box,
         // routing them through the same `focus_by_name` call.
-        let name_row = ui.row_gap(row_gap, |ui| {
+        let name_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("Name: ");
             let _ = ui.register_focusable_named("name");
             let r = ui.container().fill().col(|ui| {
@@ -139,7 +139,7 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
             let _ = ui.focus_by_name("name");
         }
 
-        let email_row = ui.row_gap(row_gap, |ui| {
+        let email_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("Email:");
             let _ = ui.register_focusable_named("email");
             let r = ui.container().fill().col(|ui| {
@@ -153,7 +153,7 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
             let _ = ui.focus_by_name("email");
         }
 
-        let city_row = ui.row_gap(row_gap, |ui| {
+        let city_row = ui.container().gap(row_gap).row(|ui| {
             ui.text("City: ");
             let _ = ui.register_focusable_named("city");
             let r = ui.container().fill().col(|ui| {
@@ -172,7 +172,7 @@ fn render_input_rows(ui: &mut Context, state: &mut DemoState) {
 /// Render three focus buttons. Each button targets a name; clicking it
 /// asks the focus system to jump on the next frame.
 fn render_focus_buttons(ui: &mut Context, gap: u32) {
-    let _ = ui.row_gap(gap, |ui| {
+    let _ = ui.container().gap(gap).row(|ui| {
         if ui.button("Focus name").clicked {
             let _ = ui.focus_by_name("name");
         }

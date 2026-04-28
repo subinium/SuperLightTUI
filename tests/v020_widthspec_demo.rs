@@ -20,7 +20,7 @@ fn widthspec_demo_renders_all_five_variants() {
                     .fg(Color::Cyan)
                     .bold();
 
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text("Fixed(20)");
                     let _ = ui
                         .bordered(Border::Single)
@@ -30,7 +30,7 @@ fn widthspec_demo_renders_all_five_variants() {
                         });
                 });
 
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text("Pct(50)");
                     let _ = ui
                         .bordered(Border::Single)
@@ -40,7 +40,7 @@ fn widthspec_demo_renders_all_five_variants() {
                         });
                 });
 
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text("Ratio(1,3)");
                     let _ = ui
                         .bordered(Border::Single)
@@ -50,7 +50,7 @@ fn widthspec_demo_renders_all_five_variants() {
                         });
                 });
 
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text("MinMax(10,30)");
                     let _ = ui
                         .bordered(Border::Single)
@@ -60,7 +60,7 @@ fn widthspec_demo_renders_all_five_variants() {
                         });
                 });
 
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text("Auto");
                     let _ = ui.bordered(Border::Single).col(|ui| {
                         ui.text("AutoVar").fg(Color::White);

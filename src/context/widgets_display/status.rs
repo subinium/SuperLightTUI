@@ -296,12 +296,31 @@ impl Context {
     }
 
     /// Render a badge with the theme's primary color.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.badge("NEW");
+    /// # });
+    /// ```
     pub fn badge(&mut self, label: &str) -> Response {
         let theme = self.theme;
         self.badge_colored(label, theme.primary)
     }
 
     /// Render a badge with a custom background color.
+    ///
+    /// Foreground is auto-selected for contrast via [`Color::contrast_fg`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::Color;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.badge_colored("ALPHA", Color::Magenta);
+    /// # });
+    /// ```
     pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
         let fg = Color::contrast_fg(color);
         let mut label_text = String::with_capacity(label.len() + 2);
@@ -314,6 +333,17 @@ impl Context {
     }
 
     /// Render a keyboard shortcut hint with reversed styling.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.line(|ui| {
+    ///     ui.text("Quit: ");
+    ///     ui.key_hint("Ctrl+Q");
+    /// });
+    /// # });
+    /// ```
     pub fn key_hint(&mut self, key: &str) -> Response {
         let theme = self.theme;
         let mut key_text = String::with_capacity(key.len() + 2);
@@ -326,6 +356,20 @@ impl Context {
     }
 
     /// Render a label-value stat pair.
+    ///
+    /// Renders as a column: a dim label above a bold value. Pair multiple
+    /// stats in a [`row`](Self::row) for a compact dashboard strip.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.row(|ui| {
+    ///     ui.stat("Users", "1.2k");
+    ///     ui.stat("Revenue", "$8,420");
+    /// });
+    /// # });
+    /// ```
     pub fn stat(&mut self, label: &str, value: &str) -> Response {
         let _ = self.col(|ui| {
             ui.text(label).dim();
@@ -336,6 +380,15 @@ impl Context {
     }
 
     /// Render a stat pair with a custom value color.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::Color;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.stat_colored("Errors", "0", Color::Green);
+    /// # });
+    /// ```
     pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
         let _ = self.col(|ui| {
             ui.text(label).dim();
@@ -346,6 +399,22 @@ impl Context {
     }
 
     /// Render a stat pair with an up/down trend arrow.
+    ///
+    /// The arrow color follows the theme: `success` for [`Trend::Up`],
+    /// `error` for [`Trend::Down`].
+    ///
+    /// [`Trend::Up`]: crate::widgets::Trend::Up
+    /// [`Trend::Down`]: crate::widgets::Trend::Down
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::Trend;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.stat_trend("MRR", "$24.5k", Trend::Up);
+    /// ui.stat_trend("Churn", "1.8%", Trend::Down);
+    /// # });
+    /// ```
     pub fn stat_trend(
         &mut self,
         label: &str,
@@ -372,6 +441,20 @@ impl Context {
     }
 
     /// Render a centered empty-state placeholder.
+    ///
+    /// Title is rendered prominently; description is dimmed below. Both are
+    /// centered horizontally and vertically inside the available space.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let items: Vec<&str> = vec![];
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// if items.is_empty() {
+    ///     ui.empty_state("No items yet", "Press 'a' to add one");
+    /// }
+    /// # });
+    /// ```
     pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
         let _ = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
@@ -382,6 +465,23 @@ impl Context {
     }
 
     /// Render a centered empty-state placeholder with an action button.
+    ///
+    /// Returns a [`Response`] whose `clicked` field is `true` on the frame
+    /// the action button is activated.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let items: Vec<&str> = vec![];
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// if items.is_empty() {
+    ///     let r = ui.empty_state_action("No items yet", "Get started", "Add first item");
+    ///     if r.clicked {
+    ///         // open create flow
+    ///     }
+    /// }
+    /// # });
+    /// ```
     pub fn empty_state_action(
         &mut self,
         title: &str,

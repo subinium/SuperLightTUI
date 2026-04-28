@@ -225,7 +225,7 @@ fn render_modal_body(ui: &mut Context, state: &mut modal_trap_demo::State) {
         .grow(1)
         .col(|ui| {
             ui.text("test body").dim();
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 let _ = ui.button("First bg button");
                 let _ = ui.button("Second bg button");
                 let _ = ui.button("Third bg button");
@@ -246,7 +246,7 @@ fn render_modal_body(ui: &mut Context, state: &mut modal_trap_demo::State) {
                 .gap(sp.xs())
                 .col(|ui| {
                     ui.text("Press Tab — focus stays inside the modal.").bold();
-                    let _ = ui.row_gap(sp.sm(), |ui| {
+                    let _ = ui.container().gap(sp.sm()).row(|ui| {
                         if ui.button_with("Yes", ButtonVariant::Primary).clicked {
                             state.answered = Some(true);
                             state.show_modal = false;

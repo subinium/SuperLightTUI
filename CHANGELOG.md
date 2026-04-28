@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.20.1] - 2026-04-29
+
+### Deprecated
+
+- **`deprecated(layout)` — `Context::col_gap` and `Context::row_gap`** — The two-arg shorthand collides with `ContainerBuilder::col_gap` / `ContainerBuilder::row_gap`, which set the *row-finalize* / *column-finalize* main-axis gap (Tailwind `gap-x` / `gap-y` axis convention) and so mean the opposite thing despite the same name. Use `ui.container().gap(n).col(f)` / `.row(f)` instead — same output, no name collision. AI-generated code that hits the old form continues to compile with a deprecation warning until the planned v0.21+ removal.
+
+### Docs
+
+- **`docs(skills)` — `.claude/skills/slt/{SKILL,REFERENCES}.md` and `.claude/skills/slt-migration/SKILL.md` synced to v0.20** — Mental-model section trimmed, 5 API rules and 5 Layer model formalized, v0.20 removed-API table inlined (`gauge_w`, `gauge_colored`, `line_gauge_with`, `breadcrumb_sep`, `LineGaugeOpts`, `HighlightRange::single`, `label_owned`), Korean trigger phrases added, hook-ordering decision table for `use_state` / `use_state_named` / `use_state_keyed`, per-domain reference-example index. Migration skill version banner bumped from v0.19.2 → v0.20.0.
+- **`docs(skills)` — Rule 6 (return-type pattern) added to `SKILL.md`** — `Context` methods return `&mut Self` for chainable display mutators (`text`, `link`, `styled`, style chain) or `Response` for interaction results (every stateful interactive widget plus `col` / `row` / `modal`); `line` / `line_wrap` / `screen` continue an inline-text chain so they return `&mut Self`. The split is the most common AI-generated compile error — chaining `.bold()` on `ui.button(...)` etc. — and now has a single discoverable rule.
+- **`docs(skills)` — Custom widget pattern decision guide** — Function form (`fn render_card(ui, &data)`) covers the 90% case; `impl Widget` is for caller-owned state types and third-party crates exporting widgets through trait-bound APIs. Closes the "when do I pick which" gap that previously left readers to guess from the trait example alone.
+- **`docs(rustdoc)` — `# Example` blocks added to the status family** — `badge`, `badge_colored`, `key_hint`, `stat`, `stat_colored`, `stat_trend`, `empty_state`, `empty_state_action` (`src/context/widgets_display/status.rs`) each carry a runnable `no_run` example. Closes the patch-safe doc-only audit gap flagged in v0.20.0.
+- **`docs(rustdoc)` — `# Example` block added to `vsplit_pane`** — `src/context/widgets_display/split.rs:66` — paired with the existing `split_pane` example so both orientations are equally discoverable.
+- **`docs(readme)` — Removed version-specific "v0.20 Demo Catalog"** — The 20-row table of `v020_*` demos with issue numbers belongs in `docs/EXAMPLES.md` (already linked from the same page) rather than the top-level README, which should stay timeless across minor releases. Replaced with a tighter "Demo Launcher" subsection pointing readers at the per-release catalog. Same applies to the inline `# All v0.20 demos at once` comment in the launcher snippet — generalized to "full feature-tour spread".
+
+### Refactor
+
+- **`refactor(examples)` / `refactor(tests)` — 25 demo and integration files migrated off `Context::col_gap` / `Context::row_gap`** to the explicit `ui.container().gap(n).col(f)` / `.row(f)` form. 22 example files (counter, demo, demo_design_system, cookbook_*, system_tour, v020_tour, v020_use_state_keyed, v020_modal_trap, v020_theme_subtree, v020_spacing_scale, anim, etc.) and 3 integration tests (`v020_interaction_regression`, `v020_theme_modal_demos`, `v020_widthspec_demo`). Output is byte-identical (same finalize path, same gap value) — the change is purely about removing the deprecated form so AI training data and downstream copy-paste land on the unambiguous shape from the start.
+
+### Fixed
+
+- **`fix(tests)` — `tests/v020_perf_alloc.rs` cross-test allocator contamination** — Every `#[test]` in the file now grabs the file-wide `measure_lock` mutex via the new `enter_perf_test()` helper on its first line. The pre-fix `measure_allocs` lock protected only the measurement critical section, so non-measuring sibling tests still ran concurrently and their `String::from(...)` / `Vec::new()` calls leaked into the global `ALLOC_COUNT`. Pattern manifested as flaky `framestate_reuse_steady_state` / `kitty_placement_flush` / `use_state_keyed_*` budget breaches whose noise scaled with macOS thread-cache timing. Root cause now fixed in source — the `--test-threads=1` workaround in `.github/workflows/ci.yml` (line 41-46) was removed in the same change.
+- **`fix(buffer)` — `dead_code` warning under `--no-default-features`** — `Buffer::recompute_line_hashes`, `Buffer::row_clean`, `Buffer::row_hash` (`src/buffer.rs:475-540`) are gated on `#[cfg(any(feature = "crossterm", test))]`. The methods exist solely to support the per-row hash fast-path inside `flush_buffer_diff` (added in #171), which is itself behind the `crossterm` feature. Without the gate they showed as `dead_code` whenever the crate was built with `--no-default-features`, tripping `cargo check -p superlighttui --no-default-features` on a clean tree. No public-API change — methods stay `pub(crate)`.
+
+### CI
+
+- **`ci(test)` — Removed `--test-threads=1` from the Test job** — `.github/workflows/ci.yml` now runs `cargo test --all-features` with the default parallel runner. Justified by the `tests/v020_perf_alloc.rs` source fix above; CI run time drops by ~10 s on the typical SLT testsuite size.
+
 ## [0.20.0] - 2026-04-28
 
 ### Added

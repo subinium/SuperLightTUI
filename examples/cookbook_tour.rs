@@ -184,7 +184,7 @@ fn render_intro(ui: &mut Context) {
 
 /// One label/description row for the intro recipe list.
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.row_gap(1, |ui| {
+    let _ = ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<12}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });

@@ -66,7 +66,7 @@ pub fn render(ui: &mut Context) {
             ui.text("Outer scope keeps its parent theme — nothing leaks across panels.")
                 .dim();
 
-            let _ = ui.row_gap(panel_gap, |ui| {
+            let _ = ui.container().gap(panel_gap).row(|ui| {
                 for (label, theme) in theme_bench() {
                     panel(ui, label, theme);
                 }

@@ -275,46 +275,18 @@ For composition advice, see [Patterns Guide].
 | `inline` | `cargo run --example inline` | Inline rendering below a normal prompt |
 | `async_demo` | `cargo run --example async_demo --features async` | Background messages |
 
-The full categorized index lives in [Examples Guide].
+The full categorized index — including per-release feature tours and showcase demos — lives in [Examples Guide].
 
-### v0.20 Demo Catalog
+### Demo Launcher
 
-Run any v020 demo directly:
-
-| Demo | Issue | Showcases |
-|---|---|---|
-| `v020_showcase` | (integration) | All v0.20 features on one screen |
-| `v020_regression_panel` | (integration) | v0.19 + v0.20 cumulative regression check |
-| `v020_dx_shortcuts` | #209/#210/#220/#221 | on_hover, animate_bool, fill, center_in |
-| `v020_use_state_keyed` | #215 | Dynamic-string-keyed state |
-| `v020_use_effect` | #216 | Dependency-tracked effects |
-| `v020_named_focus` | #217 | register_focusable_named, focus_by_name |
-| `v020_theme_subtree` | #226 | Per-subtree theme override |
-| `v020_modal_trap` | #225 | Modal tab_trap focus containment |
-| `v020_spacing_scale` | #227 | compact / comfortable / spacious presets |
-| `v020_split_pane` | #223 | split_pane / vsplit_pane with drag handle |
-| `v020_gauge` | #224 | gauge / line_gauge builder APIs |
-| `v020_gutter_highlights` | #235 | scrollable_with_gutter, GutterOpts |
-| `v020_breadcrumb_response` | #213 | Builder breadcrumb API |
-| `v020_progress_response` | #212 | progress / spinner returning Response |
-| `v020_static_log` | #233 | ui.static_log() append-only scrollback |
-| `v020_keymap_help` | #236 | WidgetKeyHelp + auto help overlay |
-| `v020_ctrl_c_passthrough` | #238 | RunConfig::handle_ctrl_c opt-out |
-| `v020_widthspec` | #237 | WidthSpec / HeightSpec sampler |
-| `v020_perf_audit` | #204/205/206/228 | Allocation + timing report (stdout) |
-| `v020_test_utils` | #229–232 | record_frames / sequence / snapshot_format / negative asserts (stdout) |
-
-Or use the launcher script:
+`scripts/ghostty_demos.sh` opens demos in fresh Ghostty windows, which is
+useful for skimming the full set side by side. See [Examples Guide] for the
+list of demos at each release.
 
 ```bash
-# Interactive picker
-./scripts/ghostty_demos.sh
-
-# All v0.20 demos at once (each in its own Ghostty window)
-./scripts/ghostty_demos.sh --features
-
-# Just the integration demos
-./scripts/ghostty_demos.sh --showcase
+./scripts/ghostty_demos.sh             # interactive picker
+./scripts/ghostty_demos.sh --features  # full feature-tour spread
+./scripts/ghostty_demos.sh --showcase  # integration showcases only
 ```
 
 ## Custom Widgets And Backends

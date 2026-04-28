@@ -36,7 +36,7 @@ fn body(ui: &mut Context) {
             ui.text("compact = base 1, comfortable = base 2, spacious = base 3.")
                 .dim();
 
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 panel(ui, "compact", Theme::compact());
                 panel(ui, "comfortable", Theme::comfortable());
                 panel(ui, "spacious", Theme::spacious());

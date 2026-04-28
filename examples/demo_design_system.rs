@@ -113,7 +113,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     }
 
     // ── Header ───────────────────────────────────────────────────
-    let _ = ui.col_gap(sp.xs(), |ui| {
+    let _ = ui.container().gap(sp.xs()).col(|ui| {
         ui.text("Design System Demo (v0.17)").bold().fg(primary);
         ui.text(format!(
             "Theme: {} | Left/Right cycle themes | t: toggle theme view | q: quit",
@@ -125,11 +125,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     if state.show_themes {
         // ── Theme browser ────────────────────────────────────────
-        let _ = ui.col_gap(sp.sm(), |ui| {
+        let _ = ui.container().gap(sp.sm()).col(|ui| {
             ui.text("All Theme Presets").bold();
             for (i, (name, t)) in state.themes.iter().enumerate() {
                 let marker = if i == state.theme_idx { "> " } else { "  " };
-                let _ = ui.row_gap(1, |ui| {
+                let _ = ui.container().gap(1).row(|ui| {
                     ui.text(format!("{}{}", marker, name)).fg(t.primary).bold();
                     for (label, color) in [
                         ("pri", t.primary),
@@ -149,10 +149,10 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         });
     } else {
         // ── Showcase ─────────────────────────────────────────────
-        let _ = ui.col_gap(sp.sm(), |ui| {
+        let _ = ui.container().gap(sp.sm()).col(|ui| {
             // Row 1: Style extends + ThemeColor
             ui.text("Style Extends + ThemeColor").bold();
-            let _ = ui.row_gap(sp.xs(), |ui| {
+            let _ = ui.container().gap(sp.xs()).row(|ui| {
                 let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
                     ui.text("CARD (base)").fg(surface_text);
                     ui.text("theme_bg: Surface").fg(text_dim);
@@ -173,7 +173,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             // Row 2: Spacing tokens
             ui.text("Spacing Tokens").bold();
-            let _ = ui.row_gap(sp.xs(), |ui| {
+            let _ = ui.container().gap(sp.xs()).row(|ui| {
                 let scale = Spacing::new(1);
                 for (name, val) in [
                     ("xs", scale.xs()),
@@ -190,7 +190,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             // Row 3: WidgetTheme + interactive widgets
             ui.text("WidgetTheme (buttons have cyan accent)").bold();
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 let _ = ui.container().apply(&CARD).grow(1).col(|ui| {
                     if ui.button("Increment").clicked {
                         state.counter += 1;
@@ -220,7 +220,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 ("Success", theme.success),
                 ("Surface", theme.surface),
             ];
-            let _ = ui.row_gap(sp.xs(), |ui| {
+            let _ = ui.container().gap(sp.xs()).row(|ui| {
                 for (label, bg_color) in test_bgs {
                     let fg = Color::contrast_fg(bg_color);
                     let ratio = Color::contrast_ratio(fg, bg_color);
