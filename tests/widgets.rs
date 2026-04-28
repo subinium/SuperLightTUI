@@ -5189,3 +5189,78 @@ fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
         "viewport should not have followed the cursor up, but Item 5 became visible: {out:?}"
     );
 }
+
+#[test]
+fn calendar_h_l_move_by_day() {
+    // Regression for #193: `h`/`l` previously navigated months, which
+    // contradicted vim convention (h/l = cursor ±1 unit). They now move
+    // the cursor by one day, and `[`/`]` navigate months instead.
+    let mut tb = TestBackend::new(40, 12);
+    let mut state = CalendarState::from_ym(2024, 6);
+
+    // Walk the cursor to June 15 with arrow keys so we can observe `h`/`l`
+    // from a known mid-month position. Pressing Enter at the end commits
+    // the cursor to `selected_day`, which the test reads via the public
+    // `selected_date()` getter (`cursor_day` is crate-private).
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..14 {
+        walk = walk.key_code(slt::KeyCode::Right);
+    }
+    let setup = walk.key_code(slt::KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 15)),
+        "setup precondition: cursor walked to June 15"
+    );
+
+    // `h` must move the cursor one day backward inside the same month,
+    // not jump to the previous month. The bug fixed in #193 used to map
+    // `h` to `prev_month()`, which would land us in May.
+    let h = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('h'))
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(h, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 14)),
+        "h should move cursor one day back, staying in June"
+    );
+
+    // `l` must move the cursor one day forward inside the same month.
+    let l = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('l'))
+        .key_code(slt::KeyCode::Enter)
+        .build();
+    tb.render_with_events(l, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_date(),
+        Some((2024, 6, 15)),
+        "l should move cursor one day forward, staying in June"
+    );
+
+    // `[` is the new month-back binding.
+    let lb = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char('['))
+        .build();
+    tb.render_with_events(lb, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!((state.year, state.month), (2024, 5));
+
+    // `]` is the new month-forward binding.
+    let rb = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Char(']'))
+        .build();
+    tb.render_with_events(rb, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!((state.year, state.month), (2024, 6));
+}

@@ -327,6 +327,22 @@ impl Context {
     }
 
     /// Render a calendar date picker with month navigation.
+    ///
+    /// # Keybindings (when focused)
+    ///
+    /// | Key | Action |
+    /// |-----|--------|
+    /// | `Left` / `h` | Previous day |
+    /// | `Right` / `l` | Next day |
+    /// | `Up` | Previous week (−7 days) |
+    /// | `Down` | Next week (+7 days) |
+    /// | `[` | Previous month |
+    /// | `]` | Next month |
+    /// | `Enter` / `Space` | Select cursor day |
+    ///
+    /// `h`/`l` follow vim convention (cursor by one day). Use `[`/`]` for
+    /// month navigation. Mouse clicks on the title row navigate months and
+    /// clicks inside the day grid select that day.
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -359,10 +375,18 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('h') => {
-                        state.prev_month();
+                        calendar_move_cursor_by_days(state, -1);
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('l') => {
+                        calendar_move_cursor_by_days(state, 1);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('[') => {
+                        state.prev_month();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(']') => {
                         state.next_month();
                         consumed_indices.push(i);
                     }
