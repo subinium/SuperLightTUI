@@ -7,12 +7,13 @@
 //! Run: `cargo run --example v020_gutter_highlights`
 //!
 //! Keys:
-//!   n            — jump to the next matching line
-//!   N            — jump to the previous matching line
-//!   1            — filter by ERROR
-//!   2            — filter by WARN
-//!   3            — filter by INFO
-//!   Ctrl-Q / Esc — quit
+//!   n                — jump to the next matching line
+//!   p                — jump to the previous matching line
+//!   1                — filter by ERROR
+//!   2                — filter by WARN
+//!   3                — filter by INFO
+//!   Mouse wheel      — scroll the viewport
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
 //!   ┌── filter status / match counter ────────────┐
@@ -58,13 +59,13 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         if ui.key('n') {
             state.scroll.highlight_next();
         }
-        if ui.key('N') {
+        if ui.key('p') {
             state.scroll.highlight_previous();
         }
         if ui.key('1') {
@@ -136,7 +137,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .grow(1)
         .col(|ui| {
             ui.text(format!(
-                "Filter: {:?}    n=next  N=prev    1=ERROR 2=WARN 3=INFO",
+                "Filter: {:?}    n=next  p=prev    1=ERROR 2=WARN 3=INFO    wheel=scroll",
                 state.query,
             ))
             .fg(Color::Cyan);
@@ -160,7 +161,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
             if let Some(idx) = r.current_highlight {
                 ui.text(format!(
-                    "Match {}/{}    (press n / N to navigate)",
+                    "Match {}/{}    (press n / p to navigate)",
                     idx + 1,
                     r.total_highlights
                 ))
@@ -168,6 +169,6 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             } else {
                 ui.text("No matches").dim();
             }
-            ui.text("Ctrl-Q / Esc quits.").dim();
+            ui.text("q / Esc / Ctrl-Q quits.").dim();
         });
 }

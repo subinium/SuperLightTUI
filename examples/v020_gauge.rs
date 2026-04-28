@@ -6,7 +6,7 @@
 //! Run: `cargo run --example v020_gauge`
 //!
 //! Keys:
-//!   Ctrl-Q / Esc — quit
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Builder API (post v0.20.0 consistency pass):
 //!   ui.gauge(0.6).label("60%").width(24)
@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         state.tick = state.tick.wrapping_add(1);
@@ -51,12 +51,20 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .p(sp.xs())
         .gap(sp.xs())
         .col(|ui| {
-            ui.text("Block-style gauge with inline label (color-tiered):")
+            ui.text("Block-style gauge with inline label (color-tiered, animated):")
                 .fg(Color::Cyan);
 
             metric_row(ui, "CPU  ", cpu);
             metric_row(ui, "MEM  ", memory);
             metric_row(ui, "DISK ", disk);
+
+            ui.text("");
+            ui.text("Static tiers — green < 50%, yellow 50–80%, red ≥ 80%:")
+                .fg(Color::Cyan);
+
+            metric_row(ui, "25%  ", 0.25);
+            metric_row(ui, "65%  ", 0.65);
+            metric_row(ui, "90%  ", 0.90);
 
             ui.text("");
             ui.text("Single-line gauge with custom characters:")
@@ -83,7 +91,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     .label("85%");
             });
 
-            ui.text("Ctrl-Q / Esc quits.").dim();
+            ui.text("q / Esc / Ctrl-Q quits.").dim();
         });
 }
 
@@ -93,7 +101,7 @@ fn metric_row(ui: &mut Context, label: &str, value: f64) {
     let _ = ui.row_gap(sp.sm(), |ui| {
         ui.text(label);
         ui.gauge(value)
-            .label(&format!("{:.0}%", value * 100.0))
+            .label(format!("{:.0}%", value * 100.0))
             .width(24);
     });
 }

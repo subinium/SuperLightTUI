@@ -5,11 +5,12 @@
 //! Run: `cargo run --example v020_split_pane`
 //!
 //! Keys:
-//!   Tab / Shift-Tab — focus the split handle
-//!   Left / Right    — adjust ratio when horizontal handle is focused
-//!   Up   / Down     — adjust ratio when vertical handle is focused
-//!   v               — toggle horizontal / vertical orientation
-//!   Ctrl-Q / Esc    — quit
+//!   Tab / Shift-Tab     — focus the split handle
+//!   Left / Right        — adjust ratio when horizontal handle is focused
+//!   Up   / Down         — adjust ratio when vertical handle is focused
+//!   Mouse drag (handle) — adjust ratio by dragging `│` or `─`
+//!   v                   — toggle horizontal / vertical orientation
+//!   q / Esc / Ctrl-Q    — quit
 //!
 //! Layout:
 //!   ┌── horizontal ──────────────────────────┐
@@ -24,7 +25,7 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         if ui.key('v') {
@@ -75,7 +76,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .gap(sp.xs())
         .grow(1)
         .col(|ui| {
-            ui.text("Tab focuses the handle, arrows adjust the ratio. 'v' toggles orientation.")
+            ui.text("Tab focuses the handle; arrows adjust the ratio; mouse-drag the handle. 'v' toggles orientation.")
                 .fg(Color::Cyan);
 
             let r = if state.vertical {
@@ -105,10 +106,10 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             };
 
             ui.text(format!(
-                "ratio = {:.2}    drag_active = {}",
-                r.ratio, r.drag_active
+                "ratio = {:.2}    drag_active = {}    dragging = {}",
+                r.ratio, r.drag_active, state.split.dragging
             ))
             .dim();
-            ui.text("Ctrl-Q / Esc quits.").dim();
+            ui.text("q / Esc / Ctrl-Q quits.").dim();
         });
 }

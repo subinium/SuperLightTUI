@@ -7,10 +7,11 @@
 //! Run: `cargo run --example v020_breadcrumb_response`
 //!
 //! Keys:
-//!   Tab / Shift-Tab — focus a segment
-//!   Enter / Space   — activate the focused segment (drops trailing crumbs)
-//!   Mouse click     — same as Enter
-//!   Ctrl-Q / Esc    — quit
+//!   Tab / Shift-Tab     — focus a segment
+//!   Enter / Space       — activate the focused segment (drops trailing crumbs)
+//!   Mouse click         — same as Enter
+//!   r                   — reset path back to the full chain
+//!   q / Esc / Ctrl-Q    — quit
 //!
 //! Layout:
 //!   ┌── v0.20.0 #213: BreadcrumbResponse ────────┐
@@ -28,8 +29,11 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
+        }
+        if ui.key('r') {
+            state.current = SEGMENTS.len() - 1;
         }
         render(ui, &mut state);
     })
@@ -60,7 +64,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .p(sp.xs())
         .gap(sp.xs())
         .col(|ui| {
-            ui.text("Tab / Shift-Tab to focus a segment, Enter to navigate to it.")
+            ui.text("Tab / Shift-Tab focuses a segment; Enter, Space, or click activates it. 'r' resets the path.")
                 .fg(Color::Cyan);
 
             let visible: Vec<&str> = SEGMENTS.iter().take(state.current + 1).copied().collect();
@@ -78,8 +82,13 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 ui.text("(whole bar hovered)").fg(Color::Yellow);
             }
 
-            ui.text(format!("Current segment: {}", SEGMENTS[state.current]))
-                .dim();
-            ui.text("Ctrl-Q / Esc quits.").dim();
+            ui.text(format!(
+                "Current segment: {}    (depth {} / {})",
+                SEGMENTS[state.current],
+                state.current + 1,
+                SEGMENTS.len(),
+            ))
+            .dim();
+            ui.text("q / Esc / Ctrl-Q quits.").dim();
         });
 }

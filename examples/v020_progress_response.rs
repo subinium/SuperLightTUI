@@ -7,7 +7,10 @@
 //! Run: `cargo run --example v020_progress_response`
 //!
 //! Keys:
-//!   Ctrl-Q / Esc — quit
+//!   Space            — pause / resume the animation
+//!   Left / Right     — nudge ratio by 5% (also pauses if running)
+//!   Hover (mouse)    — highlights the spinner / progress bar
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
 //!   ┌── v0.20.0 #212: Response from progress / spinner ──┐
@@ -22,14 +25,28 @@ use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 /// the bar pingpongs forever without runaway accumulation.
 const RATIO_STEP: f64 = 0.01;
 
+/// Manual nudge applied by Left/Right arrows when the user takes over.
+const MANUAL_STEP: f64 = 0.05;
+
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
-        state.advance();
+        if ui.key(' ') {
+            state.paused = !state.paused;
+        }
+        if ui.key_code(KeyCode::Left) {
+            state.nudge(-MANUAL_STEP);
+        }
+        if ui.key_code(KeyCode::Right) {
+            state.nudge(MANUAL_STEP);
+        }
+        if !state.paused {
+            state.advance();
+        }
         render(ui, &mut state);
     })
 }
@@ -42,6 +59,8 @@ pub struct DemoState {
     pub ratio: f64,
     /// Direction of motion. Flipped at each endpoint.
     pub step: f64,
+    /// `true` when the auto-advance is paused (manually nudged or Space-toggled).
+    pub paused: bool,
 }
 
 impl DemoState {
@@ -51,6 +70,7 @@ impl DemoState {
             spinner: SpinnerState::dots(),
             ratio: 0.0,
             step: RATIO_STEP,
+            paused: false,
         }
     }
 
@@ -64,6 +84,14 @@ impl DemoState {
             self.ratio = 0.0;
             self.step = -self.step;
         }
+    }
+
+    /// Manually shift the ratio by `delta`, clamped to `[0.0, 1.0]`. Pauses
+    /// the auto-advance so subsequent frames don't immediately overwrite the
+    /// user's intent.
+    pub fn nudge(&mut self, delta: f64) {
+        self.ratio = (self.ratio + delta).clamp(0.0, 1.0);
+        self.paused = true;
     }
 }
 
@@ -95,13 +123,47 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             });
 
             let pr = ui.progress(state.ratio);
-            ui.text(format!("ratio = {:.0}%", state.ratio * 100.0))
-                .dim();
+            ui.text(format!(
+                "ratio = {:.0}%    {}",
+                state.ratio * 100.0,
+                if state.paused {
+                    "(paused)"
+                } else {
+                    "(running)"
+                },
+            ))
+            .dim();
             if pr.hovered {
                 ui.text("  Progress hovered — click would trigger a scrubber")
                     .fg(Color::Yellow);
             }
 
-            ui.text("Ctrl-Q / Esc quits.").dim();
+            ui.text("");
+            ui.text("Static variants (different ratios, different widths):")
+                .fg(Color::Cyan);
+
+            let _ = ui.row(|ui| {
+                ui.text("  0%  ");
+                let _ = ui.progress(0.0);
+            });
+            let _ = ui.row(|ui| {
+                ui.text(" 25%  ");
+                let _ = ui.progress(0.25);
+            });
+            let _ = ui.row(|ui| {
+                ui.text(" 50%  ");
+                let _ = ui.progress(0.50);
+            });
+            let _ = ui.row(|ui| {
+                ui.text(" 75%  ");
+                let _ = ui.progress(0.75);
+            });
+            let _ = ui.row(|ui| {
+                ui.text("100%  ");
+                let _ = ui.progress(1.0);
+            });
+
+            ui.text("Space pauses; ←/→ nudges 5%. q / Esc / Ctrl-Q quits.")
+                .dim();
         });
 }
