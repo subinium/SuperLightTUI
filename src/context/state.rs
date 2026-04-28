@@ -212,4 +212,68 @@ impl Response {
     pub fn none() -> Self {
         Self::default()
     }
+
+    /// Attach a tooltip to this widget. Renders only when the widget is
+    /// currently hovered.
+    ///
+    /// Equivalent to calling [`Context::tooltip`] immediately after the
+    /// widget, but composes cleanly with the chained `Response` style:
+    ///
+    /// ```ignore
+    /// if ui.button("Save").on_hover(ui, "Saves the file").clicked {
+    ///     save();
+    /// }
+    /// ```
+    ///
+    /// `text` is wrapped at 38 columns and rendered in an overlay panel
+    /// anchored under (or above, if no room below) the widget's rect.
+    /// Empty strings, zero-area rects, and non-hovered responses are
+    /// silently skipped — no allocation in the cold path.
+    ///
+    /// Unlike [`Context::tooltip`], the binding is not order-sensitive:
+    /// the tooltip is attached to *this* response specifically, so
+    /// chaining further widgets afterward does not strip it.
+    #[must_use = "on_hover returns the Response for further chaining"]
+    pub fn on_hover(self, ctx: &mut Context, text: impl Into<String>) -> Self {
+        if !self.hovered || self.rect.width == 0 || self.rect.height == 0 {
+            return self;
+        }
+        let tooltip_text = text.into();
+        if tooltip_text.is_empty() {
+            return self;
+        }
+        let lines = super::widgets_display::wrap_tooltip_text(&tooltip_text, 38);
+        ctx.pending_tooltips.push(PendingTooltip {
+            anchor_rect: self.rect,
+            lines,
+        });
+        self
+    }
+
+    /// Run a closure to render arbitrary tooltip content when the widget is
+    /// hovered.
+    ///
+    /// The closure receives the same `&mut Context` and runs immediately
+    /// (in-place — not deferred). This means the closure can issue any UI
+    /// commands; positioning is the caller's responsibility (use
+    /// [`Context::overlay`] / [`Context::overlay_at`] inside the closure
+    /// for floating panels).
+    ///
+    /// For simple text tooltips, prefer [`Response::on_hover`] which
+    /// auto-positions the tooltip under the widget.
+    ///
+    /// ```ignore
+    /// ui.button("Help").on_hover_ui(ui, |ui| {
+    ///     let _ = ui.overlay(|ui| {
+    ///         ui.text("Custom tooltip body");
+    ///     });
+    /// });
+    /// ```
+    #[must_use = "on_hover_ui returns the Response for further chaining"]
+    pub fn on_hover_ui(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.hovered && self.rect.width > 0 && self.rect.height > 0 {
+            f(ctx);
+        }
+        self
+    }
 }

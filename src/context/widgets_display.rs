@@ -12,7 +12,7 @@ mod line_wrap_tests;
 #[cfg(test)]
 mod tests;
 
-fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec<String> {
+pub(super) fn wrap_tooltip_text(text: &str, max_width: usize) -> Vec<String> {
     let max_width = max_width.max(1);
     let mut lines = Vec::new();
 

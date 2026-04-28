@@ -1130,6 +1130,26 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Expand to fill remaining space on the main axis. Shorthand for
+    /// [`grow(1)`](Self::grow).
+    ///
+    /// Equivalent to CSS `flex: 1` and ratatui's `Constraint::Fill(1)`.
+    /// This is the most common case in flex layouts and reads more
+    /// naturally than `grow(1)` for new readers — the abstract "grow
+    /// factor" terminology is replaced by a self-documenting verb.
+    ///
+    /// ```ignore
+    /// ui.container().fill().col(|ui| { ... });
+    /// // identical to:
+    /// ui.container().grow(1).col(|ui| { ... });
+    /// ```
+    ///
+    /// For other weights (e.g. a 2:1 split between two siblings), use
+    /// `grow(N)` directly.
+    pub fn fill(self) -> Self {
+        self.grow(1)
+    }
+
     define_breakpoint_methods!(
         base = grow,
         arg = value: u16,
