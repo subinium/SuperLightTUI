@@ -4,15 +4,27 @@ use super::*;
 ///
 /// `Indexed` refers to a slot in `Context::hook_states` (positional, used by
 /// [`Context::use_state`] / [`Context::use_memo`]). `Named` refers to a key in
-/// `Context::named_states` (used by [`Context::use_state_named`]).
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+/// `Context::named_states` (used by [`Context::use_state_named`]). `Keyed`
+/// refers to a runtime-string key in `Context::keyed_states` (used by
+/// [`Context::use_state_keyed`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StateKey {
     Indexed(usize),
     Named(&'static str),
+    Keyed(String),
 }
 
 /// Handle to state created by `use_state()`. Access via `.get(ui)` / `.get_mut(ui)`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+///
+/// # Note on `Copy`
+///
+/// As of v0.20.0, `State<T>` is no longer `Copy`. The internal key may hold an
+/// owned `String` (for [`Context::use_state_keyed`]), which prevents trivial
+/// duplication. Existing call sites that use the handle locally (`let s =
+/// ui.use_state(...); s.get(ui);`) are unaffected — the handle is moved into
+/// closures or borrowed by reference. If you previously relied on implicit
+/// copy semantics, call `.clone()` explicitly.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State<T> {
     key: StateKey,
     _marker: std::marker::PhantomData<T>,
@@ -33,11 +45,18 @@ impl<T: 'static> State<T> {
         }
     }
 
+    pub(crate) fn from_keyed(id: String) -> Self {
+        Self {
+            key: StateKey::Keyed(id),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
     /// Read the current value.
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
-        match self.key {
+        match &self.key {
             StateKey::Indexed(idx) => {
-                ui.hook_states[idx].downcast_ref::<T>().unwrap_or_else(|| {
+                ui.hook_states[*idx].downcast_ref::<T>().unwrap_or_else(|| {
                     panic!(
                         "use_state type mismatch at hook index {} — expected {}",
                         idx,
@@ -62,14 +81,31 @@ impl<T: 'static> State<T> {
                         std::any::type_name::<T>()
                     )
                 }),
+            StateKey::Keyed(id) => ui
+                .keyed_states
+                .get(id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_keyed: no entry for id {:?} — was use_state_keyed called?",
+                        id
+                    )
+                })
+                .downcast_ref::<T>()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_keyed type mismatch for id {:?} — expected {}",
+                        id,
+                        std::any::type_name::<T>()
+                    )
+                }),
         }
     }
 
     /// Mutably access the current value.
     pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
-        match self.key {
+        match &self.key {
             StateKey::Indexed(idx) => {
-                ui.hook_states[idx].downcast_mut::<T>().unwrap_or_else(|| {
+                ui.hook_states[*idx].downcast_mut::<T>().unwrap_or_else(|| {
                     panic!(
                         "use_state type mismatch at hook index {} — expected {}",
                         idx,
@@ -90,6 +126,23 @@ impl<T: 'static> State<T> {
                 .unwrap_or_else(|| {
                     panic!(
                         "use_state_named type mismatch for id {:?} — expected {}",
+                        id,
+                        std::any::type_name::<T>()
+                    )
+                }),
+            StateKey::Keyed(id) => ui
+                .keyed_states
+                .get_mut(id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_keyed: no entry for id {:?} — was use_state_keyed called?",
+                        id
+                    )
+                })
+                .downcast_mut::<T>()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "use_state_keyed type mismatch for id {:?} — expected {}",
                         id,
                         std::any::type_name::<T>()
                     )
@@ -122,14 +175,34 @@ impl<T: 'static> State<T> {
 #[derive(Debug, Clone, Default)]
 #[must_use = "Response contains interaction state — check .clicked, .hovered, or .changed"]
 pub struct Response {
-    /// Whether the widget was clicked this frame.
+    /// Whether the widget was left-clicked this frame.
     pub clicked: bool,
+    /// Whether the widget was right-clicked this frame.
+    ///
+    /// Detected when a `MouseButton::Right` `Down` event lands inside the
+    /// widget's `rect`. Suppressed for non-overlay widgets while a modal is
+    /// active (consistent with the existing modal-suppression behavior of
+    /// `clicked` / `hovered`). Available since v0.20.0.
+    pub right_clicked: bool,
     /// Whether the mouse is hovering over the widget.
     pub hovered: bool,
     /// Whether the widget's value changed this frame.
     pub changed: bool,
     /// Whether the widget currently has keyboard focus.
     pub focused: bool,
+    /// Whether the widget *just* received keyboard focus this frame.
+    ///
+    /// `true` only on the first frame after focus moved to this widget;
+    /// `false` thereafter (until focus moves away and returns). Mutually
+    /// exclusive with [`lost_focus`](Self::lost_focus). Available since
+    /// v0.20.0.
+    pub gained_focus: bool,
+    /// Whether the widget *just* lost keyboard focus this frame.
+    ///
+    /// `true` only on the first frame after focus moved away from this widget;
+    /// `false` on subsequent frames. Mutually exclusive with
+    /// [`gained_focus`](Self::gained_focus). Available since v0.20.0.
+    pub lost_focus: bool,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,
 }

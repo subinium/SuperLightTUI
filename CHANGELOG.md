@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`feat(context)` — `Response::right_clicked` / `gained_focus` / `lost_focus`** (#208) — three new public bool fields on every widget `Response`. `right_clicked` mirrors the existing `clicked` logic for `MouseButton::Right`. `gained_focus` is `true` exactly on the frame focus moves to the widget; `lost_focus` is `true` exactly on the frame focus moves away. Mutually exclusive within a single Response. Hooked into `begin_widget_interaction` so all widgets that use the standard interaction path (button / table / select / radio / checkbox / toggle / tree etc.) populate the signals automatically.
+- **`feat(hooks)` — `Context::use_state_keyed` / `use_state_keyed_default`** (#215) — runtime-string-keyed persistent state. Accepts `impl Into<String>`, so `format!("item-{i}")` works in dynamic loops where `use_state_named` (which requires `&'static str`) does not. Stored in a parallel `keyed_states: HashMap<String, Box<dyn Any>>` on `Context` / `FrameState`. Mirrors the namespace-collision + per-frame-allocation caveats of `use_state_named`. **See breaking section below for the `State<T>` Copy removal.**
+- **`feat(hooks)` — `Context::use_effect`** (#216) — dependency-tracked side effects. `ui.use_effect(|deps| do_thing(deps), &deps)` runs the closure on the first frame and on every frame thereafter where `*deps != stored_deps`. Positional hook (same rules as `use_state` / `use_memo`). Fire-and-forget — no cleanup callback. Doc warns that `use_effect` inside `error_boundary` may re-fire on rollback.
+- **`feat(focus)` — `register_focusable_named` + `focus_by_name` + `focused_name`** (#217) — Ink-style named focus manager. `register_focusable_named(name)` is a drop-in replacement for `register_focusable()` that records `name → focus_index`. `focus_by_name(name)` requests focus on the named widget; resolution happens against the previous frame's map (deferred-command pattern). `focused_name()` returns the name of the currently focused widget, if any. Compatible with the existing positional Tab/Shift+Tab cycling.
+- **`feat(context)` — `Context::key_presses_when` + `Context::consume_event`** (#218) — public focus-gated key-press iterator and per-event consume helper. `key_presses_when(active)` returns an empty iterator when `active=false` and the same items as the internal `available_key_presses` when `active=true`. `consume_event(idx)` is the public counterpart of the crate-internal `consume_indices`, enabling user-land `Widget` impls to mark events handled. Out-of-range indices silently no-op.
+
+### Breaking
+
+- **`State<T>` is no longer `Copy`** (#215) — required to support the `Keyed(String)` variant of the internal `StateKey` enum. `Clone` is still derived (cheap for `Indexed` / `Named`, allocates one `String` for `Keyed`). **Migration**: if you previously relied on implicit copy semantics — for example `let s = ui.use_state(...); use_a(s); use_b(s);` — call `s.clone()` explicitly: `use_a(s.clone()); use_b(s);`. An audit of every `State<T>` use site in `src/`, `tests/`, `examples/` showed **zero** sites depended on `Copy`; existing call sites borrow or move the handle and continue to compile unchanged.
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting

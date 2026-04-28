@@ -10,19 +10,40 @@ impl Context {
     ) -> Self {
         let hook_states = &mut state.hook_states;
         let named_states = std::mem::take(&mut state.named_states);
+        // Issue #215: hand off the keyed-state map for this frame. Same
+        // lifetime as `named_states`: moved out at frame start, moved back
+        // at frame end (see `run_frame_kernel`).
+        let keyed_states = std::mem::take(&mut state.keyed_states);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
+        // Issue #217: name→index map from the previous frame, used to resolve
+        // `focus_by_name(name)` at frame start. We move it out so the
+        // `register_focusable_named` calls in this frame can rebuild a fresh
+        // `focus_name_map`. The fresh map is swapped back into
+        // `focus_name_map_prev` at frame end.
+        let focus_name_map_prev = std::mem::take(&mut focus.focus_name_map_prev);
+        let pending_focus_name = focus.pending_focus_name.take();
+        let prev_focus_index = focus.prev_focus_index;
         let layout_feedback = &mut state.layout_feedback;
         let diagnostics = &mut state.diagnostics;
         let consumed = vec![false; events.len()];
 
         let mut mouse_pos = layout_feedback.last_mouse_pos;
         let mut click_pos = None;
+        let mut right_click_pos = None;
         for event in &events {
             if let Event::Mouse(mouse) = event {
                 mouse_pos = Some((mouse.x, mouse.y));
-                if matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                    click_pos = Some((mouse.x, mouse.y));
+                match mouse.kind {
+                    MouseKind::Down(MouseButton::Left) => {
+                        click_pos = Some((mouse.x, mouse.y));
+                    }
+                    MouseKind::Down(MouseButton::Right) => {
+                        // Issue #208: capture last right-click position so
+                        // `response_for` can hit-test against per-widget rects.
+                        right_click_pos = Some((mouse.x, mouse.y));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -40,6 +61,20 @@ impl Context {
             }
             if let Some((fid, _)) = best {
                 focus_index = fid;
+            }
+        }
+
+        // Issue #217: resolve a pending `focus_by_name(...)` request against
+        // the previous frame's `name → index` map. If the name wasn't
+        // registered last frame, we keep the request pending for the next
+        // frame so a widget that registers later can still receive focus.
+        // If the request resolves, we consume it.
+        let mut still_pending: Option<String> = None;
+        if let Some(name) = pending_focus_name {
+            if let Some(&resolved) = focus_name_map_prev.get(&name) {
+                focus_index = resolved;
+            } else {
+                still_pending = Some(name);
             }
         }
 
@@ -61,6 +96,7 @@ impl Context {
             focus_index,
             hook_states: std::mem::take(hook_states),
             named_states,
+            keyed_states,
             context_stack: Vec::new(),
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,
@@ -73,6 +109,7 @@ impl Context {
             _prev_focus_rects: std::mem::take(&mut layout_feedback.prev_focus_rects),
             mouse_pos,
             click_pos,
+            right_click_pos,
             prev_modal_active: focus.prev_modal_active,
             clipboard_text: None,
             debug: diagnostics.debug_mode,
@@ -83,6 +120,7 @@ impl Context {
             rollback: ContextRollbackState {
                 last_text_idx: None,
                 focus_count: 0,
+                last_focusable_id: None,
                 interaction_count: 0,
                 scroll_count: 0,
                 group_count: 0,
@@ -101,6 +139,10 @@ impl Context {
             scroll_lines_per_event: 1,
             screen_hook_map,
             widget_theme: WidgetTheme::new(),
+            prev_focus_index,
+            focus_name_map_prev,
+            focus_name_map: std::collections::HashMap::new(),
+            pending_focus_name: still_pending,
         };
         ctx.build_hovered_groups();
         ctx
@@ -349,6 +391,21 @@ impl Context {
         let interaction_id = self.next_interaction_id();
         let mut response = self.response_for(interaction_id);
         response.focused = focused;
+        // Issue #208: compute focus transitions from the most recent
+        // `register_focusable` call. If that focusable lined up with the
+        // previously-focused widget index from the prior frame, focus
+        // changes since map directly to gained/lost.
+        if let Some(this_id) = self.rollback.last_focusable_id {
+            let was_focused = self
+                .prev_focus_index
+                .map(|prev| prev == this_id)
+                .unwrap_or(false);
+            response.gained_focus = focused && !was_focused;
+            response.lost_focus = !focused && was_focused;
+            // Consume the marker so a single `register_focusable` powers
+            // exactly one `begin_widget_interaction` call.
+            self.rollback.last_focusable_id = None;
+        }
         (interaction_id, response)
     }
 
@@ -475,10 +532,15 @@ impl Context {
         if (self.rollback.modal_active || self.prev_modal_active)
             && self.rollback.overlay_depth == 0
         {
+            self.rollback.last_focusable_id = None;
             return false;
         }
         let id = self.rollback.focus_count;
         self.rollback.focus_count += 1;
+        // Issue #208: remember this widget's focus id so the immediately
+        // following `begin_widget_interaction` call can compare against
+        // `prev_focus_index` and emit gained/lost focus signals.
+        self.rollback.last_focusable_id = Some(id);
         self.commands.push(Command::FocusMarker(id));
         if self.prev_modal_active
             && self.prev_modal_focus_count > 0
@@ -754,5 +816,268 @@ impl Context {
         // Restore the queue so subsequent frames can re-render until each
         // entry's TTL expires above.
         self.rollback.notification_queue = queue;
+    }
+
+    // ----------------------------------------------------------------
+    // v0.20.0 hooks: keyed state, effects, named focus, key gating
+    // ----------------------------------------------------------------
+
+    /// Component-local persistent state keyed by a runtime string.
+    ///
+    /// Unlike [`use_state_named`](Self::use_state_named), `id` can be a
+    /// runtime value such as `format!("row-{i}")`. The key is converted to
+    /// `String` once per call, incurring **one allocation per unique key
+    /// per frame**.
+    ///
+    /// # When to use
+    /// - Per-item state in a dynamic list where positional [`use_state`]
+    ///   would break if items are reordered or filtered.
+    /// - Reusable component functions called with a runtime discriminator.
+    ///
+    /// # Namespace
+    /// Keys live in a single global namespace per `Context`. Prefix them
+    /// to avoid collisions: `format!("my_component::item-{i}")`.
+    ///
+    /// # Stale entries
+    /// Removed items leak their state until the `Context` is dropped (or
+    /// the program exits). For long-running sessions with churn, manage
+    /// state externally via a single `Vec<T>` in [`use_state`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// for (i, item) in items.iter().enumerate() {
+    ///     let row_state = ui.use_state_keyed(format!("row-{i}"), || ItemState::default());
+    ///     // ...
+    /// }
+    /// ```
+    ///
+    /// [`use_state`]: Self::use_state
+    pub fn use_state_keyed<T: 'static>(
+        &mut self,
+        id: impl Into<String>,
+        init: impl FnOnce() -> T,
+    ) -> State<T> {
+        let key: String = id.into();
+        // `entry().or_insert_with` avoids the double-lookup on the hot
+        // (already-populated) path and only invokes `init` on first entry.
+        self.keyed_states
+            .entry(key.clone())
+            .or_insert_with(|| Box::new(init()));
+        State::from_keyed(key)
+    }
+
+    /// Like [`use_state_keyed`](Self::use_state_keyed), but uses
+    /// [`Default::default()`] to initialize the value on first call.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let counter = ui.use_state_keyed_default::<i32>(format!("c-{i}"));
+    /// ```
+    pub fn use_state_keyed_default<T: Default + 'static>(
+        &mut self,
+        id: impl Into<String>,
+    ) -> State<T> {
+        self.use_state_keyed(id, T::default)
+    }
+
+    /// Run a side-effecting closure when `deps` changes.
+    ///
+    /// On the **first frame** the hook slot is encountered, `f` is called
+    /// unconditionally. On **subsequent frames**, `f` is only called when
+    /// `*deps != stored_deps`. The hook is **positional** (same ordering
+    /// rules as [`use_state`](Self::use_state)).
+    ///
+    /// # Fire-and-forget semantics
+    ///
+    /// There is no cleanup callback. If setup resources need teardown,
+    /// store a handle in [`use_state`](Self::use_state) and drop it on
+    /// a later frame.
+    ///
+    /// # Caveat: `error_boundary` re-fire
+    ///
+    /// Effects placed inside an [`error_boundary`](Self::error_boundary)
+    /// scope can re-fire when the boundary catches a panic and rolls back
+    /// the hook slots. For non-idempotent side effects (network requests,
+    /// payments) put the effect outside the boundary or guard with an
+    /// idempotency key.
+    ///
+    /// # Common patterns
+    ///
+    /// ```ignore
+    /// // Run once on first frame:
+    /// ui.use_effect(|_| initialize_logger(), &());
+    ///
+    /// // Run when `selected_tab` changes:
+    /// ui.use_effect(|tab| load_tab_data(*tab), &selected_tab);
+    /// ```
+    pub fn use_effect<D: PartialEq + Clone + 'static>(&mut self, f: impl FnOnce(&D), deps: &D) {
+        let idx = self.rollback.hook_cursor;
+        self.rollback.hook_cursor += 1;
+
+        if idx >= self.hook_states.len() {
+            // First encounter: run the effect, then store the deps so we
+            // can detect future changes.
+            f(deps);
+            self.hook_states.push(Box::new(deps.clone()));
+            return;
+        }
+
+        match self.hook_states[idx].downcast_mut::<D>() {
+            Some(stored) => {
+                if *stored != *deps {
+                    f(deps);
+                    *stored = deps.clone();
+                }
+            }
+            None => panic!(
+                "Hook type mismatch at index {idx}: expected {}. \
+                 Hooks must be called in the same order every frame.",
+                std::any::type_name::<D>()
+            ),
+        }
+    }
+
+    /// Register a widget as focusable with a stable string name.
+    ///
+    /// Returns `true` if this widget currently has focus. Identical to
+    /// [`register_focusable`](Self::register_focusable) except it also
+    /// records the `name → current_index` mapping so other code can later
+    /// call [`focus_by_name`](Self::focus_by_name).
+    ///
+    /// The name must be unique per frame. Duplicate names in the same
+    /// frame are silently ignored (first registration wins).
+    ///
+    /// Names must be re-registered each frame (the map is rebuilt every
+    /// frame), the same model as
+    /// [`use_state_named`](Self::use_state_named).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let focused = ui.register_focusable_named("search");
+    /// // ... draw search box ...
+    /// ```
+    pub fn register_focusable_named(&mut self, name: &str) -> bool {
+        let focused = self.register_focusable();
+        // Use the focus id captured by `register_focusable` (or recompute
+        // the most-recently-assigned slot when the modal suppression path
+        // skipped recording). This keeps the map aligned with the same
+        // index space `Tab` cycling uses.
+        if let Some(this_id) = self.rollback.last_focusable_id {
+            // First-write-wins so duplicate names in the same frame are
+            // silent no-ops (rather than aliasing into the second slot).
+            self.focus_name_map
+                .entry(name.to_string())
+                .or_insert(this_id);
+        }
+        focused
+    }
+
+    /// Request focus on the named widget.
+    ///
+    /// If the named widget was registered last frame the focus change
+    /// takes effect at the **start of the next frame** (one-frame delay
+    /// is the deferred-command pattern used throughout SLT). If the name
+    /// has never been registered, the request stays pending: the next
+    /// frame to register that name receives focus.
+    ///
+    /// Returns `true` if the name resolved against the most recent frame's
+    /// registrations; `false` if the request was queued for later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if ui.button("Find").clicked {
+    ///     ui.focus_by_name("search");
+    /// }
+    /// ```
+    pub fn focus_by_name(&mut self, name: &str) -> bool {
+        let resolved = self.focus_name_map_prev.contains_key(name);
+        // Always store the request — even if it resolved this frame, the
+        // next-frame plumbing (`Context::new`) is what actually applies
+        // the index. We use take/replace so the caller cannot stack two
+        // pending names; the most recent wins.
+        self.pending_focus_name = Some(name.to_string());
+        resolved
+    }
+
+    /// Return the name of the currently focused widget, if it was
+    /// registered with
+    /// [`register_focusable_named`](Self::register_focusable_named) this
+    /// frame.
+    ///
+    /// Returns `None` if the focused widget used the unnamed
+    /// [`register_focusable`](Self::register_focusable) API or if no widget
+    /// has focus.
+    pub fn focused_name(&self) -> Option<&str> {
+        // Search this frame's map for the entry whose index equals
+        // `focus_index`. The map is small (one entry per named focusable),
+        // so a linear scan is fine — typical apps register <50 names.
+        self.focus_name_map
+            .iter()
+            .find_map(|(name, &idx)| (idx == self.focus_index).then_some(name.as_str()))
+    }
+
+    /// Iterate unconsumed key-press events, gated on `active`.
+    ///
+    /// When `active` is `false`, returns an empty iterator. When `active`
+    /// is `true`, behaves identically to the internal
+    /// `available_key_presses`. The returned indices are valid for
+    /// [`consume_event`](Self::consume_event).
+    ///
+    /// This is the **preferred pattern** for focus-gated keyboard handling
+    /// in custom widgets. Because the iterator borrows `self.events`
+    /// immutably, collect the indices first and consume them after the
+    /// loop:
+    ///
+    /// ```ignore
+    /// let focused = ui.register_focusable();
+    /// let mut hits: Vec<usize> = Vec::new();
+    /// for (i, key) in ui.key_presses_when(focused) {
+    ///     if key.code == slt::KeyCode::Enter {
+    ///         hits.push(i);
+    ///         // ... handle Enter ...
+    ///     }
+    /// }
+    /// for i in hits { ui.consume_event(i); }
+    /// ```
+    pub fn key_presses_when(
+        &self,
+        active: bool,
+    ) -> impl Iterator<Item = (usize, &crate::event::KeyEvent)> + '_ {
+        // The `!active` short-circuit at the head of the predicate yields
+        // an empty iterator at zero allocation cost when the widget isn't
+        // focused. Indices are still drawn from `self.events` so callers
+        // can pass them straight to `consume_event`.
+        self.events
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, event)| {
+                if !active {
+                    return None;
+                }
+                if self.consumed.get(i).copied().unwrap_or(true) {
+                    return None;
+                }
+                match event {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => Some((i, key)),
+                    _ => None,
+                }
+            })
+    }
+
+    /// Mark the event at `index` as consumed.
+    ///
+    /// Public counterpart to the crate-internal `consume_indices`. Use
+    /// this in custom widgets after handling an event yielded by
+    /// [`key_presses_when`](Self::key_presses_when) so subsequent widgets
+    /// don't react to the same key. Out-of-range indices are silently
+    /// ignored (matching the iterator-pair semantics).
+    pub fn consume_event(&mut self, index: usize) {
+        if let Some(slot) = self.consumed.get_mut(index) {
+            *slot = true;
+        }
     }
 }

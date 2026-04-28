@@ -26,6 +26,11 @@ pub struct Context {
     pub(crate) focus_index: usize,
     pub(crate) hook_states: Vec<Box<dyn std::any::Any>>,
     pub(crate) named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
+    /// Issue #215: persistent state keyed by a runtime `String`. Mirrors
+    /// `named_states` but accepts dynamic keys (e.g. `format!("item-{i}")`).
+    /// The map is moved into `Context::new` from `FrameState` and moved back
+    /// at frame end, identical to the `named_states` lifetime.
+    pub(crate) keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
     pub(crate) context_stack: Vec<Box<dyn std::any::Any>>,
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,
@@ -38,6 +43,10 @@ pub struct Context {
     pub(crate) _prev_focus_rects: Vec<(usize, Rect)>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
     pub(crate) click_pos: Option<(u32, u32)>,
+    /// Issue #208: position of the most recent `MouseButton::Right` `Down`
+    /// event in this frame. Mirrors `click_pos` for the right-button. Used
+    /// by `response_for` to populate `Response::right_clicked`.
+    pub(crate) right_click_pos: Option<(u32, u32)>,
     pub(crate) prev_modal_active: bool,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) debug: bool,
@@ -54,6 +63,22 @@ pub struct Context {
     pub(crate) scroll_lines_per_event: u32,
     pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub(crate) widget_theme: WidgetTheme,
+    /// Issue #208: which focus index was current at the END of the previous
+    /// frame. `None` on the very first frame. Used to compute
+    /// `Response::gained_focus` / `Response::lost_focus` per widget.
+    pub(crate) prev_focus_index: Option<usize>,
+    /// Issue #217: name → focus-index map built in the previous frame, used
+    /// to resolve `focus_by_name(...)` requests at the start of this frame.
+    /// Empty on the first frame.
+    pub(crate) focus_name_map_prev: std::collections::HashMap<String, usize>,
+    /// Issue #217: name → focus-index map being built this frame as widgets
+    /// call `register_focusable_named(...)`. Swapped into `focus_name_map_prev`
+    /// at frame end.
+    pub(crate) focus_name_map: std::collections::HashMap<String, usize>,
+    /// Issue #217: name requested by `focus_by_name(...)`; consumed at the
+    /// start of the next frame. Outlives a single frame so the resolution
+    /// happens against `focus_name_map_prev`.
+    pub(crate) pending_focus_name: Option<String>,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -68,6 +93,14 @@ pub(crate) struct PendingTooltip {
 pub(crate) struct ContextRollbackState {
     pub(crate) last_text_idx: Option<usize>,
     pub(crate) focus_count: usize,
+    /// Issue #208: id assigned by the most recent `register_focusable()` /
+    /// `register_focusable_named(...)` call. `begin_widget_interaction`
+    /// reads this to compute `Response::gained_focus` / `lost_focus`
+    /// without changing the public `register_focusable` signature. Reset
+    /// to `None` at frame start; left alone after read so widgets that
+    /// don't pair `register_focusable` with `begin_widget_interaction`
+    /// still get correct behavior.
+    pub(crate) last_focusable_id: Option<usize>,
     pub(crate) interaction_count: usize,
     pub(crate) scroll_count: usize,
     pub(crate) group_count: usize,
