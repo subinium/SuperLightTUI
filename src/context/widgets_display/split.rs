@@ -9,6 +9,12 @@ use super::*;
 /// Keyboard step applied to `state.ratio` per arrow-key press when the handle is focused.
 const KEY_STEP: f32 = 0.05;
 
+/// Scale factor applied to the `[0.0, 1.0]` ratio to produce a `u16` flexbox
+/// `grow` weight. 1000 gives ~0.1% precision in pane sizes — finer than any
+/// terminal cell can render at typical widths, while staying well below
+/// `u16::MAX` so the two-pane sum can never overflow.
+const RATIO_GROW_SCALE: f32 = 1000.0;
+
 /// Direction of the split. Internal helper — public API is the `split_pane`
 /// (horizontal) / `vsplit_pane` (vertical) entry points.
 #[derive(Debug, Clone, Copy)]
@@ -99,8 +105,8 @@ impl Context {
 
         let theme = self.theme;
         let ratio = state.ratio.clamp(state.min_ratio, 1.0 - state.min_ratio);
-        let left_grow = ((ratio * 1000.0).round() as u16).max(1);
-        let right_grow = (((1.0 - ratio) * 1000.0).round() as u16).max(1);
+        let left_grow = ((ratio * RATIO_GROW_SCALE).round() as u16).max(1);
+        let right_grow = (((1.0 - ratio) * RATIO_GROW_SCALE).round() as u16).max(1);
 
         let drag_active = state.dragging;
 

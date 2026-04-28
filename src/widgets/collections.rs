@@ -782,10 +782,16 @@ pub struct SplitPaneState {
     pub min_ratio: f32,
 }
 
+/// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
+/// Override per-instance via [`SplitPaneState::with_min_ratio`].
+pub const DEFAULT_SPLIT_MIN_RATIO: f32 = 0.10;
+
 impl SplitPaneState {
-    /// Create split state with the given initial ratio (clamped to `[0.05, 0.95]`).
+    /// Create split state with the given initial ratio, clamped to
+    /// `[DEFAULT_SPLIT_MIN_RATIO, 1.0 - DEFAULT_SPLIT_MIN_RATIO]` (default
+    /// `[0.10, 0.90]`).
     pub fn new(ratio: f32) -> Self {
-        let min_ratio = 0.10;
+        let min_ratio = DEFAULT_SPLIT_MIN_RATIO;
         let clamped = ratio.clamp(min_ratio, 1.0 - min_ratio);
         Self {
             ratio: clamped,

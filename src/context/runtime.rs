@@ -1294,7 +1294,7 @@ impl Context {
                 return vec;
             }
         }
-        EMPTY_KEYMAPS
+        &[]
     }
 
     /// Render an automatic keymap-help overlay listing every widget keymap
@@ -1347,20 +1347,8 @@ impl Context {
     }
 }
 
-// Sentinel keys mirror the constants in `lib.rs`. They are duplicated here
-// (rather than imported) to keep this module self-contained — the values
-// match `STATIC_LOG_NAMED_STATE_KEY` and `KEYMAP_REGISTRY_NAMED_STATE_KEY`.
-const STATIC_LOG_KEY: &str = "__slt_static_log_pending";
-const KEYMAP_REGISTRY_KEY: &str = "__slt_keymap_registry";
-const EMPTY_KEYMAPS: &[crate::keymap::PublishedKeymap] = &[];
-
-#[cfg(all(test, feature = "crossterm"))]
-mod sentinel_key_tests {
-    use super::*;
-
-    #[test]
-    fn sentinel_keys_match_lib_constants() {
-        assert_eq!(STATIC_LOG_KEY, crate::STATIC_LOG_NAMED_STATE_KEY);
-        assert_eq!(KEYMAP_REGISTRY_KEY, crate::KEYMAP_REGISTRY_NAMED_STATE_KEY);
-    }
-}
+// Sentinel keys reused from `lib.rs` so the two reads/writes can never drift.
+use crate::{
+    KEYMAP_REGISTRY_NAMED_STATE_KEY as KEYMAP_REGISTRY_KEY,
+    STATIC_LOG_NAMED_STATE_KEY as STATIC_LOG_KEY,
+};

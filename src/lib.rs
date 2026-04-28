@@ -1148,13 +1148,11 @@ fn write_static_lines(lines: &[String]) -> io::Result<()> {
 }
 
 /// Reserved sentinel key used by [`Context::static_log`] (issue #233).
-/// MUST stay in sync with `STATIC_LOG_KEY` in `context::runtime`. Only
-/// referenced from the crossterm-gated `drain_static_log` helper.
-#[cfg(feature = "crossterm")]
+/// Re-exported into `context::runtime` so reads/writes never drift.
 pub(crate) const STATIC_LOG_NAMED_STATE_KEY: &str = "__slt_static_log_pending";
 
 /// Reserved sentinel key used by [`Context::publish_keymap`] (issue #236).
-/// MUST stay in sync with `KEYMAP_REGISTRY_KEY` in `context::runtime`.
+/// Re-exported into `context::runtime` so reads/writes never drift.
 pub(crate) const KEYMAP_REGISTRY_NAMED_STATE_KEY: &str = "__slt_keymap_registry";
 
 /// Clear the per-frame keymap registry stored in [`FrameState::named_states`]
@@ -1369,6 +1367,18 @@ pub(crate) fn run_frame_kernel(
         state.focus.prev_focus_index = Some(ctx.focus_index);
         state.focus.focus_name_map_prev = ctx.focus_name_map;
         state.focus.pending_focus_name = ctx.pending_focus_name;
+        // Issue #204: reclaim the 6 alloc-reuse buffers on the quit path
+        // too. Real TUI exits ignore this, but TestBackend reuses the same
+        // FrameState across `render()` calls — without the reclaim the next
+        // frame's `Context::new` `mem::take`s an empty Vec and silently
+        // reverts to v0.19 per-frame allocation.
+        ctx.deferred_draws.clear();
+        state.context_stack_buf = std::mem::take(&mut ctx.context_stack);
+        state.deferred_draws_buf = std::mem::take(&mut ctx.deferred_draws);
+        state.group_stack_buf = std::mem::take(&mut ctx.rollback.group_stack);
+        state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
+        state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
+        state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
         #[cfg(feature = "crossterm")]
         let clipboard_text = ctx.clipboard_text.take();
         #[cfg(feature = "crossterm")]
