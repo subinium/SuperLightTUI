@@ -794,6 +794,7 @@ impl Context {
             constraints: Constraints::default(),
             title: None,
             grow: 0,
+            shrink_flag: false,
             scroll_offset: None,
             theme_override: None,
         }

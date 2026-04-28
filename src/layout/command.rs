@@ -105,6 +105,14 @@ pub(crate) enum Command {
     },
     FocusMarker(usize),
     InteractionMarker(usize),
+    /// Marks the next container / scrollable as opt-in flex-shrink.
+    ///
+    /// Pushed by [`crate::context::ContainerBuilder::shrink`] just before the
+    /// matching `BeginContainer` / `BeginScrollable`. Consumed by
+    /// `build_children` like [`Command::FocusMarker`] (buffered into
+    /// `pending_shrink`, applied to the next built [`super::tree::LayoutNode`]).
+    /// Closes #161.
+    ShrinkMarker,
     RawDraw {
         draw_id: usize,
         constraints: Constraints,

@@ -81,6 +81,12 @@ pub struct ContainerBuilder<'a> {
     pub(crate) constraints: Constraints,
     pub(crate) title: Option<(String, Style)>,
     pub(crate) grow: u16,
+    /// Opt-in flex-shrink flag. Set via [`ContainerBuilder::shrink`].
+    ///
+    /// When `true`, this container participates in proportional shrinking
+    /// if its parent row/column overflows. Default `false` keeps the
+    /// historic overflow-by-design behavior. Closes #161.
+    pub(crate) shrink_flag: bool,
     pub(crate) scroll_offset: Option<u32>,
     pub(crate) theme_override: Option<Theme>,
 }
@@ -1188,6 +1194,52 @@ impl<'a> ContainerBuilder<'a> {
         self.grow(1)
     }
 
+    /// Opt this container into proportional flex-shrink.
+    ///
+    /// Marks this container as a shrink participant. When the parent
+    /// row / column overflows (its children's combined width or height
+    /// exceeds available space), shrink-flagged children scale their
+    /// fixed sizes by `available / fixed_total` (CSS `flex-shrink`-style).
+    /// Children without `.shrink()` keep their historic
+    /// overflow-by-design size and clip naturally.
+    ///
+    /// Default for every container is `false` — opt in per child.
+    /// Equivalent to CSS `flex-shrink: 1` (vs the SLT default of `0`).
+    /// Closes #161.
+    ///
+    /// # Example
+    ///
+    /// Two siblings with combined fixed width `60` placed inside a
+    /// `40`-cell row. Without `.shrink()`, the row overflows; with
+    /// `.shrink()` on both, each scales to `40 * 30/60 = 20`:
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Without shrink — overflows the parent.
+    /// ui.row(|ui| {
+    ///     ui.container().w(30).col(|ui| { ui.text("left"); });
+    ///     ui.container().w(30).col(|ui| { ui.text("right"); });
+    /// });
+    ///
+    /// // With shrink on both — proportional fit, no clipping.
+    /// ui.row(|ui| {
+    ///     ui.container().w(30).shrink().col(|ui| { ui.text("left"); });
+    ///     ui.container().w(30).shrink().col(|ui| { ui.text("right"); });
+    /// });
+    /// # });
+    /// ```
+    ///
+    /// # Layout
+    ///
+    /// Only fixed-width children with `grow == 0` participate. Grow
+    /// children already absorb leftover space and ignore the shrink
+    /// flag. Mixing shrink and non-shrink siblings is supported — only
+    /// the flagged ones contribute to the shrink budget.
+    pub fn shrink(mut self) -> Self {
+        self.shrink_flag = true;
+        self
+    }
+
     define_breakpoint_methods!(
         base = grow,
         arg = value: u16,
@@ -1575,6 +1627,16 @@ impl<'a> ContainerBuilder<'a> {
         };
         let group_name = self.group_name.take();
         let is_group_container = group_name.is_some();
+
+        // Opt-in flex-shrink (#161). Push a marker the layout pass picks up
+        // and applies to the next `BeginContainer` / `BeginScrollable`,
+        // mirroring the existing `FocusMarker` / `InteractionMarker` pattern.
+        // This avoids touching every `BeginContainerArgs` construction site
+        // across the widget modules — only `ContainerBuilder.shrink()`
+        // emits the marker, and `LayoutNode::shrink` defaults to `false`.
+        if self.shrink_flag {
+            self.ctx.commands.push(Command::ShrinkMarker);
+        }
 
         if let Some(scroll_offset) = self.scroll_offset {
             self.ctx

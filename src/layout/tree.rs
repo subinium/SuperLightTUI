@@ -56,6 +56,14 @@ pub(crate) struct LayoutNode {
     pub(crate) text_data: Option<Box<TextNodeData>>,
     pub(crate) style: Style,
     pub(crate) grow: u16,
+    /// Opt-in flex-shrink flag. Default `false`.
+    ///
+    /// Set by `build_children` when a [`Command::ShrinkMarker`] precedes the
+    /// node's `Begin*` command. Read by [`super::flexbox::layout_row`] /
+    /// `layout_column` to scale this child's contribution proportionally
+    /// when the parent overflows. Children without the flag keep their
+    /// historic overflow-by-design width / height. Closes #161.
+    pub(crate) shrink: bool,
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
@@ -147,6 +155,7 @@ impl LayoutNode {
             })),
             style,
             grow,
+            shrink: false,
             align,
             align_self: None,
             justify: Justify::Start,
@@ -194,6 +203,7 @@ impl LayoutNode {
             })),
             style: Style::new(),
             grow: 0,
+            shrink: false,
             align,
             align_self: None,
             justify: Justify::Start,
@@ -228,6 +238,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow: config.grow,
+            shrink: false,
             align: config.align,
             align_self: config.align_self,
             justify: config.justify,
@@ -277,6 +288,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow,
+            shrink: false,
             align: Align::Start,
             align_self: None,
             justify: Justify::Start,
@@ -314,6 +326,7 @@ impl LayoutNode {
             text_data: None,
             style: Style::new(),
             grow,
+            shrink: false,
             align: Align::Start,
             align_self: None,
             justify: Justify::Start,
@@ -948,10 +961,14 @@ fn build_children(
     }
     let mut pending_focus_id: Option<usize> = None;
     let mut pending_interaction_id: Option<usize> = None;
+    // ShrinkMarker is buffered into `pending_shrink` and consumed by the next
+    // container / scrollable node. Closes #161.
+    let mut pending_shrink: bool = false;
     while let Some(command) = commands.next() {
         match command {
             Command::FocusMarker(id) => pending_focus_id = Some(id),
             Command::InteractionMarker(id) => pending_interaction_id = Some(id),
+            Command::ShrinkMarker => pending_shrink = true,
             Command::Text {
                 content,
                 cursor_offset,
@@ -1048,6 +1065,10 @@ fn build_children(
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
+                if pending_shrink {
+                    node.shrink = true;
+                    pending_shrink = false;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
@@ -1092,6 +1113,10 @@ fn build_children(
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
+                if pending_shrink {
+                    node.shrink = true;
+                    pending_shrink = false;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }

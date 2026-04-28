@@ -1310,3 +1310,129 @@ fn build_tree_drains_in_place_preserving_capacity() {
     let _tree2 = build_tree(&mut commands);
     assert_eq!(commands.len(), 0, "second drain must also leave len = 0");
 }
+
+// =====================================================================
+// #161 — opt-in proportional flex-shrink
+// =====================================================================
+//
+// Three regression tests cover the spec checklist from #161:
+//
+//   (a) no shrink   — output identical to pre-#161 (overflow-by-design).
+//   (b) all shrink  — every fixed child scales by `available / fixed_total`.
+//   (c) mixed       — only flagged children scale; the rest keep their size.
+
+/// Helper: push a Column container holding a single 20-char text.
+fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
+    if shrink {
+        commands.push(Command::ShrinkMarker);
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Column,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    commands.push(Command::Text {
+        content: "x".repeat(20),
+        cursor_offset: None,
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap: false,
+        truncate: false,
+        margin: Default::default(),
+        constraints: Default::default(),
+    });
+    commands.push(Command::EndContainer);
+}
+
+fn open_row(commands: &mut Vec<Command>) {
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Row,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+}
+
+#[test]
+fn flex_shrink_default_off_preserves_overflow() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, false);
+    push_textcol_20(&mut commands, false);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(!row.children[0].shrink);
+    assert!(!row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
+#[test]
+fn flex_shrink_all_children_proportional_distribution() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, true);
+    push_textcol_20(&mut commands, true);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(row.children[0].shrink);
+    assert!(row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 15);
+    assert_eq!(row.children[1].size.0, 15);
+}
+
+#[test]
+fn flex_shrink_mixed_only_flagged_scale() {
+    let mut commands: Vec<Command> = Vec::new();
+    open_row(&mut commands);
+    push_textcol_20(&mut commands, true);
+    push_textcol_20(&mut commands, false);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    assert!(row.children[0].shrink);
+    assert!(!row.children[1].shrink);
+    assert_eq!(row.children[0].size.0, 10);
+    assert_eq!(row.children[1].size.0, 20);
+}

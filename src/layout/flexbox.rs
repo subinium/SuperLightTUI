@@ -389,6 +389,32 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         }
     }
 
+    // Opt-in proportional flex-shrink (#161). When the row's fixed children
+    // overflow the available width, scale shrink-flagged children by
+    // `available / fixed_width` so the row no longer overflows. Children
+    // without `.shrink()` keep the historic overflow-by-design behavior.
+    //
+    // Only `grow == 0` children participate (grow children consume
+    // leftover, not fixed). The scale factor follows the spec in #161:
+    // `min(available, shrink_total) / fixed_width`.
+    let shrink_scale: Option<f64> = if fixed_width > available && available > 0 {
+        let shrink_total: u32 = node
+            .children
+            .iter()
+            .zip(min_widths.iter())
+            .filter(|(c, _)| c.shrink && c.grow == 0)
+            .map(|(_, mw)| mw)
+            .sum();
+        if shrink_total > 0 {
+            let numerator = (available as f64).min(shrink_total as f64);
+            Some(numerator / fixed_width as f64)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut flex_space = available.saturating_sub(fixed_width);
     let mut remaining_grow = total_grow;
 
@@ -402,7 +428,11 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_widths.get(i).min(available)
+            let raw = min_widths.get(i).min(available);
+            match shrink_scale {
+                Some(scale) if child.shrink => ((raw as f64) * scale).floor() as u32,
+                _ => raw,
+            }
         };
         child_widths.push(w);
     }
@@ -468,6 +498,26 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
         }
     }
 
+    // Opt-in proportional flex-shrink (#161). Cross-axis sibling of the
+    // `layout_row` block above — same scale formula on the height axis.
+    let shrink_scale: Option<f64> = if fixed_height > available && available > 0 {
+        let shrink_total: u32 = node
+            .children
+            .iter()
+            .zip(min_heights.iter())
+            .filter(|(c, _)| c.shrink && c.grow == 0)
+            .map(|(_, mh)| mh)
+            .sum();
+        if shrink_total > 0 {
+            let numerator = (available as f64).min(shrink_total as f64);
+            Some(numerator / fixed_height as f64)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut flex_space = available.saturating_sub(fixed_height);
     let mut remaining_grow = total_grow;
 
@@ -481,7 +531,11 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
             share
         } else {
-            min_heights.get(i).min(available)
+            let raw = min_heights.get(i).min(available);
+            match shrink_scale {
+                Some(scale) if child.shrink => ((raw as f64) * scale).floor() as u32,
+                _ => raw,
+            }
         };
         child_heights.push(h);
     }
