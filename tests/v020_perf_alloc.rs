@@ -335,3 +335,143 @@ fn dim_buffer_modal_zero_size_falls_back_to_full() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Reviewer A #6: use_state_keyed double-clone — must allocate at most one
+// `String` per call on the cache-hit path.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn use_state_keyed_allocates_one_string_per_call() {
+    // Differential test: compare a frame with N cache-hit calls to a
+    // baseline frame with the same shape but no extra calls. The delta
+    // is the marginal allocation cost of the N `use_state_keyed` calls.
+    //
+    // With the fix: each call adds 1 alloc (the closure's `k.clone()`).
+    // Pre-fix: each call adds 2 (the extra `entry(key.clone())`).
+    //
+    // Uses N = 100 so the signal (~100 fix vs ~200 pre-fix) dominates
+    // any cross-test noise from concurrent threads.
+    use slt::TestBackend;
+
+    const N: usize = 100;
+
+    let mut tb = TestBackend::new(20, 3);
+
+    let pre_keys: Vec<String> = (0..N).map(|i| format!("k-{i}")).collect();
+
+    // Warm-up frames so TestBackend's lazy buffers reach steady state
+    // and all keyed entries exist (forcing the cache-hit path).
+    for _ in 0..3 {
+        tb.render(|ui| {
+            for k in &pre_keys {
+                let _ = ui.use_state_keyed(k.clone(), || 0i32);
+            }
+        });
+    }
+
+    // Baseline frame: identical render shape, anchor only.
+    let (_, baseline) = measure_allocs("use_state_keyed_baseline_empty_frame", || {
+        tb.render(|ui| {
+            let _ = ui.use_state_keyed(String::from("baseline-anchor"), || 0i32);
+        });
+    });
+
+    // Test frame: anchor + N cache-hit calls.
+    let (_, with_calls) = measure_allocs("use_state_keyed_n_cache_hit_calls", || {
+        tb.render(|ui| {
+            let _ = ui.use_state_keyed(String::from("baseline-anchor"), || 0i32);
+            for k in &pre_keys {
+                let _ = ui.use_state_keyed(k.clone(), || 0i32);
+            }
+        });
+    });
+
+    let delta = with_calls.saturating_sub(baseline);
+    eprintln!(
+        "use_state_keyed: baseline = {}, with {} calls = {}, delta = {}",
+        baseline, N, with_calls, delta
+    );
+
+    // With the fix: delta ≈ N (one `k.clone()` per call; `id.into()` on
+    // `String->String` is identity; cache-hit path is alloc-free).
+    // Pre-fix: delta ≈ 2*N (extra `entry(key.clone())` per call).
+    //
+    // Budget = 1.5 * N cleanly separates fix (~100) from pre-fix (~200)
+    // while absorbing cross-test noise from concurrent allocator activity.
+    let budget = (N * 3) / 2;
+    assert!(
+        delta <= budget,
+        "use_state_keyed alloc regression: {} cache-hit calls added {} allocations over baseline (budget {}); pre-fix double-clone would add >= {}",
+        N,
+        delta,
+        budget,
+        N * 2
+    );
+}
+
+#[test]
+fn use_state_keyed_cache_hit_scales_one_per_call() {
+    // Differential test: compare a small-N frame to a large-N frame on a
+    // warmed TestBackend. The marginal-cost model (large - small) cancels
+    // render-internal one-off allocations that don't scale with call count.
+    //
+    // Uses LARGE_N = 100 so the signal (~100 fix vs ~200 pre-fix) dominates
+    // any cross-test allocator-counter noise from concurrent test threads
+    // (the global `MEASURING` toggle leaks during periods where another
+    // test is in its measure_allocs critical section).
+    use slt::TestBackend;
+
+    const SMALL_N: usize = 10;
+    const LARGE_N: usize = 100;
+
+    let mut tb = TestBackend::new(20, 3);
+
+    let pre_keys: Vec<String> = (0..LARGE_N).map(|i| format!("scale-k-{i}")).collect();
+
+    // Warm-up: populate ALL entries used in either measurement.
+    for _ in 0..3 {
+        tb.render(|ui| {
+            for k in &pre_keys {
+                let _ = ui.use_state_keyed(k.clone(), || 0i32);
+            }
+        });
+    }
+
+    let (_, with_small) = measure_allocs("use_state_keyed_scale_small", || {
+        tb.render(|ui| {
+            for k in &pre_keys[..SMALL_N] {
+                let _ = ui.use_state_keyed(k.clone(), || 0i32);
+            }
+        });
+    });
+
+    let (_, with_large) = measure_allocs("use_state_keyed_scale_large", || {
+        tb.render(|ui| {
+            for k in &pre_keys[..LARGE_N] {
+                let _ = ui.use_state_keyed(k.clone(), || 0i32);
+            }
+        });
+    });
+
+    let extra_calls = LARGE_N - SMALL_N;
+    let extra_allocs = with_large.saturating_sub(with_small);
+    eprintln!(
+        "use_state_keyed marginal allocs for +{} calls = {} ({} = {}, {} = {})",
+        extra_calls, extra_allocs, SMALL_N, with_small, LARGE_N, with_large
+    );
+
+    // With the fix: extra_calls extra calls add ~extra_calls extra allocs
+    // (1 per call). Pre-fix: ~2 * extra_calls (2 per call). Budget at
+    // 1.5 * extra_calls cleanly separates fix (~90) from pre-fix (~180)
+    // and absorbs minor cross-test noise.
+    let budget = (extra_calls * 3) / 2;
+    assert!(
+        extra_allocs <= budget,
+        "use_state_keyed marginal-cost regression: {} extra cache-hit calls added {} allocations (budget {}); pre-fix double-clone would add >= {}",
+        extra_calls,
+        extra_allocs,
+        budget,
+        extra_calls * 2
+    );
+}

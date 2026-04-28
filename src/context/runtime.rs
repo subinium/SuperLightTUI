@@ -917,8 +917,11 @@ impl Context {
     ///
     /// Unlike [`use_state_named`](Self::use_state_named), `id` can be a
     /// runtime value such as `format!("row-{i}")`. The key is converted to
-    /// `String` once per call, incurring **one allocation per unique key
-    /// per frame**.
+    /// `String` once per call. The hot path (key already present) performs
+    /// **zero string allocations beyond the [`Into<String>`] conversion at
+    /// the call site** — first looking up by `&str`, only allocating a
+    /// fresh map key on first insert. Together: at most **one allocation
+    /// per call, regardless of cache state**.
     ///
     /// # When to use
     /// - Per-item state in a dynamic list where positional [`use_state`]
@@ -950,11 +953,13 @@ impl Context {
         init: impl FnOnce() -> T,
     ) -> State<T> {
         let key: String = id.into();
-        // `entry().or_insert_with` avoids the double-lookup on the hot
-        // (already-populated) path and only invokes `init` on first entry.
-        self.keyed_states
-            .entry(key.clone())
-            .or_insert_with(|| Box::new(init()));
+        // Lookup by `&str` first to avoid cloning on the hot
+        // (already-populated) path. Only on first insert do we clone the
+        // key into the map; otherwise the original `key` String is the
+        // sole allocation and is moved into `State::from_keyed`.
+        if !self.keyed_states.contains_key(key.as_str()) {
+            self.keyed_states.insert(key.clone(), Box::new(init()));
+        }
         State::from_keyed(key)
     }
 

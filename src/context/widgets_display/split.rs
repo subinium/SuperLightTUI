@@ -149,35 +149,27 @@ impl Context {
         state: &mut SplitPaneState,
         orientation: SplitOrientation,
     ) {
+        // Hoist the orientation-dependent key codes outside the per-event
+        // loop so the match runs once per call, not once per pending key.
+        let (neg, pos) = match orientation {
+            SplitOrientation::Horizontal => (KeyCode::Left, KeyCode::Right),
+            SplitOrientation::Vertical => (KeyCode::Up, KeyCode::Down),
+        };
         let mut consumed: Vec<usize> = Vec::new();
         let mut delta = 0.0_f64;
         for (i, key) in self.available_key_presses() {
-            let is_left = matches!(key.code, KeyCode::Left);
-            let is_right = matches!(key.code, KeyCode::Right);
-            let is_up = matches!(key.code, KeyCode::Up);
-            let is_down = matches!(key.code, KeyCode::Down);
-            match orientation {
-                SplitOrientation::Horizontal => {
-                    if is_left {
-                        delta -= KEY_STEP;
-                        consumed.push(i);
-                    } else if is_right {
-                        delta += KEY_STEP;
-                        consumed.push(i);
-                    }
-                }
-                SplitOrientation::Vertical => {
-                    if is_up {
-                        delta -= KEY_STEP;
-                        consumed.push(i);
-                    } else if is_down {
-                        delta += KEY_STEP;
-                        consumed.push(i);
-                    }
-                }
+            if key.code == neg {
+                delta -= KEY_STEP;
+                consumed.push(i);
+            } else if key.code == pos {
+                delta += KEY_STEP;
+                consumed.push(i);
             }
         }
-        if delta != 0.0 {
+        // Use abs/EPSILON instead of `!= 0.0` for clarity; behavior is
+        // unchanged for the realistic input range (delta is a sum of exact
+        // 0.05 increments, so any non-zero result is well above EPSILON).
+        if delta.abs() > f64::EPSILON {
             state.set_ratio(state.ratio + delta);
         }
         self.consume_indices(consumed);
