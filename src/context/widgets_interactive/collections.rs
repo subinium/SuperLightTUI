@@ -187,22 +187,9 @@ impl Context {
                 let spec = columns.get(col_idx).copied().unwrap_or(GridColumn::Auto);
                 let (grow, constraints) = match spec {
                     GridColumn::Auto => (1, Constraints::default()),
-                    GridColumn::Fixed(w) => (
-                        0,
-                        Constraints {
-                            min_width: Some(w),
-                            max_width: Some(w),
-                            ..Constraints::default()
-                        },
-                    ),
+                    GridColumn::Fixed(w) => (0, Constraints::default().w(w)),
                     GridColumn::Grow(g) => (g, Constraints::default()),
-                    GridColumn::Percent(p) => (
-                        0,
-                        Constraints {
-                            width_pct: Some(p),
-                            ..Constraints::default()
-                        },
-                    ),
+                    GridColumn::Percent(p) => (0, Constraints::default().w_pct(p)),
                 };
 
                 self.skip_interaction_slot();

@@ -9,6 +9,29 @@
 - **`feat(buffer)` — `Buffer::snapshot_format()`** (#231) — Stable styled-snapshot string for `insta::assert_snapshot!` compatibility. Named palette colors → short codes (`red`, `light_blue`); RGB → `#rrggbb`; indexed → `idx<N>`; canonical modifier order (`bold,dim,italic,underline,reversed,strikethrough`). Format guaranteed stable across patch and minor versions; locked by `tests/snapshot_format_stability.rs`.
 - **`feat(test-utils)` — `assert_not_contains` / `assert_line_not_contains` / `assert_empty_line` / `assert_style_at`** (#232) — Negative assertion helpers on `TestBackend`. Failures show offending row indices and full row contents; `assert_style_at` reports `(x, y, expected, actual)` on style mismatch.
 
+### Breaking
+
+- **`refactor(style)` — `Constraints` redesign with `WidthSpec`/`HeightSpec`** (#237 — closes #207, #219). The `Constraints` struct now holds two enum-typed fields, `width: WidthSpec` and `height: HeightSpec`, instead of the v0.19 trio of `Option<u32>` / `Option<u8>` fields per axis. Builder methods (`min_w`, `max_w`, `min_h`, `max_h`, `w`, `h`, `w_pct`, `h_pct`) are preserved as ergonomic shortcuts that set the appropriate variant. New: `w_ratio(num, den)` / `h_ratio(num, den)` for exact integer-fraction sizing — `Ratio(1, 3)` produces `area / 3` (floor division; for `area = 80, num = 1, den = 3` → `26`). `size_of::<Constraints>()` drops from 36 → 24 bytes (33 % reduction); `WidthSpec` and `HeightSpec` are 12 bytes each. The `MinMax` variant uses sentinel encoding (`min = 0` means "no minimum", `max = u32::MAX` means "no maximum") so the variant fits in 12 bytes.
+
+  Migration:
+
+  ```rust
+  // before (v0.19)
+  Constraints {
+      min_width: Some(10),
+      max_width: Some(40),
+      ..Default::default()
+  }
+  // after (v0.20)
+  Constraints::default().w_minmax(10, 40)
+  // or piecewise:
+  Constraints::default().min_w(10).max_w(40)
+  ```
+
+  Direct field reads (`c.min_width`, `c.max_width`, `c.width_pct`, …) become accessor calls (`c.min_width()`, `c.max_width()`, `c.width_pct()`, …) — they still return `Option<u32>` / `Option<u8>` so the receiving code typically only needs to add parentheses. For imperative mutation (rare; previously `c.min_width = Some(v)`), use the new setter methods (`set_min_width`, `set_max_width`, `set_width_pct`, …).
+
+  `serde` wire format changes: persisted `Constraints` JSON from v0.19 will not deserialize into v0.20 because the field shape is different. Re-export persisted data after upgrading.
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting

@@ -294,8 +294,8 @@ impl LayoutNode {
             children: Vec::new(),
             pos: (0, 0),
             size: (
-                constraints.min_width.unwrap_or(0),
-                constraints.min_height.unwrap_or(0),
+                constraints.min_width().unwrap_or(0),
+                constraints.min_height().unwrap_or(0),
             ),
             is_scrollable: false,
             scroll_offset: 0,
@@ -413,8 +413,8 @@ impl LayoutNode {
             }
         };
 
-        let width = width.max(self.constraints.min_width.unwrap_or(0));
-        let width = match self.constraints.max_width {
+        let width = width.max(self.constraints.min_width().unwrap_or(0));
+        let width = match self.constraints.max_width() {
             Some(max_w) => width.min(max_w),
             None => width,
         };
@@ -444,7 +444,7 @@ impl LayoutNode {
             }
         };
 
-        let height = height.max(self.constraints.min_height.unwrap_or(0));
+        let height = height.max(self.constraints.min_height().unwrap_or(0));
         height.saturating_add(self.margin.vertical())
     }
 

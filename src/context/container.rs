@@ -674,30 +674,28 @@ impl<'a> ContainerBuilder<'a> {
             self.text_color = Some(v);
         }
         if let Some(w) = style.w {
-            self.constraints.min_width = Some(w);
-            self.constraints.max_width = Some(w);
+            self.constraints = self.constraints.w(w);
         }
         if let Some(h) = style.h {
-            self.constraints.min_height = Some(h);
-            self.constraints.max_height = Some(h);
+            self.constraints = self.constraints.h(h);
         }
         if let Some(v) = style.min_w {
-            self.constraints.min_width = Some(v);
+            self.constraints.set_min_width(Some(v));
         }
         if let Some(v) = style.max_w {
-            self.constraints.max_width = Some(v);
+            self.constraints.set_max_width(Some(v));
         }
         if let Some(v) = style.min_h {
-            self.constraints.min_height = Some(v);
+            self.constraints.set_min_height(Some(v));
         }
         if let Some(v) = style.max_h {
-            self.constraints.max_height = Some(v);
+            self.constraints.set_max_height(Some(v));
         }
         if let Some(v) = style.w_pct {
-            self.constraints.width_pct = Some(v);
+            self.constraints.set_width_pct(Some(v));
         }
         if let Some(v) = style.h_pct {
-            self.constraints.height_pct = Some(v);
+            self.constraints.set_height_pct(Some(v));
         }
         // Resolve ThemeColor fields against the active theme (overrides literal colors)
         if let Some(tc) = style.theme_bg {
@@ -937,8 +935,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set a fixed width (sets both min and max width).
     pub fn w(mut self, value: u32) -> Self {
-        self.constraints.min_width = Some(value);
-        self.constraints.max_width = Some(value);
+        self.constraints = self.constraints.w(value);
         self
     }
 
@@ -962,8 +959,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set a fixed height (sets both min and max height).
     pub fn h(mut self, value: u32) -> Self {
-        self.constraints.min_height = Some(value);
-        self.constraints.max_height = Some(value);
+        self.constraints = self.constraints.h(value);
         self
     }
 
@@ -980,7 +976,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
     pub fn min_w(mut self, value: u32) -> Self {
-        self.constraints.min_width = Some(value);
+        self.constraints.set_min_width(Some(value));
         self
     }
 
@@ -997,7 +993,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
     pub fn max_w(mut self, value: u32) -> Self {
-        self.constraints.max_width = Some(value);
+        self.constraints.set_max_width(Some(value));
         self
     }
 
@@ -1014,7 +1010,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
     pub fn min_h(mut self, value: u32) -> Self {
-        self.constraints.min_height = Some(value);
+        self.constraints.set_min_height(Some(value));
         self
     }
 
@@ -1031,7 +1027,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the maximum height constraint. Shorthand for [`max_height`](Self::max_height).
     pub fn max_h(mut self, value: u32) -> Self {
-        self.constraints.max_height = Some(value);
+        self.constraints.set_max_height(Some(value));
         self
     }
 
@@ -1072,13 +1068,13 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set width as a percentage (1-100) of the parent container.
     pub fn w_pct(mut self, pct: u8) -> Self {
-        self.constraints.width_pct = Some(pct.min(100));
+        self.constraints.set_width_pct(Some(pct.min(100)));
         self
     }
 
     /// Set height as a percentage (1-100) of the parent container.
     pub fn h_pct(mut self, pct: u8) -> Self {
-        self.constraints.height_pct = Some(pct.min(100));
+        self.constraints.set_height_pct(Some(pct.min(100)));
         self
     }
 
