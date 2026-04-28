@@ -6,7 +6,7 @@
 //! Run: `cargo run --example v020_spacing_scale`
 //!
 //! Keys:
-//!   Ctrl-Q / Esc — quit
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
 //!   ┌─────────── outer frame ─────────────────────────────────┐
@@ -76,7 +76,9 @@ pub fn render(ui: &mut Context) {
 
 fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        // macOS Ctrl-C is bound to copy in many terminals — bind quit to plain
+        // `q`, Esc, and Ctrl-Q so the demo is escape-able under every setup.
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         body(ui);

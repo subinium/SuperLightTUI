@@ -6,10 +6,11 @@
 //! Run: `cargo run --example v020_modal_trap`
 //!
 //! Keys:
+//!   M               — open the modal
 //!   Tab / Shift-Tab — cycle focus (only inside modal once it is open)
 //!   Enter           — activate the focused button
 //!   Esc             — close the modal (or quit, when no modal is open)
-//!   Ctrl-Q          — quit
+//!   q / Ctrl-Q      — quit (only when no modal is open)
 //!
 //! Layout:
 //!   ┌── main view ────────────────────────┐
@@ -127,14 +128,26 @@ fn main() -> std::io::Result<()> {
     let mut state = State::new();
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) {
+        // Quit keys only fire when no modal is open. macOS Ctrl-C is bound to
+        // copy in many terminals — bind quit to plain `q`, Esc, and Ctrl-Q so
+        // the demo is escape-able under every common setup.
+        //
+        // Note: `key()` / `key_code()` / `key_mod()` are blocked when a modal
+        // is active (the modal/overlay guard inside the event helpers), so the
+        // explicit `!show_modal` check below is belt-and-suspenders for the
+        // Esc branch — Esc inside the modal must dismiss it, not quit the app.
+        if !state.show_modal
+            && (ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL))
+        {
             ui.quit();
         }
-        // Esc closes the modal first; only quits when no modal is open.
-        // raw_key_code below sees the same press unfiltered, so we guard
-        // with `!show_modal` here to avoid a double-handle.
-        if ui.key_code(KeyCode::Esc) && !state.show_modal {
-            ui.quit();
+
+        // M opens the modal (keyboard-accessible alternative to clicking the
+        // "Open modal" button below). Blocked automatically while a modal is
+        // already open via the same overlay guard.
+        if ui.key('m') || ui.key('M') {
+            state.show_modal = true;
+            state.answered = None;
         }
 
         body(ui, &mut state);

@@ -10,7 +10,7 @@
 //! Run: `cargo run --example v020_theme_subtree`
 //!
 //! Keys:
-//!   Ctrl-Q / Esc   — quit
+//!   q / Esc / Ctrl-Q — quit
 //!
 //! Layout:
 //!   ┌── SLT v0.20: Per-subtree theme override ──────────────────┐
@@ -45,7 +45,9 @@ fn main() -> std::io::Result<()> {
 /// Public so snapshot tests can compare per-theme renders against fixed
 /// markers without re-deriving the panel layout in each test.
 pub fn render(ui: &mut Context) {
-    if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+    // macOS Ctrl-C is bound to copy in many terminals — bind quit to plain `q`,
+    // Esc, and Ctrl-Q so the demo is escape-able under every common setup.
+    if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
         ui.quit();
         return;
     }
