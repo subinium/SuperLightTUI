@@ -186,11 +186,12 @@ fn main() -> std::io::Result<()> {
 
                 // modal + tab_trap (#225). Toggled by `M`.
                 if modal_open {
+                    let pad = ui.theme().spacing.sm();
                     let _ = ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| {
                         let _ = ui
                             .bordered(Border::Double)
                             .title("Modal (#225 tab_trap)")
-                            .p(2)
+                            .p(pad)
                             .theme(Theme::dracula())
                             .col(|ui| {
                                 ui.text("Tab cycles within this modal only.");

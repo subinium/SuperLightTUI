@@ -782,22 +782,22 @@ impl Default for ScrollState {
 pub struct SplitPaneState {
     /// Fraction of space given to the first pane. Clamped to
     /// `[min_ratio, 1.0 - min_ratio]`.
-    pub ratio: f32,
+    pub ratio: f64,
     /// Whether the handle is currently being dragged.
     pub dragging: bool,
     /// Minimum fraction allocated to either pane. Default: `0.10`.
-    pub min_ratio: f32,
+    pub min_ratio: f64,
 }
 
 /// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
 /// Override per-instance via [`SplitPaneState::with_min_ratio`].
-pub const DEFAULT_SPLIT_MIN_RATIO: f32 = 0.10;
+pub const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
 
 impl SplitPaneState {
     /// Create split state with the given initial ratio, clamped to
     /// `[DEFAULT_SPLIT_MIN_RATIO, 1.0 - DEFAULT_SPLIT_MIN_RATIO]` (default
     /// `[0.10, 0.90]`).
-    pub fn new(ratio: f32) -> Self {
+    pub fn new(ratio: f64) -> Self {
         let min_ratio = DEFAULT_SPLIT_MIN_RATIO;
         let clamped = ratio.clamp(min_ratio, 1.0 - min_ratio);
         Self {
@@ -808,14 +808,14 @@ impl SplitPaneState {
     }
 
     /// Override the minimum ratio for either pane (clamped to `[0.0, 0.49]`).
-    pub fn with_min_ratio(mut self, min: f32) -> Self {
+    pub fn with_min_ratio(mut self, min: f64) -> Self {
         self.min_ratio = min.clamp(0.0, 0.49);
         self.ratio = self.ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
         self
     }
 
     /// Set the ratio, clamped to `[min_ratio, 1.0 - min_ratio]`.
-    pub fn set_ratio(&mut self, ratio: f32) {
+    pub fn set_ratio(&mut self, ratio: f64) {
         self.ratio = ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
     }
 }

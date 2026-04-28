@@ -7,13 +7,13 @@
 use super::*;
 
 /// Keyboard step applied to `state.ratio` per arrow-key press when the handle is focused.
-const KEY_STEP: f32 = 0.05;
+const KEY_STEP: f64 = 0.05;
 
 /// Scale factor applied to the `[0.0, 1.0]` ratio to produce a `u16` flexbox
 /// `grow` weight. 1000 gives ~0.1% precision in pane sizes — finer than any
 /// terminal cell can render at typical widths, while staying well below
 /// `u16::MAX` so the two-pane sum can never overflow.
-const RATIO_GROW_SCALE: f32 = 1000.0;
+const RATIO_GROW_SCALE: f64 = 1000.0;
 
 /// Direction of the split. Internal helper — public API is the `split_pane`
 /// (horizontal) / `vsplit_pane` (vertical) entry points.
@@ -150,7 +150,7 @@ impl Context {
         orientation: SplitOrientation,
     ) {
         let mut consumed: Vec<usize> = Vec::new();
-        let mut delta = 0.0_f32;
+        let mut delta = 0.0_f64;
         for (i, key) in self.available_key_presses() {
             let is_left = matches!(key.code, KeyCode::Left);
             let is_right = matches!(key.code, KeyCode::Right);
@@ -248,7 +248,7 @@ impl Context {
                                         .x
                                         .saturating_sub(outer.x)
                                         .min(outer.width.saturating_sub(1));
-                                    rel as f32 / outer.width as f32
+                                    f64::from(rel) / f64::from(outer.width)
                                 }
                             }
                             SplitOrientation::Vertical => {
@@ -259,7 +259,7 @@ impl Context {
                                         .y
                                         .saturating_sub(outer.y)
                                         .min(outer.height.saturating_sub(1));
-                                    rel as f32 / outer.height as f32
+                                    f64::from(rel) / f64::from(outer.height)
                                 }
                             }
                         };

@@ -32,7 +32,9 @@ SHOWCASE_PRESET=(
     "v020_regression_panel"
 )
 
-# The 17 individual feature demos, one per v0.20 issue cluster.
+# The 18 individual feature demos, one per v0.20 issue cluster.
+# v020_perf_audit and v020_test_utils are non-interactive stdout reports —
+# included for completeness, they will exit immediately in the launched window.
 FEATURES_PRESET=(
     "v020_dx_shortcuts"
     "v020_use_state_keyed"
@@ -51,6 +53,7 @@ FEATURES_PRESET=(
     "v020_ctrl_c_passthrough"
     "v020_widthspec"
     "v020_perf_audit"
+    "v020_test_utils"
 )
 
 # --- helpers -------------------------------------------------------------

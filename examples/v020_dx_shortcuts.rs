@@ -115,7 +115,8 @@ fn render_demo(ui: &mut Context, state: &State) {
 }
 
 fn render_actions_column(ui: &mut Context, panel_alpha: f64) {
-    let _ = ui.container().w(ACTIONS_W).gap(1).col(|ui| {
+    let gap = ui.theme().spacing.xs();
+    let _ = ui.container().w(ACTIONS_W).gap(gap).col(|ui| {
         ui.text("Actions").bold();
 
         // #209 — on_hover: tooltip chained directly onto the button response.
@@ -132,29 +133,36 @@ fn render_actions_column(ui: &mut Context, panel_alpha: f64) {
 }
 
 fn render_status_column(ui: &mut Context, panel_alpha: f64) {
+    let pad = ui.theme().spacing.xs();
     // #220 — fill(): the right-hand column claims all remaining width
     // without writing `grow(1)`. Reads as plain English at the call site.
-    let _ = ui.container().fill().border(Border::Single).p(1).col(|ui| {
-        ui.text("Status").bold();
-        ui.text("Shorthand helpers are about reading code, not");
-        ui.text("writing it. fill() == grow(1) — but plain English.");
+    let _ = ui
+        .container()
+        .fill()
+        .border(Border::Single)
+        .p(pad)
+        .col(|ui| {
+            ui.text("Status").bold();
+            ui.text("Shorthand helpers are about reading code, not");
+            ui.text("writing it. fill() == grow(1) — but plain English.");
 
-        if panel_alpha > 0.0 {
-            let _ = ui.container().mt(1).p(1).col(|ui| {
-                let alpha_color = if panel_alpha > PANEL_ALPHA_HIGH {
-                    Color::Green
-                } else if panel_alpha > PANEL_ALPHA_MID {
-                    Color::Yellow
-                } else {
-                    Color::DarkGray
-                };
-                ui.text(format!("Animated panel ({:.0}%)", panel_alpha * 100.0))
-                    .fg(alpha_color)
-                    .bold();
-                ui.text("Smoothly tweened via animate_bool.");
-            });
-        }
-    });
+            if panel_alpha > 0.0 {
+                let pad = ui.theme().spacing.xs();
+                let _ = ui.container().mt(pad).p(pad).col(|ui| {
+                    let alpha_color = if panel_alpha > PANEL_ALPHA_HIGH {
+                        Color::Green
+                    } else if panel_alpha > PANEL_ALPHA_MID {
+                        Color::Yellow
+                    } else {
+                        Color::DarkGray
+                    };
+                    ui.text(format!("Animated panel ({:.0}%)", panel_alpha * 100.0))
+                        .fg(alpha_color)
+                        .bold();
+                    ui.text("Smoothly tweened via animate_bool.");
+                });
+            }
+        });
 }
 
 fn render_centered_help(ui: &mut Context) {

@@ -132,7 +132,7 @@ pub struct SplitPaneResponse {
     /// The row/column-level interaction response.
     pub response: Response,
     /// Current ratio after this frame's interaction (mirrors `state.ratio`).
-    pub ratio: f32,
+    pub ratio: f64,
     /// Whether the handle was actively being dragged this frame.
     pub drag_active: bool,
 }
