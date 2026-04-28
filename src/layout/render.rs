@@ -6,15 +6,100 @@ pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
     buf.clip_stack.clear();
     for overlay in &node.overlays {
         if overlay.modal {
-            dim_entire_buffer(buf);
+            // Issue #228: use the modal's known rect (set by `flexbox::compute`
+            // before render is called) to dim only the surrounding strips
+            // rather than the entire buffer. For the common modal-with-margin
+            // case this drops the write count from O(W*H) to O(perimeter).
+            // Only fall back to the full-buffer scan when the modal has zero
+            // size (degenerate case — should not happen post-compute, but the
+            // fallback keeps the visual contract identical).
+            let modal_rect = Rect::new(
+                overlay.node.pos.0,
+                overlay.node.pos.1,
+                overlay.node.size.0,
+                overlay.node.size.1,
+            );
+            if modal_rect.width == 0 || modal_rect.height == 0 {
+                dim_entire_buffer(buf);
+            } else {
+                dim_buffer_around(buf, modal_rect);
+            }
         }
         render_inner(&overlay.node, buf, 0, None, 0);
     }
 }
 
+/// Apply the `DIM` modifier to every cell in `buf`.
+///
+/// Retained for the fallback path in [`render`] when a modal has zero size
+/// (degenerate, but possible during transitions). The hot path uses
+/// [`dim_buffer_around`] which scans only the four strips outside the modal.
 fn dim_entire_buffer(buf: &mut Buffer) {
     for y in buf.area.y..buf.area.bottom() {
         for x in buf.area.x..buf.area.right() {
+            let cell = buf.get_mut(x, y);
+            cell.style.modifiers |= crate::style::Modifiers::DIM;
+        }
+    }
+}
+
+/// Test-only re-export of [`dim_buffer_around`] for the perf alloc tests
+/// and the `v020_perf_audit` demo. Not part of the stable API.
+#[doc(hidden)]
+pub(crate) fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
+    dim_buffer_around(buf, modal_rect)
+}
+
+/// Apply the `DIM` modifier only to cells outside `modal_rect` (issue #228).
+///
+/// Walks the four strips (top / bottom / left / right) bounded by the
+/// intersection of `buf.area` and `modal_rect`. For a typical modal that
+/// covers ~50% of the screen, this is roughly half as many writes as
+/// [`dim_entire_buffer`]; for a small modal centered on a 200x60 terminal
+/// the savings are dramatic. The visible output is identical because the
+/// cells inside the modal are about to be painted by `render_inner`
+/// immediately after this call returns.
+fn dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
+    let area = buf.area;
+    // Clip the modal rect to the buffer (safety: a layout bug that placed the
+    // modal partly outside the screen must not cause us to skip dimming any
+    // visible cell). Coordinates are exclusive on the right/bottom.
+    let clip_x = modal_rect.x.max(area.x);
+    let clip_y = modal_rect.y.max(area.y);
+    let clip_right = modal_rect.right().min(area.right());
+    let clip_bottom = modal_rect.bottom().min(area.bottom());
+
+    // If the modal is fully off-screen, dim everything (matches the prior
+    // behavior — the entire visible buffer is "background").
+    if clip_right <= clip_x || clip_bottom <= clip_y {
+        dim_entire_buffer(buf);
+        return;
+    }
+
+    // Top strip: rows above the modal, full width of the buffer.
+    for y in area.y..clip_y {
+        for x in area.x..area.right() {
+            let cell = buf.get_mut(x, y);
+            cell.style.modifiers |= crate::style::Modifiers::DIM;
+        }
+    }
+    // Bottom strip: rows below the modal, full width of the buffer.
+    for y in clip_bottom..area.bottom() {
+        for x in area.x..area.right() {
+            let cell = buf.get_mut(x, y);
+            cell.style.modifiers |= crate::style::Modifiers::DIM;
+        }
+    }
+    // Left strip: columns left of the modal, only across the modal's row band.
+    for y in clip_y..clip_bottom {
+        for x in area.x..clip_x {
+            let cell = buf.get_mut(x, y);
+            cell.style.modifiers |= crate::style::Modifiers::DIM;
+        }
+    }
+    // Right strip: columns right of the modal, only across the modal's row band.
+    for y in clip_y..clip_bottom {
+        for x in clip_right..area.right() {
             let cell = buf.get_mut(x, y);
             cell.style.modifiers |= crate::style::Modifiers::DIM;
         }

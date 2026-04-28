@@ -50,6 +50,31 @@ impl Context {
         // `state.commands_buf` for the next frame in `run_frame_kernel`.
         let mut commands = std::mem::take(&mut state.commands_buf);
         commands.clear();
+
+        // Issue #204: reuse the six per-frame `Vec`/`HashSet` allocations
+        // (`context_stack`, `deferred_draws`, `rollback.group_stack`,
+        // `rollback.text_color_stack`, `pending_tooltips`, `hovered_groups`).
+        // Same `mem::take` pattern as `commands_buf` (#150). Each buffer is
+        // empty at frame end (asserted at `run_frame_kernel`) — `mem::take`
+        // hands a `Default::default()` empty back to the state, the Vec/HashSet
+        // we move into `Context` keeps its capacity from the prior frame, and
+        // `clear()` here is a no-op except as a defensive guard against future
+        // refactors that might leak items past the assertions.
+        let mut context_stack = std::mem::take(&mut state.context_stack_buf);
+        context_stack.clear();
+        let mut deferred_draws = std::mem::take(&mut state.deferred_draws_buf);
+        deferred_draws.clear();
+        let mut group_stack = std::mem::take(&mut state.group_stack_buf);
+        group_stack.clear();
+        let mut text_color_stack = std::mem::take(&mut state.text_color_stack_buf);
+        text_color_stack.clear();
+        let mut pending_tooltips = std::mem::take(&mut state.pending_tooltips_buf);
+        pending_tooltips.clear();
+        let hovered_groups = std::mem::take(&mut state.hovered_groups_buf);
+        // `hovered_groups` is `clear()`-ed inside `build_hovered_groups`
+        // immediately below, so we do not pre-clear here — capacity is
+        // preserved across frames.
+
         let mut ctx = Self {
             commands,
             events,
@@ -61,7 +86,7 @@ impl Context {
             focus_index,
             hook_states: std::mem::take(hook_states),
             named_states,
-            context_stack: Vec::new(),
+            context_stack,
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,
             prev_modal_focus_count: focus.prev_modal_focus_count,
@@ -79,14 +104,14 @@ impl Context {
             debug_layer: diagnostics.debug_layer,
             theme,
             is_real_terminal: false,
-            deferred_draws: Vec::new(),
+            deferred_draws,
             rollback: ContextRollbackState {
                 last_text_idx: None,
                 focus_count: 0,
                 interaction_count: 0,
                 scroll_count: 0,
                 group_count: 0,
-                group_stack: Vec::new(),
+                group_stack,
                 overlay_depth: 0,
                 modal_active: false,
                 modal_focus_start: 0,
@@ -94,10 +119,10 @@ impl Context {
                 hook_cursor: 0,
                 dark_mode: theme.is_dark,
                 notification_queue: std::mem::take(&mut diagnostics.notification_queue),
-                text_color_stack: Vec::new(),
+                text_color_stack,
             },
-            pending_tooltips: Vec::new(),
-            hovered_groups: std::collections::HashSet::new(),
+            pending_tooltips,
+            hovered_groups,
             scroll_lines_per_event: 1,
             screen_hook_map,
             widget_theme: WidgetTheme::new(),

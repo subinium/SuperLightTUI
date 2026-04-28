@@ -23,5 +23,25 @@ pub(crate) use flexbox::compute;
 pub(crate) use render::{render, render_debug_overlay};
 pub(crate) use tree::{build_tree, wrap_lines, wrap_segments, LayoutNode, NodeKind};
 
+/// Test-only entry point exposing `wrap_segments` for allocation-budget tests.
+///
+/// Not part of the stable API. Used by `tests/v020_perf_alloc.rs`.
+#[doc(hidden)]
+pub fn __bench_wrap_segments(
+    segments: &[(String, Style)],
+    max_width: u32,
+) -> Vec<Vec<(String, Style)>> {
+    tree::wrap_segments(segments, max_width)
+}
+
+/// Test-only entry point exposing the modal-aware dim path.
+///
+/// Not part of the stable API. Used by `tests/v020_perf_alloc.rs` and the
+/// `examples/v020_perf_audit` demo.
+#[doc(hidden)]
+pub fn __bench_dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
+    render::__bench_dim_buffer_around(buf, modal_rect);
+}
+
 #[cfg(test)]
 mod tests;
