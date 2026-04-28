@@ -114,7 +114,7 @@ pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};
 
-pub use crate::test_utils::{EventBuilder, TestBackend};
+pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence};
 // Animation primitives (builder types) are re-exported at crate root for
 // ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
 // live under `slt::anim::*` — they are rarely imported in isolation and
