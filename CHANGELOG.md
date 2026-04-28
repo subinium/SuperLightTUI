@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`feat(lib)` — `Context::static_log(line)`** (#233) — append-only scrollback widget API. Inside the frame closure, queue lines that get committed to the terminal's history above the inline dynamic area. Drains automatically through `slt::run_static` / `slt::run_static_with`; no-op (with a `cfg(debug_assertions)` warning) on full-screen and inline runtimes that have no scrollback channel. Inspired by Ink's `<Static>`. Companion accessor `Context::take_static_log()` exposes the same buffer to custom backends and `TestBackend` callers.
+- **`feat(keymap)` — `WidgetKeyHelp` trait + `Context::publish_keymap` / `published_keymaps` / `keymap_help_overlay`** (#236) — opt-in trait for widgets to publish their `&'static [(key, description)]` shortcut list. The framework aggregates every keymap registered this frame (cleared at frame start by `run_frame_kernel`) and `keymap_help_overlay(open)` renders an automatic modal listing all bindings — wire it to `?` / `F1` for instant discoverability. Standalone `PublishedKeymap` struct exposed for downstream widgets / palettes.
+- **`feat(lib)` — `RunConfig::handle_ctrl_c(bool)`** (#238) — opt-out for the auto-Ctrl+C-quits behavior. Defaults to `true` (preserves v0.19 contract). Setting `false` delivers Ctrl+C to the frame closure as a normal `Event::Key` with `KeyModifiers::CONTROL` — matches RataTUI's raw-mode semantics so users migrating code that already handles Ctrl+C explicitly do not need to fork SLT. Threaded through `run_with`, `run_inline_with`, `run_static_with`, and `run_async_loop`. `run()` rustdoc updated to note that wrapping with `crossterm::terminal::enable_raw_mode()` / `disable_raw_mode()` is redundant — SLT enters raw mode automatically.
+- **`example` — `examples/v020_static_log.rs`** — counter demo committing every 5th tick to scrollback via `ui.static_log()`.
+- **`example` — `examples/v020_keymap_help.rs`** — two `WidgetKeyHelp` impls (`global`, `counter`) showing automatic help overlay aggregation on `?`.
+- **`example` — `examples/v020_ctrl_c_passthrough.rs`** — three-strike Ctrl+C confirmation flow under `RunConfig::handle_ctrl_c(false)`.
+- **`test` — `tests/v020_lib_toplevel.rs`** — 16 unit tests covering static-log accumulation/drain semantics, keymap registry frame-clearing, the const-friendly `PublishedKeymap::new`, and `RunConfig::handle_ctrl_c` builder + opt-out event delivery.
+- **`test` — `tests/v020_lib_demos.rs`** — 3 snapshot regressions for the new demos, baselines committed under `tests/snapshots/v020_lib_demos__*.snap`.
+
 ## [0.19.3] — 2026-04-27
 
 Patch release covering 11 v0.19.x patch-safe issues plus 6 cross-cutting

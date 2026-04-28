@@ -1,0 +1,9 @@
+---
+source: tests/v020_lib_demos.rs
+---
+Ctrl+C passthrough demo (issue #238)
+
+Ctrl+C presses observed: 1 / 3
+
+Press Ctrl+C three times to quit, or 'q' to quit immediately.
+(With handle_ctrl_c(false), Ctrl+C arrives as a normal key event.)
