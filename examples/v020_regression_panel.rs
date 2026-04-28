@@ -11,8 +11,13 @@
 //! - **#235 gutter highlights** — gutter + n/p navigation
 //! - **#224 gauge / line_gauge** — both gauge variants render together
 //!
-//! Tab navigates focusable widgets · `M` opens modal · `?` opens key help
-//! · `n`/`p` navigates highlighted lines · `Esc` / `Ctrl-Q` quits.
+//! Keys:
+//!   Tab / Shift-Tab     — navigate focusable widgets
+//!   ↑ / ↓ (j / k)       — move table selection (when table is focused)
+//!   M                   — toggle the modal (tab_trap on, Esc dismisses)
+//!   ?                   — toggle the key-help overlay
+//!   n / p               — next / prev gutter highlight
+//!   q / Esc / Ctrl-Q    — quit (Ctrl-C may be bound to copy on macOS)
 
 use slt::{
     Anchor, Border, Color, Context, GutterOpts, HighlightRange, KeyCode, KeyModifiers, ScrollState,
@@ -251,19 +256,48 @@ fn main() -> std::io::Result<()> {
     slt::run_with(
         slt::RunConfig::default().mouse(true),
         move |ui: &mut Context| {
-            if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+            // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+            // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
+            // reaches the app. Quit only when no overlay/modal is intercepting
+            // input — Esc inside the modal/help-overlay must dismiss it
+            // first.
+            let any_overlay = state.modal_open || state.help_open;
+            if !any_overlay
+                && (ui.key('q')
+                    || ui.key_code(KeyCode::Esc)
+                    || ui.key_mod('q', KeyModifiers::CONTROL))
+            {
                 ui.quit();
             }
-            if ui.key('m') || ui.key('M') {
-                state.modal_open = !state.modal_open;
+            // M toggles the modal. When the modal is already open, the modal
+            // guard inside `key()` blocks us — fall back to `raw_key_code`
+            // so the same key still closes the modal.
+            if !any_overlay && (ui.key('m') || ui.key('M')) {
+                state.modal_open = true;
+            } else if state.modal_open && ui.raw_key_code(KeyCode::Char('m')) {
+                state.modal_open = false;
             }
-            if ui.key('?') {
-                state.help_open = !state.help_open;
+            // `?` toggles the key-help overlay. Same `raw_*` fallback as M:
+            // once the overlay is open it counts as a modal, so the plain
+            // `key('?')` check is blocked by the overlay guard.
+            if !any_overlay && ui.key('?') {
+                state.help_open = true;
+            } else if state.help_open && ui.raw_key_code(KeyCode::Char('?')) {
+                state.help_open = false;
             }
-            if ui.key('n') {
+            // Esc dismisses any open overlay (modal first, then help). Both
+            // need raw_key_code because plain `key_code(Esc)` is blocked
+            // while a modal is active.
+            if state.modal_open && ui.raw_key_code(KeyCode::Esc) {
+                state.modal_open = false;
+            } else if state.help_open && ui.raw_key_code(KeyCode::Esc) {
+                state.help_open = false;
+            }
+            if !any_overlay && ui.key('n') {
                 state.scroll.highlight_next();
             }
-            if ui.key('p') {
+            if !any_overlay && ui.key('p') {
                 state.scroll.highlight_previous();
             }
 

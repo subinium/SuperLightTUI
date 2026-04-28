@@ -6,10 +6,10 @@
 //! Run: `cargo run --example v020_dx_shortcuts`
 //!
 //! Keys:
-//!   Space      — toggle the animated side panel (drives animate_bool)
-//!   ? / h      — toggle the centered help overlay (drives Rect::center_in)
-//!   Hover Save — show the chained tooltip (drives Response::on_hover)
-//!   Ctrl-Q / Esc — quit
+//!   Space             — toggle the animated side panel (drives animate_bool)
+//!   ? / h             — toggle the centered help overlay (drives Rect::center_in)
+//!   Hover Save / Open — show the chained tooltip (drives Response::on_hover)
+//!   q / Esc / Ctrl-Q  — quit (Ctrl-C may be bound to copy on macOS)
 //!
 //! Layout (80x24 minimum):
 //!
@@ -54,7 +54,11 @@ fn main() -> std::io::Result<()> {
     };
 
     slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+        // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+        // iTerm2 with default copy-shortcut) intercept Ctrl-C, so it never
+        // reaches the app reliably.
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         if ui.key(' ') {
@@ -100,7 +104,7 @@ fn render_demo(ui: &mut Context, state: &State) {
         .col(|ui| {
             ui.text("Press Space to toggle the panel, hover Save for a tooltip,")
                 .dim();
-            ui.text("press ? for the centered help overlay, Ctrl-Q to quit.")
+            ui.text("press ? for the centered help overlay, q / Esc / Ctrl-Q to quit.")
                 .dim();
 
             let _ = ui.row(|ui| {

@@ -26,11 +26,25 @@
 //! │ Email [             ]              │  2 │ ERROR unresolved     │
 //! │ [Save] [Cancel]                    │  3 │ pub fn two()         │
 //! ├────────────────────────────────────┴───────────────────────────┤
-//! │ Tab/⇧Tab focus · Space toggle · n/p highlight · ? help · ^Q    │
+//! │ Tab focus · Space toggle · n/p highlight · q/Esc/^Q quit       │
 //! └────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! Run with: `cargo run --example v020_showcase`
+//!
+//! Keys:
+//!   Tab / Shift-Tab     — cycle focus across the registered fields/buttons
+//!   Type into Name/Email — text_input is interactive; type/backspace/etc.
+//!   Click a breadcrumb  — drops trailing crumbs (notification fires)
+//!   Hover Save / Cancel — chained on_hover tooltip (#209)
+//!   Hover "Hover me"    — Dracula-themed tooltip in the theme subtree
+//!   Space               — toggle the panel_alpha animate_bool target
+//!   n / p               — next / prev gutter highlight
+//!   q / Esc / Ctrl-Q    — quit (Ctrl-C may be bound to copy on macOS)
+//!
+//! Note: bare `q` quits ONLY when no text input has focus — typed `q` goes
+//! to the focused input. Click outside the input or Tab past it to make
+//! `q` quit.
 //!
 //! Demos: #209 on_hover, #210 animate_bool, #213 breadcrumb_response,
 //! #217 named_focus, #224 gauge / line_gauge, #226 theme override,
@@ -71,7 +85,17 @@ fn main() -> std::io::Result<()> {
     scroll.set_highlights(&hl);
 
     slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key_mod('q', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        // Render FIRST so the focused text_input can claim keys (q, space,
+        // n, p, etc.) before our global handlers see them. text_input
+        // consumes character keys when focused; this ordering means the
+        // global `key('q')` quit can never strand the user mid-typing.
+        render(ui, &mut name, &mut email, panel_open, &mut scroll);
+
+        // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+        // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+        // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
+        // reaches the app.
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         if ui.key(' ') {
@@ -83,8 +107,6 @@ fn main() -> std::io::Result<()> {
         if ui.key('p') {
             scroll.highlight_previous();
         }
-
-        render(ui, &mut name, &mut email, panel_open, &mut scroll);
     })
 }
 
@@ -217,9 +239,12 @@ pub fn render(
                 });
             });
 
-            // Row 5 — footer (key bindings).
-            ui.text("Tab/⇧Tab focus · Space toggle · n/p highlights · ? help · Ctrl-Q quit")
-                .dim();
+            // Row 5 — footer (key bindings). Mirrors the doc-comment "Keys"
+            // block; keep these two in sync when adding bindings.
+            ui.text(
+                "Tab/⇧Tab focus · type into inputs · Space toggle · n/p highlights · q/Esc/^Q quit",
+            )
+            .dim();
         });
 }
 

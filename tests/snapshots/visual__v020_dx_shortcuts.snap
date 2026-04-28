@@ -6,7 +6,7 @@ assertion_line: 38
 │                                                                              │
 │ Press Space to toggle the panel, hover Save for a tooltip,                   │
 │                                                                              │
-│ press ? for the centered help overlay, Ctrl-Q to quit.                       │
+│ press ? for the centered help overlay, q / Esc / Ctrl-Q to quit.             │
 │                                                                              │
 │ Actions         ············································───────────────┐ │
 │                 ·           │                              ·               │ │
