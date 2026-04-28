@@ -15,7 +15,7 @@
 ///
 /// ```no_run
 /// # slt::run(|ui: &mut slt::Context| {
-/// let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+/// let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
 /// if let Some(i) = r.clicked_segment {
 ///     // navigate to segment `i`
 /// }
@@ -46,13 +46,16 @@ impl std::ops::Deref for BreadcrumbResponse {
 /// Wraps the row-level [`Response`] plus the rendered ratio so callers can
 /// confirm the displayed value (clamped to `0.0..=1.0`). Implements
 /// `Deref<Target = Response>` so `r.hovered` etc. work directly.
+///
+/// Note: `ratio` was widened from `f32` to `f64` in v0.20.0 so the gauge
+/// family aligns with `animate_value`, chart APIs, and `progress_bar`.
 #[derive(Debug, Clone, Default)]
 #[must_use = "GaugeResponse contains interaction state — check .hovered or .ratio"]
 pub struct GaugeResponse {
     /// The row-level interaction response.
     pub response: Response,
     /// The clamped ratio that was rendered (always `0.0..=1.0`).
-    pub ratio: f32,
+    pub ratio: f64,
 }
 
 impl std::ops::Deref for GaugeResponse {
@@ -62,7 +65,13 @@ impl std::ops::Deref for GaugeResponse {
     }
 }
 
-/// Options for [`Context::line_gauge`](crate::Context::line_gauge).
+/// Options struct for the deprecated
+/// [`Context::line_gauge_with`](crate::Context::line_gauge_with) shim.
+///
+/// New code should use the chainable builder
+/// `ui.line_gauge(ratio).label(...).width(...).filled(...).empty(...)`.
+/// This struct stays around for one minor cycle to ease migration of v0.19
+/// call sites that constructed it directly.
 #[derive(Debug, Clone)]
 pub struct LineGaugeOpts {
     /// Fill character. Default: `'━'`.

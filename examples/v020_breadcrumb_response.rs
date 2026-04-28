@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
                     .fg(Color::Cyan);
 
                 let visible: Vec<&str> = segments.iter().take(current + 1).copied().collect();
-                let r = ui.breadcrumb(&visible);
+                let r = ui.breadcrumb(&visible).show();
                 if let Some(i) = r.clicked_segment {
                     current = i;
                 }

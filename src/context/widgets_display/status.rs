@@ -166,64 +166,42 @@ impl Context {
         response
     }
 
-    /// Render a breadcrumb navigation bar with the default separator (` › `).
+    /// Begin building a breadcrumb navigation bar with the default separator
+    /// (` › `).
     ///
-    /// Returns a [`BreadcrumbResponse`] carrying the row-level interaction
-    /// response (hover, rect, focus) and the index of the clicked segment if
-    /// any. Use [`Self::breadcrumb_sep`] for a custom separator string.
-    ///
-    /// `BreadcrumbResponse` derefs to `Response`, so `.hovered`, `.rect`, and
-    /// `.focused` work directly.
+    /// Returns a [`Breadcrumb`] builder that auto-renders on `Drop`. Chain
+    /// `.separator(s)` for a custom separator and `.color(c)` for a custom
+    /// link color. Call `.show()` to render and obtain a
+    /// [`BreadcrumbResponse`] carrying `clicked_segment` and `Deref<Response>`.
     ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
-    /// let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    /// // simple
+    /// ui.breadcrumb(&["Home", "Settings", "Profile"]);
+    ///
+    /// // with custom separator + color, capturing the response
+    /// let r = ui
+    ///     .breadcrumb(&["Home", "src", "lib.rs"])
+    ///     .separator(" > ")
+    ///     .show();
     /// if let Some(i) = r.clicked_segment {
     ///     // navigate to segment `i`
     /// }
     /// # });
     /// ```
-    pub fn breadcrumb(&mut self, segments: &[&str]) -> BreadcrumbResponse {
-        self.breadcrumb_sep(segments, " › ")
+    pub fn breadcrumb<'a>(&'a mut self, segments: &'a [&'a str]) -> Breadcrumb<'a> {
+        Breadcrumb::new(self, segments)
     }
 
-    /// Render a breadcrumb with a custom separator string.
-    ///
-    /// See [`Self::breadcrumb`] for the default separator variant.
+    /// Deprecated: use the builder form `ui.breadcrumb(segments).separator(sep)`.
+    #[deprecated(
+        since = "0.20.0",
+        note = "use `ui.breadcrumb(segments).separator(sep)` builder; this will be removed in v0.21.0"
+    )]
     pub fn breadcrumb_sep(&mut self, segments: &[&str], separator: &str) -> BreadcrumbResponse {
-        let theme = self.theme;
-        let last_idx = segments.len().saturating_sub(1);
-        let mut clicked_segment: Option<usize> = None;
-
-        let response = self.row(|ui| {
-            for (i, segment) in segments.iter().enumerate() {
-                let is_last = i == last_idx;
-                if is_last {
-                    ui.text(*segment).bold();
-                } else {
-                    let focused = ui.register_focusable();
-                    let resp = ui.interaction();
-                    let activated = resp.clicked || ui.consume_activation_keys(focused);
-                    let color = if resp.hovered || focused {
-                        theme.accent
-                    } else {
-                        theme.primary
-                    };
-                    ui.text(*segment).fg(color).underline();
-                    if activated {
-                        clicked_segment = Some(i);
-                    }
-                    ui.text(separator).dim();
-                }
-            }
-        });
-
-        BreadcrumbResponse {
-            response,
-            clicked_segment,
-        }
+        Breadcrumb::new(self, segments).separator(separator).show()
     }
 
     /// Collapsible section that toggles on click, Enter, or Space.
@@ -497,5 +475,98 @@ impl Context {
             });
 
         Response::none()
+    }
+}
+
+/// Breadcrumb navigation bar builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::breadcrumb`]. Chain `.separator(s)` to override
+/// the default ` › ` separator and `.color(c)` to override the link color.
+/// Drop the value to render without capturing a response, or call
+/// [`Self::show`] to render and obtain a [`BreadcrumbResponse`].
+///
+/// `Drop` is intentional: `ui.breadcrumb(&["Home", "src"]).separator(" > ");`
+/// is the idiomatic form when the response isn't needed.
+pub struct Breadcrumb<'a> {
+    ctx: Option<&'a mut Context>,
+    segments: &'a [&'a str],
+    separator: &'a str,
+    color: Option<Color>,
+}
+
+impl<'a> Breadcrumb<'a> {
+    pub(super) fn new(ctx: &'a mut Context, segments: &'a [&'a str]) -> Self {
+        Self {
+            ctx: Some(ctx),
+            segments,
+            separator: " › ",
+            color: None,
+        }
+    }
+
+    /// Set the separator string between segments (default: ` › `).
+    pub fn separator(mut self, sep: &'a str) -> Self {
+        self.separator = sep;
+        self
+    }
+
+    /// Override the link (clickable segment) color. Defaults to `theme.primary`.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Render now and return the [`BreadcrumbResponse`].
+    pub fn show(mut self) -> BreadcrumbResponse {
+        let ctx = self.ctx.take().expect("Breadcrumb::show called twice");
+        render_breadcrumb(ctx, self.segments, self.separator, self.color)
+    }
+}
+
+impl Drop for Breadcrumb<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_breadcrumb(ctx, self.segments, self.separator, self.color);
+        }
+    }
+}
+
+fn render_breadcrumb(
+    ctx: &mut Context,
+    segments: &[&str],
+    separator: &str,
+    color_override: Option<Color>,
+) -> BreadcrumbResponse {
+    let theme = ctx.theme;
+    let last_idx = segments.len().saturating_sub(1);
+    let mut clicked_segment: Option<usize> = None;
+    let link_color = color_override.unwrap_or(theme.primary);
+
+    let response = ctx.row(|ui| {
+        for (i, segment) in segments.iter().enumerate() {
+            let is_last = i == last_idx;
+            if is_last {
+                ui.text(*segment).bold();
+            } else {
+                let focused = ui.register_focusable();
+                let resp = ui.interaction();
+                let activated = resp.clicked || ui.consume_activation_keys(focused);
+                let color = if resp.hovered || focused {
+                    theme.accent
+                } else {
+                    link_color
+                };
+                ui.text(*segment).fg(color).underline();
+                if activated {
+                    clicked_segment = Some(i);
+                }
+                ui.text(separator).dim();
+            }
+        }
+    });
+
+    BreadcrumbResponse {
+        response,
+        clicked_segment,
     }
 }

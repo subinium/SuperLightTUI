@@ -8,7 +8,7 @@
 //! that for high-stakes baselines).
 
 use slt::widgets::SpinnerState;
-use slt::{HighlightRange, LineGaugeOpts, ScrollState, SplitPaneState, TestBackend};
+use slt::{GutterOpts, HighlightRange, ScrollState, SplitPaneState, TestBackend};
 
 #[test]
 fn demo_v020_progress_response_renders() {
@@ -110,8 +110,8 @@ fn demo_v020_gauge_renders_label_in_filled_bar() {
             .title("gauge")
             .p(1)
             .col(|ui| {
-                let _ = ui.gauge_w(0.5, "50%", 24);
-                let _ = ui.gauge_w(0.85, "85%", 24);
+                ui.gauge(0.5).label("50%").width(24);
+                ui.gauge(0.85).label("85%").width(24);
             });
     });
     tb.assert_contains("50%");
@@ -130,15 +130,12 @@ fn demo_v020_line_gauge_renders_labels_after_bar() {
             .title("line_gauge")
             .p(1)
             .col(|ui| {
-                let _ = ui.line_gauge(0.6, LineGaugeOpts::default().label("60%").width(24));
-                let _ = ui.line_gauge(
-                    0.3,
-                    LineGaugeOpts::default()
-                        .filled('#')
-                        .empty('.')
-                        .width(24)
-                        .label("30%"),
-                );
+                ui.line_gauge(0.6).label("60%").width(24);
+                ui.line_gauge(0.3)
+                    .filled('#')
+                    .empty('.')
+                    .width(24)
+                    .label("30%");
             });
     });
     tb.assert_contains("60%");
@@ -159,7 +156,7 @@ fn demo_v020_gutter_highlights_render_search_navigation() {
             _ => format!("INFO  line {i}"),
         })
         .collect();
-    state.set_highlights(&[HighlightRange::line(5), HighlightRange::line(12)]);
+    state.set_highlights(&[HighlightRange::single(5), HighlightRange::single(12)]);
     tb.render(|ui| {
         let _ = ui
             .bordered(slt::Border::Rounded)
@@ -169,9 +166,7 @@ fn demo_v020_gutter_highlights_render_search_navigation() {
             .col(|ui| {
                 let r = ui.scrollable_with_gutter(
                     &mut state,
-                    lines.len(),
-                    8,
-                    |idx| format!("{:>3}", idx + 1),
+                    GutterOpts::new(lines.len(), 8, |idx| format!("{:>3}", idx + 1)),
                     |ui, abs| {
                         if let Some(line) = lines.get(abs) {
                             ui.text(line.clone());

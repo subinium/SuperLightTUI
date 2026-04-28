@@ -3,6 +3,11 @@
 //
 // Introduced in v0.20.0 (#224). Complements the unlabeled
 // `Context::progress_bar` / `Context::progress` (`textarea_progress.rs`).
+//
+// API consistency pass (v0.20.0): callers now use a chainable builder pattern
+// (`ui.gauge(0.5).label("CPU").width(48)`). Auto-renders on `Drop`; call
+// `.show()` to get a [`GaugeResponse`] back. Ratios are `f64` to match
+// `animate_value`, chart APIs, and `progress_bar` — no more `f32` outliers.
 
 use super::*;
 
@@ -10,90 +15,332 @@ use super::*;
 const DEFAULT_GAUGE_WIDTH: u32 = 20;
 
 impl Context {
-    /// Render a block-fill progress bar with a centered inline label.
+    /// Begin building a block-fill progress bar with optional centered label.
     ///
-    /// `ratio` is clamped to `0.0..=1.0`. The label is rendered centered in
-    /// the bar; pass `""` for no label. Width defaults to 20 cells; use
-    /// [`Self::gauge_w`] for an explicit size.
+    /// `ratio` is clamped to `0.0..=1.0`. The returned [`Gauge`] auto-renders
+    /// when dropped, so a bare `ui.gauge(0.5);` produces a default-width bar.
+    /// Chain `.label(...)`, `.width(...)`, or `.color(...)` to customize.
+    /// Call `.show()` (instead of dropping) to capture a [`GaugeResponse`].
     ///
     /// Color tiers follow theme colors: `success` below 50%, `warning` 50–80%,
-    /// `error` above 80%. Override per-call via [`Self::gauge_colored`] when
-    /// you need a single fixed color regardless of progress.
+    /// `error` at or above 80%. Override per-call with `.color(...)`.
     ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
-    /// let r = ui.gauge(0.6, "60%");
+    /// ui.gauge(0.6).label("60%");
+    /// let r = ui.gauge(0.42).label("CPU").width(48).show();
     /// if r.hovered { /* attach tooltip */ }
     /// # });
     /// ```
-    pub fn gauge(&mut self, ratio: f32, label: &str) -> GaugeResponse {
-        self.gauge_w(ratio, label, DEFAULT_GAUGE_WIDTH)
+    pub fn gauge(&mut self, ratio: f64) -> Gauge<'_> {
+        Gauge::new(self, ratio)
     }
 
-    /// Render a block-fill gauge with an inline label at a fixed width.
-    ///
-    /// See [`Self::gauge`] for details on label centering and color tiers.
-    pub fn gauge_w(&mut self, ratio: f32, label: &str, width: u32) -> GaugeResponse {
-        let clamped = ratio.clamp(0.0, 1.0);
-        let color = gauge_color_for(self, clamped);
-        self.gauge_colored(clamped, label, width, color)
+    /// Deprecated: use the builder form `ui.gauge(ratio).label(label).width(width)`.
+    #[deprecated(
+        since = "0.20.0",
+        note = "use `ui.gauge(ratio).label(label).width(width)` builder; this will be removed in v0.21.0"
+    )]
+    pub fn gauge_w(&mut self, ratio: f64, label: &str, width: u32) -> GaugeResponse {
+        let mut g = Gauge::new(self, ratio).width(width);
+        if !label.is_empty() {
+            g = g.label_owned(label.to_string());
+        }
+        g.show()
     }
 
-    /// Render a block-fill gauge with a fixed color (no automatic tiering).
+    /// Deprecated: use the builder form `ui.gauge(ratio).label(label).width(width).color(color)`.
+    #[deprecated(
+        since = "0.20.0",
+        note = "use `ui.gauge(ratio).label(label).width(width).color(color)` builder; this will be removed in v0.21.0"
+    )]
     pub fn gauge_colored(
         &mut self,
-        ratio: f32,
+        ratio: f64,
         label: &str,
         width: u32,
         color: Color,
     ) -> GaugeResponse {
-        let response = self.interaction();
-        let clamped = ratio.clamp(0.0, 1.0);
-        let width = width.max(1);
-        let bar = compose_block_bar(clamped, width, label);
-        self.styled(bar, Style::new().fg(color));
-        GaugeResponse {
-            response,
-            ratio: clamped,
+        let mut g = Gauge::new(self, ratio).width(width).color(color);
+        if !label.is_empty() {
+            g = g.label_owned(label.to_string());
         }
+        g.show()
     }
 
-    /// Render a single-line gauge with configurable fill/empty characters.
+    /// Begin building a single-line gauge with configurable fill/empty chars.
+    ///
+    /// `ratio` is clamped to `0.0..=1.0`. Chain `.label(...)`, `.width(...)`,
+    /// `.filled(...)`, `.empty(...)` to customize. Auto-renders on `Drop`;
+    /// call `.show()` to capture a [`GaugeResponse`].
     ///
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::LineGaugeOpts;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// let _ = ui.line_gauge(0.6, LineGaugeOpts::default().label("60%"));
+    /// ui.line_gauge(0.6).label("60%").width(24);
+    /// ui.line_gauge(0.78).label("Memory").width(48).filled('━');
     /// # });
     /// ```
-    pub fn line_gauge(&mut self, ratio: f32, opts: LineGaugeOpts) -> GaugeResponse {
-        let response = self.interaction();
-        let clamped = ratio.clamp(0.0, 1.0);
-        let width = opts.width.unwrap_or(DEFAULT_GAUGE_WIDTH).max(1);
-        let bar = compose_line_bar(
-            clamped,
-            width,
-            opts.filled,
-            opts.empty,
-            opts.label.as_deref(),
-        );
-        let color = gauge_color_for(self, clamped);
-        self.styled(bar, Style::new().fg(color));
-        GaugeResponse {
-            response,
-            ratio: clamped,
+    pub fn line_gauge(&mut self, ratio: f64) -> LineGauge<'_> {
+        LineGauge::new(self, ratio)
+    }
+
+    /// Deprecated: use the chainable builder `ui.line_gauge(ratio).label(...).width(...)`.
+    ///
+    /// Retained as a thin shim over the builder for one minor cycle to ease
+    /// migration of existing call sites.
+    #[deprecated(
+        since = "0.20.0",
+        note = "use the chainable builder `ui.line_gauge(ratio).label(...).width(...).filled(...).empty(...)`; this will be removed in v0.21.0"
+    )]
+    pub fn line_gauge_with(&mut self, ratio: f64, opts: LineGaugeOpts) -> GaugeResponse {
+        let mut g = LineGauge::new(self, ratio)
+            .filled(opts.filled)
+            .empty(opts.empty);
+        if let Some(w) = opts.width {
+            g = g.width(w);
         }
+        if let Some(label) = opts.label {
+            g = g.label_owned(label);
+        }
+        g.show()
+    }
+}
+
+/// Block-fill gauge builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::gauge`]. Chainable `.label`, `.width`, `.color`
+/// methods configure the gauge before it renders. Drop the value to render
+/// without capturing a response, or call [`Self::show`] to render and obtain
+/// a [`GaugeResponse`].
+///
+/// `Drop` is intentional: `ui.gauge(0.5).label("CPU");` is the idiomatic form
+/// when the response isn't needed, mirroring egui's `ui.add(...)`. Use
+/// [`Self::show`] when you need the response.
+pub struct Gauge<'a> {
+    ctx: Option<&'a mut Context>,
+    ratio: f64,
+    label: Option<String>,
+    width: Option<u32>,
+    color: Option<Color>,
+}
+
+impl<'a> Gauge<'a> {
+    fn new(ctx: &'a mut Context, ratio: f64) -> Self {
+        Self {
+            ctx: Some(ctx),
+            ratio,
+            label: None,
+            width: None,
+            color: None,
+        }
+    }
+
+    /// Set the centered inline label. Empty string is treated as "no label".
+    pub fn label(mut self, label: &str) -> Self {
+        if label.is_empty() {
+            self.label = None;
+        } else {
+            self.label = Some(label.to_string());
+        }
+        self
+    }
+
+    /// Set the centered inline label from an owned String (avoids extra alloc).
+    pub fn label_owned(mut self, label: String) -> Self {
+        if label.is_empty() {
+            self.label = None;
+        } else {
+            self.label = Some(label);
+        }
+        self
+    }
+
+    /// Set the bar width in terminal cells (default: 20).
+    pub fn width(mut self, w: u32) -> Self {
+        self.width = Some(w);
+        self
+    }
+
+    /// Override the auto-tiered color with a fixed color.
+    pub fn color(mut self, c: Color) -> Self {
+        self.color = Some(c);
+        self
+    }
+
+    /// Render now and return the [`GaugeResponse`].
+    pub fn show(mut self) -> GaugeResponse {
+        // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
+        let ctx = self.ctx.take().expect("Gauge::show called twice");
+        let response = render_gauge(
+            ctx,
+            self.ratio,
+            self.width.unwrap_or(DEFAULT_GAUGE_WIDTH),
+            self.label.as_deref().unwrap_or(""),
+            self.color,
+        );
+        response
+    }
+}
+
+impl Drop for Gauge<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_gauge(
+                ctx,
+                self.ratio,
+                self.width.unwrap_or(DEFAULT_GAUGE_WIDTH),
+                self.label.as_deref().unwrap_or(""),
+                self.color,
+            );
+        }
+    }
+}
+
+/// Single-line gauge builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::line_gauge`]. Chainable methods configure the
+/// gauge before it renders. Drop to render without capturing a response, or
+/// call [`Self::show`] to render and obtain a [`GaugeResponse`].
+///
+/// `Drop` is intentional: `ui.line_gauge(0.5).filled('━');` is the idiomatic
+/// form when the response isn't needed.
+pub struct LineGauge<'a> {
+    ctx: Option<&'a mut Context>,
+    ratio: f64,
+    label: Option<String>,
+    width: Option<u32>,
+    filled: char,
+    empty: char,
+}
+
+impl<'a> LineGauge<'a> {
+    fn new(ctx: &'a mut Context, ratio: f64) -> Self {
+        Self {
+            ctx: Some(ctx),
+            ratio,
+            label: None,
+            width: None,
+            filled: '━',
+            empty: '─',
+        }
+    }
+
+    /// Set the trailing label, appended after the bar.
+    pub fn label(mut self, label: &str) -> Self {
+        if label.is_empty() {
+            self.label = None;
+        } else {
+            self.label = Some(label.to_string());
+        }
+        self
+    }
+
+    /// Set the trailing label from an owned String.
+    pub fn label_owned(mut self, label: String) -> Self {
+        if label.is_empty() {
+            self.label = None;
+        } else {
+            self.label = Some(label);
+        }
+        self
+    }
+
+    /// Set the bar width in terminal cells (default: 20).
+    pub fn width(mut self, w: u32) -> Self {
+        self.width = Some(w);
+        self
+    }
+
+    /// Set the filled character (default: `'━'`).
+    pub fn filled(mut self, ch: char) -> Self {
+        self.filled = ch;
+        self
+    }
+
+    /// Set the empty character (default: `'─'`).
+    pub fn empty(mut self, ch: char) -> Self {
+        self.empty = ch;
+        self
+    }
+
+    /// Render now and return the [`GaugeResponse`].
+    pub fn show(mut self) -> GaugeResponse {
+        let ctx = self.ctx.take().expect("LineGauge::show called twice");
+        render_line_gauge(
+            ctx,
+            self.ratio,
+            self.width.unwrap_or(DEFAULT_GAUGE_WIDTH),
+            self.filled,
+            self.empty,
+            self.label.as_deref(),
+        )
+    }
+}
+
+impl Drop for LineGauge<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_line_gauge(
+                ctx,
+                self.ratio,
+                self.width.unwrap_or(DEFAULT_GAUGE_WIDTH),
+                self.filled,
+                self.empty,
+                self.label.as_deref(),
+            );
+        }
+    }
+}
+
+/// Internal rendering for a block-fill gauge.
+fn render_gauge(
+    ctx: &mut Context,
+    ratio: f64,
+    width: u32,
+    label: &str,
+    color_override: Option<Color>,
+) -> GaugeResponse {
+    let response = ctx.interaction();
+    let clamped = ratio.clamp(0.0, 1.0);
+    let width = width.max(1);
+    let bar = compose_block_bar(clamped, width, label);
+    let color = color_override.unwrap_or_else(|| gauge_color_for(ctx, clamped));
+    ctx.styled(bar, Style::new().fg(color));
+    GaugeResponse {
+        response,
+        ratio: clamped,
+    }
+}
+
+/// Internal rendering for a single-line gauge.
+fn render_line_gauge(
+    ctx: &mut Context,
+    ratio: f64,
+    width: u32,
+    filled: char,
+    empty: char,
+    label: Option<&str>,
+) -> GaugeResponse {
+    let response = ctx.interaction();
+    let clamped = ratio.clamp(0.0, 1.0);
+    let width = width.max(1);
+    let bar = compose_line_bar(clamped, width, filled, empty, label);
+    let color = gauge_color_for(ctx, clamped);
+    ctx.styled(bar, Style::new().fg(color));
+    GaugeResponse {
+        response,
+        ratio: clamped,
     }
 }
 
 /// Pick a color from the theme based on the current ratio.
 ///
-/// `success` < 50%, `warning` 50–80%, `error` > 80%.
-fn gauge_color_for(ctx: &Context, ratio: f32) -> Color {
+/// `success` < 50%, `warning` 50–80%, `error` >= 80%.
+fn gauge_color_for(ctx: &Context, ratio: f64) -> Color {
     if ratio >= 0.80 {
         ctx.theme.error
     } else if ratio >= 0.50 {
@@ -106,9 +353,10 @@ fn gauge_color_for(ctx: &Context, ratio: f32) -> Color {
 /// Build a block-style bar (`█` filled, `░` empty) of `width` cells with an
 /// optional centered `label`. The label is omitted (not truncated) when the
 /// bar is too narrow to fit it.
-fn compose_block_bar(ratio: f32, width: u32, label: &str) -> String {
+fn compose_block_bar(ratio: f64, width: u32, label: &str) -> String {
     let width_usize = width as usize;
-    let filled = (ratio * width as f32).round() as u32;
+    // Cast to f32 only at the rendering boundary — internal math is f64.
+    let filled = (ratio * width as f64).round() as u32;
     let filled = filled.min(width);
 
     if !label.is_empty() {
@@ -152,13 +400,14 @@ fn compose_block_bar(ratio: f32, width: u32, label: &str) -> String {
 /// Build a single-line bar with configurable fill/empty chars and optional
 /// label appended after the bar (not centered inside).
 fn compose_line_bar(
-    ratio: f32,
+    ratio: f64,
     width: u32,
     filled: char,
     empty: char,
     label: Option<&str>,
 ) -> String {
-    let filled_count = (ratio * width as f32).round() as u32;
+    // Cast to u32 only at the bar-rendering boundary.
+    let filled_count = (ratio * width as f64).round() as u32;
     let filled_count = filled_count.min(width);
     let empty_count = width.saturating_sub(filled_count);
     let mut out = String::with_capacity(width as usize + label.map_or(0, |s| s.len() + 1));
@@ -213,5 +462,15 @@ mod tests {
     fn line_bar_appends_label() {
         let bar = compose_line_bar(1.0, 4, '#', '.', Some("done"));
         assert_eq!(bar, "#### done");
+    }
+
+    #[test]
+    fn block_bar_f64_precision() {
+        // Ratios that f32 rounds differently from f64 still produce stable
+        // block counts — confirms internal math runs in f64.
+        let bar = compose_block_bar(1.0 / 3.0, 30, "");
+        let filled = bar.chars().filter(|&c| c == '█').count();
+        // (1/3 * 30).round() == 10
+        assert_eq!(filled, 10);
     }
 }

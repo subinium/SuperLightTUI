@@ -4,18 +4,87 @@
 // Introduced in v0.20.0 (#235). Companion to the existing `scrollable` /
 // `scroll_col` / `scroll_row` widgets in `layout.rs` and the `ScrollState`
 // highlight extensions in `widgets/collections.rs`.
+//
+// API consistency pass (v0.20.0): the four+ positional args were collapsed
+// into a [`GutterOpts<G>`] struct so callers don't have to remember argument
+// order. The 90% case (line numbers) gets a [`GutterOpts::line_numbers`]
+// shortcut so most callers never write the closure manually.
 
 use super::*;
+
+/// Options for [`Context::scrollable_with_gutter`].
+///
+/// Carries the bookkeeping arguments together so call sites become readable:
+///
+/// ```no_run
+/// # use slt::{GutterOpts, ScrollState};
+/// # let mut scroll = ScrollState::default();
+/// # slt::run(|ui: &mut slt::Context| {
+/// // 90% case — automatic line numbers.
+/// ui.scrollable_with_gutter(
+///     &mut scroll,
+///     GutterOpts::line_numbers(120, 24),
+///     |ui, line| { ui.text(format!("line {line}")); },
+/// );
+///
+/// // Custom gutter labels.
+/// ui.scrollable_with_gutter(
+///     &mut scroll,
+///     GutterOpts::new(120, 24, |i| if i == 7 { "!".to_string() } else { String::new() }),
+///     |ui, line| { ui.text(format!("line {line}")); },
+/// );
+/// # });
+/// ```
+pub struct GutterOpts<G> {
+    /// Total number of content lines.
+    pub total_lines: usize,
+    /// Viewport height in rows.
+    pub viewport_height: u32,
+    /// Closure that returns the gutter label for a given absolute line index.
+    pub gutter_fn: G,
+}
+
+impl<G> GutterOpts<G>
+where
+    G: Fn(usize) -> String,
+{
+    /// Build options with an explicit gutter labeling closure.
+    pub fn new(total_lines: usize, viewport_height: u32, gutter_fn: G) -> Self {
+        Self {
+            total_lines,
+            viewport_height,
+            gutter_fn,
+        }
+    }
+}
+
+impl GutterOpts<fn(usize) -> String> {
+    /// Shortcut for the 90% case: render 1-based line numbers in the gutter.
+    ///
+    /// Equivalent to `GutterOpts::new(total, viewport, |i| format!("{}", i + 1))`
+    /// but uses a function pointer to avoid forcing the caller to name the
+    /// closure type.
+    pub fn line_numbers(total_lines: usize, viewport_height: u32) -> Self {
+        fn label(i: usize) -> String {
+            format!("{}", i + 1)
+        }
+        Self {
+            total_lines,
+            viewport_height,
+            gutter_fn: label,
+        }
+    }
+}
 
 impl Context {
     /// Scrollable column with a left gutter rendered per visible line.
     ///
-    /// `total_lines` is the absolute count of content lines. `viewport_height`
-    /// is the number of rows the viewport should occupy. `gutter_fn` receives
-    /// the absolute content line index (0-based) and returns the gutter label.
-    /// `f` is invoked for each visible line (0-indexed within the viewport)
-    /// and renders that line's content. Highlighted lines (set via
-    /// [`ScrollState::set_highlights`]) receive an accent background.
+    /// `state` is the active scroll state. `opts` carries `total_lines`,
+    /// `viewport_height`, and the gutter labeling closure (use
+    /// [`GutterOpts::line_numbers`] for the common case). `body_fn` is invoked
+    /// for each visible line and renders that line's content. Highlighted
+    /// lines (set via [`ScrollState::set_highlights`]) receive an accent
+    /// background.
     ///
     /// Returns a [`GutterResponse`] with the current highlight index and
     /// total highlight count for callers wiring up `n` / `N` search-result
@@ -24,16 +93,14 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::{HighlightRange, ScrollState};
+    /// # use slt::{GutterOpts, HighlightRange, ScrollState};
     /// # let mut scroll = ScrollState::new();
-    /// # scroll.set_highlights(&[HighlightRange::line(7), HighlightRange::line(15)]);
+    /// # scroll.set_highlights(&[HighlightRange::single(7), HighlightRange::single(15)]);
     /// # let lines: Vec<&str> = vec![];
     /// # slt::run(|ui: &mut slt::Context| {
     /// let r = ui.scrollable_with_gutter(
     ///     &mut scroll,
-    ///     lines.len(),
-    ///     10,
-    ///     |idx| format!("{:>4}", idx + 1),
+    ///     GutterOpts::line_numbers(lines.len(), 10),
     ///     |ui, abs_line| {
     ///         if let Some(line) = lines.get(abs_line) {
     ///             ui.text(*line);
@@ -48,15 +115,19 @@ impl Context {
     pub fn scrollable_with_gutter<G, F>(
         &mut self,
         state: &mut ScrollState,
-        total_lines: usize,
-        viewport_height: u32,
-        gutter_fn: G,
+        opts: GutterOpts<G>,
         mut f: F,
     ) -> GutterResponse
     where
         G: Fn(usize) -> String,
         F: FnMut(&mut Context, usize),
     {
+        let GutterOpts {
+            total_lines,
+            viewport_height,
+            gutter_fn,
+        } = opts;
+
         // Sync state's bounds and clamp offset.
         state.set_bounds(total_lines as u32, viewport_height);
         let max_offset = total_lines.saturating_sub(viewport_height as usize);

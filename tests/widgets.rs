@@ -3072,6 +3072,7 @@ fn breadcrumb_enter_activates_focused_segment() {
     tb.render_with_events(events, 0, 1, |ui| {
         clicked = ui
             .breadcrumb(&["Home", "Settings", "Profile"])
+            .show()
             .clicked_segment;
     });
     assert_eq!(clicked, Some(0));
@@ -3089,6 +3090,7 @@ fn breadcrumb_mouse_click_activates_segment() {
     tb.render_with_events(events, 0, 0, |ui| {
         clicked = ui
             .breadcrumb(&["Home", "Settings", "Profile"])
+            .show()
             .clicked_segment;
     });
 
@@ -4098,14 +4100,14 @@ fn breadcrumb_response_exposes_rect() {
     let mut rect = slt::Rect::default();
     let mut idx: Option<usize> = None;
     tb.render(|ui| {
-        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
         rect = r.rect;
         idx = r.clicked_segment;
     });
     // First frame has no prev_hit_map entry yet, so rect may be zero — render
     // a second frame so the response carries a real rect.
     tb.render(|ui| {
-        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
         rect = r.rect;
     });
     assert!(
@@ -4125,7 +4127,7 @@ fn breadcrumb_response_returns_clicked_index_on_enter() {
     let events = slt::EventBuilder::new().key_code(KeyCode::Enter).build();
     let mut clicked: Option<usize> = None;
     tb.render_with_events(events, 0, 1, |ui| {
-        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
         clicked = r.clicked_segment;
     });
     assert_eq!(clicked, Some(0));
@@ -4136,7 +4138,7 @@ fn breadcrumb_response_derefs_to_response() {
     // BreadcrumbResponse derefs into Response, so .hovered/.rect work directly.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
-        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+        let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show();
         // Must compile via Deref impl.
         let _ = r.hovered;
         let _ = r.rect;
@@ -4145,7 +4147,23 @@ fn breadcrumb_response_derefs_to_response() {
 }
 
 #[test]
-fn breadcrumb_sep_uses_custom_separator() {
+fn breadcrumb_builder_separator_uses_custom_string() {
+    // v0.20.0 builder replacement for the deprecated `breadcrumb_sep` shim.
+    let mut tb = TestBackend::new(60, 3);
+    tb.render(|ui| {
+        ui.breadcrumb(&["A", "B", "C"]).separator(" > ");
+    });
+    let output = tb.to_string();
+    assert!(output.contains(" > "));
+    assert!(output.contains("A"));
+    assert!(output.contains("C"));
+}
+
+#[test]
+#[allow(deprecated)]
+fn breadcrumb_sep_deprecated_shim_still_works() {
+    // Regression: the deprecated `breadcrumb_sep` shim must keep producing
+    // identical output through one minor cycle to avoid breaking v0.19 callers.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
         let _ = ui.breadcrumb_sep(&["A", "B", "C"], " > ");
