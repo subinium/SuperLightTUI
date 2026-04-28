@@ -195,15 +195,6 @@ impl Context {
         Breadcrumb::new(self, segments)
     }
 
-    /// Deprecated: use the builder form `ui.breadcrumb(segments).separator(sep)`.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use `ui.breadcrumb(segments).separator(sep)` builder; this will be removed in v0.21.0"
-    )]
-    pub fn breadcrumb_sep(&mut self, segments: &[&str], separator: &str) -> BreadcrumbResponse {
-        Breadcrumb::new(self, segments).separator(separator).show()
-    }
-
     /// Collapsible section that toggles on click, Enter, or Space.
     pub fn accordion(
         &mut self,

@@ -45,7 +45,7 @@ fn highlights() -> Vec<HighlightRange> {
         .iter()
         .enumerate()
         .filter(|(_, l)| l.starts_with("ERROR"))
-        .map(|(i, _)| HighlightRange::single(i))
+        .map(|(i, _)| HighlightRange::line(i))
         .collect()
 }
 
@@ -94,6 +94,12 @@ fn main() -> std::io::Result<()> {
 
             let theme = ui.theme();
             let pad = theme.spacing.xs();
+            // Pull theme colors out of the Theme so closures don't need to
+            // re-borrow `theme` — they capture the `Color` value directly.
+            // Showcasing the theme system rather than hardcoding RGB demo values.
+            let badge_bg = theme.surface;
+            let badge_fg = theme.primary;
+            let center_dim = theme.text_dim;
 
             // Wrap in error_boundary so a panic in any sub-section is caught.
             ui.error_boundary(|ui| {
@@ -151,36 +157,25 @@ fn main() -> std::io::Result<()> {
                     });
 
                 // overlay_anchor (#200) — 4 corners + center, all visible at once.
+                // Colors come from the active theme so the demo also showcases #226.
                 let _ = ui.overlay_at(Anchor::TopLeft, |ui| {
-                    ui.styled(
-                        " ◤ TL ",
-                        slt::Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Cyan),
-                    );
+                    ui.styled(" ◤ TL ", slt::Style::new().bg(badge_bg).fg(badge_fg));
                 });
                 let _ = ui.overlay_at(Anchor::TopRight, |ui| {
-                    ui.styled(
-                        " TR ◥ ",
-                        slt::Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Cyan),
-                    );
+                    ui.styled(" TR ◥ ", slt::Style::new().bg(badge_bg).fg(badge_fg));
                 });
                 let _ = ui.overlay_at(Anchor::BottomLeft, |ui| {
-                    ui.styled(
-                        " ◣ BL ",
-                        slt::Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Cyan),
-                    );
+                    ui.styled(" ◣ BL ", slt::Style::new().bg(badge_bg).fg(badge_fg));
                 });
                 let _ = ui.overlay_at(Anchor::BottomRight, |ui| {
-                    ui.styled(
-                        " BR ◢ ",
-                        slt::Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Cyan),
-                    );
+                    ui.styled(" BR ◢ ", slt::Style::new().bg(badge_bg).fg(badge_fg));
                 });
                 let _ = ui.overlay_at(Anchor::Center, |ui| {
                     if modal_open {
                         // The actual modal renders below; this overlay just shows
                         // we did NOT confuse overlay_at with modal.
                     } else {
-                        ui.text(" ⊕ ").fg(Color::DarkGray);
+                        ui.text(" ⊕ ").fg(center_dim);
                     }
                 });
 

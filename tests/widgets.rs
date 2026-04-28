@@ -4148,25 +4148,11 @@ fn breadcrumb_response_derefs_to_response() {
 
 #[test]
 fn breadcrumb_builder_separator_uses_custom_string() {
-    // v0.20.0 builder replacement for the deprecated `breadcrumb_sep` shim.
+    // The chainable `.separator(...)` is the only public form for custom
+    // breadcrumb separators in v0.20.0+.
     let mut tb = TestBackend::new(60, 3);
     tb.render(|ui| {
         ui.breadcrumb(&["A", "B", "C"]).separator(" > ");
-    });
-    let output = tb.to_string();
-    assert!(output.contains(" > "));
-    assert!(output.contains("A"));
-    assert!(output.contains("C"));
-}
-
-#[test]
-#[allow(deprecated)]
-fn breadcrumb_sep_deprecated_shim_still_works() {
-    // Regression: the deprecated `breadcrumb_sep` shim must keep producing
-    // identical output through one minor cycle to avoid breaking v0.19 callers.
-    let mut tb = TestBackend::new(60, 3);
-    tb.render(|ui| {
-        let _ = ui.breadcrumb_sep(&["A", "B", "C"], " > ");
     });
     let output = tb.to_string();
     assert!(output.contains(" > "));

@@ -65,62 +65,6 @@ impl std::ops::Deref for GaugeResponse {
     }
 }
 
-/// Options struct for the deprecated
-/// [`Context::line_gauge_with`](crate::Context::line_gauge_with) shim.
-///
-/// New code should use the chainable builder
-/// `ui.line_gauge(ratio).label(...).width(...).filled(...).empty(...)`.
-/// This struct stays around for one minor cycle to ease migration of v0.19
-/// call sites that constructed it directly.
-#[derive(Debug, Clone)]
-pub struct LineGaugeOpts {
-    /// Fill character. Default: `'━'`.
-    pub filled: char,
-    /// Empty character. Default: `'─'`.
-    pub empty: char,
-    /// Width in terminal cells. `None` falls back to a default of 20 cells.
-    pub width: Option<u32>,
-    /// Optional label appended after the bar (e.g., `"60%"`).
-    pub label: Option<String>,
-}
-
-impl Default for LineGaugeOpts {
-    fn default() -> Self {
-        Self {
-            filled: '━',
-            empty: '─',
-            width: None,
-            label: None,
-        }
-    }
-}
-
-impl LineGaugeOpts {
-    /// Set the label appended after the bar.
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    /// Set an explicit bar width in terminal cells.
-    pub fn width(mut self, width: u32) -> Self {
-        self.width = Some(width);
-        self
-    }
-
-    /// Set a custom fill character.
-    pub fn filled(mut self, ch: char) -> Self {
-        self.filled = ch;
-        self
-    }
-
-    /// Set a custom empty character.
-    pub fn empty(mut self, ch: char) -> Self {
-        self.empty = ch;
-        self
-    }
-}
-
 /// Response from [`Context::split_pane`](crate::Context::split_pane) and
 /// [`Context::vsplit_pane`](crate::Context::vsplit_pane).
 ///

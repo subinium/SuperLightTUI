@@ -4,7 +4,7 @@
 // Introduced in v0.20.0 (#224). Complements the unlabeled
 // `Context::progress_bar` / `Context::progress` (`textarea_progress.rs`).
 //
-// API consistency pass (v0.20.0): callers now use a chainable builder pattern
+// Callers use a chainable builder pattern
 // (`ui.gauge(0.5).label("CPU").width(48)`). Auto-renders on `Drop`; call
 // `.show()` to get a [`GaugeResponse`] back. Ratios are `f64` to match
 // `animate_value`, chart APIs, and `progress_bar` — no more `f32` outliers.
@@ -38,38 +38,6 @@ impl Context {
         Gauge::new(self, ratio)
     }
 
-    /// Deprecated: use the builder form `ui.gauge(ratio).label(label).width(width)`.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use `ui.gauge(ratio).label(label).width(width)` builder; this will be removed in v0.21.0"
-    )]
-    pub fn gauge_w(&mut self, ratio: f64, label: &str, width: u32) -> GaugeResponse {
-        let mut g = Gauge::new(self, ratio).width(width);
-        if !label.is_empty() {
-            g = g.label_owned(label.to_string());
-        }
-        g.show()
-    }
-
-    /// Deprecated: use the builder form `ui.gauge(ratio).label(label).width(width).color(color)`.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use `ui.gauge(ratio).label(label).width(width).color(color)` builder; this will be removed in v0.21.0"
-    )]
-    pub fn gauge_colored(
-        &mut self,
-        ratio: f64,
-        label: &str,
-        width: u32,
-        color: Color,
-    ) -> GaugeResponse {
-        let mut g = Gauge::new(self, ratio).width(width).color(color);
-        if !label.is_empty() {
-            g = g.label_owned(label.to_string());
-        }
-        g.show()
-    }
-
     /// Begin building a single-line gauge with configurable fill/empty chars.
     ///
     /// `ratio` is clamped to `0.0..=1.0`. Chain `.label(...)`, `.width(...)`,
@@ -86,27 +54,6 @@ impl Context {
     /// ```
     pub fn line_gauge(&mut self, ratio: f64) -> LineGauge<'_> {
         LineGauge::new(self, ratio)
-    }
-
-    /// Deprecated: use the chainable builder `ui.line_gauge(ratio).label(...).width(...)`.
-    ///
-    /// Retained as a thin shim over the builder for one minor cycle to ease
-    /// migration of existing call sites.
-    #[deprecated(
-        since = "0.20.0",
-        note = "use the chainable builder `ui.line_gauge(ratio).label(...).width(...).filled(...).empty(...)`; this will be removed in v0.21.0"
-    )]
-    pub fn line_gauge_with(&mut self, ratio: f64, opts: LineGaugeOpts) -> GaugeResponse {
-        let mut g = LineGauge::new(self, ratio)
-            .filled(opts.filled)
-            .empty(opts.empty);
-        if let Some(w) = opts.width {
-            g = g.width(w);
-        }
-        if let Some(label) = opts.label {
-            g = g.label_owned(label);
-        }
-        g.show()
     }
 }
 
@@ -140,17 +87,12 @@ impl<'a> Gauge<'a> {
     }
 
     /// Set the centered inline label. Empty string is treated as "no label".
-    pub fn label(mut self, label: &str) -> Self {
-        if label.is_empty() {
-            self.label = None;
-        } else {
-            self.label = Some(label.to_string());
-        }
-        self
-    }
-
-    /// Set the centered inline label from an owned String (avoids extra alloc).
-    pub fn label_owned(mut self, label: String) -> Self {
+    ///
+    /// Accepts both `&str` and owned `String` via `impl Into<String>` so
+    /// callers with already-owned strings (e.g. `format!(...)`) don't pay a
+    /// redundant clone.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
         if label.is_empty() {
             self.label = None;
         } else {
@@ -175,14 +117,13 @@ impl<'a> Gauge<'a> {
     pub fn show(mut self) -> GaugeResponse {
         // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
         let ctx = self.ctx.take().expect("Gauge::show called twice");
-        let response = render_gauge(
+        render_gauge(
             ctx,
             self.ratio,
             self.width.unwrap_or(DEFAULT_GAUGE_WIDTH),
             self.label.as_deref().unwrap_or(""),
             self.color,
-        );
-        response
+        )
     }
 }
 
@@ -230,17 +171,12 @@ impl<'a> LineGauge<'a> {
     }
 
     /// Set the trailing label, appended after the bar.
-    pub fn label(mut self, label: &str) -> Self {
-        if label.is_empty() {
-            self.label = None;
-        } else {
-            self.label = Some(label.to_string());
-        }
-        self
-    }
-
-    /// Set the trailing label from an owned String.
-    pub fn label_owned(mut self, label: String) -> Self {
+    ///
+    /// Accepts both `&str` and owned `String` via `impl Into<String>` so
+    /// callers with already-owned strings (e.g. `format!(...)`) don't pay a
+    /// redundant clone.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
         if label.is_empty() {
             self.label = None;
         } else {

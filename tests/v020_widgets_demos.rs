@@ -156,7 +156,7 @@ fn demo_v020_gutter_highlights_render_search_navigation() {
             _ => format!("INFO  line {i}"),
         })
         .collect();
-    state.set_highlights(&[HighlightRange::single(5), HighlightRange::single(12)]);
+    state.set_highlights(&[HighlightRange::line(5), HighlightRange::line(12)]);
     tb.render(|ui| {
         let _ = ui
             .bordered(slt::Border::Rounded)

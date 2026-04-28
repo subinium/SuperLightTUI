@@ -153,12 +153,12 @@ pub use style::{
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
-    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, LineGaugeOpts, ListState,
-    ModeState, MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState,
-    ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState,
-    StaticOutput, StreamingMarkdownState, StreamingTextState, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
-    TreeNode, TreeState, Trend,
+    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
+    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
+    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    Trend,
 };
 
 /// Rendering backend for SLT.

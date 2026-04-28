@@ -577,18 +577,14 @@ pub struct HighlightRange {
 
 impl HighlightRange {
     /// Create a single-line highlight at `line`.
+    ///
+    /// Field-name pairing: `start_line` + `line_count` → constructor named
+    /// `line`. Use [`Self::span`] for multi-line ranges.
     pub fn line(line: usize) -> Self {
         Self {
             start_line: line,
             line_count: 1,
         }
-    }
-
-    /// Create a single-line highlight at `line` (idiomatic alias for
-    /// [`Self::line`] introduced in v0.20.0 — reads better at call sites that
-    /// alternate between `single` / `span`).
-    pub fn single(line: usize) -> Self {
-        Self::line(line)
     }
 
     /// Create a multi-line highlight starting at `start_line` covering `line_count` rows.

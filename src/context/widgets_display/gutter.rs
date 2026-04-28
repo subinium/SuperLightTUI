@@ -95,7 +95,7 @@ impl Context {
     /// ```no_run
     /// # use slt::{GutterOpts, HighlightRange, ScrollState};
     /// # let mut scroll = ScrollState::new();
-    /// # scroll.set_highlights(&[HighlightRange::single(7), HighlightRange::single(15)]);
+    /// # scroll.set_highlights(&[HighlightRange::line(7), HighlightRange::line(15)]);
     /// # let lines: Vec<&str> = vec![];
     /// # slt::run(|ui: &mut slt::Context| {
     /// let r = ui.scrollable_with_gutter(
