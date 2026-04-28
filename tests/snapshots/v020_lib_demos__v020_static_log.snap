@@ -2,5 +2,5 @@
 source: tests/v020_lib_demos.rs
 ---
 Counter: 5
-Space/Enter: bump counter | q: quit
+Space/Enter: bump counter | q / Esc / Ctrl-Q: quit
 Lines logged to scrollback every 5 ticks via ui.static_log()

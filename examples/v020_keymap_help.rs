@@ -6,11 +6,17 @@
 //! Run: `cargo run --example v020_keymap_help`
 //!
 //! Keys:
-//!   k / Up        — increment counter
-//!   j / Down      — decrement counter
-//!   r             — reset counter to zero
-//!   ?             — toggle the auto-help overlay
-//!   Ctrl-Q / Esc  — quit
+//!   k / Up         — increment counter
+//!   j / Down       — decrement counter
+//!   r              — reset counter to zero
+//!   ?              — toggle the auto-help overlay
+//!   Esc            — close the overlay (when open)
+//!   q / Ctrl-Q     — quit
+//!
+//! Note: while the help overlay is open it acts as a modal, so the
+//! regular `ui.key('?')` / `ui.key_code(KeyCode::Esc)` checks are blocked
+//! by the modal guard. The toggle uses `raw_key_mod` / `raw_key_code` so
+//! '?' and Esc keep working while the overlay is up.
 //!
 //! Layout:
 //!   ┌──────── main view ────────┐
@@ -19,7 +25,7 @@
 //!   │ Press ? for help…         │       │ counter: k/Up, j/Down, r  │
 //!   └───────────────────────────┘       └───────────────────────────┘
 
-use slt::{Color, Context, KeyCode, RunConfig, Style, WidgetKeyHelp};
+use slt::{Color, Context, KeyCode, KeyModifiers, RunConfig, Style, WidgetKeyHelp};
 
 /// Counter widget bindings — published every frame the widget renders, so
 /// the help overlay only lists keys that are actually live.
@@ -82,11 +88,21 @@ fn main() -> std::io::Result<()> {
     let mut help_open = false;
 
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key('q') {
+        // Quit. Ctrl-Q is the portable alternative to Ctrl-C, which is
+        // intercepted as Copy on macOS terminals.
+        if ui.key('q') || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
-        if ui.key('?') {
+        // Toggle help overlay. Use `raw_key_mod` so '?' keeps toggling
+        // even after the overlay opens — the regular `key('?')` is
+        // blocked by the overlay's modal guard.
+        if ui.raw_key_mod('?', KeyModifiers::NONE) {
             help_open = !help_open;
+        }
+        // Close overlay on Esc as well (also via `raw_*` to bypass the
+        // modal guard).
+        if help_open && ui.raw_key_code(KeyCode::Esc) {
+            help_open = false;
         }
         if ui.key('k') || ui.key_code(KeyCode::Up) {
             count = count.saturating_add(1);

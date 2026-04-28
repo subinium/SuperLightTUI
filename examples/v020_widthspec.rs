@@ -6,7 +6,11 @@
 //! Run: `cargo run --example v020_widthspec`
 //!
 //! Keys:
-//!   q / Ctrl-C / Esc — quit
+//!   q / Esc / Ctrl-Q — quit
+//!
+//! Note: Ctrl-C is intentionally not bound here. macOS terminals (Ghostty,
+//! iTerm2, Terminal.app) bind Ctrl-C to Copy by default, so the keystroke
+//! never reaches the app. Ctrl-Q is the portable alternative.
 //!
 //! Layout (80x12 minimum):
 //!
@@ -34,7 +38,7 @@ const MINMAX_HI: u32 = 30;
 
 fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key('q') || ui.key_mod('c', KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
 
@@ -58,7 +62,7 @@ pub fn render(ui: &mut Context) {
             ui.text("Each row demonstrates a WidthSpec variant.")
                 .fg(Color::Cyan)
                 .bold();
-            ui.text("(Press q or Ctrl+C to quit)").dim();
+            ui.text("(Press q / Esc / Ctrl-Q to quit)").dim();
 
             // Fixed(20) — exact column count.
             row(ui, "Fixed(20)", |ui| {

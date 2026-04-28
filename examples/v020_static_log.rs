@@ -5,8 +5,13 @@
 //! Run: `cargo run --example v020_static_log`
 //!
 //! Keys:
-//!   Space / Enter — bump the counter
-//!   Ctrl-Q / Esc  — quit
+//!   Space / Enter      — bump the counter
+//!   q / Esc / Ctrl-Q   — quit
+//!
+//! Note: this demo intentionally avoids Ctrl-C as a quit key. macOS
+//! terminals (Ghostty, iTerm2, Terminal.app) bind Ctrl-C to Copy by
+//! default, so the keystroke never reaches the app — Ctrl-Q is the
+//! portable alternative.
 //!
 //! Layout:
 //!   ┌──────────────────────────────────┐
@@ -18,7 +23,7 @@
 //!   │ Space/Enter: bump counter | q…   │
 //!   └──────────────────────────────────┘
 
-use slt::{Color, Context, KeyCode, StaticOutput, Style};
+use slt::{Color, Context, KeyCode, KeyModifiers, StaticOutput, Style};
 
 /// Counter increment that triggers a scrollback log entry. Five matches the
 /// snapshot fixture below — keeping it as a constant avoids a magic number
@@ -33,7 +38,7 @@ fn inline_body(ui: &mut Context, count: u32) {
             format!("Counter: {count}"),
             Style::new().bold().fg(Color::Cyan),
         );
-        ui.text("Space/Enter: bump counter | q: quit");
+        ui.text("Space/Enter: bump counter | q / Esc / Ctrl-Q: quit");
         ui.styled(
             "Lines logged to scrollback every 5 ticks via ui.static_log()",
             Style::new().dim(),
@@ -60,7 +65,7 @@ fn main() -> std::io::Result<()> {
     let mut last_logged: u32 = 0;
 
     slt::run_static(&mut output, 4, |ui: &mut Context| {
-        if ui.key('q') || ui.key_code(KeyCode::Esc) {
+        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
         if ui.key(' ') || ui.key_code(KeyCode::Enter) {
