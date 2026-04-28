@@ -30,6 +30,32 @@ pub struct State<T> {
     _marker: std::marker::PhantomData<T>,
 }
 
+/// Downcast a stored boxed `Any` to `&T`, panicking with a uniform context
+/// message on mismatch. Internal helper to keep [`State::get`] / [`State::get_mut`]
+/// concise and ensure every panic site formats identically.
+///
+/// `ctx` should be a complete leading clause such as
+/// `"use_state_named type mismatch for id \"foo\""` — the helper appends
+/// `" — expected <type>"` so callers don't repeat that suffix at every site.
+fn downcast_or_panic<'a, T: 'static>(
+    boxed: &'a dyn std::any::Any,
+    ctx: std::fmt::Arguments<'_>,
+) -> &'a T {
+    boxed
+        .downcast_ref::<T>()
+        .unwrap_or_else(|| panic!("{ctx} — expected {}", std::any::type_name::<T>()))
+}
+
+/// Mutable counterpart of [`downcast_or_panic`].
+fn downcast_or_panic_mut<'a, T: 'static>(
+    boxed: &'a mut dyn std::any::Any,
+    ctx: std::fmt::Arguments<'_>,
+) -> &'a mut T {
+    boxed
+        .downcast_mut::<T>()
+        .unwrap_or_else(|| panic!("{ctx} — expected {}", std::any::type_name::<T>()))
+}
+
 impl<T: 'static> State<T> {
     pub(crate) fn from_idx(idx: usize) -> Self {
         Self {
@@ -55,98 +81,56 @@ impl<T: 'static> State<T> {
     /// Read the current value.
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
         match &self.key {
-            StateKey::Indexed(idx) => {
-                ui.hook_states[*idx].downcast_ref::<T>().unwrap_or_else(|| {
-                    panic!(
-                        "use_state type mismatch at hook index {} — expected {}",
-                        idx,
-                        std::any::type_name::<T>()
-                    )
-                })
+            StateKey::Indexed(idx) => downcast_or_panic::<T>(
+                ui.hook_states[*idx].as_ref(),
+                format_args!("use_state type mismatch at hook index {idx}"),
+            ),
+            StateKey::Named(id) => {
+                let boxed = ui.named_states.get(id).unwrap_or_else(|| {
+                    panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
+                });
+                downcast_or_panic::<T>(
+                    boxed.as_ref(),
+                    format_args!("use_state_named type mismatch for id {id:?}"),
+                )
             }
-            StateKey::Named(id) => ui
-                .named_states
-                .get(id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_named: no entry for id {:?} — was use_state_named called?",
-                        id
-                    )
-                })
-                .downcast_ref::<T>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_named type mismatch for id {:?} — expected {}",
-                        id,
-                        std::any::type_name::<T>()
-                    )
-                }),
-            StateKey::Keyed(id) => ui
-                .keyed_states
-                .get(id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_keyed: no entry for id {:?} — was use_state_keyed called?",
-                        id
-                    )
-                })
-                .downcast_ref::<T>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_keyed type mismatch for id {:?} — expected {}",
-                        id,
-                        std::any::type_name::<T>()
-                    )
-                }),
+            StateKey::Keyed(id) => {
+                let boxed = ui.keyed_states.get(id).unwrap_or_else(|| {
+                    panic!("use_state_keyed: no entry for id {id:?} — was use_state_keyed called?")
+                });
+                downcast_or_panic::<T>(
+                    boxed.as_ref(),
+                    format_args!("use_state_keyed type mismatch for id {id:?}"),
+                )
+            }
         }
     }
 
     /// Mutably access the current value.
     pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
         match &self.key {
-            StateKey::Indexed(idx) => {
-                ui.hook_states[*idx].downcast_mut::<T>().unwrap_or_else(|| {
-                    panic!(
-                        "use_state type mismatch at hook index {} — expected {}",
-                        idx,
-                        std::any::type_name::<T>()
-                    )
-                })
+            StateKey::Indexed(idx) => downcast_or_panic_mut::<T>(
+                ui.hook_states[*idx].as_mut(),
+                format_args!("use_state type mismatch at hook index {idx}"),
+            ),
+            StateKey::Named(id) => {
+                let boxed = ui.named_states.get_mut(id).unwrap_or_else(|| {
+                    panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
+                });
+                downcast_or_panic_mut::<T>(
+                    boxed.as_mut(),
+                    format_args!("use_state_named type mismatch for id {id:?}"),
+                )
             }
-            StateKey::Named(id) => ui
-                .named_states
-                .get_mut(id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_named: no entry for id {:?} — was use_state_named called?",
-                        id
-                    )
-                })
-                .downcast_mut::<T>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_named type mismatch for id {:?} — expected {}",
-                        id,
-                        std::any::type_name::<T>()
-                    )
-                }),
-            StateKey::Keyed(id) => ui
-                .keyed_states
-                .get_mut(id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_keyed: no entry for id {:?} — was use_state_keyed called?",
-                        id
-                    )
-                })
-                .downcast_mut::<T>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "use_state_keyed type mismatch for id {:?} — expected {}",
-                        id,
-                        std::any::type_name::<T>()
-                    )
-                }),
+            StateKey::Keyed(id) => {
+                let boxed = ui.keyed_states.get_mut(id).unwrap_or_else(|| {
+                    panic!("use_state_keyed: no entry for id {id:?} — was use_state_keyed called?")
+                });
+                downcast_or_panic_mut::<T>(
+                    boxed.as_mut(),
+                    format_args!("use_state_keyed type mismatch for id {id:?}"),
+                )
+            }
         }
     }
 }

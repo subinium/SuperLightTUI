@@ -769,7 +769,8 @@ impl Default for ScrollState {
     }
 }
 
-/// State for a [`Context::split_pane`] / [`Context::vsplit_pane`] container.
+/// State for a [`crate::Context::split_pane`] /
+/// [`crate::Context::vsplit_pane`] container.
 ///
 /// Tracks the split ratio and drag state. Pass a mutable reference each frame
 /// — the widget updates `ratio` in place when the user drags the handle or
@@ -786,8 +787,11 @@ pub struct SplitPaneState {
 }
 
 /// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
-/// Override per-instance via [`SplitPaneState::with_min_ratio`].
-pub const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
+///
+/// Crate-internal: there is no public path that benefits from constructing
+/// with this constant — call [`SplitPaneState::new`] for the default (0.10)
+/// or [`SplitPaneState::with_min_ratio`] to override per-instance.
+pub(crate) const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
 
 impl SplitPaneState {
     /// Create split state with the given initial ratio, clamped to
@@ -822,7 +826,7 @@ impl Default for SplitPaneState {
     }
 }
 
-/// Column specification for [`Context::grid_with()`].
+/// Column specification for [`crate::Context::grid_with()`].
 ///
 /// Controls the width allocation of individual columns in a grid layout.
 ///

@@ -205,17 +205,32 @@ fn display_for_mod_char(mods: KeyModifiers, key: char) -> String {
     }
 }
 
-/// Opt-in trait for widgets that publish their keyboard shortcuts (issue #236).
+/// Opt-in trait for users to publish a widget's keymap to the framework so
+/// `Context::keymap_help_overlay` can list it on `?` press (issue #236).
 ///
-/// Implement this on widget state types (e.g. `RichLogState`, `TableState`,
-/// `TextInputState`) and the framework can aggregate every visible widget's
-/// help into a single overlay or palette tab. The returned slice must be
-/// `'static` — hardcode a `const` array per widget so the registration is
-/// allocation-free.
+/// # Scope
+///
+/// SLT does **not** implement this on built-in widgets — it is a user-facing
+/// extension point. Built-in widgets register their bindings directly inside
+/// their `impl Context::*` methods. To publish the keymap of your *own*
+/// custom widget, implement this trait, then call
+/// [`Context::publish_keymap`](crate::Context::publish_keymap) in your render
+/// method:
+///
+/// ```ignore
+/// ctx.publish_keymap("my_widget", MyState::key_help(&state));
+/// ```
+///
+/// In other words, this trait is the same shape as `std::fmt::Display`: zero
+/// blanket / built-in impls; you opt in by implementing it on your own type.
+/// If you prefer a free-function call, [`Context::publish_keymap`] takes the
+/// same `(name, &'static [...])` signature without the trait.
 ///
 /// # Format
 ///
-/// `(key_combo, description)` pairs. Use the same display style as
+/// The returned slice must be `'static` — hardcode a `const` array per
+/// widget so the registration is allocation-free. Each tuple is
+/// `(key_combo, description)` using the same display style as
 /// [`Binding::display`] (e.g. `"↑/k"`, `"Ctrl+S"`, `"PgDn"`).
 ///
 /// # Example

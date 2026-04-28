@@ -635,16 +635,29 @@ impl Constraints {
         }
     }
 
-    // ─── imperative setters (compat shim for legacy field-write sites) ─
+    // ─── imperative setters ─────────────────────────────────────────────
+    //
+    // These mutate `&mut Constraints` in-place. They exist alongside the
+    // owning builder methods (`min_w`, `max_w`, …) for call sites that hold
+    // a mutable borrow to a `Constraints` field embedded in a larger struct
+    // — for those the builder's `mut self -> Self` shape would force a
+    // `*c = c.min_w(v)` deref-assign. The setters keep that ergonomic.
+    //
+    // # Compatibility
+    //
+    // Public for downstream callers that adopted these from v0.19. New code
+    // that owns a `Constraints` value should prefer the chainable builders
+    // (`Constraints::default().min_w(10).max_w(40)`).
 
     /// Set the minimum width as `Option<u32>`.
     ///
-    /// Imperative shim used by call sites that previously wrote
-    /// `c.min_width = Some(value)`. Promotes the variant to
-    /// [`WidthSpec::MinMax`] preserving any existing `max` side. Passing
-    /// `None` clears the minimum (sets it to `0`); if the resulting
-    /// `MinMax` has no effective bounds (`min == 0` and `max == u32::MAX`)
-    /// the variant collapses back to [`WidthSpec::Auto`].
+    /// Promotes the variant to [`WidthSpec::MinMax`] preserving any existing
+    /// `max` side. Passing `None` clears the minimum (sets it to `0`); if the
+    /// resulting `MinMax` has no effective bounds (`min == 0` and
+    /// `max == u32::MAX`) the variant collapses back to [`WidthSpec::Auto`].
+    ///
+    /// Prefer [`Constraints::min_w`] when you own the value; this setter is
+    /// for in-place mutation through `&mut Constraints`.
     pub fn set_min_width(&mut self, value: Option<u32>) {
         let max = match self.width {
             WidthSpec::MinMax { max, .. } => max,

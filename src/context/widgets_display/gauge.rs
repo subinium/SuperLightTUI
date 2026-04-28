@@ -286,51 +286,91 @@ fn gauge_color_for(ctx: &Context, ratio: f64) -> Color {
     }
 }
 
+/// How a label is positioned relative to the bar cells.
+enum LabelMode<'a> {
+    /// Overlay the label on top of the bar, centered. If the bar is too narrow
+    /// to fit `label_w + 2`, the label is omitted entirely (not truncated).
+    Centered(&'a str),
+    /// Append the label after the bar, separated by a single space. Empty or
+    /// missing labels emit nothing.
+    Trailing(Option<&'a str>),
+}
+
+/// Compute the filled-cell count for `ratio`, clamped to `[0, width]`.
+///
+/// Internal math runs in `f64` (the public ratio type) and only crosses to
+/// `u32` at this boundary — keeps `compose_*_bar` precision-stable.
+fn filled_cells(ratio: f64, width: u32) -> u32 {
+    let count = (ratio * f64::from(width)).round() as u32;
+    count.min(width)
+}
+
+/// Shared bar-composition core for `compose_block_bar` / `compose_line_bar`.
+///
+/// Builds `width` cells (filled or empty) and overlays/appends the label
+/// according to `mode`. Unicode width is honored for centered overlays so
+/// multi-byte labels (e.g. CJK) line up correctly.
+fn compose_bar(
+    ratio: f64,
+    width: u32,
+    fill_ch: char,
+    empty_ch: char,
+    mode: LabelMode<'_>,
+) -> String {
+    let width_usize = width as usize;
+    let filled = filled_cells(ratio, width);
+
+    if let LabelMode::Centered(label) = mode {
+        if !label.is_empty() {
+            let label_w = UnicodeWidthStr::width(label);
+            if label_w + 2 <= width_usize {
+                // Build the bar then overlay the centered label.
+                let mut cells: Vec<char> = Vec::with_capacity(width_usize);
+                for i in 0..width {
+                    cells.push(if i < filled { fill_ch } else { empty_ch });
+                }
+                let label_start = (width_usize.saturating_sub(label_w)) / 2;
+                let label_end = label_start + label_w;
+                let mut out = String::with_capacity(width_usize * 4 + label.len());
+                for ch in cells.iter().take(label_start) {
+                    out.push(*ch);
+                }
+                out.push_str(label);
+                for ch in cells.iter().take(width_usize).skip(label_end) {
+                    out.push(*ch);
+                }
+                return out;
+            }
+        }
+    }
+
+    // Plain bar (no label, label too wide, or trailing mode).
+    let trailing = match mode {
+        LabelMode::Trailing(Some(lbl)) if !lbl.is_empty() => Some(lbl),
+        _ => None,
+    };
+    let mut out = String::with_capacity(
+        width_usize * fill_ch.len_utf8().max(empty_ch.len_utf8())
+            + trailing.map_or(0, |s| s.len() + 1),
+    );
+    for _ in 0..filled {
+        out.push(fill_ch);
+    }
+    for _ in 0..width.saturating_sub(filled) {
+        out.push(empty_ch);
+    }
+    if let Some(lbl) = trailing {
+        out.push(' ');
+        out.push_str(lbl);
+    }
+    out
+}
+
 /// Build a block-style bar (`█` filled, `░` empty) of `width` cells with an
 /// optional centered `label`. The label is omitted (not truncated) when the
 /// bar is too narrow to fit it.
 fn compose_block_bar(ratio: f64, width: u32, label: &str) -> String {
-    let width_usize = width as usize;
-    // Cast to f32 only at the rendering boundary — internal math is f64.
-    let filled = (ratio * width as f64).round() as u32;
-    let filled = filled.min(width);
-
-    if !label.is_empty() {
-        let label_w = UnicodeWidthStr::width(label);
-        if label_w + 2 <= width_usize {
-            // Center the label and overlay it on the bar.
-            let mut cells: Vec<char> = Vec::with_capacity(width_usize);
-            for i in 0..width {
-                if i < filled {
-                    cells.push('█');
-                } else {
-                    cells.push('░');
-                }
-            }
-            let label_start = (width_usize.saturating_sub(label_w)) / 2;
-            let label_end = label_start + label_w;
-            let mut out = String::with_capacity(width_usize * 4 + label.len());
-            // Push leading bar cells.
-            for ch in cells.iter().take(label_start) {
-                out.push(*ch);
-            }
-            out.push_str(label);
-            for ch in cells.iter().take(width_usize).skip(label_end) {
-                out.push(*ch);
-            }
-            return out;
-        }
-    }
-
-    // No label or label doesn't fit — emit plain bar.
-    let mut out = String::with_capacity(width_usize * 3);
-    for _ in 0..filled {
-        out.push('█');
-    }
-    for _ in 0..width.saturating_sub(filled) {
-        out.push('░');
-    }
-    out
+    compose_bar(ratio, width, '█', '░', LabelMode::Centered(label))
 }
 
 /// Build a single-line bar with configurable fill/empty chars and optional
@@ -342,24 +382,7 @@ fn compose_line_bar(
     empty: char,
     label: Option<&str>,
 ) -> String {
-    // Cast to u32 only at the bar-rendering boundary.
-    let filled_count = (ratio * width as f64).round() as u32;
-    let filled_count = filled_count.min(width);
-    let empty_count = width.saturating_sub(filled_count);
-    let mut out = String::with_capacity(width as usize + label.map_or(0, |s| s.len() + 1));
-    for _ in 0..filled_count {
-        out.push(filled);
-    }
-    for _ in 0..empty_count {
-        out.push(empty);
-    }
-    if let Some(lbl) = label {
-        if !lbl.is_empty() {
-            out.push(' ');
-            out.push_str(lbl);
-        }
-    }
-    out
+    compose_bar(ratio, width, filled, empty, LabelMode::Trailing(label))
 }
 
 #[cfg(test)]
