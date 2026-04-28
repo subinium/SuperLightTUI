@@ -1368,7 +1368,13 @@ impl<'a> ContainerBuilder<'a> {
     /// This is a crate-internal helper; external callers should use
     /// [`Context::scrollable`] together with a [`ScrollState`].
     ///
+    /// Hidden from rustdoc with `#[doc(hidden)]` so it does not appear in the
+    /// public API surface, while remaining callable for backwards compatibility
+    /// (cargo-semver-checks still tracks the symbol). Promote to `pub(crate)`
+    /// at v1.0.
+    ///
     /// [`ScrollState`]: crate::widgets::ScrollState
+    #[doc(hidden)]
     pub fn scroll_offset(mut self, offset: u32) -> Self {
         self.scroll_offset = Some(offset);
         self
@@ -1742,10 +1748,10 @@ mod hotfix_tests {
 
     // -- #149: scroll_offset visibility (compile-time check) -----------
 
-    /// The crate-internal `scroll_offset` helper must remain callable
-    /// from inside the crate. Resolving the function path under `pub(crate)`
-    /// is a compile-time guarantee — this test compiles only when the path
-    /// is reachable.
+    /// The `scroll_offset` helper must remain callable from inside the crate.
+    /// It is `#[doc(hidden)] pub` (Option B from the issue) so it is removed
+    /// from rustdoc but still semver-tracked; this test compiles only when
+    /// the path is reachable.
     #[test]
     fn scroll_offset_is_crate_internal_api() {
         let _ = ContainerBuilder::scroll_offset;
