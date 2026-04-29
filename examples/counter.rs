@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
             .gap(1)
             .col(|ui| {
                 ui.text("SLT Counter").bold().fg(Color::Cyan);
-                let _ = ui.row_gap(2, |ui| {
+                let _ = ui.container().gap(2).row(|ui| {
                     ui.text("Count:");
                     let color = if count >= 0 { Color::Green } else { Color::Red };
                     ui.text(format!("{count}")).bold().fg(color);

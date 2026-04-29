@@ -828,7 +828,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
@@ -906,7 +906,7 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))
@@ -958,7 +958,7 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
         .w(game_w)
         .ml(left)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 let _ = ui
                     .bordered(Border::Single)
                     .border_style(Style::new().fg(theme.border))

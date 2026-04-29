@@ -71,11 +71,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Single-line gauge with custom characters:")
                 .fg(Color::Cyan);
 
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Default  ");
                 ui.line_gauge(0.6).label("60%").width(24);
             });
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Hash/dot ");
                 ui.line_gauge(0.45)
                     .filled('#')
@@ -83,7 +83,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     .width(24)
                     .label("45%");
             });
-            let _ = ui.row_gap(sp.sm(), |ui| {
+            let _ = ui.container().gap(sp.sm()).row(|ui| {
                 ui.text("Block    ");
                 ui.line_gauge(0.85)
                     .filled('█')
@@ -99,7 +99,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 /// Render a single labelled `gauge` row with an auto-formatted percentage.
 fn metric_row(ui: &mut Context, label: &str, value: f64) {
     let sp = ui.spacing();
-    let _ = ui.row_gap(sp.sm(), |ui| {
+    let _ = ui.container().gap(sp.sm()).row(|ui| {
         ui.text(label);
         ui.gauge(value)
             .label(format!("{:.0}%", value * 100.0))

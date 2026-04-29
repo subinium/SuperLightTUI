@@ -62,7 +62,22 @@ impl Context {
     /// Vertical split container with a draggable handle.
     ///
     /// Mirrors [`Self::split_pane`] but stacks the panes vertically with a
-    /// 1-row horizontal divider (`─`) between them.
+    /// 1-row horizontal divider (`─`) between them. The handle is focusable;
+    /// arrow keys (`Up`/`Down`) adjust the ratio by 5% per press.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::SplitPaneState;
+    /// # let mut split = SplitPaneState::new(0.5);
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.vsplit_pane(
+    ///     &mut split,
+    ///     |ui| { ui.text("top pane"); },
+    ///     |ui| { ui.text("bottom pane"); },
+    /// );
+    /// # });
+    /// ```
     pub fn vsplit_pane<T, B>(
         &mut self,
         state: &mut SplitPaneState,

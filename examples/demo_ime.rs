@@ -61,7 +61,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 .dim();
             ui.separator();
 
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 let _ = ui.container().grow(1).gap(1).col(|ui| {
                     ui.text("Name").bold();
                     let _ = ui.text_input(&mut state.name);

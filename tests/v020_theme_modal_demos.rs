@@ -21,7 +21,7 @@ fn render_theme_subtree(ui: &mut Context) {
         .grow(1)
         .col(|ui| {
             ui.text("Each panel uses container().theme(...).").dim();
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 panel(ui, "Dark", Theme::dark());
                 panel(ui, "Light", Theme::light());
             });
@@ -100,7 +100,7 @@ fn render_spacing_scale(ui: &mut Context) {
         .p(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 density_panel(ui, "compact", Theme::compact());
                 density_panel(ui, "comfortable", Theme::comfortable());
                 density_panel(ui, "spacious", Theme::spacious());
@@ -138,7 +138,7 @@ fn demo_spacing_scale_compact_visually_denser_than_spacious() {
     // padding difference is observable.
     let mut tb = TestBackend::new(80, 16);
     tb.render(|ui| {
-        let _ = ui.row_gap(2, |ui| {
+        let _ = ui.container().gap(2).row(|ui| {
             density_panel(ui, "compact", Theme::compact());
             density_panel(ui, "spacious", Theme::spacious());
         });

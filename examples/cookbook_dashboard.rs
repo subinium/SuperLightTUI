@@ -107,7 +107,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                     let _ = ui.stat_colored("CPU", &format!("{:.1}%", m.cpu), Color::Cyan);
                 });
@@ -130,11 +130,11 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             );
 
             let spark_w = ui.width().saturating_sub(14).max(20);
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 ui.text("Memory").dim();
                 let _ = ui.sparkline(&mem_slice, spark_w);
             });
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 ui.text("Req/s ").dim();
                 let _ = ui.sparkline(&req_slice, spark_w);
             });

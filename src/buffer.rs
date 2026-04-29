@@ -472,6 +472,10 @@ impl Buffer {
     ///
     /// Called by `flush_buffer_diff` once per frame, before the per-row
     /// skip check (issue #171).
+    ///
+    /// Gated on `crossterm` (the only flush call site) and `test`. Without
+    /// the gate it shows as `dead_code` under `--no-default-features`.
+    #[cfg(any(feature = "crossterm", test))]
     pub(crate) fn recompute_line_hashes(&mut self) {
         let height = self.area.height;
         if height == 0 {
@@ -510,11 +514,14 @@ impl Buffer {
     /// Returns `true` if row `y` (buffer-space) was not touched since the
     /// last [`Self::recompute_line_hashes`] call.
     ///
+    /// Gated on `crossterm` (consumed by `flush_buffer_diff`) and `test`.
+    ///
     /// Used by `flush_buffer_diff` to short-circuit the per-cell scan when
     /// combined with a hash match against the previous frame (issue #171).
     /// Out-of-range rows report as dirty so callers fall back to the
     /// existing per-cell path on edge inputs.
     #[inline]
+    #[cfg(any(feature = "crossterm", test))]
     pub(crate) fn row_clean(&self, y: u32) -> bool {
         if y < self.area.y {
             return false;
@@ -533,6 +540,7 @@ impl Buffer {
     /// hash for clean rows is used as a short-circuit signal, so callers
     /// must check `row_clean` first.
     #[inline]
+    #[cfg(any(feature = "crossterm", test))]
     pub(crate) fn row_hash(&self, y: u32) -> Option<u64> {
         if y < self.area.y {
             return None;

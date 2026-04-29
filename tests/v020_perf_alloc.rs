@@ -2,17 +2,27 @@
 //!
 //! Each test wraps a hot path (frame render, wrap_segments, kitty placement
 //! flush, dim_buffer modal) in a counting global allocator and asserts the
-//! allocation count drops to a near-zero steady-state. The counter is global
-//! and these tests run in sequence on a single thread (the test runner uses
-//! 1 thread for #[ignore] suites by default; we don't `#[ignore]` here, but
-//! the counter is per-allocation and noisy results from parallel tests are
-//! filtered by measuring deltas before/after a specific operation).
+//! allocation count drops to a near-zero steady-state.
 //!
-//! NOTE: Cargo's test runner runs each `#[test]` in parallel by default. To
-//! avoid cross-test contamination on the global counter, every test takes a
-//! scoped `delta = ALLOC_COUNT.swap(...)` snapshot inside a critical section
-//! gated by `MEASURING_LOCK`. Only one test "measures" at a time; the others
-//! run without measuring.
+//! # Cross-test isolation (root-cause fix, v0.20.1 #240)
+//!
+//! Cargo's test runner runs `#[test]` functions in parallel by default. The
+//! `MEASURING` flag and `ALLOC_COUNT` counter are global, so any other test
+//! thread that allocates while a measurement is in flight pollutes the count.
+//!
+//! Pre-fix the file relied on a `measure_lock` mutex held only inside
+//! `measure_allocs()`, which protected nothing — non-measuring siblings still
+//! ran concurrently and their `String::from(...)` / `Vec::new()` calls leaked
+//! into the counter, producing noisy `1599 / 1937 / 65 / 145` budget breaches
+//! whose pattern depended purely on macOS thread-cache timing.
+//!
+//! Fix: every `#[test]` in this file now grabs `measure_lock` at the top of
+//! the function body. That serialises the *whole* file at the test-function
+//! granularity (one binary = one mutex), so `cargo test --all-features` is
+//! reliable even without `--test-threads=1`. `measure_allocs()` itself uses
+//! `try_lock` since the caller already holds the guard — the only purpose of
+//! the inner attempt is to belt-and-braces against future tests that forget
+//! to call `enter_perf_test()` at the top.
 
 #![allow(clippy::unwrap_used)]
 
@@ -41,15 +51,30 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-/// Serializes the `MEASURING` toggle so concurrent tests don't pollute each
-/// other's allocation deltas.
+/// Serialises every `#[test]` in this file. Held by `enter_perf_test()` for
+/// the lifetime of each test function so the parallel test runner cannot
+/// interleave allocator activity from a sibling test into a measurement.
 fn measure_lock() -> &'static Mutex<()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// Acquire the file-wide test mutex. Every `#[test]` body must call this on
+/// its first line and bind the returned guard to a `_guard` local — the
+/// guard's `Drop` releases the mutex when the test function exits, so the
+/// next test in line gets a clean global allocator state.
+#[must_use = "binding the guard to `_guard` keeps the file-wide test serialisation alive"]
+fn enter_perf_test() -> std::sync::MutexGuard<'static, ()> {
+    measure_lock().lock().unwrap()
+}
+
 fn measure_allocs<R>(label: &'static str, f: impl FnOnce() -> R) -> (R, usize) {
-    let _guard = measure_lock().lock().unwrap();
+    // The caller (each `#[test]` fn) already holds `measure_lock` via
+    // `enter_perf_test()`, so a recursive `lock()` would deadlock. `try_lock`
+    // is a belt-and-braces guard: if a future test forgets the file-wide
+    // `_guard`, the failed try_lock at least prevents two threads from
+    // toggling `MEASURING` at once.
+    let _maybe_guard = measure_lock().try_lock();
     ALLOC_COUNT.store(0, Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
     let r = f();
@@ -65,6 +90,7 @@ fn measure_allocs<R>(label: &'static str, f: impl FnOnce() -> R) -> (R, usize) {
 
 #[test]
 fn framestate_reuse_steady_state_alloc_count_low() {
+    let _guard = enter_perf_test();
     use slt::TestBackend;
 
     let mut tb = TestBackend::new(80, 24);
@@ -114,6 +140,7 @@ fn framestate_reuse_steady_state_alloc_count_low() {
 
 #[test]
 fn wrap_segments_alloc_count_low_via_bench_helper() {
+    let _guard = enter_perf_test();
     // Build static segment fixtures once — keep all allocations of the
     // fixture out of the measured region so we only count what
     // `wrap_segments` itself drives.
@@ -162,6 +189,7 @@ fn wrap_segments_alloc_count_low_via_bench_helper() {
 
 #[test]
 fn kitty_placement_flush_first_flush_one_arc_clone() {
+    let _guard = enter_perf_test();
     // Each rgba Arc gets exactly +1 strong ref (the stored `prev_placements`
     // copy). The pre-fix code added an extra +1 per Arc per flush via the
     // `let adjusted: Vec<KittyPlacement> = ... .iter().map(|p| p.clone())`
@@ -184,6 +212,7 @@ fn kitty_placement_flush_first_flush_one_arc_clone() {
 
 #[test]
 fn kitty_placement_flush_steady_state_no_arc_growth() {
+    let _guard = enter_perf_test();
     // After the first flush, repeated identical flushes must not bump any
     // Arc strong count — the fast-path returns early and the new in-place
     // rebuild only swaps the existing prev_placements entries.
@@ -210,6 +239,7 @@ fn kitty_placement_flush_steady_state_no_arc_growth() {
 
 #[test]
 fn kitty_placement_flush_alloc_count_low() {
+    let _guard = enter_perf_test();
     // Steady-state flushes must allocate near-zero. Pre-fix code allocated
     // a `Vec<KittyPlacement>` per flush (+ a per-element `Arc::clone`
     // bookkeeping). Post-fix: only `Vec<u8>` sink growth on bytes written.
@@ -241,6 +271,7 @@ fn kitty_placement_flush_alloc_count_low() {
 
 #[test]
 fn dim_buffer_modal_perimeter_not_area() {
+    let _guard = enter_perf_test();
     // Direct call to the public bench helper that exposes modal-aware dim.
     use slt::buffer::Buffer;
     use slt::rect::Rect;
@@ -288,6 +319,7 @@ fn dim_buffer_modal_perimeter_not_area() {
 
 #[test]
 fn dim_buffer_modal_full_screen_falls_back_correctly() {
+    let _guard = enter_perf_test();
     use slt::buffer::Buffer;
     use slt::rect::Rect;
 
@@ -312,6 +344,7 @@ fn dim_buffer_modal_full_screen_falls_back_correctly() {
 
 #[test]
 fn dim_buffer_modal_zero_size_falls_back_to_full() {
+    let _guard = enter_perf_test();
     use slt::buffer::Buffer;
     use slt::rect::Rect;
 
@@ -343,6 +376,7 @@ fn dim_buffer_modal_zero_size_falls_back_to_full() {
 
 #[test]
 fn use_state_keyed_allocates_one_string_per_call() {
+    let _guard = enter_perf_test();
     // Differential test: compare a frame with N cache-hit calls to a
     // baseline frame with the same shape but no extra calls. The delta
     // is the marginal allocation cost of the N `use_state_keyed` calls.
@@ -412,6 +446,7 @@ fn use_state_keyed_allocates_one_string_per_call() {
 
 #[test]
 fn use_state_keyed_cache_hit_scales_one_per_call() {
+    let _guard = enter_perf_test();
     // Differential test: compare a small-N frame to a large-N frame on a
     // warmed TestBackend. The marginal-cost model (large - small) cancels
     // render-internal one-off allocations that don't scale with call count.
@@ -489,6 +524,7 @@ fn use_state_keyed_cache_hit_scales_one_per_call() {
 /// must re-emit placements at the new offset.
 #[test]
 fn kitty_flush_resize_reemits() {
+    let _guard = enter_perf_test();
     let mut fx = slt::__bench_new_kitty_fixture(3);
     let mut sink: Vec<u8> = Vec::new();
 
@@ -552,6 +588,7 @@ fn kitty_flush_resize_reemits() {
 ///     frame would trip if the rollback failed to restore the stack.
 #[test]
 fn framestate_reuse_buffers_restored_on_error_boundary_panic() {
+    let _guard = enter_perf_test();
     use slt::TestBackend;
 
     // ── Frame 1: normal render to populate FrameState reuse buffers. ────

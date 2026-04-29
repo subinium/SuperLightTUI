@@ -70,7 +70,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.row_gap(1, |ui| {
+            let _ = ui.container().gap(1).row(|ui| {
                 ui.text("Search:").dim();
                 let resp = ui.text_input(&mut state.search);
                 if resp.changed {

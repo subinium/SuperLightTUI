@@ -67,7 +67,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Destructive actions need a confirmation modal.")
                 .dim();
 
-            let _ = ui.row_gap(2, |ui| {
+            let _ = ui.container().gap(2).row(|ui| {
                 ui.text(format!("Items remaining: {}", state.items_left))
                     .bold()
                     .fg(Color::Cyan);
@@ -92,7 +92,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 .gap(1)
                 .col(|ui| {
                     ui.text("Delete this item? This cannot be undone.").bold();
-                    let _ = ui.row_gap(2, |ui| {
+                    let _ = ui.container().gap(2).row(|ui| {
                         if ui.button_with("Yes", ButtonVariant::Danger).clicked {
                             state.items_left = state.items_left.saturating_sub(1);
                             state.toasts.success("Deleted", tick);

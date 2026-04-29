@@ -108,7 +108,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
 
                 let row_gap = ui.spacing().xs();
-                let _ = ui.row_gap(row_gap, |ui| {
+                let _ = ui.container().gap(row_gap).row(|ui| {
                     let value = *counter.get(ui);
                     let prefix = if i == selected { "▶" } else { " " };
                     let label = format!("{prefix} item {i:>2}  count = {value:>4}");
