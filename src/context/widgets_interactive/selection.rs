@@ -4,6 +4,10 @@ use super::*;
 /// to the compact `{page}/{total}` counter to avoid overflowing the line.
 const PAGINATOR_MAX_DOTS: usize = 12;
 
+/// Per-column cell renderer for [`Context::table_with`]: maps
+/// `(row_view_index, col_index, raw_cell)` to styled content.
+type TableCellRenderer = Box<dyn Fn(usize, usize, &str) -> (String, Style)>;
+
 impl Context {
     /// Render a data table with sortable columns and row selection.
     ///
@@ -17,6 +21,59 @@ impl Context {
 
     /// Render a data table with custom widget colors.
     pub fn table_colored(&mut self, state: &mut TableState, colors: &WidgetColors) -> Response {
+        self.table_inner(state, colors, None)
+    }
+
+    /// Render a data table with a per-column cell renderer.
+    ///
+    /// `cell` maps `(row_view_index, col_index, raw_cell)` to a
+    /// `(content, Style)` pair, letting any column carry its own foreground /
+    /// background / modifiers (a colored badge, a status label, an icon, …).
+    /// Columns whose closure returns the unchanged raw string with a default
+    /// [`Style`] fall back to the plain string-grid behavior. The closure is
+    /// `'static` (it is invoked during deferred row rendering) and is called
+    /// once per visible cell per frame.
+    ///
+    /// Sorting, filtering, pagination, width constraints, and multi-row
+    /// selection all behave exactly as in [`table`](Context::table); only the
+    /// per-cell content/style differs.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Color, Style, widgets::TableState};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(
+    ///     vec!["Service", "Status"],
+    ///     vec![vec!["api", "OK"], vec!["db", "DOWN"]],
+    /// );
+    /// ui.table_with(&mut table, |_row, col, raw| {
+    ///     if col == 1 {
+    ///         let color = if raw == "OK" { Color::Green } else { Color::Red };
+    ///         (raw.to_string(), Style::new().fg(color).bold())
+    ///     } else {
+    ///         (raw.to_string(), Style::default())
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn table_with(
+        &mut self,
+        state: &mut TableState,
+        cell: impl Fn(usize, usize, &str) -> (String, Style) + 'static,
+    ) -> Response {
+        let colors = self.widget_theme.table;
+        self.table_inner(state, &colors, Some(Box::new(cell)))
+    }
+
+    fn table_inner(
+        &mut self,
+        state: &mut TableState,
+        colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
+    ) -> Response {
         if state.is_dirty() {
             state.recompute_widths();
         }
@@ -26,6 +83,7 @@ impl Context {
         let old_sort_ascending = state.sort_ascending;
         let old_page = state.page;
         let old_filter = state.filter.clone();
+        let old_multi = state.multi_selected.clone();
 
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -35,14 +93,16 @@ impl Context {
         if state.is_dirty() {
             state.recompute_widths();
         }
+        state.resolve_column_widths(self.area_width);
 
-        self.table_render(state, focused, colors);
+        self.table_render(state, focused, colors, cell);
 
         response.changed = state.selected != old_selected
             || state.sort_column != old_sort_column
             || state.sort_ascending != old_sort_ascending
             || state.page != old_page
-            || state.filter != old_filter;
+            || state.filter != old_filter
+            || state.multi_selected != old_multi;
         response
     }
 
@@ -96,6 +156,14 @@ impl Context {
                 let clicked_idx = (mouse.y - rect.y - 2) as usize;
                 if clicked_idx < visible_len {
                     state.selected = clicked_idx;
+                    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                        let anchor = state.selection_anchor.unwrap_or(clicked_idx);
+                        state.select_range(anchor, clicked_idx);
+                    } else if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                        state.toggle_row(clicked_idx);
+                    } else {
+                        state.select_single(clicked_idx);
+                    }
                     consumed.push(i);
                 }
             }
@@ -103,7 +171,13 @@ impl Context {
         }
     }
 
-    fn table_render(&mut self, state: &mut TableState, focused: bool, colors: &WidgetColors) {
+    fn table_render(
+        &mut self,
+        state: &mut TableState,
+        focused: bool,
+        colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
+    ) {
         let total_visible = state.visible_indices().len();
         let page_start = if state.page_size > 0 {
             state
@@ -141,7 +215,7 @@ impl Context {
             })));
 
         self.render_table_header(state, colors);
-        self.render_table_rows(state, focused, page_start, visible_len, colors);
+        self.render_table_rows(state, focused, page_start, visible_len, colors, cell);
 
         if state.page_size > 0 && state.total_pages() > 1 {
             let current_page = (state.page + 1).to_string();
@@ -170,7 +244,23 @@ impl Context {
 
         let mut consumed_indices = Vec::new();
         for (i, key) in self.available_key_presses() {
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             match key.code {
+                // Shift+Up/Down: extend a contiguous range from the anchor.
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if shift => {
+                    let visible_len = table_visible_len(state);
+                    state.selected = state.selected.min(visible_len.saturating_sub(1));
+                    let anchor = *state.selection_anchor.get_or_insert(state.selected);
+                    handle_vertical_nav(
+                        &mut state.selected,
+                        visible_len.saturating_sub(1),
+                        key.code.clone(),
+                    );
+                    state.select_range(anchor, state.selected);
+                    consumed_indices.push(i);
+                }
+                // Plain Up/Down (or k/j): move the cursor only (back-compat).
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                     let visible_len = table_visible_len(state);
                     state.selected = state.selected.min(visible_len.saturating_sub(1));
@@ -179,6 +269,16 @@ impl Context {
                         visible_len.saturating_sub(1),
                         key.code.clone(),
                     );
+                    consumed_indices.push(i);
+                }
+                // Ctrl+Space: toggle the focused row without clearing the set.
+                // Space: toggle the focused row (additive toggle).
+                KeyCode::Char(' ') if ctrl => {
+                    state.toggle_row(state.selected);
+                    consumed_indices.push(i);
+                }
+                KeyCode::Char(' ') => {
+                    state.toggle_row(state.selected);
                     consumed_indices.push(i);
                 }
                 KeyCode::PageUp => {
@@ -248,21 +348,34 @@ impl Context {
         page_start: usize,
         visible_len: usize,
         colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
     ) {
         for idx in 0..visible_len {
-            let data_idx = state.visible_indices()[page_start + idx];
+            let view_idx = page_start + idx;
+            let data_idx = state.visible_indices()[view_idx];
             let Some(row) = state.rows.get(data_idx) else {
                 continue;
             };
-            let line = format_table_row(row, state.column_widths(), " │ ");
-            if idx == state.selected {
+
+            // Base style for the whole row, applied to every cell unless the
+            // per-column renderer overrides it. Priority: focused cursor row >
+            // multi-selected row > zebra > plain. When `multi_selected` is empty
+            // (the default), this collapses to the pre-v0.21 behavior verbatim.
+            let base = if idx == state.selected {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
                 if focused {
                     style = style.bold();
                 }
-                self.styled(line, style);
+                style
+            } else if state.is_row_selected(view_idx) {
+                // Dimmer selection background to distinguish set members from
+                // the brighter focused-cursor row.
+                Style::new()
+                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+                    .fg(colors.fg.unwrap_or(self.theme.selected_fg))
+                    .dim()
             } else {
                 let mut style = Style::new().fg(colors.fg.unwrap_or(self.theme.text));
                 if state.zebra {
@@ -275,7 +388,45 @@ impl Context {
                     });
                     style = style.bg(zebra_bg);
                 }
-                self.styled(line, style);
+                style
+            };
+
+            match &cell {
+                None => {
+                    let line = format_table_row(row, state.column_widths(), " │ ");
+                    self.styled(line, base);
+                }
+                Some(render) => {
+                    let widths = state.column_widths();
+                    let mut segments: Vec<(String, Style)> =
+                        Vec::with_capacity(widths.len().saturating_mul(2));
+                    for (col, width) in widths.iter().enumerate() {
+                        if col > 0 {
+                            segments.push((" │ ".to_string(), base));
+                        }
+                        let raw = row.get(col).map(String::as_str).unwrap_or("");
+                        let (content, cell_style) = render(view_idx, col, raw);
+                        // Overlay the per-cell style onto the row base: the cell
+                        // fg / bg win when set, modifiers are unioned. This keeps
+                        // the row selection background unless the cell overrides
+                        // it, while letting a column carry its own colored text.
+                        let mut merged = base;
+                        if cell_style.fg.is_some() {
+                            merged.fg = cell_style.fg;
+                        }
+                        if cell_style.bg.is_some() {
+                            merged.bg = cell_style.bg;
+                        }
+                        merged.modifiers |= cell_style.modifiers;
+                        let padded = clamp_table_cell(&content, *width);
+                        segments.push((padded, merged));
+                    }
+                    self.line(move |ui| {
+                        for (text, style) in segments {
+                            ui.styled(text, style);
+                        }
+                    });
+                }
             }
         }
     }

@@ -183,8 +183,8 @@ pub use widgets::{
     GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
     PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState, RichLogEntry,
     RichLogState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
-    SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState, TableState,
-    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
+    SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState, TableColumn,
+    TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
     ToolApprovalState, TreeNode, TreeState, Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
