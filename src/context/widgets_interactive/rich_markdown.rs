@@ -148,16 +148,76 @@ impl Context {
     ///
     /// `total` is the number of items. `visible_height` limits how many rows
     /// are rendered. The closure `f` is called only for visible indices.
+    ///
+    /// This is the uniform fixed-height fast path: every item is treated as
+    /// exactly one row. For chat/feed bubbles of differing heights see
+    /// [`virtual_list_variable`](Context::virtual_list_variable).
     pub fn virtual_list(
         &mut self,
         state: &mut ListState,
         visible_height: u32,
         f: impl Fn(&mut Context, usize),
     ) -> Response {
+        self.virtual_list_impl(state, visible_height, false, f)
+    }
+
+    /// Variable-height variant of [`virtual_list`](Context::virtual_list).
+    ///
+    /// Each item's height (in rows) comes from
+    /// [`ListState::set_item_heights`](crate::widgets::ListState::set_item_heights);
+    /// the visible range is computed so the rendered items fill at most
+    /// `visible_height` rows starting from the current viewport. This is the
+    /// chat/feed use case where bubbles vary in height (a one-line reply next
+    /// to a 30-line code block). When no per-item heights are set it falls back
+    /// to the uniform fast path and produces output identical to
+    /// [`virtual_list`](Context::virtual_list). Rendering remains `O(visible)`:
+    /// only items in the computed range invoke `f`, prefix-sum lookups are
+    /// `O(log n)` and the prefix-sum rebuild is `O(n)` gated behind a dirty
+    /// flag.
+    ///
+    /// An item taller than `visible_height` renders from its top and is never
+    /// skipped. `PageUp`/`PageDown` move the selection by the number of *items*
+    /// that fill `visible_height` *rows* from the current position. The
+    /// "↑ N more / ↓ N more" affordances continue to count *items*.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut state = ListState::new(vec!["short reply", "long\ncode\nblock", "ok"])
+    ///     .with_item_heights(vec![1, 3, 1]);
+    ///
+    /// slt::run(|ui| {
+    ///     ui.virtual_list_variable(&mut state, 10, |ui, idx| {
+    ///         ui.text(format!("bubble {idx}"));
+    ///     });
+    /// })?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    ///
+    /// Available since `0.21.0`.
+    pub fn virtual_list_variable(
+        &mut self,
+        state: &mut ListState,
+        visible_height: u32,
+        f: impl Fn(&mut Context, usize),
+    ) -> Response {
+        self.virtual_list_impl(state, visible_height, true, f)
+    }
+
+    fn virtual_list_impl(
+        &mut self,
+        state: &mut ListState,
+        visible_height: u32,
+        variable: bool,
+        f: impl Fn(&mut Context, usize),
+    ) -> Response {
         if state.items.is_empty() {
             return Response::none();
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        let use_heights = variable && state.has_item_heights();
         let focused = self.register_focusable();
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
@@ -175,12 +235,20 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::PageUp => {
-                        state.selected = state.selected.saturating_sub(visible_height as usize);
+                        state.selected = if use_heights {
+                            page_up_target(state, state.selected, visible_height)
+                        } else {
+                            state.selected.saturating_sub(visible_height as usize)
+                        };
                         consumed_indices.push(i);
                     }
                     KeyCode::PageDown => {
-                        state.selected = (state.selected + visible_height as usize)
-                            .min(state.items.len().saturating_sub(1));
+                        state.selected = if use_heights {
+                            page_down_target(state, state.selected, visible_height)
+                        } else {
+                            (state.selected + visible_height as usize)
+                                .min(state.items.len().saturating_sub(1))
+                        };
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
@@ -198,16 +266,23 @@ impl Context {
         }
 
         let vh = visible_height as usize;
-        // Clamp viewport_offset so `selected` stays inside [offset, offset + vh)
-        // without forcing the cursor onto the bottom row when scrolling down.
-        if state.selected < state.viewport_offset {
-            state.viewport_offset = state.selected;
-        }
-        if vh > 0 && state.selected >= state.viewport_offset + vh {
-            state.viewport_offset = state.selected - vh + 1;
-        }
-        let start = state.viewport_offset;
-        let end = (start + vh).min(state.items.len());
+        let (start, end) = if use_heights {
+            row_visible_range(state, vh)
+        } else {
+            // Uniform fixed-height path — byte-identical to the original
+            // `virtual_list`: one item == one row.
+            //
+            // Clamp viewport_offset so `selected` stays inside [offset, offset + vh)
+            // without forcing the cursor onto the bottom row when scrolling down.
+            if state.selected < state.viewport_offset {
+                state.viewport_offset = state.selected;
+            }
+            if vh > 0 && state.selected >= state.viewport_offset + vh {
+                state.viewport_offset = state.selected - vh + 1;
+            }
+            let start = state.viewport_offset;
+            (start, (start + vh).min(state.items.len()))
+        };
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -1226,4 +1301,121 @@ fn retain_longest_prefix(buf: &mut Vec<char>, target: &[char]) {
     if start > 0 {
         buf.drain(0..start);
     }
+}
+
+// ── variable-height virtual_list helpers ─────────────────────────────────
+//
+// These operate on the per-item `row_prefix` cached in `ListState` so the
+// visible range and page jumps are computed in *rows*, not items, while the
+// public `viewport_offset` keeps its "top item index" meaning. All lookups are
+// O(log n) (binary search) or O(visible) (bounded linear accumulation).
+
+/// Largest item index `i` such that `row_prefix[i] <= target_row` — i.e. the
+/// item containing (or starting at) `target_row`. Result is in `0..n`.
+fn item_at_row(row_prefix: &[u32], target_row: u32, n: usize) -> usize {
+    // `row_prefix` has `n + 1` entries; entry `i` is the first row of item `i`.
+    // partition_point returns the count of entries `<= target_row`; subtract one
+    // to get the index of the item that owns that row, clamped to the last item.
+    if n == 0 {
+        return 0;
+    }
+    let count = row_prefix.partition_point(|&r| r <= target_row);
+    count.saturating_sub(1).min(n - 1)
+}
+
+/// Compute the `[start, end)` item range for the variable-height path.
+///
+/// Clamps `state.viewport_offset` (top item index) so `selected` is fully
+/// visible by *rows*, then accumulates item heights from the top until the
+/// viewport is filled. `viewport_row_offset` is kept in sync with the top
+/// item's starting row. `end` always covers at least one item, so an item
+/// taller than the viewport renders from its top instead of being skipped
+/// (no zero-progress loop).
+fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
+    state.ensure_row_prefix();
+    let n = state.items.len();
+    if n == 0 || vh == 0 {
+        state.viewport_offset = state.viewport_offset.min(n.saturating_sub(1));
+        state.viewport_row_offset = 0;
+        return (state.viewport_offset, state.viewport_offset);
+    }
+
+    let vh_rows = vh as u32;
+    let row_prefix = state.row_prefix();
+    // `row_prefix[i]` is the top row of item `i`.
+    let sel = state.selected.min(n - 1);
+    let sel_top = row_prefix[sel];
+    let sel_bottom = row_prefix[sel + 1]; // exclusive bottom row of `selected`
+
+    let mut top = state.viewport_offset.min(n - 1);
+
+    // Scroll up: if the selection's top row is above the viewport top row,
+    // pull the viewport up to the selected item.
+    if sel_top < row_prefix[top] {
+        top = sel;
+    }
+
+    // Scroll down: while the selection's bottom row falls past the viewport
+    // window, advance the top item. Each step makes progress (top increases),
+    // so this terminates. Stop once `selected` fits or the selected item is
+    // itself the top (a single item taller than the viewport).
+    while top < sel && sel_bottom.saturating_sub(row_prefix[top]) > vh_rows {
+        top += 1;
+    }
+
+    // Accumulate items from `top` until adding the next item would overflow
+    // `vh` rows; the rendered items then sum to at most `vh` rows (a partially
+    // clipped item is excluded). Always include at least the top item so a
+    // tall item is never skipped (it renders from its top).
+    let top_row = row_prefix[top];
+    let target_bottom = top_row.saturating_add(vh_rows);
+    // Largest exclusive `end` such that `row_prefix[end] <= target_bottom`,
+    // i.e. items `top..end` fully fit within `vh` rows (their cumulative bottom
+    // row does not exceed the viewport bottom). `partition_point` returns the
+    // count of entries `<= target_bottom` (one past the largest matching
+    // index), so subtract one to get the inclusive prefix index = exclusive
+    // item end. Clamp to `[top + 1, n]` so at least one item always renders
+    // (a tall item that overflows `vh` shows alone, from its top).
+    let end = row_prefix
+        .partition_point(|&r| r <= target_bottom)
+        .saturating_sub(1)
+        .clamp(top + 1, n);
+
+    state.viewport_offset = top;
+    state.viewport_row_offset = top_row as usize;
+    (top, end)
+}
+
+/// Item index reached by paging *down* one viewport (`vh` rows) from `from`.
+/// Advances by the count of items whose cumulative height fills `vh` rows,
+/// guaranteeing forward progress of at least one item.
+fn page_down_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
+    state.ensure_row_prefix();
+    let n = state.items.len();
+    if n == 0 {
+        return 0;
+    }
+    let from = from.min(n - 1);
+    let row_prefix = state.row_prefix();
+    let from_top = row_prefix[from];
+    let target = from_top.saturating_add(visible_height.max(1));
+    let next = item_at_row(row_prefix, target, n);
+    next.max(from + 1).min(n - 1)
+}
+
+/// Item index reached by paging *up* one viewport (`vh` rows) from `from`.
+/// Retreats by the count of items whose cumulative height fills `vh` rows,
+/// guaranteeing backward progress of at least one item (until index 0).
+fn page_up_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
+    state.ensure_row_prefix();
+    let n = state.items.len();
+    if n == 0 {
+        return 0;
+    }
+    let from = from.min(n - 1);
+    let row_prefix = state.row_prefix();
+    let from_bottom = row_prefix[from + 1];
+    let target = from_bottom.saturating_sub(visible_height.max(1));
+    let prev = item_at_row(row_prefix, target, n);
+    prev.min(from.saturating_sub(1))
 }

@@ -2557,6 +2557,158 @@ fn virtual_list_renders_items() {
     assert!(!tb.to_string().contains("Item 3"));
 }
 
+// ── variable-height virtual_list (#253) ──────────────────────────────────
+// `set_item_heights` / `ensure_row_prefix` / `row_prefix` are crate-private,
+// so their direct unit test lives inline in `src/widgets/collections.rs`.
+
+#[test]
+fn virtual_list_variable_fixed_fallback_matches_uniform() {
+    let items: Vec<String> = (0..8).map(|i| format!("Item {i}")).collect();
+    let mut a = ListState::new(items.clone());
+    let mut b = ListState::new(items);
+
+    let mut tb_uniform = TestBackend::new(40, 12);
+    tb_uniform.render(|ui| {
+        ui.virtual_list(&mut a, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let mut tb_variable = TestBackend::new(40, 12);
+    tb_variable.render(|ui| {
+        // No heights set → must take the byte-identical fast path.
+        ui.virtual_list_variable(&mut b, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    assert_eq!(
+        tb_uniform.to_string(),
+        tb_variable.to_string(),
+        "variable_list with no heights must match virtual_list byte-for-byte"
+    );
+}
+
+#[test]
+fn virtual_list_variable_respects_item_heights() {
+    let mut tb = TestBackend::new(40, 12);
+    // Heights [1, 3, 1, 2, 1]; vh = 4. Rows 0..4 = item0 (1) + item1 (3).
+    // item2 starts at row 4 → clipped out.
+    let mut state = ListState::new(vec!["Item 0", "Item 1", "Item 2", "Item 3", "Item 4"])
+        .with_item_heights(vec![1, 3, 1, 2, 1]);
+
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let out = tb.to_string();
+    assert!(out.contains("Item 0"), "expected Item 0: {out:?}");
+    assert!(out.contains("Item 1"), "expected Item 1: {out:?}");
+    assert!(!out.contains("Item 3"), "Item 3 should be clipped: {out:?}");
+}
+
+#[test]
+fn virtual_list_variable_page_down_by_rows() {
+    let mut tb = TestBackend::new(40, 12);
+    // 20 items; first six heights are [3, 3, 1, 1, 1, 1, ...] then 1s.
+    let mut heights = vec![3u32, 3, 1, 1, 1, 1];
+    heights.extend(std::iter::repeat(1u32).take(14));
+    let items: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
+    let mut state = ListState::new(items).with_item_heights(heights);
+
+    // PageDown with vh = 6 from item 0 (rows 0..6 cover item0 (3) + item1 (3)),
+    // so the target row is 6 which is item 2 — selection should land on item 2,
+    // NOT item 6 (a fixed-count page jump).
+    let events = slt::EventBuilder::new().key_code(KeyCode::PageDown).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.virtual_list_variable(&mut state, 6, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    assert_eq!(
+        state.selected, 2,
+        "PageDown should advance by rows (item 2), not by 6 items"
+    );
+}
+
+#[test]
+fn virtual_list_variable_tall_item_renders() {
+    let mut tb = TestBackend::new(40, 12);
+    // Single item taller than the viewport: it must still render (from its top)
+    // and the range loop must terminate.
+    let mut state = ListState::new(vec!["Tall"]).with_item_heights(vec![10]);
+
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 4, |ui, idx| {
+            ui.text(format!("Tall {idx}"));
+        });
+    });
+
+    assert!(
+        tb.to_string().contains("Tall 0"),
+        "tall item should render from its top: {:?}",
+        tb.to_string()
+    );
+}
+
+#[test]
+fn virtual_list_variable_more_affordance_counts_items() {
+    let mut tb = TestBackend::new(40, 14);
+    // 10 items, all height 1. Force the viewport to start at item 3 by selecting
+    // item 6 with vh = 3 (so start = 4? no — with uniform-via-heights all 1,
+    // selecting 5 and vh 3 keeps viewport sticky). Drive selection to position
+    // the viewport at items 3..5.
+    let mut state = ListState::new((0..10).map(|i| format!("Item {i}")).collect::<Vec<_>>())
+        .with_item_heights(vec![1; 10]);
+    state.selected = 5;
+
+    // First frame anchors the viewport bottom at item 5 (start = 3).
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 3, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let out = tb.to_string();
+    assert!(
+        out.contains("↑ 3 more"),
+        "expected '↑ 3 more' (items above), got: {out:?}"
+    );
+    // remaining items below = 10 - end. end = 6 (items 3,4,5) → 4 more.
+    assert!(
+        out.contains("↓ 4 more"),
+        "expected '↓ 4 more' (items below), got: {out:?}"
+    );
+}
+
+#[test]
+fn virtual_list_variable_empty_and_zero_height() {
+    // Empty list returns Response::none() and renders nothing.
+    let mut tb = TestBackend::new(40, 8);
+    let mut empty = ListState::new(Vec::<String>::new());
+    let resp = std::cell::RefCell::new(None);
+    tb.render(|ui| {
+        *resp.borrow_mut() = Some(ui.virtual_list_variable(&mut empty, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        }));
+    });
+    assert!(!resp.borrow().as_ref().unwrap().changed);
+    tb.assert_not_contains("Item");
+
+    // visible_height == 0 renders nothing.
+    let mut tb2 = TestBackend::new(40, 8);
+    let mut state = ListState::new(vec!["Item 0", "Item 1"]).with_item_heights(vec![2, 2]);
+    tb2.render(|ui| {
+        ui.virtual_list_variable(&mut state, 0, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    tb2.assert_not_contains("Item 0");
+}
+
 #[test]
 fn command_palette_closed() {
     let mut tb = TestBackend::new(80, 24);
@@ -6230,6 +6382,63 @@ proptest::proptest! {
         proptest::prop_assert!(
             (start.year, start.month, start.day) <= (end.year, end.month, end.day),
             "range not ordered: {start:?} > {end:?}"
+        );
+    }
+}
+
+proptest::proptest! {
+    /// The variable-height visible range is always non-empty, bounded by
+    /// `visible_height` rows (unless a single tall item overflows), keeps the
+    /// selection inside the range, and never panics / indexes out of bounds.
+    #[test]
+    fn prop_virtual_list_variable_range_bounded(
+        len in 1usize..200,
+        heights in proptest::collection::vec(1u32..=8, 1..200),
+        selected in 0usize..200,
+        visible_height in 1u32..=30,
+    ) {
+        // Align the height vector to the item count.
+        let mut h = heights;
+        h.resize(len, 1);
+        let items: Vec<String> = (0..len).map(|i| format!("Item {i}")).collect();
+        let mut state = ListState::new(items).with_item_heights(h.clone());
+        state.selected = selected.min(len - 1);
+        let sel = state.selected;
+
+        let mut tb = TestBackend::new(40, 40);
+        let rendered = std::cell::RefCell::new(Vec::<usize>::new());
+        tb.render(|ui| {
+            ui.virtual_list_variable(&mut state, visible_height, |ui, idx| {
+                rendered.borrow_mut().push(idx);
+                ui.text(format!("Item {idx}"));
+            });
+        });
+
+        let rendered = rendered.into_inner();
+        proptest::prop_assert!(!rendered.is_empty(), "range must be non-empty");
+
+        let start = *rendered.first().unwrap();
+        let end = *rendered.last().unwrap() + 1; // exclusive
+        proptest::prop_assert_eq!(
+            rendered,
+            (start..end).collect::<Vec<_>>(),
+            "rendered indices must be a contiguous start..end slice"
+        );
+
+        // Selection stays inside [start, end).
+        proptest::prop_assert!(
+            start <= sel && sel < end,
+            "selected {} not in range {}..{}",
+            sel, start, end
+        );
+
+        // Total rendered rows <= visible_height, OR exactly one tall item.
+        let total_rows: u32 = (start..end).map(|i| h[i]).sum();
+        let single_tall = end - start == 1 && h[start] > visible_height;
+        proptest::prop_assert!(
+            total_rows <= visible_height || single_tall,
+            "rows {} exceed vh {} without being a single tall item (range {}..{})",
+            total_rows, visible_height, start, end
         );
     }
 }
