@@ -113,6 +113,11 @@ syntax = [
     "syntax-yaml",
 ]
 kitty-compress = ["dep:flate2"]
+# Dev-only test harness (issue #274): exposes `PtyBackend`/`PtyFrame`, which
+# drive the real `Terminal` flush pipeline into an in-process byte sink for
+# end-to-end escape-code / image-protocol assertions. Off by default; pulls
+# `crossterm` for the SGR/queue! emitters. Not part of `full`.
+pty-test = ["crossterm"]
 full = ["crossterm", "async", "serde", "theme-watch", "image", "qrcode", "kitty-compress", "bidi"]
 
 [package.metadata.docs.rs]

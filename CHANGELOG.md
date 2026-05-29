@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.0] - Unreleased
+
+### Added
+
+- **`feat(test-utils)` — `PtyBackend` + `PtyFrame` end-to-end escape-byte harness** (#274) — Behind the dev-only `pty-test` feature (off by default), `PtyBackend` drives the *real* `Terminal` flush pipeline into an in-process `Vec<u8>` sink, so the actual escape/image-protocol bytes that ship to a terminal — SGR runs, OSC 8 hyperlinks, Sixel (`\x1bPq`), Kitty graphics (`\x1b_Ga=`), and color-depth-downsampled SGR — are asserted as whole frames. Assertions: `assert_emits`, `assert_not_emits`, `last_raw`, `frames_raw`, `with_color_depth`. This is the byte/protocol regression tier that the buffer-only `TestBackend` and the plain-text `insta` snapshots in `tests/visual_snapshots.rs` deliberately cannot reach. No real TTY required — reproducible on `ubuntu-latest`.
+
+### CI
+
+- **`ci(gallery)` — VHS gallery gate + tape coverage parity** (#274) — New `gallery` job renders every `.tape` in the repo through VHS and asserts each produces its declared `Output` asset at a non-trivial byte size, uploading the generated assets as a workflow artifact (no auto-commit). A `.tape` now exists for every gallery asset advertised in `README.md` (added `demo`, `demo_dashboard`, `demo_website`, `demo_game`, `demo_pretext`), and `tests/gallery_manifest.rs` (plain `cargo test`, no VHS) fails if README ↔ tape parity drifts. Replaces the manual "tmux verification for visual demos before release" release-checklist step.
+
 ## [0.20.1] - 2026-04-29
 
 ### Deprecated
