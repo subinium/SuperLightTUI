@@ -1251,14 +1251,46 @@ impl ScrollState {
         self.viewport_height
     }
 
-    /// Get the scroll progress as a ratio in [0.0, 1.0].
-    pub fn progress(&self) -> f32 {
+    /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
+    ///
+    /// Returns `f64` to match the rest of the ratio surface unified in v0.20
+    /// (`Gauge::ratio`, `SplitPaneState::ratio`, `progress(ratio)`,
+    /// `progress_bar(ratio)`). Feed the value straight into [`Context::gauge`]
+    /// or [`Context::progress_bar`] without a cast.
+    ///
+    /// [`Context::gauge`]: crate::Context::gauge
+    /// [`Context::progress_bar`]: crate::Context::progress_bar
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let scroll = ScrollState::new();
+    /// // Bounds are populated by the `scrollable` widget each frame; a fresh
+    /// // state with no content reports 0.0.
+    /// let ratio: f64 = scroll.progress_ratio();
+    /// assert!((0.0..=1.0).contains(&ratio));
+    /// ```
+    pub fn progress_ratio(&self) -> f64 {
         let max = self.content_height.saturating_sub(self.viewport_height);
         if max == 0 {
             0.0
         } else {
-            self.offset as f32 / max as f32
+            self.offset as f64 / max as f64
         }
+    }
+
+    /// Deprecated `f32` alias for [`progress_ratio`](Self::progress_ratio).
+    ///
+    /// `ScrollState::progress` was the only `f32` ratio left after the v0.20
+    /// `f32 → f64` ratio unification. Migrate to [`progress_ratio`](Self::progress_ratio):
+    /// call sites that wrapped the result in `as f64` can drop the cast, while
+    /// call sites passing the value to `gauge` / `progress_bar` (which already
+    /// take `f64`) need no cast at all.
+    #[deprecated(
+        since = "0.21.0",
+        note = "use progress_ratio() — f64 matches the rest of the v0.20+ ratio surface (gauge/progress_bar take f64; drop any `as f64` cast)"
+    )]
+    pub fn progress(&self) -> f32 {
+        self.progress_ratio() as f32
     }
 
     /// Scroll up by the given number of rows, clamped to 0.
@@ -1651,5 +1683,63 @@ mod list_state_height_tests {
         // item_heights still carries 3 entries; items now has 2 → height 1 for
         // out-of-range indices is not consulted, the prefix matches the 2 items.
         assert_eq!(state.row_prefix(), &[0, 2, 4]);
+    }
+}
+
+#[cfg(test)]
+mod scroll_state_progress_tests {
+    use super::ScrollState;
+
+    /// Build a state with the bounds the `scrollable` widget would set, plus an
+    /// offset, so `progress_ratio` exercises a realistic non-zero ratio.
+    fn scrolled(content_height: u32, viewport_height: u32, offset: usize) -> ScrollState {
+        let mut state = ScrollState::new();
+        state.set_bounds(content_height, viewport_height);
+        state.offset = offset;
+        state
+    }
+
+    #[test]
+    fn progress_ratio_returns_f64_in_unit_range() {
+        // Top of a scrollable region → 0.0.
+        let top = scrolled(100, 20, 0);
+        let ratio: f64 = top.progress_ratio();
+        assert_eq!(ratio, 0.0);
+
+        // Halfway through the scrollable range (offset 40 of max 80) → 0.5.
+        let mid = scrolled(100, 20, 40);
+        assert_eq!(mid.progress_ratio(), 0.5);
+
+        // Fully scrolled (offset == max) → 1.0.
+        let bottom = scrolled(100, 20, 80);
+        assert_eq!(bottom.progress_ratio(), 1.0);
+    }
+
+    #[test]
+    fn progress_ratio_is_zero_when_content_fits_viewport() {
+        // No overflow → no scroll range → 0.0 (and no divide-by-zero).
+        let fits = scrolled(20, 20, 0);
+        assert_eq!(fits.progress_ratio(), 0.0);
+
+        let smaller = scrolled(10, 20, 5);
+        assert_eq!(smaller.progress_ratio(), 0.0);
+    }
+
+    #[test]
+    fn progress_ratio_preserves_f64_precision() {
+        // 1/3 is lossy in f32; the f64 surface keeps more digits than `as f32`.
+        let third = scrolled(40, 10, 10); // max = 30, offset = 10 → 1/3
+        let ratio = third.progress_ratio();
+        assert!((ratio - 1.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_progress_delegates_to_progress_ratio() {
+        // The deprecated f32 alias must agree with the f64 source within f32 epsilon.
+        let state = scrolled(100, 20, 40);
+        let expected = state.progress_ratio() as f32;
+        assert_eq!(state.progress(), expected);
+        assert!((state.progress() - 0.5).abs() < f32::EPSILON);
     }
 }
