@@ -679,18 +679,26 @@ impl Context {
     /// occur in the tree. Pick unique ids — for example, prefix with a
     /// component name (`"counter::value"`).
     ///
+    /// # Naming
+    ///
+    /// The no-suffix form takes an `init` closure, matching
+    /// [`use_state`](Self::use_state)`(init)` and
+    /// [`use_state_keyed`](Self::use_state_keyed)`(id, init)`. Use
+    /// [`use_state_named_default`](Self::use_state_named_default) for the
+    /// `T: Default` shorthand.
+    ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// fn counter(ui: &mut slt::Context) {
-    ///     let count = ui.use_state_named_with("counter::value", || 0i32);
+    ///     let count = ui.use_state_named("counter::value", || 0i32);
     ///     ui.text(format!("Count: {}", count.get(ui)));
     ///     if ui.button("+1").clicked {
     ///         *count.get_mut(ui) += 1;
     ///     }
     /// }
     /// ```
-    pub fn use_state_named_with<T: 'static>(
+    pub fn use_state_named<T: 'static>(
         &mut self,
         id: &'static str,
         init: impl FnOnce() -> T,
@@ -701,16 +709,52 @@ impl Context {
         State::from_named(id)
     }
 
-    /// Like [`use_state_named_with`](Self::use_state_named_with), but uses
+    /// Like [`use_state_named`](Self::use_state_named), but uses
     /// [`Default::default()`] to initialize the value on first call.
+    ///
+    /// Mirrors [`use_state_keyed_default`](Self::use_state_keyed_default): the
+    /// `_default` suffix means "no init closure, `T: Default` required".
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let value = ui.use_state_named::<i32>("counter::value");
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let value = ui.use_state_named_default::<i32>("counter::value");
+    /// ui.text(format!("{}", value.get(ui)));
+    /// # });
     /// ```
-    pub fn use_state_named<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
-        self.use_state_named_with(id, T::default)
+    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
+        self.use_state_named(id, T::default)
+    }
+
+    /// Deprecated alias for [`use_state_named`](Self::use_state_named).
+    ///
+    /// **Deprecated since 0.21.0**: the `_named` family now follows the
+    /// "no-suffix = init closure" convention so it matches
+    /// [`use_state`](Self::use_state) and
+    /// [`use_state_keyed`](Self::use_state_keyed). The init-closure form is now
+    /// spelled `use_state_named(id, init)`; the `T: Default` shorthand is
+    /// [`use_state_named_default`](Self::use_state_named_default).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Old: ui.use_state_named_with("counter::value", || 0i32)
+    /// let count = ui.use_state_named("counter::value", || 0i32);
+    /// ui.text(format!("{}", count.get(ui)));
+    /// # });
+    /// ```
+    #[deprecated(
+        since = "0.21.0",
+        note = "Renamed to `use_state_named` — the no-suffix form now takes the init closure, matching `use_state` / `use_state_keyed`."
+    )]
+    pub fn use_state_named_with<T: 'static>(
+        &mut self,
+        id: &'static str,
+        init: impl FnOnce() -> T,
+    ) -> State<T> {
+        self.use_state_named(id, init)
     }
 
     /// Smoothly animate between `0.0` and `1.0` driven by a boolean.
@@ -761,7 +805,7 @@ impl Context {
     /// Use this shorthand when you want zero boilerplate and linear easing
     /// is acceptable. For custom easing, a non-static key, or
     /// non-tick-based control, construct a [`crate::Tween`] explicitly via
-    /// [`Context::use_state_named_with`](Self::use_state_named_with).
+    /// [`Context::use_state_named`](Self::use_state_named).
     pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
         let tick = self.tick;
         let entry = self
