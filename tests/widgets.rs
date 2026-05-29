@@ -3876,7 +3876,7 @@ fn code_block_renders_code() {
 fn code_block_numbered_has_line_numbers() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        ui.code_block_numbered("line1\nline2\nline3");
+        ui.code_block("line1\nline2\nline3").numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1"));
@@ -3910,7 +3910,7 @@ fn demo_v094_content_does_not_panic() {
         ui.accordion("Advanced", &mut acc_adv, |ui| {
             ui.definition_list(&[("Log", "debug")]);
         });
-        ui.code_block_numbered("fn main() {}");
+        ui.code_block("fn main() {}").numbered();
         ui.empty_state("No items", "Add some");
     });
     tb.assert_contains("v0.9.4");
@@ -3935,7 +3935,7 @@ fn demo_list_set_items_no_panic() {
 fn code_block_lang_renders_content() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("let x = 1;", "rust");
+        ui.code_block("let x = 1;").lang("rust");
     });
     tb.assert_contains("let");
     tb.assert_contains("1");
@@ -3945,7 +3945,7 @@ fn code_block_lang_renders_content() {
 fn code_block_lang_unknown_falls_back() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("hello world", "brainfuck");
+        ui.code_block("hello world").lang("brainfuck");
     });
     tb.assert_contains("hello");
 }
@@ -3954,7 +3954,9 @@ fn code_block_lang_unknown_falls_back() {
 fn code_block_numbered_lang_renders() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_numbered_lang("fn main() {}\nlet x = 1;", "rust");
+        ui.code_block("fn main() {}\nlet x = 1;")
+            .lang("rust")
+            .numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1"));
@@ -3962,11 +3964,68 @@ fn code_block_numbered_lang_renders() {
     assert!(output.contains("main"));
 }
 
+// The deprecated `code_block_*` variants must remain behavior-preserving
+// aliases of the `CodeBlock` builder. This is the only test that intentionally
+// calls the deprecated names, so the `#[allow(deprecated)]` is scoped here.
+#[test]
+#[allow(deprecated)]
+fn code_block_deprecated_aliases_match_builder() {
+    let code = "fn main() {\n    let x = 1;\n}";
+
+    // numbered + lang
+    let mut tb_alias = slt::TestBackend::new(40, 10);
+    tb_alias.render(|ui| {
+        ui.code_block_numbered_lang(code, "rust");
+    });
+    let mut tb_builder = slt::TestBackend::new(40, 10);
+    tb_builder.render(|ui| {
+        let _ = ui.code_block(code).lang("rust").numbered().show();
+    });
+    assert_eq!(
+        tb_alias.to_string(),
+        tb_builder.to_string(),
+        "code_block_numbered_lang must match code_block(..).lang(..).numbered()"
+    );
+
+    // lang only
+    let mut tb_alias2 = slt::TestBackend::new(40, 10);
+    tb_alias2.render(|ui| {
+        ui.code_block_lang(code, "rust");
+    });
+    let mut tb_builder2 = slt::TestBackend::new(40, 10);
+    tb_builder2.render(|ui| {
+        let _ = ui.code_block(code).lang("rust").show();
+    });
+    assert_eq!(tb_alias2.to_string(), tb_builder2.to_string());
+
+    // numbered only
+    let mut tb_alias3 = slt::TestBackend::new(40, 10);
+    tb_alias3.render(|ui| {
+        ui.code_block_numbered(code);
+    });
+    let mut tb_builder3 = slt::TestBackend::new(40, 10);
+    tb_builder3.render(|ui| {
+        let _ = ui.code_block(code).numbered().show();
+    });
+    assert_eq!(tb_alias3.to_string(), tb_builder3.to_string());
+
+    // default path: `code_block(code)` (drop-render) == old `code_block(code)` Response form
+    let mut tb_default = slt::TestBackend::new(40, 10);
+    tb_default.render(|ui| {
+        ui.code_block(code);
+    });
+    let mut tb_default_show = slt::TestBackend::new(40, 10);
+    tb_default_show.render(|ui| {
+        let _ = ui.code_block(code).show();
+    });
+    assert_eq!(tb_default.to_string(), tb_default_show.to_string());
+}
+
 #[test]
 fn code_block_lang_empty_lang_uses_fallback() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("let x = 1;", "");
+        ui.code_block("let x = 1;").lang("");
     });
     tb.assert_contains("let");
 }
@@ -4653,7 +4712,7 @@ fn code_block_numbered_single_line_gutter_one_digit() {
     // 1 line → gutter width = 1 ("1 │ ")
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.code_block_numbered("only_line");
+        ui.code_block("only_line").numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1 │"));
@@ -4669,7 +4728,7 @@ fn code_block_numbered_ten_lines_gutter_two_digits() {
         .join("\n");
     let mut tb = TestBackend::new(40, 14);
     tb.render(|ui| {
-        ui.code_block_numbered(&code);
+        ui.code_block(&code).numbered();
     });
     let output = tb.to_string();
     // First line right-padded to width 2
@@ -4687,7 +4746,7 @@ fn code_block_numbered_hundred_lines_gutter_three_digits() {
         .join("\n");
     let mut tb = TestBackend::new(60, 110);
     tb.render(|ui| {
-        ui.code_block_numbered(&code);
+        ui.code_block(&code).numbered();
     });
     let output = tb.to_string();
     // 100th line should appear with no leading space ("100 │")
@@ -4702,7 +4761,7 @@ fn code_block_numbered_empty_input_does_not_panic() {
     // lines.len() == 0 → .max(1).ilog10() == 0 → gutter_w = 1, no panic
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.code_block_numbered("");
+        ui.code_block("").numbered();
     });
     // Empty body still renders the bordered container without crashing.
     let _ = tb.to_string();

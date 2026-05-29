@@ -20,7 +20,7 @@ mod text;
 pub use gauge::{Gauge, LineGauge};
 pub use gutter::GutterOpts;
 pub use layout::Anchor;
-pub use status::Breadcrumb;
+pub use status::{Breadcrumb, CodeBlock};
 
 #[cfg(test)]
 mod line_wrap_tests;

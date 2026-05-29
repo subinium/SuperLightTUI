@@ -2142,7 +2142,10 @@ fn render_v0132(
                 .fg(theme.surface_text)
                 .wrap();
             ui.text("ui.sixel_image(&rgba, w, h, cols, rows)").dim();
-            let _ = ui.code_block_numbered("// Render only on verified Sixel terminals\nlet _ = ui.sixel_image(&rgba, w, h, cols, rows);");
+            let _ = ui
+                .code_block("// Render only on verified Sixel terminals\nlet _ = ui.sixel_image(&rgba, w, h, cols, rows);")
+                .numbered()
+                .show();
         });
 
         card(ui, |ui| {
@@ -2150,9 +2153,12 @@ fn render_v0132(
             ui.text("Fixed logs above + dynamic TUI below")
                 .fg(theme.surface_text);
             let _ = ui.container().min_w(56).col(|ui| {
-                let _ = ui.code_block_numbered(
-                    "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n  out.println(\"Building...\");\n  ui.progress(0.6);\n});",
-                );
+                let _ = ui
+                    .code_block(
+                        "let mut out = StaticOutput::new();\nslt::run_static(&mut out, 5, |ui| {\n  out.println(\"Building...\");\n  ui.progress(0.6);\n});",
+                    )
+                    .numbered()
+                    .show();
             });
             ui.text("CLI tool pattern: scrolling output + live status")
                 .dim();
@@ -2267,7 +2273,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("use std::collections::HashMap;\n\nfn main() {\n    let mut map = HashMap::new();\n    map.insert(\"key\", 42);\n    println!(\"{:?}\", map);\n}", "rust");
+                    let _ = ui.code_block("use std::collections::HashMap;\n\nfn main() {\n    let mut map = HashMap::new();\n    map.insert(\"key\", 42);\n    println!(\"{:?}\", map);\n}").lang("rust").show();
                 });
 
             let _ = ui
@@ -2276,7 +2282,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("import json\n\ndef process(data: list[str]) -> dict:\n    \"\"\"Parse and transform data.\"\"\"\n    result = {k: len(k) for k in data}\n    return result", "python");
+                    let _ = ui.code_block("import json\n\ndef process(data: list[str]) -> dict:\n    \"\"\"Parse and transform data.\"\"\"\n    result = {k: len(k) for k in data}\n    return result").lang("python").show();
                 });
         });
 
@@ -2287,7 +2293,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("interface User {\n  name: string;\n  age: number;\n}\n\nconst greet = (user: User): string => {\n  return `Hello, ${user.name}!`;\n};", "ts");
+                    let _ = ui.code_block("interface User {\n  name: string;\n  age: number;\n}\n\nconst greet = (user: User): string => {\n  return `Hello, ${user.name}!`;\n};").lang("ts").show();
                 });
 
             let _ = ui
@@ -2296,7 +2302,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tch := make(chan int, 10)\n\tgo func() { ch <- 42 }()\n\tfmt.Println(<-ch)\n}", "go");
+                    let _ = ui.code_block("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tch := make(chan int, 10)\n\tgo func() { ch <- 42 }()\n\tfmt.Println(<-ch)\n}").lang("go").show();
                 });
         });
 
@@ -2307,7 +2313,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("#include <vector>\n#include <algorithm>\n\nint main() {\n    std::vector<int> v = {3, 1, 4};\n    std::sort(v.begin(), v.end());\n    return 0;\n}", "cpp");
+                    let _ = ui.code_block("#include <vector>\n#include <algorithm>\n\nint main() {\n    std::vector<int> v = {3, 1, 4};\n    std::sort(v.begin(), v.end());\n    return 0;\n}").lang("cpp").show();
                 });
 
             let _ = ui
@@ -2316,7 +2322,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("import java.util.List;\n\npublic class Main {\n    public static void main(String[] args) {\n        var items = List.of(\"a\", \"b\");\n        items.forEach(System.out::println);\n    }\n}", "java");
+                    let _ = ui.code_block("import java.util.List;\n\npublic class Main {\n    public static void main(String[] args) {\n        var items = List.of(\"a\", \"b\");\n        items.forEach(System.out::println);\n    }\n}").lang("java").show();
                 });
         });
 
@@ -2327,7 +2333,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("#!/bin/bash\nset -euo pipefail\n\nfor file in *.rs; do\n  echo \"Processing $file\"\n  wc -l \"$file\"\ndone", "bash");
+                    let _ = ui.code_block("#!/bin/bash\nset -euo pipefail\n\nfor file in *.rs; do\n  echo \"Processing $file\"\n  wc -l \"$file\"\ndone").lang("bash").show();
                 });
 
             let _ = ui
@@ -2336,7 +2342,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("class Person\n  attr_reader :name, :age\n\n  def initialize(name, age)\n    @name = name\n    @age = age\n  end\n\n  def greet = \"Hi, I'm #{name}\"\nend", "ruby");
+                    let _ = ui.code_block("class Person\n  attr_reader :name, :age\n\n  def initialize(name, age)\n    @name = name\n    @age = age\n  end\n\n  def greet = \"Hi, I'm #{name}\"\nend").lang("ruby").show();
                 });
         });
 
@@ -2347,7 +2353,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("{\n  \"name\": \"slt\",\n  \"version\": \"0.14.1\",\n  \"features\": [\"syntax\", \"async\"],\n  \"count\": 15\n}", "json");
+                    let _ = ui.code_block("{\n  \"name\": \"slt\",\n  \"version\": \"0.14.1\",\n  \"features\": [\"syntax\", \"async\"],\n  \"count\": 15\n}").lang("json").show();
                 });
 
             let _ = ui
@@ -2356,7 +2362,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("[package]\nname = \"superlighttui\"\nversion = \"0.14.1\"\n\n[features]\nsyntax = [\"syntax-rust\"]", "toml");
+                    let _ = ui.code_block("[package]\nname = \"superlighttui\"\nversion = \"0.14.1\"\n\n[features]\nsyntax = [\"syntax-rust\"]").lang("toml").show();
                 });
 
             let _ = ui
@@ -2365,7 +2371,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4", "yaml");
+                    let _ = ui.code_block("name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4").lang("yaml").show();
                 });
         });
 
@@ -2376,7 +2382,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SLT Demo</title>\n</head>\n<body>\n  <h1 class=\"title\">Hello</h1>\n</body>\n</html>", "html");
+                    let _ = ui.code_block("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SLT Demo</title>\n</head>\n<body>\n  <h1 class=\"title\">Hello</h1>\n</body>\n</html>").lang("html").show();
                 });
 
             let _ = ui
@@ -2385,7 +2391,7 @@ fn render_v0141(ui: &mut Context) {
                 .p(1)
                 .grow(1)
                 .col(|ui| {
-                    let _ = ui.code_block_lang(".container {\n  display: flex;\n  gap: 1rem;\n  background: #1e1e2e;\n  border-radius: 8px;\n  padding: 16px;\n}", "css");
+                    let _ = ui.code_block(".container {\n  display: flex;\n  gap: 1rem;\n  background: #1e1e2e;\n  border-radius: 8px;\n  padding: 16px;\n}").lang("css").show();
                 });
         });
     });
@@ -2676,9 +2682,10 @@ fn render_v094(
     });
 
     let _ = ui.divider_text("Code Block");
-    let _ = ui.code_block_numbered(
-        "fn main() {\n    slt::run(|ui| {\n        ui.text(\"hello\");\n    });\n}",
-    );
+    let _ = ui
+        .code_block("fn main() {\n    slt::run(|ui| {\n        ui.text(\"hello\");\n    });\n}")
+        .numbered()
+        .show();
 
     let _ = ui.divider_text("Empty State");
     let _ = ui.container().h(3).col(|ui| {

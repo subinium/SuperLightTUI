@@ -2,6 +2,21 @@ use super::*;
 
 impl Context {
     /// Render an alert banner with icon and level-based coloring.
+    ///
+    /// Argument order is `(message, level)` — message first, then the
+    /// [`AlertLevel`](crate::widgets::AlertLevel). This is the executable
+    /// proof that [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md)
+    /// Rule 3 matches the shipped signature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::AlertLevel;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.alert("Disk full", AlertLevel::Error);
+    /// ui.alert("Saved", AlertLevel::Success);
+    /// # });
+    /// ```
     pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
         use crate::widgets::AlertLevel;
 
@@ -504,48 +519,121 @@ impl Context {
         }
     }
 
-    /// Render a code block with keyword-based syntax highlighting.
-    pub fn code_block(&mut self, code: &str) -> Response {
-        self.code_block_lang(code, "")
+    /// Begin building a syntax-highlighted code block.
+    ///
+    /// Chain `.lang(...)` for language-aware highlighting and `.numbered()`
+    /// for a line-number gutter. The returned [`CodeBlock`] auto-renders when
+    /// dropped, so a bare `ui.code_block(code);` produces a default block.
+    /// Call `.show()` (instead of dropping) to capture the [`Response`].
+    ///
+    /// This is the consuming-builder shape shared with [`Context::gauge`] /
+    /// [`Context::breadcrumb`] — see [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md) Rule 1.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.code_block("let x = 1;");
+    /// let r = ui.code_block("fn main() {}").lang("rust").numbered().show();
+    /// if r.hovered { /* attach tooltip */ }
+    /// # });
+    /// ```
+    pub fn code_block<'a>(&'a mut self, code: &'a str) -> CodeBlock<'a> {
+        CodeBlock::new(self, code)
     }
 
     /// Render a code block with language-aware syntax highlighting.
+    #[deprecated(since = "0.21.0", note = "use `code_block(code).lang(lang)`")]
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
-        let theme = self.theme;
-        let pad = theme.spacing.xs();
-        let highlighted: Option<Vec<Vec<(String, Style)>>> =
-            crate::syntax::highlight_code(code, lang, &theme);
-        let _ = self
-            .bordered(Border::Rounded)
-            .bg(theme.surface)
-            .p(pad)
-            .col(|ui| {
-                if let Some(ref lines) = highlighted {
-                    render_tree_sitter_lines(ui, lines);
-                } else {
-                    for line in code.lines() {
-                        ui.line(|ui| render_highlighted_line(ui, line));
-                    }
-                }
-            });
-
-        Response::none()
+        render_code_block(self, code, lang, false)
     }
 
     /// Render a code block with line numbers and keyword highlighting.
+    #[deprecated(since = "0.21.0", note = "use `code_block(code).numbered()`")]
     pub fn code_block_numbered(&mut self, code: &str) -> Response {
-        self.code_block_numbered_lang(code, "")
+        render_code_block(self, code, "", true)
     }
 
     /// Render a code block with line numbers and language-aware highlighting.
+    #[deprecated(
+        since = "0.21.0",
+        note = "use `code_block(code).lang(lang).numbered()`"
+    )]
     pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
+        render_code_block(self, code, lang, true)
+    }
+}
+
+/// Syntax-highlighted code block builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::code_block`]. Chain `.lang(...)` for
+/// language-aware highlighting and `.numbered()` for a line-number gutter.
+/// Drop the value to render without capturing a response, or call
+/// [`Self::show`] to render and obtain a [`Response`].
+///
+/// Consuming-builder shape, mirroring [`Gauge`](super::Gauge) /
+/// [`Breadcrumb`]: `Drop` is intentional so `ui.code_block(code);` is the
+/// idiomatic form when the response isn't needed (egui's `ui.add(...)` idiom).
+pub struct CodeBlock<'a> {
+    ctx: Option<&'a mut Context>,
+    code: &'a str,
+    lang: &'a str,
+    numbered: bool,
+}
+
+impl<'a> CodeBlock<'a> {
+    fn new(ctx: &'a mut Context, code: &'a str) -> Self {
+        Self {
+            ctx: Some(ctx),
+            code,
+            lang: "",
+            numbered: false,
+        }
+    }
+
+    /// Set the language for syntax highlighting (e.g. `"rust"`). Empty string
+    /// (the default) falls back to keyword-based highlighting.
+    pub fn lang(mut self, lang: &'a str) -> Self {
+        self.lang = lang;
+        self
+    }
+
+    /// Enable the line-number gutter.
+    pub fn numbered(mut self) -> Self {
+        self.numbered = true;
+        self
+    }
+
+    /// Render now and return the [`Response`].
+    pub fn show(mut self) -> Response {
+        // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
+        let ctx = self.ctx.take().expect("CodeBlock::show called twice");
+        render_code_block(ctx, self.code, self.lang, self.numbered)
+    }
+}
+
+impl Drop for CodeBlock<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_code_block(ctx, self.code, self.lang, self.numbered);
+        }
+    }
+}
+
+/// Internal code-block rendering shared by the [`CodeBlock`] builder and the
+/// deprecated `code_block_*` aliases. Folds the language-aware and
+/// line-numbered paths on the `numbered` flag — no behavior change versus the
+/// previous separate `code_block_lang` / `code_block_numbered_lang` bodies.
+fn render_code_block(ctx: &mut Context, code: &str, lang: &str, numbered: bool) -> Response {
+    let theme = ctx.theme;
+    let pad = theme.spacing.xs();
+    let highlighted: Option<Vec<Vec<(String, Style)>>> =
+        crate::syntax::highlight_code(code, lang, &theme);
+
+    if numbered {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
-        let theme = self.theme;
-        let pad = theme.spacing.xs();
-        let highlighted: Option<Vec<Vec<(String, Style)>>> =
-            crate::syntax::highlight_code(code, lang, &theme);
-        let _ = self
+        let _ = ctx
             .bordered(Border::Rounded)
             .bg(theme.surface)
             .p(pad)
@@ -570,9 +658,23 @@ impl Context {
                     }
                 }
             });
-
-        Response::none()
+    } else {
+        let _ = ctx
+            .bordered(Border::Rounded)
+            .bg(theme.surface)
+            .p(pad)
+            .col(|ui| {
+                if let Some(ref lines) = highlighted {
+                    render_tree_sitter_lines(ui, lines);
+                } else {
+                    for line in code.lines() {
+                        ui.line(|ui| render_highlighted_line(ui, line));
+                    }
+                }
+            });
     }
+
+    Response::none()
 }
 
 /// Breadcrumb navigation bar builder. Auto-renders on `Drop`.
@@ -665,5 +767,66 @@ fn render_breadcrumb(
     BreadcrumbResponse {
         response,
         clicked_segment,
+    }
+}
+
+#[cfg(test)]
+mod code_block_tests {
+    use crate::test_utils::TestBackend;
+    use crate::widgets::AlertLevel;
+
+    #[test]
+    fn code_block_builder_renders_lang_and_gutter() {
+        let mut tb = TestBackend::new(40, 8);
+        tb.render(|ui| {
+            let _ = ui.code_block("let x = 1;").lang("rust").numbered().show();
+        });
+        tb.assert_contains("let");
+        // Line-number gutter from the numbered path (`status.rs` render).
+        tb.assert_contains("1 │");
+    }
+
+    #[test]
+    fn code_block_default_drop_renders() {
+        // Bare drop-render (no chain) must produce the same content as `.show()`.
+        let mut tb_drop = TestBackend::new(40, 8);
+        tb_drop.render(|ui| {
+            ui.code_block("a\nb");
+        });
+        let mut tb_show = TestBackend::new(40, 8);
+        tb_show.render(|ui| {
+            let _ = ui.code_block("a\nb").show();
+        });
+        assert_eq!(tb_drop.to_string(), tb_show.to_string());
+    }
+
+    #[test]
+    fn code_block_deprecated_alias_byte_identical() {
+        let code = "fn main() {}\nlet y = 2;";
+        let mut tb_builder = TestBackend::new(40, 8);
+        tb_builder.render(|ui| {
+            let _ = ui.code_block(code).lang("rust").numbered().show();
+        });
+        let mut tb_alias = TestBackend::new(40, 8);
+        tb_alias.render(|ui| {
+            #[allow(deprecated)]
+            let _ = ui.code_block_numbered_lang(code, "rust");
+        });
+        assert_eq!(
+            tb_builder.to_string(),
+            tb_alias.to_string(),
+            "deprecated alias must be behavior-preserving"
+        );
+    }
+
+    #[test]
+    fn alert_message_first_then_level() {
+        // Regression guard for the API_DESIGN.md arg-order drift: `(message,
+        // level)` is the shipped order. Compiles == doc order matches code.
+        let mut tb = TestBackend::new(40, 5);
+        tb.render(|ui| {
+            let _ = ui.alert("Disk full", AlertLevel::Error);
+        });
+        tb.assert_contains("Disk full");
     }
 }

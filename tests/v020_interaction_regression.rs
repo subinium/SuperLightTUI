@@ -306,7 +306,7 @@ fn char_index_of(haystack: &str, needle: &str) -> Option<usize> {
 fn code_block_lang_empty_lang_renders_tokens_inline() {
     let mut tb = TestBackend::new(80, 8);
     tb.render(|ui| {
-        let _ = ui.code_block_lang("fn main() { let x = 1; }", "");
+        let _ = ui.code_block("fn main() { let x = 1; }").lang("").show();
     });
 
     // Tokens that the keyword-heuristic highlighter emits separately. They

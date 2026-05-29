@@ -171,7 +171,7 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CodeBlock,
     ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State, TreemapItem,
     Widget,
 };
