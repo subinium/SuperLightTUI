@@ -1,5 +1,5 @@
 use super::*;
-use crate::RichLogState;
+use crate::{RichLogState, DEFAULT_CHORD_TIMEOUT_TICKS};
 
 impl Context {
     /// Render a scrollable rich log view with styled entries.
@@ -1049,38 +1049,181 @@ impl Context {
         result
     }
 
-    // ── key sequence ─────────────────────────────────────────────────
+    // ── key chord (cross-frame multi-key sequence) ───────────────────
 
-    /// Check if a sequence of character keys was pressed across recent frames.
+    /// Match a multi-key sequence whose keystrokes may span multiple frames
+    /// (vi `gg`, leader keys).
     ///
-    /// Matches when each character in `seq` appears in consecutive unconsumed
-    /// key events within this frame. For single-frame sequences only (e.g., "gg").
-    pub fn key_seq(&self, seq: &str) -> bool {
-        if seq.is_empty() {
+    /// Unlike a single-frame matcher, `key_chord` buffers partial input in
+    /// [`FrameState`](crate::FrameState) across frames: typing `g` on one frame
+    /// and `g` on the next returns `true` on the second frame. The partial
+    /// prefix is cleared on a non-matching key press (vi semantics: `g` then
+    /// `x` cancels a pending `gg`) or after
+    /// [`DEFAULT_CHORD_TIMEOUT_TICKS`](crate::DEFAULT_CHORD_TIMEOUT_TICKS) of
+    /// inactivity (measured on the same tick clock as notifications/animation).
+    ///
+    /// Returns `true` exactly once, on the frame that completes the sequence;
+    /// the completing key event is consumed so downstream widgets in the same
+    /// frame do not also handle it. It does not re-fire on later frames without
+    /// new input.
+    ///
+    /// # Leader notation
+    ///
+    /// A leading `<space>` or `<leader>` token (or a literal space) matches the
+    /// space key, e.g. `key_chord("<space>ff")`, `key_chord("<leader>ff")`, and
+    /// `key_chord(" ff")` are equivalent. Only `<space>` / `<leader>` are
+    /// recognized as special tokens; every other character is matched
+    /// literally. Modifier-aware chords (`C-x C-s`) are out of scope.
+    ///
+    /// An empty sequence always returns `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.key_chord("gg") {
+    ///         // vi-style: jump to the top
+    ///     }
+    ///     if ui.key_chord("<space>ff") {
+    ///         // leader key: open a file finder
+    ///     }
+    /// });
+    /// ```
+    pub fn key_chord(&mut self, seq: &str) -> bool {
+        self.key_chord_timeout(seq, DEFAULT_CHORD_TIMEOUT_TICKS)
+    }
+
+    /// [`key_chord`](Self::key_chord) with an explicit per-call timeout in ticks.
+    ///
+    /// A partial sequence is abandoned if `timeout_ticks` elapse on the tick
+    /// clock without a matching next key. Use this when a chord should be more
+    /// forgiving (large value) or stricter (small value) than the
+    /// [`DEFAULT_CHORD_TIMEOUT_TICKS`](crate::DEFAULT_CHORD_TIMEOUT_TICKS)
+    /// default. All other behavior matches [`key_chord`](Self::key_chord).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     // Require the second `g` within ~0.25s at 60Hz.
+    ///     if ui.key_chord_timeout("gg", 15) {
+    ///         // jump to top
+    ///     }
+    /// });
+    /// ```
+    pub fn key_chord_timeout(&mut self, seq: &str, timeout_ticks: u64) -> bool {
+        let target = parse_chord(seq);
+        if target.is_empty() {
             return false;
         }
+        // Modal guard parity with the (deprecated) `key_seq`: suppress chords
+        // while a modal owns input and no overlay is layered on top.
         if (self.rollback.modal_active || self.prev_modal_active)
             && self.rollback.overlay_depth == 0
         {
             return false;
         }
-        let target: Vec<char> = seq.chars().collect();
-        let mut matched = 0;
-        for (_, key) in self.available_key_presses() {
-            if let KeyCode::Char(c) = key.code {
-                if c == target[matched] {
-                    matched += 1;
-                    if matched == target.len() {
-                        return true;
-                    }
-                } else {
-                    matched = 0;
-                    if c == target[0] {
-                        matched = 1;
-                    }
-                }
+
+        // Expire a stale prefix before processing this frame's keys.
+        if self.tick.saturating_sub(self.chord.last_tick) > timeout_ticks {
+            self.chord.pending.clear();
+        }
+
+        // Snapshot this frame's unconsumed char presses up front so the
+        // immutable borrow from `available_key_presses` is released before we
+        // mutate `self.chord` / call `consume_indices`.
+        let char_presses: Vec<(usize, char)> = self
+            .available_key_presses()
+            .filter_map(|(i, key)| match key.code {
+                KeyCode::Char(c) => Some((i, c)),
+                _ => None,
+            })
+            .collect();
+
+        let tick = self.tick;
+        let mut completed_index: Option<usize> = None;
+        let mut buf: Vec<char> = self.chord.pending.chars().collect();
+
+        for (i, c) in char_presses {
+            buf.push(c);
+            // Keep only the longest suffix of `buf` that is a prefix of
+            // `target`, giving vi-style overlap semantics (typing `gxg` still
+            // arms `gg` from the trailing `g`).
+            retain_longest_prefix(&mut buf, &target);
+            self.chord.last_tick = tick;
+            if buf.len() == target.len() {
+                completed_index = Some(i);
+                buf.clear();
+                break;
             }
         }
-        false
+
+        self.chord.pending = buf.into_iter().collect();
+        if let Some(i) = completed_index {
+            self.consume_indices([i]);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if a sequence of character keys was pressed.
+    ///
+    /// Deprecated alias for [`key_chord`](Self::key_chord). The original
+    /// `key_seq` only matched when every key arrived in a single poll batch
+    /// (i.e. physically simultaneous keypresses), so vi `gg` / leader keys
+    /// were unreachable at any human typing speed. It now delegates to
+    /// [`key_chord`](Self::key_chord) and matches across frames.
+    #[deprecated(
+        since = "0.21.0",
+        note = "renamed to `key_chord`; now matches across frames"
+    )]
+    pub fn key_seq(&mut self, seq: &str) -> bool {
+        self.key_chord(seq)
+    }
+}
+
+/// Expand `<space>` / `<leader>` tokens in a chord spec into the characters
+/// the matcher compares against. Everything else is taken literally. The only
+/// special tokens are `<space>` and `<leader>` (both map to a literal space);
+/// a literal space in the input is preserved as-is.
+fn parse_chord(seq: &str) -> Vec<char> {
+    let mut out = Vec::new();
+    let mut rest = seq;
+    while !rest.is_empty() {
+        if let Some(tail) = rest.strip_prefix("<space>") {
+            out.push(' ');
+            rest = tail;
+        } else if let Some(tail) = rest.strip_prefix("<leader>") {
+            out.push(' ');
+            rest = tail;
+        } else {
+            let c = rest.chars().next().expect("rest is non-empty");
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Shrink `buf` to the longest suffix that is still a prefix of `target`.
+///
+/// This gives vi-style overlap semantics: after a mismatch the matcher does
+/// not reset to empty but keeps any trailing characters that could begin a
+/// fresh match. For example, with `target = ['g', 'g']`, the input `g x g`
+/// leaves `buf = ['g']` (the trailing `g` re-arms the chord) rather than
+/// discarding it.
+fn retain_longest_prefix(buf: &mut Vec<char>, target: &[char]) {
+    // Try progressively shorter suffixes of `buf`; the first that is a prefix
+    // of `target` wins. An empty suffix is always a prefix, so this terminates.
+    let mut start = 0;
+    while start < buf.len() {
+        if buf[start..].iter().zip(target).all(|(b, t)| b == t) {
+            break;
+        }
+        start += 1;
+    }
+    if start > 0 {
+        buf.drain(0..start);
     }
 }

@@ -286,7 +286,9 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `consume_key_code(code)` | `bool` | KeyCode pressed (marks as consumed) |
 | `key_mod(c, mods)` | `bool` | Char + modifier (Ctrl, Alt, Shift) |
 | `raw_key_mod(c, mods)` | `bool` | Char + modifier, ignoring consumed state |
-| `key_seq(seq)` | `bool` | Multi-key sequence detection |
+| `key_chord(seq)` | `bool` | Cross-frame multi-key sequence (vi `gg`, leader keys); buffers partial input and times out on inactivity |
+| `key_chord_timeout(seq, ticks)` | `bool` | `key_chord` with an explicit per-call timeout in ticks |
+| `key_seq(seq)` | `bool` | **Deprecated** — alias for `key_chord` |
 | `key_release(c)` | `bool` | Char key released |
 | `key_code_release(code)` | `bool` | KeyCode released |
 

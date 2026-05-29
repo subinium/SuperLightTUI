@@ -426,7 +426,8 @@ Keyboard (non-consuming unless noted):
 - `ui.key(c) -> bool`
 - `ui.key_code(KeyCode) -> bool`
 - `ui.key_mod(c, KeyModifiers) -> bool`
-- `ui.key_seq("gg") -> bool` — multi-key sequence.
+- `ui.key_chord("gg") -> bool` — cross-frame multi-key sequence (vi `gg`, leader keys); buffers partial input across frames and times out on inactivity. `key_chord_timeout(seq, ticks)` sets a per-call timeout.
+- `ui.key_seq("gg") -> bool` — **deprecated** alias for `key_chord`.
 - `ui.key_release(c)` / `ui.key_code_release(code)`
 - `ui.raw_key_code(code)` / `ui.raw_key_mod(c, mods)` — ignore consumed state; for global shortcuts.
 - `ui.consume_key(c)` / `ui.consume_key_code(code)` — mark event consumed.
@@ -1189,7 +1190,7 @@ async fn main() -> std::io::Result<()> {
 
 - Quit: `ui.quit()` (Ctrl+C also quits).
 - Read a key: `ui.key('q')`, `ui.key_code(KeyCode::Enter)`, `ui.key_mod('s', KeyModifiers::CONTROL)`.
-- Read multi-key sequence (like Vim `gg`): `ui.key_seq("gg")`.
+- Read a cross-frame multi-key chord (vi `gg`, leader keys like `<space>ff`): `ui.key_chord("gg")`. Buffers partial input across frames; resets on a mismatching key or after a timeout. (`key_seq` is a deprecated alias.)
 - Mouse click position: `ui.mouse_down()` / `ui.mouse_pos()`.
 - Scroll: `ui.scroll_up()` / `ui.scroll_down()`.
 - Paste: `ui.paste()`.

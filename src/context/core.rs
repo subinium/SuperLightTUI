@@ -31,6 +31,10 @@ pub struct Context {
     /// The map is moved into `Context::new` from `FrameState` and moved back
     /// at frame end, identical to the `named_states` lifetime.
     pub(crate) keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
+    /// Issue #262: cross-frame partial-chord buffer for [`Context::key_chord`].
+    /// Moved into `Context::new` from `FrameState` and moved back at frame end,
+    /// identical to the `keyed_states` lifetime.
+    pub(crate) chord: crate::widgets::ChordState,
     pub(crate) context_stack: Vec<Box<dyn std::any::Any>>,
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,

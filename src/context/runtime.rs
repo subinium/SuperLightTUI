@@ -14,6 +14,10 @@ impl Context {
         // lifetime as `named_states`: moved out at frame start, moved back
         // at frame end (see `run_frame_kernel`).
         let keyed_states = std::mem::take(&mut state.keyed_states);
+        // Issue #262: hand off the partial-chord buffer for this frame. Same
+        // lifetime as `keyed_states`: moved out at frame start, moved back at
+        // frame end (see `run_frame_kernel`).
+        let chord = std::mem::take(&mut state.chord_states);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         // Issue #217: name→index map from the previous frame, used to resolve
@@ -125,6 +129,7 @@ impl Context {
             hook_states: std::mem::take(hook_states),
             named_states,
             keyed_states,
+            chord,
             context_stack,
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,

@@ -1,3 +1,37 @@
+/// Default tick budget (~1s at 60Hz) after which a partially-typed chord
+/// is abandoned. Matches the tick clock used by notifications/animation.
+///
+/// Override per call site with
+/// [`Context::key_chord_timeout`](crate::Context::key_chord_timeout).
+pub const DEFAULT_CHORD_TIMEOUT_TICKS: u64 = 60;
+
+/// Cross-frame partial-sequence buffer for
+/// [`Context::key_chord`](crate::Context::key_chord).
+///
+/// Persisted in `FrameState` across frames (same out/in policy as
+/// `keyed_states`). Holds at most one in-flight chord prefix; a mismatching
+/// key or a timeout clears it. You never construct this directly — SLT owns a
+/// single instance per [`Context`](crate::Context) and threads it through the
+/// frame loop for you.
+///
+/// # Example
+///
+/// ```no_run
+/// slt::run(|ui: &mut slt::Context| {
+///     // The buffer is managed internally; just call `key_chord`.
+///     if ui.key_chord("gg") {
+///         // jump to top
+///     }
+/// });
+/// ```
+#[derive(Debug, Default, Clone)]
+pub struct ChordState {
+    /// Characters accumulated so far toward some registered chord.
+    pub(crate) pending: String,
+    /// Tick of the most recent accepted key; used for timeout expiry.
+    pub(crate) last_tick: u64,
+}
+
 /// State for a command palette overlay.
 ///
 /// Renders as a modal with a search input and filtered command list.

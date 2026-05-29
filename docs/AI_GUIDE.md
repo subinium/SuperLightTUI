@@ -67,7 +67,7 @@ The original `use_state` / `use_memo` order rule still holds — only the id-key
 
 ### "How do I handle keyboard shortcuts?"
 
-Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. For key sequence detection use `key_seq("gg")`.
+Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity. (`key_seq` is a deprecated alias that now delegates to `key_chord`.)
 
 ### "How do I make a custom widget?"
 
