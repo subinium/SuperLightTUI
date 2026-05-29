@@ -174,6 +174,9 @@ pub use style::{
     HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
     ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
+pub use widgets::validators;
+#[cfg(feature = "async")]
+pub use widgets::AsyncValidation;
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
@@ -182,7 +185,7 @@ pub use widgets::{
     ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
     StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend,
+    Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.

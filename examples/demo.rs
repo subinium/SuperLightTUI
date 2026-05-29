@@ -276,8 +276,28 @@ impl Default for DemoState {
             v7_stream_tick: 0,
             toasts: ToastState::new(),
             form: FormState::new()
-                .field(FormField::new("Email").placeholder("you@example.com"))
-                .field(FormField::new("Password").placeholder("********")),
+                .field(
+                    FormField::new("Email")
+                        .placeholder("you@example.com")
+                        .validate(|v| {
+                            if v.contains('@') {
+                                Ok(())
+                            } else {
+                                Err("invalid email".into())
+                            }
+                        }),
+                )
+                .field(
+                    FormField::new("Password")
+                        .placeholder("********")
+                        .validate(|v| {
+                            if v.len() >= 6 {
+                                Ok(())
+                            } else {
+                                Err("min 6 chars".into())
+                            }
+                        }),
+                ),
             palette: CommandPaletteState::new(vec![
                 PaletteCommand::new("Switch Theme", "Cycle to next theme"),
                 PaletteCommand::new("Toggle Modal", "Show/hide modal dialog"),
@@ -977,22 +997,7 @@ fn render_forms(ui: &mut Context, form: &mut FormState, password: &mut TextInput
                 ui.form_field(field);
             }
             if ui.form_submit("Sign In").clicked {
-                let _valid = form.validate(&[
-                    |v| {
-                        if v.contains('@') {
-                            Ok(())
-                        } else {
-                            Err("invalid email".into())
-                        }
-                    },
-                    |v| {
-                        if v.len() >= 6 {
-                            Ok(())
-                        } else {
-                            Err("min 6 chars".into())
-                        }
-                    },
-                ]);
+                let _valid = form.validate_all();
             }
         });
 

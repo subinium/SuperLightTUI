@@ -1124,8 +1124,10 @@ impl Context {
     /// to the closure. Use [`Context::form_field`] inside the closure to
     /// render each field with label + input + error display.
     ///
-    /// Submission is driven by [`Context::form_submit`]; validation is
-    /// triggered explicitly via [`FormState::validate`].
+    /// Submission is driven by [`Context::form_submit`]. Per-field validators
+    /// attached via [`FormField::validate`](crate::widgets::FormField::validate)
+    /// run automatically inside [`Context::form_field`]; aggregate validity is
+    /// read via [`FormState::is_valid`](crate::widgets::FormState::is_valid).
     pub fn form(
         &mut self,
         state: &mut FormState,
@@ -1137,17 +1139,59 @@ impl Context {
         self
     }
 
-    /// Render a single form field with label and input.
+    /// Render a single form field with label and input, running its validators.
     ///
-    /// Shows a validation error below the input when present.
+    /// The field's own validators (attached via
+    /// [`FormField::validate`](crate::widgets::FormField::validate)) run
+    /// automatically according to its
+    /// [`trigger`](crate::widgets::FormField::trigger):
+    /// [`OnChange`](crate::widgets::ValidateTrigger::OnChange) re-validates on
+    /// each keystroke, [`OnBlur`](crate::widgets::ValidateTrigger::OnBlur)
+    /// (the default) re-validates when focus leaves the field, and
+    /// [`Manual`](crate::widgets::ValidateTrigger::Manual) never auto-validates.
+    /// The resulting [`error`](crate::widgets::FormField::error) is shown below
+    /// the input.
+    ///
+    /// With the `async` feature, any in-flight
+    /// [`validate_async`](crate::widgets::FormField::validate_async) check is
+    /// polled each frame and its result surfaced as the field error.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, validators};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut field = FormField::new("Email")
+    ///     .validate(validators::email()); // OnBlur by default
+    /// ui.form_field(&mut field);
+    /// # });
+    /// ```
     pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
+        #[cfg(feature = "async")]
+        let async_resolved = field.poll_async();
+        let mut resp = Response::none();
         let _ = self.col(|ui| {
             ui.styled(field.label.as_str(), Style::new().bold().fg(ui.theme.text));
-            let _ = ui.text_input(&mut field.input);
+            resp = ui.text_input(&mut field.input);
             if let Some(error) = field.error.as_deref() {
                 ui.styled(error, Style::new().dim().fg(ui.theme.error));
             }
         });
+        #[cfg(feature = "async")]
+        let _ = async_resolved;
+        // `text_input` reports `.focused` reliably but does not yet populate
+        // `.lost_focus` on its container-assembled response, so blur is derived
+        // from the focus edge tracked on the field itself.
+        let lost_focus = field.observe_focus(resp.focused);
+        match field.trigger {
+            ValidateTrigger::OnChange if resp.changed => {
+                field.run_validators();
+            }
+            ValidateTrigger::OnBlur if lost_focus => {
+                field.run_validators();
+            }
+            _ => {}
+        }
         self
     }
 
@@ -1157,8 +1201,10 @@ impl Context {
     /// same form by rendering in the theme's primary color (via
     /// [`ButtonVariant::Primary`]). Returns `true` in `.clicked` when the
     /// user clicks it, presses Enter while focused, or activates it with
-    /// Space. Pair with [`FormState::validate`] to gate submission on
-    /// all fields being valid.
+    /// Space. Pair with
+    /// [`FormState::validate_all`](crate::widgets::FormState::validate_all) /
+    /// [`FormState::is_valid`](crate::widgets::FormState::is_valid) to gate
+    /// submission on all fields being valid.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
         self.button_with(label, ButtonVariant::Primary)
     }
