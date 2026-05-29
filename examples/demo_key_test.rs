@@ -58,7 +58,7 @@ fn main() -> std::io::Result<()> {
                 ui.spacer();
                 ui.text("SLT 0.15 Key Test").dim();
             });
-            ui.separator();
+            let _ = ui.separator();
 
             let _ = ui.container().grow(1).p(1).col(|ui| {
                 ui.text("Events:").bold();
@@ -67,7 +67,7 @@ fn main() -> std::io::Result<()> {
                     ui.text(line).fg(Color::Green);
                 }
             });
-            ui.separator();
+            let _ = ui.separator();
 
             let _ = ui.container().px(1).pb(1).col(|ui| {
                 let _ = ui.text_input(&mut input);

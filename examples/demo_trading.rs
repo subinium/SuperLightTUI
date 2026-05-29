@@ -693,7 +693,7 @@ fn balance(ui: &mut Context, s: &St) {
         ui.text(" USDT ").fg(DIM);
         ui.text(format!("{:.2}", s.bal_usdt)).bold();
     });
-    ui.separator();
+    let _ = ui.separator();
     let pnl: f64 = s.positions.iter().map(|p| p.pnl).sum();
     let c = if pnl >= 0.0 { GREEN } else { RED };
     ui.line(|ui| {

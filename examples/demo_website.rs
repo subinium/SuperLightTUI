@@ -1374,7 +1374,7 @@ fn render_post_flexbox(ui: &mut Context) {
             );
             ui.text("SLT").bold().fg(theme.success);
         });
-        ui.separator();
+        let _ = ui.separator();
         let mappings = [
             ("display: flex", "implicit (all containers)"),
             ("flex-direction: column", "ui.col(|ui| { ... })"),
@@ -1622,7 +1622,7 @@ fn render_pricing(
                         ui.text("Choose how you want to support SLT.")
                             .fg(theme.surface_text);
                         ui.text("");
-                        ui.separator();
+                        let _ = ui.separator();
                         ui.text("");
                         ui.text("Selected plan").fg(theme.surface_text);
                         ui.text(selected_plan.as_str()).bold().fg(theme.accent);
@@ -1855,7 +1855,7 @@ fn price_card(
                 ui.text(price).bold().fg(color);
                 ui.text(format!(" {period}")).fg(theme.surface_text);
             });
-            ui.separator();
+            let _ = ui.separator();
             ui.text("");
             for feat in features {
                 let _ = ui.row(|ui| {

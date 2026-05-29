@@ -535,10 +535,10 @@ fn body(ui: &mut Context, state: &mut DemoState) {
                 });
                 ui.text("All widgets follow active theme tokens.")
                     .fg(theme.text_dim);
-                ui.separator();
+                let _ = ui.separator();
 
                 render_page_tabs(ui, page_tabs);
-                ui.separator();
+                let _ = ui.separator();
 
                 let _ = ui
                     .scrollable(scroll)
@@ -608,7 +608,7 @@ fn body(ui: &mut Context, state: &mut DemoState) {
                         _ => {}
                     });
 
-                ui.separator();
+                let _ = ui.separator();
                 let _ = ui.help(&[
                     ("^Q/Esc", "quit"),
                     ("^T", "theme"),
@@ -874,7 +874,7 @@ fn render_layout(
                 ui.text(list.selected_item().unwrap_or("-"))
                     .fg(theme.primary);
             });
-            ui.separator();
+            let _ = ui.separator();
             ui.text("Sort: click header · Filter + Pagination").dim();
             let _ = ui.text_input(table_filter);
             table.set_filter(&table_filter.value);
@@ -1057,7 +1057,7 @@ fn render_ime(
             });
         });
 
-        ui.separator();
+        let _ = ui.separator();
         ui.text("Message").bold().fg(theme.primary);
         let rows = ui.height().saturating_sub(24).max(5);
         let _ = ui.textarea(ime_message, rows);
@@ -1171,7 +1171,7 @@ fn render_v011(
             let matches = autocomplete.matched_suggestions();
             ui.text(format!("matches: {}", matches.join(", "))).dim();
 
-            ui.separator();
+            let _ = ui.separator();
             ui.text("Validators").fg(theme.surface_text);
             let _ = ui.text_input(validated);
             validated.run_validators();
@@ -1589,13 +1589,13 @@ fn render_v070(
                 ui.text("Kitty Keyboard").bold().fg(theme.secondary);
                 ui.text("Key release events enabled").fg(theme.surface_text);
                 ui.text("kitty_keyboard: true").fg(theme.secondary);
-                ui.separator();
+                let _ = ui.separator();
                 ui.text("OSC 52 Clipboard").bold().fg(theme.accent);
                 ui.text("copy_to_clipboard()").fg(theme.surface_text);
                 if ui.button("Copy 'SLT v0.7.0'").clicked {
                     ui.copy_to_clipboard("SLT v0.7.0");
                 }
-                ui.separator();
+                let _ = ui.separator();
                 ui.text("DevTools: Press F12").bold().fg(theme.warning);
             });
         });

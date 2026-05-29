@@ -78,7 +78,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             let _ = ui.toggle("Dark", &mut state.dark_mode);
         });
 
-        ui.separator();
+        let _ = ui.separator();
 
         let _ = ui.row(|ui| {
             ui.text("Filter").bold().fg(theme.text_dim);
@@ -92,7 +92,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             let _ = ui.table(&mut state.table);
         });
 
-        ui.separator();
+        let _ = ui.separator();
 
         if let Some(row) = state.table.selected_row() {
             let _ = ui.row(|ui| {

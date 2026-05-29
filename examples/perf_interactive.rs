@@ -47,11 +47,11 @@ fn main() -> std::io::Result<()> {
                     ui.text("Text input cursor path").bold().fg(Color::Cyan);
                     let _ = ui.text_input(&mut input);
 
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text("Wrapped text path").bold().fg(Color::Yellow);
                     ui.text(long_text.clone()).wrap();
 
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text("Textarea cursor path").bold().fg(Color::Green);
                     let _ = ui.textarea(&mut textarea, textarea_rows);
                 });

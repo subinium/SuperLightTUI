@@ -146,7 +146,7 @@ fn snapshot_separator() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
         ui.text("Top");
-        ui.separator();
+        let _ = ui.separator();
         ui.text("Bottom");
     });
     insta::assert_snapshot!(tb.to_string_trimmed());
