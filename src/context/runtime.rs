@@ -158,6 +158,10 @@ impl Context {
             inspector_mode: diagnostics.inspector_mode,
             theme,
             is_real_terminal: false,
+            // Issue #264: conservative default; overwritten by the probed
+            // snapshot in `run_frame_kernel` on a real terminal.
+            #[cfg(feature = "crossterm")]
+            capabilities: crate::terminal::Capabilities::default(),
             deferred_draws,
             rollback: ContextRollbackState {
                 last_text_idx: None,
@@ -260,6 +264,32 @@ impl Context {
     #[allow(clippy::misnamed_getters)]
     pub fn focus_count(&self) -> usize {
         self.prev_focus_count
+    }
+
+    /// Read-only snapshot of the terminal's negotiated capabilities
+    /// (issue #264).
+    ///
+    /// Populated once at session enter via a DA1/DA2/XTGETTCAP probe. This is
+    /// **diagnostics-only**: image rendering already routes through the
+    /// automatic blitter ladder (Kitty > Sixel > sextant > half-block), so app
+    /// code is never required to branch on the returned value. On a headless
+    /// backend (e.g. [`TestBackend`](crate::TestBackend)) or piped stdout, the
+    /// probe is skipped and every field is a conservative default.
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let caps = ui.capabilities();
+    /// // e.g. surface a "truecolor: on" line in a diagnostics panel.
+    /// let _ = caps.truecolor;
+    /// # });
+    /// ```
+    #[cfg(feature = "crossterm")]
+    pub fn capabilities(&self) -> &crate::terminal::Capabilities {
+        &self.capabilities
     }
 
     pub(crate) fn process_focus_keys(&mut self) {

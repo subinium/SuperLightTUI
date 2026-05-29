@@ -219,7 +219,13 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
-        let sixel_supported = self.is_real_terminal && terminal_supports_sixel();
+        // Issue #264: consult the negotiated capability snapshot first (the
+        // DA1 probe is authoritative when it answered). Fall back to the env
+        // allowlist (now including WezTerm/Ghostty) / `SLT_FORCE_SIXEL` when the
+        // probe returned unknown. App code never selects a protocol — the
+        // blitter ladder resolves it.
+        let sixel_supported =
+            self.is_real_terminal && (self.capabilities.sixel || terminal_supports_sixel());
         if !sixel_supported {
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {

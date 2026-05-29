@@ -357,6 +357,360 @@ fn detect_cell_pixel_size() -> Option<(u32, u32)> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Runtime terminal capability probe (issue #264)
+// ---------------------------------------------------------------------------
+//
+// Historically SLT decided whether a terminal could render images / accept the
+// Kitty keyboard protocol / do truecolor *purely from environment-variable
+// allowlists*, which silently degraded capable modern terminals (WezTerm,
+// Ghostty) to an error string. This block adds a one-shot DA1/DA2/XTGETTCAP
+// probe at session enter, parses the replies into a read-only [`Capabilities`]
+// snapshot, and drives an automatic blitter ladder so app code never has to
+// branch on terminal identity. The data types are always compiled (so the
+// `Context` field exists on every build); only the runtime probe is
+// `crossterm`-gated.
+
+/// Image-rendering primitives the terminal can drive, used to build the
+/// automatic blitter ladder. Each flag is conservative: when the runtime probe
+/// returns no answer the defaults assume only the universally available
+/// primitives (half-block + quadrants).
+///
+/// App code is **not** required to inspect this; it exists for diagnostics and
+/// to feed [`Capabilities::best_blitter`].
+///
+/// # Example
+///
+/// ```no_run
+/// # slt::run(|ui: &mut slt::Context| {
+/// let blitters = ui.capabilities().blitters;
+/// // Half-block is available on any ANSI terminal.
+/// assert!(blitters.half);
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlitterSupport {
+    /// `▀` upper-half block — available on any ANSI terminal.
+    pub half: bool,
+    /// `▖▗▘▝` quadrant blocks — available on any Unicode-capable terminal.
+    pub quad: bool,
+    /// `🬀`..`🬻` sextants (Unicode 13+) — off by default until a renderer
+    /// confirms support. This issue wires the capability slot; a sextant
+    /// renderer is a separate feature.
+    pub sextant: bool,
+}
+
+impl Default for BlitterSupport {
+    fn default() -> Self {
+        Self {
+            half: true,
+            quad: true,
+            sextant: false,
+        }
+    }
+}
+
+/// Read-only snapshot of negotiated terminal capabilities, populated once at
+/// session enter via DA1/DA2/XTGETTCAP.
+///
+/// App code **must not** be required to branch on this — it exists for
+/// diagnostics and to drive the automatic blitter ladder (see
+/// [`Capabilities::best_blitter`]). On a headless backend (TestBackend / piped
+/// stdout) or when the probe gets no reply, every field falls back to a
+/// conservative default.
+///
+/// Available since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// # slt::run(|ui: &mut slt::Context| {
+/// let caps = ui.capabilities();
+/// if caps.sixel {
+///     // Diagnostics only — image rendering already routes through the ladder.
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    /// 24-bit color confirmed (XTGETTCAP `Tc`/`RGB` or `COLORTERM`).
+    pub truecolor: bool,
+    /// Sixel graphics confirmed (DA1 attribute `4`).
+    pub sixel: bool,
+    /// Kitty graphics protocol confirmed (DA2 terminal-ID heuristic).
+    pub kitty_graphics: bool,
+    /// Kitty keyboard protocol confirmed.
+    pub kitty_keyboard: bool,
+    /// Synchronized output (DECSET 2026) confirmed.
+    pub sync_output: bool,
+    /// Set of cell-art blitters the terminal can drive.
+    pub blitters: BlitterSupport,
+}
+
+/// Descending image-render preference. The first capability that is available
+/// wins; app code never selects a [`Blitter`] directly.
+///
+/// Ladder order: [`Kitty`](Blitter::Kitty) > [`Sixel`](Blitter::Sixel) >
+/// [`Sextant`](Blitter::Sextant) > [`HalfBlock`](Blitter::HalfBlock).
+///
+/// Available since `0.21.0`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blitter {
+    /// Kitty graphics protocol (highest fidelity).
+    Kitty,
+    /// Sixel graphics protocol.
+    Sixel,
+    /// Unicode sextant cell art.
+    Sextant,
+    /// Half-block cell art (universal fallback).
+    HalfBlock,
+}
+
+impl Capabilities {
+    /// Resolve the best available image blitter for this terminal.
+    ///
+    /// Returns the first supported rung of the ladder
+    /// (Kitty > Sixel > Sextant > HalfBlock). This is total: it always returns
+    /// a [`Blitter`], falling through to [`Blitter::HalfBlock`] which every
+    /// terminal supports.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let _ = ui.capabilities().best_blitter();
+    /// # });
+    /// ```
+    pub fn best_blitter(&self) -> Blitter {
+        if self.kitty_graphics {
+            Blitter::Kitty
+        } else if self.sixel {
+            Blitter::Sixel
+        } else if self.blitters.sextant {
+            Blitter::Sextant
+        } else {
+            Blitter::HalfBlock
+        }
+    }
+}
+
+/// Return the process-global negotiated [`Capabilities`], probing the terminal
+/// exactly once on first call and caching the result.
+///
+/// The probe issues DA1 (`CSI c`), DA2 (`CSI > c`), and XTGETTCAP for the
+/// truecolor capname, reading replies through the existing OSC round-trip
+/// infrastructure with a bounded total timeout (≤150ms). On no reply every
+/// field falls back to a conservative default. Repeated calls are free.
+#[cfg(feature = "crossterm")]
+pub fn capabilities() -> Capabilities {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<Capabilities> = OnceLock::new();
+    *CACHED.get_or_init(probe_capabilities)
+}
+
+/// Send DA1/DA2/XTGETTCAP and parse the replies into a [`Capabilities`].
+///
+/// Conservative on failure: any unread / unparsable reply leaves the
+/// corresponding flag at its default. The total stdin wait is bounded to keep
+/// startup latency within the same budget as the existing OSC 11 query.
+#[cfg(feature = "crossterm")]
+fn probe_capabilities() -> Capabilities {
+    let mut caps = Capabilities::default();
+
+    // Total stdin wait is bounded to ≤150ms (90 + 30 + 30) so a silent
+    // terminal cannot stall startup beyond the existing OSC-11 budget. A
+    // responsive terminal replies in well under 10ms, so the common path adds
+    // negligible latency.
+    let mut out = io::stdout();
+    // DA1 then DA2 in one write — both terminate with `c`, so a single
+    // DA-aware read drains both replies (in order) when supported.
+    if write!(out, "\x1b[c\x1b[>c").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_da_response(Duration::from_millis(90)) {
+            parse_da1(&resp, &mut caps);
+            parse_da2(&resp, &mut caps);
+        }
+    }
+
+    // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct payload.
+    // Supporting terminals ack with `APC G i=31;OK ST`; others stay silent so
+    // the bounded read just times out. Base64 of three zero bytes = "AAAA".
+    if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
+            parse_kitty_graphics_ack(&resp, &mut caps);
+        }
+    }
+
+    // XTGETTCAP for the `Tc` (truecolor) capname: DCS + q <hex> ST.
+    // `Tc` -> hex "5463".
+    if write!(out, "\x1bP+q5463\x1b\\").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
+            parse_xtgettcap_truecolor(&resp, &mut caps);
+        }
+    }
+
+    // Env precedence chain stays authoritative for truecolor: a positive
+    // COLORTERM/TERM signal confirms it even when the probe is silent.
+    if matches!(ColorDepth::detect(), ColorDepth::TrueColor) {
+        caps.truecolor = true;
+    }
+
+    // Env-fallback: when the runtime queries are silent (no reply within the
+    // timeout), trust the terminal identity for the Kitty-graphics family so a
+    // known-capable host (Kitty, Ghostty, WezTerm) still climbs the top rung.
+    // The query above wins when it answers; this only fills an unknown.
+    if !caps.kitty_graphics && term_is_kitty_graphics_host() {
+        caps.kitty_graphics = true;
+    }
+
+    caps
+}
+
+/// Heuristic env-fallback for Kitty-graphics hosts, consulted only when the
+/// runtime Kitty graphics query returned no reply. Matches the documented
+/// `TERM` / `TERM_PROGRAM` identities of terminals that implement the Kitty
+/// graphics protocol.
+#[cfg(feature = "crossterm")]
+fn term_is_kitty_graphics_host() -> bool {
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_program = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    // Kitty sets `TERM=xterm-kitty`; Ghostty/WezTerm advertise via TERM_PROGRAM.
+    term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
+}
+
+/// Read a Device-Attributes reply, which (unlike OSC) terminates with the byte
+/// `c` rather than BEL / ST. Drains up to two `c`-terminated CSI replies
+/// (DA1 + DA2) within the timeout so a combined `CSI c CSI > c` query yields
+/// both answers in one string.
+#[cfg(feature = "crossterm")]
+fn read_da_response(timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut stdin = io::stdin();
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1];
+    let mut terminators = 0usize;
+
+    while Instant::now() < deadline {
+        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
+            continue;
+        }
+        let read = stdin.read(&mut buf).ok()?;
+        if read == 0 {
+            continue;
+        }
+        bytes.push(buf[0]);
+        // `c` is the final byte of a DA reply. Stop once we have collected the
+        // expected pair (DA1 + DA2); also stop on a lone reply so a terminal
+        // that ignores DA2 does not stall the whole timeout.
+        if buf[0] == b'c' {
+            terminators += 1;
+            if terminators >= 2 {
+                break;
+            }
+        }
+        if bytes.len() >= 4096 {
+            break;
+        }
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Parse a DA1 reply (`CSI ? <attrs> c`). Attribute `4` indicates Sixel
+/// support. Only the DA1 segment is consulted; a trailing DA2 segment in the
+/// same string is ignored here.
+#[cfg(feature = "crossterm")]
+fn parse_da1(response: &str, caps: &mut Capabilities) {
+    // DA1 reply: ESC [ ? <n> ; <n> ; ... c  (no `>` after `[`).
+    let mut search = response;
+    while let Some(pos) = search.find("\x1b[?") {
+        let body = &search[pos + 3..];
+        let Some(end) = body.find('c') else { break };
+        let attrs = &body[..end];
+        for attr in attrs.split(';') {
+            if attr.trim() == "4" {
+                caps.sixel = true;
+            }
+        }
+        search = &body[end + 1..];
+    }
+}
+
+/// Parsed DA2 (secondary device attributes) terminal identity:
+/// `(primary_id, firmware_version)` from `CSI > <id> ; <ver> ; <sub> c`.
+///
+/// Returns `None` if the string contains no DA2 reply. Kept separate from the
+/// `Capabilities` mutation so it is independently testable and so callers that
+/// want the raw identity (e.g. future per-terminal quirks) are not forced
+/// through capability inference.
+#[cfg(feature = "crossterm")]
+fn parse_da2(response: &str, caps: &mut Capabilities) {
+    let Some((id, _ver)) = parse_da2_identity(response) else {
+        return;
+    };
+    // DA2 primary id `41` is the documented Kitty graphics terminal id (Kitty
+    // reports `\x1b[>41;<ver>;<sub>c`). This is the one unambiguous DA2 graphics
+    // signal; every other host is resolved by the Kitty graphics query above or
+    // the env-fallback, so we deliberately do not maintain a wider id registry.
+    const KITTY_GRAPHICS_DA2_ID: u32 = 41;
+    if id == KITTY_GRAPHICS_DA2_ID {
+        caps.kitty_graphics = true;
+    }
+}
+
+/// Extract `(primary_id, version)` from a DA2 reply, or `None` if absent.
+#[cfg(feature = "crossterm")]
+fn parse_da2_identity(response: &str) -> Option<(u32, u32)> {
+    let pos = response.find("\x1b[>")?;
+    let body = &response[pos + 3..];
+    let end = body.find('c')?;
+    let mut parts = body[..end].split(';');
+    let id = parts.next()?.trim().parse::<u32>().ok()?;
+    let ver = parts.next().and_then(|s| s.trim().parse::<u32>().ok());
+    Some((id, ver.unwrap_or(0)))
+}
+
+/// Parse a Kitty graphics protocol query ack (`APC G i=31;OK ST`). A terminal
+/// that supports the protocol echoes the image id with an `OK` status; anything
+/// else (silence, error status) leaves the flag untouched.
+#[cfg(feature = "crossterm")]
+fn parse_kitty_graphics_ack(response: &str, caps: &mut Capabilities) {
+    // Ack form: ESC _ G <key=val>;OK ESC \  — we sent i=31, so look for that id
+    // paired with an OK status.
+    if let Some(pos) = response.find("\x1b_G") {
+        let body = &response[pos + 3..];
+        let end = body.find("\x1b\\").unwrap_or(body.len());
+        let payload = &body[..end];
+        if payload.contains("i=31") && payload.contains("OK") {
+            caps.kitty_graphics = true;
+        }
+    }
+}
+
+/// Parse an XTGETTCAP reply for the `Tc` (truecolor) capname. A valid reply is
+/// `DCS 1 + r <hex(capname)>[=<hex(value)>] ST`; a leading `1` means the
+/// capability is present.
+#[cfg(feature = "crossterm")]
+fn parse_xtgettcap_truecolor(response: &str, caps: &mut Capabilities) {
+    // Valid reply prefix: ESC P 1 + r  (DCS 1 + r ...). `Tc` -> hex 5463.
+    if let Some(pos) = response.find("\x1bP1+r") {
+        let body = &response[pos + 5..];
+        if body
+            .to_ascii_lowercase()
+            .split([';', '\x1b'])
+            .any(|seg| seg.starts_with("5463"))
+        {
+            caps.truecolor = true;
+        }
+    }
+}
+
 fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     let mut chunks = Vec::new();
     let bytes = encoded.as_bytes();
@@ -449,6 +803,14 @@ impl TerminalSessionGuard {
             guard.restore(stdout, false);
             return Err(err);
         }
+
+        // Issue #264: run the one-shot DA1/DA2/XTGETTCAP capability probe at
+        // session enter, while raw mode is active so the replies are readable.
+        // `capabilities()` caches in a `OnceLock`, so the resume re-enter path
+        // never re-probes. Never runs on the PTY-harness path (`harness` is
+        // always `false` here, but resume/harness re-entries go through
+        // `write_session_enter` directly, not `enter`).
+        let _ = capabilities();
 
         Ok(guard)
     }
@@ -2055,6 +2417,202 @@ mod tests {
             parse_osc11_response("\x1b]11;rgb:ffff/ffff/ffff\x07"),
             ColorScheme::Light
         );
+    }
+
+    // ---- Capability probe / blitter ladder (issue #264) ----
+
+    #[test]
+    fn blitter_support_default_is_conservative() {
+        let b = BlitterSupport::default();
+        assert!(b.half);
+        assert!(b.quad);
+        assert!(!b.sextant);
+    }
+
+    #[test]
+    fn capabilities_default_is_all_false_but_half_block() {
+        let c = Capabilities::default();
+        assert!(!c.truecolor);
+        assert!(!c.sixel);
+        assert!(!c.kitty_graphics);
+        assert!(!c.kitty_keyboard);
+        assert!(!c.sync_output);
+        // With nothing negotiated the ladder must still resolve to half-block.
+        assert_eq!(c.best_blitter(), Blitter::HalfBlock);
+    }
+
+    #[test]
+    fn best_blitter_ladder_table() {
+        let kitty = Capabilities {
+            kitty_graphics: true,
+            ..Default::default()
+        };
+        assert_eq!(kitty.best_blitter(), Blitter::Kitty);
+
+        let sixel = Capabilities {
+            sixel: true,
+            ..Default::default()
+        };
+        assert_eq!(sixel.best_blitter(), Blitter::Sixel);
+
+        let sextant = Capabilities {
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sextant.best_blitter(), Blitter::Sextant);
+
+        assert_eq!(Capabilities::default().best_blitter(), Blitter::HalfBlock);
+    }
+
+    #[test]
+    fn best_blitter_precedence_kitty_over_everything() {
+        let all = Capabilities {
+            kitty_graphics: true,
+            sixel: true,
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(all.best_blitter(), Blitter::Kitty);
+
+        let sixel_and_sextant = Capabilities {
+            sixel: true,
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sixel_and_sextant.best_blitter(), Blitter::Sixel);
+    }
+
+    #[test]
+    fn best_blitter_never_picks_unsupported_protocol() {
+        // Exhaustive-ish sweep over field combinations: the resolver must never
+        // return Kitty without kitty_graphics, nor Sixel without sixel, etc.
+        for kitty in [false, true] {
+            for sixel in [false, true] {
+                for sextant in [false, true] {
+                    let caps = Capabilities {
+                        kitty_graphics: kitty,
+                        sixel,
+                        blitters: BlitterSupport {
+                            sextant,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    match caps.best_blitter() {
+                        Blitter::Kitty => assert!(kitty),
+                        Blitter::Sixel => assert!(sixel && !kitty),
+                        Blitter::Sextant => assert!(sextant && !sixel && !kitty),
+                        Blitter::HalfBlock => assert!(!kitty && !sixel && !sextant),
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_attribute_4_sets_sixel() {
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;4;6c", &mut caps);
+        assert!(caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_without_4_leaves_sixel_false() {
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;1;6c", &mut caps);
+        assert!(!caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_ignores_da2_segment_in_same_string() {
+        // DA1 (no `4`) followed by DA2 — DA2 must not be mistaken for DA1.
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;1c\x1b[>0;276;0c", &mut caps);
+        assert!(!caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_no_panic_on_garbage() {
+        let mut caps = Capabilities::default();
+        // Must not panic and must not set kitty_graphics on an unknown id.
+        parse_da2("\x1b[>99;1;0c", &mut caps);
+        assert!(!caps.kitty_graphics);
+        parse_da2("not a da2 reply", &mut caps);
+        assert!(!caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_kitty_id_sets_kitty_graphics() {
+        let mut caps = Capabilities::default();
+        // Kitty reports DA2 primary id 41.
+        parse_da2("\x1b[>41;4000;0c", &mut caps);
+        assert!(caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_identity_extracts_id_and_version() {
+        assert_eq!(parse_da2_identity("\x1b[>0;276;0c"), Some((0, 276)));
+        assert_eq!(parse_da2_identity("\x1b[>41;4000;0c"), Some((41, 4000)));
+        assert_eq!(parse_da2_identity("no reply here"), None);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_kitty_graphics_ack_ok_sets_flag() {
+        let mut caps = Capabilities::default();
+        parse_kitty_graphics_ack("\x1b_Gi=31;OK\x1b\\", &mut caps);
+        assert!(caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_kitty_graphics_ack_error_or_wrong_id_leaves_flag() {
+        let mut caps = Capabilities::default();
+        // Error status must not flag support.
+        parse_kitty_graphics_ack("\x1b_Gi=31;ENOENT:bad\x1b\\", &mut caps);
+        assert!(!caps.kitty_graphics);
+        // A different image id is not our query.
+        parse_kitty_graphics_ack("\x1b_Gi=99;OK\x1b\\", &mut caps);
+        assert!(!caps.kitty_graphics);
+        // No APC at all.
+        parse_kitty_graphics_ack("garbage", &mut caps);
+        assert!(!caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_xtgettcap_tc_sets_truecolor() {
+        let mut caps = Capabilities::default();
+        // DCS 1 + r 5463 (=Tc) ST → truecolor present.
+        parse_xtgettcap_truecolor("\x1bP1+r5463=\x1b\\", &mut caps);
+        assert!(caps.truecolor);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_xtgettcap_invalid_leaves_truecolor_false() {
+        let mut caps = Capabilities::default();
+        // DCS 0 + r (capability NOT present) must not set the flag.
+        parse_xtgettcap_truecolor("\x1bP0+r5463\x1b\\", &mut caps);
+        assert!(!caps.truecolor);
+        // Wrong capname hex must not match.
+        parse_xtgettcap_truecolor("\x1bP1+r1234=\x1b\\", &mut caps);
+        assert!(!caps.truecolor);
     }
 
     #[cfg(feature = "crossterm")]

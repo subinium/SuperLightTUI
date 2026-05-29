@@ -63,6 +63,14 @@ pub struct Context {
     pub(crate) inspector_mode: bool,
     pub(crate) theme: Theme,
     pub(crate) is_real_terminal: bool,
+    /// Issue #264: read-only snapshot of negotiated terminal capabilities
+    /// (DA1/DA2/XTGETTCAP), exposed via [`Context::capabilities`]. Populated
+    /// from the process-global probe in `run_frame_kernel`; defaults
+    /// conservatively on headless backends. Diagnostics-only — image rendering
+    /// routes through the automatic blitter ladder, so app code never branches
+    /// on this.
+    #[cfg(feature = "crossterm")]
+    pub(crate) capabilities: crate::terminal::Capabilities,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) rollback: ContextRollbackState,
     pub(crate) pending_tooltips: Vec<PendingTooltip>,

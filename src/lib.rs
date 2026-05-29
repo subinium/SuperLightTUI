@@ -144,6 +144,11 @@ pub use terminal::__bench_flush_buffer_diff_mut_with_buf;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
+/// Runtime terminal capability probe (issue #264): read-only [`Capabilities`]
+/// snapshot plus the [`Blitter`] ladder it drives. Diagnostics-only — image
+/// rendering routes through the ladder automatically.
+#[cfg(feature = "crossterm")]
+pub use terminal::{capabilities, Blitter, BlitterSupport, Capabilities};
 #[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
@@ -1702,6 +1707,14 @@ pub(crate) fn run_frame_kernel(
     clear_keymap_registry(state);
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
+    // Issue #264: surface the negotiated capability snapshot read-only. The
+    // probe ran once at session enter (cached in a `OnceLock`); on a headless
+    // backend it never ran, so we keep the conservative default rather than
+    // forcing a probe that would block on stdin.
+    #[cfg(feature = "crossterm")]
+    if is_real_terminal {
+        ctx.capabilities = terminal::capabilities();
+    }
     ctx.set_scroll_speed(config.scroll_speed);
     ctx.widget_theme = config.widget_theme;
 

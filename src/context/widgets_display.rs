@@ -465,10 +465,15 @@ fn terminal_supports_sixel() -> bool {
     // clients — none of which support sixel. Patched-xterm-with-sixel users
     // can opt in with `SLT_FORCE_SIXEL=1`.
     const KNOWN_SIXEL_TERMS: &[&str] = &["mlterm", "foot", "yaft", "xterm-256color-sixel"];
+    // Issue #264 companion fix: WezTerm (sixel + iTerm2 protocol) and Ghostty
+    // (Kitty graphics + sixel) are capable image hosts that the env-only
+    // allowlist previously rejected, painting `[sixel unsupported]` on the best
+    // available terminals. They are matched via `TERM_PROGRAM` here as the
+    // env-fallback when the runtime DA1 probe returns unknown.
+    const KNOWN_SIXEL_TERM_PROGRAMS: &[&str] = &["foot", "mlterm", "wezterm", "ghostty"];
     KNOWN_SIXEL_TERMS.iter().any(|&t| term == t)
         || term.contains("sixel")
-        || term_program == "foot"
-        || term_program == "mlterm"
+        || KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program.as_str())
 }
 
 #[cfg(all(test, feature = "crossterm"))]
@@ -557,6 +562,29 @@ mod sixel_detection_tests {
     #[test]
     fn sixel_substring_match_catches_custom_builds() {
         with_env(Some("custom-with-sixel"), None, false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_wezterm_detected_via_term_program() {
+        // Issue #264: WezTerm reports `TERM=xterm-256color` but is a capable
+        // image host; it must no longer fall through to `[sixel unsupported]`.
+        with_env(Some("xterm-256color"), Some("wezterm"), false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_ghostty_detected_via_term_program() {
+        with_env(Some("xterm-256color"), Some("ghostty"), false, || {
+            assert!(terminal_supports_sixel());
+        });
+    }
+
+    #[test]
+    fn sixel_mlterm_still_detected_via_term_program() {
+        with_env(Some("xterm-256color"), Some("mlterm"), false, || {
             assert!(terminal_supports_sixel());
         });
     }
