@@ -43,6 +43,64 @@ fn sanitize_cell_char(ch: char) -> char {
     }
 }
 
+/// Returns `true` if `s` contains any codepoint that can trigger
+/// right-to-left or explicit bidirectional reordering under the Unicode
+/// Bidirectional Algorithm (UAX #9).
+///
+/// Pure-LTR strings (ASCII, Latin, CJK, …) return `false` and take the
+/// zero-allocation fast path in [`Buffer::set_string`]: no `String` is
+/// allocated and `unicode-bidi` is never invoked. Only strings that carry
+/// Hebrew, Arabic, Syriac, Thaana, Arabic presentation forms, or the
+/// explicit bidi control characters (RLM/LRM, RLE/LRE, RLO/LRO, PDF,
+/// RLI/LRI/FSI/PDI) need the full reorder pass.
+///
+/// This is intentionally a cheap, conservative character-class scan rather
+/// than a full UAX #9 resolution: a `true` here only *gates* the (possibly
+/// no-op) reorder, so over-inclusion costs at worst one extra reorder call,
+/// never incorrect output. Under-inclusion would silently mirror RTL text,
+/// so the ranges err toward inclusion.
+#[cfg(feature = "bidi")]
+#[inline]
+fn needs_bidi_reorder(s: &str) -> bool {
+    s.chars().any(|c| {
+        let u = c as u32;
+        matches!(u,
+            0x0590..=0x05FF | // Hebrew
+            0x0600..=0x06FF | // Arabic
+            0x0700..=0x074F | // Syriac
+            0x0750..=0x077F | // Arabic Supplement
+            0x0780..=0x07BF | // Thaana
+            0x08A0..=0x08FF | // Arabic Extended-A
+            0xFB1D..=0xFDFF | // Hebrew/Arabic presentation forms-A
+            0xFE70..=0xFEFF   // Arabic presentation forms-B
+        )
+        // explicit bidi controls: LRM, RLM, RLE/LRE/PDF/LRO/RLO, RLI/LRI/FSI/PDI
+        || matches!(u, 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
+    })
+}
+
+/// Reorder one logical-order line into visual (display) order per UAX #9.
+///
+/// The input is treated as a single paragraph (callers already split on
+/// `\n` upstream — see [`Buffer::set_string`]). The base paragraph
+/// direction is resolved from the first strong character (no override),
+/// matching default UAX #9 behavior. Returns the visually-ordered string.
+///
+/// Only ever called after [`needs_bidi_reorder`] returns `true`, so the
+/// `String` allocation here is incurred solely on the RTL path; pure-LTR
+/// input never reaches this function.
+#[cfg(feature = "bidi")]
+fn reorder_line_visual(s: &str) -> String {
+    use unicode_bidi::BidiInfo;
+    // No paragraph override: let the first strong char set base direction.
+    let info = BidiInfo::new(s, None);
+    match info.paragraphs.first() {
+        // A single input line is a single paragraph; reorder its full range.
+        Some(para) => info.reorder_line(para, para.range.clone()).into_owned(),
+        None => s.to_string(), // empty input → no paragraph
+    }
+}
+
 /// Structured Kitty graphics protocol image placement.
 ///
 /// Stored separately from raw escape sequences so the terminal can manage
@@ -372,6 +430,23 @@ impl Buffer {
         // false positives only cost one redundant hash recompute, never a
         // correctness issue.
         self.mark_row_dirty(y);
+        // Bidi (UAX #9) reorder: convert this logical-order line into visual
+        // (display) order before the positional cell-write loop below. The
+        // loop is purely left-to-right by column, so RTL runs must be
+        // reordered *here* or they render mirrored. `needs_bidi_reorder`
+        // gates the work so pure-LTR input neither allocates nor calls into
+        // `unicode-bidi` — its output is byte-identical to skipping this
+        // block entirely. Width/clip/zero-width/hyperlink handling below is
+        // order-independent and applies unchanged to the reordered glyphs.
+        #[cfg(feature = "bidi")]
+        let reordered;
+        #[cfg(feature = "bidi")]
+        let s: &str = if needs_bidi_reorder(s) {
+            reordered = reorder_line_visual(s);
+            &reordered
+        } else {
+            s
+        };
         let clip = self.effective_clip().copied();
         for ch in s.chars() {
             if x >= self.area.right() {
@@ -1344,5 +1419,182 @@ mod tests {
         assert_eq!(buf.line_dirty.len(), 2);
         assert_eq!(buf.line_hashes.len(), 2);
         assert!(buf.line_dirty.iter().all(|d| *d));
+    }
+
+    // ── Bidi (UAX #9) reordering ────────────────────────────────────────
+    //
+    // `line_visual` reads a buffer row left-to-right by column and trims
+    // trailing blanks — exactly the visual order a reader sees, which is the
+    // correct oracle for asserting reorder output.
+    #[cfg(feature = "bidi")]
+    fn line_visual(buf: &Buffer, y: u32) -> String {
+        let mut s = String::new();
+        for x in buf.area.x..buf.area.right() {
+            let sym = buf.get(x, y).symbol.as_str();
+            if sym.is_empty() {
+                continue; // wide-char trailing cell
+            }
+            s.push_str(sym);
+        }
+        s.trim_end().to_string()
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn needs_bidi_reorder_false_for_pure_ltr() {
+        // Pure-LTR strings take the zero-allocation fast path.
+        assert!(!needs_bidi_reorder("Hello, world 123"));
+        assert!(!needs_bidi_reorder(""));
+        assert!(!needs_bidi_reorder("café résumé"));
+        assert!(!needs_bidi_reorder("世界 CJK wide"));
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn needs_bidi_reorder_true_for_rtl_and_controls() {
+        assert!(needs_bidi_reorder("שלום")); // Hebrew
+        assert!(needs_bidi_reorder("شكرا")); // Arabic
+        assert!(needs_bidi_reorder("abc אבג def")); // mixed
+        assert!(needs_bidi_reorder("a\u{202E}bc")); // RLO control
+        assert!(needs_bidi_reorder("\u{200F}")); // RLM
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_ltr_unchanged_by_reorder_path() {
+        // Regression guard: LTR text must NOT be reordered.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "abcde", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "a");
+        assert_eq!(buf.get(1, 0).symbol, "b");
+        assert_eq!(buf.get(2, 0).symbol, "c");
+        assert_eq!(buf.get(3, 0).symbol, "d");
+        assert_eq!(buf.get(4, 0).symbol, "e");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_pure_rtl_reverses_to_visual_order() {
+        // Hebrew "שלום" is logical ש,ל,ו,ם. In visual order the first
+        // logical char (ש) lands on the rightmost column and the last (ם)
+        // on the leftmost — i.e. the row reads "םולש" left-to-right.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string(0, 0, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}", Style::new());
+        // column 0 == last logical char, last column == first logical char
+        assert_eq!(buf.get(0, 0).symbol, "\u{05DD}"); // ם
+        assert_eq!(buf.get(3, 0).symbol, "\u{05E9}"); // ש
+        assert_eq!(line_visual(&buf, 0), "\u{05DD}\u{05D5}\u{05DC}\u{05E9}");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_mixed_ltr_rtl_run() {
+        // Per UAX #9 (unicode-bidi reference vectors): "abc אבג" → "abc גבא".
+        // The Latin segment keeps LTR order; the Hebrew segment reverses.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(0, 0, "abc \u{05D0}\u{05D1}\u{05D2}", Style::new());
+        assert_eq!(line_visual(&buf, 0), "abc \u{05D2}\u{05D1}\u{05D0}");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_numbers_inside_rtl_stay_ltr() {
+        // "123 אבג" → "גבא 123": European numbers are weak LTR and cannot
+        // reorder a strong RTL run, so the digits stay "123" left-to-right
+        // while the Hebrew reverses (unicode-bidi reference vector).
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(0, 0, "123 \u{05D0}\u{05D1}\u{05D2}", Style::new());
+        assert_eq!(line_visual(&buf, 0), "\u{05D2}\u{05D1}\u{05D0} 123");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_wide_char_with_rtl_blanks_trailing_cell() {
+        // A CJK wide glyph mixed with Hebrew: after reorder the wide char's
+        // trailing cell must still be blanked at the correct visual column.
+        // Logical "世 אב" → the wide 世 stays leftmost (LTR base), Hebrew
+        // reverses to "בא". Visual: 世 (cols 0-1), space (col 2), ב (3) א (4).
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "\u{4E16} \u{05D0}\u{05D1}", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "\u{4E16}"); // 世 leading
+        assert!(buf.get(1, 0).symbol.is_empty(), "wide trailing must blank");
+        assert_eq!(buf.get(3, 0).symbol, "\u{05D1}"); // ב
+        assert_eq!(buf.get(4, 0).symbol, "\u{05D0}"); // א
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_linked_hyperlink_survives_reorder() {
+        // Every non-blank emitted cell of an RTL link must carry the URL,
+        // regardless of its new visual column.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string_linked(
+            0,
+            0,
+            "\u{05E9}\u{05DC}\u{05D5}\u{05DD}",
+            Style::new(),
+            "https://example.com",
+        );
+        for x in 0..4 {
+            let cell = buf.get(x, 0);
+            assert!(
+                cell.hyperlink.is_some(),
+                "hyperlink missing at visual column {x}"
+            );
+        }
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_control_chars_filtered_in_rtl() {
+        // An ESC embedded in an RTL string must still be replaced with
+        // U+FFFD — the reorder path must not bypass sanitize_cell_char.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "\u{05D0}\x1b\u{05D1}", Style::new());
+        let mut found_replacement = false;
+        for x in 0..6 {
+            let sym = buf.get(x, 0).symbol.as_str();
+            assert!(!sym.contains('\x1b'), "ESC leaked into a cell");
+            if sym.contains('\u{FFFD}') {
+                found_replacement = true;
+            }
+        }
+        assert!(found_replacement, "ESC was not replaced with U+FFFD");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn reorder_line_visual_empty_is_noop() {
+        assert_eq!(reorder_line_visual(""), "");
+    }
+
+    #[cfg(feature = "bidi")]
+    mod bidi_proptest {
+        use super::{needs_bidi_reorder, reorder_line_visual};
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            /// Fast-path no-op: arbitrary ASCII strings never need reordering.
+            #[test]
+            fn ascii_takes_fast_path_and_reorder_is_identity(s in "[ -~]{0,64}") {
+                prop_assert!(!needs_bidi_reorder(&s));
+                // Even if forced through the reorder, ASCII is a no-op permutation.
+                prop_assert_eq!(reorder_line_visual(&s), s);
+            }
+
+            /// Reorder is a permutation, not a width change: the total display
+            /// width of the reordered line equals the original's width.
+            #[test]
+            fn reorder_preserves_total_display_width(
+                s in "[a-z\\x{05D0}-\\x{05EA}\\x{0627}-\\x{064A}0-9 ]{0,48}"
+            ) {
+                use unicode_width::UnicodeWidthStr;
+                let before = UnicodeWidthStr::width(s.as_str());
+                let after = UnicodeWidthStr::width(reorder_line_visual(&s).as_str());
+                prop_assert_eq!(before, after);
+            }
+        }
     }
 }
