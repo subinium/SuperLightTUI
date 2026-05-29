@@ -441,6 +441,14 @@ impl TestBackend {
         self.frame_state.scheduler.slot_count()
     }
 
+    /// Inject the ambient Tokio runtime handle so `Context::spawn` works inside
+    /// rendered frames (issue #234). Mirrors what `run_async_loop` does once
+    /// before its loop; test-only — real async runs go through `run_async`.
+    #[cfg(all(test, feature = "async"))]
+    pub(crate) fn set_async_runtime(&mut self, handle: tokio::runtime::Handle) {
+        self.frame_state.async_tasks.set_runtime(handle);
+    }
+
     /// Get the rendered text content of row y (trimmed trailing spaces)
     pub fn line(&self, y: u32) -> String {
         let mut s = String::new();

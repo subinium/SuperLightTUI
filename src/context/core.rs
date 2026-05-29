@@ -96,6 +96,13 @@ pub struct Context {
     /// frame start and moved back at frame end (where untouched slots are
     /// GC'd), identical to the `named_states` lifetime.
     pub(crate) scheduler: SchedulerState,
+    /// Issue #234: in-frame async task registry backing
+    /// [`Context::spawn`](crate::Context::spawn) /
+    /// [`Context::poll`](crate::Context::poll). Round-tripped through
+    /// `FrameState` like `scheduler`. Gated behind `async`; the field does not
+    /// exist (zero overhead) when the feature is off.
+    #[cfg(feature = "async")]
+    pub(crate) async_tasks: AsyncTasks,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;

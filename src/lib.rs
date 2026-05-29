@@ -166,6 +166,9 @@ pub use context::{
     Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
     ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
 };
+// Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
+#[cfg(feature = "async")]
+pub use context::TaskHandle;
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
     MouseKind,
@@ -920,6 +923,12 @@ pub(crate) struct FrameState {
     /// `Context` exactly like `named_states` — moved out at frame start, moved
     /// back at frame end where untouched slots are garbage-collected.
     pub scheduler: widgets::SchedulerState,
+    /// Issue #234: persistent async task registry backing `Context::spawn` /
+    /// `Context::poll`. Round-tripped through `Context` exactly like
+    /// `scheduler` — moved out at frame start, moved back at frame end. Gated
+    /// behind `async`; absent (zero overhead) when the feature is off.
+    #[cfg(feature = "async")]
+    pub async_tasks: context::AsyncTasks,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1149,8 +1158,13 @@ pub fn run_async_with<M: Send + 'static>(
     let handle =
         tokio::runtime::Handle::try_current().map_err(|err| io::Error::other(err.to_string()))?;
 
+    // Issue #234: clone the runtime handle into the render loop so
+    // `Context::spawn` has a runtime to launch tasks onto. The render loop runs
+    // on `spawn_blocking` (no ambient runtime), so the handle must be passed
+    // explicitly rather than recovered via `Handle::try_current()` inside.
+    let loop_handle = handle.clone();
     handle.spawn_blocking(move || {
-        let _ = run_async_loop(config, f, rx);
+        let _ = run_async_loop(config, f, rx, loop_handle);
     });
 
     Ok(tx)
@@ -1161,6 +1175,7 @@ fn run_async_loop<M: Send + 'static>(
     config: RunConfig,
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
     mut rx: tokio::sync::mpsc::Receiver<M>,
+    runtime: tokio::runtime::Handle,
 ) -> io::Result<()> {
     if !io::stdout().is_terminal() {
         return Ok(());
@@ -1188,6 +1203,10 @@ fn run_async_loop<M: Send + 'static>(
     let mut events: Vec<Event> = Vec::new();
     let mut messages: Vec<M> = Vec::new();
     let mut state = FrameState::default();
+    // Issue #234: inject the ambient runtime so `Context::spawn` works inside
+    // the frame closure. Set once before the loop; round-tripped through
+    // `Context` from here on (see `run_frame_kernel`).
+    state.async_tasks.set_runtime(runtime);
 
     loop {
         let frame_start = Instant::now();
@@ -1721,6 +1740,18 @@ pub(crate) fn run_frame_kernel(
         let mut scheduler = ctx.scheduler;
         scheduler.gc_untouched();
         state.scheduler = scheduler;
+        // Issue #234: hand the async task registry back so in-flight tasks and
+        // pending results survive to the next frame (TestBackend reuses
+        // `FrameState` across `render()` calls — same rationale as the
+        // scheduler reclaim).
+        #[cfg(feature = "async")]
+        {
+            // Pump the registry every frame so a handle dropped on a frame that
+            // calls neither spawn nor poll still has its cancellation processed
+            // (and completed results moved in) before the round-trip.
+            ctx.async_tasks.maintain();
+            state.async_tasks = ctx.async_tasks;
+        }
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
@@ -1885,6 +1916,17 @@ pub(crate) fn run_frame_kernel(
     let mut scheduler = ctx.scheduler;
     scheduler.gc_untouched();
     state.scheduler = scheduler;
+    // Issue #234: hand the async task registry back so in-flight tasks and
+    // pending results survive to the next frame (same round-trip lifecycle as
+    // the scheduler table).
+    #[cfg(feature = "async")]
+    {
+        // Pump the registry every frame (see the quit-path note): drains
+        // completed results and honours handle-drop cancellations even on a
+        // frame that called neither spawn nor poll.
+        ctx.async_tasks.maintain();
+        state.async_tasks = ctx.async_tasks;
+    }
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.

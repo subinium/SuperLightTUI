@@ -22,6 +22,11 @@ impl Context {
         // lifetime as `named_states`: moved out at frame start, moved back at
         // frame end (where untouched slots are GC'd; see `run_frame_kernel`).
         let scheduler = std::mem::take(&mut state.scheduler);
+        // Issue #234: hand off the async task registry for this frame. Same
+        // lifetime as `scheduler`: moved out at frame start, moved back at
+        // frame end (see `run_frame_kernel`).
+        #[cfg(feature = "async")]
+        let async_tasks = std::mem::take(&mut state.async_tasks);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         // Issue #217: name→index map from the previous frame, used to resolve
@@ -185,6 +190,9 @@ impl Context {
             // method called this frame.
             frame_instant: std::time::Instant::now(),
             scheduler,
+            // Issue #234: async task registry round-tripped like `scheduler`.
+            #[cfg(feature = "async")]
+            async_tasks,
         };
         ctx.build_hovered_groups();
         ctx
@@ -1081,6 +1089,98 @@ impl Context {
             Ok(value) => value,
             Err(panic) => std::panic::resume_unwind(panic),
         }
+    }
+
+    /// Spawn a fire-and-forget async task from inside the frame closure.
+    ///
+    /// Returns a [`TaskHandle<T>`](crate::TaskHandle) you store and pass to
+    /// [`poll`](Self::poll) on later frames to retrieve the result. This closes
+    /// the ergonomics gap of the channel pattern (`run_async` + an external
+    /// `Sender`) for the common case: "click a button, kick off one async call,
+    /// show its result next frame" — without wiring a channel yourself.
+    ///
+    /// **Dropping the returned handle cancels the in-flight task.** Keep it
+    /// alive (e.g. in `use_state`) for as long as you care about the result.
+    /// Each handle carries a unique id, so two `TaskHandle<String>` live at the
+    /// same time never cross their results.
+    ///
+    /// Requires the `async` feature and an active Tokio runtime — call it
+    /// inside [`run_async`](crate::run_async) /
+    /// [`run_async_with`](crate::run_async_with), which inject the runtime
+    /// handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no Tokio runtime was injected (e.g. when called from the sync
+    /// [`run`](crate::run) loop or `TestBackend` without a runtime).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "async")]
+    /// # async fn run() -> std::io::Result<()> {
+    /// use slt::{Context, RunConfig, TaskHandle};
+    ///
+    /// async fn fetch() -> String {
+    ///     // e.g. an HTTP request
+    ///     "result".to_string()
+    /// }
+    ///
+    /// slt::run_async_with(RunConfig::default(), |ui: &mut Context, _: &mut Vec<()>| {
+    ///     // One handle, stored across frames via `use_state`.
+    ///     let handle = ui.use_state(|| None::<TaskHandle<String>>);
+    ///
+    ///     if ui.button("Fetch").clicked && handle.get(ui).is_none() {
+    ///         *handle.get_mut(ui) = Some(ui.spawn(async { fetch().await }));
+    ///     }
+    ///
+    ///     // Take the handle out of state to poll it: `ui.poll` needs `&mut ui`,
+    ///     // which cannot coexist with a `&TaskHandle` borrowed from `ui`'s own
+    ///     // state. Put it back if the task is still pending.
+    ///     if let Some(h) = handle.get_mut(ui).take() {
+    ///         match ui.poll(&h) {
+    ///             Some(result) => {
+    ///                 ui.text(format!("Got: {result}"));
+    ///             }
+    ///             None => {
+    ///                 *handle.get_mut(ui) = Some(h);
+    ///                 ui.text("Loading...");
+    ///             }
+    ///         }
+    ///     }
+    /// })?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub fn spawn<T: Send + 'static>(
+        &mut self,
+        fut: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> TaskHandle<T> {
+        self.async_tasks.spawn(fut)
+    }
+
+    /// Poll a [`TaskHandle`](crate::TaskHandle) for its result.
+    ///
+    /// Returns `Some(result)` exactly once — on the first frame after the task
+    /// completes — then `None` on every subsequent call. Returns `None` while
+    /// the task is still in flight.
+    ///
+    /// Pairs with [`spawn`](Self::spawn). Requires the `async` feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "async")]
+    /// # fn ex(ui: &mut slt::Context, handle: &slt::TaskHandle<u32>) {
+    /// if let Some(value) = ui.poll(handle) {
+    ///     ui.text(format!("done: {value}"));
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub fn poll<T: 'static>(&mut self, handle: &TaskHandle<T>) -> Option<T> {
+        self.async_tasks.poll::<T>(handle.id())
     }
 
     /// Look up the nearest provided value of type `T` on the context stack.

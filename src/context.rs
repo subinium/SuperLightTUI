@@ -71,8 +71,19 @@ pub use container::*;
 
 mod runtime;
 
+/// Issue #234: in-frame async task API (`spawn`/`poll`), gated behind `async`.
+#[cfg(feature = "async")]
+mod async_tasks;
+#[cfg(feature = "async")]
+pub(crate) use async_tasks::AsyncTasks;
+#[cfg(feature = "async")]
+pub use async_tasks::TaskHandle;
+
 mod helpers;
 pub(crate) use helpers::*;
+
+#[cfg(all(test, feature = "async"))]
+mod async_tasks_tests;
 
 #[cfg(test)]
 mod tests;
