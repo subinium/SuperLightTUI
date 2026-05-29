@@ -66,7 +66,7 @@ fn use_memo_caches_when_deps_unchanged() {
             first.set(first.get() + 1);
             d * 2
         });
-        assert_eq!(*val, 10);
+        assert_eq!(val.copied(ui), 10);
     });
 
     let second = call_count.clone();
@@ -75,7 +75,7 @@ fn use_memo_caches_when_deps_unchanged() {
             second.set(second.get() + 1);
             d * 2
         });
-        assert_eq!(*val, 10);
+        assert_eq!(val.copied(ui), 10);
     });
 
     assert_eq!(call_count.get(), 1);
@@ -92,7 +92,7 @@ fn use_memo_recomputes_on_dep_change() {
             first.set(first.get() + 1);
             d * 10
         });
-        assert_eq!(*val, 30);
+        assert_eq!(val.copied(ui), 30);
     });
 
     let second = call_count.clone();
@@ -101,7 +101,7 @@ fn use_memo_recomputes_on_dep_change() {
             second.set(second.get() + 1);
             d * 10
         });
-        assert_eq!(*val, 70);
+        assert_eq!(val.copied(ui), 70);
     });
 
     assert_eq!(call_count.get(), 2);
@@ -5246,12 +5246,12 @@ fn scrollbar_returns_response_none_when_content_fits() {
 fn use_memo_cache_hit_returns_consistent_value() {
     let mut tb = TestBackend::new(20, 5);
     tb.render(|ui| {
-        let v1 = *ui.use_memo(&42i32, |x| x * 2);
+        let v1 = ui.use_memo(&42i32, |x| x * 2).copied(ui);
         // Different compute closure on a different slot: hook cursor must
         // advance correctly even when the cache-hit path returns directly
         // from a single downcast. If the cursor or downcast logic regresses,
         // these reads will conflict.
-        let v2 = *ui.use_memo(&10i32, |x| x * 3);
+        let v2 = ui.use_memo(&10i32, |x| x * 3).copied(ui);
         assert_eq!(v1, 84);
         assert_eq!(v2, 30);
     });
@@ -5264,22 +5264,22 @@ fn use_memo_cache_hit_does_not_recompute() {
 
     let c1 = calls.clone();
     tb.render(|ui| {
-        let v = *ui.use_memo(&7i32, |d| {
+        let v = ui.use_memo(&7i32, |d| {
             c1.set(c1.get() + 1);
             d * 4
         });
-        assert_eq!(v, 28);
+        assert_eq!(v.copied(ui), 28);
     });
 
     let c2 = calls.clone();
     tb.render(|ui| {
         // Same deps — must hit cache and return the stored value via the
         // single-downcast path without invoking `compute`.
-        let v = *ui.use_memo(&7i32, |d| {
+        let v = ui.use_memo(&7i32, |d| {
             c2.set(c2.get() + 1);
             d * 99 // would corrupt result if recomputed
         });
-        assert_eq!(v, 28);
+        assert_eq!(v.copied(ui), 28);
     });
 
     assert_eq!(calls.get(), 1, "compute must run only on first frame");

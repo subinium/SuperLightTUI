@@ -167,7 +167,8 @@ pub use cell::Cell;
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
     Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
-    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
+    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State, TreemapItem,
+    Widget,
 };
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]

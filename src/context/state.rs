@@ -135,6 +135,109 @@ impl<T: 'static> State<T> {
     }
 }
 
+/// Internal storage shape for a value created by [`Context::use_memo`].
+///
+/// The previous-frame dependencies are kept type-erased (`Box<dyn Any>`) so the
+/// read path ([`Memo::get`]) can downcast the slot to `MemoSlot<T>` without
+/// knowing `D`. [`Context::use_memo`] downcasts `deps` back to `&D` when
+/// comparing against the new dependencies to decide whether to recompute.
+///
+/// Kept `pub(crate)` — never part of the public API. The `T` in its type name
+/// appears in the hook-ordering mismatch panic message, mirroring the historic
+/// `(D, T)` message shape.
+pub(crate) struct MemoSlot<T> {
+    pub(crate) deps: Box<dyn std::any::Any>,
+    pub(crate) value: T,
+}
+
+/// Handle to a memoized value created by [`Context::use_memo`].
+///
+/// Like [`State<T>`], this is an *index handle*, not a live borrow — it stores
+/// only the hook slot index and does **not** keep [`Context`] borrowed. That is
+/// the whole point: the handle composes with later `ui.*` calls, where the old
+/// `&T`-returning form (now [`Context::use_memo_ref`]) held an immutable borrow
+/// of `ui` that conflicted with any subsequent mutation.
+///
+/// Read the value with [`get`](Self::get) (`&T`) or [`copied`](Self::copied)
+/// (`T: Copy`).
+///
+/// # Example
+///
+/// ```no_run
+/// # slt::run(|ui: &mut slt::Context| {
+/// let count = ui.use_state(|| 0i32);
+/// let count_val = *count.get(ui);
+/// // Handle releases the `&mut ui` borrow immediately...
+/// let doubled = ui.use_memo(&count_val, |c| c * 2);
+/// // ...so an intervening `ui.*` call composes cleanly.
+/// ui.text("computed:");
+/// ui.text(format!("{}", doubled.copied(ui)));
+/// # });
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Memo<T> {
+    idx: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: 'static> Memo<T> {
+    pub(crate) fn from_idx(idx: usize) -> Self {
+        Self {
+            idx,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Read the memoized value.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the slot index and expected type name if the hook at this
+    /// index does not hold a `MemoSlot<T>` — i.e. the rules-of-hooks contract
+    /// was broken (hooks called in a different order than the frame that created
+    /// the slot). The message matches [`Context::use_memo`]'s own mismatch
+    /// panic.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let m = ui.use_memo(&3i32, |d| d * 2);
+    /// ui.text(format!("{}", m.get(ui)));
+    /// # });
+    /// ```
+    pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
+        match ui.hook_states[self.idx].downcast_ref::<MemoSlot<T>>() {
+            Some(slot) => &slot.value,
+            None => panic!(
+                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
+                self.idx,
+                std::any::type_name::<MemoSlot<T>>()
+            ),
+        }
+    }
+
+    /// Read a `Copy` of the memoized value.
+    ///
+    /// Convenience for `*memo.get(ui)`. Panics under the same conditions as
+    /// [`get`](Self::get).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let doubled = ui.use_memo(&21i32, |d| d * 2).copied(ui);
+    /// ui.text(format!("{doubled}"));
+    /// # });
+    /// ```
+    pub fn copied(&self, ui: &Context) -> T
+    where
+        T: Copy,
+    {
+        *self.get(ui)
+    }
+}
+
 /// Interaction response returned by all widgets.
 ///
 /// Container methods return a [`Response`]. Check `.clicked`, `.changed`, etc.

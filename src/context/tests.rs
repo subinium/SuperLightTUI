@@ -66,13 +66,112 @@ fn use_memo_type_mismatch_includes_index_and_expected_type() {
         "panic message should include hook index, got: {message}"
     );
     assert!(
-        message.contains(std::any::type_name::<(u8, u8)>()),
-        "panic message should include expected type, got: {message}"
+        message.contains(std::any::type_name::<MemoSlot<u8>>()),
+        "panic message should include expected MemoSlot type, got: {message}"
     );
     assert!(
         message.contains("Hooks must be called in the same order every frame."),
         "panic message should explain hook ordering requirement, got: {message}"
     );
+}
+
+#[test]
+fn use_memo_handle_releases_borrow() {
+    // The handle composes with an intervening `ui.*` mutation — the exact
+    // pattern that failed to compile when `use_memo` returned `&T`.
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let m = ui.use_memo(&21i32, |d| d * 2);
+        // Intervening mutation: would conflict with a live `&T` borrow.
+        ui.text("memo:");
+        let v = m.copied(ui);
+        ui.text(format!("{v}"));
+    });
+    tb.assert_contains("memo:");
+    tb.assert_contains("42");
+}
+
+#[test]
+fn use_memo_recomputes_only_on_dep_change() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut tb = TestBackend::new(20, 3);
+
+    // Frame 1: dep = 2 — first compute.
+    let c1 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c1.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "first frame computes once");
+
+    // Frame 2: same dep — no recompute (cache hit).
+    let c2 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "stable deps must not recompute"
+    );
+
+    // Frame 3: changed dep — recompute.
+    let c3 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        *dep.get_mut(ui) = 5; // change the dependency
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c3.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "changed deps must recompute"
+    );
+    tb.assert_contains("50");
+}
+
+#[test]
+fn use_memo_copied_matches_get() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let m = ui.use_memo(&7i32, |d| d * 3);
+        assert_eq!(m.copied(ui), *m.get(ui));
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    tb.assert_contains("21");
+}
+
+#[test]
+fn use_memo_ref_still_compiles() {
+    // The deprecated `&T`-returning alias remains a drop-in for existing
+    // callers and yields the same value as the handle form.
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        #[allow(deprecated)]
+        let v = *ui.use_memo_ref(&8i32, |d| d * 2);
+        assert_eq!(v, 16);
+        ui.text(format!("{v}"));
+    });
+    tb.assert_contains("16");
 }
 
 #[test]
