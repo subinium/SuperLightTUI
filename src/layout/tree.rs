@@ -539,10 +539,14 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         let mut chunk_end = word_start;
         let mut chunk_width: u32 = 0;
 
-        for (rel_i, ch) in slice.char_indices() {
+        // Chunk at grapheme-cluster boundaries: a cluster (ZWJ flag, family
+        // emoji, Indic / Thai syllable) is never sliced. A cluster wider than
+        // `max_width` is emitted whole on its own chunk, mirroring the
+        // single-wide-char behavior.
+        for (rel_i, g) in slice.grapheme_indices(true) {
             let abs_i = word_start + rel_i;
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            let ch_len = ch.len_utf8();
+            let ch_width = UnicodeWidthStr::width(g) as u32;
+            let ch_len = g.len();
 
             if chunk_end == chunk_start {
                 if ch_width > max_width {
@@ -696,8 +700,13 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         let mut word_start: usize = 0;
         let mut word_width: u32 = 0;
 
-        for (i, ch) in paragraph.char_indices() {
-            if ch == ' ' {
+        // Iterate by grapheme cluster so word width accumulates per
+        // user-perceived character; a greedy break can therefore never land
+        // inside a cluster (ZWJ flag, family emoji, Indic / Thai syllable).
+        // Space detection compares the cluster to a single-space string — a
+        // bare ASCII space is its own cluster.
+        for (i, g) in paragraph.grapheme_indices(true) {
+            if g == " " {
                 push_word(
                     paragraph,
                     &mut lines,
@@ -713,7 +722,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 word_width = 0;
                 continue;
             }
-            word_width += UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+            word_width += UnicodeWidthStr::width(g) as u32;
         }
 
         push_word(
@@ -849,11 +858,11 @@ fn wrap_segments_paragraph(
                     break;
                 }
                 let s = segments[cur_seg].0.as_str();
-                let ch = s[cur_off..]
-                    .chars()
+                let g = s[cur_off..]
+                    .graphemes(true)
                     .next()
-                    .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
-                if ch == ' ' {
+                    .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
+                if g == " " {
                     cur_off += 1; // ASCII space is 1 byte
                     continue;
                 }
@@ -882,12 +891,15 @@ fn wrap_segments_paragraph(
             }
             let s = segments[cur_seg].0.as_str();
             let style = segments[cur_seg].1;
-            let ch = s[cur_off..]
-                .chars()
+            // Advance by grapheme cluster within the current segment so a
+            // cluster (ZWJ emoji, combining sequence) never spans a wrap
+            // break. Width is measured on the whole cluster.
+            let g = s[cur_off..]
+                .graphemes(true)
                 .next()
-                .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
-            let ch_len = ch.len_utf8();
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+                .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
+            let ch_len = g.len();
+            let ch_width = UnicodeWidthStr::width(g) as u32;
 
             if line_width + ch_width > max_width && line_width > 0 {
                 if let Some((segs_len, last_byte_len, _w, sp_seg, sp_off)) = last_space_break {
@@ -903,7 +915,7 @@ fn wrap_segments_paragraph(
             }
 
             // Snapshot BEFORE pushing the space so we can roll back to a pre-space state.
-            if ch == ' ' {
+            if g == " " {
                 let segs_len = line_segs.len();
                 let last_byte_len = line_segs.last().map(|(text, _)| text.len()).unwrap_or(0);
                 last_space_break = Some((segs_len, last_byte_len, line_width, cur_seg, cur_off));
@@ -926,15 +938,15 @@ fn wrap_segments_paragraph(
                 .max(1);
             if let Some(last) = line_segs.last_mut() {
                 if last.1 == style {
-                    last.0.push(ch);
+                    last.0.push_str(g);
                 } else {
                     let mut nw = String::with_capacity(cap);
-                    nw.push(ch);
+                    nw.push_str(g);
                     line_segs.push((nw, style));
                 }
             } else {
                 let mut nw = String::with_capacity(cap);
-                nw.push(ch);
+                nw.push_str(g);
                 line_segs.push((nw, style));
             }
             line_width += ch_width;

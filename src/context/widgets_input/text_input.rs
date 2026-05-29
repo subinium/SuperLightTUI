@@ -33,7 +33,7 @@ impl Context {
         );
         let focused = self.register_focusable();
         let old_value = state.value.clone();
-        state.cursor = state.cursor.min(state.value.chars().count());
+        state.cursor = state.cursor.min(grapheme_count(&state.value));
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -85,7 +85,7 @@ impl Context {
                             .or_else(|| matched_suggestions.first())
                         {
                             state.value = selected.clone();
-                            state.cursor = state.value.chars().count();
+                            state.cursor = grapheme_count(&state.value);
                             state.show_suggestions = false;
                             state.suggestion_index = 0;
                         }
@@ -93,11 +93,11 @@ impl Context {
                     }
                     KeyCode::Char(ch) => {
                         if let Some(max) = state.max_length {
-                            if state.value.chars().count() >= max {
+                            if grapheme_count(&state.value) >= max {
                                 continue;
                             }
                         }
-                        let index = byte_index_for_char(&state.value, state.cursor);
+                        let index = byte_index_for_grapheme(&state.value, state.cursor);
                         state.value.insert(index, ch);
                         state.cursor += 1;
                         if !state.suggestions.is_empty() {
@@ -109,8 +109,8 @@ impl Context {
                     }
                     KeyCode::Backspace => {
                         if state.cursor > 0 {
-                            let start = byte_index_for_char(&state.value, state.cursor - 1);
-                            let end = byte_index_for_char(&state.value, state.cursor);
+                            let start = byte_index_for_grapheme(&state.value, state.cursor - 1);
+                            let end = byte_index_for_grapheme(&state.value, state.cursor);
                             state.value.replace_range(start..end, "");
                             state.cursor -= 1;
                         }
@@ -126,7 +126,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Right => {
-                        state.cursor = (state.cursor + 1).min(state.value.chars().count());
+                        state.cursor = (state.cursor + 1).min(grapheme_count(&state.value));
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
@@ -134,10 +134,10 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Delete => {
-                        let len = state.value.chars().count();
+                        let len = grapheme_count(&state.value);
                         if state.cursor < len {
-                            let start = byte_index_for_char(&state.value, state.cursor);
-                            let end = byte_index_for_char(&state.value, state.cursor + 1);
+                            let start = byte_index_for_grapheme(&state.value, state.cursor);
+                            let end = byte_index_for_grapheme(&state.value, state.cursor + 1);
                             state.value.replace_range(start..end, "");
                         }
                         if !state.suggestions.is_empty() {
@@ -148,7 +148,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.cursor = state.value.chars().count();
+                        state.cursor = grapheme_count(&state.value);
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -158,7 +158,7 @@ impl Context {
                 // Cache char count once and update incrementally — insert is
                 // O(1) amortized per char, so recomputing via `chars().count()`
                 // inside the loop would be O(n²) on large pastes.
-                let mut char_count = state.value.chars().count();
+                let mut char_count = grapheme_count(&state.value);
                 for ch in text.chars() {
                     // text_input is single-line; drop newlines, tabs, control
                     // chars, and other bytes that would corrupt rendering or
@@ -171,7 +171,7 @@ impl Context {
                             break;
                         }
                     }
-                    let index = byte_index_for_char(&state.value, state.cursor);
+                    let index = byte_index_for_grapheme(&state.value, state.cursor);
                     state.value.insert(index, ch);
                     state.cursor += 1;
                     char_count += 1;
@@ -224,16 +224,19 @@ impl Context {
                 (ph, None)
             }
         } else {
-            let chars: Vec<char> = state.value.chars().collect();
-            let display_chars: Vec<char> = if state.masked {
-                vec!['•'; chars.len()]
+            // Display units are grapheme clusters: `state.cursor` is a cluster
+            // index, so each rendered unit (one source cluster, or one mask
+            // glyph standing in for it) advances the cursor index by one.
+            let clusters: Vec<&str> = state.value.graphemes(true).collect();
+            let display_units: Vec<&str> = if state.masked {
+                vec!["•"; clusters.len()]
             } else {
-                chars.clone()
+                clusters.clone()
             };
 
-            let cursor_display_pos: usize = display_chars[..state.cursor.min(display_chars.len())]
+            let cursor_display_pos: usize = display_units[..state.cursor.min(display_units.len())]
                 .iter()
-                .map(|c| UnicodeWidthChar::width(*c).unwrap_or(1))
+                .map(|g| cluster_width(g).max(1) as usize)
                 .sum();
 
             let scroll_offset = if cursor_display_pos >= visible_width {
@@ -245,8 +248,8 @@ impl Context {
             let mut rendered = String::new();
             let mut cursor_offset = None;
             let mut current_width: usize = 0;
-            for (idx, &ch) in display_chars.iter().enumerate() {
-                let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
+            for (idx, g) in display_units.iter().enumerate() {
+                let cw = cluster_width(g).max(1) as usize;
                 if current_width + cw <= scroll_offset {
                     current_width += cw;
                     continue;
@@ -258,10 +261,10 @@ impl Context {
                     cursor_offset = Some(rendered.chars().count());
                     rendered.push('▎');
                 }
-                rendered.push(ch);
+                rendered.push_str(g);
                 current_width += cw;
             }
-            if focused && state.cursor >= display_chars.len() {
+            if focused && state.cursor >= display_units.len() {
                 cursor_offset = Some(rendered.chars().count());
                 rendered.push('▎');
             }

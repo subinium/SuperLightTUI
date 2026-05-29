@@ -30,6 +30,7 @@ name = "slt"
 [dependencies]
 crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
+unicode-segmentation = "1"
 smallvec = "1"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }

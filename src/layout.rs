@@ -7,6 +7,7 @@ use crate::style::{
     Align, Border, BorderSides, Color, Constraints, HeightSpec, Justify, Margin, Padding, Style,
     WidthSpec,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
