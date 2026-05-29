@@ -7,10 +7,11 @@
 //! - #224 — gauge / line_gauge with inline label
 //! - #235 — scrollable_with_gutter + highlight navigation
 
+use slt::event::Event;
 use slt::widgets::SpinnerState;
 use slt::{
     BreadcrumbResponse, Color, EventBuilder, GaugeResponse, GutterOpts, GutterResponse,
-    HighlightRange, KeyCode, ScrollState, SplitPaneState, TestBackend,
+    HighlightRange, KeyCode, Rect, ScrollState, SplitPaneState, TestBackend,
 };
 
 // ── #212: spinner / progress return Response ─────────────────────────────
@@ -478,4 +479,271 @@ fn issue_235_clear_highlights_resets_state() {
     state.clear_highlights();
     assert_eq!(state.current_highlight(), None);
     assert!(state.highlights().is_empty());
+}
+
+// ── #249: scrollbar() click-to-jump + drag-to-scroll ─────────────────────
+
+/// Render the standard `scroll_col + scrollbar` row for several warm-up
+/// frames, then return the bar's track rect from the final `Response`.
+///
+/// Three frames are required for the rect to stabilize: frame 0 has no
+/// `scrollable` bounds yet (viewport_height 0 → the bar renders nothing);
+/// frame 1 has bounds but the bar's hit rect is still absent from the
+/// previous (frame-0) `prev_hit_map`; frame 2 finally reads frame 1's rect.
+fn render_scrollbar_seeded(tb: &mut TestBackend, state: &mut ScrollState) -> Rect {
+    let mut rect = Rect::new(0, 0, 0, 0);
+    for _ in 0..3 {
+        tb.render(|ui| {
+            let _ = ui.row(|ui| {
+                let _ = ui.scrollable(state).grow(1).col(|ui| {
+                    for i in 0..100 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                rect = ui.scrollbar(state).rect;
+            });
+        });
+    }
+    assert!(rect.height > 0, "scrollbar track must have a known rect");
+    rect
+}
+
+/// Render the standard row once with the given events applied.
+fn render_scrollbar_with_events(tb: &mut TestBackend, state: &mut ScrollState, events: Vec<Event>) {
+    tb.run_with_events(events, |ui| {
+        let _ = ui.row(|ui| {
+            let _ = ui.scrollable(state).grow(1).col(|ui| {
+                for i in 0..100 {
+                    ui.text(format!("Line {i}"));
+                }
+            });
+            let _ = ui.scrollbar(state);
+        });
+    });
+}
+
+#[test]
+fn issue_249_scrollbar_click_jumps_to_bottom() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+    let max_offset = (state.content_height() - state.viewport_height()) as usize;
+    assert!(max_offset > 0, "test needs overflow");
+
+    // Click the bottom track cell → jump to max_offset.
+    let bottom_y = track.bottom() - 1;
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new().click(track.x, bottom_y).build(),
+    );
+    assert_eq!(
+        state.offset, max_offset,
+        "clicking the bottom track cell must jump to max_offset"
+    );
+}
+
+#[test]
+fn issue_249_scrollbar_click_jumps_to_top() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+    let max_offset = (state.content_height() - state.viewport_height()) as usize;
+
+    // Start scrolled to the bottom, then re-seed a frame so prev_hit_map's
+    // thumb position reflects it.
+    state.set_offset(max_offset);
+    render_scrollbar_with_events(&mut tb, &mut state, Vec::new());
+    assert_eq!(state.offset, max_offset, "precondition: scrolled to bottom");
+
+    // Click the top track cell → jump to 0.
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new().click(track.x, track.y).build(),
+    );
+    assert_eq!(
+        state.offset, 0,
+        "clicking the top track cell must jump to 0"
+    );
+}
+
+#[test]
+fn issue_249_scrollbar_click_middle_is_near_half() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+    let max_offset = (state.content_height() - state.viewport_height()) as i64;
+
+    let mid_y = track.y + track.height / 2;
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new().click(track.x, mid_y).build(),
+    );
+    let half = max_offset / 2;
+    let got = state.offset as i64;
+    assert!(
+        (got - half).abs() <= 5,
+        "midpoint click offset {got} not within 5 of {half}"
+    );
+}
+
+#[test]
+fn issue_249_scrollbar_thumb_drag_scrolls() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+    // Thumb starts at the top (offset 0). Grab it, then drag progressively
+    // further down across frames; offset must grow monotonically.
+    let thumb_top_y = track.y;
+    let mut offsets = Vec::new();
+    for k in [0u32, 3, 7] {
+        render_scrollbar_with_events(
+            &mut tb,
+            &mut state,
+            EventBuilder::new()
+                .click(track.x, thumb_top_y)
+                .drag(track.x, thumb_top_y + k)
+                .build(),
+        );
+        offsets.push(state.offset);
+    }
+    assert!(
+        state.dragging,
+        "thumb still held (no mouse-up) → dragging stays true"
+    );
+    assert!(
+        offsets[1] > offsets[0] && offsets[2] > offsets[1],
+        "offset must grow monotonically with drag distance: {offsets:?}"
+    );
+
+    // Mouse-up releases the drag.
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new()
+            .mouse_up(track.x, thumb_top_y + 7)
+            .build(),
+    );
+    assert!(!state.dragging, "mouse-up must clear dragging");
+}
+
+#[test]
+fn issue_249_scrollbar_drag_outside_track_x_still_scrolls() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+    // Grab the thumb, then drag far to the left (off the 1-cell-wide track).
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new()
+            .click(track.x, track.y)
+            .drag(track.x.saturating_sub(30), track.y + 8)
+            .build(),
+    );
+    assert!(state.dragging, "drag started");
+    assert!(
+        state.offset > 0,
+        "drag is not gated on x once started: offset must follow y"
+    );
+}
+
+#[test]
+fn issue_249_scrollbar_no_overflow_is_inert() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    // Content fits the viewport → no overflow.
+    let render = |ui: &mut slt::Context, state: &mut ScrollState| {
+        let _ = ui.row(|ui| {
+            let _ = ui.scrollable(state).grow(1).col(|ui| {
+                for i in 0..3 {
+                    ui.text(format!("Line {i}"));
+                }
+            });
+            let _ = ui.scrollbar(state);
+        });
+    };
+    for _ in 0..2 {
+        tb.render(|ui| render(ui, &mut state));
+    }
+    // Click where the bar would be: nothing happens.
+    tb.run_with_events(EventBuilder::new().click(79, 19).build(), |ui| {
+        render(ui, &mut state)
+    });
+    assert_eq!(state.offset, 0, "no overflow → click is inert");
+    assert!(!state.dragging, "no overflow → never enters drag mode");
+}
+
+#[test]
+fn issue_249_scrollbar_wheel_interop() {
+    // A wheel event over the scroll_col and a track click in the same batch
+    // both apply, clamped coherently.
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+    let max_offset = (state.content_height() - state.viewport_height()) as usize;
+
+    let events = EventBuilder::new()
+        .scroll_down(10, 10) // wheel over the scroll_col area
+        .click(track.x, track.bottom() - 1) // jump to bottom via the bar
+        .build();
+    render_scrollbar_with_events(&mut tb, &mut state, events);
+    assert_eq!(
+        state.offset, max_offset,
+        "wheel + track-click both apply and clamp to max_offset"
+    );
+}
+
+#[test]
+fn issue_249_scrollbar_modal_suppression() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+    // Open a modal, then click where the bar is: the bar is inert.
+    let click = EventBuilder::new()
+        .click(track.x, track.bottom() - 1)
+        .build();
+    let offset_before = state.offset;
+    tb.run_with_events(click, |ui| {
+        let _ = ui.modal(|ui| {
+            ui.text("blocking");
+        });
+        let _ = ui.row(|ui| {
+            let _ = ui.scrollable(&mut state).grow(1).col(|ui| {
+                for i in 0..100 {
+                    ui.text(format!("Line {i}"));
+                }
+            });
+            let _ = ui.scrollbar(&mut state);
+        });
+    });
+    assert_eq!(
+        state.offset, offset_before,
+        "scrollbar interaction must be suppressed while a modal is active"
+    );
+    assert!(!state.dragging, "no drag entered under modal");
+}
+
+#[test]
+fn issue_249_scrollbar_renders_thumb_after_offset_move() {
+    let mut tb = TestBackend::new(80, 20);
+    let mut state = ScrollState::new();
+    let track = render_scrollbar_seeded(&mut tb, &mut state);
+
+    render_scrollbar_with_events(
+        &mut tb,
+        &mut state,
+        EventBuilder::new()
+            .click(track.x, track.bottom() - 1)
+            .build(),
+    );
+    assert!(state.offset > 0, "offset moved");
+    // `assert_contains` panics on absence — calling it IS the assertion.
+    tb.assert_contains("█");
 }
