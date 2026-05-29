@@ -189,14 +189,20 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     match node.kind {
         NodeKind::Text | NodeKind::Spacer | NodeKind::RawDraw(_) => {}
         NodeKind::Container(Direction::Row) => {
-            layout_row(
+            let viewport_area = inner_area(
                 node,
-                inner_area(
-                    node,
-                    Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
-                ),
-                depth,
+                Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
             );
+            if node.is_scrollable {
+                // Extracted to keep `compute_body`'s stack frame small: the
+                // `[u16; INLINE_CAP]` save-buffer lives in the callee, not in
+                // every recursion frame (matters for deep non-scrollable trees,
+                // see `tree::MAX_LAYOUT_DEPTH`).
+                layout_scrollable_row(node, viewport_area, depth);
+            } else {
+                layout_row(node, viewport_area, depth);
+                node.content_width = 0;
+            }
             node.content_height = 0;
         }
         NodeKind::Container(Direction::Column) => {
@@ -205,67 +211,17 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
                 Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
             );
             if node.is_scrollable {
-                // Inline-first scratch for saving `grow` values per child. Most
-                // scrollable containers have few children; fall back to a Vec
-                // only for wide ones. This avoids the per-frame allocation.
-                let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
-                let mut saved_overflow: Option<Vec<u16>> = None;
-                let child_count = node.children.len();
-                if child_count > INLINE_CAP {
-                    let mut v = Vec::with_capacity(child_count);
-                    for c in &node.children {
-                        v.push(c.grow);
-                    }
-                    saved_overflow = Some(v);
-                } else {
-                    for (i, c) in node.children.iter().enumerate() {
-                        saved_inline[i] = c.grow;
-                    }
-                }
-                for child in &mut node.children {
-                    child.grow = 0;
-                }
-                let total_gaps: i64 = if node.children.is_empty() {
-                    0
-                } else {
-                    (node.children.len() as i64 - 1) * node.gap as i64
-                };
-                let children_height: u32 = node
-                    .children
-                    .iter_mut()
-                    .map(|c| c.min_height_for_width(viewport_area.width))
-                    .sum::<u32>();
-                // `total_gaps` may be negative for overlap (#222); clamp at 0.
-                let natural_height: u32 = (children_height as i64 + total_gaps).max(0) as u32;
-
-                if natural_height > viewport_area.height {
-                    let virtual_area = Rect::new(
-                        viewport_area.x,
-                        viewport_area.y,
-                        viewport_area.width,
-                        natural_height,
-                    );
-                    layout_column(node, virtual_area, depth);
-                } else {
-                    match &saved_overflow {
-                        Some(over) => {
-                            for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
-                                child.grow = grow;
-                            }
-                        }
-                        None => {
-                            for (i, child) in node.children.iter_mut().enumerate() {
-                                child.grow = saved_inline[i];
-                            }
-                        }
-                    }
-                    layout_column(node, viewport_area, depth);
-                }
-                node.content_height = scroll_content_height(node, viewport_area.y);
+                // Extracted (see `layout_scrollable_row`): the per-child grow
+                // save-buffer stays out of `compute_body`'s recursion frame.
+                layout_scrollable_column(node, viewport_area, depth);
             } else {
                 layout_column(node, viewport_area, depth);
                 node.content_height = 0;
             }
+            // A scrollable column scrolls vertically only — its x-axis content
+            // width stays 0 so `ScrollState` never reports horizontal overflow
+            // for it (#247).
+            node.content_width = 0;
         }
     }
 
@@ -302,6 +258,137 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 }
 
+/// Lay out a scrollable `Direction::Column` into `viewport_area`.
+///
+/// Extracted from `compute_body` so its `[u16; INLINE_CAP]` grow-save buffer
+/// does not inflate the recursion frame for deep non-scrollable trees. The
+/// body is byte-identical to the pre-extraction inline branch: zero children's
+/// `grow`, measure the natural content height, lay out into an over-tall
+/// virtual area on overflow (else restore `grow` and lay out into the
+/// viewport), then record `content_height`.
+#[inline(never)]
+fn layout_scrollable_column(node: &mut LayoutNode, viewport_area: Rect, depth: usize) {
+    // Inline-first scratch for saving `grow` values per child. Most scrollable
+    // containers have few children; fall back to a Vec only for wide ones.
+    let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
+    let mut saved_overflow: Option<Vec<u16>> = None;
+    let child_count = node.children.len();
+    if child_count > INLINE_CAP {
+        let mut v = Vec::with_capacity(child_count);
+        for c in &node.children {
+            v.push(c.grow);
+        }
+        saved_overflow = Some(v);
+    } else {
+        for (i, c) in node.children.iter().enumerate() {
+            saved_inline[i] = c.grow;
+        }
+    }
+    for child in &mut node.children {
+        child.grow = 0;
+    }
+    let total_gaps: i64 = if node.children.is_empty() {
+        0
+    } else {
+        (node.children.len() as i64 - 1) * node.gap as i64
+    };
+    let children_height: u32 = node
+        .children
+        .iter_mut()
+        .map(|c| c.min_height_for_width(viewport_area.width))
+        .sum::<u32>();
+    // `total_gaps` may be negative for overlap (#222); clamp at 0.
+    let natural_height: u32 = (children_height as i64 + total_gaps).max(0) as u32;
+
+    if natural_height > viewport_area.height {
+        let virtual_area = Rect::new(
+            viewport_area.x,
+            viewport_area.y,
+            viewport_area.width,
+            natural_height,
+        );
+        layout_column(node, virtual_area, depth);
+    } else {
+        match &saved_overflow {
+            Some(over) => {
+                for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
+                    child.grow = grow;
+                }
+            }
+            None => {
+                for (i, child) in node.children.iter_mut().enumerate() {
+                    child.grow = saved_inline[i];
+                }
+            }
+        }
+        layout_column(node, viewport_area, depth);
+    }
+    node.content_height = scroll_content_height(node, viewport_area.y);
+}
+
+/// Lay out a scrollable `Direction::Row` into `viewport_area` — the x-axis
+/// mirror of [`layout_scrollable_column`] (#247).
+///
+/// Zeroes children's `grow` (so they keep their natural width rather than
+/// fighting the overflow measurement), sums child `min_width` + gaps into the
+/// natural content width, lays out into an over-wide virtual area when it
+/// overflows the viewport (else restores `grow` and lays out into the
+/// viewport), then records `content_width`. Extracted for the same stack-frame
+/// reason as the column path.
+#[inline(never)]
+fn layout_scrollable_row(node: &mut LayoutNode, viewport_area: Rect, depth: usize) {
+    let mut saved_inline: [u16; INLINE_CAP] = [0; INLINE_CAP];
+    let mut saved_overflow: Option<Vec<u16>> = None;
+    let child_count = node.children.len();
+    if child_count > INLINE_CAP {
+        let mut v = Vec::with_capacity(child_count);
+        for c in &node.children {
+            v.push(c.grow);
+        }
+        saved_overflow = Some(v);
+    } else {
+        for (i, c) in node.children.iter().enumerate() {
+            saved_inline[i] = c.grow;
+        }
+    }
+    for child in &mut node.children {
+        child.grow = 0;
+    }
+    let total_gaps: i64 = if node.children.is_empty() {
+        0
+    } else {
+        (node.children.len() as i64 - 1) * node.gap as i64
+    };
+    let children_width: u32 = node.children.iter().map(|c| c.min_width()).sum::<u32>();
+    // `total_gaps` may be negative for overlap (#222); clamp at 0.
+    let natural_width: u32 = (children_width as i64 + total_gaps).max(0) as u32;
+
+    if natural_width > viewport_area.width {
+        let virtual_area = Rect::new(
+            viewport_area.x,
+            viewport_area.y,
+            natural_width,
+            viewport_area.height,
+        );
+        layout_row(node, virtual_area, depth);
+    } else {
+        match &saved_overflow {
+            Some(over) => {
+                for (child, &grow) in node.children.iter_mut().zip(over.iter()) {
+                    child.grow = grow;
+                }
+            }
+            None => {
+                for (i, child) in node.children.iter_mut().enumerate() {
+                    child.grow = saved_inline[i];
+                }
+            }
+        }
+        layout_row(node, viewport_area, depth);
+    }
+    node.content_width = scroll_content_width(node, viewport_area.x);
+}
+
 fn scroll_content_height(node: &LayoutNode, inner_y: u32) -> u32 {
     let Some(max_bottom) = node
         .children
@@ -319,6 +406,30 @@ fn scroll_content_height(node: &LayoutNode, inner_y: u32) -> u32 {
     };
 
     max_bottom.saturating_sub(inner_y)
+}
+
+/// X-axis mirror of [`scroll_content_height`] (#247).
+///
+/// Returns the rightmost child edge (position + width + right margin) relative
+/// to the scrollable row's inner-x origin, i.e. the total content width the
+/// viewport scrolls across. `0` when the row has no children.
+fn scroll_content_width(node: &LayoutNode, inner_x: u32) -> u32 {
+    let Some(max_right) = node
+        .children
+        .iter()
+        .map(|child| {
+            child
+                .pos
+                .0
+                .saturating_add(child.size.0)
+                .saturating_add(child.margin.right)
+        })
+        .max()
+    else {
+        return 0;
+    };
+
+    max_right.saturating_sub(inner_x)
 }
 
 /// Compute the leading offset and inter-child gap for a flex line.

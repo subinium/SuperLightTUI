@@ -39,7 +39,9 @@ pub struct Context {
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,
     pub(crate) prev_modal_focus_count: usize,
-    pub(crate) prev_scroll_infos: Vec<(u32, u32)>,
+    /// `(content_extent, viewport_extent, is_horizontal)` per scrollable from
+    /// the previous frame (#247).
+    pub(crate) prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub(crate) prev_scroll_rects: Vec<Rect>,
     pub(crate) prev_hit_map: Vec<Rect>,
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,

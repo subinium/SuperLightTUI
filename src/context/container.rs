@@ -104,6 +104,11 @@ pub struct ContainerBuilder<'a> {
     /// child's min size, preserving current behavior. Closes #258.
     pub(crate) basis: Option<u32>,
     pub(crate) scroll_offset: Option<u32>,
+    /// Horizontal scroll offset for a scrollable row (#247). Set internally by
+    /// [`crate::Context::scrollable`] from `ScrollState::offset_x`; carried into
+    /// `BeginScrollableArgs` and applied by the tree builder only when the
+    /// finalizing direction is `Direction::Row`.
+    pub(crate) scroll_offset_x: Option<u32>,
     pub(crate) theme_override: Option<Theme>,
 }
 
@@ -1792,10 +1797,15 @@ impl<'a> ContainerBuilder<'a> {
         }
 
         if let Some(scroll_offset) = self.scroll_offset {
+            // #247: carry the finalizing `.row()` / `.col()` direction and both
+            // axis offsets. The tree builder applies the offset matching
+            // `direction`; the cross-axis offset is `0` for a single-axis
+            // scroller (the common case).
             self.ctx
                 .commands
                 .push(Command::BeginScrollable(Box::new(BeginScrollableArgs {
                     grow: self.grow,
+                    direction,
                     border: self.border,
                     border_sides: self.border_sides,
                     border_style,
@@ -1809,6 +1819,7 @@ impl<'a> ContainerBuilder<'a> {
                     constraints: self.constraints,
                     title: self.title,
                     scroll_offset,
+                    scroll_offset_x: self.scroll_offset_x.unwrap_or(0),
                     group_name,
                 })));
         } else {
