@@ -2447,6 +2447,7 @@ fn markdown_list() {
 }
 
 #[test]
+#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
 fn key_seq_matches_sequence() {
     let mut tb = TestBackend::new(80, 24);
     let events = slt::EventBuilder::new().key('g').key('g').build();
@@ -2460,6 +2461,7 @@ fn key_seq_matches_sequence() {
 }
 
 #[test]
+#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
 fn key_seq_rejects_non_sequence() {
     let mut tb = TestBackend::new(80, 24);
     let events = slt::EventBuilder::new().key('g').key('x').build();

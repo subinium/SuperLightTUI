@@ -177,14 +177,14 @@ pub use style::{
     ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
 pub use widgets::{
-    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
+    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, ChordState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
     FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
     MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
     ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
     StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend,
+    Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.
@@ -764,6 +764,11 @@ pub(crate) struct FrameState {
     /// across frames; survives panics inside `error_boundary` (matching the
     /// `named_states` policy).
     pub keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
+    /// Issue #262: cross-frame partial-chord buffer for [`Context::key_chord`].
+    /// Round-trips across frames using the same `std::mem::take` out/in policy
+    /// as `keyed_states` (moved out in `Context::new`, restored at frame end in
+    /// `run_frame_kernel`).
+    pub chord_states: widgets::ChordState,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1507,6 +1512,10 @@ pub(crate) fn run_frame_kernel(
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
         state.keyed_states = ctx.keyed_states;
+        // Issue #262: persist the partial-chord buffer on quit too (TestBackend
+        // reuses `FrameState` across `render()` calls — same rationale as the
+        // keyed-state reclaim).
+        state.chord_states = ctx.chord;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
@@ -1661,6 +1670,9 @@ pub(crate) fn run_frame_kernel(
     // frame can pick it up via `Context::new`. Mirrors the `named_states`
     // round-trip exactly.
     state.keyed_states = ctx.keyed_states;
+    // Issue #262: hand the partial-chord buffer back so a chord spanning
+    // multiple frames survives between them. Same round-trip as `keyed_states`.
+    state.chord_states = ctx.chord;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
