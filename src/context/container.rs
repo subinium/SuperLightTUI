@@ -91,6 +91,18 @@ pub struct ContainerBuilder<'a> {
     /// if its parent row/column overflows. Default `false` keeps the
     /// historic overflow-by-design behavior. Closes #161.
     pub(crate) shrink_flag: bool,
+    /// Opt-in container-level flex-wrap flag. Set via
+    /// [`ContainerBuilder::wrap`].
+    ///
+    /// When `true` on a row, children that overflow the available width flow
+    /// onto subsequent lines instead of overflowing past the right edge.
+    /// Default `false` keeps the historic single-line behavior. No-op on a
+    /// column. Closes #258.
+    pub(crate) wrap_flag: bool,
+    /// Optional flex-basis (initial main-axis size, in cells). Set via
+    /// [`ContainerBuilder::basis`]. `None` (default) falls back to the
+    /// child's min size, preserving current behavior. Closes #258.
+    pub(crate) basis: Option<u32>,
     pub(crate) scroll_offset: Option<u32>,
     pub(crate) theme_override: Option<Theme>,
 }
@@ -1298,6 +1310,70 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Allow row children to wrap onto subsequent lines on main-axis overflow.
+    ///
+    /// When a `.row()` finalized with `wrap()` has children whose combined
+    /// width exceeds the available width, the overflowing children flow onto
+    /// the next line, and lines stack on the cross axis. This is the
+    /// immediate-mode primitive for tag clouds, chip lists, wrapping toolbars,
+    /// and responsive card grids that reflow as the terminal resizes — without
+    /// per-frame breakpoint math. Equivalent to CSS `flex-wrap: wrap`.
+    ///
+    /// Spacing: within-line (main-axis) spacing uses `gap` / `col_gap` as
+    /// usual; between-line (cross-axis) spacing uses `row_gap` when set, else
+    /// `gap`. A child wider than the full available width occupies its own
+    /// line (clipped, as a single-line row would clip) rather than producing
+    /// an empty line.
+    ///
+    /// Row only. On `col()` this is a documented no-op (vertical-axis wrap is
+    /// out of scope). Default: no wrap (single-line, current
+    /// overflow-by-design behavior). Closes #258.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // A chip list that reflows onto as many lines as the width needs.
+    /// ui.container().wrap().gap(1).row(|ui| {
+    ///     for tag in ["rust", "tui", "flexbox", "wrap", "immediate-mode"] {
+    ///         ui.container().p(1).col(|ui| { ui.text(tag); });
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    #[doc(alias = "flex-wrap")]
+    pub fn wrap(mut self) -> Self {
+        self.wrap_flag = true;
+        self
+    }
+
+    /// Set the flex-basis: the initial main-axis size (in cells) that `grow`
+    /// grows from and `shrink` (#161) shrinks from.
+    ///
+    /// CSS resolves flex sizing as `basis` (initial) → distribute free space
+    /// by `grow` → distribute the deficit by `shrink`. By default SLT uses a
+    /// child's min size as that base; `basis(n)` overrides it so a child can
+    /// say "start at `n` cells, then grow / shrink from there". `None`
+    /// (default, i.e. not calling this) falls back to the min size, preserving
+    /// current behavior. Equivalent to CSS `flex-basis: <n>`. Closes #258.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Two cards that each start at 10 cells, then split the leftover.
+    /// ui.row(|ui| {
+    ///     ui.container().basis(10).grow(1).col(|ui| { ui.text("a"); });
+    ///     ui.container().basis(10).grow(1).col(|ui| { ui.text("b"); });
+    /// });
+    /// # });
+    /// ```
+    #[doc(alias = "flex-basis")]
+    pub fn basis(mut self, cells: u32) -> Self {
+        self.basis = Some(cells);
+        self
+    }
+
     define_breakpoint_methods!(
         base = grow,
         arg = value: u16,
@@ -1638,6 +1714,10 @@ impl<'a> ContainerBuilder<'a> {
             Direction::Column => self.row_gap.map(|g| g as i32).unwrap_or(self.gap),
             Direction::Row => self.col_gap.map(|g| g as i32).unwrap_or(self.gap),
         };
+        // Cross-axis (between-line) gap for a wrapping row (#258): `row_gap`
+        // when set, else the builder `gap`. Only consulted by the layout pass
+        // when this container is a wrapping `Direction::Row`.
+        let resolved_cross_gap: i32 = self.row_gap.map(|g| g as i32).unwrap_or(self.gap);
 
         let in_hovered_group = self
             .group_name
@@ -1696,6 +1776,19 @@ impl<'a> ContainerBuilder<'a> {
         // emits the marker, and `LayoutNode::shrink` defaults to `false`.
         if self.shrink_flag {
             self.ctx.commands.push(Command::ShrinkMarker);
+        }
+
+        // Opt-in flex-wrap / flex-basis (#258). Same marker pattern as shrink:
+        // pushed just before the matching `Begin*`, picked up by the layout
+        // pass and applied to the next node. Both default off / `None`, so
+        // unflagged containers are byte-identical to pre-#258.
+        if self.wrap_flag {
+            self.ctx
+                .commands
+                .push(Command::WrapMarker(resolved_cross_gap));
+        }
+        if let Some(basis) = self.basis {
+            self.ctx.commands.push(Command::BasisMarker(basis));
         }
 
         if let Some(scroll_offset) = self.scroll_offset {
@@ -1877,5 +1970,55 @@ mod hotfix_tests {
     #[test]
     fn scroll_offset_is_crate_internal_api() {
         let _ = ContainerBuilder::scroll_offset;
+    }
+}
+
+#[cfg(test)]
+mod flex_wrap_tests {
+    //! Render-level regression tests for flex-wrap / flex-basis (#258).
+
+    use crate::test_utils::TestBackend;
+
+    /// A wrapping row of labels wider than the backend must flow the
+    /// overflowing label onto the second terminal row, not clip it off the
+    /// right edge. Each label is a 1-cell-tall text node, so a line is one
+    /// cell tall and a wrap is visible as text on row 1.
+    #[test]
+    fn wrap_row_flows_overflow_to_second_line() {
+        // Backend is 12 wide. `col_gap(1)` sets within-line spacing only, so
+        // the cross-axis (between-line) gap falls back to 0. "alpha"(5) + 1 +
+        // "bravo"(5) = 11 fits line 0; "gamma" overflows (11 + 1 + 5 = 17 >
+        // 12) to line 1, immediately below with no blank gap row.
+        let mut tb = TestBackend::new(12, 4);
+        tb.render(|ui| {
+            let _ = ui.container().wrap().col_gap(1).row(|ui| {
+                ui.text("alpha");
+                ui.text("bravo");
+                ui.text("gamma");
+            });
+        });
+
+        // Line 0 holds the first two labels; the third wrapped to line 1.
+        tb.assert_line_contains(0, "alpha");
+        tb.assert_line_contains(0, "bravo");
+        tb.assert_line_contains(1, "gamma");
+    }
+
+    /// `wrap()` is opt-in: without it the overflowing label clips off the
+    /// right edge rather than wrapping, so nothing appears on row 1.
+    #[test]
+    fn no_wrap_row_keeps_single_line() {
+        let mut tb = TestBackend::new(12, 4);
+        tb.render(|ui| {
+            let _ = ui.container().col_gap(1).row(|ui| {
+                ui.text("alpha");
+                ui.text("bravo");
+                ui.text("gamma");
+            });
+        });
+
+        // Single line: first label on row 0, nothing wrapped to row 1.
+        tb.assert_line_contains(0, "alpha");
+        assert_eq!(tb.line(1), "");
     }
 }

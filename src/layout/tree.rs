@@ -12,7 +12,15 @@ use super::*;
 /// post-split it should be substantially smaller. If a future field
 /// addition pushes this past the bound, either box the new field or audit
 /// whether the addition needs to live on `LayoutNode` at all.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 320);
+///
+/// Bumped 320 → 328 for the flex-wrap / flex-basis fields (#258):
+/// `cross_gap: i32` (4 bytes) and `flex_basis_raw: u32` (4 bytes), the two
+/// new scalar layout properties read by `flexbox::layout_row`. The
+/// `wrap_children: bool` flag packs into existing bool padding and adds
+/// nothing. Both are scalars (no heap, no niche), so this is the minimum
+/// footprint for the feature; boxing two 4-byte fields would cost a pointer
+/// (8 bytes) plus an allocation per wrapping container, a net loss.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 328);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -68,6 +76,16 @@ pub(crate) struct LayoutNode {
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
     pub(crate) wrap: bool,
+    /// Opt-in container-level flex-wrap flag. Default `false`.
+    ///
+    /// Set by `build_children` when a [`Command::WrapMarker`] precedes the
+    /// node's `Begin*` command. Read by [`super::flexbox::layout_row`]: when
+    /// set, row children that overflow the available width flow onto
+    /// subsequent lines (multi-line row) rather than overflowing past the
+    /// right edge. Applies to `Direction::Row` only; a no-op for columns.
+    /// Distinct from [`LayoutNode::wrap`], which is text line-wrapping.
+    /// Closes #258.
+    pub(crate) wrap_children: bool,
     pub(crate) truncate: bool,
     /// Inter-child gap on the main axis, in cells.
     ///
@@ -78,6 +96,24 @@ pub(crate) struct LayoutNode {
     /// as usual. Same 4-byte size as the previous `u32` — no layout-node
     /// budget impact (#222).
     pub(crate) gap: i32,
+    /// Cross-axis (between-line) gap for a wrapping row, in cells.
+    ///
+    /// Only meaningful when [`LayoutNode::wrap_children`] is set on a
+    /// `Direction::Row` container. Resolves to `row_gap` when set, else the
+    /// main-axis `gap`. Within-line spacing continues to use
+    /// [`LayoutNode::gap`]. Closes #258.
+    pub(crate) cross_gap: i32,
+    /// Optional flex-basis: the initial main-axis size (in cells) that
+    /// `grow` grows from and `shrink` (#161) shrinks from.
+    ///
+    /// Stored as a `u32` with [`LayoutNode::NO_BASIS`] (`u32::MAX`) meaning
+    /// "unset" — a sentinel rather than `Option<u32>` so the field is 4 bytes,
+    /// keeping `LayoutNode` within its size budget (the niche of
+    /// `Option<u32>` would cost 8). Unset falls back to
+    /// [`LayoutNode::min_width`] (the historic base size), so unflagged
+    /// children keep their current sizing. Read via [`LayoutNode::flex_basis`].
+    /// Set by `build_children` from a [`Command::BasisMarker`]. Closes #258.
+    pub(crate) flex_basis_raw: u32,
     pub(crate) border: Option<Border>,
     pub(crate) border_sides: BorderSides,
     pub(crate) border_style: Style,
@@ -123,6 +159,23 @@ pub(crate) struct ContainerConfig {
 }
 
 impl LayoutNode {
+    /// Sentinel value for [`LayoutNode::flex_basis_raw`] meaning "no basis
+    /// set" (fall back to `min_width`). Chosen as `u32::MAX` because a real
+    /// flex-basis that large is never a meaningful main-axis size. Closes #258.
+    pub(crate) const NO_BASIS: u32 = u32::MAX;
+
+    /// The resolved flex-basis, or `None` when unset (`NO_BASIS`).
+    ///
+    /// Reads the [`LayoutNode::flex_basis_raw`] sentinel field. Closes #258.
+    #[inline]
+    pub(crate) fn flex_basis(&self) -> Option<u32> {
+        if self.flex_basis_raw == Self::NO_BASIS {
+            None
+        } else {
+            Some(self.flex_basis_raw)
+        }
+    }
+
     /// Get a shared reference to the text-only payload.
     ///
     /// Returns `None` for non-text variants. Use this everywhere the
@@ -169,6 +222,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate,
             gap: 0,
             border: None,
@@ -217,6 +273,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -252,6 +311,9 @@ impl LayoutNode {
             align_self: config.align_self,
             justify: config.justify,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: config.gap,
             border: config.border,
@@ -302,6 +364,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -340,6 +405,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -513,8 +581,80 @@ impl LayoutNode {
                 let lines = self.ensure_wrapped_for_width(inner_width);
                 lines.saturating_add(self.margin.vertical())
             }
+            // A wrapping row's height depends on how many lines its children
+            // flow onto at `available_width`, so it cannot be derived from the
+            // width-independent `min_height`. Partition the children greedily
+            // (mirroring `flexbox::layout_row`'s wrap pass) and sum each line's
+            // tallest child plus the between-line cross-axis gap. Closes #258.
+            NodeKind::Container(Direction::Row) if self.wrap_children => {
+                self.wrapped_min_height(available_width)
+            }
             _ => self.min_height(),
         }
+    }
+
+    /// Intrinsic height of a wrapping row at a given available width.
+    ///
+    /// Greedily partitions the children into lines by accumulated main-axis
+    /// width (`flex_basis` else `min_width`, plus the within-line gap), then
+    /// sums each line's tallest child plus the cross-axis (between-line) gap.
+    /// A child wider than the inner width occupies its own line. The result
+    /// is clamped against the container's own `constraints` / `margin`, and
+    /// the cross-axis gap total is clamped at 0 so an overlap gap never wraps
+    /// the unsigned height. Closes #258.
+    fn wrapped_min_height(&mut self, available_width: u32) -> u32 {
+        let inner_width = available_width
+            .saturating_sub(self.margin.horizontal())
+            .saturating_sub(self.frame_horizontal());
+
+        // Snapshot per-child base widths / heights (immutable borrow ends
+        // before we touch `self.constraints` below).
+        let gap = self.gap;
+        let cross_gap = self.cross_gap;
+        let mut line_count: u32 = 0;
+        let mut total_lines_height: u32 = 0;
+        let mut cur_width: i64 = 0;
+        let mut cur_line_height: u32 = 0;
+        let mut cur_has_child = false;
+
+        for child in &self.children {
+            let base = child.flex_basis().unwrap_or_else(|| child.min_width());
+            let child_height = child.min_height();
+            if cur_has_child {
+                // Would adding this child (plus the within-line gap) overflow?
+                let prospective = cur_width + gap as i64 + base as i64;
+                if prospective > inner_width as i64 {
+                    // Flush the current line and start a new one with this child.
+                    line_count += 1;
+                    total_lines_height = total_lines_height.saturating_add(cur_line_height);
+                    cur_width = base as i64;
+                    cur_line_height = child_height;
+                } else {
+                    cur_width = prospective;
+                    cur_line_height = cur_line_height.max(child_height);
+                }
+            } else {
+                cur_width = base as i64;
+                cur_line_height = child_height;
+                cur_has_child = true;
+            }
+        }
+        if cur_has_child {
+            line_count += 1;
+            total_lines_height = total_lines_height.saturating_add(cur_line_height);
+        }
+
+        // Between-line cross-axis gaps: `(line_count - 1) * cross_gap`,
+        // clamped at 0 for overlap gaps.
+        let gap_total = if line_count > 1 {
+            ((line_count as i64 - 1) * cross_gap as i64).max(0) as u32
+        } else {
+            0
+        };
+        let content_height = total_lines_height.saturating_add(gap_total);
+        let height = content_height + self.frame_vertical();
+        let height = height.max(self.constraints.min_height().unwrap_or(0));
+        height.saturating_add(self.margin.vertical())
     }
 }
 
@@ -1066,11 +1206,18 @@ fn build_children(
     // ShrinkMarker is buffered into `pending_shrink` and consumed by the next
     // container / scrollable node. Closes #161.
     let mut pending_shrink: bool = false;
+    // WrapMarker / BasisMarker mirror the shrink-marker pattern: buffered here
+    // and applied to the next container / scrollable node. `pending_wrap`
+    // holds the cross-axis (between-line) gap carried by the marker. Closes #258.
+    let mut pending_wrap: Option<i32> = None;
+    let mut pending_basis: Option<u32> = None;
     while let Some(command) = commands.next() {
         match command {
             Command::FocusMarker(id) => pending_focus_id = Some(id),
             Command::InteractionMarker(id) => pending_interaction_id = Some(id),
             Command::ShrinkMarker => pending_shrink = true,
+            Command::WrapMarker(cross_gap) => pending_wrap = Some(cross_gap),
+            Command::BasisMarker(basis) => pending_basis = Some(basis),
             Command::Text {
                 content,
                 cursor_offset,
@@ -1171,6 +1318,13 @@ fn build_children(
                     node.shrink = true;
                     pending_shrink = false;
                 }
+                if let Some(cross_gap) = pending_wrap.take() {
+                    node.wrap_children = true;
+                    node.cross_gap = cross_gap;
+                }
+                if let Some(basis) = pending_basis.take() {
+                    node.flex_basis_raw = basis;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
@@ -1218,6 +1372,18 @@ fn build_children(
                 if pending_shrink {
                     node.shrink = true;
                     pending_shrink = false;
+                }
+                // Consume any pending wrap/basis markers so they don't leak to a
+                // later sibling. Wrap is a no-op on a column (scrollable is
+                // always a column), but the cross-axis gap is recorded for
+                // completeness; basis is recorded but only consumed by row
+                // resolution.
+                if let Some(cross_gap) = pending_wrap.take() {
+                    node.wrap_children = true;
+                    node.cross_gap = cross_gap;
+                }
+                if let Some(basis) = pending_basis.take() {
+                    node.flex_basis_raw = basis;
                 }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);

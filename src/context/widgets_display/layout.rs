@@ -839,6 +839,8 @@ impl Context {
             title: None,
             grow: 0,
             shrink_flag: false,
+            wrap_flag: false,
+            basis: None,
             scroll_offset: None,
             theme_override: None,
         }

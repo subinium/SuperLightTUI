@@ -116,6 +116,28 @@ pub(crate) enum Command {
     /// `pending_shrink`, applied to the next built [`super::tree::LayoutNode`]).
     /// Closes #161.
     ShrinkMarker,
+    /// Marks the next container as a wrapping (multi-line) row, carrying the
+    /// signed cross-axis (between-line) gap.
+    ///
+    /// Pushed by [`crate::context::ContainerBuilder::wrap`] just before the
+    /// matching `BeginContainer` / `BeginScrollable`. Consumed by
+    /// `build_children` like [`Command::ShrinkMarker`] (buffered into
+    /// `pending_wrap`, applied to the next built
+    /// [`super::tree::LayoutNode`]). On a `Row` container the child layout
+    /// flows children onto subsequent lines on main-axis overflow, with the
+    /// payload as the between-line gap; on a `Column` container it is a
+    /// documented no-op. Kept a scalar variant so the `Command` enum stays
+    /// small. Closes #258.
+    WrapMarker(i32),
+    /// Sets the flex-basis (initial main-axis size, in cells) on the next
+    /// container.
+    ///
+    /// Pushed by [`crate::context::ContainerBuilder::basis`] just before the
+    /// matching `BeginContainer` / `BeginScrollable`. Buffered into
+    /// `pending_basis` and applied to the next built
+    /// [`super::tree::LayoutNode::flex_basis`]. A scalar variant so the
+    /// `Command` enum stays small. Closes #258.
+    BasisMarker(u32),
     RawDraw {
         draw_id: usize,
         constraints: Constraints,
