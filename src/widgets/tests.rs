@@ -302,3 +302,77 @@ fn calendar_prev_next_month_handles_year_boundary() {
     state.next_month();
     assert_eq!((state.year, state.month), (2024, 1));
 }
+
+#[test]
+fn paginator_new_clamps_per_page_to_one() {
+    let state = PaginatorState::new(30, 0);
+    assert_eq!(state.per_page, 1);
+    assert_eq!(state.page, 0);
+    assert_eq!(state.style, PaginatorStyle::Dots);
+    // No division by zero.
+    assert_eq!(state.total_pages(), 30);
+}
+
+#[test]
+fn paginator_total_pages() {
+    assert_eq!(PaginatorState::new(0, 5).total_pages(), 1); // empty -> 1 page
+    assert_eq!(PaginatorState::new(10, 3).total_pages(), 4); // ceil(10/3)
+    assert_eq!(PaginatorState::new(9, 3).total_pages(), 3); // exact multiple
+    assert_eq!(PaginatorState::new(1, 10).total_pages(), 1);
+}
+
+#[test]
+fn paginator_page_bounds() {
+    let mut state = PaginatorState::new(10, 3);
+    assert_eq!(state.page_bounds(), (0, 3));
+    state.set_page(1);
+    assert_eq!(state.page_bounds(), (3, 6));
+    state.set_page(3); // last (partial) page
+    assert_eq!(state.page_bounds(), (9, 10));
+}
+
+#[test]
+fn paginator_page_bounds_empty_is_zero_zero() {
+    let state = PaginatorState::new(0, 3);
+    assert_eq!(state.page_bounds(), (0, 0));
+}
+
+#[test]
+fn paginator_next_prev_clamp_both_ends() {
+    let mut state = PaginatorState::new(6, 3); // 2 pages
+    state.prev_page(); // already at 0
+    assert_eq!(state.page, 0);
+    state.next_page();
+    assert_eq!(state.page, 1);
+    state.next_page(); // already last
+    assert_eq!(state.page, 1);
+}
+
+#[test]
+fn paginator_set_page_clamps_into_range() {
+    let mut state = PaginatorState::new(10, 3); // 4 pages
+    state.set_page(99);
+    assert_eq!(state.page, 3);
+    state.set_page(1);
+    assert_eq!(state.page, 1);
+}
+
+#[test]
+fn paginator_set_total_items_reclamps_page() {
+    let mut state = PaginatorState::new(10, 3);
+    state.set_page(3);
+    state.set_total_items(3); // now only 1 page
+    assert_eq!(state.total_items, 3);
+    assert_eq!(state.page, 0);
+}
+
+#[test]
+fn paginator_set_per_page_reclamps_page() {
+    let mut state = PaginatorState::new(10, 3); // 4 pages
+    state.set_page(3);
+    state.set_per_page(10); // now only 1 page
+    assert_eq!(state.per_page, 10);
+    assert_eq!(state.page, 0);
+    state.set_per_page(0); // clamps to 1
+    assert_eq!(state.per_page, 1);
+}

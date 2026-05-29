@@ -1,5 +1,9 @@
 use super::*;
 
+/// Maximum page count rendered as dots before [`Context::paginator`] falls back
+/// to the compact `{page}/{total}` counter to avoid overflowing the line.
+const PAGINATOR_MAX_DOTS: usize = 12;
+
 impl Context {
     /// Render a data table with sortable columns and row selection.
     ///
@@ -381,6 +385,166 @@ impl Context {
         self.rollback.last_text_idx = None;
 
         response.changed = state.selected != old_selected;
+        response
+    }
+
+    /// Render a standalone paginator, decoupled from any list or table.
+    ///
+    /// Consumes Left/`h`/PageUp (previous page) and Right/`l`/PageDown (next
+    /// page) when focused, and consumes those key events when handled. Clicking
+    /// a dot (in [`PaginatorStyle::Dots`]) jumps to that page; clicking the
+    /// left/right half of the counter (in [`PaginatorStyle::Arabic`]) goes to
+    /// the previous/next page. [`Response::changed`] is `true` iff the page
+    /// changed this frame.
+    ///
+    /// Pass a `&mut PaginatorState` each frame and use
+    /// [`PaginatorState::page_bounds`] to slice your own data.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(42, 10);
+    /// # slt::run(move |ui: &mut slt::Context| {
+    /// ui.paginator(&mut state);
+    /// # });
+    /// ```
+    pub fn paginator(&mut self, state: &mut PaginatorState) -> Response {
+        // Reuse the tabs WidgetColors slot until a dedicated paginator slot lands.
+        let colors = self.widget_theme.tabs;
+        self.paginator_colored(state, &colors)
+    }
+
+    /// Render a standalone paginator with custom widget colors.
+    ///
+    /// Behaves exactly like [`Context::paginator`] but draws with the provided
+    /// [`WidgetColors`] instead of the theme defaults.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Color, PaginatorState, WidgetColors};
+    ///
+    /// let mut state = PaginatorState::new(20, 5);
+    /// let colors = WidgetColors {
+    ///     accent: Some(Color::Cyan),
+    ///     ..WidgetColors::default()
+    /// };
+    /// # slt::run(move |ui: &mut slt::Context| {
+    /// ui.paginator_colored(&mut state, &colors);
+    /// # });
+    /// ```
+    pub fn paginator_colored(
+        &mut self,
+        state: &mut PaginatorState,
+        colors: &WidgetColors,
+    ) -> Response {
+        state.page = state.page.min(state.total_pages().saturating_sub(1));
+        let old_page = state.page;
+
+        let focused = self.register_focusable();
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left | KeyCode::Char('h') | KeyCode::PageUp => {
+                        state.prev_page();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') | KeyCode::PageDown => {
+                        state.next_page();
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        let total_pages = state.total_pages();
+        // Dots style overflows past 12 pages, so fall back to the compact counter.
+        let use_dots =
+            matches!(state.style, PaginatorStyle::Dots) && total_pages <= PAGINATOR_MAX_DOTS;
+
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                if mouse.y != rect.y {
+                    continue;
+                }
+                let rel_x = mouse.x.saturating_sub(rect.x);
+                if use_dots {
+                    // Dots render with no inter-glyph gap, so dot `n` is at column `n`.
+                    let target = rel_x as usize;
+                    if target < total_pages {
+                        state.set_page(target);
+                        consumed.push(i);
+                    }
+                } else {
+                    // Counter: left half -> prev, right half -> next.
+                    let label = format!("{}/{}", state.page + 1, total_pages);
+                    let width = UnicodeWidthStr::width(label.as_str()) as u32;
+                    if rel_x < width {
+                        if rel_x < width / 2 {
+                            state.prev_page();
+                        } else {
+                            state.next_page();
+                        }
+                        consumed.push(i);
+                    }
+                }
+            }
+            self.consume_indices(consumed);
+        }
+
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+
+        if use_dots {
+            let active_color = colors.accent.unwrap_or(self.theme.primary);
+            let inactive_color = colors.fg.unwrap_or(self.theme.text_dim);
+            for page in 0..total_pages {
+                let (glyph, color) = if page == state.page {
+                    ("●", active_color)
+                } else {
+                    ("○", inactive_color)
+                };
+                let style = if page == state.page && focused {
+                    Style::new().fg(color).bold()
+                } else {
+                    Style::new().fg(color)
+                };
+                self.styled(glyph, style);
+            }
+        } else {
+            let label = format!("{}/{}", state.page + 1, total_pages);
+            let style = Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim));
+            self.styled(label, style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        response.changed = state.page != old_page;
         response
     }
 

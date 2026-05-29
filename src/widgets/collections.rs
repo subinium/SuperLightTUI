@@ -598,6 +598,198 @@ impl TableState {
     }
 }
 
+/// Visual style for [`Context::paginator`](crate::Context::paginator).
+///
+/// `Dots` renders one `●`/`○` glyph per page and is the default; it falls back
+/// to `Arabic` automatically once there are more than 12 pages so the indicator
+/// never overflows. `Arabic` renders a compact `{page}/{total}` counter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaginatorStyle {
+    /// One `●`/`○` glyph per page. Auto-falls back to [`Self::Arabic`] past 12 pages.
+    #[default]
+    Dots,
+    /// Compact `{page}/{total}` counter.
+    Arabic,
+}
+
+/// Standalone pagination state, decoupled from any list or table.
+///
+/// Owns a page index over an arbitrary item count, so you can paginate a
+/// wizard, slide deck, onboarding flow, carousel, or any non-table data. Pass a
+/// mutable reference to [`Context::paginator`](crate::Context::paginator) each
+/// frame; Left/`h`/PageUp move to the previous page and Right/`l`/PageDown move
+/// to the next page when the widget is focused.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{PaginatorState, PaginatorStyle};
+///
+/// let mut state = PaginatorState::new(42, 10); // 42 items, 10 per page
+/// state.style = PaginatorStyle::Arabic;
+/// assert_eq!(state.total_pages(), 5);
+/// let (start, end) = state.page_bounds(); // slice your own data with these
+/// assert_eq!((start, end), (0, 10));
+/// ```
+#[derive(Debug, Clone)]
+pub struct PaginatorState {
+    /// Total number of items being paged over.
+    pub total_items: usize,
+    /// Items per page (clamped to `>= 1` internally).
+    pub per_page: usize,
+    /// Current page (0-based).
+    pub page: usize,
+    /// Rendering style.
+    pub style: PaginatorStyle,
+}
+
+impl PaginatorState {
+    /// Create a paginator over `total_items` with `per_page` items per page.
+    ///
+    /// `per_page` is clamped to at least `1` internally (so a `0` argument is
+    /// treated as `1`, avoiding division by zero). The current page starts at
+    /// `0` and the style defaults to [`PaginatorStyle::Dots`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let state = PaginatorState::new(30, 0); // 0 per_page -> clamped to 1
+    /// assert_eq!(state.per_page, 1);
+    /// assert_eq!(state.total_pages(), 30);
+    /// ```
+    pub fn new(total_items: usize, per_page: usize) -> Self {
+        Self {
+            total_items,
+            per_page: per_page.max(1),
+            page: 0,
+            style: PaginatorStyle::default(),
+        }
+    }
+
+    /// Total number of pages; always `>= 1` (returns `1` when there are no items).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// assert_eq!(PaginatorState::new(0, 5).total_pages(), 1);
+    /// assert_eq!(PaginatorState::new(10, 3).total_pages(), 4);
+    /// assert_eq!(PaginatorState::new(9, 3).total_pages(), 3);
+    /// ```
+    pub fn total_pages(&self) -> usize {
+        self.total_items.div_ceil(self.per_page.max(1)).max(1)
+    }
+
+    /// Inclusive-start / exclusive-end item indices for the current page.
+    ///
+    /// `end` is clamped to `total_items`, so callers can slice their own data
+    /// with `&items[start..end]` without bounds-checking the tail page.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(10, 3);
+    /// assert_eq!(state.page_bounds(), (0, 3));
+    /// state.set_page(3); // last (partial) page
+    /// assert_eq!(state.page_bounds(), (9, 10));
+    /// ```
+    pub fn page_bounds(&self) -> (usize, usize) {
+        let start = self
+            .page
+            .saturating_mul(self.per_page)
+            .min(self.total_items);
+        let end = start.saturating_add(self.per_page).min(self.total_items);
+        (start, end)
+    }
+
+    /// Advance one page, clamped to the last page (no wrap).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(6, 3); // 2 pages
+    /// state.next_page();
+    /// assert_eq!(state.page, 1);
+    /// state.next_page(); // already last page -> clamped
+    /// assert_eq!(state.page, 1);
+    /// ```
+    pub fn next_page(&mut self) {
+        self.page = (self.page + 1).min(self.total_pages().saturating_sub(1));
+    }
+
+    /// Go back one page, clamped to `0` (no wrap).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(6, 3);
+    /// state.prev_page(); // already page 0 -> clamped
+    /// assert_eq!(state.page, 0);
+    /// ```
+    pub fn prev_page(&mut self) {
+        self.page = self.page.saturating_sub(1);
+    }
+
+    /// Jump to a specific page, clamped into `[0, total_pages() - 1]`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(10, 3); // 4 pages
+    /// state.set_page(99);
+    /// assert_eq!(state.page, 3);
+    /// ```
+    pub fn set_page(&mut self, page: usize) {
+        self.page = page.min(self.total_pages().saturating_sub(1));
+    }
+
+    /// Update the item count and re-clamp the current page into range.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(10, 3);
+    /// state.set_page(3); // last page
+    /// state.set_total_items(3); // now only 1 page
+    /// assert_eq!(state.page, 0);
+    /// ```
+    pub fn set_total_items(&mut self, total: usize) {
+        self.total_items = total;
+        self.page = self.page.min(self.total_pages().saturating_sub(1));
+    }
+
+    /// Update items-per-page (clamped to `>= 1`) and re-clamp the current page.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(10, 3); // 4 pages
+    /// state.set_page(3);
+    /// state.set_per_page(10); // now only 1 page
+    /// assert_eq!(state.per_page, 10);
+    /// assert_eq!(state.page, 0);
+    /// ```
+    pub fn set_per_page(&mut self, per_page: usize) {
+        self.per_page = per_page.max(1);
+        self.page = self.page.min(self.total_pages().saturating_sub(1));
+    }
+}
+
 /// A highlighted line range within a scrollable region.
 ///
 /// Used with [`ScrollState::set_highlights`] to mark search results, error
