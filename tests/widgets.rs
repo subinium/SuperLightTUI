@@ -5264,3 +5264,158 @@ fn calendar_h_l_move_by_day() {
     });
     assert_eq!((state.year, state.month), (2024, 6));
 }
+
+// ── Color picker ──────────────────────────────────────────────────────
+
+#[test]
+fn color_picker_renders_swatch_grid() {
+    let mut tb = TestBackend::new(40, 12);
+    tb.render(|ui| {
+        let mut s = ColorPickerState::tailwind();
+        ui.color_picker(&mut s);
+    });
+    // The selected-color readout uses the `▸` marker and a #RRGGBB label.
+    tb.assert_contains("▸");
+    tb.assert_contains("hex");
+}
+
+#[test]
+fn color_picker_empty_palette_no_panic() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(Vec::new());
+    tb.render(|ui| {
+        let resp = ui.color_picker(&mut s);
+        assert!(!resp.changed);
+    });
+}
+
+#[test]
+fn color_picker_right_then_down_move_cursor() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // Right moves +1.
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(right, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1);
+
+    // Down moves +columns.
+    let down = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Down)
+        .build();
+    tb.render_with_events(down, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1 + 8);
+}
+
+#[test]
+fn color_picker_cursor_clamps_at_edges_no_wrap() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // Left at column 0 stays put (no wrap to previous row).
+    let left = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+    tb.render_with_events(left, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 0);
+
+    // Up at row 0 stays put.
+    let up = slt::EventBuilder::new().key_code(slt::KeyCode::Up).build();
+    tb.render_with_events(up, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 0);
+}
+
+#[test]
+fn color_picker_changed_true_on_nav_false_on_noop() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    let mut changed = false;
+    tb.render_with_events(right, 0, 1, |ui| {
+        changed = ui.color_picker(&mut s).changed;
+    });
+    assert!(changed, "moving the cursor must report changed");
+
+    // Left at the new column 1 still moves (to 0) — pick a genuine no-op:
+    // Up at row 0 does not change the color.
+    let up = slt::EventBuilder::new().key_code(slt::KeyCode::Up).build();
+    let mut changed2 = true;
+    tb.render_with_events(up, 0, 1, |ui| {
+        changed2 = ui.color_picker(&mut s).changed;
+    });
+    assert!(!changed2, "a clamped no-op move must not report changed");
+}
+
+#[test]
+fn color_picker_tab_toggles_hex_mode_and_typing_sets_color() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(vec![slt::Color::Rgb(239, 68, 68)]);
+
+    // Tab enters hex mode.
+    let tab = slt::EventBuilder::new().key_code(slt::KeyCode::Tab).build();
+    tb.render_with_events(tab, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.mode, PickerMode::Hex);
+
+    // Type a valid hex string; selected() reflects it.
+    for ch in "#3b82f6".chars() {
+        let ev = slt::EventBuilder::new().key(ch).build();
+        tb.render_with_events(ev, 0, 1, |ui| {
+            ui.color_picker(&mut s);
+        });
+    }
+    assert_eq!(s.selected(), slt::Color::Rgb(59, 130, 246));
+    assert!(s.hex_input.validation_error.is_none());
+}
+
+#[test]
+fn color_picker_invalid_hex_surfaces_validation_error() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(vec![slt::Color::Rgb(239, 68, 68)]);
+    s.mode = PickerMode::Hex;
+
+    for ch in "zz".chars() {
+        let ev = slt::EventBuilder::new().key(ch).build();
+        tb.render_with_events(ev, 0, 1, |ui| {
+            ui.color_picker(&mut s);
+        });
+    }
+    // Color unchanged (falls back to the swatch), error surfaced.
+    assert_eq!(s.selected(), slt::Color::Rgb(239, 68, 68));
+    assert!(s.hex_input.validation_error.is_some());
+    tb.assert_contains("✗");
+}
+
+#[test]
+fn color_picker_click_selects_swatch() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // First render establishes the hit-test rect for the interaction.
+    tb.render(|ui| {
+        ui.color_picker(&mut s);
+    });
+
+    // Click the second swatch cell on the first grid row. Each swatch is
+    // 3 cells wide; the grid starts at x = rect.x + 2 (rounded border + x
+    // padding) and y = rect.y + 1 (top border). Column 1 sits at x = 5, y = 1.
+    let click = slt::EventBuilder::new().click(5, 1).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1, "click on column 1 should select swatch 1");
+}
