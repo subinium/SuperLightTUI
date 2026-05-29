@@ -177,15 +177,15 @@ pub use style::{
     ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
 pub use widgets::{
-    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, ChordState,
-    ColorPickerState, CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry,
-    FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, ModeState, MultiSelectState, PaginatorState, PaginatorStyle,
-    PaletteCommand, PickerMode, RadioState, RichLogEntry, RichLogState, ScreenState, ScrollState,
-    SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
+    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
+    CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
+    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
+    GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
+    PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState, RichLogEntry,
+    RichLogState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
+    SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
+    ToolApprovalState, TreeNode, TreeState, Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.

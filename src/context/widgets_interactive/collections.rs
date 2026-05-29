@@ -328,6 +328,10 @@ impl Context {
 
     /// Render a calendar date picker with month navigation.
     ///
+    /// Single-date mode is the default. Opt into range selection with
+    /// [`CalendarState::with_range`] and an optional `HH:MM` time row with
+    /// [`CalendarState::with_time`].
+    ///
     /// # Keybindings (when focused)
     ///
     /// | Key | Action |
@@ -338,11 +342,34 @@ impl Context {
     /// | `Down` | Next week (+7 days) |
     /// | `[` | Previous month |
     /// | `]` | Next month |
-    /// | `Enter` / `Space` | Select cursor day |
+    /// | `Enter` / `Space` | Select cursor day (range: set anchor) |
+    /// | `Shift+Left` / `Shift+H` | Extend range −1 day |
+    /// | `Shift+Right` / `Shift+L` | Extend range +1 day |
+    /// | `Shift+Up` | Extend range −7 days |
+    /// | `Shift+Down` | Extend range +7 days |
+    /// | `Shift+Enter` / `Shift+Space` | Set range extent at cursor |
     ///
     /// `h`/`l` follow vim convention (cursor by one day). Use `[`/`]` for
     /// month navigation. Mouse clicks on the title row navigate months and
-    /// clicks inside the day grid select that day.
+    /// clicks inside the day grid select that day; in range mode a
+    /// `Shift`+left-click sets the range extent endpoint.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// # let mut cal = slt::CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// let resp = ui.calendar(&mut cal);
+    /// if resp.changed {
+    ///     if let Some((start, end)) = cal.selected_range() {
+    ///         ui.text(format!("{}-{:02}-{:02} → {}-{:02}-{:02}",
+    ///             start.year, start.month, start.day,
+    ///             end.year, end.month, end.day));
+    ///     }
+    /// }
+    /// # });
+    /// ```
     pub fn calendar(&mut self, state: &mut CalendarState) -> Response {
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -353,35 +380,35 @@ impl Context {
             state.selected_day = Some(day.min(month_days));
         }
         let old_selected = state.selected_day;
+        let old_anchor = state.anchor;
+        let old_extent = state.extent;
+        let old_time = (state.hour, state.minute);
 
         if focused {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
+                let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                let range = state.mode == CalendarSelect::Range;
+                // Day delta for cursor-movement keys; `None` for non-movement keys.
+                let movement_delta = match key.code {
+                    KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => Some(-1),
+                    KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => Some(1),
+                    KeyCode::Up => Some(-7),
+                    KeyCode::Down => Some(7),
+                    _ => None,
+                };
+
+                if let Some(delta) = movement_delta {
+                    calendar_move_cursor_by_days(state, delta);
+                    if range && shift {
+                        // Shift-extend: move the extent endpoint with the cursor.
+                        state.extend_to_cursor();
+                    }
+                    consumed_indices.push(i);
+                    continue;
+                }
+
                 match key.code {
-                    KeyCode::Left => {
-                        calendar_move_cursor_by_days(state, -1);
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Right => {
-                        calendar_move_cursor_by_days(state, 1);
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Up => {
-                        calendar_move_cursor_by_days(state, -7);
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Down => {
-                        calendar_move_cursor_by_days(state, 7);
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Char('h') => {
-                        calendar_move_cursor_by_days(state, -1);
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Char('l') => {
-                        calendar_move_cursor_by_days(state, 1);
-                        consumed_indices.push(i);
-                    }
                     KeyCode::Char('[') => {
                         state.prev_month();
                         consumed_indices.push(i);
@@ -391,7 +418,17 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        state.selected_day = Some(state.cursor_day);
+                        if range {
+                            if shift {
+                                // Set the range extent endpoint at the cursor.
+                                state.extend_to_cursor();
+                            } else {
+                                // Set / reset the anchor at the cursor.
+                                state.set_anchor_to_cursor();
+                            }
+                        } else {
+                            state.selected_day = Some(state.cursor_day);
+                        }
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -438,7 +475,17 @@ impl Context {
                     continue;
                 }
                 state.cursor_day = day;
-                state.selected_day = Some(day);
+                if state.mode == CalendarSelect::Range {
+                    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                        // Shift+click sets the range extent endpoint.
+                        state.extend_to_cursor();
+                    } else {
+                        // Plain click (re)sets the anchor.
+                        state.set_anchor_to_cursor();
+                    }
+                } else {
+                    state.selected_day = Some(day);
+                }
                 consumed.push(i);
             }
             self.consume_indices(consumed);
@@ -552,7 +599,26 @@ impl Context {
                 }
                 let day = idx - first + 1;
                 let text = format!("{day:>2} ");
-                let style = if state.selected_day == Some(day) {
+                let cell = CalDate {
+                    year: state.year,
+                    month: state.month,
+                    day,
+                };
+                let style = if state.mode == CalendarSelect::Range {
+                    if state.is_range_endpoint(cell) {
+                        // Endpoints get the strong selected highlight.
+                        Style::new()
+                            .bg(self.theme.selected_bg)
+                            .fg(self.theme.selected_fg)
+                    } else if state.in_range(cell) {
+                        // Interior band: subtler surface fill, distinct from endpoints.
+                        Style::new().bg(self.theme.surface).fg(self.theme.text)
+                    } else if state.cursor_day == day {
+                        Style::new().fg(self.theme.primary).bold()
+                    } else {
+                        Style::new().fg(self.theme.text)
+                    }
+                } else if state.selected_day == Some(day) {
                     Style::new()
                         .bg(self.theme.selected_bg)
                         .fg(self.theme.selected_fg)
@@ -567,9 +633,17 @@ impl Context {
             self.commands.push(Command::EndContainer);
         }
 
+        if state.time_enabled {
+            let time_text = format!("{:02}:{:02}", state.hour, state.minute);
+            self.styled(time_text, Style::new().fg(self.theme.text).bold());
+        }
+
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
-        response.changed = state.selected_day != old_selected;
+        response.changed = state.selected_day != old_selected
+            || state.anchor != old_anchor
+            || state.extent != old_extent
+            || (state.hour, state.minute) != old_time;
         response
     }
 

@@ -1469,6 +1469,7 @@ pub(crate) struct SessionSnapshot {
     mode: TerminalSessionMode,
     mouse_enabled: bool,
     kitty_keyboard: bool,
+    report_all_keys: bool,
 }
 
 /// Set by the SIGCONT handler and consumed once at the top of each run-loop
@@ -1486,6 +1487,7 @@ impl Terminal {
             mode: self.session.mode,
             mouse_enabled: self.session.mouse_enabled,
             kitty_keyboard: self.session.kitty_keyboard,
+            report_all_keys: self.session.report_all_keys,
         }
     }
 }
@@ -1499,6 +1501,7 @@ impl InlineTerminal {
             mode: self.session.mode,
             mouse_enabled: self.session.mouse_enabled,
             kitty_keyboard: self.session.kitty_keyboard,
+            report_all_keys: self.session.report_all_keys,
         }
     }
 }
@@ -1551,6 +1554,7 @@ pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
         mode: snapshot.mode,
         mouse_enabled: snapshot.mouse_enabled,
         kitty_keyboard: snapshot.kitty_keyboard,
+        report_all_keys: snapshot.report_all_keys,
     };
     let _ = write_session_enter(&mut out, &guard);
     let _ = out.flush();
@@ -1564,6 +1568,7 @@ fn test_snapshot(mode: TerminalSessionMode, mouse: bool, kitty: bool) -> Session
         mode,
         mouse_enabled: mouse,
         kitty_keyboard: kitty,
+        report_all_keys: false,
     }
 }
 
@@ -1575,6 +1580,7 @@ pub(crate) fn test_session_snapshot() -> SessionSnapshot {
         mode: TerminalSessionMode::Fullscreen,
         mouse_enabled: false,
         kitty_keyboard: false,
+        report_all_keys: false,
     }
 }
 
