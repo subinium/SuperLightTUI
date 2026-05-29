@@ -84,7 +84,7 @@ fn bench_full_render(c: &mut Criterion) {
             backend.render(|ui| {
                 let _ = ui.col(|ui| {
                     ui.text("Header").bold();
-                    ui.separator();
+                    let _ = ui.separator();
                     for i in 0..20 {
                         ui.text(format!("Row {i}"));
                     }

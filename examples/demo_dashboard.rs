@@ -212,7 +212,7 @@ pub fn render_frame(
                     .grow(1)
                     .col(|ui| {
                         let _ = ui.table(proc_table);
-                        ui.separator();
+                        let _ = ui.separator();
                         let _ = ui.row(|ui| {
                             if ui.button("Kill").clicked {
                                 let row = proc_table.selected;

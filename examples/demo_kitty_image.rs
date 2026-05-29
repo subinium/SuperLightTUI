@@ -48,7 +48,7 @@ fn main() -> std::io::Result<()> {
                             .fg(Color::Yellow);
                         let _ = ui.kitty_image(rgba, *w, *h, 30, 8);
                         if i < images.len() - 1 {
-                            ui.separator();
+                            let _ = ui.separator();
                         }
                     }
                     ui.text("");

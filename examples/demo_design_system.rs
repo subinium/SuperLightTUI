@@ -120,7 +120,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             theme_name
         ))
         .fg(text_dim);
-        ui.separator();
+        let _ = ui.separator();
     });
 
     if state.show_themes {

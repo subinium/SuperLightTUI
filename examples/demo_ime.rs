@@ -59,7 +59,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("IME Input Demo").bold().fg(theme.primary);
             ui.text("Hangul / Japanese / Chinese composition input")
                 .dim();
-            ui.separator();
+            let _ = ui.separator();
 
             let _ = ui.container().gap(2).row(|ui| {
                 let _ = ui.container().grow(1).gap(1).col(|ui| {
@@ -94,7 +94,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 });
             });
 
-            ui.separator();
+            let _ = ui.separator();
 
             ui.text("Message").bold();
             let rows = term_h.saturating_sub(16).max(5);

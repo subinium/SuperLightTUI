@@ -64,7 +64,7 @@ pub fn render_frame(
             ui.text("CJK 위젯 데모 — Ctrl+Q to quit · 카드를 클릭해 보세요")
                 .bold()
                 .fg(Color::Cyan);
-            ui.separator();
+            let _ = ui.separator();
 
             let _ = ui.row(|ui| {
                 let _ = ui
@@ -92,7 +92,7 @@ pub fn render_frame(
                     });
             });
 
-            ui.separator();
+            let _ = ui.separator();
             let _ = ui.row(|ui| {
                 // Group name encodes the focus role so `is_group_focused`
                 // (used by `text_input` internally) stays unique even if
@@ -126,7 +126,7 @@ pub fn render_frame(
                     });
             });
 
-            ui.separator();
+            let _ = ui.separator();
             ui.text("Truncation table — 각 박스는 너비 12, 제목이 잘려야 정상 (hover/click)")
                 .dim();
             let _ = ui.row(|ui| {
@@ -169,7 +169,7 @@ pub fn render_frame(
                 }
             });
 
-            ui.separator();
+            let _ = ui.separator();
             let _ = ui.row(|ui| {
                 let last_label = last_clicked_state
                     .get(ui)

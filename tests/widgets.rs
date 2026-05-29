@@ -3251,7 +3251,7 @@ fn scrollbar_renders_thumb() {
                     ui.text(format!("Line {i}"));
                 }
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     tb.render(|ui| {
@@ -3261,7 +3261,7 @@ fn scrollbar_renders_thumb() {
                     ui.text(format!("Line {i}"));
                 }
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     let output = tb.to_string();
@@ -3277,7 +3277,7 @@ fn scrollbar_no_render_when_content_fits() {
             ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
                 ui.text("short content");
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     tb.render(|ui| {
@@ -3285,7 +3285,7 @@ fn scrollbar_no_render_when_content_fits() {
             ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
                 ui.text("short content");
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     let output = tb.to_string();
@@ -5155,6 +5155,89 @@ fn separator_colored_still_callable_after_move() {
         ui.separator_colored(slt::Color::Red);
     });
     tb.assert_contains("─");
+}
+
+// ── #241: separator / separator_colored / scrollbar return real Response ────
+
+#[test]
+fn separator_returns_response() {
+    // The interaction rect resolves against the *previous* frame's hit map,
+    // so the rect is empty on frame 1 and populated on frame 2.
+    let mut tb = TestBackend::new(40, 5);
+    let render = |ui: &mut slt::Context| {
+        let r = ui.separator();
+        // A real Response (not a chained `&mut Self`).
+        assert!(!r.clicked, "no click event was injected");
+        r
+    };
+    tb.render(|ui| {
+        render(ui);
+    });
+    let mut width = 0;
+    tb.render(|ui| {
+        width = render(ui).rect.width;
+    });
+    assert!(width > 0, "separator response rect should be sized");
+    tb.assert_contains("─");
+}
+
+#[test]
+fn separator_colored_returns_response() {
+    let mut tb = TestBackend::new(40, 5);
+    let render = |ui: &mut slt::Context| ui.separator_colored(slt::Color::Cyan);
+    tb.render(|ui| {
+        render(ui);
+    });
+    let mut r = slt::Response::none();
+    tb.render(|ui| {
+        r = render(ui);
+    });
+    assert!(r.rect.width > 0);
+    assert!(!r.clicked);
+    tb.assert_contains("─");
+}
+
+#[test]
+fn scrollbar_returns_response_when_rendered() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    let mut last_width = 0;
+    // The track is a `col` container, so its `Response` carries the track
+    // hit-test rect. The rect resolves against the prior frame's hit map and
+    // the scroll metrics take a frame to establish, so prime three frames.
+    for _ in 0..3 {
+        tb.render(|ui| {
+            ui.container().h(8).row(|ui| {
+                ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                    for i in 0..50 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                last_width = ui.scrollbar(&mut scroll).rect.width;
+            });
+        });
+    }
+    // Track region is rendered, so the interaction rect is sized.
+    assert!(last_width > 0, "scrollbar track rect should be sized");
+}
+
+#[test]
+fn scrollbar_returns_response_none_when_content_fits() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.container().h(8).row(|ui| {
+                ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                    ui.text("short content");
+                });
+                let r = ui.scrollbar(&mut scroll);
+                // Nothing rendered → Response::none() (degenerate rect).
+                assert_eq!(r.rect.width, 0, "no scrollbar → empty response rect");
+                assert!(!r.clicked);
+            });
+        });
+    }
 }
 
 // ── #133: use_memo single-downcast cache-hit path ──────────────────────────

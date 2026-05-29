@@ -159,7 +159,20 @@ impl Context {
     ///
     /// The line is drawn with the theme's border color and expands to fill the
     /// container width.
-    pub fn separator(&mut self) -> &mut Self {
+    ///
+    /// Returns a [`Response`] so the divider's hit-test rect is available for
+    /// hover detection. Prior to v0.21.0 this returned `&mut Self`, but the
+    /// chained style mutators (`.bold()`, `.fg()`) were a no-op — the cached
+    /// separator string is already finalized — so the chain was dropped.
+    /// Statement-form callers (`ui.separator();`) compile unchanged.
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.separator();
+    /// # });
+    /// ```
+    pub fn separator(&mut self) -> Response {
+        let response = self.interaction();
         // The cached `sep_line()` is much wider than any reasonable terminal,
         // so the cross-axis (column-direction) clip in `Buffer::set_string`
         // truncates the trailing chars. Keeping `grow = 0` means a column
@@ -178,11 +191,23 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
+        response
     }
 
     /// Render a horizontal separator line with a custom color.
-    pub fn separator_colored(&mut self, color: Color) -> &mut Self {
+    ///
+    /// Returns a [`Response`] for hover detection; see [`Context::separator`]
+    /// for the v0.21.0 return-shape change. Statement-form callers compile
+    /// unchanged.
+    ///
+    /// ```no_run
+    /// # use slt::Color;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.separator_colored(Color::Cyan);
+    /// # });
+    /// ```
+    pub fn separator_colored(&mut self, color: Color) -> Response {
+        let response = self.interaction();
         self.commands.push(Command::Text {
             content: sep_line().to_owned(),
             cursor_offset: None,
@@ -195,7 +220,7 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
+        response
     }
 
     /// Conditionally render content when the named screen is active.
@@ -926,17 +951,23 @@ impl Context {
     ///     ui.scrollable(&mut scroll).grow(1).col(|ui| {
     ///         for i in 0..100 { ui.text(format!("Line {i}")); }
     ///     });
-    ///     ui.scrollbar(&scroll);
+    ///     ui.scrollbar(&mut scroll);
     /// });
     /// # });
     /// ```
     ///
     /// # Returns
     ///
-    /// Currently always returns [`Response::none()`]. The [`Response`] return
-    /// type reserves an extension point so future click-to-jump and
-    /// drag-to-scroll handling can be added without a further breaking change.
-    pub fn scrollbar(&mut self, state: &ScrollState) -> Response {
+    /// A [`Response`] whose hit-test rect covers the scrollbar track — it is
+    /// the track container's own interaction response, so `.clicked`,
+    /// `.hovered`, and `.rect` are populated for the track region today. The
+    /// `&mut ScrollState` receiver reserves the extension point so future
+    /// click-to-jump and drag-to-scroll handling (issue #249) can mutate the
+    /// offset without a further breaking change. When the content fits the
+    /// viewport nothing is rendered and [`Response::none()`] is returned.
+    /// Prior to v0.21.0 the receiver was `&ScrollState`; pass `&mut scroll`
+    /// instead.
+    pub fn scrollbar(&mut self, state: &mut ScrollState) -> Response {
         let vh = state.viewport_height();
         let ch = state.content_height();
         if vh == 0 || ch <= vh {
@@ -957,7 +988,10 @@ impl Context {
         const THUMB: &str = "█";
         const TRACK: &str = "│";
 
-        let _ = self.container().w(1).h(track_height).col(|ui| {
+        // The track container carries its own interaction slot (every
+        // `col`/`row` reserves one), so its `Response` is the hit-test rect
+        // for click-to-jump — no separate `interaction()` call is needed.
+        self.container().w(1).h(track_height).col(|ui| {
             for i in 0..track_height {
                 if i >= thumb_pos && i < thumb_pos + thumb_height {
                     ui.styled(THUMB, Style::new().fg(theme.primary));
@@ -965,9 +999,7 @@ impl Context {
                     ui.styled(TRACK, Style::new().fg(theme.text_dim).dim());
                 }
             }
-        });
-
-        Response::none()
+        })
     }
 
     fn auto_scroll_nested(

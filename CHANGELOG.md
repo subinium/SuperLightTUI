@@ -2,6 +2,10 @@
 
 ## [0.21.0] - Unreleased
 
+### Changed (Breaking)
+
+- **`feat(widgets-display)`! — `scrollbar()`, `separator()`, `separator_colored()` return real `Response`** (#241) — Resolves `Known v0.21 migration note #2` / `docs/ARCHITECTURE.md` M4 (`no () returns`). `separator()` / `separator_colored()` previously returned `&mut Self` from a legacy text-chain pattern, but the chained `.bold()` / `.fg()` mutators were a no-op (the cached separator string is already finalized), so the misleading chain is dropped in favor of a real `Response` routed through `Context::interaction()`. `scrollbar()` already returned `Response::none()` in v0.20 (#184); it is now routed through `Context::interaction()` so the track hit-test rect is populated, and its receiver changes from `&ScrollState` to `&mut ScrollState` to reserve the click-to-jump / drag-to-scroll extension point (#249) without another breaking change. **Migration:** statement-form `separator` callers (`ui.separator();`) compile unchanged; any `.separator().bold()`-style chains must drop the no-op suffix (none existed in-crate). `scrollbar` callers pass `&mut scroll` instead of `&scroll`.
+
 ### Added
 
 - **`feat(test-utils)` — `PtyBackend` + `PtyFrame` end-to-end escape-byte harness** (#274) — Behind the dev-only `pty-test` feature (off by default), `PtyBackend` drives the *real* `Terminal` flush pipeline into an in-process `Vec<u8>` sink, so the actual escape/image-protocol bytes that ship to a terminal — SGR runs, OSC 8 hyperlinks, Sixel (`\x1bPq`), Kitty graphics (`\x1b_Ga=`), and color-depth-downsampled SGR — are asserted as whole frames. Assertions: `assert_emits`, `assert_not_emits`, `last_raw`, `frames_raw`, `with_color_depth`. This is the byte/protocol regression tier that the buffer-only `TestBackend` and the plain-text `insta` snapshots in `tests/visual_snapshots.rs` deliberately cannot reach. No real TTY required — reproducible on `ubuntu-latest`.

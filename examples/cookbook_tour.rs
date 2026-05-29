@@ -100,7 +100,7 @@ fn main() -> std::io::Result<()> {
             .grow(1)
             .col(|ui| {
                 let _ = ui.tabs(&mut state.tabs);
-                ui.separator();
+                let _ = ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so the intro's
                 // long help text and any overflowing recipe stay reachable
