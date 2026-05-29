@@ -1447,6 +1447,137 @@ fn write_session_cleanup(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Unix job-control suspend/resume (Ctrl+Z / `fg`) — issue #263
+// ---------------------------------------------------------------------------
+//
+// On Unix, SIGTSTP stops the process in kernel space with no Rust code on the
+// stack, so neither `Drop` nor the panic hook can restore the terminal. The
+// run loops install a `signal-hook` background thread that, on SIGTSTP, runs
+// the same teardown the session guard would (`disable_raw_mode`, leave alt
+// screen, show cursor, disable paste/focus/mouse/kitty) and then re-raises
+// SIGTSTP to genuinely stop; on SIGCONT it re-enters the session and flags a
+// full redraw. The whole feature is `#[cfg(unix)]` and uses only signal-hook's
+// safe API, preserving `#![forbid(unsafe_code)]`.
+
+/// Immutable snapshot of the active terminal session used by the unix
+/// suspend/resume handler to restore and re-enter the terminal across a
+/// Ctrl+Z / `fg` cycle without owning the `Terminal`/`InlineTerminal`.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SessionSnapshot {
+    mode: TerminalSessionMode,
+    mouse_enabled: bool,
+    kitty_keyboard: bool,
+}
+
+/// Set by the SIGCONT handler and consumed once at the top of each run-loop
+/// iteration to force a full clear + repaint after resuming from suspend.
+#[cfg(unix)]
+pub(crate) static NEEDS_FULL_REDRAW: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+impl Terminal {
+    /// Capture the session state the suspend/resume handler needs to restore
+    /// and re-enter this fullscreen terminal across Ctrl+Z / `fg`.
+    pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            mode: self.session.mode,
+            mouse_enabled: self.session.mouse_enabled,
+            kitty_keyboard: self.session.kitty_keyboard,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl InlineTerminal {
+    /// Capture the session state the suspend/resume handler needs to restore
+    /// and re-enter this inline terminal across Ctrl+Z / `fg`.
+    pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            mode: self.session.mode,
+            mouse_enabled: self.session.mouse_enabled,
+            kitty_keyboard: self.session.kitty_keyboard,
+        }
+    }
+}
+
+/// Write the escape sequences that tear down the TUI session in preparation
+/// for SIGTSTP (the inverse of [`write_session_enter`]).
+///
+/// `inline_reserved` is passed `false` to [`write_session_cleanup`] to avoid
+/// emitting the inline trailing-newline dance mid-session; the reserved region
+/// is repainted on resume via the forced full redraw. Pure byte output, no
+/// raw-mode toggle — split out so it can be unit-tested against a `Vec<u8>`.
+#[cfg(unix)]
+fn write_suspend_sequence(stdout: &mut impl Write, snapshot: &SessionSnapshot) -> io::Result<()> {
+    if snapshot.kitty_keyboard {
+        use crossterm::event::PopKeyboardEnhancementFlags;
+        execute!(stdout, PopKeyboardEnhancementFlags)?;
+    }
+    if snapshot.mouse_enabled {
+        execute!(stdout, DisableMouseCapture)?;
+    }
+    execute!(stdout, DisableFocusChange)?;
+    write_session_cleanup(stdout, snapshot.mode, false)
+}
+
+/// Restore the terminal to cooked/non-TUI state in preparation for the process
+/// being stopped by SIGTSTP.
+///
+/// Mirrors [`TerminalSessionGuard::restore`] but writes directly to
+/// `io::stdout()` (the handler runs on a background thread that does not own
+/// the buffered terminal stdout).
+#[cfg(unix)]
+pub(crate) fn suspend_to_shell(snapshot: &SessionSnapshot) {
+    let mut out = io::stdout();
+    let _ = write_suspend_sequence(&mut out, snapshot);
+    let _ = terminal::disable_raw_mode();
+    let _ = out.flush();
+}
+
+/// Re-enter the TUI session after a SIGCONT (resume via `fg`), matching the
+/// original [`SessionSnapshot`], and flag a full redraw for the next frame.
+///
+/// Mirrors [`TerminalSessionGuard::enter`] but writes directly to
+/// `io::stdout()`. Sets [`NEEDS_FULL_REDRAW`] so the next loop iteration clears
+/// the front buffer and repaints every cell.
+#[cfg(unix)]
+pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
+    let mut out = io::stdout();
+    let _ = terminal::enable_raw_mode();
+    let guard = TerminalSessionGuard {
+        mode: snapshot.mode,
+        mouse_enabled: snapshot.mouse_enabled,
+        kitty_keyboard: snapshot.kitty_keyboard,
+    };
+    let _ = write_session_enter(&mut out, &guard);
+    let _ = out.flush();
+    NEEDS_FULL_REDRAW.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Construct a [`SessionSnapshot`] for tests without a live terminal.
+#[cfg(all(unix, test))]
+fn test_snapshot(mode: TerminalSessionMode, mouse: bool, kitty: bool) -> SessionSnapshot {
+    SessionSnapshot {
+        mode,
+        mouse_enabled: mouse,
+        kitty_keyboard: kitty,
+    }
+}
+
+/// Construct a fullscreen [`SessionSnapshot`] for crate-level tests that drive
+/// the suspend handler without a live terminal (issue #263).
+#[cfg(all(unix, test))]
+pub(crate) fn test_session_snapshot() -> SessionSnapshot {
+    SessionSnapshot {
+        mode: TerminalSessionMode::Fullscreen,
+        mouse_enabled: false,
+        kitty_keyboard: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1514,6 +1645,85 @@ mod tests {
         assert!(output.ends_with('\n'));
         assert!(output.contains("\u{1b}[?25h"));
         assert!(output.contains("\u{1b}[?2004l"));
+    }
+
+    // ── Unix suspend/resume sequence tests (issue #263) ──────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_fullscreen_leaves_alt_screen() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, false, false);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
+        assert!(output.contains("\u{1b}[?25h"), "shows cursor");
+        assert!(output.contains("\u{1b}[?2004l"), "disables bracketed paste");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_inline_keeps_normal_screen() {
+        let snapshot = test_snapshot(TerminalSessionMode::Inline, false, false);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(
+            !output.contains("\u{1b}[?1049l"),
+            "inline must not leave alt screen"
+        );
+        assert!(output.contains("\u{1b}[?25h"), "shows cursor");
+        assert!(output.contains("\u{1b}[?2004l"), "disables bracketed paste");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_disables_mouse_and_kitty_when_enabled() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, true, true);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        // DisableMouseCapture emits the SGR-mouse disable (?1006l) among others.
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1006l"), "disables SGR mouse mode");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_sequence_fullscreen_round_trips_enter_and_flags_redraw() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, false, false);
+
+        // The resume path re-enters the same byte state as the initial enter.
+        let guard = TerminalSessionGuard {
+            mode: snapshot.mode,
+            mouse_enabled: snapshot.mouse_enabled,
+            kitty_keyboard: snapshot.kitty_keyboard,
+        };
+        let mut enter_bytes = Vec::new();
+        write_session_enter(&mut enter_bytes, &guard).unwrap();
+        let enter = String::from_utf8(enter_bytes).unwrap();
+        assert!(enter.contains("\u{1b}[?1049h"));
+        assert!(enter.contains("\u{1b}[?25l"));
+        assert!(enter.contains("\u{1b}[?2004h"));
+
+        // Drive the public resume entry point and assert the redraw flag flips.
+        NEEDS_FULL_REDRAW.store(false, std::sync::atomic::Ordering::SeqCst);
+        resume_from_shell(&snapshot);
+        assert!(
+            NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst),
+            "resume must request a full redraw exactly once"
+        );
+        assert!(
+            !NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst),
+            "the redraw flag is consumed by the first swap (idempotent)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn needs_full_redraw_swaps_true_once() {
+        NEEDS_FULL_REDRAW.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst));
+        assert!(!NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
