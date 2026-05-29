@@ -1093,3 +1093,141 @@ impl Default for SpinnerState {
         Self::dots()
     }
 }
+
+/// State for a numeric stepper field (clamp + step, integer or float).
+///
+/// A numeric stepper renders the value as an editable field with `▾`/`▴`
+/// affordances. When focused it adjusts via Up/Down (or `k`/`j`) and the scroll
+/// wheel, or the user can type a value directly and press `Enter` to commit it.
+/// The committed [`value`](NumberInputState::value) is always clamped into
+/// `[min, max]` (and rounded to a whole number in integer mode).
+///
+/// Create with [`NumberInputState::new`] (float) or
+/// [`NumberInputState::integer`], then pass to
+/// [`Context::number_input`](crate::Context::number_input) each frame.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::NumberInputState;
+/// # slt::run(|ui: &mut slt::Context| {
+/// let mut qty = NumberInputState::integer(3, 0, 10).step(1.0);
+/// let r = ui.number_input(&mut qty);
+/// if r.changed {
+///     // qty.value was adjusted this frame
+/// }
+/// # });
+/// ```
+///
+/// Available since `0.21.0`.
+#[derive(Debug, Clone)]
+pub struct NumberInputState {
+    /// Committed numeric value, always within `[min, max]`.
+    pub value: f64,
+    /// Inclusive lower bound.
+    pub min: f64,
+    /// Inclusive upper bound.
+    pub max: f64,
+    /// Increment applied per Up/Down/scroll tick.
+    pub step: f64,
+    /// When true, the value is whole-number only and rendered without a decimal point.
+    pub integer: bool,
+    /// In-progress typed text; `Some` while the user is editing the field.
+    pub editing: Option<String>,
+    /// Last parse failure from `Enter` on an invalid buffer, if any.
+    pub parse_error: Option<String>,
+}
+
+impl NumberInputState {
+    /// Float stepper with the given starting value and inclusive range.
+    ///
+    /// `value` is clamped into `[min, max]` immediately. If `min > max` the two
+    /// bounds are swapped so the range is always well-formed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::widgets::NumberInputState;
+    /// let s = NumberInputState::new(1.5, 0.0, 10.0);
+    /// assert_eq!(s.value, 1.5);
+    /// assert!(!s.integer);
+    /// ```
+    pub fn new(value: f64, min: f64, max: f64) -> Self {
+        let (min, max) = if min <= max { (min, max) } else { (max, min) };
+        Self {
+            value: value.clamp(min, max),
+            min,
+            max,
+            step: 1.0,
+            integer: false,
+            editing: None,
+            parse_error: None,
+        }
+    }
+
+    /// Integer stepper (rounds value, renders without a decimal point).
+    ///
+    /// Convenience constructor that sets `integer = true` and a default step of
+    /// `1.0`. `value` is clamped into `[min, max]`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::widgets::NumberInputState;
+    /// let s = NumberInputState::integer(42, 0, 100);
+    /// assert_eq!(s.value, 42.0);
+    /// assert!(s.integer);
+    /// ```
+    pub fn integer(value: i64, min: i64, max: i64) -> Self {
+        let mut s = Self::new(value as f64, min as f64, max as f64);
+        s.integer = true;
+        s
+    }
+
+    /// Set the per-tick increment (consumes self, builder style).
+    ///
+    /// Negative or zero steps are coerced to `0.0` (no adjustment).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::widgets::NumberInputState;
+    /// let s = NumberInputState::new(0.0, 0.0, 1.0).step(0.1);
+    /// assert!((s.step - 0.1).abs() < f64::EPSILON);
+    /// ```
+    pub fn step(mut self, step: f64) -> Self {
+        self.step = step.max(0.0);
+        self
+    }
+
+    /// Clamp `value` into `[min, max]` (and round if `integer`).
+    ///
+    /// Used internally after every adjustment and typed commit, and exposed so
+    /// callers that mutate [`value`](NumberInputState::value) directly can
+    /// re-normalize it.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::widgets::NumberInputState;
+    /// let mut s = NumberInputState::integer(0, 0, 10);
+    /// s.value = 99.0;
+    /// assert_eq!(s.clamped(), 10.0);
+    /// s.value = 3.7;
+    /// assert_eq!(s.clamped(), 4.0);
+    /// ```
+    pub fn clamped(&self) -> f64 {
+        let v = self.value.clamp(self.min, self.max);
+        if self.integer {
+            v.round()
+        } else {
+            v
+        }
+    }
+}
+
+impl Default for NumberInputState {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 100.0)
+    }
+}

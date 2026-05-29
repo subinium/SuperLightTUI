@@ -184,11 +184,11 @@ pub use widgets::{
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
     DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
     GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
-    PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState, RichLogEntry,
-    RichLogState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
-    SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState, TableColumn,
-    TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
-    ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
+    NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState,
+    RichLogEntry, RichLogState, ScreenState, ScrollState, SelectState, SpinnerState,
+    SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState,
+    TableColumn, TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage,
+    ToastState, ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
     DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 

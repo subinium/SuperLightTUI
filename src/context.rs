@@ -20,8 +20,8 @@ use crate::widgets::{
     color_hex_label, parse_hex_color, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate,
     CalendarSelect, CalendarState, ColorPickerState, CommandPaletteState, ContextItem,
     FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, MultiSelectState, PaginatorState, PaginatorStyle, PickerMode,
-    RadioState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
+    HighlightRange, ListState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
+    PickerMode, RadioState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
     SplitPaneState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
     ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
 };

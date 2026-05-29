@@ -211,4 +211,199 @@ impl Context {
         response.changed = changed;
         response
     }
+
+    /// Numeric stepper field: Up/Down (or `k`/`j`) and scroll-wheel adjust by
+    /// `step`, or type a value directly and press `Enter`. The committed value
+    /// is always clamped to `[min, max]` (and rounded in integer mode).
+    ///
+    /// Unlike [`slider`](Context::slider) — a bar-and-thumb control keyed by
+    /// Left/Right — this renders the raw value as a `▾ 42 ▴` field that accepts
+    /// direct typing. Config lives on [`NumberInputState`]. Up/`k` increments,
+    /// Down/`j` decrements; `Enter` commits a typed buffer, `Esc` discards it,
+    /// `Backspace` edits it. Left/Right are intentionally unused (reserved).
+    ///
+    /// `Response.focused` reflects focus and `Response.changed` is `true` iff
+    /// the committed value changed this frame. All handled key and scroll
+    /// events are consumed so they do not leak to other widgets or the global
+    /// quit handler.
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # use slt::widgets::NumberInputState;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut qty = NumberInputState::integer(3, 0, 10).step(1.0);
+    /// let r = ui.number_input(&mut qty);
+    /// if r.changed { /* qty.value updated */ }
+    /// # });
+    /// ```
+    pub fn number_input(&mut self, state: &mut NumberInputState) -> Response {
+        let focused = self.register_focusable();
+
+        // Normalize the committed value before processing input so the
+        // pre-frame baseline used for `changed` is itself in-range.
+        state.value = state.clamped();
+        let old = state.value;
+        let step = state.step.max(0.0);
+
+        let adjust = |state: &mut NumberInputState, delta: f64| {
+            if delta == 0.0 {
+                return;
+            }
+            // Adjusting commits any in-progress buffer (discarding it) and
+            // clears a prior parse error.
+            state.editing = None;
+            state.parse_error = None;
+            state.value = (state.value + delta).clamp(state.min, state.max);
+            if state.integer {
+                state.value = state.value.round();
+            }
+        };
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        adjust(state, step);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        adjust(state, -step);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(ch) if is_number_char(ch, state) => {
+                        let buf = state.editing.get_or_insert_with(String::new);
+                        buf.push(ch);
+                        state.parse_error = None;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        if let Some(buf) = state.editing.as_mut() {
+                            buf.pop();
+                            state.parse_error = None;
+                            consumed_indices.push(i);
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(buf) = state.editing.take() {
+                            let trimmed = buf.trim();
+                            match trimmed.parse::<f64>() {
+                                Ok(parsed) if parsed.is_finite() => {
+                                    state.value = parsed.clamp(state.min, state.max);
+                                    if state.integer {
+                                        state.value = state.value.round();
+                                    }
+                                    state.parse_error = None;
+                                }
+                                _ => {
+                                    state.parse_error = Some(format!("invalid number: {trimmed}"));
+                                }
+                            }
+                            consumed_indices.push(i);
+                        }
+                    }
+                    KeyCode::Esc if state.editing.is_some() => {
+                        state.editing = None;
+                        state.parse_error = None;
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        // Clamp again after key handling so the rendered value is in-range.
+        state.value = state.clamped();
+
+        let display = if let Some(buf) = state.editing.as_ref() {
+            buf.clone()
+        } else if state.integer {
+            format!("{:.0}", state.value)
+        } else {
+            format_compact_number(state.value)
+        };
+
+        let primary_color = self.theme.primary;
+        let dim_color = self.theme.text_dim;
+        let error_color = self.theme.error;
+        let value_color = if focused { primary_color } else { dim_color };
+        let arrow_color = if focused { primary_color } else { dim_color };
+        let parse_error = state.parse_error.clone();
+        let editing = state.editing.is_some();
+
+        let mut response = self.container().row(|ui| {
+            ui.text("▾").fg(arrow_color);
+            ui.text(" ");
+            if focused {
+                ui.text(display.as_str()).bold().fg(value_color);
+            } else {
+                ui.text(display.as_str()).fg(value_color);
+            }
+            ui.text(" ");
+            ui.text("▴").fg(arrow_color);
+            if editing {
+                ui.text(" ✎").fg(dim_color);
+            }
+            if let Some(err) = parse_error.as_ref() {
+                let mut indicator = String::with_capacity(2 + err.len());
+                indicator.push_str("  ⚠ ");
+                indicator.push_str(err);
+                ui.text(indicator).dim().fg(error_color);
+            }
+        });
+
+        // Scroll-wheel adjustment over the rendered field's rect. The row's
+        // `Response.rect` comes from the previous frame's hit map (the standard
+        // `prev_hit_map` pattern, mirroring `rich_log`), so a scroll tick takes
+        // effect on the next frame. `ScrollUp` increments, `ScrollDown`
+        // decrements, both clamped to `[min, max]`.
+        if response.rect.width > 0 && response.rect.height > 0 {
+            let rect = response.rect;
+            let mut consumed = Vec::new();
+            for (i, mouse) in self.mouse_events_in_rect(rect) {
+                match mouse.kind {
+                    MouseKind::ScrollUp => {
+                        adjust(state, step);
+                        consumed.push(i);
+                    }
+                    MouseKind::ScrollDown => {
+                        adjust(state, -step);
+                        consumed.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed);
+        }
+
+        // Final clamp guards against any direct mutation or scroll adjustment.
+        state.value = state.clamped();
+
+        response.focused = focused;
+        // `changed` is true iff the committed value actually moved this frame.
+        response.changed = (state.value - old).abs() > f64::EPSILON;
+        response
+    }
+}
+
+/// Whether `ch` may be appended to the in-progress edit buffer.
+///
+/// Always allows ASCII digits. Allows a single `.` in float mode (not when the
+/// buffer already contains one). Allows a leading `-` only when negatives are
+/// representable (`min < 0`) and the buffer is empty.
+fn is_number_char(ch: char, state: &NumberInputState) -> bool {
+    if ch.is_ascii_digit() {
+        return true;
+    }
+    let buf = state.editing.as_deref().unwrap_or("");
+    match ch {
+        '.' => !state.integer && !buf.contains('.'),
+        '-' => state.min < 0.0 && buf.is_empty(),
+        _ => false,
+    }
 }
