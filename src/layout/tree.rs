@@ -511,7 +511,13 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         return vec![String::new()];
     }
     if max_width == 0 {
-        return vec![text.to_string()];
+        // No width budget: honor hard breaks only, and never let a control
+        // char reach a cell. `split('\n')` (not `str::lines()`) keeps a trailing
+        // empty line so every '\n' opens a fresh line.
+        return text
+            .split('\n')
+            .map(|p| p.strip_suffix('\r').unwrap_or(p).to_string())
+            .collect();
     }
 
     // Words and chunks are referred to by byte ranges `(start, end)` into `text`,
@@ -675,55 +681,127 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
     }
 
     let mut lines: Vec<String> = Vec::new();
-    let mut current_line_words: Vec<(usize, usize)> = Vec::new();
-    let mut current_width: u32 = 0;
     let mut chunk_buf: Vec<((usize, usize), u32)> = Vec::new();
 
-    let mut word_start: usize = 0;
-    let mut word_width: u32 = 0;
+    // Resolve hard line breaks first: split on '\n' (CRLF-normalized), then
+    // soft-wrap each paragraph independently. `split('\n')` (not `str::lines()`)
+    // is deliberate so a trailing '\n' yields a trailing empty line — every
+    // '\n' opens a fresh line.
+    for raw_paragraph in text.split('\n') {
+        let paragraph = raw_paragraph.strip_suffix('\r').unwrap_or(raw_paragraph);
+        let lines_before = lines.len();
 
-    for (i, ch) in text.char_indices() {
-        if ch == ' ' {
-            push_word(
-                text,
-                &mut lines,
-                &mut current_line_words,
-                &mut current_width,
-                &mut chunk_buf,
-                word_start,
-                i,
-                word_width,
-                max_width,
-            );
-            word_start = i + 1; // ASCII space is 1 byte
-            word_width = 0;
-            continue;
+        let mut current_line_words: Vec<(usize, usize)> = Vec::new();
+        let mut current_width: u32 = 0;
+        let mut word_start: usize = 0;
+        let mut word_width: u32 = 0;
+
+        for (i, ch) in paragraph.char_indices() {
+            if ch == ' ' {
+                push_word(
+                    paragraph,
+                    &mut lines,
+                    &mut current_line_words,
+                    &mut current_width,
+                    &mut chunk_buf,
+                    word_start,
+                    i,
+                    word_width,
+                    max_width,
+                );
+                word_start = i + 1; // ASCII space is 1 byte
+                word_width = 0;
+                continue;
+            }
+            word_width += UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
         }
-        word_width += UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+
+        push_word(
+            paragraph,
+            &mut lines,
+            &mut current_line_words,
+            &mut current_width,
+            &mut chunk_buf,
+            word_start,
+            paragraph.len(),
+            word_width,
+            max_width,
+        );
+
+        flush_line(paragraph, &mut lines, &mut current_line_words);
+
+        // An empty paragraph (consecutive / leading / trailing '\n', or an
+        // all-whitespace run that trims to nothing) contributes one blank line.
+        if lines.len() == lines_before {
+            lines.push(String::new());
+        }
     }
 
-    push_word(
-        text,
-        &mut lines,
-        &mut current_line_words,
-        &mut current_width,
-        &mut chunk_buf,
-        word_start,
-        text.len(),
-        word_width,
-        max_width,
-    );
+    lines
+}
 
-    flush_line(text, &mut lines, &mut current_line_words);
+/// Split a styled-segment run into paragraph groups on hard line breaks
+/// (`'\n'`), normalizing `"\r\n"` to a single break. Each returned group is a
+/// segment list with no embedded newlines.
+fn split_segments_on_newline(segments: &[(String, Style)]) -> Vec<Vec<(String, Style)>> {
+    let mut groups: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut cur: Vec<(String, Style)> = Vec::new();
+    for (text, style) in segments {
+        let pieces: Vec<&str> = text.split('\n').collect();
+        let last_idx = pieces.len() - 1;
+        for (idx, piece) in pieces.iter().enumerate() {
+            let piece = piece.strip_suffix('\r').unwrap_or(piece);
+            if !piece.is_empty() {
+                cur.push((piece.to_string(), *style));
+            }
+            if idx < last_idx {
+                // A '\n' followed this piece — close the current paragraph.
+                groups.push(std::mem::take(&mut cur));
+            }
+        }
+    }
+    groups.push(cur);
+    groups
+}
 
+/// Wrap styled segments to `max_width`, honoring embedded hard line breaks
+/// (`'\n'`, with `"\r\n"` normalized) in addition to soft word wrapping. Hard
+/// breaks are resolved first by splitting into paragraphs; each paragraph is
+/// word-wrapped independently and the results are concatenated.
+pub(crate) fn wrap_segments(
+    segments: &[(String, Style)],
+    max_width: u32,
+) -> Vec<Vec<(String, Style)>> {
+    if max_width == 0 || segments.is_empty() {
+        return vec![vec![]];
+    }
+    if !segments.iter().any(|(seg_text, _)| !seg_text.is_empty()) {
+        return vec![vec![]];
+    }
+
+    // Fast path: with no hard break anywhere, behave exactly like the single
+    // paragraph kernel (and skip the split allocation) so output stays
+    // byte-identical for the common no-newline case.
+    if !segments.iter().any(|(seg_text, _)| seg_text.contains('\n')) {
+        return wrap_segments_paragraph(segments, max_width);
+    }
+
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+    for group in split_segments_on_newline(segments) {
+        // An empty / all-empty group yields `[[]]` (one blank line) from the
+        // paragraph kernel — exactly what a bare '\n' should produce — so
+        // unconditionally extend.
+        lines.extend(wrap_segments_paragraph(&group, max_width));
+    }
     if lines.is_empty() {
-        vec![String::new()]
+        vec![vec![]]
     } else {
         lines
     }
 }
 
-pub(crate) fn wrap_segments(
+/// Word-wrap a single newline-free styled-segment paragraph to `max_width`.
+fn wrap_segments_paragraph(
     segments: &[(String, Style)],
     max_width: u32,
 ) -> Vec<Vec<(String, Style)>> {

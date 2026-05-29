@@ -81,6 +81,62 @@ fn wrap_lines_only_spaces() {
 }
 
 #[test]
+fn wrap_lines_hard_break_basic() {
+    // Embedded '\n' is a hard break even though "a b" fits within max_width.
+    assert_eq!(wrap_lines("a\nb", 10), vec!["a", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_blank_line() {
+    // Consecutive newlines produce a genuine blank line.
+    assert_eq!(wrap_lines("a\n\nb", 10), vec!["a", "", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_leading_newline() {
+    assert_eq!(wrap_lines("\nb", 10), vec!["", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_trailing_newline() {
+    // Trailing '\n' opens a fresh empty line — split('\n'), not str::lines().
+    assert_eq!(wrap_lines("a\n", 10), vec!["a", ""]);
+}
+
+#[test]
+fn wrap_lines_hard_break_then_soft_wrap() {
+    // Soft wrapping still applies independently within each hard-break paragraph.
+    assert_eq!(
+        wrap_lines("hello world\nfoo", 7),
+        vec!["hello", "world", "foo"]
+    );
+}
+
+#[test]
+fn wrap_lines_hard_break_cjk() {
+    assert_eq!(wrap_lines("日本\nhello", 5), vec!["日本", "hello"]);
+}
+
+#[test]
+fn wrap_lines_crlf_normalized() {
+    // "\r\n" collapses to a single break with no stray '\r' in output.
+    assert_eq!(wrap_lines("a\r\nb", 10), vec!["a", "b"]);
+}
+
+#[test]
+fn wrap_lines_no_literal_control_char_in_output() {
+    for line in wrap_lines("alpha\nbeta\r\ngamma", 80) {
+        assert!(!line.contains('\n') && !line.contains('\r'));
+    }
+}
+
+#[test]
+fn wrap_lines_zero_width_honors_hard_break() {
+    // max_width == 0 still splits on '\n' and never emits a literal control char.
+    assert_eq!(wrap_lines("a\nb", 0), vec!["a", "b"]);
+}
+
+#[test]
 fn wrap_segments_empty_returns_single_empty_line() {
     let segs: Vec<(String, Style)> = Vec::new();
     assert_eq!(
@@ -156,6 +212,75 @@ fn wrap_segments_cjk_with_mixed_styles() {
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0], vec![("日本".to_string(), s1)]);
     assert_eq!(lines[1], vec![("語".to_string(), s2)]);
+}
+
+#[test]
+fn wrap_segments_hard_break_basic() {
+    let s = Style::new();
+    let segs = vec![("a\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s)], vec![("b".to_string(), s)]]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_blank_line() {
+    let s = Style::new();
+    let segs = vec![("a\n\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![
+            vec![("a".to_string(), s)],
+            Vec::<(String, Style)>::new(),
+            vec![("b".to_string(), s)],
+        ]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_across_segment_boundary() {
+    // A '\n' that ends one styled segment still breaks the line; styles persist.
+    let s1 = Style::new();
+    let s2 = Style::new().fg(Color::Red);
+    let segs = vec![("a\n".to_string(), s1), ("b".to_string(), s2)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s1)], vec![("b".to_string(), s2)]]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_then_soft_wrap() {
+    // Soft word wrap still applies within each hard-break paragraph.
+    let s = Style::new();
+    let segs = vec![("hello world\nfoo".to_string(), s)];
+    let joined: Vec<String> = wrap_segments(&segs, 9)
+        .iter()
+        .map(|l| l.iter().map(|(t, _)| t.as_str()).collect())
+        .collect();
+    assert_eq!(joined, vec!["hello", "world", "foo"]);
+}
+
+#[test]
+fn wrap_segments_crlf_normalized() {
+    let s = Style::new();
+    let segs = vec![("a\r\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s)], vec![("b".to_string(), s)]]
+    );
+}
+
+#[test]
+fn wrap_segments_no_literal_control_char_in_runs() {
+    let s = Style::new();
+    let segs = vec![("alpha\nbeta\r\ngamma".to_string(), s)];
+    for line in wrap_segments(&segs, 80) {
+        for (t, _) in line {
+            assert!(!t.contains('\n') && !t.contains('\r'));
+        }
+    }
 }
 
 #[test]
