@@ -476,6 +476,38 @@ fn terminal_supports_sixel() -> bool {
         || KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program.as_str())
 }
 
+/// Env-fallback detection for the iTerm2 OSC 1337 inline-image protocol
+/// (issue #265).
+///
+/// Consulted as the env-fallback when the runtime capability probe returned
+/// unknown, mirroring [`terminal_supports_sixel`]. Matches the `TERM_PROGRAM`
+/// identities of terminals that implement OSC 1337 inline images: iTerm2
+/// itself, WezTerm (iTerm2-compat mode), Tabby, and mintty. `SLT_FORCE_ITERM=1`
+/// forces a positive. Never fires on `xterm-256color`, matching the sixel
+/// regression-test parity.
+#[cfg(feature = "crossterm")]
+fn terminal_supports_iterm() -> bool {
+    let force = std::env::var("SLT_FORCE_ITERM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    if matches!(force.as_str(), "1" | "true" | "yes" | "on") {
+        return true;
+    }
+
+    let term_program = std::env::var("TERM_PROGRAM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // iTerm2 reports `TERM_PROGRAM=iTerm.app`; WezTerm, Tabby, and mintty all
+    // implement OSC 1337. Detection is `TERM_PROGRAM`-only on purpose: these
+    // hosts ship `TERM=xterm-256color`, so a `TERM` substring check would
+    // false-positive on plain xterm.
+    const KNOWN_ITERM_TERM_PROGRAMS: &[&str] = &["iterm.app", "wezterm", "tabby", "mintty"];
+    KNOWN_ITERM_TERM_PROGRAMS.contains(&term_program.as_str())
+}
+
 #[cfg(all(test, feature = "crossterm"))]
 mod sixel_detection_tests {
     use super::terminal_supports_sixel;
@@ -587,5 +619,107 @@ mod sixel_detection_tests {
         with_env(Some("xterm-256color"), Some("mlterm"), false, || {
             assert!(terminal_supports_sixel());
         });
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod iterm_detection_tests {
+    use super::terminal_supports_iterm;
+    use std::sync::Mutex;
+
+    // Env vars are process-global. A test-local mutex serializes access so
+    // concurrent test threads don't observe each other's set_var() calls.
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+    fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_term = std::env::var("TERM").ok();
+        let prev_program = std::env::var("TERM_PROGRAM").ok();
+        let prev_force = std::env::var("SLT_FORCE_ITERM").ok();
+
+        match term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
+        }
+        match term_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        if force {
+            std::env::set_var("SLT_FORCE_ITERM", "1");
+        } else {
+            std::env::remove_var("SLT_FORCE_ITERM");
+        }
+
+        f();
+
+        match prev_term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
+        }
+        match prev_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        match prev_force {
+            Some(v) => std::env::set_var("SLT_FORCE_ITERM", v),
+            None => std::env::remove_var("SLT_FORCE_ITERM"),
+        }
+    }
+
+    #[test]
+    fn iterm_xterm_256color_no_false_positive() {
+        // Parity with `sixel_xterm_256color_no_false_positive`: a plain xterm
+        // must never be mistaken for an OSC 1337 host.
+        with_env(Some("xterm-256color"), None, false, || {
+            assert!(!terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_app_detected() {
+        with_env(Some("xterm-256color"), Some("iTerm.app"), false, || {
+            assert!(terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_wezterm_detected() {
+        with_env(Some("xterm-256color"), Some("WezTerm"), false, || {
+            assert!(terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_tabby_detected() {
+        with_env(Some("xterm-256color"), Some("Tabby"), false, || {
+            assert!(terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_mintty_detected() {
+        with_env(Some("xterm-256color"), Some("mintty"), false, || {
+            assert!(terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_force_env_overrides_negative_term() {
+        with_env(Some("xterm-256color"), None, true, || {
+            assert!(terminal_supports_iterm());
+        });
+    }
+
+    #[test]
+    fn iterm_unknown_term_program_negative() {
+        with_env(
+            Some("xterm-256color"),
+            Some("Apple_Terminal"),
+            false,
+            || {
+                assert!(!terminal_supports_iterm());
+            },
+        );
     }
 }
