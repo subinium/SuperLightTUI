@@ -60,7 +60,11 @@ impl Default for ModalOptions {
 #[must_use = "ContainerBuilder does nothing until .col(), .row(), .line(), or .draw() is called"]
 pub struct ContainerBuilder<'a> {
     pub(crate) ctx: &'a mut Context,
-    pub(crate) gap: u32,
+    /// Resolved main-axis gap, in cells. Signed (#222): negative means
+    /// adjacent children overlap, set via [`ContainerBuilder::gap_overlap`].
+    /// The public [`ContainerBuilder::gap`] setter takes `u32` and is
+    /// source-compatible; only `gap_overlap` can store a negative value.
+    pub(crate) gap: i32,
     pub(crate) row_gap: Option<u32>,
     pub(crate) col_gap: Option<u32>,
     pub(crate) align: Align,
@@ -694,7 +698,9 @@ impl<'a> ContainerBuilder<'a> {
             self.margin = v;
         }
         if let Some(v) = style.gap {
-            self.gap = v;
+            // `ContainerStyle::gap` stays `Option<u32>` (positive only); only
+            // `gap_overlap` produces a negative builder gap (#222).
+            self.gap = v as i32;
         }
         if let Some(v) = style.row_gap {
             self.row_gap = Some(v);
@@ -1132,7 +1138,59 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the gap (in cells) between child elements.
     pub fn gap(mut self, gap: u32) -> Self {
-        self.gap = gap;
+        self.gap = gap as i32;
+        self
+    }
+
+    /// Set a *negative* gap, causing adjacent children to overlap by `overlap`
+    /// cells on the main axis.
+    ///
+    /// This is SLT's analogue of ratatui's `Layout::spacing(-1)`. The common
+    /// use is collapsing the duplicate border between two adjacent bordered
+    /// panels: with `gap_overlap(1)` each panel's shared edge lands in the
+    /// same column (row layout) or row (column layout), so the doubled border
+    ///
+    /// ```text
+    /// ┌────┐┌────┐
+    /// │    ││    │
+    /// └────┘└────┘
+    /// ```
+    ///
+    /// collapses to a single shared edge.
+    ///
+    /// `gap_overlap(0)` is identical to `gap(0)` (no overlap). It composes with
+    /// the existing `gap` family: the last call wins, so call exactly one of
+    /// `gap` / `gap_overlap` per builder.
+    ///
+    /// # Rendering note
+    ///
+    /// SLT does not (yet) merge the shared cells into junction glyphs (`┬`,
+    /// `┼`, `┴`). When two bordered panels overlap, both write the shared
+    /// column/row and the later panel's border character wins by buffer-diff
+    /// order. To get a clean seam, give the panels compatible border styles or
+    /// drop one panel's shared side (e.g. `border_sides` without the left edge).
+    ///
+    /// Large overlaps saturate gracefully — `gap_overlap(N)` past a child's
+    /// extent never panics or wraps; positions clamp at 0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Border;
+    /// // Two bordered panels sharing one border column.
+    /// ui.container().gap_overlap(1).row(|ui| {
+    ///     ui.bordered(Border::Single).w(10).col(|ui| {
+    ///         ui.text("left");
+    ///     });
+    ///     ui.bordered(Border::Single).w(10).col(|ui| {
+    ///         ui.text("right");
+    ///     });
+    /// });
+    /// # });
+    /// ```
+    pub fn gap_overlap(mut self, overlap: u32) -> Self {
+        self.gap = -(overlap as i32);
         self
     }
 
@@ -1574,9 +1632,11 @@ impl<'a> ContainerBuilder<'a> {
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
-        let resolved_gap = match direction {
-            Direction::Column => self.row_gap.unwrap_or(self.gap),
-            Direction::Row => self.col_gap.unwrap_or(self.gap),
+        // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
+        // to the signed builder `gap`, which alone can carry an overlap (#222).
+        let resolved_gap: i32 = match direction {
+            Direction::Column => self.row_gap.map(|g| g as i32).unwrap_or(self.gap),
+            Direction::Row => self.col_gap.map(|g| g as i32).unwrap_or(self.gap),
         };
 
         let in_hovered_group = self

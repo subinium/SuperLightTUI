@@ -498,7 +498,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: tabs_gap,
+                gap: tabs_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -922,7 +922,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: cb_gap,
+                gap: cb_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -1005,7 +1005,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: toggle_gap,
+                gap: toggle_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -1215,7 +1215,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: trig_gap,
+                gap: trig_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

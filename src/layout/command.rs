@@ -18,7 +18,9 @@ pub enum Direction {
 #[derive(Debug, Clone)]
 pub(crate) struct BeginContainerArgs {
     pub direction: Direction,
-    pub gap: u32,
+    /// Signed inter-child gap (negative = overlap). See
+    /// [`crate::ContainerBuilder::gap_overlap`] (#222).
+    pub gap: i32,
     pub align: Align,
     pub align_self: Option<Align>,
     pub justify: Justify,
@@ -55,8 +57,9 @@ pub(crate) struct BeginScrollableArgs {
     pub align_self: Option<Align>,
     /// Main-axis justification. Fixes #142.
     pub justify: Justify,
-    /// Gap between children in pixels. Fixes #142.
-    pub gap: u32,
+    /// Signed gap between children in cells (negative = overlap, #222).
+    /// Fixes #142.
+    pub gap: i32,
     pub padding: Padding,
     pub margin: Margin,
     pub constraints: Constraints,

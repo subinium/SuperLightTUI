@@ -225,17 +225,18 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
                 for child in &mut node.children {
                     child.grow = 0;
                 }
-                let total_gaps = if node.children.is_empty() {
+                let total_gaps: i64 = if node.children.is_empty() {
                     0
                 } else {
-                    (node.children.len() as u32 - 1) * node.gap
+                    (node.children.len() as i64 - 1) * node.gap as i64
                 };
-                let natural_height: u32 = node
+                let children_height: u32 = node
                     .children
                     .iter_mut()
                     .map(|c| c.min_height_for_width(viewport_area.width))
-                    .sum::<u32>()
-                    + total_gaps;
+                    .sum::<u32>();
+                // `total_gaps` may be negative for overlap (#222); clamp at 0.
+                let natural_height: u32 = (children_height as i64 + total_gaps).max(0) as u32;
 
                 if natural_height > viewport_area.height {
                     let virtual_area = Rect::new(
@@ -320,7 +321,13 @@ fn scroll_content_height(node: &LayoutNode, inner_y: u32) -> u32 {
     max_bottom.saturating_sub(inner_y)
 }
 
-fn justify_offsets(justify: Justify, remaining: u32, n: u32, gap: u32) -> (u32, u32) {
+/// Compute the leading offset and inter-child gap for a flex line.
+///
+/// `gap` is signed (#222): a negative value overlaps adjacent children.
+/// The returned start offset is unsigned (clamped at 0); the returned
+/// inter-child gap stays signed so the caller advances positions with
+/// `saturating_add_signed`.
+fn justify_offsets(justify: Justify, remaining: u32, n: u32, gap: i32) -> (u32, i32) {
     if n <= 1 {
         let start = match justify {
             Justify::Center => remaining / 2,
@@ -330,18 +337,21 @@ fn justify_offsets(justify: Justify, remaining: u32, n: u32, gap: u32) -> (u32, 
         return (start, gap);
     }
 
+    // For Center/End, `(n - 1) * gap` may be negative when children overlap;
+    // clamp the consumed gap span at 0 so the unsigned `remaining` math holds.
+    let total_gap_span = (((n - 1) as i64) * gap as i64).max(0) as u32;
     match justify {
         Justify::Start => (0, gap),
-        Justify::Center => (remaining.saturating_sub((n - 1) * gap) / 2, gap),
-        Justify::End => (remaining.saturating_sub((n - 1) * gap), gap),
-        Justify::SpaceBetween => (0, remaining / (n - 1)),
+        Justify::Center => (remaining.saturating_sub(total_gap_span) / 2, gap),
+        Justify::End => (remaining.saturating_sub(total_gap_span), gap),
+        Justify::SpaceBetween => (0, (remaining / (n - 1)) as i32),
         Justify::SpaceAround => {
             let slot = remaining / n;
-            (slot / 2, slot)
+            (slot / 2, slot as i32)
         }
         Justify::SpaceEvenly => {
             let slot = remaining / (n + 1);
-            (slot, slot)
+            (slot, slot as i32)
         }
     }
 }
@@ -371,8 +381,11 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     let n = node.children.len() as u32;
-    let total_gaps = (n - 1) * node.gap;
-    let available = area.width.saturating_sub(total_gaps);
+    // Signed gap (#222): `total_gaps` may be negative when children overlap,
+    // which gives them *more* available space. `i64` intermediate avoids any
+    // overflow before clamping the result back into the `u32` width budget.
+    let total_gaps = ((n - 1) as i64) * node.gap as i64;
+    let available = (area.width as i64 - total_gaps).max(0) as u32;
     let child_count = node.children.len();
     let mut min_widths = U32Stack::with_capacity(child_count);
     for child in &node.children {
@@ -466,7 +479,11 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         };
         child.pos.1 = child.pos.1.saturating_add(y_offset);
         let effective_w = child.size.0.saturating_add(child.margin.horizontal());
-        x += effective_w + inter_gap;
+        // `inter_gap` is signed (#222); advance with a saturating signed add so
+        // an overlap (negative gap) larger than the cursor never wraps `u32`.
+        x = x
+            .saturating_add(effective_w)
+            .saturating_add_signed(inter_gap);
     }
 }
 
@@ -480,8 +497,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     let n = node.children.len() as u32;
-    let total_gaps = (n - 1) * node.gap;
-    let available = area.height.saturating_sub(total_gaps);
+    // Signed gap (#222) — see `layout_row` for the `i64`-clamp rationale.
+    let total_gaps = ((n - 1) as i64) * node.gap as i64;
+    let available = (area.height as i64 - total_gaps).max(0) as u32;
     let child_count = node.children.len();
     let mut min_heights = U32Stack::with_capacity(child_count);
     for child in &mut node.children {
@@ -569,6 +587,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
         };
         child.pos.0 = child.pos.0.saturating_add(x_offset);
         let effective_h = child.size.1.saturating_add(child.margin.vertical());
-        y += effective_h + inter_gap;
+        // Signed `inter_gap` (#222) — saturating signed advance, see `layout_row`.
+        y = y
+            .saturating_add(effective_h)
+            .saturating_add_signed(inter_gap);
     }
 }

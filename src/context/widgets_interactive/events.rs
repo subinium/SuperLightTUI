@@ -16,7 +16,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: help_gap,
+                gap: help_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -60,7 +60,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: help_gap,
+                gap: help_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

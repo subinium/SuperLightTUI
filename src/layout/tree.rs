@@ -69,7 +69,15 @@ pub(crate) struct LayoutNode {
     pub(crate) justify: Justify,
     pub(crate) wrap: bool,
     pub(crate) truncate: bool,
-    pub(crate) gap: u32,
+    /// Inter-child gap on the main axis, in cells.
+    ///
+    /// Signed: a negative value (set via
+    /// [`ContainerBuilder::gap_overlap`](crate::ContainerBuilder::gap_overlap))
+    /// makes adjacent children overlap by `-gap` cells, e.g. so two bordered
+    /// panels share a border column/row. Positive values space children apart
+    /// as usual. Same 4-byte size as the previous `u32` — no layout-node
+    /// budget impact (#222).
+    pub(crate) gap: i32,
     pub(crate) border: Option<Border>,
     pub(crate) border_sides: BorderSides,
     pub(crate) border_style: Style,
@@ -98,7 +106,8 @@ pub(crate) struct LayoutNode {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ContainerConfig {
-    pub(crate) gap: u32,
+    /// See [`LayoutNode::gap`] — signed inter-child gap (negative = overlap).
+    pub(crate) gap: i32,
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
@@ -408,13 +417,15 @@ impl LayoutNode {
             NodeKind::Text => self.size.0,
             NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
             NodeKind::Container(Direction::Row) => {
-                let gaps = if self.children.is_empty() {
+                let gaps: i64 = if self.children.is_empty() {
                     0
                 } else {
-                    (self.children.len() as u32 - 1) * self.gap
+                    (self.children.len() as i64 - 1) * self.gap as i64
                 };
                 let children_width: u32 = self.children.iter().map(|c| c.min_width()).sum();
-                children_width + gaps + self.frame_horizontal()
+                // `gaps` may be negative for overlap (#222); clamp the total at 0
+                // so a small intrinsic width never wraps the `u32` subtraction.
+                ((children_width as i64 + gaps).max(0) as u32) + self.frame_horizontal()
             }
             NodeKind::Container(Direction::Column) => {
                 self.children
@@ -447,13 +458,14 @@ impl LayoutNode {
                     + self.frame_vertical()
             }
             NodeKind::Container(Direction::Column) => {
-                let gaps = if self.children.is_empty() {
+                let gaps: i64 = if self.children.is_empty() {
                     0
                 } else {
-                    (self.children.len() as u32 - 1) * self.gap
+                    (self.children.len() as i64 - 1) * self.gap as i64
                 };
                 let children_height: u32 = self.children.iter().map(|c| c.min_height()).sum();
-                children_height + gaps + self.frame_vertical()
+                // `gaps` may be negative for overlap (#222); clamp at 0.
+                ((children_height as i64 + gaps).max(0) as u32) + self.frame_vertical()
             }
         };
 
