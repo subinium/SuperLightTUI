@@ -18,6 +18,10 @@ impl Context {
         // lifetime as `keyed_states`: moved out at frame start, moved back at
         // frame end (see `run_frame_kernel`).
         let chord = std::mem::take(&mut state.chord_states);
+        // Issue #248: hand off the scheduler timer table for this frame. Same
+        // lifetime as `named_states`: moved out at frame start, moved back at
+        // frame end (where untouched slots are GC'd; see `run_frame_kernel`).
+        let scheduler = std::mem::take(&mut state.scheduler);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         // Issue #217: name→index map from the previous frame, used to resolve
@@ -176,6 +180,10 @@ impl Context {
             focus_name_map_prev,
             focus_name_map: std::collections::HashMap::new(),
             pending_focus_name: still_pending,
+            // Issue #248: sample a single wall-clock "now" for every timer
+            // method called this frame.
+            frame_instant: std::time::Instant::now(),
+            scheduler,
         };
         ctx.build_hovered_groups();
         ctx
@@ -760,6 +768,280 @@ impl Context {
                 )
             });
         state.sample(target, duration_ticks, tick)
+    }
+
+    /// One-shot frame-clock timer (issue #248).
+    ///
+    /// Returns `true` exactly once — on the first frame at or after `dur` has
+    /// elapsed since the first `schedule` call for `id` — and `false` on every
+    /// other frame, both before and after. Re-arm by calling
+    /// [`cancel`](Self::cancel) and then `schedule` again.
+    ///
+    /// Wall-clock based ([`std::time::Instant`] sampled once at frame start),
+    /// so it works with the default feature set and without the `async`
+    /// feature. Precision is bounded by the run loop's `tick_rate` (the
+    /// deadline is observed on the next frame after it elapses), so durations
+    /// well below the frame cadence are not meaningful.
+    ///
+    /// The id lives in the same per-context namespace as
+    /// [`use_state_named`](Self::use_state_named): pick a unique key per call
+    /// site.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.schedule("splash::dismiss", Duration::from_millis(800)) {
+    ///         // Runs once, ~800ms after the first frame that called this.
+    ///         ui.text("Splash dismissed.");
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn schedule(&mut self, id: &'static str, dur: std::time::Duration) -> bool {
+        let now = self.frame_instant;
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Once {
+                    deadline: now + dur,
+                    fired: false,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Once { deadline, fired } if !*fired && now >= *deadline => {
+                *fired = true;
+                true
+            }
+            // Not yet due, already fired, or a re-used id bound to a different
+            // timer kind: do not fire (a typo can't crash the app).
+            _ => false,
+        }
+    }
+
+    /// Recurring frame-clock timer (issue #248).
+    ///
+    /// Returns the number of whole `dur` intervals that elapsed since the
+    /// previous frame this `id` was sampled: `0` on most frames, `1` typically,
+    /// and `> 1` if the frame loop stalled past several intervals — so no ticks
+    /// are silently dropped. The internal clock advances by exactly the
+    /// returned number of intervals each frame, so counts never drift.
+    ///
+    /// Wall-clock based and `async`-free, like [`schedule`](Self::schedule).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     let ticks = ui.every("clock::second", Duration::from_secs(1));
+    ///     if ticks > 0 {
+    ///         // Advance a once-per-second animation by `ticks` steps.
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn every(&mut self, id: &'static str, dur: std::time::Duration) -> u32 {
+        let now = self.frame_instant;
+        let interval = dur.max(std::time::Duration::from_nanos(1));
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Every {
+                    interval,
+                    last: now,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Every { interval, last } => {
+                let elapsed = now.saturating_duration_since(*last);
+                let fired = crate::widgets::intervals_elapsed(elapsed, *interval);
+                if fired > 0 {
+                    // Advance by exactly the intervals reported so counts never
+                    // drift, even across stalled frames.
+                    *last += *interval * fired;
+                }
+                fired
+            }
+            _ => 0,
+        }
+    }
+
+    /// Debounce timer — the typeahead / search-as-you-type primitive (#248).
+    ///
+    /// Each frame where `dirty == true` resets the quiet window to `dur`.
+    /// Returns `true` exactly once on the first frame after `dur` of quiet (no
+    /// `dirty`), then stays `false` until the next dirty frame re-arms it. This
+    /// mirrors Textual's `@work(exclusive=True)` debounce: collapse a burst of
+    /// keystrokes so only the final, settled query runs.
+    ///
+    /// Wall-clock based and `async`-free, like [`schedule`](Self::schedule).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use slt::TextInputState;
+    ///
+    /// let mut query = TextInputState::with_placeholder("Search...");
+    /// slt::run(move |ui: &mut slt::Context| {
+    ///     // `resp.changed` is true on the keystroke frame -> the dirty signal.
+    ///     let resp = ui.text_input(&mut query);
+    ///     // Fire the search only after 250ms of no typing.
+    ///     if ui.debounce("search::run", Duration::from_millis(250), resp.changed) {
+    ///         // run_search(&query.value());
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn debounce(&mut self, id: &'static str, dur: std::time::Duration, dirty: bool) -> bool {
+        let now = self.frame_instant;
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Debounce {
+                    dur,
+                    deadline: now + dur,
+                    fired: false,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Debounce {
+                dur: slot_dur,
+                deadline,
+                fired,
+            } => {
+                *slot_dur = dur;
+                if dirty {
+                    // Re-arm the quiet window from this frame.
+                    *deadline = now + dur;
+                    *fired = false;
+                    false
+                } else if !*fired && now >= *deadline {
+                    *fired = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Exclusive-group claim — cancel stale work on supersede (issue #248).
+    ///
+    /// Within a `group`, only the most-recently-claimed `id` returns `true`;
+    /// once a newer `id` claims the group, every prior `id` returns `false`
+    /// from then on. Use it to cancel an in-flight typeahead query when a newer
+    /// query supersedes it: pair with [`debounce`](Self::debounce) to fire the
+    /// settled query, then guard the work with `exclusive` so only the latest
+    /// claim proceeds.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     let query_id = "q-42"; // e.g. a per-keystroke sequence id
+    ///     if ui.exclusive("search", query_id) {
+    ///         // Only the latest claimed query runs; older ones are cancelled.
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn exclusive(&mut self, group: &'static str, id: &str) -> bool {
+        let entry = self
+            .scheduler
+            .exclusive
+            .entry(group.to_string())
+            .or_default();
+        if entry.winner == id {
+            // The reigning claim re-polls itself: still the winner.
+            return true;
+        }
+        if entry.retired.contains(id) {
+            // A previously-superseded id can never win again: stale work stays
+            // cancelled even if re-polled.
+            return false;
+        }
+        // A new id supersedes the group: retire the old winner (if any) and
+        // become the active claim.
+        if !entry.winner.is_empty() {
+            let old = std::mem::take(&mut entry.winner);
+            entry.retired.insert(old);
+        }
+        entry.winner = id.to_string();
+        true
+    }
+
+    /// Drop the scheduler slot for `id`, re-arming it on the next
+    /// [`schedule`](Self::schedule) / [`every`](Self::every) /
+    /// [`debounce`](Self::debounce) call (issue #248).
+    ///
+    /// Accepts both `&'static str` and runtime-`String` ids: clears the slot
+    /// from the named map and the dynamic-id map.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.schedule("retry", Duration::from_secs(5)) {
+    ///         // ...
+    ///     }
+    ///     if ui.key('r') {
+    ///         ui.cancel("retry"); // next `schedule("retry", ..)` starts fresh
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn cancel(&mut self, id: &str) {
+        self.scheduler.named.remove(id);
+        self.scheduler.keyed.remove(id);
+    }
+
+    /// Wall-clock time elapsed since `id` was first scheduled, or `None` if no
+    /// live timer slot exists for `id` (issue #248).
+    ///
+    /// Useful for progress UIs ("retrying in 3s…") that want the raw elapsed
+    /// duration rather than a fire/no-fire signal. Measured against the same
+    /// frame instant the timer methods use.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.schedule("upload", Duration::from_secs(30));
+    ///     if let Some(elapsed) = ui.elapsed("upload") {
+    ///         ui.text(format!("Uploading for {}s", elapsed.as_secs()));
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn elapsed(&self, id: &str) -> Option<std::time::Duration> {
+        let started = self
+            .scheduler
+            .named
+            .get(id)
+            .or_else(|| self.scheduler.keyed.get(id))
+            .map(|slot| slot.started)?;
+        Some(self.frame_instant.saturating_duration_since(started))
     }
 
     /// Push a value onto the context stack for the duration of `body`.

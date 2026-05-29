@@ -82,6 +82,16 @@ pub struct Context {
     /// start of the next frame. Outlives a single frame so the resolution
     /// happens against `focus_name_map_prev`.
     pub(crate) pending_focus_name: Option<String>,
+    /// Issue #248: wall-clock instant sampled once at frame start. All
+    /// frame-clock timer deadlines (`schedule`/`every`/`debounce`) compare
+    /// against this single instant so every timer sampled in the same frame
+    /// sees a consistent "now". Deliberately wall-clock, not the frame tick
+    /// (`run_frame_kernel` never advances `diagnostics.tick`).
+    pub(crate) frame_instant: std::time::Instant,
+    /// Issue #248: persistent timer table. Moved in from `FrameState` at
+    /// frame start and moved back at frame end (where untouched slots are
+    /// GC'd), identical to the `named_states` lifetime.
+    pub(crate) scheduler: SchedulerState,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;

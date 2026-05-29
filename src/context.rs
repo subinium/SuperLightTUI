@@ -21,9 +21,10 @@ use crate::widgets::{
     CalendarSelect, CalendarState, ColorPickerState, CommandPaletteState, ContextItem,
     FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
     HighlightRange, ListState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
-    PickerMode, RadioState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
-    SplitPaneState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
+    PickerMode, RadioState, SchedKind, SchedulerSlot, SchedulerState, ScreenState, ScrollState,
+    SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
+    ValidateTrigger,
 };
 use crate::FrameState;
 use unicode_segmentation::UnicodeSegmentation;
@@ -75,3 +76,6 @@ pub(crate) use helpers::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod scheduler_tests;

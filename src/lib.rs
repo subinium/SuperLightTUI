@@ -185,11 +185,11 @@ pub use widgets::{
     DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
     GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
     NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState,
-    RichLogEntry, RichLogState, ScreenState, ScrollState, SelectState, SpinnerState,
-    SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState,
-    TableColumn, TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage,
-    ToastState, ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
-    DEFAULT_CHORD_TIMEOUT_TICKS,
+    RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
+    SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState,
+    StreamingTextState, TableColumn, TableState, TabsState, TextInputState, TextareaState,
+    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    ValidateTrigger, Validator, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.
@@ -904,6 +904,10 @@ pub(crate) struct FrameState {
     /// as `keyed_states` (moved out in `Context::new`, restored at frame end in
     /// `run_frame_kernel`).
     pub chord_states: widgets::ChordState,
+    /// Issue #248: persistent frame-clock timer table. Round-tripped through
+    /// `Context` exactly like `named_states` — moved out at frame start, moved
+    /// back at frame end where untouched slots are garbage-collected.
+    pub scheduler: widgets::SchedulerState,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1691,6 +1695,10 @@ pub(crate) fn run_frame_kernel(
         // reuses `FrameState` across `render()` calls — same rationale as the
         // keyed-state reclaim).
         state.chord_states = ctx.chord;
+        // Issue #248: hand the scheduler table back and GC abandoned timers.
+        let mut scheduler = ctx.scheduler;
+        scheduler.gc_untouched();
+        state.scheduler = scheduler;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
@@ -1848,6 +1856,11 @@ pub(crate) fn run_frame_kernel(
     // Issue #262: hand the partial-chord buffer back so a chord spanning
     // multiple frames survives between them. Same round-trip as `keyed_states`.
     state.chord_states = ctx.chord;
+    // Issue #248: hand the scheduler table back and GC any timer slot that was
+    // not sampled this frame (mirrors the `named_states` round-trip lifecycle).
+    let mut scheduler = ctx.scheduler;
+    scheduler.gc_untouched();
+    state.scheduler = scheduler;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.

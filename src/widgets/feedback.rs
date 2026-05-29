@@ -470,4 +470,128 @@ pub enum Trend {
     Down,
 }
 
+// ── Frame-clock scheduler (issue #248) ────────────────────────────────
+
+/// The kind of timer a [`SchedulerSlot`] holds.
+///
+/// Sampled once per frame against the frame's wall-clock
+/// [`std::time::Instant`]. Intentionally **not** keyed on the frame tick:
+/// `run_frame_kernel` does not advance `diagnostics.tick`, so a tick-based
+/// deadline would never elapse under `TestBackend`. See issue #248.
+pub(crate) enum SchedKind {
+    /// One-shot timer that fires exactly once at/after `deadline`.
+    Once {
+        deadline: std::time::Instant,
+        fired: bool,
+    },
+    /// Recurring timer that reports whole `interval`s elapsed since `last`.
+    Every {
+        interval: std::time::Duration,
+        last: std::time::Instant,
+    },
+    /// Debounce timer: rearmed to `now + dur` on every dirty frame, fires
+    /// once when the quiet window `dur` elapses.
+    Debounce {
+        dur: std::time::Duration,
+        deadline: std::time::Instant,
+        fired: bool,
+    },
+}
+
+/// A single live timer in the [`SchedulerState`] table.
+pub(crate) struct SchedulerSlot {
+    /// Wall-clock instant the slot was first created. Backs [`Context::elapsed`].
+    pub(crate) started: std::time::Instant,
+    /// The timer behavior for this slot.
+    pub(crate) kind: SchedKind,
+    /// GC flag: set true every frame the slot is sampled; slots left `false`
+    /// at frame end are dropped so abandoned timers do not leak.
+    pub(crate) touched_this_frame: bool,
+}
+
+/// Persistent timer table backing the frame-clock scheduler (issue #248).
+///
+/// Round-tripped through the per-frame state exactly like the named-state
+/// map: moved into [`Context`](crate::Context) at frame start and moved back
+/// at frame end, where untouched slots are garbage-collected. Drives
+/// [`Context::schedule`](crate::Context::schedule),
+/// [`every`](crate::Context::every), [`debounce`](crate::Context::debounce),
+/// [`exclusive`](crate::Context::exclusive), [`cancel`](crate::Context::cancel),
+/// and [`elapsed`](crate::Context::elapsed).
+///
+/// This type is public so it appears in `cargo doc`, but all fields are
+/// `pub(crate)`: you never construct or inspect it directly — the `Context`
+/// timer methods are the entire API surface.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::time::Duration;
+///
+/// slt::run(|ui: &mut slt::Context| {
+///     // The scheduler state is managed for you behind the timer methods.
+///     if ui.schedule("greet", Duration::from_millis(500)) {
+///         ui.text("Half a second has passed.");
+///     }
+/// })?;
+/// # Ok::<_, std::io::Error>(())
+/// ```
+#[derive(Default)]
+pub struct SchedulerState {
+    /// `&'static str`-keyed slots (mirrors `named_states`).
+    pub(crate) named: std::collections::HashMap<&'static str, SchedulerSlot>,
+    /// Runtime-`String`-keyed slots for dynamic ids (mirrors `keyed_states`).
+    pub(crate) keyed: std::collections::HashMap<String, SchedulerSlot>,
+    /// Exclusive-group claim table: `group -> claim state` (issue #248).
+    pub(crate) exclusive: std::collections::HashMap<String, ExclusiveGroup>,
+}
+
+/// Per-group claim state for [`Context::exclusive`](crate::Context::exclusive)
+/// (issue #248). Tracks the current winning id plus ids that were superseded
+/// and must stay stale (`false`) even if re-polled.
+#[derive(Default)]
+pub(crate) struct ExclusiveGroup {
+    /// The most-recently-claimed id; the only id that returns `true`.
+    pub(crate) winner: String,
+    /// Ids that previously won the group and were superseded. They never win
+    /// again, so stale work cancels permanently.
+    pub(crate) retired: std::collections::HashSet<String>,
+}
+
+/// Pure interval-counting kernel for [`Context::every`](crate::Context::every)
+/// (issue #248). Returns how many whole `interval`s fit into `elapsed`,
+/// saturating at [`u32::MAX`]. Extracted so the no-drop / no-double-count
+/// invariant can be proptested deterministically without real sleeps.
+pub(crate) fn intervals_elapsed(
+    elapsed: std::time::Duration,
+    interval: std::time::Duration,
+) -> u32 {
+    let nanos = interval.as_nanos().max(1);
+    let count = elapsed.as_nanos() / nanos;
+    count.min(u32::MAX as u128) as u32
+}
+
+impl SchedulerState {
+    /// Drop every slot that was not sampled this frame, then reset the
+    /// per-frame `touched` flag on the survivors. Called at frame end from
+    /// `run_frame_kernel`, mirroring the `named_states` writeback lifecycle.
+    pub(crate) fn gc_untouched(&mut self) {
+        self.named.retain(|_, slot| slot.touched_this_frame);
+        self.keyed.retain(|_, slot| slot.touched_this_frame);
+        for slot in self.named.values_mut() {
+            slot.touched_this_frame = false;
+        }
+        for slot in self.keyed.values_mut() {
+            slot.touched_this_frame = false;
+        }
+    }
+
+    /// Total number of live timer slots (named + keyed). Test-only accessor
+    /// used to assert GC of abandoned timers (issue #248).
+    #[cfg(test)]
+    pub(crate) fn slot_count(&self) -> usize {
+        self.named.len() + self.keyed.len()
+    }
+}
+
 // ── Select / Dropdown ─────────────────────────────────────────────────
