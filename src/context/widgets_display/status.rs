@@ -297,11 +297,17 @@ impl Context {
 
     /// Render a badge with the theme's primary color.
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers (`ui.badge("NEW");`) compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.badge("NEW");
+    /// let r = ui.badge("NEW");
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn badge(&mut self, label: &str) -> Response {
@@ -313,12 +319,18 @@ impl Context {
     ///
     /// Foreground is auto-selected for contrast via [`Color::contrast_fg`].
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # use slt::Color;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.badge_colored("ALPHA", Color::Magenta);
+    /// let r = ui.badge_colored("ALPHA", Color::Magenta);
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
@@ -327,12 +339,20 @@ impl Context {
         label_text.push(' ');
         label_text.push_str(label);
         label_text.push(' ');
+        // Reserve the interaction slot *before* the text so the marker
+        // attaches to the badge's rect (same pattern as `spinner` / `gauge`).
+        let response = self.interaction();
         self.text(label_text).fg(fg).bg(color);
 
-        Response::none()
+        response
     }
 
     /// Render a keyboard shortcut hint with reversed styling.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the hint's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers compile unchanged.
     ///
     /// # Example
     ///
@@ -340,7 +360,8 @@ impl Context {
     /// # slt::run(|ui: &mut slt::Context| {
     /// ui.line(|ui| {
     ///     ui.text("Quit: ");
-    ///     ui.key_hint("Ctrl+Q");
+    ///     let r = ui.key_hint("Ctrl+Q");
+    ///     if r.hovered { /* attach a tooltip */ }
     /// });
     /// # });
     /// ```
@@ -350,9 +371,12 @@ impl Context {
         key_text.push(' ');
         key_text.push_str(key);
         key_text.push(' ');
+        // Reserve the interaction slot *before* the text so the marker
+        // attaches to the hint's rect.
+        let response = self.interaction();
         self.text(key_text).reversed().fg(theme.text_dim);
 
-        Response::none()
+        response
     }
 
     /// Render a label-value stat pair.
@@ -360,48 +384,61 @@ impl Context {
     /// Renders as a column: a dim label above a bold value. Pair multiple
     /// stats in a [`row`](Self::row) for a compact dashboard strip.
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// ui.row(|ui| {
-    ///     ui.stat("Users", "1.2k");
+    ///     let r = ui.stat("Users", "1.2k");
+    ///     if r.hovered { /* attach a tooltip */ }
     ///     ui.stat("Revenue", "$8,420");
     /// });
     /// # });
     /// ```
     pub fn stat(&mut self, label: &str, value: &str) -> Response {
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold();
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a stat pair with a custom value color.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// # Example
     ///
     /// ```no_run
     /// # use slt::Color;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.stat_colored("Errors", "0", Color::Green);
+    /// let r = ui.stat_colored("Errors", "0", Color::Green);
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold().fg(color);
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a stat pair with an up/down trend arrow.
     ///
     /// The arrow color follows the theme: `success` for [`Trend::Up`],
     /// `error` for [`Trend::Down`].
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// [`Trend::Up`]: crate::widgets::Trend::Up
     /// [`Trend::Down`]: crate::widgets::Trend::Down
@@ -411,7 +448,8 @@ impl Context {
     /// ```no_run
     /// # use slt::widgets::Trend;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.stat_trend("MRR", "$24.5k", Trend::Up);
+    /// let r = ui.stat_trend("MRR", "$24.5k", Trend::Up);
+    /// if r.hovered { /* attach a tooltip */ }
     /// ui.stat_trend("Churn", "1.8%", Trend::Down);
     /// # });
     /// ```
@@ -426,7 +464,7 @@ impl Context {
             crate::widgets::Trend::Up => ("↑", theme.success),
             crate::widgets::Trend::Down => ("↓", theme.error),
         };
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.line(|ui| {
                 ui.text(value).bold();
@@ -435,15 +473,18 @@ impl Context {
                 arrow_text.push_str(arrow);
                 ui.text(arrow_text).fg(color);
             });
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a centered empty-state placeholder.
     ///
     /// Title is rendered prominently; description is dimmed below. Both are
     /// centered horizontally and vertically inside the available space.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the placeholder rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// # Example
     ///
@@ -456,18 +497,20 @@ impl Context {
     /// # });
     /// ```
     pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
-        let _ = self.container().center().col(|ui| {
+        self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a centered empty-state placeholder with an action button.
     ///
     /// Returns a [`Response`] whose `clicked` field is `true` on the frame
-    /// the action button is activated.
+    /// the action button is activated. As of v0.21.0 the response also carries
+    /// real `hovered` / `right_clicked` state (and the laid-out `rect`) for the
+    /// placeholder area, so callers can attach `.on_hover(...)` tooltips. The
+    /// `clicked` / `changed` fields still track the action button specifically,
+    /// not the whole placeholder.
     ///
     /// # Example
     ///
@@ -489,7 +532,9 @@ impl Context {
         action_label: &str,
     ) -> Response {
         let mut clicked = false;
-        let _ = self.container().center().col(|ui| {
+        // The container response carries hover / right-click / rect for the
+        // whole placeholder area; `clicked` still tracks the action button.
+        let mut response = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
             if ui.button(action_label).clicked {
@@ -497,11 +542,9 @@ impl Context {
             }
         });
 
-        Response {
-            clicked,
-            changed: clicked,
-            ..Response::none()
-        }
+        response.clicked = clicked;
+        response.changed = clicked;
+        response
     }
 
     /// Render a code block with keyword-based syntax highlighting.
