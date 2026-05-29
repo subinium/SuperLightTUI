@@ -17,12 +17,13 @@ use crate::style::{
     Modifiers, Padding, Spacing, Style, Theme, ThemeColor, WidgetColors, WidgetTheme,
 };
 use crate::widgets::{
-    ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, CommandPaletteState,
-    ContextItem, FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, MultiSelectState, PaginatorState, PaginatorStyle, RadioState,
-    ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState,
-    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
-    ToastState, ToolApprovalState, TreeState,
+    color_hex_label, parse_hex_color, ApprovalAction, BreadcrumbResponse, ButtonVariant,
+    CalendarState, ColorPickerState, CommandPaletteState, ContextItem, FilePickerState, FormField,
+    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState,
+    MultiSelectState, PaginatorState, PaginatorStyle, PickerMode, RadioState, ScreenState,
+    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState,
+    TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastState,
+    ToolApprovalState, TreeState,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};

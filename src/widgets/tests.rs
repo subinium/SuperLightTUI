@@ -398,3 +398,113 @@ fn paginator_set_per_page_reclamps_page() {
     state.set_per_page(0); // clamps to 1
     assert_eq!(state.per_page, 1);
 }
+
+// ── Color picker ──────────────────────────────────────────────────────
+
+#[test]
+fn color_picker_tailwind_has_22_swatches_and_defaults() {
+    let picker = ColorPickerState::tailwind();
+    assert_eq!(picker.colors.len(), 22);
+    assert_eq!(picker.columns, 8);
+    assert_eq!(picker.selected, 0);
+    assert_eq!(picker.mode, PickerMode::Palette);
+}
+
+#[test]
+fn color_picker_columns_clamps_to_at_least_one() {
+    let picker = ColorPickerState::tailwind().columns(0);
+    assert_eq!(picker.columns, 1);
+    let picker = ColorPickerState::tailwind().columns(5);
+    assert_eq!(picker.columns, 5);
+}
+
+#[test]
+fn color_picker_selected_returns_swatch_in_palette_mode() {
+    let picker = ColorPickerState::new(vec![
+        crate::Color::Rgb(239, 68, 68),
+        crate::Color::Rgb(59, 130, 246),
+    ]);
+    assert_eq!(picker.selected(), crate::Color::Rgb(239, 68, 68));
+}
+
+#[test]
+fn color_picker_empty_palette_selected_falls_back_to_reset() {
+    let picker = ColorPickerState::new(Vec::new());
+    assert_eq!(picker.selected(), crate::Color::Reset);
+}
+
+#[test]
+fn color_picker_hex_mode_overrides_swatch_when_valid() {
+    let mut picker = ColorPickerState::new(vec![crate::Color::Rgb(239, 68, 68)]);
+    picker.mode = PickerMode::Hex;
+    picker.hex_input.value = "#3b82f6".to_string();
+    assert_eq!(picker.selected(), crate::Color::Rgb(59, 130, 246));
+}
+
+#[test]
+fn color_picker_hex_mode_invalid_falls_back_to_swatch() {
+    let mut picker = ColorPickerState::new(vec![crate::Color::Rgb(239, 68, 68)]);
+    picker.mode = PickerMode::Hex;
+    picker.hex_input.value = "not-a-color".to_string();
+    assert_eq!(picker.selected(), crate::Color::Rgb(239, 68, 68));
+}
+
+#[test]
+fn parse_hex_color_accepts_six_and_three_digit_forms() {
+    assert_eq!(
+        parse_hex_color("#3b82f6"),
+        Some(crate::Color::Rgb(59, 130, 246))
+    );
+    assert_eq!(
+        parse_hex_color("#FFFFFF"),
+        Some(crate::Color::Rgb(255, 255, 255))
+    );
+    assert_eq!(parse_hex_color("#000000"), Some(crate::Color::Rgb(0, 0, 0)));
+    // #RGB expands each nibble.
+    assert_eq!(
+        parse_hex_color("#fff"),
+        Some(crate::Color::Rgb(255, 255, 255))
+    );
+    assert_eq!(parse_hex_color("#0a0"), Some(crate::Color::Rgb(0, 170, 0)));
+    // Surrounding whitespace is trimmed.
+    assert_eq!(
+        parse_hex_color("  #3b82f6 "),
+        Some(crate::Color::Rgb(59, 130, 246))
+    );
+}
+
+#[test]
+fn parse_hex_color_rejects_malformed_input() {
+    assert_eq!(parse_hex_color("3b82f6"), None); // missing '#'
+    assert_eq!(parse_hex_color("#zzzzzz"), None); // non-hex digits
+    assert_eq!(parse_hex_color("#12345"), None); // wrong length
+    assert_eq!(parse_hex_color("#1234567"), None); // too long
+    assert_eq!(parse_hex_color(""), None);
+    assert_eq!(parse_hex_color("#"), None);
+}
+
+#[test]
+fn color_hex_label_formats_rgb_only() {
+    assert_eq!(
+        color_hex_label(crate::Color::Rgb(59, 130, 246)),
+        Some("#3B82F6".to_string())
+    );
+    assert_eq!(color_hex_label(crate::Color::Red), None);
+    assert_eq!(color_hex_label(crate::Color::Indexed(42)), None);
+}
+
+#[test]
+fn color_picker_swatch_downsamples_for_eight_bit() {
+    // Locks the render contract: an RGB swatch degrades to an Indexed cell
+    // under EightBit (the terminal flush layer applies this on output).
+    let swatch = crate::Color::Rgb(59, 130, 246);
+    assert!(matches!(
+        swatch.downsampled(crate::ColorDepth::EightBit),
+        crate::Color::Indexed(_)
+    ));
+    // Under NoColor no background color is emitted.
+    assert_eq!(
+        swatch.downsampled(crate::ColorDepth::NoColor),
+        crate::Color::Reset
+    );
+}

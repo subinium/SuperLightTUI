@@ -1332,5 +1332,338 @@ impl Context {
         response
     }
 
+    // ── color picker ───────────────────────────────────────────────────
+
+    /// Render an interactive color picker over the [`Color`] model.
+    ///
+    /// Shows a grid of color swatches plus an optional hex-entry field. When
+    /// focused, the arrow keys / `hjkl` move the 2D swatch cursor (clamped at
+    /// the grid edges), `Tab` toggles between palette and hex entry, and
+    /// `Enter` / `Space` confirms the current color. Returns `changed` on the
+    /// exact frames where the selected [`Color`] differs from the previous
+    /// frame. Read the chosen color back via
+    /// [`ColorPickerState::selected`](crate::widgets::ColorPickerState::selected).
+    ///
+    /// Each swatch is emitted with a full-RGB background; the terminal backend
+    /// downsamples it to the active [`ColorDepth`](crate::ColorDepth) on flush,
+    /// so the picker degrades correctly on 256-color, 16-color, and no-color
+    /// terminals. Uses the theme's `color_picker` slot for border and cursor
+    /// colors; override per-call with
+    /// [`color_picker_colored`](Self::color_picker_colored).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut picker = ColorPickerState::tailwind();
+    /// if ui.color_picker(&mut picker).changed {
+    ///     let chosen = picker.selected();
+    ///     let _ = chosen;
+    /// }
+    /// # });
+    /// ```
+    pub fn color_picker(&mut self, state: &mut ColorPickerState) -> Response {
+        let colors = self.widget_theme.color_picker;
+        self.color_picker_colored(state, &colors)
+    }
+
+    /// Render a color picker with custom [`WidgetColors`].
+    ///
+    /// Behaves exactly like [`color_picker`](Self::color_picker) but draws the
+    /// border, cursor highlight, and hex field with the supplied colors instead
+    /// of the theme's `color_picker` slot.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # use slt::{Color, WidgetColors};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut picker = ColorPickerState::tailwind();
+    /// let theme = WidgetColors::new().accent(Color::Cyan);
+    /// ui.color_picker_colored(&mut picker, &theme);
+    /// # });
+    /// ```
+    pub fn color_picker_colored(
+        &mut self,
+        state: &mut ColorPickerState,
+        colors: &WidgetColors,
+    ) -> Response {
+        if state.colors.is_empty() {
+            return Response::none();
+        }
+        let columns = state.columns.max(1);
+        state.selected = state.selected.min(state.colors.len() - 1);
+
+        let focused = self.register_focusable();
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
+        let old_color = state.selected();
+
+        self.color_picker_handle_keys(state, focused, columns);
+        self.color_picker_handle_clicks(state, interaction_id, columns);
+        self.color_picker_render(state, focused, columns, colors);
+
+        response.changed = state.selected() != old_color;
+        response
+    }
+
+    fn color_picker_handle_keys(
+        &mut self,
+        state: &mut ColorPickerState,
+        focused: bool,
+        columns: usize,
+    ) {
+        if !focused {
+            return;
+        }
+        let len = state.colors.len();
+        let mut consumed_indices = Vec::new();
+        for (i, key) in self.available_key_presses() {
+            match state.mode {
+                PickerMode::Palette => match key.code {
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        if state.selected % columns > 0 {
+                            state.selected -= 1;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        if state.selected % columns < columns - 1 && state.selected + 1 < len {
+                            state.selected += 1;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if state.selected >= columns {
+                            state.selected -= columns;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if state.selected + columns < len {
+                            state.selected += columns;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Tab => {
+                        state.mode = PickerMode::Hex;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                },
+                PickerMode::Hex => match key.code {
+                    KeyCode::Tab => {
+                        state.mode = PickerMode::Palette;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(ch) => {
+                        let index =
+                            byte_index_for_char(&state.hex_input.value, state.hex_input.cursor);
+                        state.hex_input.value.insert(index, ch);
+                        state.hex_input.cursor += 1;
+                        color_picker_validate_hex(&mut state.hex_input);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        if state.hex_input.cursor > 0 {
+                            let start = byte_index_for_char(
+                                &state.hex_input.value,
+                                state.hex_input.cursor - 1,
+                            );
+                            let end =
+                                byte_index_for_char(&state.hex_input.value, state.hex_input.cursor);
+                            state.hex_input.value.replace_range(start..end, "");
+                            state.hex_input.cursor -= 1;
+                        }
+                        color_picker_validate_hex(&mut state.hex_input);
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                },
+            }
+        }
+        self.consume_indices(consumed_indices);
+    }
+
+    fn color_picker_handle_clicks(
+        &mut self,
+        state: &mut ColorPickerState,
+        interaction_id: usize,
+        columns: usize,
+    ) {
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            // The interaction rect spans the whole bordered container; the
+            // swatch grid starts inside the top border and the left
+            // border + x-padding. Offset clicks back into grid space.
+            let grid_x0 = rect.x + GRID_X_OFFSET;
+            let grid_y0 = rect.y + GRID_Y_OFFSET;
+            let rows = state.colors.len().div_ceil(columns);
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                if mouse.x < grid_x0 || mouse.y < grid_y0 {
+                    continue;
+                }
+                let row = (mouse.y - grid_y0) as usize;
+                let col = (mouse.x - grid_x0) as usize / SWATCH_WIDTH;
+                if row < rows && col < columns {
+                    let idx = row * columns + col;
+                    if idx < state.colors.len() {
+                        state.mode = PickerMode::Palette;
+                        state.selected = idx;
+                        consumed.push(i);
+                    }
+                }
+            }
+            self.consume_indices(consumed);
+        }
+    }
+
+    fn color_picker_render(
+        &mut self,
+        state: &ColorPickerState,
+        focused: bool,
+        columns: usize,
+        colors: &WidgetColors,
+    ) {
+        let border_color = if focused {
+            colors.accent.unwrap_or(self.theme.primary)
+        } else {
+            colors.border.unwrap_or(self.theme.border)
+        };
+        let text_color = colors.fg.unwrap_or(self.theme.text);
+
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Rounded),
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border_color),
+                bg_color: None,
+                padding: Padding::xy(1, 0),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+
+        // Swatch grid: one Row container per grid row, one cell per swatch.
+        let rows = state.colors.len().div_ceil(columns);
+        for row in 0..rows {
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new(),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
+            for col in 0..columns {
+                let idx = row * columns + col;
+                let Some(&swatch) = state.colors.get(idx) else {
+                    break;
+                };
+                let is_cursor = idx == state.selected && state.mode == PickerMode::Palette;
+                let marker = if is_cursor { '▣' } else { ' ' };
+                let mut cell = String::with_capacity(SWATCH_WIDTH);
+                cell.push(' ');
+                cell.push(marker);
+                cell.push(' ');
+                // Full-RGB bg; the terminal flush downsamples per ColorDepth.
+                // contrast_fg keeps the cursor marker legible on any swatch.
+                let mut style = Style::new().bg(swatch).fg(Color::contrast_fg(swatch));
+                if is_cursor {
+                    style = style.bold();
+                }
+                self.styled(cell, style);
+            }
+            self.commands.push(Command::EndContainer);
+            self.rollback.last_text_idx = None;
+        }
+
+        // Selected color readout: a `#RRGGBB` label keeps the picker legible
+        // under `ColorDepth::NoColor`, where no background color is emitted.
+        let selected = state.selected();
+        let label = color_hex_label(selected).unwrap_or_else(|| "selected".to_string());
+        let mut readout = String::with_capacity(label.len() + 3);
+        readout.push_str("▸ ");
+        readout.push_str(&label);
+        self.styled(readout, Style::new().fg(text_color).bold());
+
+        // Hex entry line. The embedded field shows the typed value (or its
+        // placeholder); a `✗` flag surfaces the text-input validation error
+        // path on malformed input without panicking.
+        let hex_active = state.mode == PickerMode::Hex;
+        let hex_display = if state.hex_input.value.is_empty() {
+            state.hex_input.placeholder.clone()
+        } else {
+            state.hex_input.value.clone()
+        };
+        let mut hex_line = String::with_capacity(hex_display.len() + 6);
+        hex_line.push_str(if hex_active { "▸ hex " } else { "  hex " });
+        hex_line.push_str(&hex_display);
+        if state.hex_input.validation_error.is_some() {
+            hex_line.push_str(" ✗");
+        }
+        let hex_style = if hex_active {
+            Style::new()
+                .fg(colors.accent.unwrap_or(self.theme.primary))
+                .bold()
+        } else {
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
+        };
+        self.styled(hex_line, hex_style);
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+    }
+
     // ── tree ─────────────────────────────────────────────────────────
+}
+
+/// Display width in cells of one color-picker swatch (` ▣ ` / `   `).
+const SWATCH_WIDTH: usize = 3;
+
+/// Horizontal offset from the picker's interaction rect to the swatch grid:
+/// the rounded left border (1) plus the container's left x-padding (1).
+const GRID_X_OFFSET: u32 = 2;
+
+/// Vertical offset from the picker's interaction rect to the swatch grid:
+/// the rounded top border (1); the container has no top padding.
+const GRID_Y_OFFSET: u32 = 1;
+
+/// Validate the hex-entry field, setting/clearing its `validation_error`.
+///
+/// An empty field is treated as "not yet entered" (no error). Any non-empty
+/// value that does not parse as `#RRGGBB` / `#RGB` records an error so the
+/// widget can surface the text-input validation path.
+fn color_picker_validate_hex(input: &mut TextInputState) {
+    if input.value.is_empty() {
+        input.validation_error = None;
+    } else if parse_hex_color(&input.value).is_none() {
+        input.validation_error = Some("invalid hex".to_string());
+    } else {
+        input.validation_error = None;
+    }
 }

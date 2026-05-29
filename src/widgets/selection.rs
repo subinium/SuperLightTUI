@@ -371,3 +371,214 @@ impl PaletteCommand {
         self
     }
 }
+
+// ── Color Picker ──────────────────────────────────────────────────────
+
+/// Interaction mode of a [`ColorPickerState`].
+///
+/// Toggle between the two modes with `Tab` when the picker is focused.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::{ColorPickerState, PickerMode};
+/// let mut picker = ColorPickerState::tailwind();
+/// assert_eq!(picker.mode, PickerMode::Palette);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerMode {
+    /// Navigate the 2D swatch grid with the arrow keys / `hjkl`.
+    #[default]
+    Palette,
+    /// Enter a `#RRGGBB` or `#RGB` hex string in the embedded text field.
+    Hex,
+}
+
+/// State for an interactive color picker over the [`Color`](crate::Color) model.
+///
+/// Renders a grid of color swatches plus an optional hex-entry field. Pass a
+/// mutable reference to [`Context::color_picker`](crate::Context::color_picker)
+/// each frame; read the chosen color back via [`selected`](Self::selected).
+///
+/// Swatches are emitted with a full-RGB background; the terminal backend
+/// downsamples each cell to the active [`ColorDepth`](crate::ColorDepth) on
+/// flush (see [`Color::downsampled`](crate::Color::downsampled)), so the picker
+/// degrades correctly on 256-color, 16-color, and no-color terminals. Every
+/// `Color::Rgb` swatch also carries a `#RRGGBB` label rendered with a
+/// [`Color::contrast_fg`](crate::Color::contrast_fg) foreground, so the picker
+/// stays legible even when no background color is emitted.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::ColorPickerState;
+/// # slt::run(|ui: &mut slt::Context| {
+/// let mut picker = ColorPickerState::tailwind();
+/// let resp = ui.color_picker(&mut picker);
+/// if resp.changed {
+///     let chosen = picker.selected();
+///     // persist `chosen` somewhere…
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone)]
+pub struct ColorPickerState {
+    /// Swatch colors laid out row-major.
+    pub colors: Vec<crate::Color>,
+    /// Number of swatches per row (minimum 1, default 8).
+    pub columns: usize,
+    /// Flat index of the selected swatch into [`colors`](Self::colors).
+    pub selected: usize,
+    /// Whether the picker is in palette-grid or hex-entry mode.
+    pub mode: PickerMode,
+    /// Backing text field used in [`PickerMode::Hex`].
+    pub hex_input: TextInputState,
+}
+
+impl ColorPickerState {
+    /// Create a picker over the given swatches with the first one selected.
+    ///
+    /// Defaults to 8 columns and [`PickerMode::Palette`]. An empty `colors`
+    /// vector is allowed; the widget renders nothing and reports no change.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # use slt::Color;
+    /// let picker = ColorPickerState::new(vec![
+    ///     Color::Rgb(239, 68, 68),
+    ///     Color::Rgb(59, 130, 246),
+    /// ]);
+    /// assert_eq!(picker.columns, 8);
+    /// ```
+    pub fn new(colors: Vec<crate::Color>) -> Self {
+        Self {
+            colors,
+            columns: 8,
+            selected: 0,
+            mode: PickerMode::Palette,
+            hex_input: TextInputState::with_placeholder("#RRGGBB"),
+        }
+    }
+
+    /// Build a picker from the Tailwind `c500` shades in
+    /// [`crate::palette::tailwind`].
+    ///
+    /// Includes all 22 palettes from `SLATE` through `ROSE`, in declaration
+    /// order, giving a balanced default swatch grid.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// let picker = ColorPickerState::tailwind();
+    /// assert_eq!(picker.colors.len(), 22);
+    /// ```
+    pub fn tailwind() -> Self {
+        use crate::palette::tailwind;
+        let colors = vec![
+            tailwind::SLATE.c500,
+            tailwind::GRAY.c500,
+            tailwind::ZINC.c500,
+            tailwind::NEUTRAL.c500,
+            tailwind::STONE.c500,
+            tailwind::RED.c500,
+            tailwind::ORANGE.c500,
+            tailwind::AMBER.c500,
+            tailwind::YELLOW.c500,
+            tailwind::LIME.c500,
+            tailwind::GREEN.c500,
+            tailwind::EMERALD.c500,
+            tailwind::TEAL.c500,
+            tailwind::CYAN.c500,
+            tailwind::SKY.c500,
+            tailwind::BLUE.c500,
+            tailwind::INDIGO.c500,
+            tailwind::VIOLET.c500,
+            tailwind::PURPLE.c500,
+            tailwind::FUCHSIA.c500,
+            tailwind::PINK.c500,
+            tailwind::ROSE.c500,
+        ];
+        Self::new(colors)
+    }
+
+    /// Set the number of swatches per row (clamped to at least 1).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// let picker = ColorPickerState::tailwind().columns(6);
+    /// assert_eq!(picker.columns, 6);
+    /// ```
+    pub fn columns(mut self, n: usize) -> Self {
+        self.columns = n.max(1);
+        self
+    }
+
+    /// Return the currently selected color.
+    ///
+    /// In [`PickerMode::Hex`] a successfully parsed `#RRGGBB` / `#RGB` value
+    /// takes precedence; otherwise the highlighted palette swatch is returned.
+    /// Falls back to [`Color::Reset`](crate::Color::Reset) when the palette is
+    /// empty and no valid hex value has been entered.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # use slt::Color;
+    /// let picker = ColorPickerState::new(vec![Color::Rgb(59, 130, 246)]);
+    /// assert_eq!(picker.selected(), Color::Rgb(59, 130, 246));
+    /// ```
+    pub fn selected(&self) -> crate::Color {
+        if self.mode == PickerMode::Hex {
+            if let Some(c) = parse_hex_color(&self.hex_input.value) {
+                return c;
+            }
+        }
+        self.colors
+            .get(self.selected)
+            .copied()
+            .unwrap_or(crate::Color::Reset)
+    }
+}
+
+/// Parse a `#RRGGBB` or `#RGB` hex string into a [`Color::Rgb`](crate::Color).
+///
+/// Returns `None` for malformed input (wrong length, non-hex digits, missing
+/// `#`). The leading `#` is required; surrounding whitespace is trimmed.
+pub(crate) fn parse_hex_color(input: &str) -> Option<crate::Color> {
+    let s = input.trim();
+    let hex = s.strip_prefix('#')?;
+    let (r, g, b) = match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            (r, g, b)
+        }
+        3 => {
+            // #RGB expands each nibble to a byte (e.g. `f` -> `0xff`).
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 0x11;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 0x11;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 0x11;
+            (r, g, b)
+        }
+        _ => return None,
+    };
+    Some(crate::Color::Rgb(r, g, b))
+}
+
+/// Render `color` as a `#RRGGBB` label, or `None` for non-RGB colors.
+///
+/// Used by the color picker to label swatches so they stay legible when the
+/// terminal emits no background color.
+pub(crate) fn color_hex_label(color: crate::Color) -> Option<String> {
+    match color {
+        crate::Color::Rgb(r, g, b) => Some(format!("#{r:02X}{g:02X}{b:02X}")),
+        _ => None,
+    }
+}

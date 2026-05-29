@@ -144,6 +144,10 @@ name = "hello"
 path = "examples/hello.rs"
 
 [[example]]
+name = "color_picker"
+path = "examples/color_picker.rs"
+
+[[example]]
 name = "counter"
 path = "examples/counter.rs"
 

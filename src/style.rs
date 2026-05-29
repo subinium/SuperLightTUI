@@ -1498,6 +1498,8 @@ pub struct WidgetTheme {
     pub toggle: WidgetColors,
     /// Default colors for text inputs.
     pub text_input: WidgetColors,
+    /// Default colors for color pickers.
+    pub color_picker: WidgetColors,
 }
 
 impl WidgetTheme {
@@ -1513,6 +1515,7 @@ impl WidgetTheme {
             checkbox: WidgetColors::new(),
             toggle: WidgetColors::new(),
             text_input: WidgetColors::new(),
+            color_picker: WidgetColors::new(),
         }
     }
 
@@ -1567,6 +1570,12 @@ impl WidgetTheme {
     /// Set default text input colors.
     pub const fn text_input(mut self, colors: WidgetColors) -> Self {
         self.text_input = colors;
+        self
+    }
+
+    /// Set default color picker colors.
+    pub const fn color_picker(mut self, colors: WidgetColors) -> Self {
+        self.color_picker = colors;
         self
     }
 }
