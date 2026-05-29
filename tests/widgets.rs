@@ -2031,6 +2031,57 @@ fn select_renders_open() {
 }
 
 #[test]
+fn select_open_filter_narrows_visible_items() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+    state.filter = "an".to_string(); // matches Banana only
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("Banana");
+    tb.assert_contains("/an"); // query feedback line
+    tb.assert_not_contains("Cherry"); // filtered out (and not the trigger value)
+}
+
+#[test]
+fn select_open_filter_no_match_shows_placeholder_line() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana"]);
+    state.open = true;
+    state.filter = "zzz".to_string();
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("(no matches)");
+}
+
+#[test]
+fn select_type_to_filter_then_enter_selects_match() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+    // Type "ch" (narrows to Cherry), then Enter selects it.
+    let events = slt::EventBuilder::new()
+        .key('c')
+        .key('h')
+        .key_code(KeyCode::Enter)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.select(&mut state);
+    });
+
+    assert_eq!(state.selected_item(), Some("Cherry"));
+    assert!(!state.open, "Enter closes the dropdown");
+    assert!(state.filter.is_empty(), "filter resets after selection");
+}
+
+#[test]
 fn radio_renders_options() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = RadioState::new(vec!["One", "Two", "Three"]);

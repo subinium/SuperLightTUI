@@ -758,6 +758,16 @@ impl Context {
         let old_selected = state.selected;
 
         self.select_handle_events(state, focused, response.clicked);
+        // Keep the cursor within the filtered subset before rendering.
+        if state.open {
+            let flen = state.filtered_indices().len();
+            let cur = state.cursor();
+            if flen == 0 {
+                state.set_cursor(0);
+            } else if cur >= flen {
+                state.set_cursor(flen - 1);
+            }
+        }
         self.select_render(state, focused, colors);
         response.changed = state.selected != old_selected;
         response
@@ -767,6 +777,7 @@ impl Context {
         if clicked {
             state.open = !state.open;
             if state.open {
+                state.filter.clear();
                 state.set_cursor(state.selected);
             }
         }
@@ -778,30 +789,56 @@ impl Context {
         let mut consumed_indices = Vec::new();
         for (i, key) in self.available_key_presses() {
             if state.open {
+                // Cursor indexes into the filtered subset (not `items`); arrow
+                // keys navigate, printable keys type into the filter.
+                let filtered_len = state.filtered_indices().len();
                 match key.code {
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let mut cursor = state.cursor();
-                        let _ = handle_vertical_nav(
-                            &mut cursor,
-                            state.items.len().saturating_sub(1),
-                            key.code.clone(),
-                        );
-                        state.set_cursor(cursor);
+                    KeyCode::Up => {
+                        state.set_cursor(state.cursor().saturating_sub(1));
                         consumed_indices.push(i);
                     }
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        state.selected = state.cursor();
+                    KeyCode::Down => {
+                        if filtered_len > 0 {
+                            let next = (state.cursor() + 1).min(filtered_len - 1);
+                            state.set_cursor(next);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(&real) = state.filtered_indices().get(state.cursor()) {
+                            state.selected = real;
+                        }
                         state.open = false;
+                        state.filter.clear();
                         consumed_indices.push(i);
                     }
                     KeyCode::Esc => {
-                        state.open = false;
+                        // First Esc clears a non-empty query; a second closes.
+                        if state.filter.is_empty() {
+                            state.open = false;
+                        } else {
+                            state.filter.clear();
+                            state.set_cursor(0);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        state.filter.pop();
+                        state.set_cursor(0);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(c) => {
+                        // Printable keys (including space, 'j', 'k') type into the
+                        // filter — arrows remain the only navigation while open.
+                        state.filter.push(c);
+                        state.set_cursor(0);
                         consumed_indices.push(i);
                     }
                     _ => {}
                 }
             } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                 state.open = true;
+                state.filter.clear();
                 state.set_cursor(state.selected);
                 consumed_indices.push(i);
             }
@@ -897,8 +934,27 @@ impl Context {
     }
 
     fn render_select_dropdown(&mut self, state: &SelectState, colors: &WidgetColors) {
-        for (idx, item) in state.items.iter().enumerate() {
-            let is_cursor = idx == state.cursor();
+        let filtered = state.filtered_indices();
+
+        // Show the active query so typing has visible feedback.
+        if !state.filter.is_empty() {
+            let dim = self.theme.text_dim;
+            let mut q = String::with_capacity(state.filter.len() + 1);
+            q.push('/');
+            q.push_str(&state.filter);
+            self.styled(q, Style::new().fg(dim).italic());
+        }
+
+        if filtered.is_empty() {
+            let dim = self.theme.text_dim;
+            self.styled("  (no matches)".to_string(), Style::new().fg(dim).dim());
+            return;
+        }
+
+        let cursor = state.cursor();
+        for (pos, &idx) in filtered.iter().enumerate() {
+            let item = &state.items[idx];
+            let is_cursor = pos == cursor;
             let style = if is_cursor {
                 Style::new()
                     .bold()

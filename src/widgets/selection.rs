@@ -13,6 +13,10 @@ pub struct SelectState {
     /// Placeholder text shown when `items` is empty.
     pub placeholder: String,
     cursor: usize,
+    /// Type-to-filter query, active only while the dropdown is open. Reset on
+    /// open/close and on selection. Printable keys append; Backspace pops.
+    /// Public so callers can pre-fill or inspect the live query.
+    pub filter: String,
 }
 
 impl SelectState {
@@ -24,7 +28,24 @@ impl SelectState {
             open: false,
             placeholder: String::new(),
             cursor: 0,
+            filter: String::new(),
         }
+    }
+
+    /// Indices of `items` that match the current type-to-filter query, in
+    /// original order. An empty query matches every item. Matching reuses the
+    /// shared fuzzy matcher so a gapped pattern (e.g. `"sf"` → `"San Francisco"`)
+    /// still hits.
+    pub(crate) fn filtered_indices(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.items.len()).collect();
+        }
+        (0..self.items.len())
+            .filter(|&i| {
+                crate::widgets::CommandPaletteState::fuzzy_score(&self.filter, &self.items[i])
+                    .is_some()
+            })
+            .collect()
     }
 
     /// Set placeholder text shown when no item can be displayed.

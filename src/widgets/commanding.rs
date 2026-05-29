@@ -45,7 +45,7 @@ impl CommandPaletteState {
         }
     }
 
-    fn fuzzy_score(pattern: &str, text: &str) -> Option<i32> {
+    pub(crate) fn fuzzy_score(pattern: &str, text: &str) -> Option<i32> {
         let pattern = pattern.trim();
         if pattern.is_empty() {
             return Some(0);

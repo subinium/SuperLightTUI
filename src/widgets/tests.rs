@@ -187,6 +187,28 @@ fn select_state_placeholder_builder_sets_value() {
 }
 
 #[test]
+fn select_filtered_indices_empty_query_returns_all() {
+    let state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    assert_eq!(state.filtered_indices(), vec![0, 1, 2]);
+}
+
+#[test]
+fn select_filtered_indices_fuzzy_subsequence_preserves_order() {
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry", "Mango"]);
+    state.filter = "an".to_string();
+    // "an" is a subsequence of Banana and Mango but not Apple/Cherry; original
+    // order is preserved (no score reordering).
+    assert_eq!(state.filtered_indices(), vec![1, 3]);
+}
+
+#[test]
+fn select_filtered_indices_no_match_is_empty() {
+    let mut state = SelectState::new(vec!["Apple", "Banana"]);
+    state.filter = "zzz".to_string();
+    assert!(state.filtered_indices().is_empty());
+}
+
+#[test]
 fn radio_state_new_sets_items_and_selection() {
     let state = RadioState::new(vec!["red", "green"]);
     assert_eq!(state.items, vec!["red".to_string(), "green".to_string()]);
