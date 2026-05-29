@@ -10,10 +10,31 @@ pub struct ListState {
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     pub filter: String,
-    /// Top-row index of the visible viewport for `virtual_list`. Defaults to
+    /// Top *item* index of the visible viewport for `virtual_list`. Defaults to
     /// `0` and is clamped each frame so `selected` stays inside the viewport
-    /// without forcing the cursor to the bottom row.
+    /// without forcing the cursor to the bottom row. For the uniform
+    /// fixed-height path this equals the top row; with per-item heights set
+    /// (see [`set_item_heights`](ListState::set_item_heights)) the cumulative
+    /// row offset is tracked separately in `viewport_row_offset`.
     pub(crate) viewport_offset: usize,
+    /// Cumulative top-row offset of the visible viewport for
+    /// `virtual_list_variable`. Tracks the total row height of the items above
+    /// `viewport_offset` so row-accurate scrolling and edge clipping work when
+    /// per-item heights are present. Equals `viewport_offset` only when every
+    /// item is one row tall.
+    pub(crate) viewport_row_offset: usize,
+    /// Optional per-item row heights (each clamped to `>= 1`). When present,
+    /// [`Context::virtual_list_variable`](crate::Context::virtual_list_variable)
+    /// uses them to compute a row-accurate visible range; when `None` the
+    /// uniform one-row-per-item model is used.
+    item_heights: Option<Vec<u32>>,
+    /// Cached prefix sum of `item_heights`, rebuilt lazily when `heights_dirty`.
+    /// `row_prefix[i]` is the total number of rows occupied by items `0..i`, so
+    /// `row_prefix.len() == items.len() + 1` after `ensure_row_prefix`.
+    row_prefix: Vec<u32>,
+    /// Dirty flag gating `row_prefix` rebuilds; set whenever items or heights
+    /// change so a stale prefix sum is never consumed.
+    heights_dirty: bool,
     view_indices: Vec<usize>,
     /// Lowercase cache parallel to `items`, rebuilt only on `set_items` / `new`.
     /// Mirrors the `row_search_cache` pattern in `TableState`.
@@ -32,6 +53,10 @@ impl ListState {
             selected: 0,
             filter: String::new(),
             viewport_offset: 0,
+            viewport_row_offset: 0,
+            item_heights: None,
+            row_prefix: Vec::new(),
+            heights_dirty: true,
             view_indices: (0..len).collect(),
             item_search_cache,
         }
@@ -45,7 +70,115 @@ impl ListState {
         self.items = items.into_iter().map(Into::into).collect();
         self.item_search_cache = self.items.iter().map(|s| s.to_lowercase()).collect();
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        // Item count changed, so any cached prefix sum is stale.
+        self.heights_dirty = true;
         self.rebuild_view();
+    }
+
+    /// Provide a per-item row height (each clamped to `>= 1`) and return `self`.
+    ///
+    /// Enables variable-height virtualization via
+    /// [`Context::virtual_list_variable`](crate::Context::virtual_list_variable),
+    /// the chat/feed bubble use case where each item occupies a different
+    /// number of rows. Each entry corresponds to the item at the same index;
+    /// missing entries fall back to a height of `1`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::ListState;
+    ///
+    /// let state = ListState::new(vec!["short", "a\nthree\nline bubble", "ok"])
+    ///     .with_item_heights(vec![1, 3, 1]);
+    /// # let _ = state;
+    /// ```
+    ///
+    /// Available since `0.21.0`.
+    pub fn with_item_heights(mut self, heights: Vec<u32>) -> Self {
+        self.set_item_heights(heights);
+        self
+    }
+
+    /// Set per-item row heights (each clamped to `>= 1`).
+    ///
+    /// Marks the cached prefix sum dirty so it is rebuilt on the next render.
+    /// Length should match [`items`](ListState::items); missing entries fall
+    /// back to a height of `1` and extra entries are ignored.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut state = ListState::new(vec!["a", "b", "c"]);
+    /// state.set_item_heights(vec![2, 1, 4]);
+    /// # let _ = state;
+    /// ```
+    ///
+    /// Available since `0.21.0`.
+    pub fn set_item_heights(&mut self, heights: Vec<u32>) {
+        self.item_heights = Some(heights.into_iter().map(|h| h.max(1)).collect());
+        self.heights_dirty = true;
+    }
+
+    /// Clear per-item heights, reverting to the uniform one-row-per-item model.
+    ///
+    /// After this call [`Context::virtual_list_variable`](crate::Context::virtual_list_variable)
+    /// behaves identically to [`Context::virtual_list`](crate::Context::virtual_list).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut state = ListState::new(vec!["a", "b"]).with_item_heights(vec![3, 2]);
+    /// state.clear_item_heights();
+    /// # let _ = state;
+    /// ```
+    ///
+    /// Available since `0.21.0`.
+    pub fn clear_item_heights(&mut self) {
+        self.item_heights = None;
+        self.heights_dirty = true;
+    }
+
+    /// Whether per-item heights are currently set.
+    pub(crate) fn has_item_heights(&self) -> bool {
+        self.item_heights.is_some()
+    }
+
+    /// Height of item `idx` in rows (`1` when no per-item heights are set or the
+    /// index has no explicit height).
+    pub(crate) fn item_height(&self, idx: usize) -> u32 {
+        self.item_heights
+            .as_ref()
+            .and_then(|h| h.get(idx).copied())
+            .unwrap_or(1)
+    }
+
+    /// Rebuild `row_prefix` if dirty. After this call `row_prefix[i]` is the
+    /// total number of rows occupied by items `0..i`, and
+    /// `row_prefix.len() == items.len() + 1`. Rebuild is `O(n)` and skipped
+    /// entirely when `heights_dirty` is `false`.
+    pub(crate) fn ensure_row_prefix(&mut self) {
+        if !self.heights_dirty && self.row_prefix.len() == self.items.len() + 1 {
+            return;
+        }
+        let n = self.items.len();
+        self.row_prefix.clear();
+        self.row_prefix.reserve(n + 1);
+        let mut acc = 0u32;
+        self.row_prefix.push(0);
+        for i in 0..n {
+            acc = acc.saturating_add(self.item_height(i));
+            self.row_prefix.push(acc);
+        }
+        self.heights_dirty = false;
+    }
+
+    /// Read-only access to the cached prefix sum (test/helper use).
+    pub(crate) fn row_prefix(&self) -> &[u32] {
+        &self.row_prefix
     }
 
     /// Set the filter string. Multiple space-separated tokens are AND'd
@@ -1445,5 +1578,78 @@ mod table_v021_width_tests {
                 proptest::prop_assert!(w <= available);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod list_state_height_tests {
+    use super::ListState;
+
+    #[test]
+    fn row_prefix_is_cumulative_sum() {
+        let mut state = ListState::new(vec!["a", "b", "c", "d"]);
+        state.set_item_heights(vec![2, 1, 3, 1]);
+        state.ensure_row_prefix();
+        // row_prefix[i] = total rows occupied by items 0..i.
+        assert_eq!(state.row_prefix(), &[0, 2, 3, 6, 7]);
+        // item_height reflects the stored (clamped) heights.
+        assert_eq!(state.item_height(0), 2);
+        assert_eq!(state.item_height(2), 3);
+    }
+
+    #[test]
+    fn heights_below_one_are_clamped() {
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        state.set_item_heights(vec![0, 0, 0]);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 1, 2, 3]);
+        assert_eq!(state.item_height(0), 1);
+    }
+
+    #[test]
+    fn dirty_gate_skips_rebuild_when_unchanged() {
+        let mut state = ListState::new(vec!["a", "b"]);
+        state.set_item_heights(vec![3, 2]);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 3, 5]);
+        // heights_dirty is now false; a second call must be a no-op and leave
+        // the prefix intact (no panic, no recompute that changes the result).
+        assert!(!state.heights_dirty);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 3, 5]);
+    }
+
+    #[test]
+    fn no_heights_falls_back_to_uniform() {
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        assert!(!state.has_item_heights());
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 1, 2, 3]);
+        assert_eq!(state.item_height(0), 1);
+    }
+
+    #[test]
+    fn clear_reverts_to_uniform() {
+        let mut state = ListState::new(vec!["a", "b"]).with_item_heights(vec![4, 2]);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 4, 6]);
+        state.clear_item_heights();
+        assert!(!state.has_item_heights());
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 1, 2]);
+    }
+
+    #[test]
+    fn set_items_marks_dirty_and_resizes_prefix() {
+        let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(vec![2, 2, 2]);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 2, 4, 6]);
+        // Replacing items must invalidate the stale prefix.
+        state.set_items(vec!["x", "y"]);
+        assert!(state.heights_dirty);
+        state.ensure_row_prefix();
+        // item_heights still carries 3 entries; items now has 2 → height 1 for
+        // out-of-range indices is not consulted, the prefix matches the 2 items.
+        assert_eq!(state.row_prefix(), &[0, 2, 4]);
     }
 }
