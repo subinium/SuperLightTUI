@@ -1209,12 +1209,30 @@ impl HighlightRange {
 /// Pass a mutable reference to `Context::scrollable` each frame. The context
 /// updates `offset` and the internal bounds automatically based on mouse wheel
 /// and drag events.
+///
+/// Both axes are tracked (#247): the vertical axis (`offset`, [`scroll_up`] /
+/// [`scroll_down`]) drives [`Context::scroll_col`], and the horizontal axis
+/// (`offset_x`, [`scroll_left`] / [`scroll_right`]) drives
+/// [`Context::scroll_row`]. A single [`ScrollState`] scrolls one axis per
+/// container — nest a `scroll_row` inside a `scroll_col` for both. The vertical
+/// API is unchanged from earlier versions.
+///
+/// [`scroll_up`]: ScrollState::scroll_up
+/// [`scroll_down`]: ScrollState::scroll_down
+/// [`scroll_left`]: ScrollState::scroll_left
+/// [`scroll_right`]: ScrollState::scroll_right
+/// [`Context::scroll_col`]: crate::Context::scroll_col
+/// [`Context::scroll_row`]: crate::Context::scroll_row
 #[derive(Debug, Clone)]
 pub struct ScrollState {
     /// Current vertical scroll offset in rows.
     pub offset: usize,
+    /// Current horizontal scroll offset in columns (#247).
+    pub offset_x: usize,
     content_height: u32,
     viewport_height: u32,
+    content_width: u32,
+    viewport_width: u32,
     highlights: Vec<HighlightRange>,
     current_highlight: Option<usize>,
 }
@@ -1224,8 +1242,11 @@ impl ScrollState {
     pub fn new() -> Self {
         Self {
             offset: 0,
+            offset_x: 0,
             content_height: 0,
             viewport_height: 0,
+            content_width: 0,
+            viewport_width: 0,
             highlights: Vec::new(),
             current_highlight: None,
         }
@@ -1307,6 +1328,101 @@ impl ScrollState {
     pub(crate) fn set_bounds(&mut self, content_height: u32, viewport_height: u32) {
         self.content_height = content_height;
         self.viewport_height = viewport_height;
+    }
+
+    /// Update the horizontal (x-axis) bounds (#247).
+    ///
+    /// Called by [`Context::scroll_row`] / [`Context::scrollable`] each frame
+    /// when the bound scrollable scrolls horizontally. The vertical
+    /// [`set_bounds`](Self::set_bounds) is left untouched, keeping the two axes
+    /// independent.
+    ///
+    /// [`Context::scroll_row`]: crate::Context::scroll_row
+    /// [`Context::scrollable`]: crate::Context::scrollable
+    pub(crate) fn set_bounds_x(&mut self, content_width: u32, viewport_width: u32) {
+        self.content_width = content_width;
+        self.viewport_width = viewport_width;
+    }
+
+    /// Check if scrolling left is possible (`offset_x` is greater than 0, #247).
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let scroll = ScrollState::new();
+    /// assert!(!scroll.can_scroll_left());
+    /// ```
+    pub fn can_scroll_left(&self) -> bool {
+        self.offset_x > 0
+    }
+
+    /// Check if scrolling right is possible (content extends past the right
+    /// edge of the viewport, #247).
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let scroll = ScrollState::new();
+    /// // A fresh state with no content cannot scroll right.
+    /// assert!(!scroll.can_scroll_right());
+    /// ```
+    pub fn can_scroll_right(&self) -> bool {
+        (self.offset_x as u32) + self.viewport_width < self.content_width
+    }
+
+    /// Total horizontal content width in columns (#247).
+    pub fn content_width(&self) -> u32 {
+        self.content_width
+    }
+
+    /// Horizontal viewport width in columns (#247).
+    pub fn viewport_width(&self) -> u32 {
+        self.viewport_width
+    }
+
+    /// Horizontal scroll progress as a ratio in `[0.0, 1.0]` (#247).
+    ///
+    /// The x-axis mirror of [`progress_ratio`](Self::progress_ratio). Returns
+    /// `0.0` when the content fits the viewport (no horizontal overflow). Feed
+    /// it to a future horizontal scrollbar, a position readout, or a minimap.
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let scroll = ScrollState::new();
+    /// let p: f64 = scroll.progress_x();
+    /// assert!((0.0..=1.0).contains(&p));
+    /// ```
+    pub fn progress_x(&self) -> f64 {
+        let max = self.content_width.saturating_sub(self.viewport_width);
+        if max == 0 {
+            0.0
+        } else {
+            self.offset_x as f64 / max as f64
+        }
+    }
+
+    /// Scroll left by the given number of columns, clamped to 0 (#247).
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let mut scroll = ScrollState::new();
+    /// scroll.scroll_left(4); // clamps at 0 with no content
+    /// assert_eq!(scroll.offset_x, 0);
+    /// ```
+    pub fn scroll_left(&mut self, amount: usize) {
+        self.offset_x = self.offset_x.saturating_sub(amount);
+    }
+
+    /// Scroll right by the given number of columns, clamped to the maximum
+    /// horizontal offset (#247).
+    ///
+    /// ```no_run
+    /// # use slt::ScrollState;
+    /// let mut scroll = ScrollState::new();
+    /// scroll.scroll_right(4); // clamps to content bounds (0 with no content)
+    /// assert_eq!(scroll.offset_x, 0);
+    /// ```
+    pub fn scroll_right(&mut self, amount: usize) {
+        let max_offset = self.content_width.saturating_sub(self.viewport_width) as usize;
+        self.offset_x = (self.offset_x + amount).min(max_offset);
     }
 
     /// Set the active highlight ranges. Replaces any previous highlights.

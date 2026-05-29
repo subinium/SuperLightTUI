@@ -2201,3 +2201,348 @@ mod wrap_lines_grapheme_property {
         }
     }
 }
+
+// ─── #247: horizontal scroll (scroll_row) layout / collect kernel ──────────
+
+/// Build a scrollable row of fixed-width text children for the #247 tests.
+///
+/// Each child is a 1-row text node sized `cell_w` wide; `gap` is the
+/// inter-child main-axis gap. The container is positioned at the origin and
+/// marked `is_scrollable`, mirroring what `build_children` produces for
+/// `scroll_row`.
+#[cfg(test)]
+fn scrollable_row(children_widths: &[u32], gap: i32, viewport_w: u32) -> LayoutNode {
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    row.is_scrollable = true;
+    row.gap = gap;
+    for (i, &w) in children_widths.iter().enumerate() {
+        let mut t = LayoutNode::text(
+            format!("C{i}"),
+            Style::new(),
+            0,
+            Align::Start,
+            (None, false, false),
+            Margin::default(),
+            Constraints::default().min_w(w).max_w(w),
+        );
+        // Seed the intrinsic width so `min_width` reports `w` regardless of the
+        // 2-char label.
+        t.size = (w, 1);
+        row.children.push(t);
+    }
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    root.children.push(row);
+    compute(&mut root, crate::rect::Rect::new(0, 0, viewport_w, 4));
+    root
+}
+
+#[test]
+fn scrollable_row_overflow_sets_content_width_and_lays_out_horizontally() {
+    // Four 10-wide children + 3 gaps of 1 = 43 natural width into a 20-wide
+    // viewport. The scrollable row must lay out into the oversized virtual
+    // area (children march left→right past the viewport) and record
+    // `content_width == natural_width`.
+    let root = scrollable_row(&[10, 10, 10, 10], 1, 20);
+    let row = &root.children[0];
+    assert!(row.is_scrollable);
+    assert_eq!(
+        row.content_width, 43,
+        "content_width must equal the natural width (4*10 + 3*1)"
+    );
+    assert_eq!(
+        row.content_height, 0,
+        "a scrollable row has no content_height"
+    );
+
+    // Children laid out left→right at the same y, spanning past the viewport.
+    let c = &row.children;
+    assert_eq!(c[0].pos, (0, 0));
+    assert_eq!(c[1].pos.0, 11, "second child after first(10)+gap(1)");
+    assert_eq!(c[2].pos.0, 22);
+    assert_eq!(c[3].pos.0, 33);
+    for child in c {
+        assert_eq!(child.pos.1, 0, "all children share the same row (y)");
+    }
+    assert!(
+        c[3].pos.0 + c[3].size.0 > 20,
+        "the far-right child must overflow the 20-wide viewport"
+    );
+}
+
+#[test]
+fn scrollable_row_fits_reports_content_within_viewport() {
+    // 3*5 + 2*1 = 17 ≤ 20: no overflow. Mirroring the scrollable-column path,
+    // `content_width` records the real content extent (not forced to 0), and
+    // because it is ≤ the viewport width the row reports no scrollable slack:
+    // `can_scroll_right` will be false.
+    let root = scrollable_row(&[5, 5, 5], 1, 20);
+    let row = &root.children[0];
+    assert_eq!(
+        row.content_width, 17,
+        "a fitting scrollable row records its real content width (3*5 + 2*1)"
+    );
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds_x(row.content_width, 20);
+    assert!(
+        !s.can_scroll_right(),
+        "content (17) ≤ viewport (20): no horizontal slack"
+    );
+}
+
+#[test]
+fn scrollable_column_reports_zero_content_width() {
+    // Regression guard: a vertical scrollable must keep content_width == 0 and
+    // a non-zero content_height, so `ScrollState` never sees phantom
+    // horizontal overflow (#247 must not disturb the y-axis).
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut col = LayoutNode::container(Direction::Column, default_container_config());
+    col.is_scrollable = true;
+    for i in 0..10 {
+        let mut t = LayoutNode::text(
+            format!("row {i}"),
+            Style::new(),
+            0,
+            Align::Start,
+            (None, false, false),
+            Margin::default(),
+            Constraints::default(),
+        );
+        t.size = (6, 1);
+        col.children.push(t);
+    }
+    root.children.push(col);
+    compute(&mut root, crate::rect::Rect::new(0, 0, 20, 4));
+    let col = &root.children[0];
+    assert_eq!(
+        col.content_width, 0,
+        "vertical scrollable: content_width == 0"
+    );
+    assert!(
+        col.content_height > 0,
+        "vertical scrollable: content_height > 0"
+    );
+}
+
+#[test]
+fn collect_all_reports_horizontal_axis_for_scrollable_row() {
+    // The collect pass must tag a scrollable row with `is_horizontal = true`
+    // and report content/viewport *widths*, so `Context::scrollable` binds the
+    // x-axis next frame.
+    let root = scrollable_row(&[10, 10, 10, 10], 1, 20);
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    assert_eq!(fd.scroll_infos.len(), 1);
+    let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+    assert!(is_horizontal, "scrollable row must be tagged horizontal");
+    assert_eq!(content, 43, "reports content width");
+    assert_eq!(viewport, 20, "reports viewport width");
+}
+
+#[test]
+fn collect_all_keeps_vertical_axis_flag_false_for_scrollable_column() {
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut col = LayoutNode::container(Direction::Column, default_container_config());
+    col.is_scrollable = true;
+    col.pos = (0, 0);
+    col.size = (20, 4);
+    col.content_height = 30;
+    root.children.push(col);
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+    assert!(!is_horizontal, "scrollable column stays vertical (false)");
+    assert_eq!(content, 30);
+    assert_eq!(viewport, 4);
+}
+
+#[test]
+fn collect_all_shifts_child_x_by_scroll_offset_x() {
+    // A scrollable row with `scroll_offset_x = 7` must report its child focus
+    // rect shifted left by 7 (the on-screen x), mirroring the y-axis offset.
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    row.is_scrollable = true;
+    row.pos = (0, 0);
+    row.size = (20, 1);
+    row.scroll_offset_x = 7;
+    let mut child = LayoutNode::text(
+        "focusable".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+    child.pos = (10, 0);
+    child.size = (9, 1);
+    child.focus_id = Some(3);
+    row.children.push(child);
+    root.children.push(row);
+
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    let (_, rect) = fd
+        .focus_rects
+        .iter()
+        .find(|(id, _)| *id == 3)
+        .expect("focus rect collected");
+    assert_eq!(
+        rect.x, 3,
+        "child at layout x=10 with x-offset 7 must collect at screen x=3"
+    );
+}
+
+#[test]
+fn scroll_row_renders_left_to_right_not_stacked() {
+    // Regression for the core #247 bug: `scroll_row` must NOT silently build a
+    // vertical column. Children must increase in x with a constant y.
+    let mut tb = crate::test_utils::TestBackend::new(20, 6);
+    let mut scroll = crate::widgets::ScrollState::new();
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..6 {
+                ui.text(format!("COL{i}"));
+            }
+        });
+    });
+    // The leftmost columns are visible on the same single line; a vertical
+    // column would have stacked them on separate lines instead.
+    let line0 = tb.line(0);
+    assert!(
+        line0.contains("COL0") && line0.contains("COL1"),
+        "scroll_row must lay COL0 and COL1 on the SAME line (got {line0:?})"
+    );
+    assert_eq!(
+        tb.line(1),
+        "",
+        "a horizontal scroll_row must not stack children onto row 1"
+    );
+}
+
+#[test]
+fn scroll_row_clips_far_right_then_reveals_after_scroll() {
+    // Wide content into a narrow viewport: a far-right column is clipped until
+    // we scroll right, then it appears and the leftmost clips out.
+    let mut tb = crate::test_utils::TestBackend::new(16, 4);
+    let mut scroll = crate::widgets::ScrollState::new();
+
+    // Frame 1 records the scroll bounds; frame 2's `scrollable()` reads them
+    // back via `prev_scroll_infos` and calls `set_bounds_x`, so after frame 2
+    // `scroll` knows its content/viewport widths and `scroll_right` can clamp
+    // correctly. (Same two-frame bounds lifecycle as vertical scroll.)
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.assert_contains("[item00]");
+    tb.assert_not_contains("[item07]");
+
+    // Now bounds are known: scroll right far enough to reveal the last item.
+    scroll.scroll_right(60);
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.assert_contains("[item07]");
+    tb.assert_not_contains("[item00]");
+}
+
+#[test]
+fn scroll_state_horizontal_bounds_clamp_and_predicates() {
+    // Drive the bounds/predicate surface directly (no rendering): the x-axis
+    // mirror of the vertical clamp/can_scroll tests.
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds_x(100, 20); // content 100 wide, viewport 20 → max offset 80.
+
+    assert!(!s.can_scroll_left(), "at start, cannot scroll left");
+    assert!(s.can_scroll_right(), "content overflows, can scroll right");
+
+    s.scroll_right(1000); // way past the end
+    assert_eq!(s.offset_x, 80, "scroll_right clamps to content - viewport");
+    assert!(!s.can_scroll_right(), "at end, cannot scroll right");
+    assert!(s.can_scroll_left(), "at end, can scroll left");
+
+    s.scroll_left(1000); // way past the start
+    assert_eq!(s.offset_x, 0, "scroll_left clamps to 0");
+    assert!((s.progress_x() - 0.0).abs() < f64::EPSILON);
+
+    s.scroll_right(40);
+    assert!((s.progress_x() - 0.5).abs() < 1e-9, "40/80 == 0.5 progress");
+}
+
+#[test]
+fn scroll_state_vertical_api_unchanged_by_horizontal_addition() {
+    // The vertical API must remain byte-identical: a column scrollable updates
+    // `offset` only, never `offset_x`.
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds(50, 10);
+    s.scroll_down(5);
+    assert_eq!(s.offset, 5);
+    assert_eq!(s.offset_x, 0, "vertical scroll must not touch offset_x");
+    assert_eq!(s.content_width(), 0);
+    assert_eq!(s.viewport_width(), 0);
+}
+
+mod hscroll_proptest {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        // Invariant 1: for any child widths and viewport, after layout the
+        // scrollable row's `content_width` equals the natural width (sum of
+        // child widths + gaps) — the x-axis mirror of the column path, which
+        // records the real content extent regardless of overflow.
+        //
+        // Invariant 2: `ScrollState::scroll_right(offset)` always clamps
+        // `offset_x` into `[0, content_width - viewport_width]`, so the
+        // rendered viewport never scrolls past the content edge.
+        #[test]
+        fn content_width_and_offset_clamp(
+            widths in prop::collection::vec(1u32..12, 1..8),
+            viewport_w in 4u32..30,
+            requested_offset in 0usize..200,
+        ) {
+            let root = scrollable_row(&widths, 1, viewport_w);
+            let row = &root.children[0];
+
+            let gap: i64 = 1;
+            let gaps = (widths.len() as i64 - 1).max(0) * gap;
+            let natural: i64 = widths.iter().map(|&w| w as i64).sum::<i64>() + gaps;
+            prop_assert_eq!(row.content_width as i64, natural,
+                "scrollable row records the natural content width");
+
+            // Offset clamp invariant via collect (the binding path).
+            let mut fd = FrameData::default();
+            collect_all(&root, &mut fd);
+            let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+            prop_assert!(is_horizontal);
+
+            let mut s = crate::widgets::ScrollState::new();
+            s.set_bounds_x(content, viewport);
+            s.scroll_right(requested_offset);
+            let max = content.saturating_sub(viewport) as usize;
+            prop_assert!(s.offset_x <= max,
+                "offset_x {} must clamp to max {}", s.offset_x, max);
+            // No leak past the clip: every visible cell's screen x is within
+            // [0, viewport). A child at layout x `cx` renders at `cx - offset_x`;
+            // require the visible window to stay within bounds.
+            prop_assert!(s.offset_x as u32 <= content,
+                "offset_x must never exceed total content width");
+        }
+    }
+}

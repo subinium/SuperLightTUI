@@ -41,11 +41,15 @@ pub(crate) struct BeginContainerArgs {
 /// Boxed for the same reason as [`BeginContainerArgs`] — keeps the
 /// `Command` enum from being dragged up to the width of this payload.
 ///
-/// Note: `direction` is intentionally omitted — scrollable containers are
-/// always `Direction::Column` (vertical scroll only).
+/// `direction` selects the scroll axis (#247): `Direction::Column` scrolls
+/// vertically (the historic default), `Direction::Row` scrolls horizontally.
+/// Both vertical and horizontal offsets are carried so the tree builder can
+/// apply the one matching `direction` without re-querying state mid-frame.
 #[derive(Debug, Clone)]
 pub(crate) struct BeginScrollableArgs {
     pub grow: u16,
+    /// Scroll axis: `Column` => vertical scroll, `Row` => horizontal (#247).
+    pub direction: Direction,
     pub border: Option<Border>,
     pub border_sides: BorderSides,
     pub border_style: Style,
@@ -64,7 +68,10 @@ pub(crate) struct BeginScrollableArgs {
     pub margin: Margin,
     pub constraints: Constraints,
     pub title: Option<(String, Style)>,
+    /// Vertical scroll offset in rows (used when `direction == Column`).
     pub scroll_offset: u32,
+    /// Horizontal scroll offset in columns (used when `direction == Row`, #247).
+    pub scroll_offset_x: u32,
     /// Group name for hover/focus registration. Fixes #141.
     pub group_name: Option<std::sync::Arc<str>>,
 }

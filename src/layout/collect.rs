@@ -4,7 +4,15 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct FrameData {
-    pub scroll_infos: Vec<(u32, u32)>,
+    /// Per-scrollable feedback: `(content_extent, viewport_extent, is_horizontal)`.
+    ///
+    /// For a vertical scrollable (`Direction::Column`) the extents are content
+    /// height / viewport height and `is_horizontal` is `false`; for a
+    /// horizontal scrollable (`Direction::Row`, #247) they are content width /
+    /// viewport width and `is_horizontal` is `true`. The axis flag lets
+    /// `Context::scrollable` bind the right `ScrollState` bounds next frame even
+    /// though the builder reads this back before `.row()` / `.col()` is known.
+    pub scroll_infos: Vec<(u32, u32, bool)>,
     pub scroll_rects: Vec<Rect>,
     pub hit_areas: Vec<Rect>,
     pub group_rects: Vec<(Arc<str>, Rect)>,
@@ -54,8 +62,7 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     data.clear();
 
     if node.is_scrollable {
-        let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
-        data.scroll_infos.push((node.content_height, viewport_h));
+        push_scroll_info(node, data);
         data.scroll_rects
             .push(Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1));
     }
@@ -79,23 +86,47 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
         data.hit_areas[id] = rect;
     }
 
-    let child_offset = if node.is_scrollable {
-        node.scroll_offset
+    // #247: scrollable nodes shift their children on exactly one axis.
+    // `scroll_offset` is non-zero only for a column, `scroll_offset_x` only
+    // for a row, so seeding both is correct for either orientation.
+    let (child_x_offset, child_y_offset) = if node.is_scrollable {
+        (node.scroll_offset_x, node.scroll_offset)
     } else {
-        0
+        (0, 0)
     };
     for child in &node.children {
-        collect_all_inner(child, data, child_offset, None, None, 1);
+        collect_all_inner(child, data, child_x_offset, child_y_offset, None, None, 1);
     }
 
     for overlay in &node.overlays {
-        collect_all_inner(&overlay.node, data, 0, None, None, 1);
+        collect_all_inner(&overlay.node, data, 0, 0, None, None, 1);
     }
 }
 
+/// Push the `(content_extent, viewport_extent, is_horizontal)` tuple for a
+/// scrollable node, choosing the axis from its layout direction (#247).
+///
+/// A scrollable `Direction::Row` reports content width / viewport width; any
+/// other scrollable (the historic `Direction::Column`) reports content height
+/// / viewport height. Keeps the axis-selection logic in one place so both
+/// `collect_all` and `collect_all_inner` push identical tuples.
+fn push_scroll_info(node: &LayoutNode, data: &mut FrameData) {
+    if matches!(node.kind, NodeKind::Container(Direction::Row)) {
+        let viewport_w = node.size.0.saturating_sub(node.frame_horizontal());
+        data.scroll_infos
+            .push((node.content_width, viewport_w, true));
+    } else {
+        let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
+        data.scroll_infos
+            .push((node.content_height, viewport_h, false));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn collect_all_inner(
     node: &LayoutNode,
     data: &mut FrameData,
+    x_offset: u32,
     y_offset: u32,
     active_group: Option<&Arc<str>>,
     viewport: Option<Rect>,
@@ -112,26 +143,25 @@ fn collect_all_inner(
             super::tree::MAX_LAYOUT_DEPTH
         );
     }
+    // #247: every collected rect's x is shifted by `x_offset` the same way its
+    // y is shifted by `y_offset`, so a horizontally-scrolled child's
+    // interaction / focus / group / content / scroll rect tracks its on-screen
+    // position. `adj_x` is the screen x for this node.
+    let adj_x = node.pos.0.saturating_sub(x_offset);
+    let adj_y = node.pos.1.saturating_sub(y_offset);
     // Single combined block — keep `scroll_infos` and `scroll_rects` writes
     // adjacent so the `assert_eq!(scroll_infos.len(), scroll_rects.len())`
     // invariant in `lib.rs` cannot drift if one side is edited without the
     // other. Mirrors the root-node path in `collect_all`.
     if node.is_scrollable {
-        let viewport_h = node.size.1.saturating_sub(node.frame_vertical());
-        data.scroll_infos.push((node.content_height, viewport_h));
-        let adj_y = node.pos.1.saturating_sub(y_offset);
+        push_scroll_info(node, data);
         data.scroll_rects
-            .push(Rect::new(node.pos.0, adj_y, node.size.0, node.size.1));
+            .push(Rect::new(adj_x, adj_y, node.size.0, node.size.1));
     }
 
     if let Some(id) = node.interaction_id {
-        let rect = if node.pos.1 + node.size.1 > y_offset {
-            Rect::new(
-                node.pos.0,
-                node.pos.1.saturating_sub(y_offset),
-                node.size.0,
-                node.size.1,
-            )
+        let rect = if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
+            Rect::new(adj_x, adj_y, node.size.0, node.size.1)
         } else {
             Rect::new(0, 0, 0, 0)
         };
@@ -142,7 +172,7 @@ fn collect_all_inner(
     }
 
     if let NodeKind::RawDraw(draw_id) = node.kind {
-        let node_x = node.pos.0;
+        let node_x = adj_x;
         let node_w = node.size.0;
         let node_h = node.size.1;
         let screen_y = node.pos.1 as i64 - y_offset as i64;
@@ -183,41 +213,28 @@ fn collect_all_inner(
     let node_group_arc: Option<Arc<str>> = node.group_name.clone();
 
     if let Some(name) = &node_group_arc {
-        if node.pos.1 + node.size.1 > y_offset {
+        if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
             data.group_rects.push((
                 Arc::clone(name),
-                Rect::new(
-                    node.pos.0,
-                    node.pos.1.saturating_sub(y_offset),
-                    node.size.0,
-                    node.size.1,
-                ),
+                Rect::new(adj_x, adj_y, node.size.0, node.size.1),
             ));
         }
     }
 
     if matches!(node.kind, NodeKind::Container(_)) {
-        let adj_y = node.pos.1.saturating_sub(y_offset);
-        let full = Rect::new(node.pos.0, adj_y, node.size.0, node.size.1);
+        let full = Rect::new(adj_x, adj_y, node.size.0, node.size.1);
         let inset_x = node.padding.left + node.border_left_inset();
         let inset_y = node.padding.top + node.border_top_inset();
         let inner_w = node.size.0.saturating_sub(node.frame_horizontal());
         let inner_h = node.size.1.saturating_sub(node.frame_vertical());
-        let content = Rect::new(node.pos.0 + inset_x, adj_y + inset_y, inner_w, inner_h);
+        let content = Rect::new(adj_x + inset_x, adj_y + inset_y, inner_w, inner_h);
         data.content_areas.push((full, content));
     }
 
     if let Some(id) = node.focus_id {
-        if node.pos.1 + node.size.1 > y_offset {
-            data.focus_rects.push((
-                id,
-                Rect::new(
-                    node.pos.0,
-                    node.pos.1.saturating_sub(y_offset),
-                    node.size.0,
-                    node.size.1,
-                ),
-            ));
+        if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
+            data.focus_rects
+                .push((id, Rect::new(adj_x, adj_y, node.size.0, node.size.1)));
         }
     }
 
@@ -230,19 +247,25 @@ fn collect_all_inner(
         data.focus_groups[id] = current_group.cloned();
     }
 
-    let (child_offset, child_viewport) = if node.is_scrollable {
-        let screen_y = node.pos.1.saturating_sub(y_offset);
-        let area = Rect::new(node.pos.0, screen_y, node.size.0, node.size.1);
+    let (child_x_offset, child_y_offset, child_viewport) = if node.is_scrollable {
+        let area = Rect::new(adj_x, adj_y, node.size.0, node.size.1);
         let inner = inner_area(node, area);
-        (y_offset.saturating_add(node.scroll_offset), Some(inner))
+        // #247: seed both offsets — only the matching axis is non-zero on a
+        // single-axis scroller.
+        (
+            x_offset.saturating_add(node.scroll_offset_x),
+            y_offset.saturating_add(node.scroll_offset),
+            Some(inner),
+        )
     } else {
-        (y_offset, viewport)
+        (x_offset, y_offset, viewport)
     };
     for child in &node.children {
         collect_all_inner(
             child,
             data,
-            child_offset,
+            child_x_offset,
+            child_y_offset,
             current_group,
             child_viewport,
             depth + 1,

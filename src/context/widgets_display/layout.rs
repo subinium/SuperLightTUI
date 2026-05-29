@@ -842,6 +842,7 @@ impl Context {
             wrap_flag: false,
             basis: None,
             scroll_offset: None,
+            scroll_offset_x: None,
             theme_override: None,
         }
     }
@@ -867,10 +868,21 @@ impl Context {
     pub fn scrollable(&mut self, state: &mut ScrollState) -> ContainerBuilder<'_> {
         let index = self.rollback.scroll_count;
         self.rollback.scroll_count += 1;
-        if let Some(&(ch, vh)) = self.prev_scroll_infos.get(index) {
-            state.set_bounds(ch, vh);
-            let max = ch.saturating_sub(vh) as usize;
-            state.offset = state.offset.min(max);
+        // #247: the previous frame recorded the scroll axis (`is_horizontal`)
+        // because this binding runs before `.row()` / `.col()` is known. Bind
+        // the matching axis so a horizontal scrollable updates `offset_x` while
+        // a vertical one keeps the byte-identical `offset` path.
+        let mut is_horizontal = false;
+        if let Some(&(content, viewport, horizontal)) = self.prev_scroll_infos.get(index) {
+            is_horizontal = horizontal;
+            let max = content.saturating_sub(viewport) as usize;
+            if horizontal {
+                state.set_bounds_x(content, viewport);
+                state.offset_x = state.offset_x.min(max);
+            } else {
+                state.set_bounds(content, viewport);
+                state.offset = state.offset.min(max);
+            }
         }
 
         let next_id = self.rollback.interaction_count;
@@ -890,10 +902,14 @@ impl Context {
                 })
                 .map(|(_, sr)| *sr)
                 .collect();
-            self.auto_scroll_nested(&rect, state, &inner_rects);
+            self.auto_scroll_nested(&rect, state, &inner_rects, is_horizontal);
         }
 
-        self.container().scroll_offset(state.offset as u32)
+        // Carry both axis offsets; the tree builder applies the one matching
+        // the finalizing `.row()` / `.col()` direction (#247).
+        let mut builder = self.container().scroll_offset(state.offset as u32);
+        builder.scroll_offset_x = Some(state.offset_x as u32);
+        builder
     }
 
     /// Scrollable column container — shortcut for
@@ -928,8 +944,27 @@ impl Context {
     /// Scrollable row container — shortcut for
     /// `scrollable(state).grow(1).row(f)`.
     ///
-    /// Useful for horizontally-scrolling timelines, kanban boards, and
-    /// similar wide layouts.
+    /// Lays children out left-to-right and scrolls **horizontally** when their
+    /// combined width exceeds the viewport: useful for timelines, kanban
+    /// boards, wide tables, Gantt strips, and long single-line log entries
+    /// (#247). The horizontal axis is driven by
+    /// [`ScrollState::scroll_left`] / [`ScrollState::scroll_right`], native
+    /// horizontal mouse wheel, and shift+wheel. Nest a `scroll_row` inside a
+    /// [`scroll_col`](Self::scroll_col) to scroll both axes.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ScrollState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut scroll = ScrollState::new();
+    /// ui.scroll_row(&mut scroll, |ui| {
+    ///     for i in 0..40 {
+    ///         ui.text(format!("col-{i:02}  "));
+    ///     }
+    /// });
+    /// # });
+    /// ```
     pub fn scroll_row(
         &mut self,
         state: &mut ScrollState,
@@ -1009,8 +1044,10 @@ impl Context {
         rect: &Rect,
         state: &mut ScrollState,
         inner_scroll_rects: &[Rect],
+        is_horizontal: bool,
     ) {
         let mut to_consume = Vec::new();
+        let shift = crate::event::KeyModifiers::SHIFT;
         for (i, mouse) in self.mouse_events_in_rect(*rect) {
             let in_inner = inner_scroll_rects.iter().any(|sr| {
                 mouse.x >= sr.x && mouse.x < sr.right() && mouse.y >= sr.y && mouse.y < sr.bottom()
@@ -1020,17 +1057,44 @@ impl Context {
             }
 
             let delta = self.scroll_lines_per_event as usize;
-            match mouse.kind {
-                MouseKind::ScrollUp => {
-                    state.scroll_up(delta);
-                    to_consume.push(i);
+            if is_horizontal {
+                // #247: a horizontal scrollable consumes native horizontal wheel
+                // events (`ScrollLeft` / `ScrollRight`) and shift+vertical-wheel
+                // (the common terminal convention for sideways scroll on a
+                // mouse with only a vertical wheel).
+                let shifted = mouse.modifiers.contains(shift);
+                match mouse.kind {
+                    MouseKind::ScrollLeft => {
+                        state.scroll_left(delta);
+                        to_consume.push(i);
+                    }
+                    MouseKind::ScrollRight => {
+                        state.scroll_right(delta);
+                        to_consume.push(i);
+                    }
+                    MouseKind::ScrollUp if shifted => {
+                        state.scroll_left(delta);
+                        to_consume.push(i);
+                    }
+                    MouseKind::ScrollDown if shifted => {
+                        state.scroll_right(delta);
+                        to_consume.push(i);
+                    }
+                    _ => {}
                 }
-                MouseKind::ScrollDown => {
-                    state.scroll_down(delta);
-                    to_consume.push(i);
+            } else {
+                match mouse.kind {
+                    MouseKind::ScrollUp => {
+                        state.scroll_up(delta);
+                        to_consume.push(i);
+                    }
+                    MouseKind::ScrollDown => {
+                        state.scroll_down(delta);
+                        to_consume.push(i);
+                    }
+                    MouseKind::Drag(MouseButton::Left) => {}
+                    _ => {}
                 }
-                MouseKind::Drag(MouseButton::Left) => {}
-                _ => {}
             }
         }
         self.consume_indices(to_consume);

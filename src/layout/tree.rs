@@ -20,7 +20,12 @@ use super::*;
 /// nothing. Both are scalars (no heap, no niche), so this is the minimum
 /// footprint for the feature; boxing two 4-byte fields would cost a pointer
 /// (8 bytes) plus an allocation per wrapping container, a net loss.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 328);
+///
+/// Bumped 328 → 336 for the horizontal-scroll fields (#247):
+/// `scroll_offset_x: u32` (4 bytes) and `content_width: u32` (4 bytes), the
+/// x-axis mirror of `scroll_offset` / `content_height`. Same scalar rationale
+/// as #258 — boxing 4-byte fields would cost more than it saves.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 336);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -128,6 +133,20 @@ pub(crate) struct LayoutNode {
     pub(crate) is_scrollable: bool,
     pub(crate) scroll_offset: u32,
     pub(crate) content_height: u32,
+    /// Horizontal scroll offset in cells (#247).
+    ///
+    /// The x-axis mirror of [`LayoutNode::scroll_offset`]. Non-zero only for a
+    /// scrollable `Direction::Row` container; render and collect subtract it
+    /// from child x-positions exactly as `scroll_offset` is subtracted on the
+    /// y-axis.
+    pub(crate) scroll_offset_x: u32,
+    /// Total content width in cells for a scrollable row (#247).
+    ///
+    /// The x-axis mirror of [`LayoutNode::content_height`]. Set by
+    /// `flexbox::compute` to the natural width of the children when a
+    /// scrollable row overflows its viewport; `0` for every non-scrollable
+    /// container and for scrollable columns.
+    pub(crate) content_width: u32,
     pub(crate) focus_id: Option<usize>,
     pub(crate) interaction_id: Option<usize>,
     pub(crate) link_url: Option<String>,
@@ -241,6 +260,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -292,6 +313,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -330,6 +353,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -386,6 +411,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id,
             interaction_id,
             link_url: None,
@@ -424,6 +451,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -1331,6 +1360,7 @@ fn build_children(
             Command::BeginScrollable(args) => {
                 let BeginScrollableArgs {
                     grow,
+                    direction,
                     border,
                     border_sides,
                     border_style,
@@ -1344,10 +1374,16 @@ fn build_children(
                     constraints,
                     title,
                     scroll_offset,
+                    scroll_offset_x,
                     group_name,
                 } = *args;
+                // #247: honor the caller's `.row()` / `.col()` direction instead
+                // of hardcoding `Direction::Column`. A `Row` scrollable scrolls
+                // horizontally; a `Column` scrollable scrolls vertically. The
+                // offset that applies depends on the axis — the cross-axis offset
+                // is always 0 for a single-axis scroller.
                 let mut node = LayoutNode::container(
-                    Direction::Column,
+                    direction,
                     ContainerConfig {
                         gap,
                         align,
@@ -1365,7 +1401,10 @@ fn build_children(
                     },
                 );
                 node.is_scrollable = true;
-                node.scroll_offset = scroll_offset;
+                match direction {
+                    Direction::Column => node.scroll_offset = scroll_offset,
+                    Direction::Row => node.scroll_offset_x = scroll_offset_x,
+                }
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
@@ -1374,10 +1413,9 @@ fn build_children(
                     pending_shrink = false;
                 }
                 // Consume any pending wrap/basis markers so they don't leak to a
-                // later sibling. Wrap is a no-op on a column (scrollable is
-                // always a column), but the cross-axis gap is recorded for
-                // completeness; basis is recorded but only consumed by row
-                // resolution.
+                // later sibling. Wrap is a no-op on a column scrollable; the
+                // cross-axis gap is recorded for completeness; basis is recorded
+                // but only consumed by row resolution.
                 if let Some(cross_gap) = pending_wrap.take() {
                     node.wrap_children = true;
                     node.cross_gap = cross_gap;

@@ -834,7 +834,10 @@ pub(crate) struct FocusState {
 
 #[derive(Default)]
 pub(crate) struct LayoutFeedbackState {
-    pub prev_scroll_infos: Vec<(u32, u32)>,
+    /// `(content_extent, viewport_extent, is_horizontal)` per scrollable last
+    /// frame (#247). `is_horizontal` selects which `ScrollState` axis the
+    /// `scrollable` binding updates.
+    pub prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
     pub prev_group_rects: Vec<(std::sync::Arc<str>, rect::Rect)>,
