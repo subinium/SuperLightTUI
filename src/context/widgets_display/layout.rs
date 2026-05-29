@@ -1023,7 +1023,9 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction,
-                gap,
+                // `BeginContainerArgs::gap` is signed since #222; this helper's
+                // public `u32` callers (`row`/`col_gap`/…) never overlap.
+                gap: gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

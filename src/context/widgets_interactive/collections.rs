@@ -523,7 +523,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: cal_gap,
+                gap: cal_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,

@@ -1724,6 +1724,163 @@ fn truncate_with_ellipsis_ascii_unchanged() {
     );
 }
 
+// --- gap_overlap (signed gap) tests (#222) -------------------------------
+
+/// Build a `Direction` container with `gap` (signed) holding `n` fixed-size
+/// children, lay it out in `area`, and return the computed tree. Each child
+/// is a text node constrained to exactly `child_w` x `child_h` so positions
+/// are deterministic regardless of content metrics.
+fn gap_overlap_tree(
+    direction: Direction,
+    gap: i32,
+    child_w: u32,
+    child_h: u32,
+    n: usize,
+    area: crate::rect::Rect,
+) -> LayoutNode {
+    use crate::style::{Align, Constraints, Justify, Margin, Padding};
+
+    let mut commands = vec![Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction,
+        gap,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: crate::style::Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    }))];
+    for _ in 0..n {
+        commands.push(Command::Text {
+            content: "x".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default().w(child_w).h(child_h),
+        });
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    compute(&mut tree, area);
+    tree
+}
+
+#[test]
+fn gap_overlap_1_reduces_total_width() {
+    // Row of two w(10) children in a w(25) parent with gap = -1.
+    // Total used = 10 + 10 - 1 = 19; child 1 starts at child 0 end - 1.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        -1,
+        10,
+        1,
+        2,
+        crate::rect::Rect::new(0, 0, 25, 4),
+    );
+    let row = &tree.children[0];
+    let c0 = &row.children[0];
+    let c1 = &row.children[1];
+    assert_eq!(c0.size.0, 10);
+    assert_eq!(c1.size.0, 10);
+    // Overlap by 1: child 1 starts one column before child 0's end.
+    assert_eq!(
+        c1.pos.0,
+        c0.pos.0 + c0.size.0 - 1,
+        "child 1 must overlap child 0 by one column"
+    );
+    // Total extent from first child start to last child end = 19.
+    assert_eq!(c1.pos.0 + c1.size.0 - c0.pos.0, 19);
+}
+
+#[test]
+fn gap_overlap_zero_is_gap_zero() {
+    // gap_overlap(0) (gap = 0) must lay out identically to gap(0).
+    let area = crate::rect::Rect::new(0, 0, 40, 4);
+    let a = gap_overlap_tree(Direction::Row, 0, 8, 1, 3, area);
+    let b = gap_overlap_tree(Direction::Row, 0, 8, 1, 3, area);
+    for i in 0..3 {
+        assert_eq!(a.children[0].children[i].pos, b.children[0].children[i].pos);
+        assert_eq!(
+            a.children[0].children[i].size,
+            b.children[0].children[i].size
+        );
+    }
+    // And child 1 starts exactly at child 0's end (no overlap, no gap).
+    let row = &a.children[0];
+    assert_eq!(row.children[1].pos.0, row.children[0].pos.0 + 8);
+}
+
+#[test]
+fn gap_overlap_large_value_does_not_panic() {
+    // gap = -1000 with small children: positions saturate at 0, no panic/wrap.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        -1000,
+        5,
+        1,
+        3,
+        crate::rect::Rect::new(0, 0, 20, 4),
+    );
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 3);
+    // All children collapse to the same starting column (positions clamped).
+    for child in &row.children {
+        assert_eq!(child.pos.0, row.children[0].pos.0);
+    }
+}
+
+#[test]
+fn gap_positive_unchanged() {
+    // gap = 2 (positive) behaves as before: child 1 starts 2 cols after child 0.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        2,
+        6,
+        1,
+        2,
+        crate::rect::Rect::new(0, 0, 40, 4),
+    );
+    let row = &tree.children[0];
+    let c0 = &row.children[0];
+    let c1 = &row.children[1];
+    assert_eq!(c1.pos.0, c0.pos.0 + c0.size.0 + 2);
+}
+
+#[test]
+fn gap_overlap_col_direction() {
+    // gap = -1 on a column container overlaps children vertically by one row.
+    let tree = gap_overlap_tree(
+        Direction::Column,
+        -1,
+        4,
+        3,
+        2,
+        crate::rect::Rect::new(0, 0, 10, 25),
+    );
+    let col = &tree.children[0];
+    let c0 = &col.children[0];
+    let c1 = &col.children[1];
+    assert_eq!(c0.size.1, 3);
+    assert_eq!(c1.size.1, 3);
+    assert_eq!(
+        c1.pos.1,
+        c0.pos.1 + c0.size.1 - 1,
+        "child 1 must overlap child 0 by one row"
+    );
+}
+
 mod wrap_lines_grapheme_property {
     use super::wrap_lines;
     use proptest::prelude::*;
