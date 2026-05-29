@@ -169,11 +169,15 @@ pub use keymap::{Binding, KeyMap, PublishedKeymap, WidgetKeyHelp};
 pub use layout::Direction;
 pub use palette::Palette;
 pub use rect::Rect;
+#[cfg(feature = "theme-watch")]
+pub use style::ThemeWatcher;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
     HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
     ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
 };
+#[cfg(feature = "serde")]
+pub use style::{ThemeFile, ThemeLoadError};
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,

@@ -5,8 +5,14 @@
 
 mod color;
 mod theme;
+#[cfg(feature = "serde")]
+mod theme_io;
 pub use color::{Color, ColorDepth};
 pub use theme::{Spacing, Theme, ThemeBuilder, ThemeColor};
+#[cfg(feature = "theme-watch")]
+pub use theme_io::ThemeWatcher;
+#[cfg(feature = "serde")]
+pub use theme_io::{ThemeFile, ThemeLoadError};
 
 /// Terminal size breakpoint for responsive layouts.
 ///
@@ -1345,6 +1351,7 @@ impl ContainerStyle {
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 /// Per-widget color overrides that fall back to the active theme.
 ///
 /// Literal [`Color`] fields and [`ThemeColor`] fields can be set independently.
@@ -1479,6 +1486,8 @@ impl WidgetColors {
 ///     .button(WidgetColors::new().fg(Color::Cyan));
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct WidgetTheme {
     /// Default colors for buttons.
     pub button: WidgetColors,

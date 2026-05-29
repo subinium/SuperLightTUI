@@ -148,6 +148,7 @@ pub enum ThemeColor {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Theme {
     /// Primary accent color, used for focused borders and highlights.
     pub primary: Color,
@@ -645,6 +646,59 @@ impl Theme {
             is_dark: true,
             spacing: Spacing::new(1),
         }
+    }
+
+    /// Parse a [`Theme`] from a TOML document, ignoring any `[widgets]` block.
+    ///
+    /// The colors live under a top-level `[theme]` table; missing fields fall
+    /// back to [`Theme::dark()`]. Color values accept `#rrggbb`/`#rgb` hex,
+    /// named colors (`"cyan"`), or `indexed:N` palette indices. To also read
+    /// per-widget overrides, use [`ThemeFile::from_toml_str`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeLoadError::Parse`] if the document is not valid TOML or
+    /// does not match the expected shape.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Theme;
+    ///
+    /// let toml = r##"
+    /// [theme]
+    /// primary = "#ff6b6b"
+    /// bg = "#1e1e2e"
+    /// is_dark = true
+    /// "##;
+    /// let theme = Theme::from_toml_str(toml).unwrap();
+    /// assert_eq!(theme.primary, slt::Color::Rgb(255, 107, 107));
+    /// ```
+    #[cfg(feature = "serde")]
+    pub fn from_toml_str(src: &str) -> Result<Theme, ThemeLoadError> {
+        ThemeFile::from_toml_str(src).map(|tf| tf.theme)
+    }
+
+    /// Load a [`Theme`] from a TOML file at `path`, ignoring `[widgets]`.
+    ///
+    /// Convenience over [`ThemeFile::load`] when you only need the base theme.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeLoadError::Io`] if the file cannot be read, or
+    /// [`ThemeLoadError::Parse`] if it is not valid TOML.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Theme;
+    ///
+    /// let theme = Theme::load("theme.toml").unwrap();
+    /// println!("primary = {:?}", theme.primary);
+    /// ```
+    #[cfg(feature = "serde")]
+    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Theme, ThemeLoadError> {
+        ThemeFile::load(path).map(|tf| tf.theme)
     }
 }
 
