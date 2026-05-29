@@ -129,9 +129,54 @@ pub(crate) struct KittyPlacement {
     pub crop_h: u32,
 }
 
+/// FNV-1a 64-bit offset basis (the standard seed for the algorithm).
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+/// FNV-1a 64-bit prime multiplier.
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// A tiny, allocation-free [`Hasher`] implementing the FNV-1a algorithm.
+///
+/// Used for internal dirty-row digests ([`Buffer::recompute_line_hashes`]) and
+/// RGBA content hashing ([`hash_rgba`]). Row/image equality is **not** a
+/// security boundary, so the crypto-strength SipHash that
+/// [`std::collections::hash_map::DefaultHasher`] uses is unnecessary tax in the
+/// per-frame flush loop. FNV-1a is a non-cryptographic hash with no DoS
+/// resistance, which is exactly the right trade-off here: it is faster, has no
+/// extra dependency, and is deterministic within (and across) process runs.
+/// The digest is never persisted, so cross-run stability is incidental, not
+/// relied upon.
+pub(crate) struct Fnv1a(u64);
+
+impl Default for Fnv1a {
+    #[inline]
+    fn default() -> Self {
+        Self(FNV_OFFSET_BASIS)
+    }
+}
+
+impl Hasher for Fnv1a {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = self.0;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        self.0 = hash;
+    }
+}
+
 /// Compute a content hash for RGBA pixel data.
+///
+/// Uses a non-cryptographic FNV-1a digest ([`Fnv1a`]) — image dedup is not a
+/// security boundary and the digest is never persisted.
 pub(crate) fn hash_rgba(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = Fnv1a::default();
     data.hash(&mut hasher);
     hasher.finish()
 }
@@ -541,9 +586,9 @@ impl Buffer {
     ///
     /// This is the only call site that updates [`Self::line_hashes`]; once
     /// a row's hash is refreshed its `line_dirty` entry is cleared. Hashes
-    /// derive from each cell's `(symbol, style, hyperlink)` tuple via
-    /// [`std::collections::hash_map::DefaultHasher`] — sufficient for
-    /// equality detection with no extra dependency.
+    /// derive from each cell's `(symbol, style, hyperlink)` tuple via the
+    /// non-cryptographic [`Fnv1a`] hasher — sufficient for equality detection,
+    /// faster than SipHash in the per-frame loop, and with no extra dependency.
     ///
     /// Called by `flush_buffer_diff` once per frame, before the per-row
     /// skip check (issue #171).
@@ -575,7 +620,7 @@ impl Buffer {
             }
             let row_start = idx * width;
             let row_end = row_start + width;
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut hasher = Fnv1a::default();
             for cell in &self.content[row_start..row_end] {
                 cell.symbol.as_str().hash(&mut hasher);
                 cell.style.hash(&mut hasher);
@@ -1419,6 +1464,43 @@ mod tests {
         assert_eq!(buf.line_dirty.len(), 2);
         assert_eq!(buf.line_hashes.len(), 2);
         assert!(buf.line_dirty.iter().all(|d| *d));
+    }
+
+    #[test]
+    fn fnv1a_distinct_rows_distinct_identical_rows_collide() {
+        // After swapping SipHash for FNV-1a, the dirty-row digest must keep its
+        // two contract guarantees: distinct content → distinct digest, and
+        // identical content → identical digest (deterministic within a run).
+        let area = Rect::new(0, 0, 5, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "alpha", Style::new());
+        buf.set_string(0, 1, "alpha", Style::new()); // identical to row 0
+        buf.set_string(0, 2, "omega", Style::new()); // distinct
+        buf.recompute_line_hashes();
+
+        assert_eq!(
+            buf.row_hash(0),
+            buf.row_hash(1),
+            "identical rows must collide"
+        );
+        assert_ne!(
+            buf.row_hash(0),
+            buf.row_hash(2),
+            "distinct rows must not collide"
+        );
+    }
+
+    #[test]
+    fn fnv1a_hash_rgba_is_deterministic_and_content_sensitive() {
+        // `hash_rgba` (now FNV-1a) underpins Kitty image dedup: equal pixels
+        // must dedup (equal hash), differing pixels must not.
+        let a = [1u8, 2, 3, 4];
+        let b = [1u8, 2, 3, 4];
+        let c = [1u8, 2, 3, 5];
+        assert_eq!(hash_rgba(&a), hash_rgba(&b));
+        assert_ne!(hash_rgba(&a), hash_rgba(&c));
+        // Determinism within the run.
+        assert_eq!(hash_rgba(&a), hash_rgba(&a));
     }
 
     // ── Bidi (UAX #9) reordering ────────────────────────────────────────

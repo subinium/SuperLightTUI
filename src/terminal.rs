@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Read, Stdout, Write};
 use std::time::{Duration, Instant};
@@ -78,6 +79,14 @@ pub(crate) struct KittyImageManager {
     uploaded: HashMap<u64, u32>,
     /// Previous frame's placements (for diff).
     prev_placements: Vec<KittyPlacement>,
+    /// Reused dedup scratch for already-deleted image IDs in `flush`. Typical
+    /// placement counts are 0–8 (well below where a `HashSet` beats a linear /
+    /// sorted scan), so a `SmallVec` stays on the stack and carries its
+    /// capacity across frames — no per-frame heap allocation, no SipHash.
+    scratch_ids: smallvec::SmallVec<[u32; 8]>,
+    /// Reused scratch for content hashes still referenced this frame, used to
+    /// prune stale uploads. Sorted in place for `binary_search` membership.
+    scratch_hashes: smallvec::SmallVec<[u64; 8]>,
 }
 
 impl KittyImageManager {
@@ -87,6 +96,8 @@ impl KittyImageManager {
             next_id: 1,
             uploaded: HashMap::new(),
             prev_placements: Vec::new(),
+            scratch_ids: smallvec::SmallVec::new(),
+            scratch_hashes: smallvec::SmallVec::new(),
         }
     }
 
@@ -114,13 +125,17 @@ impl KittyImageManager {
             return Ok(());
         }
 
-        // Delete all previous placements (keep uploaded image data for reuse)
+        // Delete all previous placements (keep uploaded image data for reuse).
+        // Dedup via a reused `SmallVec` instead of a per-frame `HashSet`: at the
+        // 0–8 image counts this path actually sees, a linear membership scan
+        // beats hashing, and the scratch keeps its capacity across frames. The
+        // emit order (first-seen) is unchanged, so the byte stream is identical.
         if !self.prev_placements.is_empty() {
-            // Delete all visible placements by ID
-            let mut deleted_ids = std::collections::HashSet::new();
+            self.scratch_ids.clear();
             for p in &self.prev_placements {
                 if let Some(&img_id) = self.uploaded.get(&p.content_hash) {
-                    if deleted_ids.insert(img_id) {
+                    if !self.scratch_ids.contains(&img_id) {
+                        self.scratch_ids.push(img_id);
                         // Delete all placements of this image (but keep image data)
                         queue!(
                             stdout,
@@ -149,13 +164,20 @@ impl KittyImageManager {
             self.place_image_offset(stdout, img_id, pid, p, row_offset)?;
         }
 
-        // Clean up images no longer used by any placement
-        let used_hashes: std::collections::HashSet<u64> =
-            current.iter().map(|p| p.content_hash).collect();
-        let stale: Vec<u64> = self
+        // Clean up images no longer used by any placement. Build the
+        // still-referenced hash set into a reused `SmallVec`, sort it, and test
+        // membership with `binary_search` instead of a per-frame `HashSet`.
+        // (The set of stale uploads is the same regardless of scan order; the
+        // delete emission was already unordered via `HashMap` key iteration.)
+        self.scratch_hashes.clear();
+        self.scratch_hashes
+            .extend(current.iter().map(|p| p.content_hash));
+        self.scratch_hashes.sort_unstable();
+        let scratch_hashes = &self.scratch_hashes;
+        let stale: smallvec::SmallVec<[u64; 8]> = self
             .uploaded
             .keys()
-            .filter(|h| !used_hashes.contains(h))
+            .filter(|h| scratch_hashes.binary_search(h).is_err())
             .copied()
             .collect();
         for hash in stale {
@@ -267,7 +289,14 @@ fn placement_eq_with_offset(
 }
 
 /// Compress RGBA data with zlib if available, returning (payload, format_string).
-fn compress_rgba(data: &[u8]) -> (Vec<u8>, &'static str) {
+///
+/// The payload is returned as a [`Cow`] so the no-compression path (the
+/// `kitty-compress` feature off, or compression that fails to save space)
+/// **borrows** the caller's slice instead of cloning the full RGBA buffer into
+/// a throwaway `Vec` on every `upload_image` call. The compressed path still
+/// returns an owned `Vec`. The downstream `base64_encode(&payload)` call sees
+/// `&[u8]` via `Deref` in both cases, so no signature change ripples out.
+fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
     #[cfg(feature = "kitty-compress")]
     {
         use flate2::write::ZlibEncoder;
@@ -277,12 +306,12 @@ fn compress_rgba(data: &[u8]) -> (Vec<u8>, &'static str) {
             if let Ok(compressed) = encoder.finish() {
                 // Only use compression if it actually saves space
                 if compressed.len() < data.len() {
-                    return (compressed, "o=z,");
+                    return (Cow::Owned(compressed), "o=z,");
                 }
             }
         }
     }
-    (data.to_vec(), "")
+    (Cow::Borrowed(data), "")
 }
 
 /// Query the terminal for the actual cell pixel dimensions via CSI 16 t.
@@ -352,6 +381,10 @@ pub(crate) struct Terminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269). Its
+    /// capacity persists across frames so the hot flush loop never allocates a
+    /// fresh `String` per call.
+    run_buf: String,
 }
 
 pub(crate) struct InlineTerminal {
@@ -366,7 +399,14 @@ pub(crate) struct InlineTerminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269).
+    run_buf: String,
 }
+
+/// Initial capacity for the reused per-frame run-coalescing buffer. Sized to
+/// comfortably hold a full wide terminal row of multi-byte graphemes so the
+/// allocation is paid once at construction, never per frame.
+const RUN_BUF_INITIAL_CAPACITY: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminalSessionMode {
@@ -463,6 +503,7 @@ impl Terminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
 
@@ -497,6 +538,7 @@ impl Terminal {
             &self.previous,
             self.color_depth,
             0,
+            &mut self.run_buf,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -575,6 +617,7 @@ impl Terminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         }
     }
 
@@ -648,6 +691,7 @@ impl InlineTerminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
 
@@ -695,6 +739,7 @@ impl InlineTerminal {
             &self.previous,
             self.color_depth,
             row_offset,
+            &mut self.run_buf,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -1012,6 +1057,7 @@ fn flush_buffer_diff(
     previous: &Buffer,
     color_depth: ColorDepth,
     row_offset: u32,
+    run_buf: &mut String,
 ) -> io::Result<()> {
     // Run-coalescing: consecutive changed cells in the same row that share
     // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
@@ -1035,7 +1081,10 @@ fn flush_buffer_diff(
 
     // Active run state. `run_next_col` is the column the next cell must
     // occupy to extend the run; `run_open` guards the rest of the fields.
-    let mut run_buf = String::new();
+    // `run_buf` is hoisted to a caller-owned, reused buffer (issue #269): its
+    // backing allocation persists across frames so the hot flush loop performs
+    // no per-frame `String` allocation. Start clean but keep capacity.
+    run_buf.clear();
     let mut run_abs_y: u32 = 0;
     let mut run_style: Style = Style::new();
     let mut run_link: Option<&str> = None;
@@ -1124,7 +1173,13 @@ fn flush_buffer_diff(
 
                 if cell_link != active_link {
                     if let Some(url) = cell_link {
-                        queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                        // Emit the OSC 8 open in three borrowed `Print`s instead
+                        // of `format!`ing a throwaway `String` per link-state
+                        // change (issue #269). The byte stream is identical to
+                        // `"\x1b]8;;{url}\x07"`.
+                        queue!(stdout, Print("\x1b]8;;"))?;
+                        queue!(stdout, Print(url))?;
+                        queue!(stdout, Print("\x07"))?;
                     } else {
                         queue!(stdout, Print("\x1b]8;;\x07"))?;
                     }
@@ -1181,7 +1236,10 @@ pub fn __bench_flush_buffer_diff<W: Write>(
     previous: &Buffer,
     color_depth: ColorDepth,
 ) -> io::Result<()> {
-    flush_buffer_diff(w, current, previous, color_depth, 0)
+    // Own a local run buffer to keep the public bench signature stable
+    // (issue #269); the real backends pass a reused field instead.
+    let mut run_buf = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+    flush_buffer_diff(w, current, previous, color_depth, 0, &mut run_buf)
 }
 
 /// Mutable-buffer variant of [`__bench_flush_buffer_diff`] (issue #171).
@@ -1199,9 +1257,48 @@ pub fn __bench_flush_buffer_diff_mut<W: Write>(
     previous: &mut Buffer,
     color_depth: ColorDepth,
 ) -> io::Result<()> {
+    // Own a local run buffer to keep the public bench signature stable
+    // (issue #269). Use `__bench_flush_buffer_diff_mut_with_buf` to exercise
+    // cross-frame buffer reuse explicitly.
+    let mut run_buf = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+    __bench_flush_buffer_diff_mut_with_buf(w, current, previous, color_depth, &mut run_buf)
+}
+
+/// Reuse-aware variant of [`__bench_flush_buffer_diff_mut`] that threads a
+/// caller-owned `run_buf` (issue #269), mirroring how the real backends carry
+/// the buffer across frames. Refreshes per-row digests before the diff.
+///
+/// Not part of the stable API.
+///
+/// ```no_run
+/// # use slt::{Buffer, Rect, ColorDepth, Style};
+/// let area = Rect::new(0, 0, 8, 2);
+/// let mut current = Buffer::empty(area);
+/// let mut previous = Buffer::empty(area);
+/// current.set_string(0, 0, "hi", Style::new());
+/// let mut sink: Vec<u8> = Vec::new();
+/// // The same `run_buf` can be passed across frames — its capacity persists.
+/// let mut run_buf = String::with_capacity(4096);
+/// slt::__bench_flush_buffer_diff_mut_with_buf(
+///     &mut sink,
+///     &mut current,
+///     &mut previous,
+///     ColorDepth::TrueColor,
+///     &mut run_buf,
+/// )
+/// .unwrap();
+/// ```
+#[doc(hidden)]
+pub fn __bench_flush_buffer_diff_mut_with_buf<W: Write>(
+    w: &mut W,
+    current: &mut Buffer,
+    previous: &mut Buffer,
+    color_depth: ColorDepth,
+    run_buf: &mut String,
+) -> io::Result<()> {
     current.recompute_line_hashes();
     previous.recompute_line_hashes();
-    flush_buffer_diff(w, current, previous, color_depth, 0)
+    flush_buffer_diff(w, current, previous, color_depth, 0, run_buf)
 }
 
 /// Opaque test fixture wrapping `KittyImageManager` + a placements list.
@@ -2331,7 +2428,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // Exactly one cursor move for the whole run.
@@ -2370,7 +2475,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // First run needs a MoveTo; the second run starts exactly where the
@@ -2402,7 +2515,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // Two separate runs means two MoveTo commands.
@@ -2431,10 +2552,26 @@ mod tests {
         }
 
         let mut direct: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut direct, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut direct,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
 
         let mut buffered: BufWriter<Vec<u8>> = BufWriter::with_capacity(65536, Vec::new());
-        flush_buffer_diff(&mut buffered, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut buffered,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         buffered.flush().unwrap();
         let via_buf = buffered.into_inner().unwrap();
 
@@ -2486,7 +2623,15 @@ mod tests {
             write_call_count: 0,
         };
         let mut bw = BufWriter::with_capacity(65536, sink);
-        flush_buffer_diff(&mut bw, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut bw,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         bw.flush().unwrap();
         let inner = bw.into_inner().unwrap();
 
@@ -2517,7 +2662,15 @@ mod tests {
         previous.recompute_line_hashes();
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         assert!(
             out.is_empty(),
             "identical buffers must emit zero flush bytes; got {} bytes: {:?}",
@@ -2544,7 +2697,15 @@ mod tests {
         previous.recompute_line_hashes();
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8_lossy(&out);
         // The mismatched row's new content must appear; matching rows'
         // glyphs must not (they share content with `previous`).
@@ -2668,5 +2829,189 @@ mod tests {
         assert!(term.take_sink_bytes().is_empty());
         // Dropping the harness terminal must not panic or emit teardown.
         drop(term);
+    }
+
+    /// Issue #269: hoisting `run_buf` to a reused, caller-owned buffer must not
+    /// change the emitted bytes. Re-running the diff twice through the *same*
+    /// `run_buf` (which `clear()`s but keeps capacity at the top of each call)
+    /// produces the same output as a single fresh-buffer run.
+    #[test]
+    fn reused_run_buf_byte_identical_across_frames() {
+        let area = Rect::new(0, 0, 12, 2);
+        // `Buffer` is not `Clone`, so rebuild the frame pair on demand.
+        let make_frame = || {
+            let mut current = Buffer::empty(area);
+            let previous = Buffer::empty(area);
+            current.set_string(0, 0, "hello world", Style::new().fg(Color::Rgb(1, 2, 3)));
+            current.set_string(0, 1, "second line", Style::new().fg(Color::Rgb(4, 5, 6)));
+            (current, previous)
+        };
+
+        // Baseline: a fresh run_buf per call.
+        let mut baseline: Vec<u8> = Vec::new();
+        {
+            let (mut a, mut b) = make_frame();
+            __bench_flush_buffer_diff_mut_with_buf(
+                &mut baseline,
+                &mut a,
+                &mut b,
+                ColorDepth::TrueColor,
+                &mut String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            )
+            .unwrap();
+        }
+
+        // Reuse: run a throwaway frame first, then the real frame through the
+        // SAME run_buf (now carrying leftover capacity, freshly cleared).
+        let mut shared = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+        {
+            let mut warm: Vec<u8> = Vec::new();
+            let (mut a, mut b) = make_frame();
+            __bench_flush_buffer_diff_mut_with_buf(
+                &mut warm,
+                &mut a,
+                &mut b,
+                ColorDepth::TrueColor,
+                &mut shared,
+            )
+            .unwrap();
+        }
+        let cap_after_warm = shared.capacity();
+
+        let mut reused: Vec<u8> = Vec::new();
+        let (mut current, mut previous) = make_frame();
+        __bench_flush_buffer_diff_mut_with_buf(
+            &mut reused,
+            &mut current,
+            &mut previous,
+            ColorDepth::TrueColor,
+            &mut shared,
+        )
+        .unwrap();
+
+        assert_eq!(
+            baseline, reused,
+            "reused run_buf must emit byte-identical output"
+        );
+        // The reuse path keeps capacity across frames (never re-grows below the
+        // initial reservation) — the whole point of the hoist.
+        assert!(
+            shared.capacity() >= cap_after_warm,
+            "run_buf capacity must persist across frames"
+        );
+    }
+
+    /// Issue #269: the OSC 8 hyperlink open, rewritten from `format!` to three
+    /// borrowed `Print`s, must still emit the exact `\x1b]8;;<url>\x07 ...
+    /// \x1b]8;;\x07` sequence.
+    #[test]
+    fn osc8_hyperlink_emitted_verbatim_after_write_rewrite() {
+        let area = Rect::new(0, 0, 8, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let url = "https://example.com/x";
+        // `set_string_linked` sanitizes + attaches the hyperlink to each cell.
+        current.set_string_linked(0, 0, "link", Style::new(), url);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
+
+        let open = format!("\x1b]8;;{url}\x07");
+        assert!(
+            contains_seq(&out, open.as_bytes()),
+            "OSC 8 open must appear verbatim: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+        assert!(
+            contains_seq(&out, b"\x1b]8;;\x07"),
+            "OSC 8 close must appear: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+    }
+
+    /// Build `n` distinct 8x8 RGBA placements for kitty-flush golden tests.
+    fn kitty_placements(n: usize) -> Vec<KittyPlacement> {
+        (0..n)
+            .map(|i| {
+                let mut rgba = vec![0u8; 256];
+                rgba[0] = i as u8;
+                let content_hash = crate::buffer::hash_rgba(&rgba);
+                KittyPlacement {
+                    content_hash,
+                    rgba: std::sync::Arc::new(rgba),
+                    src_width: 8,
+                    src_height: 8,
+                    x: (i as u32) * 4,
+                    y: (i as u32) * 2,
+                    cols: 4,
+                    rows: 2,
+                    crop_y: 0,
+                    crop_h: 0,
+                }
+            })
+            .collect()
+    }
+
+    /// Issue #269: replacing the two per-frame `HashSet`s in
+    /// `KittyImageManager::flush` with reused `SmallVec` dedup scratch must not
+    /// change the emitted escape stream for the small placement counts (0, 1, 5)
+    /// the path actually sees. We assert structural invariants of the byte
+    /// stream rather than an opaque golden blob so the test documents intent.
+    #[test]
+    fn kitty_flush_smallvec_dedup_matches_for_small_n() {
+        for n in [0usize, 1, 5] {
+            let placements = kitty_placements(n);
+            let mut mgr = KittyImageManager::new();
+
+            // Frame 1: nothing previously placed → upload + place each image.
+            let mut frame1: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame1, &placements, 0).unwrap();
+            let s1 = String::from_utf8_lossy(&frame1);
+            // One transmit (`a=t`) and one placement (`a=p`) per image.
+            assert_eq!(
+                s1.matches("a=t,").count(),
+                n,
+                "n={n}: expected {n} uploads in frame 1: {s1:?}"
+            );
+            assert_eq!(
+                s1.matches("a=p,").count(),
+                n,
+                "n={n}: expected {n} placements in frame 1: {s1:?}"
+            );
+
+            // Frame 2: identical placements → fast path, zero output.
+            let mut frame2: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame2, &placements, 0).unwrap();
+            assert!(
+                frame2.is_empty(),
+                "n={n}: identical frame must hit the kitty fast path, got {} bytes",
+                frame2.len()
+            );
+
+            // Frame 3: clear all placements → one delete (`a=d,d=i`) per image,
+            // deduped by the reused SmallVec, plus image-data cleanup
+            // (`a=d,d=I`) for every now-unused upload.
+            let mut frame3: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame3, &[], 0).unwrap();
+            let s3 = String::from_utf8_lossy(&frame3);
+            assert_eq!(
+                s3.matches("a=d,d=i,").count(),
+                n,
+                "n={n}: expected {n} placement deletes in frame 3: {s3:?}"
+            );
+            assert_eq!(
+                s3.matches("a=d,d=I,").count(),
+                n,
+                "n={n}: expected {n} image-data deletes in frame 3: {s3:?}"
+            );
+        }
     }
 }
