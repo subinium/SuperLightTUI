@@ -25,6 +25,44 @@ fn sat_u16(v: u32) -> u16 {
     v.min(u16::MAX as u32) as u16
 }
 
+/// Output sink for a [`Terminal`] / [`InlineTerminal`] flush pipeline.
+///
+/// The production path is always [`Sink::Stdout`], a `BufWriter<Stdout>` — its
+/// byte stream and buffering are byte-for-byte identical to the pre-seam code
+/// (the [`Write`] impl below is a thin delegation, so the hot path is
+/// unchanged). When the `pty-test` dev feature (or `cfg(test)`) is enabled, a
+/// second [`Sink::Capture`] variant lets the PTY test harness drive the *real*
+/// flush emitters into an in-process `Vec<u8>` instead of a terminal, so the
+/// emitted escape / image-protocol bytes can be asserted end-to-end. The
+/// capture variant never exists in a default build.
+pub(crate) enum Sink {
+    /// Production sink: buffered stdout.
+    Stdout(BufWriter<Stdout>),
+    /// Test sink: in-process byte capture, used only by the PTY harness.
+    #[cfg(any(test, feature = "pty-test"))]
+    Capture(Vec<u8>),
+}
+
+impl Write for Sink {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Sink::Stdout(w) => w.write(buf),
+            #[cfg(any(test, feature = "pty-test"))]
+            Sink::Capture(v) => v.write(buf),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Sink::Stdout(w) => w.flush(),
+            #[cfg(any(test, feature = "pty-test"))]
+            Sink::Capture(v) => v.flush(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Kitty graphics protocol image manager
 // ---------------------------------------------------------------------------
@@ -306,7 +344,7 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
 }
 
 pub(crate) struct Terminal {
-    stdout: BufWriter<Stdout>,
+    stdout: Sink,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -317,7 +355,7 @@ pub(crate) struct Terminal {
 }
 
 pub(crate) struct InlineTerminal {
-    stdout: BufWriter<Stdout>,
+    stdout: Sink,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -342,6 +380,12 @@ struct TerminalSessionGuard {
     mouse_enabled: bool,
     kitty_keyboard: bool,
     report_all_keys: bool,
+    /// When `true`, the guard never touched real raw-mode / terminal state
+    /// (PTY test harness path). `restore` then becomes a no-op so dropping a
+    /// captured-sink `Terminal` does not call `disable_raw_mode` or emit
+    /// teardown escapes into the byte capture. Always `false` on the
+    /// production `enter` path.
+    harness: bool,
 }
 
 impl TerminalSessionGuard {
@@ -357,6 +401,7 @@ impl TerminalSessionGuard {
             mouse_enabled,
             kitty_keyboard,
             report_all_keys,
+            harness: false,
         };
 
         terminal::enable_raw_mode()?;
@@ -369,6 +414,10 @@ impl TerminalSessionGuard {
     }
 
     fn restore(&self, stdout: &mut impl Write, inline_reserved: bool) {
+        // PTY harness guard: nothing was ever entered, so nothing to restore.
+        if self.harness {
+            return;
+        }
         if self.kitty_keyboard {
             use crossterm::event::PopKeyboardEnhancementFlags;
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
@@ -406,7 +455,7 @@ impl Terminal {
         )?;
 
         Ok(Self {
-            stdout: BufWriter::with_capacity(65536, raw),
+            stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -494,6 +543,53 @@ impl Terminal {
     }
 }
 
+#[cfg(any(test, feature = "pty-test"))]
+impl Terminal {
+    /// Construct a fullscreen [`Terminal`] whose flush pipeline targets an
+    /// in-process byte capture instead of stdout.
+    ///
+    /// Used **only** by the PTY test harness ([`crate::PtyBackend`]): the
+    /// production [`Terminal::new`] / [`crate::run`] path is unchanged and
+    /// still binds `BufWriter<Stdout>`. No raw mode is entered and no session
+    /// escapes are emitted, so this can run on a headless CI runner with no
+    /// TTY. The emitted bytes — SGR runs, OSC 8, Sixel, Kitty graphics — flow
+    /// through the exact same [`flush_buffer_diff`] / [`apply_style_delta`] /
+    /// Sixel / Kitty emitters that a real terminal sees.
+    ///
+    /// `color_depth` selects the SGR encoding (truecolor vs 256-color etc.)
+    /// exercised by the flush, mirroring [`Terminal::new`]'s argument.
+    pub(crate) fn with_sink(width: u32, height: u32, color_depth: ColorDepth) -> Self {
+        let area = Rect::new(0, 0, width, height);
+        Self {
+            stdout: Sink::Capture(Vec::new()),
+            current: Buffer::empty(area),
+            previous: Buffer::empty(area),
+            cursor_visible: false,
+            session: TerminalSessionGuard {
+                mode: TerminalSessionMode::Fullscreen,
+                mouse_enabled: false,
+                kitty_keyboard: false,
+                report_all_keys: false,
+                harness: true,
+            },
+            color_depth,
+            theme_bg: None,
+            kitty_mgr: KittyImageManager::new(),
+        }
+    }
+
+    /// Drain and return the bytes captured by a [`with_sink`](Terminal::with_sink)
+    /// terminal since the last call, resetting the capture buffer.
+    ///
+    /// Panics if this terminal is not a captured-sink (harness) terminal.
+    pub(crate) fn take_sink_bytes(&mut self) -> Vec<u8> {
+        match &mut self.stdout {
+            Sink::Capture(v) => std::mem::take(v),
+            Sink::Stdout(_) => panic!("take_sink_bytes called on a non-capture Terminal"),
+        }
+    }
+}
+
 impl crate::Backend for Terminal {
     fn size(&self) -> (u32, u32) {
         Terminal::size(self)
@@ -541,7 +637,7 @@ impl InlineTerminal {
             }
         };
         Ok(Self {
-            stdout: BufWriter::with_capacity(65536, raw),
+            stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -1555,6 +1651,7 @@ pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
         mouse_enabled: snapshot.mouse_enabled,
         kitty_keyboard: snapshot.kitty_keyboard,
         report_all_keys: snapshot.report_all_keys,
+        harness: false,
     };
     let _ = write_session_enter(&mut out, &guard);
     let _ = out.flush();
@@ -1607,6 +1704,7 @@ mod tests {
             mouse_enabled: false,
             kitty_keyboard: false,
             report_all_keys: false,
+            harness: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1623,6 +1721,7 @@ mod tests {
             mouse_enabled: false,
             kitty_keyboard: false,
             report_all_keys: false,
+            harness: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1704,6 +1803,7 @@ mod tests {
             mouse_enabled: snapshot.mouse_enabled,
             kitty_keyboard: snapshot.kitty_keyboard,
             report_all_keys: snapshot.report_all_keys,
+            harness: false,
         };
         let mut enter_bytes = Vec::new();
         write_session_enter(&mut enter_bytes, &guard).unwrap();
@@ -2383,5 +2483,25 @@ mod tests {
             !s.contains("zzzzzz"),
             "matching row 2 must not flush: {s:?}"
         );
+    }
+
+    /// Issue #274: a captured-sink `Terminal` routes a styled cell through the
+    /// real flush pipeline into the in-process byte sink, and dropping it does
+    /// not emit teardown escapes (no raw mode was entered).
+    #[test]
+    fn with_sink_captures_flush_bytes_and_drops_clean() {
+        let mut term = Terminal::with_sink(10, 1, ColorDepth::TrueColor);
+        term.buffer_mut()
+            .set_string(0, 0, "Z", Style::new().fg(Color::Rgb(200, 50, 50)));
+        term.flush().unwrap();
+        let bytes = term.take_sink_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Real SGR for the truecolor fg + the printed glyph went to the sink.
+        assert!(s.contains("\u{1b}[38;2;200;50;50m"), "missing SGR: {s:?}");
+        assert!(s.contains('Z'), "missing glyph: {s:?}");
+        // A second take after no flush yields nothing (capture was drained).
+        assert!(term.take_sink_bytes().is_empty());
+        // Dropping the harness terminal must not panic or emit teardown.
+        drop(term);
     }
 }

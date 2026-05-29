@@ -147,6 +147,10 @@ pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence};
+/// PTY/sink test harness for end-to-end escape-byte assertions (issue #274).
+/// Gated behind the dev-only `pty-test` feature; absent from default builds.
+#[cfg(feature = "pty-test")]
+pub use crate::test_utils::{PtyBackend, PtyFrame};
 // Animation primitives (builder types) are re-exported at crate root for
 // ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
 // live under `slt::anim::*` — they are rarely imported in isolation and

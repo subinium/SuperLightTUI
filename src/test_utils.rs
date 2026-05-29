@@ -740,6 +740,210 @@ impl std::fmt::Display for TestBackend {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PtyBackend — end-to-end escape-byte / image-protocol capture (#274)
+// ---------------------------------------------------------------------------
+
+/// Raw bytes emitted for a single rendered frame by [`PtyBackend`].
+///
+/// Unlike [`FrameRecord`] (a glyph/snapshot view of the in-memory
+/// [`Buffer`]), `PtyFrame` holds the *actual* escape-code byte stream the
+/// production flush pipeline produced for the frame: SGR runs, OSC 8
+/// hyperlinks, Sixel (`\x1bPq`), and Kitty graphics (`\x1b_Ga=`).
+///
+/// Since 0.21.0.
+#[cfg(feature = "pty-test")]
+#[derive(Clone, Debug)]
+pub struct PtyFrame {
+    /// Raw bytes emitted for this frame (SGR runs, OSC 8, Sixel, Kitty).
+    pub raw: Vec<u8>,
+}
+
+/// Drives the *real* [`crate::run`] flush pipeline into an in-process byte
+/// sink, so escape-code / color-depth / image-protocol output is asserted
+/// end-to-end — the byte/protocol tier that [`TestBackend`]'s buffer-only
+/// model deliberately cannot reach (see `tests/visual_snapshots.rs`).
+///
+/// Each [`render`](PtyBackend::render) constructs a fresh fullscreen
+/// `Terminal` whose sink is a captured `Vec<u8>` (no real TTY, no raw mode),
+/// runs one frame through the same [`crate::frame_owned`] entry point the
+/// production loop uses, and captures the emitted bytes. Because the previous
+/// frame buffer starts empty, every frame emits a complete first-paint diff —
+/// fully deterministic and reproducible on a headless CI runner.
+///
+/// This type is gated behind the dev-only `pty-test` feature and is **not**
+/// present in a default build.
+///
+/// Since 0.21.0.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[cfg(feature = "pty-test")]
+/// # {
+/// use slt::{Color, PtyBackend};
+///
+/// let mut pb = PtyBackend::new(10, 1);
+/// pb.render(|ui| {
+///     ui.text("x").fg(Color::Red).bold();
+/// });
+/// // The real flush pipeline emitted an SGR sequence for the styled glyph.
+/// pb.assert_emits("\u{1b}[");
+/// # }
+/// ```
+#[cfg(feature = "pty-test")]
+pub struct PtyBackend {
+    width: u32,
+    height: u32,
+    color_depth: crate::style::ColorDepth,
+    state: crate::AppState,
+    config: RunConfig,
+    frames: Vec<PtyFrame>,
+}
+
+#[cfg(feature = "pty-test")]
+impl PtyBackend {
+    /// Create a PTY capture backend with the given terminal dimensions.
+    ///
+    /// Defaults to [`ColorDepth::TrueColor`](crate::ColorDepth::TrueColor);
+    /// override with [`with_color_depth`](PtyBackend::with_color_depth).
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            color_depth: crate::style::ColorDepth::TrueColor,
+            state: crate::AppState::new(),
+            config: RunConfig::default(),
+            frames: Vec::new(),
+        }
+    }
+
+    /// Set the [`ColorDepth`](crate::ColorDepth) the flush pipeline encodes
+    /// SGR colors with (e.g. truecolor vs 256-color). Returns `self` for
+    /// chaining.
+    pub fn with_color_depth(mut self, depth: crate::style::ColorDepth) -> Self {
+        self.color_depth = depth;
+        self
+    }
+
+    /// Render one frame through the real `Terminal` flush pipeline, capturing
+    /// the emitted bytes. Returns the just-captured [`PtyFrame`].
+    pub fn render(&mut self, f: impl FnOnce(&mut Context)) -> &PtyFrame {
+        self.render_with_events(Vec::new(), f)
+    }
+
+    /// Render one frame with injected input `events`, capturing the emitted
+    /// bytes. Returns the just-captured [`PtyFrame`].
+    pub fn render_with_events(
+        &mut self,
+        events: Vec<Event>,
+        f: impl FnOnce(&mut Context),
+    ) -> &PtyFrame {
+        let mut term =
+            crate::terminal::Terminal::with_sink(self.width, self.height, self.color_depth);
+        let mut once = Some(f);
+        let mut render = move |ui: &mut Context| {
+            if let Some(f) = once.take() {
+                f(ui);
+            }
+        };
+        // Drive the production single-frame entry point. The captured-sink
+        // Terminal routes every byte through flush_buffer_diff /
+        // apply_style_delta / Sixel / Kitty exactly as a real terminal would.
+        let _ = crate::frame_owned(
+            &mut term,
+            &mut self.state,
+            &self.config,
+            events,
+            &mut render,
+        );
+        let raw = term.take_sink_bytes();
+        self.frames.push(PtyFrame { raw });
+        self.frames.last().expect("frame just pushed")
+    }
+
+    /// Iterate the raw byte stream of every captured frame, oldest first.
+    pub fn frames_raw(&self) -> impl Iterator<Item = &[u8]> {
+        self.frames.iter().map(|f| f.raw.as_slice())
+    }
+
+    /// Raw bytes of the most recently rendered frame.
+    ///
+    /// Panics if no frame has been rendered yet.
+    pub fn last_raw(&self) -> &[u8] {
+        &self.frames.last().expect("no frame rendered").raw
+    }
+
+    /// Assert the last frame's byte stream contains `needle`.
+    ///
+    /// Panics with an escaped + hex dump of the emitted bytes on a miss.
+    pub fn assert_emits(&self, needle: &str) {
+        let raw = self.last_raw();
+        if find_subslice(raw, needle.as_bytes()).is_none() {
+            panic!(
+                "PtyBackend frame does not emit {:?}.\nEmitted ({} bytes):\n  escaped: {}\n  hex: {}",
+                needle,
+                raw.len(),
+                escape_bytes(raw),
+                hex_bytes(raw),
+            );
+        }
+    }
+
+    /// Assert the last frame's byte stream does **not** contain `needle`.
+    ///
+    /// Panics with an escaped + hex dump on an unexpected hit.
+    pub fn assert_not_emits(&self, needle: &str) {
+        let raw = self.last_raw();
+        if find_subslice(raw, needle.as_bytes()).is_some() {
+            panic!(
+                "PtyBackend frame unexpectedly emits {:?}.\nEmitted ({} bytes):\n  escaped: {}\n  hex: {}",
+                needle,
+                raw.len(),
+                escape_bytes(raw),
+                hex_bytes(raw),
+            );
+        }
+    }
+}
+
+/// Byte-substring search (no UTF-8 assumption — escape streams are not valid
+/// UTF-8 in general).
+#[cfg(feature = "pty-test")]
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Render a byte slice with non-printable bytes shown as `\xNN` escapes.
+#[cfg(feature = "pty-test")]
+fn escape_bytes(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            0x1b => s.push_str("\\x1b"),
+            0x20..=0x7e => s.push(b as char),
+            b'\n' => s.push_str("\\n"),
+            b'\r' => s.push_str("\\r"),
+            b'\t' => s.push_str("\\t"),
+            _ => s.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    s
+}
+
+/// Render a byte slice as space-separated two-digit hex.
+#[cfg(feature = "pty-test")]
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

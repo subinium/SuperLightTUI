@@ -263,7 +263,7 @@ src/
 - TestBackend for headless rendering: `TestBackend::new(w, h).render(|ui| { ... })`
 - `tb.assert_contains("text")` for content verification
 - draw_raw tests must verify clipping, constraints, and multi-region rendering
-- tmux verification for visual demos before release
+- VHS gallery job green in CI (regenerates the demo gallery from the `.tape` files; replaces the old manual tmux step)
 
 ## Key Patterns
 - `ContainerBuilder::draw()` requires `'static` closure (deferred execution)
