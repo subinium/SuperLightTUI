@@ -41,27 +41,45 @@ below codify the consistency we want going forward.
 
 ### Rule 1: Builder pattern for widgets with optional fields
 
+SLT builders use the **consuming-builder** shape (`mut self -> Self`), matching
+egui's `ui.add(...)` drop-render idiom. The builder borrows `&mut Context`,
+chaining methods take `mut self` and return `Self`, and the widget renders when
+the builder is **dropped**. Call `.show()` to render eagerly and capture the
+response. This is the shape shipped in `gauge.rs` / `status.rs` for `Gauge`,
+`LineGauge`, `Breadcrumb`, and `CodeBlock` — new builders must match it.
+
 ```rust
 // Method on Context returns a builder — required args only
 impl Context {
     pub fn gauge(&mut self, ratio: f64) -> Gauge<'_> { ... }
 }
 
-// Builder methods are chainable, take &mut self -> &mut Self
+// Builder methods are chainable, take `mut self` and return `Self`.
 impl<'a> Gauge<'a> {
-    pub fn label(&mut self, s: impl Into<String>) -> &mut Self { ... }
-    pub fn width(&mut self, w: u32) -> &mut Self { ... }
-    pub fn color(&mut self, c: Color) -> &mut Self { ... }
+    pub fn label(mut self, s: impl Into<String>) -> Self { ...; self }
+    pub fn width(mut self, w: u32) -> Self { ...; self }
+    pub fn color(mut self, c: Color) -> Self { ...; self }
 }
 
-// Renders on Drop. Use .show() when you need the Response back.
+// Renders on Drop (so a bare `ui.gauge(0.5).label("CPU");` works).
+// Use .show() — which consumes self — when you need the Response back.
 impl Drop for Gauge<'_> { ... }
 impl Gauge<'_> { pub fn show(self) -> GaugeResponse { ... } }
 ```
 
 **Why**: matches egui / RataTUI / dioxus mental model. One entry point per widget concept,
-optional configuration via chaining. Avoids `gauge_w` / `gauge_colored` / `gauge_with_label` proliferation
+optional configuration via chaining. Avoids `gauge_w` / `gauge_with_label` proliferation
 where every new optional dimension grows the public surface combinatorially.
+
+**The `_colored` exception**: immediate (non-builder) widgets that return `Response`
+directly — `badge`, `stat`, `separator`, `progress_bar`, `button`, `list`, `table`, etc. —
+do **not** have a chainable builder to hang `.color(...)` off of. For those, a single
+blessed `_colored` color-override variant is the canonical, documented shape (see the
+[NAMING.md](NAMING.md) suffix table). What Rule 1 forbids is the *combinatoric* explosion
+(`gauge_colored(r, "CPU", Color::Green, 48)` stacking color **and** width **and** label as
+positional args, or a `_w` × `_colored` × `_with_label` cross-product), not a single,
+consistent `_colored` sibling. Widgets that already expose a builder (`gauge`, `line_gauge`)
+use `.color(...)` and have no `_colored` variant.
 
 **Example** (good):
 
@@ -85,7 +103,7 @@ ui.gauge_label_color(0.5, "CPU", Color::Green);    // n^2 explosion as opts grow
 ```rust
 pub fn gauge(&mut self, ratio: f64) -> Gauge<'_>;
 pub fn slider(&mut self, label: &str, value: &mut f64, range: RangeInclusive<f64>) -> Response;
-pub fn progress(&mut self, ratio: f64) -> Progress<'_>;
+pub fn progress(&mut self, ratio: f64) -> Response; // immediate; `gauge` is the builder form
 pub fn chart(&mut self) -> ChartBuilder<'_>; // datasets are [(f64, f64)]
 ```
 
@@ -122,7 +140,7 @@ the boundary — `f32` does not appear in any `pub fn` on `Context`.
 pub fn gauge(&mut self, ratio: f64) -> Gauge<'_>;
 
 // 2 args — positional
-pub fn alert(&mut self, level: AlertLevel, body: &str) -> Response;
+pub fn alert(&mut self, message: &str, level: AlertLevel) -> Response;
 
 // 3 args — positional, OK
 pub fn slider(&mut self, label: &str, value: &mut f64, range: RangeInclusive<f64>) -> Response;
@@ -290,14 +308,15 @@ Copy-paste this checklist into any PR that adds or changes a public widget:
 
 - [ ] Floats are `f64` (no `f32` in public signature)
 - [ ] Public function takes ≤ 3 positional args (otherwise opts struct or builder)
-- [ ] Optional configuration uses builder pattern (chainable `&mut self -> &mut Self`)
+- [ ] Optional configuration uses the consuming-builder pattern (chainable `mut self -> Self`, renders on `Drop`, `.show()` for the response)
 - [ ] Stateful widget takes `&mut XxxState` newtype (not `&mut String` / `&mut Vec<…>`)
 - [ ] Returns `Response` (or `XxxResponse: Deref<Target = Response>` for compound widgets)
 - [ ] `*Response` struct has `#[must_use = "..."]` attribute
 - [ ] Doctest shows idiomatic one-line happy path
 - [ ] Naming matches existing widgets (`fn gauge` returns `Gauge<'_>`, not `GaugeBuilder`; opts struct is
       `GaugeOpts`, not `GaugeConfig` or `GaugeParams`)
-- [ ] No `_w` / `_colored` / `_with_label` suffix variants — fold into builder methods instead
+- [ ] No `_w` / `_with_label` / `_numbered` combinatoric suffix variants — fold into builder methods instead
+- [ ] Color customization uses the blessed `_colored` suffix (see [NAMING.md](NAMING.md) suffix table) — the canonical color-override variant for immediate widgets that take a `Color` or `&WidgetColors`; do **not** invent `_w`/`_with_label` cross-products on top of it
 ```
 
 If a check fails, fix the API before merging. The cost of an inconsistent shape compounds across every

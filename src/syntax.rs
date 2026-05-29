@@ -829,7 +829,7 @@ mod tests {
         let mut tb = TestBackend::new(40, 8);
         tb.render(|ui| {
             ui.set_theme(theme);
-            let _ = ui.code_block_lang("fn main() {}", "rust");
+            let _ = ui.code_block("fn main() {}").lang("rust").show();
         });
 
         // The code text still renders.

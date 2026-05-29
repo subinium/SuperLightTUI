@@ -120,8 +120,11 @@ TabsState::new(["Files", "Settings"]);
 |--------|---------|---------|
 | `_named` | name-keyed variant | `register_focusable_named` |
 | `_keyed` | runtime-key variant | `use_state_keyed` |
-| `_colored` | color-customized variant | `text_input_colored` |
+| `_colored` | color-customized variant (canonical color-override for immediate widgets returning `Response`; blessed in [API_DESIGN.md](API_DESIGN.md) Rule 1) | `text_input_colored` |
 | `_lang` | language-aware variant | `code_block_lang` |
+| `_styled` | explicit-`Style`/`Color` override variant | `sparkline_styled` |
+| `_hd` | high-density / braille-cell rendering variant | `candlestick_hd` |
+| `_halfblock` | half-block (▀ / ▄) pixel-doubling render variant | `heatmap_halfblock` |
 | `_pct` | percent variant | `w_pct(50)` |
 | `_ratio` | ratio variant | `w_ratio(1, 3)` |
 | `_minmax` | min/max bounds variant | `w_minmax(10, 30)` |
@@ -385,6 +388,28 @@ removed in v0.20.
 These removals are **breaking changes**, but they were introduced *and*
 removed in the same release (v0.20), so the pre-release window was the
 only place they ever existed.
+
+### Deprecations (v0.21.0)
+
+Unlike the v0.20 renames above, these names **still exist** as
+`#[deprecated(since = "0.21.0")]` forwarding aliases for the whole v0.21.x
+line. Prefer the new form; the old names compile (with a warning) and are
+scheduled for removal in the next major.
+
+| Deprecated | New | Reason |
+|------------|-----|--------|
+| `code_block_lang(c, l)` | `code_block(c).lang(l)` | Builder consolidation — `_lang` × `_numbered` cross-product folded into one `CodeBlock` builder |
+| `code_block_numbered(c)` | `code_block(c).numbered()` | Builder consolidation |
+| `code_block_numbered_lang(c, l)` | `code_block(c).lang(l).numbered()` | Builder consolidation |
+
+> Note: `code_block(code)` now returns a `CodeBlock<'_>` builder instead of
+> `Response`. It still renders on `Drop`, so the common
+> `ui.code_block(code);` / `let _ = ui.code_block(code);` forms are
+> unaffected; callers that bound the old `Response` should add `.show()`.
+
+The `_colored` suffix is **not** deprecated: it is the blessed canonical
+color-override variant for immediate widgets (see the suffix table and
+[API_DESIGN.md](API_DESIGN.md) Rule 1).
 
 ---
 
