@@ -180,11 +180,11 @@ pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, ChordState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
     FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
-    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
-    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
+    MultiSelectState, PaginatorState, PaginatorStyle, PaletteCommand, RadioState, RichLogEntry,
+    RichLogState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
+    SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
+    ToolApprovalState, TreeNode, TreeState, Trend, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.

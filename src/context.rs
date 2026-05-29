@@ -19,9 +19,10 @@ use crate::style::{
 use crate::widgets::{
     ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, CommandPaletteState,
     ContextItem, FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, MultiSelectState, RadioState, ScreenState, ScrollState, SelectState,
-    SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
+    HighlightRange, ListState, MultiSelectState, PaginatorState, PaginatorStyle, RadioState,
+    ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState,
+    StreamingTextState, TableState, TabsState, TextInputState, TextareaState, ToastLevel,
+    ToastState, ToolApprovalState, TreeState,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};

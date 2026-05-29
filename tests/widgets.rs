@@ -5317,3 +5317,131 @@ fn calendar_h_l_move_by_day() {
     });
     assert_eq!((state.year, state.month), (2024, 6));
 }
+
+#[test]
+fn paginator_dots_render_active_and_inactive() {
+    let mut state = PaginatorState::new(9, 3); // 3 pages -> dots
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("●");
+    // Page 0 active -> one filled, two empty dots.
+    let line = tb.line(0);
+    assert_eq!(line.matches('●').count(), 1, "one active dot, got {line:?}");
+    assert_eq!(
+        line.matches('○').count(),
+        2,
+        "two inactive dots, got {line:?}"
+    );
+}
+
+#[test]
+fn paginator_arabic_renders_counter() {
+    let mut state = PaginatorState::new(9, 3);
+    state.style = PaginatorStyle::Arabic;
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("1/3");
+}
+
+#[test]
+fn paginator_right_key_advances_and_reports_changed() {
+    let mut state = PaginatorState::new(9, 3);
+    state.style = PaginatorStyle::Arabic;
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    let mut changed = false;
+    tb.render_with_events(right, 0, 1, |ui| {
+        changed = ui.paginator(&mut state).changed;
+    });
+    assert!(changed, "Response.changed should be true after advancing");
+    assert_eq!(state.page, 1);
+    tb.assert_contains("2/3");
+}
+
+#[test]
+fn paginator_left_key_on_first_page_is_no_change() {
+    let mut state = PaginatorState::new(9, 3);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    let left = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+    let mut changed = true;
+    tb.render_with_events(left, 0, 1, |ui| {
+        changed = ui.paginator(&mut state).changed;
+    });
+    assert!(!changed, "Response.changed should be false at page 0");
+    assert_eq!(state.page, 0);
+}
+
+#[test]
+fn paginator_click_dot_jumps_to_page() {
+    let mut state = PaginatorState::new(9, 3); // 3 dots at columns 0,1,2
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    // Click the third dot (column 2).
+    let click = slt::EventBuilder::new().click(2, 0).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.paginator(&mut state);
+    });
+    assert_eq!(state.page, 2);
+}
+
+#[test]
+fn paginator_next_key_clamps_at_last_page() {
+    let mut state = PaginatorState::new(9, 3); // 3 pages
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    for _ in 0..5 {
+        let right = slt::EventBuilder::new()
+            .key_code(slt::KeyCode::Right)
+            .build();
+        tb.render_with_events(right, 0, 1, |ui| {
+            ui.paginator(&mut state);
+        });
+    }
+    assert_eq!(state.page, 2, "should clamp at last page");
+}
+
+#[test]
+fn paginator_dots_fall_back_to_arabic_past_twelve_pages() {
+    let mut state = PaginatorState::new(13, 1); // 13 pages, Dots default
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("/13");
+    tb.assert_not_contains("●●●");
+}
+
+#[test]
+fn paginator_empty_is_no_op_safe() {
+    let mut state = PaginatorState::new(0, 5); // total_pages == 1
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    // Single inactive-or-active dot, no panic, page stays 0.
+    let line = tb.line(0);
+    assert!(line.contains('●') || line.contains('○'), "got {line:?}");
+    assert_eq!(state.page, 0);
+}
