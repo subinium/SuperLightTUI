@@ -34,6 +34,8 @@ unicode-segmentation = "1"
 smallvec = "1"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+toml = { version = "0.8", optional = true }
+notify = { version = "6", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
 unicode-bidi = { version = "0.3", optional = true }
@@ -74,7 +76,8 @@ crossterm = ["dep:crossterm", "dep:signal-hook"]
 bidi = ["dep:unicode-bidi"]
 default = ["crossterm", "bidi"]
 async = ["dep:tokio", "crossterm"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:toml"]
+theme-watch = ["serde", "dep:notify"]
 image = ["dep:image"]
 qrcode = ["dep:qrcode"]
 syntax-rust = ["dep:tree-sitter-highlight", "dep:tree-sitter-rust"]
@@ -110,7 +113,7 @@ syntax = [
     "syntax-yaml",
 ]
 kitty-compress = ["dep:flate2"]
-full = ["crossterm", "async", "serde", "image", "qrcode", "kitty-compress", "bidi"]
+full = ["crossterm", "async", "serde", "theme-watch", "image", "qrcode", "kitty-compress", "bidi"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -186,6 +189,11 @@ path = "examples/test_mouse.rs"
 [[example]]
 name = "demo_key_test"
 path = "examples/demo_key_test.rs"
+
+[[example]]
+name = "theme_hot_reload"
+path = "examples/theme_hot_reload.rs"
+required-features = ["theme-watch"]
 
 # ── v0.20 non-interactive reports (2) — kept standalone because they
 #    print to stdout rather than render a TUI, so they don't compose
