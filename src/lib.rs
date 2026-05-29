@@ -69,6 +69,7 @@
 //! | Flag | Description |
 //! |------|-------------|
 //! | `crossterm` | Built-in terminal runtime (`run`, `run_inline`, clipboard query helpers). Enabled by default. |
+//! | `bidi` | Reorder right-to-left text (Hebrew, Arabic, …) to visual order per UAX #9 before rendering. Enabled by default; pure-LTR text takes a zero-cost fast path. Since 0.21.0. |
 //! | `async` | Enable `run_async()` with tokio channel-based message passing |
 //! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
 //! | `image` | Enable image-loading helpers for terminal image widgets |
