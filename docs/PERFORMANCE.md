@@ -39,7 +39,7 @@ end-to-end whole-pipeline measurements (closure → build → compute → collec
 >
 > **Indicative only.** These numbers were captured on a developer machine
 > while other compiles were running concurrently, so they carry scheduler
-> noise (note the wide animation/headtohead intervals). Treat them as a
+> noise (note the wide animation interval). Treat them as a
 > sanity-check order of magnitude, not a contract. Re-run
 > `cargo bench --bench benchmarks` on a *quiet* machine before quoting them
 > in a release announcement, and re-measure on your own hardware (the
@@ -122,7 +122,7 @@ The benchmark suite is defined in `benches/benchmarks.rs` and uses
   terminal sizes, including the ultra-wide 300×100 stress case
 - `animation/churn_200x60` — per-frame changing content + progress +
   sparkline, forcing a non-empty diff every frame
-- `headtohead_200x60/{slt,ratatui}` — SLT vs ratatui rendering the same
+- `dashboard_200x60/slt` — SLT rendering a representative
   dashboard into an in-memory test backend (see [§5](#5-compared-to-other-ui-frameworks))
 - `flush/{full_redraw,sparse_change,static}_200x60` and
   `flush/{full_redraw,sparse_change}_300x100` — ANSI emit cost into a
@@ -350,25 +350,28 @@ For typical TUIs, both are limited by terminal flush bandwidth (one
 syscall per ANSI command was ~10× the framework cost until #172
 introduced 64 KiB `BufWriter`).
 
-### Head-to-head vs ratatui
+### vs ratatui (reference)
 
-To put a single quantitative data point behind the qualitative table
-above, `benches/benchmarks.rs` ships a `headtohead_200x60` group that
-renders the **same logical dashboard** — a bold header, 20 text rows, and
-a progress/gauge — with both frameworks, at the same 200×60 size, into an
-**in-memory test backend** so neither side performs real terminal I/O. The
-SLT arm uses `slt::test_utils::TestBackend::render`; the ratatui arm uses
-`ratatui::backend::TestBackend` via `Terminal::draw`. The sample is each
-framework's build → layout → render → diff cost only; the OS-level flush
-syscall is excluded on both sides by construction.
+`benches/benchmarks.rs` ships a `dashboard_200x60/slt` bench that renders a
+representative dashboard — a bold header, 20 text rows, and a progress/gauge
+— at 200×60 into the **in-memory `TestBackend`**, so the sample is SLT's
+build → layout → render → diff cost only (the OS-level flush syscall is
+excluded by construction).
 
-| Framework | Bench | Per-frame (median) |
-|---|---|---|
-| **SLT** | `headtohead_200x60/slt` | ~81 µs |
-| **ratatui** | `headtohead_200x60/ratatui` | ~183 µs |
+A one-off head-to-head against ratatui 0.29 rendering the *same* logical
+dashboard via `ratatui::backend::TestBackend` + `Terminal::draw` measured:
 
-- **ratatui version**: `0.29` (pinned in `[dev-dependencies]`, bench-only —
-  it never enters the published `superlighttui` dependency tree).
+| Framework | Per-frame (median) |
+|---|---|
+| **SLT** (`dashboard_200x60/slt`) | ~81 µs |
+| **ratatui 0.29** (reference, not bench-linked) | ~183 µs |
+
+- **Why ratatui is not a `[dev-dependencies]` entry**: ratatui 0.29 pulls a
+  transitively advisory `lru 0.12` (RUSTSEC-2026-0002) that would fail the
+  release `cargo audit` gate for a benchmark-only comparison. The ratatui
+  figure above is therefore a **recorded reference measurement** (ratatui
+  0.29, same HW and method) rather than a CI-regenerated number; only the SLT
+  arm is shipped as a live bench.
 - **Methodology**: identical widget count and terminal size; both rendered
   into the framework's own in-memory test backend; criterion median,
   reference HW above; same caveats apply (indicative, re-measure on a quiet
@@ -379,7 +382,7 @@ syscall is excluded on both sides by construction.
   immediate-mode, both diff a `Buffer`) that the result will shift with
   widget mix, terminal size, and the exact ratatui widgets chosen. It is a
   starting data point, not a definitive ranking. To reproduce:
-  `cargo bench --bench benchmarks -- headtohead_200x60`.
+  `cargo bench --bench benchmarks -- dashboard_200x60`.
 
 ## 6. Detecting regressions
 

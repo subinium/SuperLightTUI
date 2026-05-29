@@ -210,7 +210,7 @@ impl AsyncTasks {
             Err(boxed) => {
                 // Type mismatch should be impossible: the id-typed handle pins
                 // the result type. Re-insert defensively rather than lose the
-                // result, and report `None` to this (mis-typed) caller.
+                // result, and report `None` to this (mistyped) caller.
                 self.results.insert(id, boxed);
                 None
             }

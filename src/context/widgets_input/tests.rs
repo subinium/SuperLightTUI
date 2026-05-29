@@ -436,7 +436,7 @@ fn number_input_invalid_typed_sets_parse_error() {
     backend.type_string("9", |ui| {
         let _ = ui.number_input(&mut s);
     });
-    // Force an unparseable buffer directly, then press Enter.
+    // Force an unparsable buffer directly, then press Enter.
     s.editing = Some("9x".to_string());
     backend.run_with_events(EventBuilder::new().key_code(KeyCode::Enter).build(), |ui| {
         let _ = ui.number_input(&mut s);

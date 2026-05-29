@@ -190,49 +190,21 @@ fn bench_animation_churn(c: &mut Criterion) {
     group.finish();
 }
 
-/// Head-to-head: SLT vs ratatui rendering the *same* logical dashboard
-/// (bold header + separator + 20 rows + progress/gauge) into an in-memory
-/// test backend at 200x60. Neither side performs real terminal I/O, so the
-/// sample is the framework's build → layout → render → diff cost only
-/// (issue #270). The ratatui arm uses ratatui's own `TestBackend` via
-/// `Terminal::draw`, which is the equivalent in-memory rendering path.
+/// SLT dashboard render baseline (bold header + separator + 20 rows +
+/// progress/gauge) into the in-memory `TestBackend` at 200x60 — the
+/// framework's build → layout → render → diff cost only, no terminal I/O
+/// (issue #270). The qualitative comparison vs ratatui's equivalent
+/// `Terminal::draw` path is documented in `docs/PERFORMANCE.md`; ratatui is
+/// intentionally NOT linked as a dev-dependency because it pulls a
+/// transitively-advisory `lru 0.12` (RUSTSEC-2026-0002) that would fail the
+/// release audit gate for a benchmark-only comparison.
 fn bench_headtohead(c: &mut Criterion) {
-    use ratatui::{
-        backend::TestBackend as RtTestBackend,
-        layout::Rect as RtRect,
-        style::{Style as RtStyle, Stylize},
-        widgets::{Gauge, Paragraph},
-        Terminal,
-    };
-
-    let mut group = c.benchmark_group("headtohead_200x60");
+    let mut group = c.benchmark_group("dashboard_200x60");
 
     group.bench_function("slt", |b| {
         let mut backend = TestBackend::new(200, 60);
         b.iter(|| {
             backend.render(render_dashboard);
-        });
-    });
-
-    group.bench_function("ratatui", |b| {
-        let mut term = Terminal::new(RtTestBackend::new(200, 60)).expect("ratatui TestBackend");
-        b.iter(|| {
-            term.draw(|f| {
-                // Header (bold), then 20 rows, then a gauge at the bottom —
-                // one widget value type per logical row, matching the SLT side.
-                f.render_widget(
-                    Paragraph::new("Header").style(RtStyle::new().bold()),
-                    RtRect::new(0, 0, 200, 1),
-                );
-                for i in 0..20u16 {
-                    f.render_widget(
-                        Paragraph::new(format!("Row {i}")),
-                        RtRect::new(0, i + 1, 200, 1),
-                    );
-                }
-                f.render_widget(Gauge::default().ratio(0.75), RtRect::new(0, 21, 200, 1));
-            })
-            .expect("ratatui draw into in-memory backend cannot fail");
         });
     });
 
