@@ -1064,6 +1064,7 @@ dependencies = [
  "qrcode",
  "serde",
  "serde_json",
+ "signal-hook",
  "smallvec",
  "tokio",
  "tree-sitter-bash",

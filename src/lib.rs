@@ -417,6 +417,90 @@ fn install_panic_hook() {
     });
 }
 
+/// RAII guard owning the unix suspend/resume (`SIGTSTP`/`SIGCONT`) handler
+/// thread for the duration of a run loop (issue #263).
+///
+/// Dropping the guard closes the `signal-hook` registration so the background
+/// thread breaks out of `Signals::forever()` and is joined, leaving no signal
+/// handlers installed after the loop exits.
+#[cfg(all(feature = "crossterm", unix))]
+struct SuspendGuard {
+    handle: signal_hook::iterator::Handle,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(all(feature = "crossterm", unix))]
+impl Drop for SuspendGuard {
+    fn drop(&mut self) {
+        // Closing the handle wakes `Signals::forever()` so the thread returns.
+        self.handle.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Install the unix job-control suspend/resume handler for one run loop.
+///
+/// Spawns a `signal-hook` background thread that, on `SIGTSTP`, restores the
+/// terminal and re-raises the default-disposition stop, and on `SIGCONT`
+/// re-enters the session and flags a full redraw. Uses only signal-hook's safe
+/// API, preserving `#![forbid(unsafe_code)]`. Returns the guard that owns the
+/// thread; dropping it uninstalls the handler.
+#[cfg(all(feature = "crossterm", unix))]
+fn install_suspend_handler(snapshot: terminal::SessionSnapshot) -> io::Result<SuspendGuard> {
+    use signal_hook::consts::{SIGCONT, SIGTSTP};
+    use signal_hook::iterator::Signals;
+
+    let mut signals = Signals::new([SIGTSTP, SIGCONT])?;
+    let handle = signals.handle();
+    let thread = std::thread::Builder::new()
+        .name("slt-suspend".to_string())
+        .spawn(move || {
+            // `has_terminal` tracks whether the TUI session is currently
+            // entered, so a stray SIGCONT (no prior SIGTSTP) or a repeated
+            // SIGTSTP cannot double-leave / double-enter (idempotency).
+            let mut has_terminal = true;
+            for signal in &mut signals {
+                match signal {
+                    SIGTSTP if has_terminal => {
+                        terminal::suspend_to_shell(&snapshot);
+                        has_terminal = false;
+                        // Genuinely stop the process now that the terminal is
+                        // restored; control returns to the shell.
+                        let _ = signal_hook::low_level::emulate_default_handler(SIGTSTP);
+                    }
+                    SIGCONT if !has_terminal => {
+                        terminal::resume_from_shell(&snapshot);
+                        has_terminal = true;
+                    }
+                    // Repeated SIGTSTP/SIGCONT or out-of-order delivery is a
+                    // no-op — the `has_terminal` guard keeps enter/leave
+                    // balanced (idempotency, issue #263).
+                    _ => {}
+                }
+            }
+        })?;
+
+    Ok(SuspendGuard {
+        handle,
+        thread: Some(thread),
+    })
+}
+
+/// Consume the pending full-redraw request raised by a `SIGCONT` resume and, if
+/// set, clear + repaint the whole frame (issue #263).
+///
+/// Called at the top of each run-loop iteration. No-op on non-unix builds.
+#[cfg(all(feature = "crossterm", unix))]
+fn drain_resume_redraw(handle_resize: &mut impl FnMut() -> io::Result<()>) -> io::Result<()> {
+    use std::sync::atomic::Ordering;
+    if terminal::NEEDS_FULL_REDRAW.swap(false, Ordering::SeqCst) {
+        handle_resize()?;
+    }
+    Ok(())
+}
+
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`] or [`run_inline_with`] to customize behavior.
@@ -505,6 +589,31 @@ pub struct RunConfig {
     /// }).unwrap();
     /// ```
     pub handle_ctrl_c: bool,
+    /// Whether the runtime restores the terminal on Ctrl+Z (`SIGTSTP`) and
+    /// re-enters it on resume (`SIGCONT`).
+    ///
+    /// When `true` (the default) on Unix, pressing Ctrl+Z runs the full
+    /// session teardown — leave the alternate screen (fullscreen only), show
+    /// the cursor, disable raw mode / bracketed paste / focus / mouse / kitty
+    /// — *before* the process is suspended, so the shell prompt returns to a
+    /// clean terminal. Resuming with `fg` re-enters the same session and forces
+    /// a full redraw. This matches helix/zellij/bubbletea job-control behavior.
+    ///
+    /// When `false`, no signal handler is installed and Ctrl+Z falls through to
+    /// crossterm as a regular key event in raw mode (the pre-0.21 behavior).
+    ///
+    /// Unix only; ignored on Windows, WASM, and non-`crossterm` builds where
+    /// there is no `SIGTSTP`. Defaults to `true`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// // Opt out: let Ctrl+Z reach the frame closure as a key event.
+    /// let cfg = RunConfig::default().handle_suspend(false);
+    /// assert!(!cfg.handle_suspend);
+    /// ```
+    pub handle_suspend: bool,
 }
 
 impl Default for RunConfig {
@@ -520,6 +629,7 @@ impl Default for RunConfig {
             title: None,
             widget_theme: style::WidgetTheme::new(),
             handle_ctrl_c: true,
+            handle_suspend: true,
         }
     }
 }
@@ -612,6 +722,26 @@ impl RunConfig {
     /// ```
     pub fn handle_ctrl_c(mut self, enabled: bool) -> Self {
         self.handle_ctrl_c = enabled;
+        self
+    }
+
+    /// Configure whether the runtime restores the terminal on Ctrl+Z
+    /// (`SIGTSTP`) and re-enters it on resume (`SIGCONT`).
+    ///
+    /// Defaults to `true`. Set to `false` to disable the suspend handler so
+    /// Ctrl+Z falls through to crossterm as a regular key event — see
+    /// [`RunConfig::handle_suspend`] for the full behavior. Unix only; ignored
+    /// elsewhere.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().handle_suspend(false);
+    /// assert!(!cfg.handle_suspend);
+    /// ```
+    pub fn handle_suspend(mut self, enabled: bool) -> Self {
+        self.handle_suspend = enabled;
         self
     }
 }
@@ -855,11 +985,21 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -963,12 +1103,22 @@ fn run_async_loop<M: Send + 'static>(
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut messages: Vec<M> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         messages.clear();
         while let Ok(message) = rx.try_recv() {
             messages.push(message);
@@ -1057,11 +1207,21 @@ pub fn run_inline_with(
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -1145,12 +1305,22 @@ pub fn run_static_with(
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
 
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -1853,5 +2023,63 @@ mod run_loop_tests {
         let before = state.diagnostics.debug_layer;
         process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
         assert_eq!(state.diagnostics.debug_layer, before);
+    }
+
+    // ── Issue #263: RunConfig::handle_suspend ────────────────────────────
+
+    #[test]
+    fn handle_suspend_defaults_to_true() {
+        assert!(RunConfig::default().handle_suspend);
+    }
+
+    #[test]
+    fn handle_suspend_builder_opts_out() {
+        let cfg = RunConfig::default().handle_suspend(false);
+        assert!(!cfg.handle_suspend);
+    }
+
+    #[test]
+    fn handle_suspend_builder_is_independent_of_ctrl_c() {
+        // Toggling suspend must not perturb the unrelated Ctrl+C toggle.
+        let cfg = RunConfig::default()
+            .handle_ctrl_c(false)
+            .handle_suspend(false);
+        assert!(!cfg.handle_ctrl_c);
+        assert!(!cfg.handle_suspend);
+
+        let cfg = RunConfig::default().handle_suspend(true);
+        assert!(cfg.handle_suspend);
+        assert!(cfg.handle_ctrl_c, "Ctrl+C default preserved");
+    }
+
+    /// End-to-end test of the real signal-delivery wiring: install the
+    /// handler, deliver a real `SIGCONT` through signal-hook's registry +
+    /// background thread, then drop the guard and confirm it closes the
+    /// registration and joins the thread without hanging or panicking.
+    ///
+    /// `SIGCONT`'s default disposition is "continue", so it is safe to raise on
+    /// the running test process — unlike `SIGTSTP`, which would stop the test
+    /// runner. The suspend (`SIGTSTP`) sequence itself is covered hermetically
+    /// by the `write_suspend_sequence` unit tests in `terminal`.
+    #[cfg(unix)]
+    #[test]
+    fn suspend_handler_installs_delivers_and_tears_down() {
+        // In constrained sandboxes signal registration can fail; if so the
+        // wiring under test cannot be exercised, so skip rather than flake.
+        let Ok(guard) = install_suspend_handler(terminal::test_session_snapshot()) else {
+            return;
+        };
+
+        // Deliver a real SIGCONT; the background thread must drain it. With no
+        // prior SIGTSTP the handler's `has_terminal` guard makes this a no-op
+        // re-enter (idempotency), which is exactly what we want to verify does
+        // not corrupt state or crash the thread.
+        let _ = signal_hook::low_level::raise(signal_hook::consts::SIGCONT);
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Dropping the guard closes the registration and joins the thread.
+        // If `Handle::close` failed to wake `Signals::forever`, this hangs and
+        // the test times out — a real regression signal.
+        drop(guard);
     }
 }

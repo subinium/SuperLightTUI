@@ -54,6 +54,13 @@ tree-sitter-css = { version = "0.25", optional = true }
 tree-sitter-html = { version = "0.23", optional = true }
 tree-sitter-yaml = { version = "0.7", optional = true }
 
+# Unix job-control suspend/resume (Ctrl+Z / `fg`). Safe API only — used to
+# restore the terminal before SIGTSTP stops the process and re-enter it on
+# SIGCONT, preserving `#![forbid(unsafe_code)]` (issue #263). Target-gated so
+# non-unix builds (Windows/WASM) never pull it.
+[target.'cfg(unix)'.dependencies]
+signal-hook = { version = "0.3", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
@@ -61,7 +68,7 @@ proptest = "1"
 serde_json = "1"
 
 [features]
-crossterm = ["dep:crossterm"]
+crossterm = ["dep:crossterm", "dep:signal-hook"]
 default = ["crossterm"]
 async = ["dep:tokio", "crossterm"]
 serde = ["dep:serde"]
