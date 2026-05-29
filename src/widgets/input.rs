@@ -230,7 +230,113 @@ impl Default for TextInputState {
     }
 }
 
-/// A single form field with label and validation.
+/// A boxed, state-capturing field validator.
+///
+/// Unlike the deprecated [`FormValidator`] function pointer, a `Validator`
+/// wraps a closure, so it can capture surrounding state — a compiled matcher,
+/// a min/max pulled from config, or a sibling field's value. Built-in
+/// constructors live in the [`validators`](crate::widgets::validators) module.
+///
+/// You rarely construct one directly: [`FormField::validate`] accepts a closure
+/// and boxes it for you. Use [`Validator::new`] when you need to build a
+/// `Validator` value yourself.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::Validator;
+/// let min = 3usize; // captured state — impossible with a fn pointer
+/// let v = Validator::new(move |s: &str| {
+///     if s.len() >= min { Ok(()) } else { Err(format!("min {min} chars")) }
+/// });
+/// assert!(v.run("hello").is_ok());
+/// assert!(v.run("hi").is_err());
+/// ```
+pub struct Validator(TextInputValidator);
+
+impl Validator {
+    /// Wrap a closure as a [`Validator`].
+    ///
+    /// The closure may capture state (it is `Box<dyn Fn>`, not a function
+    /// pointer).
+    pub fn new(f: impl Fn(&str) -> Result<(), String> + 'static) -> Self {
+        Self(Box::new(f))
+    }
+
+    /// Run the validator against `value`, returning its `Err` message on
+    /// failure.
+    pub fn run(&self, value: &str) -> Result<(), String> {
+        (self.0)(value)
+    }
+}
+
+impl std::fmt::Debug for Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Validator(<fn>)")
+    }
+}
+
+/// One in-flight asynchronous field validation.
+///
+/// Created by [`FormField::validate_async`] and polled each frame by
+/// [`Context::form_field`](crate::Context::form_field) (or directly via
+/// [`FormField::poll_async`]). Gated behind the `async` feature.
+#[cfg(feature = "async")]
+pub struct AsyncValidation {
+    rx: tokio::sync::oneshot::Receiver<Result<(), String>>,
+}
+
+#[cfg(feature = "async")]
+impl std::fmt::Debug for AsyncValidation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AsyncValidation(<pending>)")
+    }
+}
+
+/// When [`Context::form_field`](crate::Context::form_field) runs a field's
+/// validators.
+///
+/// Defaults to [`OnBlur`](ValidateTrigger::OnBlur), matching the behavior of
+/// `huh` and `bubbles/textinput`.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::{FormField, ValidateTrigger, validators};
+/// let field = FormField::new("Email")
+///     .validate(validators::email())
+///     .on_change(); // validate as the user types
+/// assert_eq!(field.trigger, ValidateTrigger::OnChange);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ValidateTrigger {
+    /// Validate on every value change (each keystroke).
+    OnChange,
+    /// Validate when the field loses focus. The default.
+    #[default]
+    OnBlur,
+    /// Never auto-validate; the app calls
+    /// [`FormState::validate_all`] or [`FormField::run_validators`] manually.
+    Manual,
+}
+
+/// A single form field with a label, an input, and its own validators.
+///
+/// Attach validators with the chainable [`validate`](Self::validate) builder
+/// (multiple allowed); choose when they run with [`on_change`](Self::on_change)
+/// / [`on_blur`](Self::on_blur). [`Context::form_field`](crate::Context::form_field)
+/// runs them automatically per [`trigger`](Self::trigger).
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::{FormField, validators};
+/// let field = FormField::new("Email")
+///     .placeholder("you@example.com")
+///     .validate(validators::required("required"))
+///     .validate(validators::email());
+/// # let _ = field;
+/// ```
 #[derive(Debug, Default)]
 pub struct FormField {
     /// Field label shown above the input.
@@ -239,6 +345,24 @@ pub struct FormField {
     pub input: TextInputState,
     /// Validation error shown below the input when present.
     pub error: Option<String>,
+    /// When the field's validators run. Defaults to
+    /// [`ValidateTrigger::OnBlur`].
+    pub trigger: ValidateTrigger,
+    /// This field's validators. Mutate via [`validate`](Self::validate); run
+    /// via [`run_validators`](Self::run_validators).
+    validators: Vec<Validator>,
+    /// Whether the field's input held keyboard focus on the previous frame.
+    ///
+    /// [`Context::form_field`](crate::Context::form_field) uses the
+    /// focused → unfocused edge to detect blur for
+    /// [`ValidateTrigger::OnBlur`]. This is tracked here (rather than read from
+    /// the input's [`Response`]) because the `text_input` Response does not yet
+    /// carry the `lost_focus` signal on its container-assembled response.
+    was_focused: bool,
+    /// One in-flight async validation, if any. Polled each frame by
+    /// [`Context::form_field`](crate::Context::form_field).
+    #[cfg(feature = "async")]
+    pending: Option<AsyncValidation>,
 }
 
 impl FormField {
@@ -248,6 +372,11 @@ impl FormField {
             label: label.into(),
             input: TextInputState::new(),
             error: None,
+            trigger: ValidateTrigger::default(),
+            validators: Vec::new(),
+            was_focused: false,
+            #[cfg(feature = "async")]
+            pending: None,
         }
     }
 
@@ -255,6 +384,158 @@ impl FormField {
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.input.placeholder = p.into();
         self
+    }
+
+    /// Attach a validator closure (chainable; call multiple times to stack
+    /// validators — the first failure becomes the field error).
+    ///
+    /// The closure may capture state, unlike the deprecated positional
+    /// [`FormValidator`]. Built-ins live in
+    /// [`validators`](crate::widgets::validators).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, validators};
+    /// let field = FormField::new("Name")
+    ///     .validate(validators::required("required"))
+    ///     .validate(validators::max_len(50, "too long"));
+    /// # let _ = field;
+    /// ```
+    pub fn validate(mut self, f: impl Fn(&str) -> Result<(), String> + 'static) -> Self {
+        self.validators.push(Validator::new(f));
+        self
+    }
+
+    /// Run this field's validators on every change (each keystroke).
+    pub fn on_change(mut self) -> Self {
+        self.trigger = ValidateTrigger::OnChange;
+        self
+    }
+
+    /// Run this field's validators when it loses focus (the default).
+    pub fn on_blur(mut self) -> Self {
+        self.trigger = ValidateTrigger::OnBlur;
+        self
+    }
+
+    /// Disable automatic validation; the app must call
+    /// [`run_validators`](Self::run_validators) or
+    /// [`FormState::validate_all`] explicitly.
+    pub fn manual(mut self) -> Self {
+        self.trigger = ValidateTrigger::Manual;
+        self
+    }
+
+    /// Number of validators attached to this field.
+    pub fn validator_count(&self) -> usize {
+        self.validators.len()
+    }
+
+    /// Run this field's validators now, setting [`error`](Self::error) to the
+    /// first failure (or clearing it on success).
+    ///
+    /// Returns `true` when the field is valid.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, validators};
+    /// let mut field = FormField::new("Name").validate(validators::required("required"));
+    /// assert!(!field.run_validators()); // empty -> error
+    /// field.input.value = "Jane".into();
+    /// assert!(field.run_validators()); // non-empty -> ok
+    /// ```
+    pub fn run_validators(&mut self) -> bool {
+        self.error = self
+            .validators
+            .iter()
+            .find_map(|v| v.run(&self.input.value).err());
+        self.error.is_none()
+    }
+
+    /// Update the tracked focus edge and report whether the field *just* lost
+    /// focus this frame (a focused → unfocused transition).
+    ///
+    /// Called by [`Context::form_field`](crate::Context::form_field) each frame
+    /// with the input's current focus state. Kept crate-internal: blur
+    /// detection is an implementation detail of the form-field trigger plumbing.
+    pub(crate) fn observe_focus(&mut self, focused: bool) -> bool {
+        let lost = self.was_focused && !focused;
+        self.was_focused = focused;
+        lost
+    }
+
+    /// Spawn an asynchronous validation of the current value, replacing any
+    /// previously pending check.
+    ///
+    /// The future runs on the ambient tokio runtime; its `Result` is surfaced
+    /// as [`error`](Self::error) once [`poll_async`](Self::poll_async) (called
+    /// each frame by [`Context::form_field`](crate::Context::form_field)) sees
+    /// it complete.
+    ///
+    /// Requires the `async` feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "async")]
+    /// # async fn ex(field: &mut slt::widgets::FormField) {
+    /// let value = field.input.value.clone();
+    /// field.validate_async(async move {
+    ///     // e.g. hit a "username taken?" endpoint
+    ///     if value == "taken" { Err("already taken".into()) } else { Ok(()) }
+    /// });
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub fn validate_async<F>(&mut self, future: F)
+    where
+        F: std::future::Future<Output = Result<(), String>> + Send + 'static,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = future.await;
+            let _ = tx.send(result);
+        });
+        self.pending = Some(AsyncValidation { rx });
+    }
+
+    /// Whether an async validation is currently in flight.
+    ///
+    /// Requires the `async` feature.
+    #[cfg(feature = "async")]
+    pub fn is_validating(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Poll the in-flight async validation (if any) without blocking.
+    ///
+    /// When the future has resolved, its result is written to
+    /// [`error`](Self::error) and the pending slot is cleared. Returns `true`
+    /// when a result was just applied this call.
+    ///
+    /// Requires the `async` feature.
+    #[cfg(feature = "async")]
+    pub fn poll_async(&mut self) -> bool {
+        use tokio::sync::oneshot::error::TryRecvError;
+        let Some(pending) = self.pending.as_mut() else {
+            return false;
+        };
+        match pending.rx.try_recv() {
+            Ok(result) => {
+                self.error = result.err();
+                self.pending = None;
+                true
+            }
+            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Closed) => {
+                // Sender dropped without sending — treat as resolved (no error
+                // to surface) and clear the stuck pending slot.
+                self.pending = None;
+                true
+            }
+        }
     }
 }
 
@@ -282,9 +563,111 @@ impl FormState {
         self
     }
 
-    /// Validate all fields with the given validators.
+    /// Whether the form is currently valid — no field holds an error.
     ///
-    /// Returns `true` when all validations pass.
+    /// Reflects the last run of each field's validators (auto-triggered by
+    /// [`Context::form_field`](crate::Context::form_field) or run explicitly via
+    /// [`validate_all`](Self::validate_all)). It does not re-run validation.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, FormState, validators};
+    /// let mut form = FormState::new().field(FormField::new("Name").validate(validators::required("required")));
+    /// assert!(form.is_valid()); // no validation run yet
+    /// form.validate_all();
+    /// assert!(!form.is_valid()); // empty Name failed
+    /// ```
+    pub fn is_valid(&self) -> bool {
+        self.fields.iter().all(|f| f.error.is_none())
+    }
+
+    /// Collect every current field error as `(field_index, message)` pairs.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, FormState, validators};
+    /// let mut form = FormState::new().field(FormField::new("Name").validate(validators::required("required")));
+    /// form.validate_all();
+    /// assert_eq!(form.errors(), vec![(0, "required")]);
+    /// ```
+    pub fn errors(&self) -> Vec<(usize, &str)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| f.error.as_deref().map(|e| (i, e)))
+            .collect()
+    }
+
+    /// Run every field's own validators, returning `true` when all pass.
+    ///
+    /// This is the replacement for the deprecated positional
+    /// [`validate`](Self::validate) — validators are co-located with their
+    /// fields, so there is no index slice to misalign.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, FormState, validators};
+    /// let mut form = FormState::new()
+    ///     .field(FormField::new("Email").validate(validators::email()));
+    /// let ok = form.validate_all();
+    /// # let _ = ok;
+    /// ```
+    pub fn validate_all(&mut self) -> bool {
+        let mut ok = true;
+        for field in &mut self.fields {
+            ok &= field.run_validators();
+        }
+        ok
+    }
+
+    /// Apply cross-field validation rules.
+    ///
+    /// The closure receives the whole form and returns `(field_index, message)`
+    /// pairs; each pair sets that field's [`error`](FormField::error). Returns
+    /// `true` when the closure reports no errors. Useful for rules like
+    /// "confirm password must match password".
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, FormState};
+    /// let mut form = FormState::new()
+    ///     .field(FormField::new("Password"))
+    ///     .field(FormField::new("Confirm"));
+    /// let ok = form.validate_with(|f| {
+    ///     if f.value(0) != f.value(1) {
+    ///         vec![(1, "passwords must match".to_string())]
+    ///     } else {
+    ///         vec![]
+    ///     }
+    /// });
+    /// # let _ = ok;
+    /// ```
+    pub fn validate_with(
+        &mut self,
+        f: impl Fn(&FormState) -> Vec<(usize, String)>,
+    ) -> bool {
+        let extra = f(self);
+        for (i, msg) in &extra {
+            if let Some(field) = self.fields.get_mut(*i) {
+                field.error = Some(msg.clone());
+            }
+        }
+        extra.is_empty()
+    }
+
+    /// Validate all fields with a positional slice of function-pointer
+    /// validators.
+    ///
+    /// Returns `true` when all validations pass. A field whose index has no
+    /// matching validator is silently skipped.
+    #[deprecated(
+        since = "0.21.0",
+        note = "Attach validators per-field via FormField::validate and call validate_all(); positional slices misalign silently."
+    )]
     pub fn validate(&mut self, validators: &[FormValidator]) -> bool {
         let mut all_valid = true;
         for (i, field) in self.fields.iter_mut().enumerate() {

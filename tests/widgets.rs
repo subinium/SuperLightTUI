@@ -253,7 +253,11 @@ fn form_renders_fields() {
     tb.assert_contains("Password");
 }
 
+// Exercises the deprecated positional `FormState::validate` shim (#252):
+// it must keep its exact pre-0.21.0 behavior. New code should attach
+// per-field validators via `FormField::validate` + `validate_all()`.
 #[test]
+#[allow(deprecated)]
 fn form_validation() {
     let mut form = FormState::new()
         .field(FormField::new("Email"))

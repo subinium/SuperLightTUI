@@ -91,9 +91,21 @@ impl DemoState {
             show_modal: false,
             selected_plan: String::new(),
             contact_form: FormState::new()
-                .field(FormField::new("Name").placeholder("Jane Doe"))
-                .field(FormField::new("Email").placeholder("jane@example.com"))
-                .field(FormField::new("Message").placeholder("How can we help?")),
+                .field(
+                    FormField::new("Name")
+                        .placeholder("Jane Doe")
+                        .validate(validate_name),
+                )
+                .field(
+                    FormField::new("Email")
+                        .placeholder("jane@example.com")
+                        .validate(validate_email),
+                )
+                .field(
+                    FormField::new("Message")
+                        .placeholder("How can we help?")
+                        .validate(validate_message),
+                ),
         }
     }
 }
@@ -1724,7 +1736,7 @@ fn render_contact(
             }
         });
         if ui.form_submit("Send").clicked {
-            if contact_form.validate(&[validate_name, validate_email, validate_message]) {
+            if contact_form.validate_all() {
                 toasts.success("Thanks for reaching out! We'll reply soon.", tick);
                 contact_form.submitted = true;
             } else {

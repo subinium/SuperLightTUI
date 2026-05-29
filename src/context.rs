@@ -23,7 +23,7 @@ use crate::widgets::{
     HighlightRange, ListState, MultiSelectState, PaginatorState, PaginatorStyle, PickerMode,
     RadioState, ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse,
     SplitPaneState, StreamingTextState, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastState, ToolApprovalState, TreeState,
+    ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
 };
 use crate::FrameState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};

@@ -13,8 +13,26 @@ use unicode_width::UnicodeWidthStr;
 use crate::context::Response;
 use crate::Style;
 
-type FormValidator = fn(&str) -> Result<(), String>;
+/// Bare function-pointer validator used by the deprecated positional
+/// [`FormState::validate`](crate::widgets::FormState::validate) API.
+///
+/// Retained for backward compatibility. New code should attach
+/// [`Validator`](crate::widgets::Validator) closures per field via
+/// [`FormField::validate`](crate::widgets::FormField::validate); see the
+/// [`validators`] module for built-ins.
+pub type FormValidator = fn(&str) -> Result<(), String>;
 type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
+
+/// Built-in field validator constructors (required / length / email / range /
+/// regex / one-of).
+///
+/// Each function returns a closure suitable for
+/// [`FormField::validate`](crate::widgets::FormField::validate) or
+/// [`Validator::new`](crate::widgets::Validator::new). All matchers are
+/// handwritten — there is no `regex` or email-parsing dependency.
+pub mod validators {
+    include!("widgets/validators.rs");
+}
 
 include!("widgets/input.rs");
 include!("widgets/collections.rs");
