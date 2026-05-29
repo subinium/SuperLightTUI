@@ -175,8 +175,8 @@ pub use rect::Rect;
 pub use style::ThemeWatcher;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
-    ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
+    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, SyntaxPalette, Theme,
+    ThemeBuilder, ThemeColor, UnderlineStyle, WidgetColors, WidgetTheme, WidthSpec,
 };
 #[cfg(feature = "serde")]
 pub use style::{ThemeFile, ThemeLoadError};

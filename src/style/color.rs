@@ -60,7 +60,7 @@ impl Color {
     ///
     /// Named colors map to their typical terminal palette values.
     /// [`Color::Reset`] maps to black; [`Color::Indexed`] maps to the xterm-256 palette.
-    fn to_rgb(self) -> (u8, u8, u8) {
+    pub(crate) fn to_rgb(self) -> (u8, u8, u8) {
         match self {
             Color::Rgb(r, g, b) => (r, g, b),
             Color::Black => (0, 0, 0),

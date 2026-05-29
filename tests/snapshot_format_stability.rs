@@ -106,6 +106,7 @@ fn stability_explicit_default_style_no_markers() {
         fg: None,
         bg: None,
         modifiers: Modifiers::NONE,
+        ..Style::new()
     };
     buf.set_string(0, 0, "abc", style);
     let snap = buf.snapshot_format();
