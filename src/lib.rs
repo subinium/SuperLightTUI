@@ -969,6 +969,21 @@ pub(crate) struct FrameState {
     /// Recycled `Context::hovered_groups` set (issue #204). Cleared at the
     /// start of each frame by `build_hovered_groups`.
     pub hovered_groups_buf: std::collections::HashSet<std::sync::Arc<str>>,
+    /// Issue #273: per-call-site version keys recorded by
+    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) on the
+    /// previous frame, indexed by the order `cached` regions were declared.
+    /// Compared against this frame's keys to classify each cached region as a
+    /// hit (key unchanged) or miss (key changed / new slot / first frame).
+    /// Cleared on resize by [`clear_frame_layout_cache`] so every cached
+    /// region misses after a geometry change. Round-trips through `Context`
+    /// exactly like `commands_buf` (moved out at frame start, moved back at
+    /// frame end). Empty (zero overhead) for apps that never call `cached`.
+    pub region_versions: Vec<u64>,
+    /// Issue #273: recycled scratch Vec for the CURRENT frame's `cached`
+    /// region keys (same alloc-reuse discipline as `commands_buf`). Cleared
+    /// before reuse; swapped into `region_versions` at frame end so the keys
+    /// recorded this frame become next frame's comparison baseline.
+    pub region_versions_buf: Vec<u64>,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
@@ -1708,6 +1723,18 @@ pub(crate) fn run_frame_kernel(
     // entries; entries from the previous frame must not leak through
     // `named_states` persistence.
     clear_keymap_registry(state);
+    // Issue #273: invalidate every `cached` region's persisted version key on a
+    // resize. The real run loop also clears region keys via
+    // `clear_frame_layout_cache` (driven by its `has_resize` flag), but the
+    // headless `TestBackend` / `frame_owned` paths feed the kernel directly
+    // and never run that flag, so we detect the resize event here too. This
+    // keeps the "resize forces a cache miss for all cached regions" invariant
+    // path-independent: a geometry change cannot be silently treated as a hit.
+    // Cheap when unused — `region_versions` is empty for apps without `cached`.
+    if !state.region_versions.is_empty() && events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+    {
+        state.region_versions.clear();
+    }
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
     // Issue #264: surface the negotiated capability snapshot read-only. The
@@ -1794,6 +1821,13 @@ pub(crate) fn run_frame_kernel(
         state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
         state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
         state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+        // Issue #273: reclaim the region-cache key buffers on quit too
+        // (TestBackend reuses `FrameState` across `render()` calls — same
+        // rationale as #204). The quit path skips `build_tree`, but the keys
+        // recorded by any `cached` regions before `quit()` are still valid as
+        // next frame's baseline.
+        state.region_versions = std::mem::take(&mut ctx.region_versions_cur);
+        state.region_versions_buf = std::mem::take(&mut ctx.region_versions_prev);
         // Issue #150: reclaim `commands` on quit too (TestBackend reuses
         // `FrameState` across `render()` calls — same rationale as #204).
         // The Vec was never `build_tree`'d on the quit path so it may still
@@ -1990,6 +2024,11 @@ pub(crate) fn run_frame_kernel(
     state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
     state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
     state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+    // Issue #273: this frame's recorded `cached` keys become next frame's
+    // comparison baseline; the (now-stale) previous keys are reclaimed as the
+    // recycled scratch buffer. Same alloc-reuse discipline as `commands_buf`.
+    state.region_versions = std::mem::take(&mut ctx.region_versions_cur);
+    state.region_versions_buf = std::mem::take(&mut ctx.region_versions_prev);
     // Issue #150: reclaim the drained command Vec so the next `Context::new`
     // picks it up via `mem::take(&mut state.commands_buf)`. After
     // `build_tree(&mut ctx.commands)` the Vec is at `len == 0` with capacity
@@ -2100,6 +2139,11 @@ fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.prev_scroll_infos.clear();
     state.layout_feedback.prev_scroll_rects.clear();
     state.layout_feedback.last_mouse_pos = None;
+    // Issue #273: a resize may change the geometry of every cached region, so
+    // the previous frame's version keys are no longer a safe stability signal.
+    // Dropping them forces a cache miss for all `cached` regions on the next
+    // frame, matching the layout-feedback invalidation above.
+    state.region_versions.clear();
 }
 
 #[cfg(feature = "crossterm")]

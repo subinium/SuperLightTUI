@@ -90,6 +90,21 @@ No. Built-in interactive widgets usually do. Custom widgets can return `()`, `bo
 Because layout feedback often uses previous-frame data in immediate-mode UI.
 For the frame timeline and prev-frame rect rules, see [Previous Frame Guide](PREVIOUS_FRAME_GUIDE.md).
 
+### "Token streaming re-renders the whole frame every token — how do I speed it up?"
+
+That is the immediate-mode contract: `stream.push(delta)` then the whole
+closure runs again. Use `ui.container().cached(version_key, f)` to wrap the
+*static chrome* (chat history, sidebar, status bar) keyed off a value you
+already own — e.g. a hash of the non-streaming inputs, or
+`StreamingTextState::version()` of the *other* panes. Leave the stream itself
+uncached; it changes every token. Note the current semantics are honest: `f`
+still runs every frame (output is byte-identical to `.col(f)`), and `cached`
+records a hit/miss stability signal (`Context::region_cache_hits()` /
+`region_cache_misses()`) rather than skipping the body — this is an
+author-controlled cache, **not** reactive binding. See
+[Performance — Pattern 7](PERFORMANCE.md) for the full rationale and the
+Phase-0 streaming benchmark.
+
 ## Implementation rules for agents
 
 - Prefer `ui.container().p(1).col(...)` over inventing new layout patterns.

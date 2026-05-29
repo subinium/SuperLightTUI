@@ -695,6 +695,70 @@ fn bench_flush_sparse_change_300x100(c: &mut Criterion) {
     group.finish();
 }
 
+/// Issue #273 — Phase 0 streaming baseline.
+///
+/// The motivating workload: an LLM emits one token, the whole frame is
+/// re-described, and the entire pipeline (closure body → `build_tree` →
+/// flexbox `compute` → `collect_all` → `render`) re-runs for ~2000 lines of
+/// static chrome above a tiny streaming region. This bench measures the full
+/// per-token frame cost so the win an upstream gate could capture is *measured,
+/// not assumed* (the issue makes Phase 0 blocking).
+///
+/// `chrome_uncached` is the baseline: the static transcript is re-described
+/// every token. `chrome_cached` wraps that transcript in
+/// [`slt::ContainerBuilder::cached`] keyed off a stable version — output is
+/// byte-identical (the cache currently always re-runs the body; see the method
+/// docs), so the two numbers quantify the recording/classification overhead of
+/// the gate itself, and the absolute cost is the headroom a future cell-level
+/// replay could reclaim.
+const STREAM_CHROME_LINES: usize = 2000;
+
+fn bench_streaming_append_chat(c: &mut Criterion) {
+    let mut group = c.benchmark_group("streaming_append_chat");
+    let transcript: Vec<String> = (0..STREAM_CHROME_LINES)
+        .map(|i| format!("[{i:04}] assistant: a prior turn of the conversation history"))
+        .collect();
+
+    // Baseline: re-describe the full static chrome every token.
+    group.bench_function("chrome_uncached", |b| {
+        let mut backend = TestBackend::new(120, 40);
+        let mut stream = slt::StreamingTextState::new();
+        b.iter(|| {
+            stream.push("tok ");
+            backend.render(|ui| {
+                let _ = ui.col(|ui| {
+                    for line in &transcript {
+                        ui.text(line.as_str());
+                    }
+                });
+                let _ = ui.streaming_text(black_box(&mut stream));
+            });
+        });
+    });
+
+    // Author declares the chrome stable via `cached`; the stream stays
+    // uncached. The chrome's key never changes across tokens, so every frame
+    // after the first is a cache hit (visible via `region_cache_hits`).
+    group.bench_function("chrome_cached", |b| {
+        let mut backend = TestBackend::new(120, 40);
+        let mut stream = slt::StreamingTextState::new();
+        let chrome_version: u64 = 1; // stable: the transcript never changes here
+        b.iter(|| {
+            stream.push("tok ");
+            backend.render(|ui| {
+                let _ = ui.container().cached(black_box(chrome_version), |ui| {
+                    for line in &transcript {
+                        ui.text(line.as_str());
+                    }
+                });
+                let _ = ui.streaming_text(black_box(&mut stream));
+            });
+        });
+    });
+
+    group.finish();
+}
+
 /// Register flush-path benches (only when `crossterm` feature is enabled,
 /// which is the default for benches). When the feature is off, this is a
 /// no-op so the file still compiles under `--no-default-features`.
@@ -731,6 +795,7 @@ criterion_group!(
     bench_widget_sparkline,
     bench_layout_grid,
     bench_widget_calendar,
+    bench_streaming_append_chat,
     bench_flush_group,
 );
 criterion_main!(benches);

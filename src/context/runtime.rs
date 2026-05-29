@@ -126,6 +126,14 @@ impl Context {
         // immediately below, so we do not pre-clear here — capacity is
         // preserved across frames.
 
+        // Issue #273: hand off the previous frame's `cached` region keys and a
+        // recycled (cleared) buffer to record this frame's keys into. Both
+        // round-trip back into `FrameState` at frame end. Empty (zero
+        // overhead) for apps that never call `cached`.
+        let region_versions_prev = std::mem::take(&mut state.region_versions);
+        let mut region_versions_cur = std::mem::take(&mut state.region_versions_buf);
+        region_versions_cur.clear();
+
         let mut ctx = Self {
             commands,
             events,
@@ -183,6 +191,10 @@ impl Context {
             },
             pending_tooltips,
             hovered_groups,
+            region_versions_prev,
+            region_versions_cur,
+            region_cache_hits: 0,
+            region_cache_misses: 0,
             scroll_lines_per_event: 1,
             screen_hook_map,
             widget_theme: WidgetTheme::new(),
@@ -441,6 +453,79 @@ impl Context {
     /// participate in hit-map indexing.
     pub(crate) fn skip_interaction_slot(&mut self) {
         self.reserve_interaction_slot();
+    }
+
+    /// Issue #273: record a [`ContainerBuilder::cached`] region's version key
+    /// at its (declaration-ordered) call site and classify it as a hit or
+    /// miss versus the previous frame.
+    ///
+    /// Returns `true` if `version_key` matches the value this call site
+    /// recorded last frame (a hit), `false` on a key change, a brand-new slot,
+    /// the first frame, or after a resize (all misses).
+    ///
+    /// This is purely an *author-declared stability signal*: the caller still
+    /// re-runs its closure every frame, so output stays byte-identical and the
+    /// immediate-mode invariant is preserved exactly. The hit/miss result is
+    /// recorded for diagnostics ([`Context::region_cache_hits`] /
+    /// [`Context::region_cache_misses`]) and to give a future cell-level cache
+    /// a sound, principle-preserving gate. See the type-level docs on
+    /// [`ContainerBuilder::cached`] for the full design rationale.
+    pub(crate) fn record_cached_region(&mut self, version_key: u64) -> bool {
+        let idx = self.region_versions_cur.len();
+        let hit = self
+            .region_versions_prev
+            .get(idx)
+            .is_some_and(|&prev| prev == version_key);
+        self.region_versions_cur.push(version_key);
+        if hit {
+            self.region_cache_hits = self.region_cache_hits.saturating_add(1);
+        } else {
+            self.region_cache_misses = self.region_cache_misses.saturating_add(1);
+        }
+        hit
+    }
+
+    /// Number of [`ContainerBuilder::cached`] regions this frame whose version
+    /// key was unchanged from the previous frame (cache hits).
+    ///
+    /// Diagnostics for the opt-in streaming cache (issue #273). A region is a
+    /// hit when its author-supplied `version_key` matches the value the same
+    /// call site recorded last frame; it misses on a key change, a new call
+    /// site, the first frame, or after a terminal resize.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.container().cached(42, |ui| {
+    ///     ui.text("stable chrome");
+    /// });
+    /// let _hits = ui.region_cache_hits();
+    /// # });
+    /// ```
+    pub fn region_cache_hits(&self) -> u32 {
+        self.region_cache_hits
+    }
+
+    /// Number of [`ContainerBuilder::cached`] regions this frame whose version
+    /// key changed (or was new / first-frame / post-resize) — cache misses.
+    ///
+    /// The counterpart to [`Context::region_cache_hits`]. See issue #273.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.container().cached(7, |ui| {
+    ///     ui.text("chrome");
+    /// });
+    /// let _misses = ui.region_cache_misses();
+    /// # });
+    /// ```
+    pub fn region_cache_misses(&self) -> u32 {
+        self.region_cache_misses
     }
 
     /// Reserve the next interaction ID and emit a marker command.

@@ -284,6 +284,53 @@ For your own derived values, use `ui.use_memo(deps, |d| compute(d))`
 (`src/context/runtime.rs:651`) — the hook stores `(deps, value)` and
 recomputes only on `PartialEq` deps change.
 
+### Pattern 7: Token streaming — cache the chrome, not the stream (#273)
+
+The dominant LLM-streaming loop is "append one token, re-render the
+whole frame": `stream.push(delta)` then the entire closure runs again.
+Every token re-walks the full pipeline (closure → `build_tree` →
+flexbox `compute` → `collect_all` → `render`) — including large static
+chrome (a chat transcript, a fixed sidebar, a status bar) that did not
+change. The flush-stage row-hash (#171, `buffer.rs` `line_dirty`) only
+short-circuits *emitting* unchanged rows to stdout; the upstream
+build/layout/collect/render cost was already paid.
+
+`ContainerBuilder::cached(version_key, f)` is the **author-controlled**
+gate for this. You wrap the *static surroundings* — keyed off a value
+you already own (a hash of the non-streaming inputs, or the
+`StreamingTextState::version()` of the *other* panes) — and leave the
+stream itself uncached:
+
+```rust
+# slt::run(|ui: &mut slt::Context| {
+# let history_version = 3u64;
+# let mut stream = slt::StreamingTextState::new();
+ui.container().cached(history_version, |ui| {
+    ui.text("…long chat transcript…"); // unchanged this token
+});
+ui.streaming_text(&mut stream);          // changes every token
+# });
+```
+
+**Important — current semantics are honest, not magic.** `cached`
+preserves the immediate-mode invariant exactly: `f` runs *every frame*,
+so output is byte-for-byte identical to `.col(f)` and there is zero
+behavior change when unused. What it adds today is a *measured,
+principle-preserving stability signal*: it records the `version_key`
+per call site, classifies each region as a hit (key unchanged) or miss,
+and exposes the tally via `Context::region_cache_hits()` /
+`region_cache_misses()`. It does **not** yet skip `f` on a hit —
+eliding the body would require splicing recorded commands and replaying
+focus / hit-map / scroll / raw-draw feedback, which risks reintroducing
+a retained tree (rejected by Design Principle R2, "Your Closure IS the
+App"). That replay is a tracked follow-up; the gate lands first so the
+win is *measured, not assumed*.
+
+The Phase-0 baseline lives in `benches/benchmarks.rs` as
+`bench_streaming_append_chat` (`chrome_uncached` vs `chrome_cached`,
+~2000 lines of static chrome above a streaming line): it quantifies the
+per-token full-frame cost the gate is designed to eventually elide.
+
 ## 5. Compared to other UI frameworks
 
 | Framework | Render model | Per-frame allocations | Profiler |

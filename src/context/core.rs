@@ -75,6 +75,23 @@ pub struct Context {
     pub(crate) rollback: ContextRollbackState,
     pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) hovered_groups: std::collections::HashSet<std::sync::Arc<str>>,
+    /// Issue #273: version keys recorded by [`Context::cached`] regions on the
+    /// PREVIOUS frame, moved in from `FrameState::region_versions`. Indexed by
+    /// the order `cached` regions are declared this frame; consulted by
+    /// `cached` to classify a region as a hit (key unchanged) or miss.
+    pub(crate) region_versions_prev: Vec<u64>,
+    /// Issue #273: version keys recorded by `cached` regions on THIS frame, in
+    /// declaration order. Swapped back into `FrameState::region_versions` at
+    /// frame end to become next frame's `region_versions_prev`.
+    pub(crate) region_versions_cur: Vec<u64>,
+    /// Issue #273: number of `cached` regions this frame whose key matched the
+    /// previous frame (a cache hit). Diagnostics-only — exposed via
+    /// [`Context::region_cache_hits`].
+    pub(crate) region_cache_hits: u32,
+    /// Issue #273: number of `cached` regions this frame whose key changed or
+    /// was new/first-frame (a cache miss). Exposed via
+    /// [`Context::region_cache_misses`].
+    pub(crate) region_cache_misses: u32,
     pub(crate) scroll_lines_per_event: u32,
     pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub(crate) widget_theme: WidgetTheme,
@@ -176,6 +193,11 @@ pub(super) struct ContextCheckpoint {
     deferred_draws_len: usize,
     context_stack_len: usize,
     pending_tooltips_len: usize,
+    /// Issue #273: `cached` region keys recorded so far, so a panicking
+    /// `cached` region inside an `error_boundary` rolls back its key entry
+    /// (and any nested ones) — keeping the recorded keys consistent with the
+    /// commands that actually survived the rollback.
+    region_versions_cur_len: usize,
     rollback: ContextRollbackState,
 }
 
@@ -187,6 +209,7 @@ impl ContextCheckpoint {
             deferred_draws_len: ctx.deferred_draws.len(),
             context_stack_len: ctx.context_stack.len(),
             pending_tooltips_len: ctx.pending_tooltips.len(),
+            region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
         }
     }
@@ -200,5 +223,8 @@ impl ContextCheckpoint {
         // Drop tooltips queued by the panicking widget but keep any that were
         // already pending before the error boundary was entered.
         ctx.pending_tooltips.truncate(self.pending_tooltips_len);
+        // Issue #273: drop `cached` keys recorded by the panicking subtree.
+        ctx.region_versions_cur
+            .truncate(self.region_versions_cur_len);
     }
 }
