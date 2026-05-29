@@ -1229,6 +1229,16 @@ pub struct ScrollState {
     pub offset: usize,
     /// Current horizontal scroll offset in columns (#247).
     pub offset_x: usize,
+    /// Whether the scrollbar thumb is currently being dragged.
+    ///
+    /// Set to `true` by [`Context::scrollbar`] on a mouse-down inside the
+    /// thumb and back to `false` on mouse-up, mirroring
+    /// [`SplitPaneState::dragging`](crate::widgets::SplitPaneState). Persists
+    /// across frames so cursor motion outside the thumb (or even outside the
+    /// track on the x-axis) keeps scrolling while the button is held.
+    ///
+    /// [`Context::scrollbar`]: crate::Context::scrollbar
+    pub dragging: bool,
     content_height: u32,
     viewport_height: u32,
     content_width: u32,
@@ -1243,6 +1253,7 @@ impl ScrollState {
         Self {
             offset: 0,
             offset_x: 0,
+            dragging: false,
             content_height: 0,
             viewport_height: 0,
             content_width: 0,
@@ -1323,6 +1334,29 @@ impl ScrollState {
     pub fn scroll_down(&mut self, amount: usize) {
         let max_offset = self.content_height.saturating_sub(self.viewport_height) as usize;
         self.offset = (self.offset + amount).min(max_offset);
+    }
+
+    /// Set the absolute scroll offset, clamped to `[0, content - viewport]`.
+    ///
+    /// Uses the same `max_offset` semantics as [`scroll_down`](Self::scroll_down).
+    /// Click-to-jump and thumb-drag in [`Context::scrollbar`] route through
+    /// this so an out-of-range target row never leaves the offset past the
+    /// last full screen of content. Direct `state.offset = …` writes keep
+    /// working; this is the clamping-safe alternative.
+    ///
+    /// [`Context::scrollbar`]: crate::Context::scrollbar
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ScrollState;
+    /// let mut scroll = ScrollState::new();
+    /// // Bounds are populated by the `scrollable` widget each frame; on a
+    /// // fresh state max_offset is 0 so any target clamps to 0.
+    /// scroll.set_offset(999);
+    /// assert_eq!(scroll.offset, 0);
+    /// ```
+    pub fn set_offset(&mut self, offset: usize) {
+        let max_offset = self.content_height.saturating_sub(self.viewport_height) as usize;
+        self.offset = offset.min(max_offset);
     }
 
     pub(crate) fn set_bounds(&mut self, content_height: u32, viewport_height: u32) {

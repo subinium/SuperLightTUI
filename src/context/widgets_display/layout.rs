@@ -993,33 +993,63 @@ impl Context {
     /// # });
     /// ```
     ///
+    /// # Interaction (since 0.21.0)
+    ///
+    /// The bar is a real input surface, mirroring `split_pane`'s drag handle:
+    ///
+    /// - **Click-to-jump on the track:** a left mouse-down inside the track but
+    ///   outside the thumb jumps `state.offset` so the clicked row maps
+    ///   proportionally to the content (top cell → offset 0, bottom cell →
+    ///   `max_offset`).
+    /// - **Drag-to-scroll on the thumb:** a left mouse-down on the thumb sets
+    ///   [`ScrollState::dragging`]; subsequent drag events scroll proportionally
+    ///   to the cursor's y within the track (even when the cursor leaves the
+    ///   track on the x-axis); mouse-up clears `dragging`.
+    ///
+    /// Only the mouse events the bar acts on are consumed, so wheel scrolling
+    /// over a sibling [`scrollable`](Self::scrollable) keeps working unchanged.
+    /// Like every mouse handler the bar is inert while a modal is active and
+    /// the bar is not inside it.
+    ///
     /// # Returns
     ///
     /// A [`Response`] whose hit-test rect covers the scrollbar track — it is
     /// the track container's own interaction response, so `.clicked`,
-    /// `.hovered`, and `.rect` are populated for the track region today. The
-    /// `&mut ScrollState` receiver reserves the extension point so future
-    /// click-to-jump and drag-to-scroll handling (issue #249) can mutate the
-    /// offset without a further breaking change. When the content fits the
-    /// viewport nothing is rendered and [`Response::none()`] is returned.
-    /// Prior to v0.21.0 the receiver was `&ScrollState`; pass `&mut scroll`
-    /// instead.
+    /// `.hovered`, and `.rect` are populated for the track region. `.changed`
+    /// is `true` on a frame where a scrollbar interaction moved the offset.
+    /// When the content fits the viewport nothing is rendered and
+    /// [`Response::none()`] is returned. Prior to v0.21.0 the receiver was
+    /// `&ScrollState`; pass `&mut scroll` instead.
     pub fn scrollbar(&mut self, state: &mut ScrollState) -> Response {
         let vh = state.viewport_height();
         let ch = state.content_height();
         if vh == 0 || ch <= vh {
+            // No overflow: render nothing, consume nothing, leave drag state
+            // untouched. Matches the pre-interaction behavior exactly.
             return Response::none();
         }
 
         let track_height = vh;
         let thumb_height = ((vh as f64 * vh as f64 / ch as f64).ceil() as u32).max(1);
         let max_offset = ch.saturating_sub(vh);
-        let thumb_pos = if max_offset == 0 {
-            0
+
+        // The upcoming `self.container()…col()` allocates the next interaction
+        // slot, so its id is the current `interaction_count`. We hit-test
+        // against THAT slot's rect from the previous frame, exactly as
+        // `scrollable()` and `consume_split_pane_drag` do.
+        let track_id = self.rollback.interaction_count;
+        let thumb_pos =
+            Self::scrollbar_thumb_pos(state.offset, max_offset, track_height, thumb_height);
+        let changed = if let Some(rect) = self.prev_hit_map.get(track_id).copied() {
+            self.handle_scrollbar_drag(rect, state, thumb_pos, thumb_height, max_offset)
         } else {
-            ((state.offset as f64 / max_offset as f64) * (track_height - thumb_height) as f64)
-                .round() as u32
+            false
         };
+
+        // Recompute the thumb position AFTER handling so the same frame's draw
+        // reflects an offset moved by a click/drag this frame.
+        let thumb_pos =
+            Self::scrollbar_thumb_pos(state.offset, max_offset, track_height, thumb_height);
 
         let theme = self.theme;
         const THUMB: &str = "█";
@@ -1028,7 +1058,7 @@ impl Context {
         // The track container carries its own interaction slot (every
         // `col`/`row` reserves one), so its `Response` is the hit-test rect
         // for click-to-jump — no separate `interaction()` call is needed.
-        self.container().w(1).h(track_height).col(|ui| {
+        let mut response = self.container().w(1).h(track_height).col(|ui| {
             for i in 0..track_height {
                 if i >= thumb_pos && i < thumb_pos + thumb_height {
                     ui.styled(THUMB, Style::new().fg(theme.primary));
@@ -1036,7 +1066,143 @@ impl Context {
                     ui.styled(TRACK, Style::new().fg(theme.text_dim).dim());
                 }
             }
-        })
+        });
+        response.changed = changed;
+        response
+    }
+
+    /// Map a scroll `offset` to the thumb's top row within the track.
+    ///
+    /// Pure helper shared by the render path and the interaction path so both
+    /// agree on where the thumb sits.
+    fn scrollbar_thumb_pos(
+        offset: usize,
+        max_offset: u32,
+        track_height: u32,
+        thumb_height: u32,
+    ) -> u32 {
+        if max_offset == 0 {
+            0
+        } else {
+            let travel = track_height.saturating_sub(thumb_height);
+            ((offset as f64 / max_offset as f64) * travel as f64).round() as u32
+        }
+    }
+
+    /// Map a cursor row `y` (absolute) to a clamped scroll offset for the
+    /// track rect at `track_y` with height `track_h`.
+    ///
+    /// The thumb is centered on the cursor: the cursor row relative to the
+    /// track maps to the thumb top (minus half the thumb), which then maps
+    /// linearly onto `[0, max_offset]`. The result is always in
+    /// `[0, max_offset]` and monotonically non-decreasing in `y`. Extracted
+    /// as an associated function so it is `proptest`-able without driving a
+    /// full frame.
+    pub(crate) fn scrollbar_offset_for_y(
+        y: u32,
+        track_y: u32,
+        track_h: u32,
+        thumb_height: u32,
+        max_offset: u32,
+    ) -> usize {
+        let travel = track_h.saturating_sub(thumb_height);
+        if travel == 0 {
+            return 0;
+        }
+        let rel = y.saturating_sub(track_y).min(track_h.saturating_sub(1));
+        let thumb_top = rel.saturating_sub(thumb_height / 2).min(travel);
+        ((thumb_top as f64 / travel as f64) * max_offset as f64).round() as usize
+    }
+
+    /// Hit-test the previous-frame track `rect` against this frame's mouse
+    /// events and apply click-to-jump / thumb-drag to `state`.
+    ///
+    /// Returns `true` if the offset moved. Mirrors `consume_split_pane_drag`:
+    /// snapshots the unconsumed mouse events, mutates `state`, then consumes
+    /// only the events it acted on so wheel scroll on a sibling container is
+    /// never double-counted.
+    fn handle_scrollbar_drag(
+        &mut self,
+        rect: Rect,
+        state: &mut ScrollState,
+        thumb_pos: u32,
+        thumb_height: u32,
+        max_offset: u32,
+    ) -> bool {
+        // Modal suppression: while a modal is active and the bar is not inside
+        // an overlay, the bar is inert — consistent with `mouse_down`'s guard.
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return false;
+        }
+        if rect.width == 0 || rect.height == 0 {
+            return false;
+        }
+
+        // Snapshot so `consume_indices` (mutable borrow) can run after the loop.
+        // `MouseKind` is not `Copy`, so clone it (mirrors `consume_split_pane_drag`).
+        let events: Vec<(usize, MouseKind, u32, u32)> = self
+            .events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                Event::Mouse(m) if !self.consumed[i] => Some((i, m.kind.clone(), m.x, m.y)),
+                _ => None,
+            })
+            .collect();
+
+        let track_y = rect.y;
+        let track_h = rect.height;
+        let thumb_top = track_y + thumb_pos;
+        let thumb_bottom = thumb_top + thumb_height;
+
+        let mut consumed: Vec<usize> = Vec::new();
+        let mut changed = false;
+        for (i, kind, mx, my) in events {
+            let in_track = mx >= rect.x && mx < rect.right() && my >= track_y && my < rect.bottom();
+            match kind {
+                MouseKind::Down(MouseButton::Left) if in_track => {
+                    let on_thumb = my >= thumb_top && my < thumb_bottom;
+                    if on_thumb {
+                        // Grab the thumb; offset only moves on subsequent drags.
+                        state.dragging = true;
+                    } else {
+                        // Click-to-jump on the track.
+                        let before = state.offset;
+                        state.set_offset(Self::scrollbar_offset_for_y(
+                            my,
+                            track_y,
+                            track_h,
+                            thumb_height,
+                            max_offset,
+                        ));
+                        changed |= state.offset != before;
+                    }
+                    consumed.push(i);
+                }
+                MouseKind::Drag(MouseButton::Left) if state.dragging => {
+                    // Drag tracks the cursor's y even outside the track on x.
+                    let before = state.offset;
+                    state.set_offset(Self::scrollbar_offset_for_y(
+                        my,
+                        track_y,
+                        track_h,
+                        thumb_height,
+                        max_offset,
+                    ));
+                    changed |= state.offset != before;
+                    consumed.push(i);
+                }
+                MouseKind::Up(MouseButton::Left) if state.dragging => {
+                    state.dragging = false;
+                    consumed.push(i);
+                }
+                _ => {}
+            }
+        }
+        self.consume_indices(consumed);
+        changed
     }
 
     fn auto_scroll_nested(
@@ -1307,5 +1473,87 @@ impl Context {
     /// submission on all fields being valid.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
         self.button_with(label, ButtonVariant::Primary)
+    }
+}
+
+#[cfg(test)]
+mod scrollbar_tests {
+    use super::*;
+
+    // ── #249: scrollbar() pixel ↔ offset mapping (pure helpers) ──────────
+
+    #[test]
+    fn offset_for_y_top_cell_maps_to_zero() {
+        // Track at y=0..20, thumb 4 tall → travel 16, max_offset 80.
+        let off = Context::scrollbar_offset_for_y(0, 0, 20, 4, 80);
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn offset_for_y_bottom_cell_maps_to_max() {
+        // Clicking the last track cell jumps to the bottom of the content.
+        let off = Context::scrollbar_offset_for_y(19, 0, 20, 4, 80);
+        assert_eq!(off, 80);
+    }
+
+    #[test]
+    fn offset_for_y_middle_is_near_half_max() {
+        // Vertical midpoint → ~max_offset / 2 (within a few rows of slop).
+        let off = Context::scrollbar_offset_for_y(10, 0, 20, 4, 80) as i64;
+        assert!((off - 40).abs() <= 5, "midpoint offset {off} not near 40");
+    }
+
+    #[test]
+    fn offset_for_y_respects_track_origin() {
+        // Track offset by track_y=3; the top cell of that track yields 0.
+        let off = Context::scrollbar_offset_for_y(3, 3, 20, 4, 80);
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn offset_for_y_zero_travel_is_zero() {
+        // Thumb fills the whole track → nowhere to move → always 0.
+        let off = Context::scrollbar_offset_for_y(7, 0, 5, 5, 0);
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn thumb_pos_endpoints() {
+        // offset 0 → thumb at top; offset == max → thumb at travel.
+        assert_eq!(Context::scrollbar_thumb_pos(0, 80, 20, 4), 0);
+        assert_eq!(Context::scrollbar_thumb_pos(80, 80, 20, 4), 16);
+    }
+
+    proptest::proptest! {
+        /// `scrollbar_offset_for_y` is always in `[0, max_offset]` and
+        /// monotonically non-decreasing in the cursor row.
+        #[test]
+        fn offset_for_y_is_clamped_and_monotonic(
+            content_height in 2u32..500,
+            viewport_height in 1u32..200,
+            y in 0u32..600,
+        ) {
+            // Derive the same track / thumb geometry the widget uses.
+            proptest::prop_assume!(content_height > viewport_height);
+            let track_h = viewport_height;
+            let thumb_height = ((viewport_height as f64 * viewport_height as f64
+                / content_height as f64)
+                .ceil() as u32)
+                .max(1);
+            let max_offset = content_height.saturating_sub(viewport_height);
+
+            let off = Context::scrollbar_offset_for_y(y, 0, track_h, thumb_height, max_offset);
+            proptest::prop_assert!(off <= max_offset as usize);
+
+            // Monotonic: a strictly lower cursor row never yields a smaller offset.
+            let off_lower = Context::scrollbar_offset_for_y(
+                y.saturating_add(1),
+                0,
+                track_h,
+                thumb_height,
+                max_offset,
+            );
+            proptest::prop_assert!(off_lower >= off);
+        }
     }
 }
