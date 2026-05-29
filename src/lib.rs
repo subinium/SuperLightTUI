@@ -178,11 +178,11 @@ pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
     CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
     FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
-    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
-    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend,
+    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, SchedulerState,
+    ScreenState, ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState,
+    StaticOutput, StreamingMarkdownState, StreamingTextState, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
+    TreeNode, TreeState, Trend,
 };
 
 /// Rendering backend for SLT.
@@ -725,6 +725,10 @@ pub(crate) struct FrameState {
     /// across frames; survives panics inside `error_boundary` (matching the
     /// `named_states` policy).
     pub keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
+    /// Issue #248: persistent frame-clock timer table. Round-tripped through
+    /// `Context` exactly like `named_states` — moved out at frame start, moved
+    /// back at frame end where untouched slots are garbage-collected.
+    pub scheduler: widgets::SchedulerState,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -1451,6 +1455,10 @@ pub(crate) fn run_frame_kernel(
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
         state.keyed_states = ctx.keyed_states;
+        // Issue #248: hand the scheduler table back and GC abandoned timers.
+        let mut scheduler = ctx.scheduler;
+        scheduler.gc_untouched();
+        state.scheduler = scheduler;
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
@@ -1605,6 +1613,11 @@ pub(crate) fn run_frame_kernel(
     // frame can pick it up via `Context::new`. Mirrors the `named_states`
     // round-trip exactly.
     state.keyed_states = ctx.keyed_states;
+    // Issue #248: hand the scheduler table back and GC any timer slot that was
+    // not sampled this frame (mirrors the `named_states` round-trip lifecycle).
+    let mut scheduler = ctx.scheduler;
+    scheduler.gc_untouched();
+    state.scheduler = scheduler;
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.

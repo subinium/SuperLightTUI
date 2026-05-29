@@ -384,6 +384,15 @@ impl TestBackend {
         self.render_with_events(events, 0, 0, f);
     }
 
+    /// Number of live frame-clock scheduler timer slots persisted after the
+    /// most recent render (issue #248). Test-only — used to assert that
+    /// abandoned timers are garbage-collected and `SchedulerState` does not
+    /// grow without bound.
+    #[cfg(test)]
+    pub(crate) fn scheduler_slot_count(&self) -> usize {
+        self.frame_state.scheduler.slot_count()
+    }
+
     /// Get the rendered text content of row y (trimmed trailing spaces)
     pub fn line(&self, y: u32) -> String {
         let mut s = String::new();
