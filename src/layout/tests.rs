@@ -1562,6 +1562,295 @@ fn flex_shrink_mixed_only_flagged_scale() {
     assert_eq!(row.children[1].size.0, 20);
 }
 
+// =====================================================================
+// #258 — flex-wrap (multi-line row) + flex-basis
+// =====================================================================
+//
+// Tree-level tests mirroring the #161 flex_shrink_* style: build a command
+// stream with the relevant marker, `build_tree`, `compute` against a fixed
+// `Rect`, and assert child `.pos` / `.size`.
+
+/// Push a Column container holding a single `width`-char text. When `basis`
+/// is `Some`, a `BasisMarker` precedes the container; when `shrink`, a
+/// `ShrinkMarker` precedes it.
+fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: Option<u32>) {
+    if shrink {
+        commands.push(Command::ShrinkMarker);
+    }
+    if let Some(b) = basis {
+        commands.push(Command::BasisMarker(b));
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Column,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    commands.push(Command::Text {
+        content: "x".repeat(width),
+        cursor_offset: None,
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap: false,
+        truncate: false,
+        margin: Default::default(),
+        constraints: Default::default(),
+    });
+    commands.push(Command::EndContainer);
+}
+
+/// Open a row, optionally wrapping (with the given cross-axis gap) and/or
+/// with a within-line gap. `wrap` pushes a `WrapMarker(cross_gap)` first.
+fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
+    if let Some(cross_gap) = wrap {
+        commands.push(Command::WrapMarker(cross_gap));
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Row,
+        gap,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+}
+
+#[test]
+fn flex_wrap_two_lines_on_overflow() {
+    // Three 14-wide children in a 30-wide wrapping row (gap 0): two fit on
+    // line 0 (14 + 14 = 28 <= 30), the third overflows to line 1.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(row.wrap_children);
+    assert_eq!(row.children.len(), 3);
+    // Line 0: children 0 and 1 share the top line.
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y);
+    assert_eq!(row.children[0].pos.0, area.x);
+    assert_eq!(row.children[1].pos.0, area.x + 14);
+    // Line 1: the overflowing child wraps down and its x resets to area.x.
+    assert_eq!(row.children[2].pos.1, area.y + 1);
+    assert_eq!(row.children[2].pos.0, area.x);
+}
+
+#[test]
+fn flex_wrap_off_is_single_line() {
+    // Same children, no WrapMarker: all on the top line, overflow preserved.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(!row.wrap_children);
+    for child in &row.children {
+        assert_eq!(child.pos.1, area.y);
+    }
+    // Overflow-by-design: monotonic x advance, third child past the right edge.
+    assert_eq!(row.children[0].pos.0, area.x);
+    assert_eq!(row.children[1].pos.0, area.x + 14);
+    assert_eq!(row.children[2].pos.0, area.x + 28);
+}
+
+#[test]
+fn flex_wrap_row_gap_between_lines() {
+    // Cross-axis gap of 2 between lines. Each line is 1 cell tall, so line 1
+    // lands at area.y + line0_height (1) + cross_gap (2) = area.y + 3.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(2));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 12);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.cross_gap, 2);
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y);
+    assert_eq!(row.children[2].pos.1, area.y + 3);
+}
+
+#[test]
+fn flex_wrap_oversize_child_own_line() {
+    // One child wider than the full area occupies its own line, then a normal
+    // child follows on the next line — no empty line, no panic.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 50, false, None); // wider than the 30-wide row
+    push_textcol(&mut commands, 10, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    // Oversize child on line 0 (clipped to area width), normal child on line 1.
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y + 1);
+    assert_eq!(row.children[1].pos.0, area.x);
+}
+
+#[test]
+fn flex_wrap_min_height_reserves_lines() {
+    // A wrapping row inside the (implicit) root column must report a multi-line
+    // height so the parent reserves enough rows. Three 14-wide children in a
+    // 30-wide row wrap to 2 lines, each 1 cell tall → row height == 2.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 12);
+    compute(&mut tree, area);
+
+    let row = &mut tree.children[0];
+    // min_height_for_width drives the parent column's reservation.
+    assert_eq!(row.min_height_for_width(30), 2);
+}
+
+#[test]
+fn flex_basis_feeds_grow() {
+    // Two children with basis(10) and grow(1) each in a 40-wide row.
+    // free = 40 - (10 + 10) = 20, split 10/10 → each grows to 10.
+    // (Grow children resolve to their share of flex_space; basis sets the
+    // base subtracted from available, so flex_space = 40 - 20 = 20.)
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    // Use grow on the wrapper containers — push them manually with basis+grow.
+    for _ in 0..2 {
+        commands.push(Command::BasisMarker(10));
+        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 1,
+            group_name: None,
+        })));
+        commands.push(Command::Text {
+            content: "x".to_string(),
+            cursor_offset: None,
+            style: Style::new(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Default::default(),
+            constraints: Default::default(),
+        });
+        commands.push(Command::EndContainer);
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 40, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children[0].flex_basis(), Some(10));
+    assert_eq!(row.children[1].flex_basis(), Some(10));
+    // Grow children split the full available width 40 → 20 each.
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
+#[test]
+fn flex_basis_feeds_shrink() {
+    // Two children, basis(20), both shrink, in a 30-wide row. The narrow text
+    // (5 chars) makes min_width 5, but basis(20) replaces it as the shrink
+    // base: fixed = 40, scale = min(30,40)/40 = 0.75, each → floor(20*0.75) = 15.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 5, true, Some(20));
+    push_textcol(&mut commands, 5, true, Some(20));
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(row.children[0].shrink);
+    assert_eq!(row.children[0].flex_basis(), Some(20));
+    assert_eq!(row.children[0].size.0, 15);
+    assert_eq!(row.children[1].size.0, 15);
+}
+
+#[test]
+fn flex_basis_none_falls_back_to_min_width() {
+    // No BasisMarker: base size is the child's min_width (20), identical to
+    // the pre-#258 path.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 20, false, None);
+    push_textcol(&mut commands, 20, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 60, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children[0].flex_basis(), None);
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
 // ---------------------------------------------------------------------------
 // Grapheme-cluster segmentation (issue #259)
 //

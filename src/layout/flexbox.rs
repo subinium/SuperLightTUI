@@ -376,29 +376,74 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         return;
     }
 
-    for child in &mut node.children {
+    // Opt-in flex-wrap (#258): a row whose children overflow `area.width`
+    // flows the overflow onto subsequent lines. Default-off rows take the
+    // single-line path below, byte-identical to pre-#258 behavior.
+    if node.wrap_children {
+        layout_row_wrapped(node, area, depth);
+    } else {
+        layout_row_line(
+            &mut node.children,
+            area,
+            node.gap,
+            node.justify,
+            node.align,
+            depth,
+        );
+    }
+}
+
+/// Lay out one horizontal line of children within `area`.
+///
+/// This is the single-line row body extracted from `layout_row` (#258) so
+/// both the non-wrapping path and each line of the wrapping path share the
+/// same basis → grow → shrink → justify → align math. `flex_basis` (#258)
+/// feeds the resolution as the per-child base size in place of `min_width`
+/// when set; `shrink` (#161) and the signed `gap` (#222) are preserved.
+fn layout_row_line(
+    children: &mut [LayoutNode],
+    area: Rect,
+    gap: i32,
+    justify: Justify,
+    align: Align,
+    depth: usize,
+) {
+    if children.is_empty() {
+        return;
+    }
+
+    for child in children.iter_mut() {
         resolve_axis_specs(&mut child.constraints, area);
     }
 
-    let n = node.children.len() as u32;
+    let n = children.len() as u32;
     // Signed gap (#222): `total_gaps` may be negative when children overlap,
     // which gives them *more* available space. `i64` intermediate avoids any
     // overflow before clamping the result back into the `u32` width budget.
-    let total_gaps = ((n - 1) as i64) * node.gap as i64;
+    let total_gaps = ((n - 1) as i64) * gap as i64;
     let available = (area.width as i64 - total_gaps).max(0) as u32;
-    let child_count = node.children.len();
-    let mut min_widths = U32Stack::with_capacity(child_count);
-    for child in &node.children {
-        min_widths.push(child.min_width());
+    let child_count = children.len();
+    // Base main-axis size feeding the resolution: `flex_basis` when set
+    // (#258), else the child's intrinsic `min_width` (historic behavior).
+    let mut base_widths = U32Stack::with_capacity(child_count);
+    for child in children.iter() {
+        base_widths.push(child.flex_basis().unwrap_or_else(|| child.min_width()));
     }
 
     let mut total_grow: u32 = 0;
     let mut fixed_width: u32 = 0;
-    for (child, min_width) in node.children.iter().zip(min_widths.iter()) {
+    // Sum of grow children's *explicit* flex-basis (#258). Grow children with
+    // no explicit basis reserve nothing and keep the historic pure-share
+    // behavior (they do not floor at their min_width). Children with an
+    // explicit basis reserve it as a floor: `grow` then distributes the space
+    // *above* the summed bases, matching CSS `flex: <grow> 0 <basis>`.
+    let mut grow_basis_total: u32 = 0;
+    for (child, base_width) in children.iter().zip(base_widths.iter()) {
         if child.grow > 0 {
             total_grow += child.grow as u32;
+            grow_basis_total += child.flex_basis().unwrap_or(0);
         } else {
-            fixed_width += min_width;
+            fixed_width += base_width;
         }
     }
 
@@ -409,14 +454,14 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
     //
     // Only `grow == 0` children participate (grow children consume
     // leftover, not fixed). The scale factor follows the spec in #161:
-    // `min(available, shrink_total) / fixed_width`.
+    // `min(available, shrink_total) / fixed_width`. With #258 the shrink base
+    // is the flex-basis (else min_width), so shrink scales from `basis`.
     let shrink_scale: Option<f64> = if fixed_width > available && available > 0 {
-        let shrink_total: u32 = node
-            .children
+        let shrink_total: u32 = children
             .iter()
-            .zip(min_widths.iter())
+            .zip(base_widths.iter())
             .filter(|(c, _)| c.shrink && c.grow == 0)
-            .map(|(_, mw)| mw)
+            .map(|(_, bw)| bw)
             .sum();
         if shrink_total > 0 {
             let numerator = (available as f64).min(shrink_total as f64);
@@ -428,20 +473,26 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         None
     };
 
-    let mut flex_space = available.saturating_sub(fixed_width);
+    // Free space distributed by `grow` is what remains after both the fixed
+    // children's bases *and* the grow children's explicit bases are reserved.
+    let mut flex_space = available
+        .saturating_sub(fixed_width)
+        .saturating_sub(grow_basis_total);
     let mut remaining_grow = total_grow;
 
     let mut child_widths = U32Stack::with_capacity(child_count);
-    for (i, child) in node.children.iter().enumerate() {
+    for (i, child) in children.iter().enumerate() {
         let w = if child.grow > 0 && total_grow > 0 {
             let share = (flex_space * child.grow as u32)
                 .checked_div(remaining_grow)
                 .unwrap_or(0);
             flex_space = flex_space.saturating_sub(share);
             remaining_grow = remaining_grow.saturating_sub(child.grow as u32);
-            share
+            // Grow children grow *from* their explicit basis (#258); with no
+            // explicit basis this adds 0, preserving the historic pure-share.
+            child.flex_basis().unwrap_or(0).saturating_add(share)
         } else {
-            let raw = min_widths.get(i).min(available);
+            let raw = base_widths.get(i).min(available);
             match shrink_scale {
                 Some(scale) if child.shrink => ((raw as f64) * scale).floor() as u32,
                 _ => raw,
@@ -452,12 +503,12 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
 
     let total_children_width: u32 = child_widths.iter().sum();
     let remaining = area.width.saturating_sub(total_children_width);
-    let (start_offset, inter_gap) = justify_offsets(node.justify, remaining, n, node.gap);
+    let (start_offset, inter_gap) = justify_offsets(justify, remaining, n, gap);
 
     let mut x = area.x + start_offset;
-    for (i, child) in node.children.iter_mut().enumerate() {
+    for (i, child) in children.iter_mut().enumerate() {
         let w = child_widths.get(i);
-        let child_cross_align = child.align_self.unwrap_or(node.align);
+        let child_cross_align = child.align_self.unwrap_or(align);
         let child_outer_h = match child_cross_align {
             Align::Start => area.height,
             _ => child.min_height_for_width(w).min(area.height),
@@ -484,6 +535,75 @@ fn layout_row(node: &mut LayoutNode, area: Rect, depth: usize) {
         x = x
             .saturating_add(effective_w)
             .saturating_add_signed(inter_gap);
+    }
+}
+
+/// Lay out a wrapping row (#258): partition children into lines that each
+/// fit `area.width`, then lay out each line with [`layout_row_line`] while
+/// advancing a cross-axis cursor.
+///
+/// Partitioning is greedy on the main-axis base size (`flex_basis` else
+/// `min_width`) plus the within-line `gap`. A child wider than `area.width`
+/// occupies its own line (clipped, as a single-line row would clip). Lines
+/// stack top-to-bottom; the between-line gap is `cross_gap` (resolves to
+/// `row_gap` else `gap` at builder time). Each line's height is the tallest
+/// child in that line; lines are laid out against a one-line-tall band so
+/// per-line grow children fill the line height, not the whole row.
+fn layout_row_wrapped(node: &mut LayoutNode, area: Rect, depth: usize) {
+    let gap = node.gap;
+    let cross_gap = node.cross_gap;
+    let justify = node.justify;
+    let align = node.align;
+
+    // Greedy line partition by base width. Each entry is the half-open child
+    // index range `[start, end)` plus the line's tallest child height.
+    let mut lines: Vec<(usize, usize, u32)> = Vec::new();
+    let mut line_start = 0usize;
+    let mut cur_width: i64 = 0;
+    let mut cur_height: u32 = 0;
+    let mut has_child = false;
+    for (i, child) in node.children.iter().enumerate() {
+        let base = child.flex_basis().unwrap_or_else(|| child.min_width());
+        let child_h = child.min_height();
+        if has_child {
+            let prospective = cur_width + gap as i64 + base as i64;
+            if prospective > area.width as i64 {
+                lines.push((line_start, i, cur_height));
+                line_start = i;
+                cur_width = base as i64;
+                cur_height = child_h;
+            } else {
+                cur_width = prospective;
+                cur_height = cur_height.max(child_h);
+            }
+        } else {
+            cur_width = base as i64;
+            cur_height = child_h;
+            has_child = true;
+        }
+    }
+    if has_child {
+        lines.push((line_start, node.children.len(), cur_height));
+    }
+
+    // Lay out each line in its own one-line-tall band, advancing `y` by the
+    // line's height plus the cross-axis gap. The cross-axis gap is signed
+    // (#222 overlap semantics carry over); a saturating signed advance keeps
+    // an overlap from wrapping `u32`.
+    let mut y = area.y;
+    for (start, end, line_height) in lines {
+        let line_area = Rect::new(area.x, y, area.width, line_height);
+        layout_row_line(
+            &mut node.children[start..end],
+            line_area,
+            gap,
+            justify,
+            align,
+            depth,
+        );
+        y = y
+            .saturating_add(line_height)
+            .saturating_add_signed(cross_gap);
     }
 }
 
