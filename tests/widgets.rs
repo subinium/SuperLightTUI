@@ -3862,6 +3862,154 @@ fn empty_state_renders_centered() {
     assert!(output.contains("Add items"));
 }
 
+// --- Issue #242: status-family widgets carry real interaction state ---
+//
+// Before v0.21.0 these returned `Response::none()` unconditionally. Each
+// hover test renders twice: frame 1 registers the rect, frame 2 moves the
+// mouse over it so `prev_hit_map` produces a real `hovered`.
+
+#[test]
+fn badge_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    // Frame 1: register layout. Badge renders " v0.9 " at column 0.
+    tb.render(|ui| {
+        let _ = ui.badge("v0.9");
+    });
+    // Frame 2: mouse over the badge label.
+    tb.run_with_events(vec![slt::Event::mouse_move(2, 0)], |ui| {
+        hovered.set(ui.badge("v0.9").hovered);
+    });
+    assert!(hovered.get(), "badge should report hovered over its rect");
+}
+
+#[test]
+fn badge_not_hovered_when_mouse_elsewhere() {
+    use std::cell::Cell;
+    let hovered = Cell::new(true);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.badge("v0.9");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 2)], |ui| {
+        hovered.set(ui.badge("v0.9").hovered);
+    });
+    assert!(
+        !hovered.get(),
+        "badge should not report hovered when mouse is off its rect"
+    );
+}
+
+#[test]
+fn badge_colored_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.badge_colored("OK", slt::Color::Green);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(1, 0)], |ui| {
+        hovered.set(ui.badge_colored("OK", slt::Color::Green).hovered);
+    });
+    assert!(hovered.get(), "badge_colored should report hovered");
+}
+
+#[test]
+fn key_hint_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.key_hint("Ctrl+S");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(2, 0)], |ui| {
+        hovered.set(ui.key_hint("Ctrl+S").hovered);
+    });
+    assert!(hovered.get(), "key_hint should report hovered");
+}
+
+#[test]
+fn stat_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat("CPU", "72%");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(0, 0)], |ui| {
+        hovered.set(ui.stat("CPU", "72%").hovered);
+    });
+    assert!(hovered.get(), "stat should report hovered over its column");
+}
+
+#[test]
+fn stat_colored_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat_colored("Err", "0", slt::Color::Green);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(1, 1)], |ui| {
+        hovered.set(ui.stat_colored("Err", "0", slt::Color::Green).hovered);
+    });
+    assert!(hovered.get(), "stat_colored should report hovered");
+}
+
+#[test]
+fn stat_trend_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat_trend("Rev", "$100", slt::Trend::Up);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(0, 0)], |ui| {
+        hovered.set(ui.stat_trend("Rev", "$100", slt::Trend::Up).hovered);
+    });
+    assert!(hovered.get(), "stat_trend should report hovered");
+}
+
+#[test]
+fn empty_state_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        let _ = ui.empty_state("No data", "Add items to begin");
+    });
+    // The placeholder container spans the full width across the title and
+    // description rows; hover over the centered title row (row 0).
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 0)], |ui| {
+        hovered.set(ui.empty_state("No data", "Add items to begin").hovered);
+    });
+    assert!(hovered.get(), "empty_state should report hovered");
+}
+
+#[test]
+fn empty_state_action_reports_hover_and_keeps_clicked() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let clicked = Cell::new(true);
+    let mut tb = TestBackend::new(40, 6);
+    tb.render(|ui| {
+        let _ = ui.empty_state_action("Empty", "Get started", "Add");
+    });
+    // No click event: `clicked` must stay false, while hover over the
+    // centered placeholder area is reported.
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 2)], |ui| {
+        let r = ui.empty_state_action("Empty", "Get started", "Add");
+        hovered.set(r.hovered);
+        clicked.set(r.clicked);
+    });
+    assert!(hovered.get(), "empty_state_action should report hovered");
+    assert!(
+        !clicked.get(),
+        "empty_state_action clicked must stay false without a button click"
+    );
+}
+
 #[test]
 fn code_block_renders_code() {
     let mut tb = TestBackend::new(60, 10);
