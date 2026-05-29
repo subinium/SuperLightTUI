@@ -149,3 +149,134 @@ fn form_field_manual_never_auto_validates() {
     assert!(!field.run_validators());
     assert_eq!(field.error.as_deref(), Some("required"));
 }
+
+// ── Grapheme-cluster cursor movement (issue #259) ──────────────────────────
+
+use crate::widgets::TextareaState;
+
+/// A bare regional indicator with no paired partner — a flag split in half.
+fn has_lone_regional_indicator(s: &str) -> bool {
+    s.chars()
+        .filter(|c| ('\u{1F1E6}'..='\u{1F1FF}').contains(c))
+        .count()
+        % 2
+        != 0
+}
+
+#[test]
+fn textarea_cursor_steps_over_grapheme() {
+    // Seed "🇰🇷x": the flag is one cluster (two regional indicators), then "x".
+    let mut state = TextareaState::new();
+    state.set_value("🇰🇷x");
+    assert_eq!(state.cursor_col, 0);
+
+    // One Right step lands after the whole flag (cluster index 1), not between
+    // the two regional indicators.
+    let mut backend = TestBackend::new(40, 6);
+    let events = EventBuilder::new().key_code(KeyCode::Right).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.textarea(&mut state, 4);
+    });
+    assert_eq!(
+        state.cursor_col, 1,
+        "Right did not step a whole flag cluster"
+    );
+
+    // A second Right lands after "x" (cluster index 2).
+    let events = EventBuilder::new().key_code(KeyCode::Right).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.textarea(&mut state, 4);
+    });
+    assert_eq!(state.cursor_col, 2);
+
+    // End/Home are also cluster-based: 2 clusters total.
+    let events = EventBuilder::new().key_code(KeyCode::Home).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.textarea(&mut state, 4);
+    });
+    assert_eq!(state.cursor_col, 0);
+}
+
+#[test]
+fn textarea_backspace_removes_whole_cluster() {
+    // Type a flag emoji (two regional indicators = one cluster) then Backspace
+    // once: the entire cluster is removed, leaving the line empty.
+    let mut state = TextareaState::new();
+    state.set_value("🇰🇷");
+    state.cursor_col = 1; // cursor after the single flag cluster
+
+    let mut backend = TestBackend::new(40, 6);
+    let events = EventBuilder::new().key_code(KeyCode::Backspace).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.textarea(&mut state, 4);
+    });
+
+    assert_eq!(state.lines[0], "", "Backspace left a flag fragment behind");
+    assert_eq!(state.cursor_col, 0);
+    assert!(
+        !has_lone_regional_indicator(&backend.to_string_trimmed()),
+        "rendered output retained a half flag"
+    );
+}
+
+#[test]
+fn text_input_cursor_grapheme() {
+    // Left/Right/Backspace on a TextInputState seeded with "🇰🇷x" step by
+    // whole grapheme cluster.
+    let mut input = TextInputState::new();
+    input.value = "🇰🇷x".to_string();
+    input.cursor = 0;
+
+    let mut backend = TestBackend::new(40, 6);
+    // Right once -> after the flag (cluster index 1).
+    let events = EventBuilder::new().key_code(KeyCode::Right).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.text_input(&mut input);
+    });
+    assert_eq!(input.cursor, 1);
+
+    // Right again -> after "x" (cluster index 2).
+    let events = EventBuilder::new().key_code(KeyCode::Right).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.text_input(&mut input);
+    });
+    assert_eq!(input.cursor, 2);
+
+    // Cursor sits at end (index 2, after "🇰🇷x"). Backspace removes "x"
+    // wholly; the flag stays intact and whole.
+    let events = EventBuilder::new().key_code(KeyCode::Backspace).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "🇰🇷", "Backspace cut the wrong unit");
+    assert_eq!(input.cursor, 1);
+    assert!(!has_lone_regional_indicator(&input.value));
+
+    // A second Backspace now removes the whole flag cluster (both regional
+    // indicators), never a half flag.
+    let events = EventBuilder::new().key_code(KeyCode::Backspace).build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "", "flag was not removed as one cluster");
+    assert_eq!(input.cursor, 0);
+}
+
+#[test]
+fn text_input_ascii_cursor_unchanged() {
+    // ASCII regression: cluster index equals scalar index for ASCII.
+    let mut input = TextInputState::new();
+    input.value = "abc".to_string();
+    input.cursor = 0;
+    let mut backend = TestBackend::new(40, 6);
+    let events = EventBuilder::new()
+        .key_code(KeyCode::Right)
+        .key_code(KeyCode::Right)
+        .key_code(KeyCode::Backspace)
+        .build();
+    backend.render_with_events(events, 0, 1, |ui| {
+        let _ = ui.text_input(&mut input);
+    });
+    assert_eq!(input.value, "ac");
+    assert_eq!(input.cursor, 1);
+}

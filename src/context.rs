@@ -26,6 +26,7 @@ use crate::widgets::{
     ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
 };
 use crate::FrameState;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]

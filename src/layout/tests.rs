@@ -1561,3 +1561,197 @@ fn flex_shrink_mixed_only_flagged_scale() {
     assert_eq!(row.children[0].size.0, 10);
     assert_eq!(row.children[1].size.0, 20);
 }
+
+// ---------------------------------------------------------------------------
+// Grapheme-cluster segmentation (issue #259)
+//
+// A break / truncate must never fall inside an extended grapheme cluster.
+// Helpers below re-segment the output and assert no output cluster boundary
+// was introduced that wasn't already an input cluster boundary.
+// ---------------------------------------------------------------------------
+
+/// A regional indicator (U+1F1E6..=U+1F1FF) on its own — i.e. a flag emoji that
+/// was split in half. Its presence in a wrapped line is the failure signature.
+fn contains_lone_regional_indicator(s: &str) -> bool {
+    use unicode_segmentation::UnicodeSegmentation;
+    s.graphemes(true).any(|g| {
+        let mut chars = g.chars();
+        match (chars.next(), chars.next()) {
+            // A single regional indicator with no paired partner: a half flag.
+            (Some(c), None) => ('\u{1F1E6}'..='\u{1F1FF}').contains(&c),
+            _ => false,
+        }
+    })
+}
+
+#[test]
+fn wrap_lines_zwj_flag_not_split() {
+    // 🇰🇷 and 🇯🇵 are each two regional-indicator scalars forming one cluster.
+    // At max_width=2 (one flag is width 2) each flag must stay whole.
+    let lines = wrap_lines("🇰🇷🇯🇵", 2);
+    for line in &lines {
+        assert!(
+            !contains_lone_regional_indicator(line),
+            "flag split mid-cluster: {line:?}"
+        );
+    }
+    // Re-joined output preserves every flag.
+    let joined: String = lines.join("");
+    assert!(joined.contains("🇰🇷"));
+    assert!(joined.contains("🇯🇵"));
+}
+
+#[test]
+fn wrap_lines_family_emoji_at_boundary() {
+    // Family emoji: 👨‍👩‍👧‍👦 is one cluster joined by ZWJ. Put a width-2 char
+    // before it so the family base lands at/over the boundary; the whole
+    // cluster must stay intact on one line (no orphaned ZWJ tail).
+    let input = "日👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    let lines = wrap_lines(input, 2);
+    // The family cluster appears whole on exactly one output line.
+    let whole = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    assert!(
+        lines.iter().any(|l| l.contains(whole)),
+        "family emoji was broken across lines: {lines:?}"
+    );
+    // No output line carries a dangling ZWJ at an edge of the cluster.
+    for line in &lines {
+        // A ZWJ must always be flanked by its joined glyphs — re-segmenting
+        // must not yield a fragment that starts or ends with a bare ZWJ.
+        assert!(
+            !line.starts_with('\u{200D}') && !line.ends_with('\u{200D}'),
+            "dangling ZWJ in {line:?}"
+        );
+    }
+}
+
+#[test]
+fn wrap_lines_devanagari_cluster() {
+    // "क्षि" is base + virama + consonant + vowel sign: one (or few) clusters.
+    // It must not be broken between a base and its combining marks.
+    use unicode_segmentation::UnicodeSegmentation;
+    let input = "क्षि";
+    let lines = wrap_lines(input, 1);
+    let input_clusters: Vec<&str> = input.graphemes(true).collect();
+    // Every output line is a whole sequence of input clusters.
+    for line in &lines {
+        for g in line.graphemes(true) {
+            assert!(
+                input_clusters.contains(&g),
+                "devanagari cluster fragmented: {g:?} not an input cluster"
+            );
+        }
+    }
+}
+
+#[test]
+fn wrap_lines_thai_cluster() {
+    // "กำ" is a Thai consonant + sara am (one cluster). Must stay intact.
+    use unicode_segmentation::UnicodeSegmentation;
+    let input = "กำ";
+    let lines = wrap_lines(input, 1);
+    let input_clusters: Vec<&str> = input.graphemes(true).collect();
+    for line in &lines {
+        for g in line.graphemes(true) {
+            assert!(
+                input_clusters.contains(&g),
+                "thai cluster fragmented: {g:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_long_word_keeps_clusters() {
+    // An over-wide word of concatenated flags chunks only between flags.
+    let lines = wrap_lines("🇰🇷🇯🇵🇺🇸", 2);
+    for line in &lines {
+        assert!(
+            !contains_lone_regional_indicator(line),
+            "long-word chunk split a flag: {line:?}"
+        );
+    }
+    let joined: String = lines.join("");
+    assert!(joined.contains("🇰🇷") && joined.contains("🇯🇵") && joined.contains("🇺🇸"));
+}
+
+#[test]
+fn wrap_segments_zwj_across_break() {
+    // A styled run containing a ZWJ family emoji never splits the cluster
+    // across two visual lines.
+    let whole = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    let segs = vec![
+        ("日本".to_string(), Style::new()),
+        (whole.to_string(), Style::new()),
+    ];
+    let lines = wrap_segments(&segs, 2);
+    // Find the cluster reassembled on a single line.
+    let any_whole = lines.iter().any(|line| {
+        let joined: String = line.iter().map(|(t, _)| t.as_str()).collect();
+        joined.contains(whole)
+    });
+    assert!(any_whole, "ZWJ cluster split across lines: {lines:?}");
+    // No line fragment dangles a ZWJ at an edge.
+    for line in &lines {
+        for (t, _) in line {
+            assert!(
+                !t.starts_with('\u{200D}') && !t.ends_with('\u{200D}'),
+                "dangling ZWJ in segment {t:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn truncate_with_ellipsis_drops_whole_cluster() {
+    // "🇰🇷abc" truncated to width 2: the flag is width 2 so it cannot fit
+    // alongside the ellipsis (target = 1). It is dropped whole, not halved.
+    let out = super::render::truncate_with_ellipsis("🇰🇷abc", 2);
+    assert_eq!(out, "\u{2026}");
+    assert!(!contains_lone_regional_indicator(&out));
+}
+
+#[test]
+fn truncate_with_ellipsis_ascii_unchanged() {
+    // ASCII regression: identical to scalar behavior.
+    assert_eq!(
+        super::render::truncate_with_ellipsis("hello", 4),
+        "hel\u{2026}"
+    );
+    assert_eq!(
+        super::render::truncate_with_ellipsis("hi", 10),
+        "hi\u{2026}"
+    );
+}
+
+mod wrap_lines_grapheme_property {
+    use super::wrap_lines;
+    use proptest::prelude::*;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        // For arbitrary strings (newline-free so we test the soft-wrap kernel),
+        // every cluster on every output line must be a whole input cluster:
+        // no output cluster boundary that wasn't an input boundary.
+        #[test]
+        fn no_partial_cluster(
+            s in "[a-c \\x{1F1E6}-\\x{1F1FF}\\x{0301}\\x{0E33}\\x{0E01}]{0,32}",
+            w in 1u32..6,
+        ) {
+            let input_clusters: std::collections::HashSet<String> =
+                s.graphemes(true).map(str::to_string).collect();
+            for line in wrap_lines(&s, w) {
+                for g in line.graphemes(true) {
+                    // Spaces are inserted as word separators by the wrapper, so
+                    // a bare space is always a legal output cluster.
+                    prop_assert!(
+                        g == " " || input_clusters.contains(g),
+                        "output cluster {:?} was not a whole input cluster (input {:?}, width {})",
+                        g, s, w
+                    );
+                }
+            }
+        }
+    }
+}

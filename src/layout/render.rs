@@ -776,9 +776,7 @@ fn render_scroll_indicators(
     }
 }
 
-fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
-    use unicode_width::UnicodeWidthChar;
-
+pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
     }
@@ -788,12 +786,15 @@ fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     let target = max_width - 1;
     let mut result = String::new();
     let mut width = 0;
-    for ch in text.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    // Stop on grapheme-cluster boundaries: a cluster (ZWJ flag, family emoji,
+    // Indic / Thai syllable) that would overflow `target` is dropped whole
+    // before the ellipsis, never half-emitted.
+    for g in text.graphemes(true) {
+        let ch_width = UnicodeWidthStr::width(g);
         if width + ch_width > target {
             break;
         }
-        result.push(ch);
+        result.push_str(g);
         width += ch_width;
     }
     result.push('\u{2026}');
