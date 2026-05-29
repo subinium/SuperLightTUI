@@ -4,6 +4,7 @@
 
 ### Changed (Breaking)
 
+- **`refactor(context)`! — `use_memo` returns a `Memo<T>` handle** (#272) — `Context::use_memo` previously returned `&T`, a live immutable borrow of `&mut Context` that could not be held across later `ui.*` calls — the lone asymmetry in the hook family (`use_state*` already return owned `State<T>` index handles). It now returns a `Memo<T>` index handle (re-exported at crate root) that holds **no** borrow of `Context`; read the value on demand with `.get(ui)` (`&T`) / `.copied(ui)` (`T: Copy`). `Memo<T>::get` panics with the same hook-index + expected-type message on a rules-of-hooks violation. The memo slot's internal storage changed from `(D, T)` to a `pub(crate) MemoSlot<T>` (type-erased deps) so the read path needs no `D` re-parameterization. The original `&T`-returning body is preserved verbatim as `use_memo_ref` (see Deprecated). **Migration:** `let x = *ui.use_memo(&d, f);` → `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference); callers that cannot migrate immediately can switch to `ui.use_memo_ref(&d, f)` (warns).
 - **`feat(widgets-display)`! — `scrollbar()`, `separator()`, `separator_colored()` return real `Response`** (#241) — Resolves `Known v0.21 migration note #2` / `docs/ARCHITECTURE.md` M4 (`no () returns`). `separator()` / `separator_colored()` previously returned `&mut Self` from a legacy text-chain pattern, but the chained `.bold()` / `.fg()` mutators were a no-op (the cached separator string is already finalized), so the misleading chain is dropped in favor of a real `Response` routed through `Context::interaction()`. `scrollbar()` already returned `Response::none()` in v0.20 (#184); it is now routed through `Context::interaction()` so the track hit-test rect is populated, and its receiver changes from `&ScrollState` to `&mut ScrollState` to reserve the click-to-jump / drag-to-scroll extension point (#249) without another breaking change. **Migration:** statement-form `separator` callers (`ui.separator();`) compile unchanged; any `.separator().bold()`-style chains must drop the no-op suffix (none existed in-crate). `scrollbar` callers pass `&mut scroll` instead of `&scroll`.
 
 ### Added
@@ -24,6 +25,7 @@
 ### Deprecated
 
 - **`deprecated(context)` — `Context::use_state_named_with`** (#240) — Now a `#[deprecated(since = "0.21.0")]` alias for the renamed `use_state_named(id, init)`. Same behavior (delegates directly), continues to compile with a deprecation warning until the planned v1.0 removal. Switch call sites to `use_state_named(id, init)`.
+- **`deprecated(context)` — `Context::use_memo_ref`** (#272) — New `#[deprecated(since = "0.21.0")]` method preserving the original `&T`-returning `use_memo` behaviour (byte-equivalent body, `(D, T)` slot) for callers that cannot adopt the `Memo<T>` handle yet. Scheduled for removal in a later minor (v0.22.0+). Migrate to `ui.use_memo(&d, f).copied(ui)` / `.get(ui)`.
 
 ## [0.20.1] - 2026-04-29
 

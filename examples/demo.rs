@@ -1836,8 +1836,8 @@ fn render_v080(
     card(ui, |ui| {
         let counter = ui.use_state(|| 0i32);
         let count_val = *counter.get(ui);
-        let doubled = *ui.use_memo(&count_val, |c| c * 2);
-        let tripled = *ui.use_memo(&count_val, |c| c * 3);
+        let doubled = ui.use_memo(&count_val, |c| c * 2).copied(ui);
+        let tripled = ui.use_memo(&count_val, |c| c * 3).copied(ui);
         let _ = ui.container().gap(1).row(|ui| {
             ui.text(format!("Count: {count_val}"));
             ui.text(format!("×2 = {doubled}")).fg(theme.primary);

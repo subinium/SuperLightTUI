@@ -1286,12 +1286,98 @@ impl Context {
 
     /// Memoize a computed value. Recomputes only when `deps` changes.
     ///
+    /// Returns a [`Memo<T>`] *index handle*, mirroring [`use_state`]'s
+    /// [`State<T>`]. The handle holds **no** borrow of `ui`, so it composes with
+    /// later `ui.*` calls — read the value on demand with `.get(ui)` /
+    /// `.copied(ui)`.
+    ///
+    /// Before v0.21.0 this returned `&T`, a live borrow of `&mut Context` that
+    /// could not be held across subsequent `ui.*` mutations. That form is now
+    /// [`use_memo_ref`](Self::use_memo_ref) (deprecated). Migrate
+    /// `let x = *ui.use_memo(&d, f);` to `let x = ui.use_memo(&d, f).copied(ui);`.
+    ///
+    /// [`use_state`]: Self::use_state
+    ///
     /// # Example
-    /// ```ignore
-    /// let doubled = ui.use_memo(&count, |c| c * 2);
-    /// ui.text(format!("Doubled: {doubled}"));
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let count = ui.use_state(|| 0i32);
+    /// let count_val = *count.get(ui);
+    /// let doubled = ui.use_memo(&count_val, |c| c * 2);
+    /// // The handle survives an intervening `ui.*` call (this is the whole point).
+    /// ui.text("doubled:");
+    /// ui.text(format!("{}", doubled.copied(ui)));
+    /// # });
     /// ```
     pub fn use_memo<T: 'static, D: PartialEq + Clone + 'static>(
+        &mut self,
+        deps: &D,
+        compute: impl FnOnce(&D) -> T,
+    ) -> Memo<T> {
+        let idx = self.rollback.hook_cursor;
+        self.rollback.hook_cursor += 1;
+
+        // First call at this slot: allocate fresh state. Deps are stored
+        // type-erased so the read path (`Memo::get`) can downcast `MemoSlot<T>`
+        // without restating `D`.
+        if idx >= self.hook_states.len() {
+            self.hook_states.push(Box::new(MemoSlot {
+                deps: Box::new(deps.clone()),
+                value: compute(deps),
+            }));
+            return Memo::from_idx(idx);
+        }
+
+        // Slot already exists: it must be the same `MemoSlot<T>` shape we used
+        // last frame, or the caller broke the rules-of-hooks contract.
+        match self.hook_states[idx].downcast_mut::<MemoSlot<T>>() {
+            Some(slot) => {
+                // Compare against the previous (type-erased) deps. A failed
+                // downcast of the stored deps to `&D` is treated as stale so the
+                // value is recomputed rather than silently kept.
+                let stale = slot
+                    .deps
+                    .downcast_ref::<D>()
+                    .map(|prev| *prev != *deps)
+                    .unwrap_or(true);
+                if stale {
+                    slot.deps = Box::new(deps.clone());
+                    slot.value = compute(deps);
+                }
+            }
+            None => panic!(
+                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
+                idx,
+                std::any::type_name::<MemoSlot<T>>()
+            ),
+        }
+        Memo::from_idx(idx)
+    }
+
+    /// Deprecated `&T`-returning form of [`use_memo`](Self::use_memo).
+    ///
+    /// **Deprecated since 0.21.0**: [`use_memo`](Self::use_memo) now returns a
+    /// [`Memo<T>`] handle that does not borrow `ui`, so it composes with later
+    /// `ui.*` calls. This alias preserves the original behaviour (returning a
+    /// `&T` borrow of `ui`) for callers that cannot migrate immediately; the
+    /// borrow keeps `ui` immutably borrowed until the reference is dropped.
+    ///
+    /// Migrate `let x = *ui.use_memo_ref(&d, f);` to
+    /// `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// # #[allow(deprecated)]
+    /// let doubled = *ui.use_memo_ref(&21i32, |c| c * 2);
+    /// ui.text(format!("{doubled}"));
+    /// # });
+    /// ```
+    #[deprecated(
+        since = "0.21.0",
+        note = "use_memo now returns a Memo<T> handle; call `.get(ui)` / `.copied(ui)`"
+    )]
+    pub fn use_memo_ref<T: 'static, D: PartialEq + Clone + 'static>(
         &mut self,
         deps: &D,
         compute: impl FnOnce(&D) -> T,
