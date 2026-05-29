@@ -129,6 +129,78 @@ pub(crate) struct KittyPlacement {
     pub crop_h: u32,
 }
 
+/// Per-cell coverage state of a [`SprixelPlacement`]'s footprint.
+///
+/// Borrowed from notcurses' sprixel damage model. Each owned cell records how a
+/// pixel graphic relates to the text cell beneath it, so the flush layer can
+/// decide whether a text write forces a re-blit of the whole graphic (issue
+/// #265). Sixel and iTerm2 (OSC 1337) graphics own a footprint of these cells;
+/// Kitty keeps its separate `KittyImageManager` lifecycle.
+///
+/// All four variants form the spec'd damage vocabulary (issue #265): the image
+/// entry points currently emit fully-`Opaque` footprints, while `Mixed` /
+/// `Transparent` are reserved for partial-coverage callers and `Annihilated`
+/// for the flush-time damage flip. The full set is exercised by the flush tests
+/// and is part of the matrix contract, so the unused-construction lint is
+/// suppressed (mirrors [`KittyPlacement`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum SprixelCell {
+    /// Graphic fully covers the cell; a text write here forces a re-blit.
+    Opaque,
+    /// Graphic partially covers the cell; a text write here forces a re-blit.
+    Mixed,
+    /// No graphic ink in this cell; text is free and triggers no re-blit.
+    Transparent,
+    /// Text overwrote graphic ink in this cell this frame, so the owning
+    /// graphic is dirty and must be re-emitted.
+    Annihilated,
+}
+
+/// A non-Kitty pixel-graphic placement (Sixel or iTerm2 OSC 1337) tracked with
+/// a per-cell damage footprint.
+///
+/// Unlike a flat [`Buffer::raw_sequence`] entry, a sprixel records the cell
+/// footprint it covers so the flush layer can re-emit a graphic **only** when a
+/// text cell annihilates its ink or its `(x, y, content_hash)` changed, rather
+/// than re-blitting every stored sequence on any delta (issue #265).
+///
+/// `seq` / `cells` are read only by the `crossterm` flush layer
+/// (`flush_sprixels`), so the unused-field lint is suppressed for
+/// `--no-default-features` builds where that consumer is gated out (mirrors
+/// [`KittyPlacement`]).
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct SprixelPlacement {
+    /// Hash of the source bytes for change detection across frames.
+    pub content_hash: u64,
+    /// Encoded passthrough payload (Sixel `DCS` or iTerm2 OSC 1337).
+    pub seq: String,
+    /// Screen cell position of the top-left corner.
+    pub x: u32,
+    pub y: u32,
+    /// Cell columns/rows the graphic footprint covers.
+    pub cols: u32,
+    pub rows: u32,
+    /// Row-major per-cell coverage state; `cells.len() == (cols * rows)`.
+    pub cells: Vec<SprixelCell>,
+}
+
+impl PartialEq for SprixelPlacement {
+    fn eq(&self, other: &Self) -> bool {
+        // Equality drives the "did this placement change?" flush check. A
+        // re-blit is needed when position or content shifts; the per-cell
+        // damage matrix (`cells`) is recomputed each frame from the text diff
+        // and is deliberately excluded so two structurally identical
+        // placements compare equal regardless of transient annihilation state.
+        self.content_hash == other.content_hash
+            && self.x == other.x
+            && self.y == other.y
+            && self.cols == other.cols
+            && self.rows == other.rows
+    }
+}
+
 /// FNV-1a 64-bit offset basis (the standard seed for the algorithm).
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 /// FNV-1a 64-bit prime multiplier.
@@ -221,6 +293,10 @@ pub struct Buffer {
     pub content: Vec<Cell>,
     pub(crate) clip_stack: Vec<Rect>,
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
+    /// Non-Kitty pixel-graphic placements (Sixel / iTerm2) with per-cell damage
+    /// footprints. Drives the sprixel-aware flush that re-emits a graphic only
+    /// when its ink is annihilated or its content/position changed (issue #265).
+    pub(crate) sprixels: Vec<SprixelPlacement>,
     pub(crate) kitty_placements: Vec<KittyPlacement>,
     pub(crate) cursor_pos: Option<(u32, u32)>,
     /// Stack of scroll clip infos set by the run loop before invoking draw
@@ -257,6 +333,7 @@ impl Buffer {
             content: vec![Cell::default(); size],
             clip_stack: Vec::new(),
             raw_sequences: Vec::new(),
+            sprixels: Vec::new(),
             kitty_placements: Vec::new(),
             cursor_pos: None,
             kitty_clip_info_stack: Vec::new(),
@@ -337,6 +414,32 @@ impl Buffer {
         }
 
         self.kitty_placements.push(p);
+    }
+
+    /// Store a non-Kitty pixel-graphic placement (Sixel or iTerm2 OSC 1337)
+    /// with its per-cell damage footprint.
+    ///
+    /// Respects the clip stack the same way [`Buffer::kitty_place`] does:
+    /// placements wholly outside the active clip are dropped. The footprint
+    /// `cells` are recorded as-supplied; the flush layer flips covered cells to
+    /// [`SprixelCell::Annihilated`] when a text write overwrites graphic ink so
+    /// only dirtied graphics are re-emitted (issue #265).
+    ///
+    /// Callers (`sixel_image` / `iterm_image*`) are `crossterm`-gated, so this
+    /// is unused under `--no-default-features`; the lint is suppressed only on
+    /// that build so a genuine dead-code signal still fires by default.
+    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    pub(crate) fn sprixel_place(&mut self, p: SprixelPlacement) {
+        if let Some(clip) = self.effective_clip() {
+            if p.x >= clip.right()
+                || p.y >= clip.bottom()
+                || p.x + p.cols <= clip.x
+                || p.y + p.rows <= clip.y
+            {
+                return;
+            }
+        }
+        self.sprixels.push(p);
     }
 
     /// Push a clipping rectangle onto the clip stack.
@@ -707,6 +810,7 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
@@ -725,6 +829,7 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();

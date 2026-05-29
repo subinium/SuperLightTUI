@@ -98,6 +98,8 @@ pub mod context;
 pub mod event;
 /// Half-block image rendering.
 pub mod halfblock;
+#[cfg(feature = "crossterm")]
+mod iterm;
 /// Keyboard shortcut mapping.
 pub mod keymap;
 /// Flexbox layout engine and command tree.

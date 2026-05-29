@@ -437,6 +437,9 @@ pub struct Capabilities {
     pub truecolor: bool,
     /// Sixel graphics confirmed (DA1 attribute `4`).
     pub sixel: bool,
+    /// iTerm2 OSC 1337 inline-image protocol confirmed (env identity for
+    /// iTerm2 / WezTerm / Tabby / mintty; issue #265).
+    pub iterm2: bool,
     /// Kitty graphics protocol confirmed (DA2 terminal-ID heuristic).
     pub kitty_graphics: bool,
     /// Kitty keyboard protocol confirmed.
@@ -451,7 +454,8 @@ pub struct Capabilities {
 /// wins; app code never selects a [`Blitter`] directly.
 ///
 /// Ladder order: [`Kitty`](Blitter::Kitty) > [`Sixel`](Blitter::Sixel) >
-/// [`Sextant`](Blitter::Sextant) > [`HalfBlock`](Blitter::HalfBlock).
+/// [`Iterm2`](Blitter::Iterm2) > [`Sextant`](Blitter::Sextant) >
+/// [`HalfBlock`](Blitter::HalfBlock).
 ///
 /// Available since `0.21.0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,6 +464,9 @@ pub enum Blitter {
     Kitty,
     /// Sixel graphics protocol.
     Sixel,
+    /// iTerm2 OSC 1337 inline-image protocol (issue #265). Pixel-accurate on
+    /// Tabby, older iTerm2, and WezTerm's iTerm2-compat mode.
+    Iterm2,
     /// Unicode sextant cell art.
     Sextant,
     /// Half-block cell art (universal fallback).
@@ -470,9 +477,9 @@ impl Capabilities {
     /// Resolve the best available image blitter for this terminal.
     ///
     /// Returns the first supported rung of the ladder
-    /// (Kitty > Sixel > Sextant > HalfBlock). This is total: it always returns
-    /// a [`Blitter`], falling through to [`Blitter::HalfBlock`] which every
-    /// terminal supports.
+    /// (Kitty > Sixel > iTerm2 > Sextant > HalfBlock). This is total: it always
+    /// returns a [`Blitter`], falling through to [`Blitter::HalfBlock`] which
+    /// every terminal supports.
     ///
     /// # Example
     ///
@@ -486,6 +493,8 @@ impl Capabilities {
             Blitter::Kitty
         } else if self.sixel {
             Blitter::Sixel
+        } else if self.iterm2 {
+            Blitter::Iterm2
         } else if self.blitters.sextant {
             Blitter::Sextant
         } else {
@@ -562,7 +571,29 @@ fn probe_capabilities() -> Capabilities {
         caps.kitty_graphics = true;
     }
 
+    // iTerm2 OSC 1337 has no DA1/DA2 signal (issue #265): the protocol is
+    // identified purely by terminal identity. Fill the capability slot from the
+    // env so the blitter ladder can offer it below Kitty/Sixel.
+    if term_is_iterm_host() {
+        caps.iterm2 = true;
+    }
+
     caps
+}
+
+/// Heuristic env-detection for iTerm2 OSC 1337 inline-image hosts (issue #265).
+///
+/// The protocol carries no DA reply, so detection is by `TERM_PROGRAM` identity
+/// only: iTerm2, WezTerm (iTerm2-compat), Tabby, and mintty.
+#[cfg(feature = "crossterm")]
+fn term_is_iterm_host() -> bool {
+    let term_program = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        term_program.as_str(),
+        "iterm.app" | "wezterm" | "tabby" | "mintty"
+    )
 }
 
 /// Heuristic env-fallback for Kitty-graphics hosts, consulted only when the
@@ -908,8 +939,11 @@ impl Terminal {
         self.kitty_mgr
             .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
 
-        // Raw sequences (sixel, other passthrough) — simple diff
+        // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
+
+        // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
+        flush_sprixels(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
         flush_cursor(
@@ -1112,8 +1146,11 @@ impl InlineTerminal {
         self.kitty_mgr
             .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
 
-        // Raw sequences (sixel, other passthrough) — simple diff
+        // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
+
+        // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
+        flush_sprixels(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
         let fallback_row = row_offset + self.height.saturating_sub(1);
@@ -1300,7 +1337,7 @@ pub(crate) fn parse_osc11_response(response: &str) -> ColorScheme {
     }
 }
 
-fn base64_encode(input: &[u8]) -> String {
+pub(crate) fn base64_encode(input: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
@@ -1753,6 +1790,92 @@ fn flush_raw_sequences(
         )?;
     }
 
+    Ok(())
+}
+
+/// Decide whether a sprixel placement must be re-blitted this frame, applying
+/// the per-cell damage matrix (issue #265).
+///
+/// Returns `true` when:
+///   * the placement is new or its `(x, y, content_hash, cols, rows)` changed
+///     (no structurally equal placement in the previous frame), OR
+///   * a text cell inside the footprint was overwritten this frame *and* the
+///     footprint marks that cell as covering graphic ink
+///     ([`SprixelCell::Opaque`] / [`SprixelCell::Mixed`]) — i.e. the cell is
+///     [`SprixelCell::Annihilated`].
+///
+/// A pure text edit landing on a [`SprixelCell::Transparent`] cell never marks
+/// damage, so the graphic is not re-emitted.
+fn sprixel_needs_reblit(
+    placement: &crate::buffer::SprixelPlacement,
+    current: &Buffer,
+    previous: &Buffer,
+) -> bool {
+    use crate::buffer::SprixelCell;
+
+    // Position / content change: re-blit if no equal placement existed last
+    // frame. `SprixelPlacement: PartialEq` compares content_hash/x/y/cols/rows
+    // (the damage matrix is excluded), so a moved or recolored image re-blits.
+    if !previous.sprixels.iter().any(|p| p == placement) {
+        return true;
+    }
+
+    // Annihilation scan: a covered text cell that changed since last frame and
+    // now shows ink forces a re-blit. `Transparent` cells are skipped so free
+    // text edits in graphic gaps emit zero sprixel bytes.
+    for row in 0..placement.rows {
+        for col in 0..placement.cols {
+            let idx = (row * placement.cols + col) as usize;
+            match placement.cells.get(idx) {
+                Some(SprixelCell::Opaque) | Some(SprixelCell::Mixed) => {}
+                // Transparent / Annihilated / out-of-range: not ink-covering,
+                // so a text write here does not damage the graphic.
+                _ => continue,
+            }
+            let x = placement.x + col;
+            let y = placement.y + row;
+            // A footprint can extend past the buffer edge (a clipped placement,
+            // or `iterm_image_fit` reserving rows beyond the viewport). Use
+            // `try_get` so an out-of-bounds footprint cell is simply skipped
+            // rather than panicking — there is no text there to annihilate it.
+            let (Some(cell), Some(prev)) = (current.try_get(x, y), previous.try_get(x, y)) else {
+                continue;
+            };
+            // Mirror `flush_buffer_diff`'s write predicate exactly: a cell is
+            // emitted (and thus overwrites graphic ink) iff it changed since
+            // last frame and carries a non-empty symbol. Matching the predicate
+            // keeps the damage matrix in lockstep with what the cell diff
+            // actually paints over the graphic.
+            if cell != prev && !cell.symbol.is_empty() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Flush the sprixel (Sixel / iTerm2) layer with per-cell damage tracking.
+///
+/// Unlike [`flush_raw_sequences`]' all-or-nothing guard, this re-emits each
+/// pixel graphic **only** when [`sprixel_needs_reblit`] reports damage, so a
+/// text edit in a transparent region of a Sixel emits zero passthrough bytes
+/// (issue #265).
+fn flush_sprixels(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+) -> io::Result<()> {
+    for placement in &current.sprixels {
+        if sprixel_needs_reblit(placement, current, previous) {
+            queue!(
+                stdout,
+                cursor::MoveTo(sat_u16(placement.x), sat_u16(row_offset + placement.y)),
+                Print(&placement.seq)
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -2434,6 +2557,7 @@ mod tests {
         let c = Capabilities::default();
         assert!(!c.truecolor);
         assert!(!c.sixel);
+        assert!(!c.iterm2);
         assert!(!c.kitty_graphics);
         assert!(!c.kitty_keyboard);
         assert!(!c.sync_output);
@@ -2454,6 +2578,20 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(sixel.best_blitter(), Blitter::Sixel);
+
+        let iterm2 = Capabilities {
+            iterm2: true,
+            ..Default::default()
+        };
+        assert_eq!(iterm2.best_blitter(), Blitter::Iterm2);
+
+        // iTerm2 sits below Sixel: a host advertising both prefers Sixel.
+        let sixel_and_iterm2 = Capabilities {
+            sixel: true,
+            iterm2: true,
+            ..Default::default()
+        };
+        assert_eq!(sixel_and_iterm2.best_blitter(), Blitter::Sixel);
 
         let sextant = Capabilities {
             blitters: BlitterSupport {
@@ -2493,25 +2631,33 @@ mod tests {
 
     #[test]
     fn best_blitter_never_picks_unsupported_protocol() {
-        // Exhaustive-ish sweep over field combinations: the resolver must never
+        // Exhaustive sweep over field combinations: the resolver must never
         // return Kitty without kitty_graphics, nor Sixel without sixel, etc.
         for kitty in [false, true] {
             for sixel in [false, true] {
-                for sextant in [false, true] {
-                    let caps = Capabilities {
-                        kitty_graphics: kitty,
-                        sixel,
-                        blitters: BlitterSupport {
-                            sextant,
+                for iterm2 in [false, true] {
+                    for sextant in [false, true] {
+                        let caps = Capabilities {
+                            kitty_graphics: kitty,
+                            sixel,
+                            iterm2,
+                            blitters: BlitterSupport {
+                                sextant,
+                                ..Default::default()
+                            },
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    };
-                    match caps.best_blitter() {
-                        Blitter::Kitty => assert!(kitty),
-                        Blitter::Sixel => assert!(sixel && !kitty),
-                        Blitter::Sextant => assert!(sextant && !sixel && !kitty),
-                        Blitter::HalfBlock => assert!(!kitty && !sixel && !sextant),
+                        };
+                        match caps.best_blitter() {
+                            Blitter::Kitty => assert!(kitty),
+                            Blitter::Sixel => assert!(sixel && !kitty),
+                            Blitter::Iterm2 => assert!(iterm2 && !sixel && !kitty),
+                            Blitter::Sextant => {
+                                assert!(sextant && !iterm2 && !sixel && !kitty)
+                            }
+                            Blitter::HalfBlock => {
+                                assert!(!kitty && !sixel && !iterm2 && !sextant)
+                            }
+                        }
                     }
                 }
             }
@@ -3570,6 +3716,210 @@ mod tests {
                 n,
                 "n={n}: expected {n} image-data deletes in frame 3: {s3:?}"
             );
+        }
+    }
+
+    // ---- #265 sprixel damage matrix ----------------------------------------
+
+    use crate::buffer::{SprixelCell, SprixelPlacement};
+
+    /// Build a 2×2-cell sprixel at (1, 1) with the given footprint states.
+    fn make_sprixel(cells: Vec<SprixelCell>) -> SprixelPlacement {
+        SprixelPlacement {
+            content_hash: 0xABCD,
+            seq: "<SIXEL>".to_string(),
+            x: 1,
+            y: 1,
+            cols: 2,
+            rows: 2,
+            cells,
+        }
+    }
+
+    #[test]
+    fn sprixel_no_text_change_emits_zero_bytes() {
+        // A frame identical to the previous one must emit no sprixel bytes.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(out.is_empty(), "stable frame should emit no sprixel bytes");
+    }
+
+    #[test]
+    fn sprixel_first_frame_blits_once() {
+        // No previous placement -> the graphic must be emitted exactly once.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut current = Buffer::empty(area);
+        current
+            .sprixels
+            .push(make_sprixel(vec![SprixelCell::Opaque; 4]));
+        let previous = Buffer::empty(area);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_text_in_opaque_cell_reblits_once() {
+        // A text write over an opaque footprint cell annihilates the graphic.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        // Write a glyph over the top-left footprint cell (1, 1).
+        current.set_char(1, 1, 'X', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(
+            s.matches("<SIXEL>").count(),
+            1,
+            "opaque-cell text write must re-blit the graphic exactly once"
+        );
+    }
+
+    #[test]
+    fn sprixel_text_in_transparent_cell_does_not_reblit() {
+        // The footprint marks (1, 1) transparent; a text write there must NOT
+        // re-blit the graphic (the core #265 win).
+        let area = Rect::new(0, 0, 10, 5);
+        let cells = vec![
+            SprixelCell::Transparent, // (1, 1)
+            SprixelCell::Opaque,      // (2, 1)
+            SprixelCell::Opaque,      // (1, 2)
+            SprixelCell::Opaque,      // (2, 2)
+        ];
+        let placement = make_sprixel(cells);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        current.set_char(1, 1, 'X', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "text in a transparent footprint cell must emit zero sprixel bytes"
+        );
+    }
+
+    #[test]
+    fn sprixel_text_outside_footprint_does_not_reblit() {
+        // A text write adjacent to (but outside) the footprint is free.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        // (5, 0) is well outside the (1,1)-(2,2) footprint.
+        current.set_char(5, 0, 'Z', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "text outside the footprint must not re-blit the graphic"
+        );
+    }
+
+    #[test]
+    fn sprixel_position_change_reblits() {
+        // Moving the graphic (same content, new x/y) must re-blit.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut moved = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        let original = moved.clone();
+        moved.x = 4;
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(moved);
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(original);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_content_change_reblits() {
+        // Same position, different content hash -> re-blit.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut recolored = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        let original = recolored.clone();
+        recolored.content_hash = 0x1234;
+        recolored.seq = "<SIXEL2>".to_string();
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(recolored);
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(original);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL2>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_reblit_count_invariant_over_single_cell_writes() {
+        // Invariant (issue #265 proptest spirit, exhaustive here): for a write
+        // to a single footprint cell, the number of re-emitted sprixels is 0
+        // iff that cell is Transparent, else 1.
+        let area = Rect::new(0, 0, 10, 5);
+        for (idx, (col, row)) in [(0u32, 0u32), (1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .enumerate()
+        {
+            for state in [
+                SprixelCell::Opaque,
+                SprixelCell::Mixed,
+                SprixelCell::Transparent,
+            ] {
+                let mut cells = vec![SprixelCell::Opaque; 4];
+                cells[idx] = state;
+                let placement = make_sprixel(cells);
+
+                let mut current = Buffer::empty(area);
+                current.sprixels.push(placement.clone());
+                current.set_char(1 + col, 1 + row, 'A', Style::new());
+
+                let mut previous = Buffer::empty(area);
+                previous.sprixels.push(placement);
+
+                let mut out: Vec<u8> = Vec::new();
+                flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+                let count = String::from_utf8(out).unwrap().matches("<SIXEL>").count();
+                let expected = if matches!(state, SprixelCell::Transparent) {
+                    0
+                } else {
+                    1
+                };
+                assert_eq!(
+                    count, expected,
+                    "cell ({col},{row}) state {state:?}: expected {expected} re-blits"
+                );
+            }
         }
     }
 }
