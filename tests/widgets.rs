@@ -771,6 +771,297 @@ fn table_zebra_uses_widget_color_override() {
     assert_eq!(tb.buffer().get(0, 4).style.bg, Some(slt::Color::Blue));
 }
 
+// ── v0.21.0: column constraints, multi-row selection, per-column renderer ──
+
+use slt::TableColumn;
+
+fn focus_table_events(events: Vec<slt::Event>) -> (Vec<slt::Event>, usize, usize) {
+    (events, 0, 1)
+}
+
+/// Overlay modifier keys onto every mouse event in the sequence.
+///
+/// `MouseEvent` is `#[non_exhaustive]`, so we mutate the public `modifiers`
+/// field on builder-produced events rather than constructing one literally.
+fn with_mouse_modifiers(mut events: Vec<slt::Event>, modifiers: KeyModifiers) -> Vec<slt::Event> {
+    for event in &mut events {
+        if let slt::Event::Mouse(mouse) = event {
+            mouse.modifiers = modifiers;
+        }
+    }
+    events
+}
+
+#[test]
+fn table_column_width_fixed_truncates() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name", "Note"], vec![vec!["averylongname", "x"]]);
+    table.column_widths_spec(&[TableColumn::Fixed(5), TableColumn::Auto]);
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    // The 13-char name is clamped to 5 cells with an ellipsis; the full name
+    // never appears.
+    assert!(!tb.to_string().contains("averylongname"));
+    tb.assert_contains("aver\u{2026}");
+}
+
+#[test]
+fn table_column_width_max_ellipsis() {
+    let mut tb = TestBackend::new(80, 10);
+    let long = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"; // 40 chars
+    let mut table = TableState::new(vec!["Data"], vec![vec![long]]);
+    table.column_widths_spec(&[TableColumn::Max(10)]);
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    let out = tb.to_string();
+    // The surviving prefix (first 9 chars + ellipsis) is present; the overflow
+    // tail is gone.
+    assert!(out.contains("012345678\u{2026}"));
+    assert!(!out.contains("ABCDEF"));
+}
+
+#[test]
+fn table_column_width_min_floors() {
+    // A 1-char column with Min(10) is padded so the header underline spans at
+    // least 10 cells. Observe the rendered separator width.
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["N"], vec![vec!["x"]]);
+    table.column_widths_spec(&[TableColumn::Min(10)]);
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    // The single-column separator is a run of box-drawing dashes at least 10
+    // cells wide (Min floor), far wider than the 1-char content.
+    let out = tb.to_string();
+    assert!(
+        out.contains(&"\u{2500}".repeat(10)),
+        "expected a >=10-cell separator run, got: {out:?}"
+    );
+}
+
+#[test]
+fn table_auto_width_unchanged_regression() {
+    // An all-Auto table renders identically to the pre-v0.21 string grid.
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"]],
+    );
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    let baseline = tb.to_string_trimmed();
+
+    // Re-render with an explicit empty spec — must be byte-identical.
+    let mut tb2 = TestBackend::new(60, 10);
+    let mut table2 = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"]],
+    );
+    table2.column_widths_spec(&[]);
+    tb2.render(|ui| {
+        ui.table(&mut table2);
+    });
+    assert_eq!(tb2.to_string_trimmed(), baseline);
+}
+
+#[test]
+fn table_multiselect_space_toggles_focused_row() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+
+    let (events, fi, pf) = focus_table_events(slt::EventBuilder::new().key(' ').build());
+    tb.render_with_events(events, fi, pf, |ui| {
+        ui.table(&mut table);
+    });
+    assert!(table.is_row_selected(0));
+    assert_eq!(table.multi_selected.len(), 1);
+}
+
+#[test]
+fn table_multiselect_shift_down_extends_range() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["a"], vec!["b"], vec!["c"], vec!["d"]],
+    );
+
+    // Space anchors row 0, then Shift+Down x2 extends the range to {0,1,2}.
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1, 2]);
+    assert_eq!(table.selected, 2);
+}
+
+#[test]
+fn table_multiselect_ctrl_space_toggles_without_clearing() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+
+    // Select {0,1,2} via Space + Shift+Down x2, then move cursor to row 1 and
+    // Ctrl+Space to toggle it out -> {0,2}.
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    // Cursor is at row 2; move up to row 1 (plain), then Ctrl+Space.
+    let events = slt::EventBuilder::new()
+        .key_code(KeyCode::Up)
+        .key_with(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 2]);
+}
+
+#[test]
+fn table_multiselect_mouse_click_and_shift_click() {
+    let mut tb = TestBackend::new(60, 12);
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["a"], vec!["b"], vec!["c"], vec!["d"]],
+    );
+
+    // Frame 1: render to populate the previous-frame hit map.
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    // Frame 2: plain click on the first data row (header + separator above).
+    // The container top is row 0, so data row 0 is at y = 2.
+    let click = slt::EventBuilder::new().click(1, 2).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.selected, 0);
+    assert!(table.is_row_selected(0));
+    assert_eq!(table.multi_selected.len(), 1);
+
+    // Frame 3: shift+click on data row 2 (y = 4) extends the range -> {0,1,2}.
+    let shift_click = with_mouse_modifiers(
+        slt::EventBuilder::new().click(1, 4).build(),
+        KeyModifiers::SHIFT,
+    );
+    tb.render_with_events(shift_click, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1, 2]);
+}
+
+#[test]
+fn table_selection_pruned_on_filter() {
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["apple"], vec!["banana"], vec!["cherry"]],
+    );
+    // Select all three rows directly via the public toggle path through render.
+    let mut tb = TestBackend::new(60, 10);
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.multi_selected.len(), 3);
+
+    // Filter down to a single row; stale view indices must be pruned.
+    table.set_filter("apple");
+    assert_eq!(table.visible_indices().len(), 1);
+    assert!(table.multi_selected.iter().all(|&i| i < 1));
+}
+
+#[test]
+fn table_selected_rows_ascending_order() {
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+    let mut tb = TestBackend::new(60, 10);
+    // Toggle row 0, move to row 2, toggle it (out-of-order set membership).
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_code(KeyCode::Down)
+        .key_code(KeyCode::Down)
+        .key_with(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    let rows = table.selected_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], "a");
+    assert_eq!(rows[1][0], "c");
+}
+
+#[test]
+fn table_with_per_column_renderer_styles_one_column() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Service", "Status"], vec![vec!["api", "OK"]]);
+
+    tb.render(|ui| {
+        ui.table_with(&mut table, |_row, col, raw| {
+            if col == 1 {
+                (raw.to_string(), slt::Style::new().fg(slt::Color::Green))
+            } else {
+                (raw.to_string(), slt::Style::default())
+            }
+        });
+    });
+
+    tb.assert_contains("api");
+    tb.assert_contains("OK");
+    // The styled status column emits a green foreground somewhere in the buffer.
+    let snapshot = tb.buffer().snapshot_format();
+    assert!(
+        snapshot.contains("green"),
+        "expected a green fg run in snapshot, got: {snapshot}"
+    );
+}
+
+#[test]
+fn table_response_changed_on_selection_toggle() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"]]);
+
+    // Idle frame: no change.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        let resp = ui.table(&mut table);
+        assert!(!resp.changed);
+    });
+
+    // Space toggles the selection set -> changed = true.
+    let events = slt::EventBuilder::new().key(' ').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        let resp = ui.table(&mut table);
+        assert!(resp.changed);
+    });
+}
+
 #[test]
 fn tabs_renders_labels() {
     let mut tb = TestBackend::new(40, 5);

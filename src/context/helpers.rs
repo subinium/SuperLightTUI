@@ -31,13 +31,51 @@ pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str
         if i > 0 {
             row.push_str(separator);
         }
-        let cell = cells.get(i).map(String::as_str).unwrap_or("");
-        let cell_width = UnicodeWidthStr::width(cell) as u32;
-        let padding = (*width).saturating_sub(cell_width) as usize;
-        row.push_str(cell);
-        row.extend(std::iter::repeat(' ').take(padding));
+        row.push_str(&clamp_table_cell(
+            cells.get(i).map(String::as_str).unwrap_or(""),
+            *width,
+        ));
     }
     row
+}
+
+/// Pad or truncate `cell` so its display width is exactly `width` cells.
+///
+/// Shorter content is right-padded with spaces (current behavior); longer
+/// content is truncated with a `…` ellipsis. With an `Auto` column the
+/// resolved width already equals the content width, so this is a pure pad —
+/// preserving the pre-v0.21 string-grid output byte-for-byte.
+pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
+    let width = width as usize;
+    let cell_width = UnicodeWidthStr::width(cell);
+    if cell_width <= width {
+        let mut out = String::with_capacity(width);
+        out.push_str(cell);
+        out.extend(std::iter::repeat(' ').take(width - cell_width));
+        return out;
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "\u{2026}".to_string();
+    }
+    let target = width - 1;
+    let mut out = String::with_capacity(width);
+    let mut acc = 0usize;
+    for ch in cell.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if acc + ch_width > target {
+            break;
+        }
+        out.push(ch);
+        acc += ch_width;
+    }
+    out.push('\u{2026}');
+    // Pad in case the last char was wide and left a one-cell gap before `…`.
+    let out_width = UnicodeWidthStr::width(out.as_str());
+    out.extend(std::iter::repeat(' ').take(width.saturating_sub(out_width)));
+    out
 }
 
 pub(crate) fn table_visible_len(state: &TableState) -> usize {

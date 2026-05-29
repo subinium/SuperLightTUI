@@ -180,7 +180,7 @@ pub use widgets::{
     FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
     MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
     ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
+    StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
     Trend,
 };

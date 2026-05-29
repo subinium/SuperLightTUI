@@ -296,21 +296,76 @@ impl TabsState {
     }
 }
 
+/// Per-column width policy for a [`TableState`].
+///
+/// Mirrors the semantics of [`GridColumn`] and
+/// [`WidthSpec`](crate::WidthSpec) for the string-grid table model. Apply a
+/// slice of these via [`TableState::column_widths_spec`]; columns without an
+/// entry (or set to [`TableColumn::Auto`]) keep the default content-derived
+/// sizing.
+///
+/// Available since v0.21.0.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{TableColumn, widgets::TableState};
+/// # slt::run(|ui: &mut slt::Context| {
+/// let mut table = TableState::new(
+///     vec!["Name", "Status"],
+///     vec![vec!["build", "ok"]],
+/// );
+/// // Pin the status column to 6 cells, leave the name column automatic.
+/// table.column_widths_spec(&[TableColumn::Auto, TableColumn::Fixed(6)]);
+/// ui.table(&mut table);
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TableColumn {
+    /// Size the column to its content (header + widest cell). Default.
+    Auto,
+    /// Exact cell width in character cells. Content is padded or truncated to fit.
+    Fixed(u32),
+    /// Content width, floored at `n` cells (never narrower than `n`).
+    Min(u32),
+    /// Content width, capped at `n` cells (truncated with an ellipsis if longer).
+    Max(u32),
+    /// Width as a percentage (`1..=100`) of the available table content width.
+    Percent(u8),
+}
+
 /// State for a data table widget.
 ///
 /// Pass a mutable reference to `Context::table` each frame. Up/Down arrow
 /// keys move the row selection when the widget is focused. Column widths are
-/// computed automatically from header and cell content.
+/// computed automatically from header and cell content, or constrained per
+/// column via [`column_widths_spec`](TableState::column_widths_spec).
+///
+/// Multi-row selection (Space / Shift+Up/Down / Ctrl+Space and modifier
+/// clicks) is tracked in [`multi_selected`](TableState::multi_selected); the
+/// `selected` field always remains the focused/cursor row.
 #[derive(Debug, Clone)]
 pub struct TableState {
     /// Column header labels.
     pub headers: Vec<String>,
     /// Table rows, each a `Vec` of cell strings.
     pub rows: Vec<Vec<String>>,
-    /// Index of the currently selected row.
+    /// Focused/cursor row (view index). Unchanged single-select semantics.
     pub selected: usize,
+    /// Multi-row selection as view indices. Empty means no multi-selection.
+    ///
+    /// Available since v0.21.0.
+    pub multi_selected: HashSet<usize>,
+    /// Range-selection anchor (view index) for Shift extension.
+    pub(crate) selection_anchor: Option<usize>,
+    /// Per-column width policy. Empty means every column is [`TableColumn::Auto`].
+    column_specs: Vec<TableColumn>,
     column_widths: Vec<u32>,
+    /// Content-derived widths before per-column specs are resolved.
+    content_widths: Vec<u32>,
     widths_dirty: bool,
+    /// Available content width used to resolve [`TableColumn::Percent`].
+    resolved_width: u32,
     /// Sorted column index (`None` means no sorting).
     pub sort_column: Option<usize>,
     /// Sort direction (`true` for ascending).
@@ -334,8 +389,13 @@ impl Default for TableState {
             headers: Vec::new(),
             rows: Vec::new(),
             selected: 0,
+            multi_selected: HashSet::new(),
+            selection_anchor: None,
+            column_specs: Vec::new(),
             column_widths: Vec::new(),
+            content_widths: Vec::new(),
             widths_dirty: true,
+            resolved_width: 0,
             sort_column: None,
             sort_ascending: true,
             filter: String::new(),
@@ -361,8 +421,13 @@ impl TableState {
             headers,
             rows,
             selected: 0,
+            multi_selected: HashSet::new(),
+            selection_anchor: None,
+            column_specs: Vec::new(),
             column_widths: Vec::new(),
+            content_widths: Vec::new(),
             widths_dirty: true,
+            resolved_width: 0,
             sort_column: None,
             sort_ascending: true,
             filter: String::new(),
@@ -479,6 +544,146 @@ impl TableState {
         self.rows.get(*data_idx).map(|r| r.as_slice())
     }
 
+    /// Set the per-column width policy.
+    ///
+    /// The slice is index-aligned with [`headers`](TableState::headers); a
+    /// shorter slice leaves trailing columns at [`TableColumn::Auto`]. Passing
+    /// an empty slice resets every column to automatic sizing.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{TableColumn, widgets::TableState};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(
+    ///     vec!["Name", "Note"],
+    ///     vec![vec!["a", "a very long note that should be capped"]],
+    /// );
+    /// table.column_widths_spec(&[TableColumn::Fixed(6), TableColumn::Max(10)]);
+    /// ui.table(&mut table);
+    /// # });
+    /// ```
+    pub fn column_widths_spec(&mut self, specs: &[TableColumn]) {
+        self.column_specs = specs.to_vec();
+        self.widths_dirty = true;
+    }
+
+    /// Return the multi-selected rows in ascending view order.
+    ///
+    /// View indices are resolved against the current sort/filter view, so the
+    /// returned slices reflect what the user sees. Stale indices (beyond the
+    /// current view) are skipped.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::TableState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(
+    ///     vec!["Name"],
+    ///     vec![vec!["a"], vec!["b"]],
+    /// );
+    /// ui.table(&mut table);
+    /// for row in table.selected_rows() {
+    ///     let _ = row;
+    /// }
+    /// # });
+    /// ```
+    pub fn selected_rows(&self) -> Vec<&[String]> {
+        let mut indices: Vec<usize> = self.multi_selected.iter().copied().collect();
+        indices.sort_unstable();
+        indices
+            .iter()
+            .filter_map(|&view_idx| self.view_indices.get(view_idx))
+            .filter_map(|&data_idx| self.rows.get(data_idx).map(|r| r.as_slice()))
+            .collect()
+    }
+
+    /// Returns `true` if the row at `view_idx` is in the multi-selection set.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::TableState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["a"]]);
+    /// ui.table(&mut table);
+    /// let _ = table.is_row_selected(0);
+    /// # });
+    /// ```
+    pub fn is_row_selected(&self, view_idx: usize) -> bool {
+        self.multi_selected.contains(&view_idx)
+    }
+
+    /// Clear the multi-selection set and the range anchor.
+    ///
+    /// The focused [`selected`](TableState::selected) cursor row is unaffected.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::widgets::TableState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(vec!["Name"], vec![vec!["a"]]);
+    /// ui.table(&mut table);
+    /// table.clear_selection();
+    /// # });
+    /// ```
+    pub fn clear_selection(&mut self) {
+        self.multi_selected.clear();
+        self.selection_anchor = None;
+    }
+
+    /// Toggle the multi-selection state for the row at `view_idx`, and set the
+    /// range anchor to it. Mirrors [`MultiSelectState::toggle`].
+    pub(crate) fn toggle_row(&mut self, view_idx: usize) {
+        if self.multi_selected.contains(&view_idx) {
+            self.multi_selected.remove(&view_idx);
+        } else {
+            self.multi_selected.insert(view_idx);
+        }
+        self.selection_anchor = Some(view_idx);
+    }
+
+    /// Replace the multi-selection with the single row at `view_idx` and reset
+    /// the anchor to it.
+    pub(crate) fn select_single(&mut self, view_idx: usize) {
+        self.multi_selected.clear();
+        self.multi_selected.insert(view_idx);
+        self.selection_anchor = Some(view_idx);
+    }
+
+    /// Select the inclusive contiguous range `[min(from,to)..=max(from,to)]`,
+    /// replacing the current multi-selection. The anchor is left at `from`.
+    pub(crate) fn select_range(&mut self, from: usize, to: usize) {
+        let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+        self.multi_selected.clear();
+        for idx in lo..=hi {
+            self.multi_selected.insert(idx);
+        }
+        self.selection_anchor = Some(from);
+    }
+
+    /// Remove any multi-selection indices that are no longer valid view
+    /// indices, and clamp the anchor. Called after the view is rebuilt.
+    fn prune_selection(&mut self) {
+        let view_len = self.view_indices.len();
+        self.multi_selected.retain(|&idx| idx < view_len);
+        if let Some(anchor) = self.selection_anchor {
+            if anchor >= view_len {
+                self.selection_anchor = None;
+            }
+        }
+    }
+
     /// Recompute view_indices based on current sort + filter settings.
     fn rebuild_view(&mut self) {
         let mut indices: Vec<usize> = (0..self.rows.len()).collect();
@@ -533,6 +738,7 @@ impl TableState {
         }
 
         self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        self.prune_selection();
         self.widths_dirty = true;
     }
 
@@ -564,29 +770,65 @@ impl TableState {
 
     pub(crate) fn recompute_widths(&mut self) {
         // Skip when no mutation since the last computation. `widths_dirty` is
-        // set by `rebuild_view` (covers `set_rows`, `set_filter`, sort) and at
-        // construction. Frames without data mutation become a no-op.
+        // set by `rebuild_view` (covers `set_rows`, `set_filter`, sort),
+        // `column_widths_spec`, and at construction. Frames without data
+        // mutation become a no-op.
         if !self.widths_dirty {
             return;
         }
         let col_count = self.headers.len();
-        self.column_widths = vec![0u32; col_count];
+        self.content_widths = vec![0u32; col_count];
         for (i, header) in self.headers.iter().enumerate() {
             let mut width = UnicodeWidthStr::width(header.as_str()) as u32;
             if self.sort_column == Some(i) {
                 width += 2;
             }
-            self.column_widths[i] = width;
+            self.content_widths[i] = width;
         }
         for row in &self.rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
                     let w = UnicodeWidthStr::width(cell.as_str()) as u32;
-                    self.column_widths[i] = self.column_widths[i].max(w);
+                    self.content_widths[i] = self.content_widths[i].max(w);
                 }
             }
         }
+        // Default resolved widths to the content widths; `resolve_column_widths`
+        // overlays the per-column specs each frame once the available width is
+        // known. When no spec is set this is the pre-v0.21 behavior verbatim.
+        self.column_widths = self.content_widths.clone();
         self.widths_dirty = false;
+    }
+
+    /// Resolve per-column width specs against the content widths, using
+    /// `available` as the total table content width for `Percent`. A no-op
+    /// when no spec is set, so all-`Auto` tables render byte-identically.
+    pub(crate) fn resolve_column_widths(&mut self, available: u32) {
+        if self.column_specs.is_empty() {
+            return;
+        }
+        // Re-derive base content widths if the available width changed since
+        // the last resolution (the previous frame may have shrunk a column).
+        if self.resolved_width != available {
+            self.column_widths = self.content_widths.clone();
+            self.resolved_width = available;
+        }
+        let col_count = self.column_widths.len();
+        for i in 0..col_count {
+            let content = self.content_widths.get(i).copied().unwrap_or(0);
+            let spec = self.column_specs.get(i).copied().unwrap_or(TableColumn::Auto);
+            let resolved = match spec {
+                TableColumn::Auto => content,
+                TableColumn::Fixed(n) => n,
+                TableColumn::Min(n) => content.max(n),
+                TableColumn::Max(n) => content.min(n),
+                TableColumn::Percent(pct) => {
+                    let pct = pct.clamp(1, 100) as u32;
+                    (available.saturating_mul(pct)) / 100
+                }
+            };
+            self.column_widths[i] = resolved;
+        }
     }
 
     pub(crate) fn column_widths(&self) -> &[u32] {
@@ -892,4 +1134,124 @@ pub enum GridColumn {
     Grow(u16),
     /// Column sized as a percentage (1–100) of the grid width.
     Percent(u8),
+}
+
+#[cfg(test)]
+mod table_v021_width_tests {
+    use super::TableColumn;
+    use super::TableState;
+
+    fn resolved(specs: &[TableColumn], content: &str, available: u32) -> u32 {
+        let mut state = TableState::new(vec!["H"], vec![vec![content]]);
+        state.column_widths_spec(specs);
+        state.recompute_widths();
+        state.resolve_column_widths(available);
+        state.column_widths()[0]
+    }
+
+    #[test]
+    fn fixed_overrides_content() {
+        assert_eq!(resolved(&[TableColumn::Fixed(5)], "averylongcell", 80), 5);
+        assert_eq!(resolved(&[TableColumn::Fixed(20)], "x", 80), 20);
+    }
+
+    #[test]
+    fn min_floors_content() {
+        // Content/header width is at most 1 here; Min raises it to 10.
+        assert_eq!(resolved(&[TableColumn::Min(10)], "x", 80), 10);
+        // Content already exceeds the floor -> unchanged.
+        assert_eq!(resolved(&[TableColumn::Min(2)], "abcdef", 80), 6);
+    }
+
+    #[test]
+    fn max_caps_content() {
+        assert_eq!(resolved(&[TableColumn::Max(4)], "abcdefghij", 80), 4);
+        // Content below the cap -> unchanged.
+        assert_eq!(resolved(&[TableColumn::Max(10)], "abc", 80), 3);
+    }
+
+    #[test]
+    fn percent_of_available() {
+        let mut state = TableState::new(vec!["A", "B"], vec![vec!["x", "y"]]);
+        state.column_widths_spec(&[TableColumn::Percent(50), TableColumn::Percent(50)]);
+        state.recompute_widths();
+        state.resolve_column_widths(40);
+        assert_eq!(state.column_widths(), &[20, 20]);
+    }
+
+    #[test]
+    fn auto_equals_content_width() {
+        // No spec -> resolve is a no-op and width is the content width.
+        assert_eq!(resolved(&[], "hello", 80), 5);
+        assert_eq!(resolved(&[TableColumn::Auto], "hello", 80), 5);
+    }
+
+    #[test]
+    fn select_range_fills_inclusive() {
+        let mut state = TableState::new(vec!["N"], vec![vec!["a"]; 5]);
+        state.select_range(1, 3);
+        let mut got: Vec<usize> = state.multi_selected.iter().copied().collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![1, 2, 3]);
+        // Reversed args produce the same inclusive set.
+        state.select_range(3, 1);
+        let mut got: Vec<usize> = state.multi_selected.iter().copied().collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn toggle_row_inserts_then_removes() {
+        let mut state = TableState::new(vec!["N"], vec![vec!["a"]; 3]);
+        state.toggle_row(1);
+        assert!(state.is_row_selected(1));
+        state.toggle_row(1);
+        assert!(!state.is_row_selected(1));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn fixed_min_max_invariants(
+            content_len in 0usize..40,
+            spec_kind in 0u8..4,
+            n in 0u32..30,
+            available in 1u32..200,
+        ) {
+            let content: String = "x".repeat(content_len);
+            let spec = match spec_kind {
+                0 => TableColumn::Fixed(n),
+                1 => TableColumn::Min(n),
+                2 => TableColumn::Max(n),
+                _ => TableColumn::Auto,
+            };
+            let w = resolved(&[spec], &content, available);
+            match spec {
+                TableColumn::Fixed(n) => proptest::prop_assert_eq!(w, n),
+                TableColumn::Min(n) => proptest::prop_assert!(w >= n),
+                TableColumn::Max(n) => proptest::prop_assert!(w <= n),
+                _ => {}
+            }
+        }
+
+        #[test]
+        fn percent_columns_never_exceed_available(
+            pcts in proptest::collection::vec(1u8..=100, 1..6),
+            available in 1u32..200,
+        ) {
+            let cols = pcts.len();
+            let headers: Vec<String> = (0..cols).map(|i| format!("H{i}")).collect();
+            let row: Vec<String> = (0..cols).map(|_| "v".to_string()).collect();
+            let mut state = TableState::new(headers, vec![row]);
+            let specs: Vec<TableColumn> = pcts.iter().map(|&p| TableColumn::Percent(p)).collect();
+            state.column_widths_spec(&specs);
+            state.recompute_widths();
+            state.resolve_column_widths(available);
+            // Each Percent column is floor(available * pct / 100) <= available.
+            for (&w, &p) in state.column_widths().iter().zip(pcts.iter()) {
+                let expected = (available.saturating_mul(p as u32)) / 100;
+                proptest::prop_assert_eq!(w, expected);
+                proptest::prop_assert!(w <= available);
+            }
+        }
+    }
 }
