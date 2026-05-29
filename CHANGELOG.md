@@ -10,6 +10,14 @@
 
 - **`ci(gallery)` — VHS gallery gate + tape coverage parity** (#274) — New `gallery` job renders every `.tape` in the repo through VHS and asserts each produces its declared `Output` asset at a non-trivial byte size, uploading the generated assets as a workflow artifact (no auto-commit). A `.tape` now exists for every gallery asset advertised in `README.md` (added `demo`, `demo_dashboard`, `demo_website`, `demo_game`, `demo_pretext`), and `tests/gallery_manifest.rs` (plain `cargo test`, no VHS) fails if README ↔ tape parity drifts. Replaces the manual "tmux verification for visual demos before release" release-checklist step.
 
+### Changed
+
+- **`refactor(context)` — `use_state_named` hook family naming unified** (#240) — The `_named` family now follows the "no-suffix = init closure" convention so it matches `use_state(init)` and `use_state_keyed(id, init)` (per `docs/NAMING.md` "find an analogous method, match its shape"). `Context::use_state_named(id, init)` now takes an init closure (previously required `T: Default`); the `T: Default` shorthand moved to the new `Context::use_state_named_default(id)`, mirroring `use_state_keyed_default`. `use_state_keyed` / `use_state_keyed_default` already matched and are unchanged. **Migration**: `use_state_named::<T>("id")` → `use_state_named_default::<T>("id")`; `use_state_named_with("id", init)` → `use_state_named("id", init)`.
+
+### Deprecated
+
+- **`deprecated(context)` — `Context::use_state_named_with`** (#240) — Now a `#[deprecated(since = "0.21.0")]` alias for the renamed `use_state_named(id, init)`. Same behavior (delegates directly), continues to compile with a deprecation warning until the planned v1.0 removal. Switch call sites to `use_state_named(id, init)`.
+
 ## [0.20.1] - 2026-04-29
 
 ### Deprecated

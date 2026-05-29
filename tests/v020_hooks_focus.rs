@@ -72,7 +72,7 @@ fn use_state_keyed_independent_from_named_namespace() {
     // collisions in one don't affect the other.
     let mut tb = TestBackend::new(40, 4);
     tb.render(|ui| {
-        let n = ui.use_state_named_with::<i32>("collision", || 1);
+        let n = ui.use_state_named::<i32>("collision", || 1);
         let k = ui.use_state_keyed("collision", || 2);
         *n.get_mut(ui) = 100;
         assert_eq!(*k.get(ui), 2, "keyed must not see named writes");

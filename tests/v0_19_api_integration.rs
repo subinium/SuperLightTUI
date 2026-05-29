@@ -1,7 +1,7 @@
 //! Integration tests for v0.19.0 component DX APIs.
 //!
 //! Exercises `provide` / `use_context` / `try_use_context`, the named
-//! variants of `use_state` (`use_state_named` / `use_state_named_with`),
+//! variants of `use_state` (`use_state_named` / `use_state_named_default`),
 //! and the `with_if` conditional modifier together in realistic
 //! combinations. Complements the unit-style tests in
 //! `tests/context_provider.rs`, `tests/use_state_named.rs`, and
@@ -76,11 +76,11 @@ fn try_use_context_missing_is_none() {
 fn use_state_named_persists() {
     let mut tb = TestBackend::new(40, 6);
     tb.render(|ui| {
-        let counter = ui.use_state_named::<i32>("counter");
+        let counter = ui.use_state_named_default::<i32>("counter");
         *counter.get_mut(ui) += 1;
     });
     tb.render(|ui| {
-        let counter = ui.use_state_named::<i32>("counter");
+        let counter = ui.use_state_named_default::<i32>("counter");
         *counter.get_mut(ui) += 1;
         let n = *counter.get(ui);
         ui.text(format!("count={n}"));
@@ -94,8 +94,8 @@ fn use_state_named_persists() {
 fn use_state_named_siblings_are_independent() {
     let mut tb = TestBackend::new(40, 6);
     tb.render(|ui| {
-        let a = ui.use_state_named_with::<i32>("a", || 10);
-        let b = ui.use_state_named_with::<i32>("b", || 20);
+        let a = ui.use_state_named::<i32>("a", || 10);
+        let b = ui.use_state_named::<i32>("b", || 20);
         let av = *a.get(ui);
         let bv = *b.get(ui);
         ui.text(format!("{av}/{bv}"));
@@ -146,7 +146,7 @@ fn combined_v0_19_apis() {
     let mut tb = TestBackend::new(40, 6);
     tb.render(|ui| {
         ui.provide(Cfg { emphasize: true }, |ui| {
-            let counter = ui.use_state_named::<i32>("combined_counter");
+            let counter = ui.use_state_named_default::<i32>("combined_counter");
             *counter.get_mut(ui) += 1;
             let n = *counter.get(ui);
             let emphasize = ui.use_context::<Cfg>().emphasize;
