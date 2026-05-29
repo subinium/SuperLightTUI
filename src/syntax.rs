@@ -6,24 +6,6 @@
 //! returns `None` so callers can fall back to the built-in keyword
 //! highlighter.
 
-#[cfg(any(
-    feature = "syntax-rust",
-    feature = "syntax-python",
-    feature = "syntax-javascript",
-    feature = "syntax-typescript",
-    feature = "syntax-go",
-    feature = "syntax-bash",
-    feature = "syntax-json",
-    feature = "syntax-toml",
-    feature = "syntax-c",
-    feature = "syntax-cpp",
-    feature = "syntax-java",
-    feature = "syntax-ruby",
-    feature = "syntax-css",
-    feature = "syntax-html",
-    feature = "syntax-yaml",
-))]
-use crate::style::Color;
 use crate::style::{Style, Theme};
 
 /// Ordered list of tree-sitter highlight capture names.
@@ -477,8 +459,11 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
 
 /// Map a tree-sitter highlight capture name to an SLT [`Style`].
 ///
-/// Colors follow the One Dark palette and flip between light/dark variants
-/// based on [`Theme::is_dark`].
+/// Colorful tokens resolve through the active theme's
+/// [`SyntaxPalette`](crate::SyntaxPalette) (`theme.syntax.*`), so code blocks
+/// adopt the selected theme instead of a hardcoded scheme. Neutral tokens
+/// (comments, operators, plain variables, punctuation) resolve through
+/// [`Theme::text`] / [`Theme::text_dim`].
 #[cfg(any(
     feature = "syntax-rust",
     feature = "syntax-python",
@@ -497,59 +482,19 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
     feature = "syntax-yaml",
 ))]
 fn highlight_name_to_style(name: &str, theme: &Theme) -> Style {
-    let dark = theme.is_dark;
+    let syntax = &theme.syntax;
     match name {
-        "keyword" => Style::new().fg(if dark {
-            Color::Rgb(198, 120, 221)
-        } else {
-            Color::Rgb(166, 38, 164)
-        }),
-        "string" | "string.special" => Style::new().fg(if dark {
-            Color::Rgb(152, 195, 121)
-        } else {
-            Color::Rgb(80, 161, 79)
-        }),
+        "keyword" => Style::new().fg(syntax.keyword),
+        "string" | "string.special" => Style::new().fg(syntax.string),
         "comment" => Style::new().fg(theme.text_dim).italic(),
-        "number" | "constant" | "constant.builtin" => Style::new().fg(if dark {
-            Color::Rgb(209, 154, 102)
-        } else {
-            Color::Rgb(152, 104, 1)
-        }),
-        "function" | "function.builtin" => Style::new().fg(if dark {
-            Color::Rgb(97, 175, 239)
-        } else {
-            Color::Rgb(64, 120, 242)
-        }),
-        "function.macro" => Style::new().fg(if dark {
-            Color::Rgb(86, 182, 194)
-        } else {
-            Color::Rgb(1, 132, 188)
-        }),
-        "type" | "type.builtin" | "constructor" => Style::new().fg(if dark {
-            Color::Rgb(229, 192, 123)
-        } else {
-            Color::Rgb(152, 104, 1)
-        }),
-        "variable.builtin" => Style::new().fg(if dark {
-            Color::Rgb(224, 108, 117)
-        } else {
-            Color::Rgb(166, 38, 164)
-        }),
-        "property" | "property.builtin" => Style::new().fg(if dark {
-            Color::Rgb(97, 175, 239)
-        } else {
-            Color::Rgb(64, 120, 242)
-        }),
-        "tag" => Style::new().fg(if dark {
-            Color::Rgb(224, 108, 117)
-        } else {
-            Color::Rgb(166, 38, 164)
-        }),
-        "attribute" => Style::new().fg(if dark {
-            Color::Rgb(209, 154, 102)
-        } else {
-            Color::Rgb(152, 104, 1)
-        }),
+        "number" | "constant" | "constant.builtin" => Style::new().fg(syntax.constant),
+        "function" | "function.builtin" => Style::new().fg(syntax.function),
+        "function.macro" => Style::new().fg(syntax.macro_),
+        "type" | "type.builtin" | "constructor" => Style::new().fg(syntax.type_),
+        "variable.builtin" => Style::new().fg(syntax.tag),
+        "property" | "property.builtin" => Style::new().fg(syntax.property),
+        "tag" => Style::new().fg(syntax.tag),
+        "attribute" => Style::new().fg(syntax.constant),
         "module" | "embedded" | "operator" | "variable" | "variable.parameter" => {
             Style::new().fg(theme.text)
         }
@@ -849,6 +794,70 @@ mod tests {
         let dark_styles: Vec<Style> = dark_result[0].iter().map(|(_, s)| *s).collect();
         let light_styles: Vec<Style> = light_result[0].iter().map(|(_, s)| *s).collect();
         assert_ne!(dark_styles, light_styles);
+    }
+
+    #[cfg(feature = "syntax-rust")]
+    #[test]
+    fn highlight_keyword_uses_theme_palette() {
+        // The `let` keyword should adopt each theme's syntax palette rather
+        // than a hardcoded One Dark color.
+        let nord = Theme::nord();
+        let catppuccin = Theme::catppuccin();
+
+        let kw_fg = |theme: &Theme| -> crate::style::Color {
+            let line = highlight_code("let x = 1;", "rust", theme).unwrap();
+            line[0]
+                .iter()
+                .find_map(|(text, style)| (text.as_str() == "let").then_some(style.fg.unwrap()))
+                .expect("`let` keyword segment present")
+        };
+
+        assert_eq!(kw_fg(&nord), nord.syntax.keyword);
+        assert_eq!(kw_fg(&catppuccin), catppuccin.syntax.keyword);
+        // The two themes resolve to different keyword colors — proving the
+        // old hardcoded One Dark purple is no longer used.
+        assert_ne!(nord.syntax.keyword, catppuccin.syntax.keyword);
+    }
+
+    #[cfg(feature = "syntax-rust")]
+    #[test]
+    fn code_block_renders_with_theme_syntax_palette() {
+        use crate::style::Theme;
+        use crate::test_utils::TestBackend;
+
+        let theme = Theme::tokyo_night();
+        let mut tb = TestBackend::new(40, 8);
+        tb.render(|ui| {
+            ui.set_theme(theme);
+            let _ = ui.code_block_lang("fn main() {}", "rust");
+        });
+
+        // The code text still renders.
+        tb.assert_contains("fn");
+        tb.assert_contains("main");
+
+        // Some keyword cell adopts Tokyo Night's keyword color, and the old
+        // hardcoded One Dark purple is absent from the buffer.
+        let one_dark_keyword = crate::style::Color::Rgb(198, 120, 221);
+        let buffer = tb.buffer();
+        let mut saw_theme_keyword = false;
+        for y in 0..tb.height() {
+            for x in 0..tb.width() {
+                let fg = buffer.get(x, y).style.fg;
+                assert_ne!(
+                    fg,
+                    Some(one_dark_keyword),
+                    "One Dark keyword color must not appear under Tokyo Night"
+                );
+                if fg == Some(theme.syntax.keyword) {
+                    saw_theme_keyword = true;
+                }
+            }
+        }
+        assert!(
+            saw_theme_keyword,
+            "expected a cell colored with Tokyo Night's keyword color"
+        );
     }
 
     #[cfg(feature = "syntax-rust")]

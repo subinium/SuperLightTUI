@@ -1054,6 +1054,7 @@ mod tests {
             fg: Some(Color::Red),
             bg: None,
             modifiers: Modifiers::NONE,
+            ..Style::new()
         };
         tb.assert_style_at(0, 0, expected);
     }

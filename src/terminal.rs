@@ -17,7 +17,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::{Buffer, KittyPlacement};
 use crate::rect::Rect;
-use crate::style::{Color, ColorDepth, Modifiers, Style};
+use crate::style::{Color, ColorDepth, Modifiers, Style, UnderlineStyle};
 
 /// Saturating cast from `u32` to `u16` — clamps to `u16::MAX` instead of truncating.
 #[inline]
@@ -1293,7 +1293,65 @@ fn apply_style_delta(
     if added.contains(Modifiers::STRIKETHROUGH) {
         queue!(w, SetAttribute(Attribute::CrossedOut))?;
     }
+    if removed.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::NoBlink))?;
+    }
+    if added.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::SlowBlink))?;
+    }
+    if removed.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::NotOverLined))?;
+    }
+    if added.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::OverLined))?;
+    }
+    // Underline style and color use raw escapes: crossterm 0.28 cannot
+    // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
+    // color reliably (its discriminants collide on these terminals).
+    if old.underline_style != new.underline_style {
+        write!(w, "\x1b[4:{}m", underline_style_param(new.underline_style))?;
+    }
+    if old.underline_color != new.underline_color {
+        emit_underline_color(w, new.underline_color, depth)?;
+    }
     Ok(())
+}
+
+/// Map an [`UnderlineStyle`] to its `CSI 4:Nm` subparameter value.
+fn underline_style_param(style: UnderlineStyle) -> u8 {
+    match style {
+        UnderlineStyle::Straight => 1,
+        UnderlineStyle::Double => 2,
+        UnderlineStyle::Curly => 3,
+        UnderlineStyle::Dotted => 4,
+        UnderlineStyle::Dashed => 5,
+    }
+}
+
+/// Emit the raw `SGR 58` underline-color sequence (or `SGR 59` to reset).
+///
+/// `None` resets the underline color to the foreground (`\x1b[59m`). Otherwise
+/// the color is downsampled to the terminal's depth: true-color emits
+/// `\x1b[58:2::r:g:bm`, while indexed/named colors emit `\x1b[58:5:im`.
+fn emit_underline_color(
+    w: &mut impl Write,
+    color: Option<Color>,
+    depth: ColorDepth,
+) -> io::Result<()> {
+    match color {
+        None => write!(w, "\x1b[59m"),
+        Some(c) => match c.downsampled(depth) {
+            Color::Reset => write!(w, "\x1b[59m"),
+            Color::Rgb(r, g, b) => write!(w, "\x1b[58:2::{r}:{g}:{b}m"),
+            Color::Indexed(i) => write!(w, "\x1b[58:5:{i}m"),
+            // Named colors have no direct SGR-58 form; resolve them to their
+            // RGB equivalent and emit a true-color underline sequence.
+            named => {
+                let (r, g, b) = named.to_rgb();
+                write!(w, "\x1b[58:2::{r}:{g}:{b}m")
+            }
+        },
+    }
 }
 
 fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
@@ -1321,6 +1379,22 @@ fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Resu
     }
     if m.contains(Modifiers::STRIKETHROUGH) {
         queue!(w, SetAttribute(Attribute::CrossedOut))?;
+    }
+    if m.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::SlowBlink))?;
+    }
+    if m.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::OverLined))?;
+    }
+    if style.underline_style != UnderlineStyle::Straight {
+        write!(
+            w,
+            "\x1b[4:{}m",
+            underline_style_param(style.underline_style)
+        )?;
+    }
+    if style.underline_color.is_some() {
+        emit_underline_color(w, style.underline_color, depth)?;
     }
     Ok(())
 }
@@ -2382,6 +2456,98 @@ mod tests {
         assert!(
             !s.contains("zzzzzz"),
             "matching row 2 must not flush: {s:?}"
+        );
+    }
+
+    fn delta_bytes(old: &Style, new: &Style) -> Vec<u8> {
+        let mut out = Vec::new();
+        apply_style_delta(&mut out, old, new, ColorDepth::TrueColor).unwrap();
+        out
+    }
+
+    fn contains_seq(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn apply_style_delta_emits_blink_set_and_reset() {
+        let on = delta_bytes(&Style::new(), &Style::new().blink());
+        // SGR 5 = SlowBlink.
+        assert!(contains_seq(&on, b"\x1b[5m"), "blink set: {on:?}");
+        let off = delta_bytes(&Style::new().blink(), &Style::new());
+        // SGR 25 = NoBlink.
+        assert!(contains_seq(&off, b"\x1b[25m"), "blink reset: {off:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_overline_set_and_reset() {
+        let on = delta_bytes(&Style::new(), &Style::new().overline());
+        // SGR 53 = OverLined.
+        assert!(contains_seq(&on, b"\x1b[53m"), "overline set: {on:?}");
+        let off = delta_bytes(&Style::new().overline(), &Style::new());
+        // SGR 55 = NotOverLined.
+        assert!(contains_seq(&off, b"\x1b[55m"), "overline reset: {off:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_curly_underline_subparameter() {
+        let out = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_style(UnderlineStyle::Curly),
+        );
+        assert!(contains_seq(&out, b"\x1b[4:3m"), "curly underline: {out:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_underline_color_and_reset() {
+        let set = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_color(Color::Rgb(255, 0, 0)),
+        );
+        assert!(
+            contains_seq(&set, b"\x1b[58:2::255:0:0m"),
+            "underline color set: {set:?}"
+        );
+        let clear = delta_bytes(
+            &Style::new().underline_color(Color::Rgb(255, 0, 0)),
+            &Style::new(),
+        );
+        assert!(
+            contains_seq(&clear, b"\x1b[59m"),
+            "underline color reset: {clear:?}"
+        );
+    }
+
+    #[test]
+    fn apply_style_delta_underline_color_indexed_uses_sgr_58_5() {
+        let out = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_color(Color::Indexed(42)),
+        );
+        assert!(
+            contains_seq(&out, b"\x1b[58:5:42m"),
+            "indexed underline: {out:?}"
+        );
+    }
+
+    #[test]
+    fn apply_style_full_emits_blink_overline_and_underline() {
+        let mut out = Vec::new();
+        let style = Style::new()
+            .blink()
+            .overline()
+            .underline_style(UnderlineStyle::Dotted)
+            .underline_color(Color::Rgb(0, 0, 255));
+        apply_style(&mut out, &style, ColorDepth::TrueColor).unwrap();
+        assert!(contains_seq(&out, b"\x1b[5m"), "blink: {out:?}");
+        assert!(contains_seq(&out, b"\x1b[53m"), "overline: {out:?}");
+        assert!(
+            contains_seq(&out, b"\x1b[4:4m"),
+            "dotted underline: {out:?}"
+        );
+        assert!(
+            contains_seq(&out, b"\x1b[58:2::0:0:255m"),
+            "underline color: {out:?}"
         );
     }
 }
