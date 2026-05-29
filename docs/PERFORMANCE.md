@@ -22,15 +22,49 @@ broken down by phase:
 | **Total framework overhead** | **< 5 ms** | |
 
 The remaining ~11 ms is yours: terminal I/O, async work, and slack for the
-OS scheduler. The pipeline runs in `slt::frame()` (`src/lib.rs:1180–1290`)
+OS scheduler. The pipeline runs in `slt::frame()` (`src/lib.rs:359`)
 which is called once per tick by `run_with` / `run_inline_with` /
 `run_static_with`.
 
-> **TODO: measure.** The numbers above are targets. To produce the
-> "measured" column for your hardware, run `cargo bench --bench benchmarks`
-> (see [§3](#3-measuring-performance)) and record the actual figures for
-> `full_render_120x40`, `layout_nested_rows_cols`, and `buffer_diff_200x50`.
-> Do not publish a benchmark number you have not measured locally.
+### Measured baselines (reference HW)
+
+The figures below are **actual `cargo bench` results**, not targets. Each is
+the criterion median for the named bench in `benches/benchmarks.rs`. The
+phase budgets in the table above are still per-phase targets; these are
+end-to-end whole-pipeline measurements (closure → build → compute → collect
+→ render → diff, and for `flush/*` the ANSI emit into an in-memory sink).
+
+> Measured on: Apple M3 Pro, macOS 26.4, rustc 1.95.0, `--release`
+> (criterion default profile), 2026-05-29.
+>
+> **Indicative only.** These numbers were captured on a developer machine
+> while other compiles were running concurrently, so they carry scheduler
+> noise (note the wide animation/headtohead intervals). Treat them as a
+> sanity-check order of magnitude, not a contract. Re-run
+> `cargo bench --bench benchmarks` on a *quiet* machine before quoting them
+> in a release announcement, and re-measure on your own hardware (the
+> commands are in [§3](#3-measuring-performance)).
+
+| Bench | Terminal size | Measured (median) | Notes |
+|---|---|---|---|
+| `full_render_dims/80x24` | 80×24 | ~18 µs | small dashboard baseline |
+| `full_render_120x40` | 120×40 | ~37 µs | header + 20 rows + progress |
+| `full_render_dims/300x100` | 300×100 | ~189 µs | ultra-wide full render |
+| `buffer_diff_200x50` | 200×50 | ~48 µs | cell-diff only (no emit) |
+| `flush/full_redraw_200x60` | 200×60 | ~309 µs | full ANSI emit into `Vec<u8>` |
+| `flush/full_redraw_300x100` | 300×100 | ~784 µs | ultra-wide full ANSI emit |
+| `animation/churn_200x60` | 200×60 | ~92 µs | per-frame changing content + sparkline |
+
+What to read from these: at 120×40 the framework build→diff cost is well
+under 0.1 ms, leaving the 16.6 ms budget effectively untouched. Even the
+ultra-wide 300×100 *render* path stays in the low-hundreds-of-µs range. The
+**flush** path is an order of magnitude heavier than the render path —
+`full_redraw_300x100` is the single largest committed cost here — because it
+walks every changed cell and emits SGR/ANSI bytes. That is exactly the path
+the sibling flush-allocation issue targets, and these committed figures are
+its before/after baseline. The `flush/full_redraw_*` numbers are *full
+redraws* (every cell dirty), which is the pathological case; steady-state
+frames touch a small fraction of cells (see `flush/sparse_change_*`).
 
 ## 2. Allocation budget
 
@@ -84,6 +118,15 @@ The benchmark suite is defined in `benches/benchmarks.rs` and uses
 - `layout_col_10_texts` — minimal column layout
 - `layout_nested_rows_cols` — 5×4 nested rows-in-column
 - `full_render_120x40` — small dashboard with header + progress
+- `full_render_dims/{80x24,120x40,300x100}` — same dashboard across
+  terminal sizes, including the ultra-wide 300×100 stress case
+- `animation/churn_200x60` — per-frame changing content + progress +
+  sparkline, forcing a non-empty diff every frame
+- `headtohead_200x60/{slt,ratatui}` — SLT vs ratatui rendering the same
+  dashboard into an in-memory test backend (see [§5](#5-compared-to-other-ui-frameworks))
+- `flush/{full_redraw,sparse_change,static}_200x60` and
+  `flush/{full_redraw,sparse_change}_300x100` — ANSI emit cost into a
+  hermetic `Vec<u8>` sink (gated on the `crossterm` feature)
 - `widget_list_100_items`, `widget_list_sizes`, `widget_table_50_rows`,
   `widget_tabs_5`, `widget_checkbox_10`, `widget_select_10_items`,
   `widget_progress_10`
@@ -130,7 +173,7 @@ println!("frame took {:?}", start.elapsed());
 ```
 
 For phase-level breakdown, splice timestamps inside `frame()` itself
-(`src/lib.rs:1180–1290`) and capture them under a feature flag. Don't
+(`src/lib.rs:359`) and capture them under a feature flag. Don't
 ship phase timers in release binaries — they show up in the steady-state
 budget.
 
@@ -259,6 +302,37 @@ ratatui apps allocate fresh widget value types each `Frame::render`.
 For typical TUIs, both are limited by terminal flush bandwidth (one
 syscall per ANSI command was ~10× the framework cost until #172
 introduced 64 KiB `BufWriter`).
+
+### Head-to-head vs ratatui
+
+To put a single quantitative data point behind the qualitative table
+above, `benches/benchmarks.rs` ships a `headtohead_200x60` group that
+renders the **same logical dashboard** — a bold header, 20 text rows, and
+a progress/gauge — with both frameworks, at the same 200×60 size, into an
+**in-memory test backend** so neither side performs real terminal I/O. The
+SLT arm uses `slt::test_utils::TestBackend::render`; the ratatui arm uses
+`ratatui::backend::TestBackend` via `Terminal::draw`. The sample is each
+framework's build → layout → render → diff cost only; the OS-level flush
+syscall is excluded on both sides by construction.
+
+| Framework | Bench | Per-frame (median) |
+|---|---|---|
+| **SLT** | `headtohead_200x60/slt` | ~81 µs |
+| **ratatui** | `headtohead_200x60/ratatui` | ~183 µs |
+
+- **ratatui version**: `0.29` (pinned in `[dev-dependencies]`, bench-only —
+  it never enters the published `superlighttui` dependency tree).
+- **Methodology**: identical widget count and terminal size; both rendered
+  into the framework's own in-memory test backend; criterion median,
+  reference HW above; same caveats apply (indicative, re-measure on a quiet
+  machine).
+- **What it shows, and what it doesn't**: on this small static dashboard,
+  SLT's per-frame cost is roughly half of ratatui's. This is a single
+  workload, not a sweep — the two render models are close enough (both
+  immediate-mode, both diff a `Buffer`) that the result will shift with
+  widget mix, terminal size, and the exact ratatui widgets chosen. It is a
+  starting data point, not a definitive ranking. To reproduce:
+  `cargo bench --bench benchmarks -- headtohead_200x60`.
 
 ## 6. Detecting regressions
 

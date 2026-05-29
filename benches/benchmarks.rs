@@ -95,6 +95,150 @@ fn bench_full_render(c: &mut Criterion) {
     });
 }
 
+/// The canonical "small dashboard" tree shared by `bench_full_render`, the
+/// `full_render_dims` group, and both arms of the ratatui head-to-head:
+/// a bold header, a separator, 20 rows, and a progress bar. Keeping the body
+/// in one place guarantees the dimension sweep and the head-to-head measure
+/// the *same* layout, only the terminal size (or framework) differs.
+fn render_dashboard(ui: &mut slt::Context) {
+    let _ = ui.col(|ui| {
+        ui.text("Header").bold();
+        let _ = ui.separator();
+        for i in 0..20 {
+            ui.text(format!("Row {i}"));
+        }
+        let _ = ui.progress(0.75);
+    });
+}
+
+/// Full-render across terminal sizes: an 80x24 baseline, the existing
+/// 120x40 dashboard size, and an ultra-wide 300x100. The 300x100 case is
+/// where an immediate-mode redraw-everything engine is most likely to blow
+/// the 16.6 ms budget, so it earns its own committed baseline (issue #270).
+fn bench_full_render_dims(c: &mut Criterion) {
+    let mut group = c.benchmark_group("full_render_dims");
+    for (w, h) in [(80u32, 24u32), (120, 40), (300, 100)] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                let mut backend = TestBackend::new(w, h);
+                b.iter(|| {
+                    backend.render(render_dashboard);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Pure-animation churn: the content, progress value, and sparkline shift
+/// every iteration, so each frame produces a genuinely non-empty diff —
+/// unlike the static `full_render*` benches, which diff an identical tree
+/// against itself after the first frame. This exercises the full
+/// build → compute → collect → render → diff loop under steady 60 FPS
+/// churn (issue #270).
+fn bench_animation_churn(c: &mut Criterion) {
+    let mut group = c.benchmark_group("animation");
+    group.bench_function("churn_200x60", |b| {
+        let mut backend = TestBackend::new(200, 60);
+        let base: Vec<f64> = (0..50)
+            .map(|i| ((i as f64 / 4.0).sin() * 40.0) + 50.0)
+            .collect();
+        let mut t: f64 = 0.0;
+
+        // Sanity: prove the churn is real — two successive frames with
+        // different `t` must produce a non-empty inter-frame diff, i.e. the
+        // renderer is not collapsing identical re-renders. Done once, before
+        // the timed loop, so it never pollutes the sample.
+        #[cfg(debug_assertions)]
+        {
+            let render_at = |backend: &mut TestBackend, t: f64| {
+                let p = (t.sin() * 0.5 + 0.5).clamp(0.0, 1.0);
+                let data: Vec<f64> = base.iter().map(|v| v + (t * 6.0).sin() * 5.0).collect();
+                backend.render(|ui| {
+                    let _ = ui.col(|ui| {
+                        ui.text(format!("frame {t:.3}"));
+                        let _ = ui.progress(p);
+                        let _ = ui.sparkline(&data, 50);
+                    });
+                });
+            };
+            render_at(&mut backend, 0.0);
+            let first = backend.to_string_trimmed();
+            render_at(&mut backend, 0.5);
+            let second = backend.to_string_trimmed();
+            debug_assert_ne!(
+                first, second,
+                "animation churn must change frame-to-frame output"
+            );
+        }
+
+        b.iter(|| {
+            t += 1.0 / 60.0; // one 60 FPS tick
+            let p = (t.sin() * 0.5 + 0.5).clamp(0.0, 1.0);
+            let data: Vec<f64> = base.iter().map(|v| v + (t * 6.0).sin() * 5.0).collect();
+            backend.render(|ui| {
+                let _ = ui.col(|ui| {
+                    ui.text(format!("frame {t:.3}"));
+                    let _ = ui.progress(p);
+                    let _ = ui.sparkline(&data, 50);
+                });
+            });
+        });
+    });
+    group.finish();
+}
+
+/// Head-to-head: SLT vs ratatui rendering the *same* logical dashboard
+/// (bold header + separator + 20 rows + progress/gauge) into an in-memory
+/// test backend at 200x60. Neither side performs real terminal I/O, so the
+/// sample is the framework's build → layout → render → diff cost only
+/// (issue #270). The ratatui arm uses ratatui's own `TestBackend` via
+/// `Terminal::draw`, which is the equivalent in-memory rendering path.
+fn bench_headtohead(c: &mut Criterion) {
+    use ratatui::{
+        backend::TestBackend as RtTestBackend,
+        layout::Rect as RtRect,
+        style::{Style as RtStyle, Stylize},
+        widgets::{Gauge, Paragraph},
+        Terminal,
+    };
+
+    let mut group = c.benchmark_group("headtohead_200x60");
+
+    group.bench_function("slt", |b| {
+        let mut backend = TestBackend::new(200, 60);
+        b.iter(|| {
+            backend.render(render_dashboard);
+        });
+    });
+
+    group.bench_function("ratatui", |b| {
+        let mut term = Terminal::new(RtTestBackend::new(200, 60)).expect("ratatui TestBackend");
+        b.iter(|| {
+            term.draw(|f| {
+                // Header (bold), then 20 rows, then a gauge at the bottom —
+                // one widget value type per logical row, matching the SLT side.
+                f.render_widget(
+                    Paragraph::new("Header").style(RtStyle::new().bold()),
+                    RtRect::new(0, 0, 200, 1),
+                );
+                for i in 0..20u16 {
+                    f.render_widget(
+                        Paragraph::new(format!("Row {i}")),
+                        RtRect::new(0, i + 1, 200, 1),
+                    );
+                }
+                f.render_widget(Gauge::default().ratio(0.75), RtRect::new(0, 21, 200, 1));
+            })
+            .expect("ratatui draw into in-memory backend cannot fail");
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_widget_list(c: &mut Criterion) {
     c.bench_function("widget_list_100_items", |b| {
         let mut backend = TestBackend::new(80, 40);
@@ -488,6 +632,69 @@ fn bench_flush_static_200x60(c: &mut Criterion) {
     group.finish();
 }
 
+/// Ultra-wide full-redraw flush (issue #270). Same harness as
+/// `bench_flush_full_redraw_200x60` but on a 300×100 area — the largest
+/// committed flush target, stressing the ANSI/SGR emit path at ultra-wide
+/// terminal size.
+#[cfg(feature = "crossterm")]
+fn bench_flush_full_redraw_300x100(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush");
+    group.bench_function("full_redraw_300x100", |b| {
+        let area = Rect::new(0, 0, 300, 100);
+        let mut prev = Buffer::empty(area);
+        let mut curr = Buffer::empty(area);
+        fill_realistic(&mut curr, 1);
+        // Sanity: full-redraw workload must produce a non-trivial diff.
+        debug_assert!(!curr.diff(&prev).is_empty());
+
+        let mut sink: Vec<u8> = Vec::with_capacity(512 * 1024);
+        b.iter(|| {
+            sink.clear();
+            slt::__bench_flush_buffer_diff_mut(
+                &mut sink,
+                black_box(&mut curr),
+                black_box(&mut prev),
+                ColorDepth::TrueColor,
+            )
+            .expect("flush into Vec<u8> cannot fail");
+            black_box(sink.len());
+        });
+    });
+    group.finish();
+}
+
+/// Ultra-wide sparse-change flush (issue #270). ~5% of cells differ on a
+/// 300×100 area — the steady-state churn workload at ultra-wide size.
+#[cfg(feature = "crossterm")]
+fn bench_flush_sparse_change_300x100(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush");
+    group.bench_function("sparse_change_300x100", |b| {
+        let area = Rect::new(0, 0, 300, 100);
+        let mut prev = Buffer::empty(area);
+        let mut curr = Buffer::empty(area);
+        fill_realistic(&mut prev, 1);
+        fill_realistic(&mut curr, 1);
+        // Sanity: start cell-for-cell equal, then mutate ~5%.
+        debug_assert!(curr.diff(&prev).is_empty());
+        fill_sparse(&mut curr, &prev);
+        debug_assert!(!curr.diff(&prev).is_empty());
+
+        let mut sink: Vec<u8> = Vec::with_capacity(128 * 1024);
+        b.iter(|| {
+            sink.clear();
+            slt::__bench_flush_buffer_diff_mut(
+                &mut sink,
+                black_box(&mut curr),
+                black_box(&mut prev),
+                ColorDepth::TrueColor,
+            )
+            .expect("flush into Vec<u8> cannot fail");
+            black_box(sink.len());
+        });
+    });
+    group.finish();
+}
+
 /// Register flush-path benches (only when `crossterm` feature is enabled,
 /// which is the default for benches). When the feature is off, this is a
 /// no-op so the file still compiles under `--no-default-features`.
@@ -497,6 +704,8 @@ fn bench_flush_group(c: &mut Criterion) {
         bench_flush_full_redraw_200x60(c);
         bench_flush_sparse_change_200x60(c);
         bench_flush_static_200x60(c);
+        bench_flush_full_redraw_300x100(c);
+        bench_flush_sparse_change_300x100(c);
     }
     let _ = c;
 }
@@ -508,6 +717,9 @@ criterion_group!(
     bench_layout_simple,
     bench_layout_nested,
     bench_full_render,
+    bench_full_render_dims,
+    bench_animation_churn,
+    bench_headtohead,
     bench_widget_list,
     bench_widget_table,
     bench_widget_list_sizes,

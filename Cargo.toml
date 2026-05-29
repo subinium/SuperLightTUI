@@ -69,6 +69,10 @@ signal-hook = { version = "0.3", optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
 proptest = "1"
+# Head-to-head reference for the `headtohead_200x60` bench (issue #270).
+# Bench-only — never enters the published `superlighttui` dependency tree, so
+# crates.io / docs.rs builds and downstream consumers are unaffected.
+ratatui = "0.29"
 serde_json = "1"
 
 [features]
