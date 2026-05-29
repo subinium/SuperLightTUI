@@ -30,8 +30,14 @@ name = "slt"
 [dependencies]
 crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
-unicode-segmentation = "1"
+# Upper-bounded for MSRV 1.81: unicode-segmentation 1.13+ requires rustc 1.85.
+unicode-segmentation = ">=1.0, <1.13"
 smallvec = "1"
+# MSRV 1.81 pin only (not used directly): a transitive dep via `toml`
+# (the `serde`/`theme-watch` features). indexmap 2.10+ requires the
+# `edition2024` Cargo feature (rustc 1.85), which breaks the MSRV gate's
+# `cargo generate-lockfile` + 1.81 check. Bound it below that.
+indexmap = ">=2.0, <2.10"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 toml = { version = "0.8", optional = true }
