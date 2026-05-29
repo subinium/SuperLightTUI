@@ -150,6 +150,7 @@ impl Context {
             clipboard_text: None,
             debug: diagnostics.debug_mode,
             debug_layer: diagnostics.debug_layer,
+            inspector_mode: diagnostics.inspector_mode,
             theme,
             is_real_terminal: false,
             deferred_draws,

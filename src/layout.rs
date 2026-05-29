@@ -21,7 +21,7 @@ pub(crate) use collect::{collect_all, FrameData};
 pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
-pub(crate) use render::{render, render_debug_overlay};
+pub(crate) use render::{render, render_debug_overlay, render_inspector, InspectorFocus};
 pub(crate) use tree::{build_tree, wrap_lines, wrap_segments, LayoutNode, NodeKind};
 
 /// Test-only entry point exposing `wrap_segments` for allocation-budget tests.

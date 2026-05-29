@@ -57,6 +57,10 @@ pub struct Context {
     /// from `state.diagnostics.debug_layer` at frame start and written back
     /// at frame end so [`Context::set_debug_layer`] persists across frames.
     pub(crate) debug_layer: crate::DebugLayer,
+    /// Issue #268: whether the devtools inspector panel (Ctrl+F12) is active.
+    /// Read from `state.diagnostics.inspector_mode` at frame start and written
+    /// back at frame end so [`Context::set_inspector`] persists across frames.
+    pub(crate) inspector_mode: bool,
     pub(crate) theme: Theme,
     pub(crate) is_real_terminal: bool,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,

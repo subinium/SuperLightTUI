@@ -832,6 +832,10 @@ pub(crate) struct DiagnosticsState {
     pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
     pub debug_layer: DebugLayer,
+    /// Issue #268: whether the devtools inspector panel (Ctrl+F12) is active.
+    /// Independent of `debug_mode`/`debug_layer`. Round-trips through
+    /// `Context::inspector_mode` like `debug_layer` so `set_inspector` persists.
+    pub inspector_mode: bool,
     pub fps_ema: f32,
 }
 
@@ -1535,6 +1539,16 @@ pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_res
         Event::FocusLost => {
             state.layout_feedback.last_mouse_pos = None;
         }
+        // Issue #268: Ctrl+F12 toggles the devtools inspector panel
+        // independently of the F12 outline overlay and the Shift+F12 layer
+        // cycle. Match before the Shift/NONE arms so the Control branch wins.
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if modifiers.contains(event::KeyModifiers::CONTROL) => {
+            state.diagnostics.inspector_mode = !state.diagnostics.inspector_mode;
+        }
         // Issue #201: Shift+F12 cycles the active `DebugLayer`. Match
         // before the plain-F12 arm so the modifier branch wins. Plain
         // F12 keeps its legacy on/off toggle when no modifiers are
@@ -1706,6 +1720,8 @@ pub(crate) fn run_frame_kernel(
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
+        // Issue #268: persist any in-frame `set_inspector` change on quit too.
+        state.diagnostics.inspector_mode = ctx.inspector_mode;
         // Issue #208 / #217: persist focus tracking state on quit so a later
         // resumed run starts in a sensible place. (Real TUI exits before
         // resuming, but tests reuse `FrameState` across calls.)
@@ -1869,6 +1885,8 @@ pub(crate) fn run_frame_kernel(
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
     state.diagnostics.debug_layer = ctx.debug_layer;
+    // Issue #268: persist any in-frame `set_inspector` change.
+    state.diagnostics.inspector_mode = ctx.inspector_mode;
     // Issue #208: remember the focus index that finished this frame so the
     // next frame can compute `Response::gained_focus` / `lost_focus`.
     state.focus.prev_focus_index = Some(ctx.focus_index);
@@ -1935,6 +1953,20 @@ pub(crate) fn run_frame_kernel(
             state.diagnostics.fps_ema,
             state.diagnostics.debug_layer,
         );
+    }
+    // Issue #268: render the devtools inspector panel (Ctrl+F12) on top of the
+    // frame. Reuses the already-built tree and the focus snapshot threaded in
+    // from `FrameState` (no new traversal beyond one focused-node DFS). The
+    // name map was already swapped into `focus_name_map_prev` above, so it
+    // reflects this frame's registrations.
+    if state.diagnostics.inspector_mode {
+        let focus = layout::InspectorFocus {
+            focus_index: state.focus.focus_index,
+            focus_count: state.focus.prev_focus_count,
+            names: &state.focus.focus_name_map_prev,
+            theme: &config.theme,
+        };
+        layout::render_inspector(&tree, buffer, &focus);
     }
 
     FrameKernelResult {
@@ -2113,6 +2145,57 @@ mod run_loop_tests {
         let before = state.diagnostics.debug_layer;
         process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
         assert_eq!(state.diagnostics.debug_layer, before);
+    }
+
+    // ── Issue #268: Ctrl+F12 devtools inspector toggle ───────────────────
+
+    #[test]
+    fn ctrl_f12_toggles_inspector_independently() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        assert!(!state.diagnostics.inspector_mode);
+
+        // Ctrl+F12 flips the inspector without touching debug overlay state.
+        process_run_loop_event(
+            &key(event::KeyModifiers::CONTROL),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(state.diagnostics.inspector_mode);
+        assert!(
+            !state.diagnostics.debug_mode,
+            "Ctrl+F12 must not toggle the F12 outline overlay"
+        );
+        assert_eq!(
+            state.diagnostics.debug_layer,
+            DebugLayer::All,
+            "Ctrl+F12 must not cycle the debug layer"
+        );
+
+        // A second Ctrl+F12 toggles it back off.
+        process_run_loop_event(
+            &key(event::KeyModifiers::CONTROL),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(!state.diagnostics.inspector_mode);
+    }
+
+    #[test]
+    fn plain_and_shift_f12_do_not_touch_inspector() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        // Plain F12 (overlay toggle) leaves the inspector alone.
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(state.diagnostics.debug_mode);
+        assert!(!state.diagnostics.inspector_mode);
+        // Shift+F12 (layer cycle) also leaves the inspector alone.
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(!state.diagnostics.inspector_mode);
     }
 
     // ── Issue #263: RunConfig::handle_suspend ────────────────────────────

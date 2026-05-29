@@ -317,6 +317,210 @@ fn render_debug_overlay_inner(
     }
 }
 
+/// Read-only snapshot of focus state threaded in from `FrameState` (issue #268).
+///
+/// The inspector overlay (Ctrl+F12) renders entirely from data the frame
+/// pipeline already collected, so this struct only borrows — it allocates
+/// nothing and triggers no new tree traversal beyond the single DFS in
+/// [`find_focused_node`].
+pub(crate) struct InspectorFocus<'a> {
+    /// Index of the currently focused widget (settled value for the frame).
+    pub focus_index: usize,
+    /// Number of focusable widgets registered last frame (chain length).
+    pub focus_count: usize,
+    /// `name -> focus_index`, from `focus_name_map_prev`.
+    pub names: &'a std::collections::HashMap<String, usize>,
+    /// Live theme used for the panel chrome (surface / border / text).
+    pub theme: &'a crate::style::Theme,
+}
+
+/// Render the devtools inspector overlay (issue #268).
+///
+/// Draws two panels on top of the frame: a *style panel* for the focused
+/// widget (focus index/name, layout rect, resolved fg/bg, padding, and
+/// constraints) and a *focus-chain panel* listing every focusable in order
+/// with a `>` cursor on the current focus and the registered name for any
+/// named entry. When nothing is focusable a single notice line is drawn.
+///
+/// This is a pure render-time overlay: it reuses the already-built layout
+/// tree (one DFS to locate the focused node) and the focus snapshot threaded
+/// in from `FrameState`. It is toggled independently of the F12 outline
+/// overlay via Ctrl+F12.
+pub(crate) fn render_inspector(root: &LayoutNode, buf: &mut Buffer, focus: &InspectorFocus<'_>) {
+    if buf.area.width == 0 || buf.area.height == 0 {
+        return;
+    }
+    if focus.focus_count == 0 {
+        render_inspector_notice(buf, focus.theme, "[SLT Inspector] no focusable widgets");
+        return;
+    }
+    // `focus_index` can exceed `focus_count` between frames (it wraps lazily
+    // inside `register_focusable`); normalize so the lookup and the chain
+    // cursor agree on which slot is current.
+    let current = focus.focus_index % focus.focus_count;
+    if let Some(node) = find_focused_node(root, current) {
+        render_style_panel(node, buf, focus, current);
+    }
+    render_focus_chain_panel(buf, focus, current);
+}
+
+/// DFS for the layout node whose `focus_id` matches `focus_id` (issue #268).
+///
+/// Walks children first, then overlays, so a focusable nested inside a
+/// tooltip/modal overlay is still resolved.
+fn find_focused_node(node: &LayoutNode, focus_id: usize) -> Option<&LayoutNode> {
+    if node.focus_id == Some(focus_id) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|c| find_focused_node(c, focus_id))
+        .or_else(|| {
+            node.overlays
+                .iter()
+                .find_map(|o| find_focused_node(&o.node, focus_id))
+        })
+}
+
+/// Format a [`Color`] human-readably for the inspector (issue #268).
+///
+/// Named colors print as their name (`Cyan`), RGB as `#rrggbb`, indexed as
+/// `idx(N)`, and [`Color::Reset`] as `default`.
+fn fmt_color(c: Color) -> String {
+    match c {
+        Color::Reset => "default".to_string(),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Color::Indexed(i) => format!("idx({i})"),
+        named => format!("{named:?}"),
+    }
+}
+
+/// Format the optional resolved color of a style slot, or `default` when unset.
+fn fmt_opt_color(c: Option<Color>) -> String {
+    c.map(fmt_color).unwrap_or_else(|| "default".to_string())
+}
+
+/// Draw a single themed notice line at the top-left (no-focusable case).
+fn render_inspector_notice(buf: &mut Buffer, theme: &crate::style::Theme, msg: &str) {
+    let style = Style::new().fg(theme.surface_text).bg(theme.surface);
+    let width = buf.area.width as usize;
+    let fill: String = " ".repeat(msg.chars().count().min(width));
+    buf.set_string(buf.area.x, buf.area.y, &fill, style);
+    buf.set_string(buf.area.x, buf.area.y, msg, style);
+}
+
+/// Render the focused-widget resolved-style panel at the top-left corner.
+///
+/// Each line is clamped to the buffer width (`set_string` clips the right
+/// edge, mirroring `render_debug_status_bar`). The panel never grows past the
+/// buffer height because it stops drawing once `y` reaches the bottom.
+fn render_style_panel(
+    node: &LayoutNode,
+    buf: &mut Buffer,
+    focus: &InspectorFocus<'_>,
+    current: usize,
+) {
+    let theme = focus.theme;
+    let text = Style::new().fg(theme.surface_text).bg(theme.surface);
+    let head = Style::new().fg(theme.border).bg(theme.surface).bold();
+
+    let name = focus
+        .names
+        .iter()
+        .find_map(|(n, &i)| (i == current).then_some(n.as_str()))
+        .unwrap_or("<unnamed>");
+    let p = node.padding;
+
+    let mut lines: Vec<(String, Style)> = Vec::with_capacity(7);
+    lines.push(("[SLT Inspector] focused widget".to_string(), head));
+    lines.push((format!("index: {current}  name: {name}"), text));
+    lines.push((
+        format!(
+            "rect: {},{} {}x{}",
+            node.pos.0, node.pos.1, node.size.0, node.size.1
+        ),
+        text,
+    ));
+    lines.push((format!("fg: {}", fmt_opt_color(node.style.fg)), text));
+    lines.push((
+        format!("bg: {}", fmt_opt_color(node.bg_color.or(node.style.bg))),
+        text,
+    ));
+    lines.push((
+        format!("padding: l{} r{} t{} b{}", p.left, p.right, p.top, p.bottom),
+        text,
+    ));
+    lines.push((format!("constraints: {:?}", node.constraints), text));
+
+    let max_w = lines
+        .iter()
+        .map(|(s, _)| s.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = (max_w as u32).min(buf.area.width);
+    let x = buf.area.x;
+    for (i, (line, style)) in lines.iter().enumerate() {
+        let y = buf.area.y + i as u32;
+        if y >= buf.area.bottom() {
+            break;
+        }
+        let fill: String = " ".repeat(width as usize);
+        buf.set_string(x, y, &fill, *style);
+        buf.set_string(x, y, line, *style);
+    }
+}
+
+/// Render the ordered focus-chain panel at the top-right corner.
+///
+/// Lists indices `0..focus_count`, marks the current focus with a `>`
+/// cursor, and appends the registered name for any named entry. Truncates to
+/// the available height; the first line is a header.
+fn render_focus_chain_panel(buf: &mut Buffer, focus: &InspectorFocus<'_>, current: usize) {
+    let theme = focus.theme;
+    let text = Style::new().fg(theme.surface_text).bg(theme.surface);
+    let head = Style::new().fg(theme.border).bg(theme.surface).bold();
+    let cursor = Style::new().fg(theme.border).bg(theme.surface).bold();
+
+    let mut lines: Vec<(String, Style)> = Vec::with_capacity(focus.focus_count + 1);
+    lines.push((
+        format!("[SLT Inspector] focus chain ({})", focus.focus_count),
+        head,
+    ));
+    // Truncate the list to what fits below the header.
+    let max_rows = buf.area.height.saturating_sub(1) as usize;
+    for idx in 0..focus.focus_count.min(max_rows) {
+        let marker = if idx == current { ">" } else { " " };
+        let name = focus
+            .names
+            .iter()
+            .find_map(|(n, &i)| (i == idx).then_some(n.as_str()));
+        let line = match name {
+            Some(n) => format!("{marker} {idx}: {n}"),
+            None => format!("{marker} {idx}"),
+        };
+        let style = if idx == current { cursor } else { text };
+        lines.push((line, style));
+    }
+
+    let max_w = lines
+        .iter()
+        .map(|(s, _)| s.chars().count())
+        .max()
+        .unwrap_or(0) as u32;
+    let panel_w = max_w.min(buf.area.width);
+    // Right-align the panel; clamp so a narrow buffer keeps it on-screen.
+    let x = buf.area.right().saturating_sub(panel_w).max(buf.area.x);
+    for (i, (line, style)) in lines.iter().enumerate() {
+        let y = buf.area.y + i as u32;
+        if y >= buf.area.bottom() {
+            break;
+        }
+        let fill: String = " ".repeat(panel_w as usize);
+        buf.set_string(x, y, &fill, *style);
+        buf.set_string(x, y, line, *style);
+    }
+}
+
 /// Pick an outline color from the layer family + depth.
 ///
 /// Each [`LayerTint`] gets a distinct base hue so layers stay visually
@@ -804,6 +1008,7 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use super::tree::default_container_config;
     use super::*;
 
     #[test]
@@ -915,5 +1120,256 @@ mod tests {
         // Right border must be intact
         let right_border = buf.get(9, 0).symbol.chars().next().unwrap_or(' ');
         assert_eq!(right_border, '┐', "right border must not be overwritten");
+    }
+
+    // ─── Issue #268: devtools inspector ───
+
+    #[test]
+    fn inspector_color_formatting() {
+        assert_eq!(fmt_color(Color::Rgb(255, 0, 0)), "#ff0000");
+        assert_eq!(fmt_color(Color::Rgb(18, 52, 86)), "#123456");
+        assert_eq!(fmt_color(Color::Cyan), "Cyan");
+        assert_eq!(fmt_color(Color::Reset), "default");
+        assert_eq!(fmt_color(Color::Indexed(8)), "idx(8)");
+        // Optional slot: `None` reads as `default`, `Some` delegates.
+        assert_eq!(fmt_opt_color(None), "default");
+        assert_eq!(fmt_opt_color(Some(Color::Red)), "Red");
+    }
+
+    #[test]
+    fn find_focused_node_walks_overlays() {
+        // A focusable nested inside an overlay must still resolve, since the
+        // DFS walks `node.children` then `node.overlays`.
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+
+        // Base child with a different focus id.
+        let mut base = LayoutNode::container(Direction::Column, default_container_config());
+        base.focus_id = Some(0);
+        root.children.push(base);
+
+        // Overlay carrying the focusable we want (id 1).
+        let mut overlay_child =
+            LayoutNode::container(Direction::Column, default_container_config());
+        overlay_child.focus_id = Some(1);
+        let mut overlay_root = LayoutNode::container(Direction::Column, default_container_config());
+        overlay_root.children.push(overlay_child);
+        root.overlays.push(super::tree::OverlayLayer {
+            node: overlay_root,
+            modal: false,
+        });
+
+        let found = find_focused_node(&root, 1).expect("overlay focusable must resolve");
+        assert_eq!(found.focus_id, Some(1));
+        // Base id still resolves via the children branch.
+        assert_eq!(
+            find_focused_node(&root, 0).and_then(|n| n.focus_id),
+            Some(0)
+        );
+        // Missing id returns None (no panic).
+        assert!(find_focused_node(&root, 9).is_none());
+    }
+
+    #[test]
+    fn inspector_no_focusables_renders_notice() {
+        let theme = crate::style::Theme::dark();
+        let names = std::collections::HashMap::new();
+        let focus = InspectorFocus {
+            focus_index: 0,
+            focus_count: 0,
+            names: &names,
+            theme: &theme,
+        };
+        let root = LayoutNode::container(Direction::Column, default_container_config());
+        let mut buf = Buffer::empty(Rect::new(0, 0, 60, 10));
+        render_inspector(&root, &mut buf, &focus);
+
+        let mut top = String::new();
+        for x in 0..60 {
+            top.push_str(&buf.get(x, 0).symbol);
+        }
+        assert!(
+            top.contains("no focusable widgets"),
+            "expected no-focusable notice; got {top:?}"
+        );
+    }
+
+    #[test]
+    fn inspector_style_panel_shows_focused_widget() {
+        use crate::style::Padding;
+        let theme = crate::style::Theme::dark();
+        let names = std::collections::HashMap::new();
+
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+        let mut focused = LayoutNode::container(Direction::Column, default_container_config());
+        focused.focus_id = Some(0);
+        focused.pos = (4, 2);
+        focused.size = (12, 3);
+        focused.padding = Padding {
+            top: 1,
+            right: 2,
+            bottom: 3,
+            left: 4,
+        };
+        focused.style.fg = Some(Color::Cyan);
+        focused.bg_color = Some(Color::Rgb(255, 0, 0));
+        root.children.push(focused);
+
+        let focus = InspectorFocus {
+            focus_index: 0,
+            focus_count: 1,
+            names: &names,
+            theme: &theme,
+        };
+        // Wide buffer so the left style panel and the right-aligned chain
+        // panel do not overlap on shared rows.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 120, 10));
+        render_inspector(&root, &mut buf, &focus);
+
+        // Collect the whole buffer into lines for assertions.
+        let mut text = String::new();
+        for y in 0..10 {
+            for x in 0..120 {
+                text.push_str(&buf.get(x, y).symbol);
+            }
+            text.push('\n');
+        }
+        assert!(
+            text.contains("focused widget"),
+            "panel header; got {text:?}"
+        );
+        assert!(text.contains("index: 0"), "focus index; got {text:?}");
+        assert!(text.contains("<unnamed>"), "unnamed marker; got {text:?}");
+        assert!(text.contains("rect: 4,2 12x3"), "rect line; got {text:?}");
+        assert!(text.contains("fg: Cyan"), "fg color; got {text:?}");
+        assert!(text.contains("bg: #ff0000"), "bg color; got {text:?}");
+        assert!(
+            text.contains("padding: l4 r2 t1 b3"),
+            "padding line; got {text:?}"
+        );
+        assert!(
+            text.contains("constraints:"),
+            "constraints line; got {text:?}"
+        );
+        // Focus-chain panel header is present too.
+        assert!(
+            text.contains("focus chain (1)"),
+            "chain header; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn inspector_focus_chain_marks_current() {
+        let theme = crate::style::Theme::dark();
+        let names = std::collections::HashMap::new();
+
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+        for id in 0..3 {
+            let mut n = LayoutNode::container(Direction::Column, default_container_config());
+            n.focus_id = Some(id);
+            n.pos = (0, id as u32);
+            n.size = (5, 1);
+            root.children.push(n);
+        }
+
+        let focus = InspectorFocus {
+            focus_index: 1,
+            focus_count: 3,
+            names: &names,
+            theme: &theme,
+        };
+        // Wide buffer so the left style panel and the right-aligned chain panel
+        // never share columns; this isolates the chain cursor for the scan.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 120, 10));
+        render_inspector(&root, &mut buf, &focus);
+
+        // The chain panel is right-aligned, so each chain row's text lives in
+        // the right half of the buffer. Scan the right half only and record
+        // which `idx` carries the `>` cursor marker.
+        let split = 80u32; // right of any left-panel content
+        let mut cursor_indices = Vec::new();
+        for y in 0..10 {
+            let mut right = String::new();
+            for x in split..120 {
+                right.push_str(&buf.get(x, y).symbol);
+            }
+            let trimmed = right.trim();
+            if trimmed.contains("chain") || trimmed.is_empty() {
+                continue; // header / blank rows
+            }
+            if let Some(rest) = trimmed.strip_prefix("> ") {
+                // "> 1" → capture the index after the cursor marker.
+                if let Ok(idx) = rest.trim().parse::<usize>() {
+                    cursor_indices.push(idx);
+                }
+            }
+        }
+        assert_eq!(
+            cursor_indices,
+            vec![1],
+            "exactly index 1 must carry the `>` cursor (not 0/2); got {cursor_indices:?}"
+        );
+    }
+
+    #[test]
+    fn inspector_named_focus_in_chain() {
+        let theme = crate::style::Theme::dark();
+        let mut names = std::collections::HashMap::new();
+        names.insert("search".to_string(), 1usize);
+
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+        for id in 0..2 {
+            let mut n = LayoutNode::container(Direction::Column, default_container_config());
+            n.focus_id = Some(id);
+            n.size = (5, 1);
+            root.children.push(n);
+        }
+
+        let focus = InspectorFocus {
+            focus_index: 1,
+            focus_count: 2,
+            names: &names,
+            theme: &theme,
+        };
+        // Wide buffer so the left style panel and right chain panel are clear.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 120, 10));
+        render_inspector(&root, &mut buf, &focus);
+
+        let mut text = String::new();
+        for y in 0..10 {
+            for x in 0..120 {
+                text.push_str(&buf.get(x, y).symbol);
+            }
+            text.push('\n');
+        }
+        assert!(
+            text.contains("search"),
+            "named focus chain entry must show its name; got {text:?}"
+        );
+        // The style panel name line resolves the same map.
+        assert!(
+            text.contains("name: search"),
+            "style panel must show focused widget's name; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn inspector_clamps_to_tiny_buffer() {
+        // A 1x1 buffer must not panic and must not write out of bounds.
+        let theme = crate::style::Theme::dark();
+        let names = std::collections::HashMap::new();
+        let mut root = LayoutNode::container(Direction::Column, default_container_config());
+        let mut n = LayoutNode::container(Direction::Column, default_container_config());
+        n.focus_id = Some(0);
+        n.size = (1, 1);
+        root.children.push(n);
+
+        let focus = InspectorFocus {
+            focus_index: 0,
+            focus_count: 1,
+            names: &names,
+            theme: &theme,
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+        render_inspector(&root, &mut buf, &focus);
     }
 }
