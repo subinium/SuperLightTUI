@@ -1584,15 +1584,22 @@ mod tests {
                 prop_assert_eq!(reorder_line_visual(&s), s);
             }
 
-            /// Reorder is a permutation, not a width change: the total display
-            /// width of the reordered line equals the original's width.
+            /// Reorder is a pure permutation of scalar values: it never adds,
+            /// drops, or mutates a codepoint.
+            ///
+            /// Note: total *display width* is deliberately NOT asserted —
+            /// `unicode-width` 0.2 is contextual (e.g. Arabic lam+alef forms a
+            /// single-cell ligature while alef+lam does not), so reordering can
+            /// legitimately change the rendered cell count. The invariant that
+            /// actually holds is multiset equality of `char`s.
             #[test]
-            fn reorder_preserves_total_display_width(
+            fn reorder_is_codepoint_permutation(
                 s in "[a-z\\x{05D0}-\\x{05EA}\\x{0627}-\\x{064A}0-9 ]{0,48}"
             ) {
-                use unicode_width::UnicodeWidthStr;
-                let before = UnicodeWidthStr::width(s.as_str());
-                let after = UnicodeWidthStr::width(reorder_line_visual(&s).as_str());
+                let mut before: Vec<char> = s.chars().collect();
+                let mut after: Vec<char> = reorder_line_visual(&s).chars().collect();
+                before.sort_unstable();
+                after.sort_unstable();
                 prop_assert_eq!(before, after);
             }
         }

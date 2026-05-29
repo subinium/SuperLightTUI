@@ -1703,6 +1703,7 @@ mod tests {
             mode: snapshot.mode,
             mouse_enabled: snapshot.mouse_enabled,
             kitty_keyboard: snapshot.kitty_keyboard,
+            report_all_keys: snapshot.report_all_keys,
         };
         let mut enter_bytes = Vec::new();
         write_session_enter(&mut enter_bytes, &guard).unwrap();
