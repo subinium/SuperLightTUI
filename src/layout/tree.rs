@@ -12,7 +12,20 @@ use super::*;
 /// post-split it should be substantially smaller. If a future field
 /// addition pushes this past the bound, either box the new field or audit
 /// whether the addition needs to live on `LayoutNode` at all.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 320);
+///
+/// Bumped 320 → 328 for the flex-wrap / flex-basis fields (#258):
+/// `cross_gap: i32` (4 bytes) and `flex_basis_raw: u32` (4 bytes), the two
+/// new scalar layout properties read by `flexbox::layout_row`. The
+/// `wrap_children: bool` flag packs into existing bool padding and adds
+/// nothing. Both are scalars (no heap, no niche), so this is the minimum
+/// footprint for the feature; boxing two 4-byte fields would cost a pointer
+/// (8 bytes) plus an allocation per wrapping container, a net loss.
+///
+/// Bumped 328 → 336 for the horizontal-scroll fields (#247):
+/// `scroll_offset_x: u32` (4 bytes) and `content_width: u32` (4 bytes), the
+/// x-axis mirror of `scroll_offset` / `content_height`. Same scalar rationale
+/// as #258 — boxing 4-byte fields would cost more than it saves.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 336);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -68,8 +81,44 @@ pub(crate) struct LayoutNode {
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
     pub(crate) wrap: bool,
+    /// Opt-in container-level flex-wrap flag. Default `false`.
+    ///
+    /// Set by `build_children` when a [`Command::WrapMarker`] precedes the
+    /// node's `Begin*` command. Read by [`super::flexbox::layout_row`]: when
+    /// set, row children that overflow the available width flow onto
+    /// subsequent lines (multi-line row) rather than overflowing past the
+    /// right edge. Applies to `Direction::Row` only; a no-op for columns.
+    /// Distinct from [`LayoutNode::wrap`], which is text line-wrapping.
+    /// Closes #258.
+    pub(crate) wrap_children: bool,
     pub(crate) truncate: bool,
-    pub(crate) gap: u32,
+    /// Inter-child gap on the main axis, in cells.
+    ///
+    /// Signed: a negative value (set via
+    /// [`ContainerBuilder::gap_overlap`](crate::ContainerBuilder::gap_overlap))
+    /// makes adjacent children overlap by `-gap` cells, e.g. so two bordered
+    /// panels share a border column/row. Positive values space children apart
+    /// as usual. Same 4-byte size as the previous `u32` — no layout-node
+    /// budget impact (#222).
+    pub(crate) gap: i32,
+    /// Cross-axis (between-line) gap for a wrapping row, in cells.
+    ///
+    /// Only meaningful when [`LayoutNode::wrap_children`] is set on a
+    /// `Direction::Row` container. Resolves to `row_gap` when set, else the
+    /// main-axis `gap`. Within-line spacing continues to use
+    /// [`LayoutNode::gap`]. Closes #258.
+    pub(crate) cross_gap: i32,
+    /// Optional flex-basis: the initial main-axis size (in cells) that
+    /// `grow` grows from and `shrink` (#161) shrinks from.
+    ///
+    /// Stored as a `u32` with [`LayoutNode::NO_BASIS`] (`u32::MAX`) meaning
+    /// "unset" — a sentinel rather than `Option<u32>` so the field is 4 bytes,
+    /// keeping `LayoutNode` within its size budget (the niche of
+    /// `Option<u32>` would cost 8). Unset falls back to
+    /// [`LayoutNode::min_width`] (the historic base size), so unflagged
+    /// children keep their current sizing. Read via [`LayoutNode::flex_basis`].
+    /// Set by `build_children` from a [`Command::BasisMarker`]. Closes #258.
+    pub(crate) flex_basis_raw: u32,
     pub(crate) border: Option<Border>,
     pub(crate) border_sides: BorderSides,
     pub(crate) border_style: Style,
@@ -84,6 +133,20 @@ pub(crate) struct LayoutNode {
     pub(crate) is_scrollable: bool,
     pub(crate) scroll_offset: u32,
     pub(crate) content_height: u32,
+    /// Horizontal scroll offset in cells (#247).
+    ///
+    /// The x-axis mirror of [`LayoutNode::scroll_offset`]. Non-zero only for a
+    /// scrollable `Direction::Row` container; render and collect subtract it
+    /// from child x-positions exactly as `scroll_offset` is subtracted on the
+    /// y-axis.
+    pub(crate) scroll_offset_x: u32,
+    /// Total content width in cells for a scrollable row (#247).
+    ///
+    /// The x-axis mirror of [`LayoutNode::content_height`]. Set by
+    /// `flexbox::compute` to the natural width of the children when a
+    /// scrollable row overflows its viewport; `0` for every non-scrollable
+    /// container and for scrollable columns.
+    pub(crate) content_width: u32,
     pub(crate) focus_id: Option<usize>,
     pub(crate) interaction_id: Option<usize>,
     pub(crate) link_url: Option<String>,
@@ -98,7 +161,8 @@ pub(crate) struct LayoutNode {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ContainerConfig {
-    pub(crate) gap: u32,
+    /// See [`LayoutNode::gap`] — signed inter-child gap (negative = overlap).
+    pub(crate) gap: i32,
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) justify: Justify,
@@ -114,6 +178,23 @@ pub(crate) struct ContainerConfig {
 }
 
 impl LayoutNode {
+    /// Sentinel value for [`LayoutNode::flex_basis_raw`] meaning "no basis
+    /// set" (fall back to `min_width`). Chosen as `u32::MAX` because a real
+    /// flex-basis that large is never a meaningful main-axis size. Closes #258.
+    pub(crate) const NO_BASIS: u32 = u32::MAX;
+
+    /// The resolved flex-basis, or `None` when unset (`NO_BASIS`).
+    ///
+    /// Reads the [`LayoutNode::flex_basis_raw`] sentinel field. Closes #258.
+    #[inline]
+    pub(crate) fn flex_basis(&self) -> Option<u32> {
+        if self.flex_basis_raw == Self::NO_BASIS {
+            None
+        } else {
+            Some(self.flex_basis_raw)
+        }
+    }
+
     /// Get a shared reference to the text-only payload.
     ///
     /// Returns `None` for non-text variants. Use this everywhere the
@@ -160,6 +241,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate,
             gap: 0,
             border: None,
@@ -176,6 +260,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -208,6 +294,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -224,6 +313,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -243,6 +334,9 @@ impl LayoutNode {
             align_self: config.align_self,
             justify: config.justify,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: config.gap,
             border: config.border,
@@ -259,6 +353,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -293,6 +389,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -312,6 +411,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id,
             interaction_id,
             link_url: None,
@@ -331,6 +432,9 @@ impl LayoutNode {
             align_self: None,
             justify: Justify::Start,
             wrap: false,
+            wrap_children: false,
+            flex_basis_raw: Self::NO_BASIS,
+            cross_gap: 0,
             truncate: false,
             gap: 0,
             border: None,
@@ -347,6 +451,8 @@ impl LayoutNode {
             is_scrollable: false,
             scroll_offset: 0,
             content_height: 0,
+            scroll_offset_x: 0,
+            content_width: 0,
             focus_id: None,
             interaction_id: None,
             link_url: None,
@@ -408,13 +514,15 @@ impl LayoutNode {
             NodeKind::Text => self.size.0,
             NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
             NodeKind::Container(Direction::Row) => {
-                let gaps = if self.children.is_empty() {
+                let gaps: i64 = if self.children.is_empty() {
                     0
                 } else {
-                    (self.children.len() as u32 - 1) * self.gap
+                    (self.children.len() as i64 - 1) * self.gap as i64
                 };
                 let children_width: u32 = self.children.iter().map(|c| c.min_width()).sum();
-                children_width + gaps + self.frame_horizontal()
+                // `gaps` may be negative for overlap (#222); clamp the total at 0
+                // so a small intrinsic width never wraps the `u32` subtraction.
+                ((children_width as i64 + gaps).max(0) as u32) + self.frame_horizontal()
             }
             NodeKind::Container(Direction::Column) => {
                 self.children
@@ -447,13 +555,14 @@ impl LayoutNode {
                     + self.frame_vertical()
             }
             NodeKind::Container(Direction::Column) => {
-                let gaps = if self.children.is_empty() {
+                let gaps: i64 = if self.children.is_empty() {
                     0
                 } else {
-                    (self.children.len() as u32 - 1) * self.gap
+                    (self.children.len() as i64 - 1) * self.gap as i64
                 };
                 let children_height: u32 = self.children.iter().map(|c| c.min_height()).sum();
-                children_height + gaps + self.frame_vertical()
+                // `gaps` may be negative for overlap (#222); clamp at 0.
+                ((children_height as i64 + gaps).max(0) as u32) + self.frame_vertical()
             }
         };
 
@@ -501,8 +610,80 @@ impl LayoutNode {
                 let lines = self.ensure_wrapped_for_width(inner_width);
                 lines.saturating_add(self.margin.vertical())
             }
+            // A wrapping row's height depends on how many lines its children
+            // flow onto at `available_width`, so it cannot be derived from the
+            // width-independent `min_height`. Partition the children greedily
+            // (mirroring `flexbox::layout_row`'s wrap pass) and sum each line's
+            // tallest child plus the between-line cross-axis gap. Closes #258.
+            NodeKind::Container(Direction::Row) if self.wrap_children => {
+                self.wrapped_min_height(available_width)
+            }
             _ => self.min_height(),
         }
+    }
+
+    /// Intrinsic height of a wrapping row at a given available width.
+    ///
+    /// Greedily partitions the children into lines by accumulated main-axis
+    /// width (`flex_basis` else `min_width`, plus the within-line gap), then
+    /// sums each line's tallest child plus the cross-axis (between-line) gap.
+    /// A child wider than the inner width occupies its own line. The result
+    /// is clamped against the container's own `constraints` / `margin`, and
+    /// the cross-axis gap total is clamped at 0 so an overlap gap never wraps
+    /// the unsigned height. Closes #258.
+    fn wrapped_min_height(&mut self, available_width: u32) -> u32 {
+        let inner_width = available_width
+            .saturating_sub(self.margin.horizontal())
+            .saturating_sub(self.frame_horizontal());
+
+        // Snapshot per-child base widths / heights (immutable borrow ends
+        // before we touch `self.constraints` below).
+        let gap = self.gap;
+        let cross_gap = self.cross_gap;
+        let mut line_count: u32 = 0;
+        let mut total_lines_height: u32 = 0;
+        let mut cur_width: i64 = 0;
+        let mut cur_line_height: u32 = 0;
+        let mut cur_has_child = false;
+
+        for child in &self.children {
+            let base = child.flex_basis().unwrap_or_else(|| child.min_width());
+            let child_height = child.min_height();
+            if cur_has_child {
+                // Would adding this child (plus the within-line gap) overflow?
+                let prospective = cur_width + gap as i64 + base as i64;
+                if prospective > inner_width as i64 {
+                    // Flush the current line and start a new one with this child.
+                    line_count += 1;
+                    total_lines_height = total_lines_height.saturating_add(cur_line_height);
+                    cur_width = base as i64;
+                    cur_line_height = child_height;
+                } else {
+                    cur_width = prospective;
+                    cur_line_height = cur_line_height.max(child_height);
+                }
+            } else {
+                cur_width = base as i64;
+                cur_line_height = child_height;
+                cur_has_child = true;
+            }
+        }
+        if cur_has_child {
+            line_count += 1;
+            total_lines_height = total_lines_height.saturating_add(cur_line_height);
+        }
+
+        // Between-line cross-axis gaps: `(line_count - 1) * cross_gap`,
+        // clamped at 0 for overlap gaps.
+        let gap_total = if line_count > 1 {
+            ((line_count as i64 - 1) * cross_gap as i64).max(0) as u32
+        } else {
+            0
+        };
+        let content_height = total_lines_height.saturating_add(gap_total);
+        let height = content_height + self.frame_vertical();
+        let height = height.max(self.constraints.min_height().unwrap_or(0));
+        height.saturating_add(self.margin.vertical())
     }
 }
 
@@ -511,7 +692,13 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         return vec![String::new()];
     }
     if max_width == 0 {
-        return vec![text.to_string()];
+        // No width budget: honor hard breaks only, and never let a control
+        // char reach a cell. `split('\n')` (not `str::lines()`) keeps a trailing
+        // empty line so every '\n' opens a fresh line.
+        return text
+            .split('\n')
+            .map(|p| p.strip_suffix('\r').unwrap_or(p).to_string())
+            .collect();
     }
 
     // Words and chunks are referred to by byte ranges `(start, end)` into `text`,
@@ -533,10 +720,14 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         let mut chunk_end = word_start;
         let mut chunk_width: u32 = 0;
 
-        for (rel_i, ch) in slice.char_indices() {
+        // Chunk at grapheme-cluster boundaries: a cluster (ZWJ flag, family
+        // emoji, Indic / Thai syllable) is never sliced. A cluster wider than
+        // `max_width` is emitted whole on its own chunk, mirroring the
+        // single-wide-char behavior.
+        for (rel_i, g) in slice.grapheme_indices(true) {
             let abs_i = word_start + rel_i;
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            let ch_len = ch.len_utf8();
+            let ch_width = UnicodeWidthStr::width(g) as u32;
+            let ch_len = g.len();
 
             if chunk_end == chunk_start {
                 if ch_width > max_width {
@@ -675,55 +866,132 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
     }
 
     let mut lines: Vec<String> = Vec::new();
-    let mut current_line_words: Vec<(usize, usize)> = Vec::new();
-    let mut current_width: u32 = 0;
     let mut chunk_buf: Vec<((usize, usize), u32)> = Vec::new();
 
-    let mut word_start: usize = 0;
-    let mut word_width: u32 = 0;
+    // Resolve hard line breaks first: split on '\n' (CRLF-normalized), then
+    // soft-wrap each paragraph independently. `split('\n')` (not `str::lines()`)
+    // is deliberate so a trailing '\n' yields a trailing empty line — every
+    // '\n' opens a fresh line.
+    for raw_paragraph in text.split('\n') {
+        let paragraph = raw_paragraph.strip_suffix('\r').unwrap_or(raw_paragraph);
+        let lines_before = lines.len();
 
-    for (i, ch) in text.char_indices() {
-        if ch == ' ' {
-            push_word(
-                text,
-                &mut lines,
-                &mut current_line_words,
-                &mut current_width,
-                &mut chunk_buf,
-                word_start,
-                i,
-                word_width,
-                max_width,
-            );
-            word_start = i + 1; // ASCII space is 1 byte
-            word_width = 0;
-            continue;
+        let mut current_line_words: Vec<(usize, usize)> = Vec::new();
+        let mut current_width: u32 = 0;
+        let mut word_start: usize = 0;
+        let mut word_width: u32 = 0;
+
+        // Iterate by grapheme cluster so word width accumulates per
+        // user-perceived character; a greedy break can therefore never land
+        // inside a cluster (ZWJ flag, family emoji, Indic / Thai syllable).
+        // Space detection compares the cluster to a single-space string — a
+        // bare ASCII space is its own cluster.
+        for (i, g) in paragraph.grapheme_indices(true) {
+            if g == " " {
+                push_word(
+                    paragraph,
+                    &mut lines,
+                    &mut current_line_words,
+                    &mut current_width,
+                    &mut chunk_buf,
+                    word_start,
+                    i,
+                    word_width,
+                    max_width,
+                );
+                word_start = i + 1; // ASCII space is 1 byte
+                word_width = 0;
+                continue;
+            }
+            word_width += UnicodeWidthStr::width(g) as u32;
         }
-        word_width += UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+
+        push_word(
+            paragraph,
+            &mut lines,
+            &mut current_line_words,
+            &mut current_width,
+            &mut chunk_buf,
+            word_start,
+            paragraph.len(),
+            word_width,
+            max_width,
+        );
+
+        flush_line(paragraph, &mut lines, &mut current_line_words);
+
+        // An empty paragraph (consecutive / leading / trailing '\n', or an
+        // all-whitespace run that trims to nothing) contributes one blank line.
+        if lines.len() == lines_before {
+            lines.push(String::new());
+        }
     }
 
-    push_word(
-        text,
-        &mut lines,
-        &mut current_line_words,
-        &mut current_width,
-        &mut chunk_buf,
-        word_start,
-        text.len(),
-        word_width,
-        max_width,
-    );
+    lines
+}
 
-    flush_line(text, &mut lines, &mut current_line_words);
+/// Split a styled-segment run into paragraph groups on hard line breaks
+/// (`'\n'`), normalizing `"\r\n"` to a single break. Each returned group is a
+/// segment list with no embedded newlines.
+fn split_segments_on_newline(segments: &[(String, Style)]) -> Vec<Vec<(String, Style)>> {
+    let mut groups: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut cur: Vec<(String, Style)> = Vec::new();
+    for (text, style) in segments {
+        let pieces: Vec<&str> = text.split('\n').collect();
+        let last_idx = pieces.len() - 1;
+        for (idx, piece) in pieces.iter().enumerate() {
+            let piece = piece.strip_suffix('\r').unwrap_or(piece);
+            if !piece.is_empty() {
+                cur.push((piece.to_string(), *style));
+            }
+            if idx < last_idx {
+                // A '\n' followed this piece — close the current paragraph.
+                groups.push(std::mem::take(&mut cur));
+            }
+        }
+    }
+    groups.push(cur);
+    groups
+}
 
+/// Wrap styled segments to `max_width`, honoring embedded hard line breaks
+/// (`'\n'`, with `"\r\n"` normalized) in addition to soft word wrapping. Hard
+/// breaks are resolved first by splitting into paragraphs; each paragraph is
+/// word-wrapped independently and the results are concatenated.
+pub(crate) fn wrap_segments(
+    segments: &[(String, Style)],
+    max_width: u32,
+) -> Vec<Vec<(String, Style)>> {
+    if max_width == 0 || segments.is_empty() {
+        return vec![vec![]];
+    }
+    if !segments.iter().any(|(seg_text, _)| !seg_text.is_empty()) {
+        return vec![vec![]];
+    }
+
+    // Fast path: with no hard break anywhere, behave exactly like the single
+    // paragraph kernel (and skip the split allocation) so output stays
+    // byte-identical for the common no-newline case.
+    if !segments.iter().any(|(seg_text, _)| seg_text.contains('\n')) {
+        return wrap_segments_paragraph(segments, max_width);
+    }
+
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+    for group in split_segments_on_newline(segments) {
+        // An empty / all-empty group yields `[[]]` (one blank line) from the
+        // paragraph kernel — exactly what a bare '\n' should produce — so
+        // unconditionally extend.
+        lines.extend(wrap_segments_paragraph(&group, max_width));
+    }
     if lines.is_empty() {
-        vec![String::new()]
+        vec![vec![]]
     } else {
         lines
     }
 }
 
-pub(crate) fn wrap_segments(
+/// Word-wrap a single newline-free styled-segment paragraph to `max_width`.
+fn wrap_segments_paragraph(
     segments: &[(String, Style)],
     max_width: u32,
 ) -> Vec<Vec<(String, Style)>> {
@@ -771,11 +1039,11 @@ pub(crate) fn wrap_segments(
                     break;
                 }
                 let s = segments[cur_seg].0.as_str();
-                let ch = s[cur_off..]
-                    .chars()
+                let g = s[cur_off..]
+                    .graphemes(true)
                     .next()
-                    .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
-                if ch == ' ' {
+                    .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
+                if g == " " {
                     cur_off += 1; // ASCII space is 1 byte
                     continue;
                 }
@@ -804,12 +1072,15 @@ pub(crate) fn wrap_segments(
             }
             let s = segments[cur_seg].0.as_str();
             let style = segments[cur_seg].1;
-            let ch = s[cur_off..]
-                .chars()
+            // Advance by grapheme cluster within the current segment so a
+            // cluster (ZWJ emoji, combining sequence) never spans a wrap
+            // break. Width is measured on the whole cluster.
+            let g = s[cur_off..]
+                .graphemes(true)
                 .next()
-                .expect("advance_past_empty guarantees cur_off < s.len() with a valid char");
-            let ch_len = ch.len_utf8();
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+                .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
+            let ch_len = g.len();
+            let ch_width = UnicodeWidthStr::width(g) as u32;
 
             if line_width + ch_width > max_width && line_width > 0 {
                 if let Some((segs_len, last_byte_len, _w, sp_seg, sp_off)) = last_space_break {
@@ -825,7 +1096,7 @@ pub(crate) fn wrap_segments(
             }
 
             // Snapshot BEFORE pushing the space so we can roll back to a pre-space state.
-            if ch == ' ' {
+            if g == " " {
                 let segs_len = line_segs.len();
                 let last_byte_len = line_segs.last().map(|(text, _)| text.len()).unwrap_or(0);
                 last_space_break = Some((segs_len, last_byte_len, line_width, cur_seg, cur_off));
@@ -848,15 +1119,15 @@ pub(crate) fn wrap_segments(
                 .max(1);
             if let Some(last) = line_segs.last_mut() {
                 if last.1 == style {
-                    last.0.push(ch);
+                    last.0.push_str(g);
                 } else {
                     let mut nw = String::with_capacity(cap);
-                    nw.push(ch);
+                    nw.push_str(g);
                     line_segs.push((nw, style));
                 }
             } else {
                 let mut nw = String::with_capacity(cap);
-                nw.push(ch);
+                nw.push_str(g);
                 line_segs.push((nw, style));
             }
             line_width += ch_width;
@@ -964,11 +1235,18 @@ fn build_children(
     // ShrinkMarker is buffered into `pending_shrink` and consumed by the next
     // container / scrollable node. Closes #161.
     let mut pending_shrink: bool = false;
+    // WrapMarker / BasisMarker mirror the shrink-marker pattern: buffered here
+    // and applied to the next container / scrollable node. `pending_wrap`
+    // holds the cross-axis (between-line) gap carried by the marker. Closes #258.
+    let mut pending_wrap: Option<i32> = None;
+    let mut pending_basis: Option<u32> = None;
     while let Some(command) = commands.next() {
         match command {
             Command::FocusMarker(id) => pending_focus_id = Some(id),
             Command::InteractionMarker(id) => pending_interaction_id = Some(id),
             Command::ShrinkMarker => pending_shrink = true,
+            Command::WrapMarker(cross_gap) => pending_wrap = Some(cross_gap),
+            Command::BasisMarker(basis) => pending_basis = Some(basis),
             Command::Text {
                 content,
                 cursor_offset,
@@ -1069,12 +1347,20 @@ fn build_children(
                     node.shrink = true;
                     pending_shrink = false;
                 }
+                if let Some(cross_gap) = pending_wrap.take() {
+                    node.wrap_children = true;
+                    node.cross_gap = cross_gap;
+                }
+                if let Some(basis) = pending_basis.take() {
+                    node.flex_basis_raw = basis;
+                }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);
             }
             Command::BeginScrollable(args) => {
                 let BeginScrollableArgs {
                     grow,
+                    direction,
                     border,
                     border_sides,
                     border_style,
@@ -1088,10 +1374,16 @@ fn build_children(
                     constraints,
                     title,
                     scroll_offset,
+                    scroll_offset_x,
                     group_name,
                 } = *args;
+                // #247: honor the caller's `.row()` / `.col()` direction instead
+                // of hardcoding `Direction::Column`. A `Row` scrollable scrolls
+                // horizontally; a `Column` scrollable scrolls vertically. The
+                // offset that applies depends on the axis — the cross-axis offset
+                // is always 0 for a single-axis scroller.
                 let mut node = LayoutNode::container(
-                    Direction::Column,
+                    direction,
                     ContainerConfig {
                         gap,
                         align,
@@ -1109,13 +1401,27 @@ fn build_children(
                     },
                 );
                 node.is_scrollable = true;
-                node.scroll_offset = scroll_offset;
+                match direction {
+                    Direction::Column => node.scroll_offset = scroll_offset,
+                    Direction::Row => node.scroll_offset_x = scroll_offset_x,
+                }
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 node.group_name = group_name;
                 if pending_shrink {
                     node.shrink = true;
                     pending_shrink = false;
+                }
+                // Consume any pending wrap/basis markers so they don't leak to a
+                // later sibling. Wrap is a no-op on a column scrollable; the
+                // cross-axis gap is recorded for completeness; basis is recorded
+                // but only consumed by row resolution.
+                if let Some(cross_gap) = pending_wrap.take() {
+                    node.wrap_children = true;
+                    node.cross_gap = cross_gap;
+                }
+                if let Some(basis) = pending_basis.take() {
+                    node.flex_basis_raw = basis;
                 }
                 build_children(&mut node, commands, overlays, false, depth + 1);
                 parent.children.push(node);

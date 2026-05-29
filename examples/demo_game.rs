@@ -884,7 +884,7 @@ fn render_tetris_screen(ui: &mut Context, game: &TetrisGame, theme: Theme) {
                         ui.text(" [P] Resume").fg(theme.text_dim);
                     }
 
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text(" ←→↑↓ Move/Rotate").fg(theme.text_dim);
                     ui.text(" SPC Drop  P Pause").fg(theme.text_dim);
                     ui.text(" R Reset   Q Quit").fg(theme.text_dim);
@@ -927,13 +927,13 @@ fn render_snake_screen(ui: &mut Context, game: &SnakeGame, theme: Theme) {
                         ui.text("SPEED").bold().fg(theme.surface_text);
                         ui.text(format!("{}", 10_u64.saturating_sub(game.move_interval())))
                             .fg(theme.accent);
-                        ui.separator();
+                        let _ = ui.separator();
                         if game.game_over {
                             ui.text("GAME OVER").bold().fg(theme.error);
                         } else if game.paused {
                             ui.text("PAUSED").bold().fg(theme.warning);
                         }
-                        ui.separator();
+                        let _ = ui.separator();
                         ui.text("←→↑↓ Move").fg(theme.text_dim);
                         ui.text("P Pause").fg(theme.text_dim);
                         ui.text("R Restart").fg(theme.text_dim);
@@ -980,13 +980,13 @@ fn render_minesweeper_screen(ui: &mut Context, game: &MinesweeperGame, theme: Th
                             .fg(theme.primary);
                         ui.text("FLAGS").bold().fg(theme.surface_text);
                         ui.text(format!("{}", game.flags_count())).fg(theme.accent);
-                        ui.separator();
+                        let _ = ui.separator();
                         if game.game_over {
                             ui.text("GAME OVER").bold().fg(theme.error);
                         } else if game.won {
                             ui.text("YOU WIN").bold().fg(theme.success);
                         }
-                        ui.separator();
+                        let _ = ui.separator();
                         ui.text("Arrows Move").fg(theme.text_dim);
                         ui.text("Enter/Space Reveal").fg(theme.text_dim);
                         ui.text("F Flag").fg(theme.text_dim);

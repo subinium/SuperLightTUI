@@ -91,9 +91,21 @@ impl DemoState {
             show_modal: false,
             selected_plan: String::new(),
             contact_form: FormState::new()
-                .field(FormField::new("Name").placeholder("Jane Doe"))
-                .field(FormField::new("Email").placeholder("jane@example.com"))
-                .field(FormField::new("Message").placeholder("How can we help?")),
+                .field(
+                    FormField::new("Name")
+                        .placeholder("Jane Doe")
+                        .validate(validate_name),
+                )
+                .field(
+                    FormField::new("Email")
+                        .placeholder("jane@example.com")
+                        .validate(validate_email),
+                )
+                .field(
+                    FormField::new("Message")
+                        .placeholder("How can we help?")
+                        .validate(validate_message),
+                ),
         }
     }
 }
@@ -1362,7 +1374,7 @@ fn render_post_flexbox(ui: &mut Context) {
             );
             ui.text("SLT").bold().fg(theme.success);
         });
-        ui.separator();
+        let _ = ui.separator();
         let mappings = [
             ("display: flex", "implicit (all containers)"),
             ("flex-direction: column", "ui.col(|ui| { ... })"),
@@ -1610,7 +1622,7 @@ fn render_pricing(
                         ui.text("Choose how you want to support SLT.")
                             .fg(theme.surface_text);
                         ui.text("");
-                        ui.separator();
+                        let _ = ui.separator();
                         ui.text("");
                         ui.text("Selected plan").fg(theme.surface_text);
                         ui.text(selected_plan.as_str()).bold().fg(theme.accent);
@@ -1724,7 +1736,7 @@ fn render_contact(
             }
         });
         if ui.form_submit("Send").clicked {
-            if contact_form.validate(&[validate_name, validate_email, validate_message]) {
+            if contact_form.validate_all() {
                 toasts.success("Thanks for reaching out! We'll reply soon.", tick);
                 contact_form.submitted = true;
             } else {
@@ -1843,7 +1855,7 @@ fn price_card(
                 ui.text(price).bold().fg(color);
                 ui.text(format!(" {period}")).fg(theme.surface_text);
             });
-            ui.separator();
+            let _ = ui.separator();
             ui.text("");
             for feat in features {
                 let _ = ui.row(|ui| {

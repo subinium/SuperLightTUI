@@ -3,8 +3,11 @@
 .sisyphus/
 SESSION-SUMMARY.md
 .DS_Store
-*.tape
 assets/blackpink/
 CLAUDE.md
 .research/
+.claude/worktrees/
+
+# Claude Code session artifacts
+.claude/scheduled_tasks.lock
 .claude/worktrees/

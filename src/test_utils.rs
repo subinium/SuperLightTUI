@@ -7,7 +7,8 @@
 use crate::buffer::Buffer;
 use crate::context::Context;
 use crate::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
+    MouseKind,
 };
 use crate::rect::Rect;
 use crate::style::Style;
@@ -71,6 +72,36 @@ impl EventBuilder {
         self
     }
 
+    /// Append a modifier-only key-press event (a bare Ctrl/Shift/Alt/Super
+    /// press with no accompanying character).
+    ///
+    /// Mirrors what the Kitty keyboard protocol delivers when
+    /// [`RunConfig::report_all_keys(true)`](crate::RunConfig::report_all_keys)
+    /// is enabled, so widget tests can simulate modifier-only presses without
+    /// poking crossterm. The event carries [`KeyCode::Modifier`] with
+    /// [`KeyModifiers::NONE`].
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{EventBuilder, KeyCode, ModifierKey};
+    ///
+    /// let events = EventBuilder::new()
+    ///     .key_modifier(ModifierKey::LeftCtrl)
+    ///     .build();
+    /// assert_eq!(events.len(), 1);
+    /// ```
+    pub fn key_modifier(mut self, m: ModifierKey) -> Self {
+        self.events.push(Event::Key(KeyEvent {
+            code: KeyCode::Modifier(m),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+        self
+    }
+
     /// Append a left mouse click at terminal position `(x, y)`.
     pub fn click(mut self, x: u32, y: u32) -> Self {
         self.events.push(Event::Mouse(MouseEvent {
@@ -78,6 +109,23 @@ impl EventBuilder {
             x,
             y,
             modifiers: KeyModifiers::NONE,
+            pixel_x: None,
+            pixel_y: None,
+        }));
+        self
+    }
+
+    /// Append a left-button press at `(x, y)` carrying the given modifiers.
+    ///
+    /// Use this to simulate `Shift`+click (e.g. range extension in the
+    /// calendar widget). The plain [`click`](EventBuilder::click) helper
+    /// always sends `KeyModifiers::NONE`.
+    pub fn click_with(mut self, x: u32, y: u32, modifiers: KeyModifiers) -> Self {
+        self.events.push(Event::Mouse(MouseEvent {
+            kind: MouseKind::Down(MouseButton::Left),
+            x,
+            y,
+            modifiers,
             pixel_x: None,
             pixel_y: None,
         }));
@@ -384,6 +432,23 @@ impl TestBackend {
         self.render_with_events(events, 0, 0, f);
     }
 
+    /// Number of live frame-clock scheduler timer slots persisted after the
+    /// most recent render (issue #248). Test-only — used to assert that
+    /// abandoned timers are garbage-collected and `SchedulerState` does not
+    /// grow without bound.
+    #[cfg(test)]
+    pub(crate) fn scheduler_slot_count(&self) -> usize {
+        self.frame_state.scheduler.slot_count()
+    }
+
+    /// Inject the ambient Tokio runtime handle so `Context::spawn` works inside
+    /// rendered frames (issue #234). Mirrors what `run_async_loop` does once
+    /// before its loop; test-only — real async runs go through `run_async`.
+    #[cfg(all(test, feature = "async"))]
+    pub(crate) fn set_async_runtime(&mut self, handle: tokio::runtime::Handle) {
+        self.frame_state.async_tasks.set_runtime(handle);
+    }
+
     /// Get the rendered text content of row y (trimmed trailing spaces)
     pub fn line(&self, y: u32) -> String {
         let mut s = String::new();
@@ -683,6 +748,210 @@ impl std::fmt::Display for TestBackend {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PtyBackend — end-to-end escape-byte / image-protocol capture (#274)
+// ---------------------------------------------------------------------------
+
+/// Raw bytes emitted for a single rendered frame by [`PtyBackend`].
+///
+/// Unlike [`FrameRecord`] (a glyph/snapshot view of the in-memory
+/// [`Buffer`]), `PtyFrame` holds the *actual* escape-code byte stream the
+/// production flush pipeline produced for the frame: SGR runs, OSC 8
+/// hyperlinks, Sixel (`\x1bPq`), and Kitty graphics (`\x1b_Ga=`).
+///
+/// Since 0.21.0.
+#[cfg(feature = "pty-test")]
+#[derive(Clone, Debug)]
+pub struct PtyFrame {
+    /// Raw bytes emitted for this frame (SGR runs, OSC 8, Sixel, Kitty).
+    pub raw: Vec<u8>,
+}
+
+/// Drives the *real* [`crate::run`] flush pipeline into an in-process byte
+/// sink, so escape-code / color-depth / image-protocol output is asserted
+/// end-to-end — the byte/protocol tier that [`TestBackend`]'s buffer-only
+/// model deliberately cannot reach (see `tests/visual_snapshots.rs`).
+///
+/// Each [`render`](PtyBackend::render) constructs a fresh fullscreen
+/// `Terminal` whose sink is a captured `Vec<u8>` (no real TTY, no raw mode),
+/// runs one frame through the same [`crate::frame_owned`] entry point the
+/// production loop uses, and captures the emitted bytes. Because the previous
+/// frame buffer starts empty, every frame emits a complete first-paint diff —
+/// fully deterministic and reproducible on a headless CI runner.
+///
+/// This type is gated behind the dev-only `pty-test` feature and is **not**
+/// present in a default build.
+///
+/// Since 0.21.0.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[cfg(feature = "pty-test")]
+/// # {
+/// use slt::{Color, PtyBackend};
+///
+/// let mut pb = PtyBackend::new(10, 1);
+/// pb.render(|ui| {
+///     ui.text("x").fg(Color::Red).bold();
+/// });
+/// // The real flush pipeline emitted an SGR sequence for the styled glyph.
+/// pb.assert_emits("\u{1b}[");
+/// # }
+/// ```
+#[cfg(feature = "pty-test")]
+pub struct PtyBackend {
+    width: u32,
+    height: u32,
+    color_depth: crate::style::ColorDepth,
+    state: crate::AppState,
+    config: RunConfig,
+    frames: Vec<PtyFrame>,
+}
+
+#[cfg(feature = "pty-test")]
+impl PtyBackend {
+    /// Create a PTY capture backend with the given terminal dimensions.
+    ///
+    /// Defaults to [`ColorDepth::TrueColor`](crate::ColorDepth::TrueColor);
+    /// override with [`with_color_depth`](PtyBackend::with_color_depth).
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            color_depth: crate::style::ColorDepth::TrueColor,
+            state: crate::AppState::new(),
+            config: RunConfig::default(),
+            frames: Vec::new(),
+        }
+    }
+
+    /// Set the [`ColorDepth`](crate::ColorDepth) the flush pipeline encodes
+    /// SGR colors with (e.g. truecolor vs 256-color). Returns `self` for
+    /// chaining.
+    pub fn with_color_depth(mut self, depth: crate::style::ColorDepth) -> Self {
+        self.color_depth = depth;
+        self
+    }
+
+    /// Render one frame through the real `Terminal` flush pipeline, capturing
+    /// the emitted bytes. Returns the just-captured [`PtyFrame`].
+    pub fn render(&mut self, f: impl FnOnce(&mut Context)) -> &PtyFrame {
+        self.render_with_events(Vec::new(), f)
+    }
+
+    /// Render one frame with injected input `events`, capturing the emitted
+    /// bytes. Returns the just-captured [`PtyFrame`].
+    pub fn render_with_events(
+        &mut self,
+        events: Vec<Event>,
+        f: impl FnOnce(&mut Context),
+    ) -> &PtyFrame {
+        let mut term =
+            crate::terminal::Terminal::with_sink(self.width, self.height, self.color_depth);
+        let mut once = Some(f);
+        let mut render = move |ui: &mut Context| {
+            if let Some(f) = once.take() {
+                f(ui);
+            }
+        };
+        // Drive the production single-frame entry point. The captured-sink
+        // Terminal routes every byte through flush_buffer_diff /
+        // apply_style_delta / Sixel / Kitty exactly as a real terminal would.
+        let _ = crate::frame_owned(
+            &mut term,
+            &mut self.state,
+            &self.config,
+            events,
+            &mut render,
+        );
+        let raw = term.take_sink_bytes();
+        self.frames.push(PtyFrame { raw });
+        self.frames.last().expect("frame just pushed")
+    }
+
+    /// Iterate the raw byte stream of every captured frame, oldest first.
+    pub fn frames_raw(&self) -> impl Iterator<Item = &[u8]> {
+        self.frames.iter().map(|f| f.raw.as_slice())
+    }
+
+    /// Raw bytes of the most recently rendered frame.
+    ///
+    /// Panics if no frame has been rendered yet.
+    pub fn last_raw(&self) -> &[u8] {
+        &self.frames.last().expect("no frame rendered").raw
+    }
+
+    /// Assert the last frame's byte stream contains `needle`.
+    ///
+    /// Panics with an escaped + hex dump of the emitted bytes on a miss.
+    pub fn assert_emits(&self, needle: &str) {
+        let raw = self.last_raw();
+        if find_subslice(raw, needle.as_bytes()).is_none() {
+            panic!(
+                "PtyBackend frame does not emit {:?}.\nEmitted ({} bytes):\n  escaped: {}\n  hex: {}",
+                needle,
+                raw.len(),
+                escape_bytes(raw),
+                hex_bytes(raw),
+            );
+        }
+    }
+
+    /// Assert the last frame's byte stream does **not** contain `needle`.
+    ///
+    /// Panics with an escaped + hex dump on an unexpected hit.
+    pub fn assert_not_emits(&self, needle: &str) {
+        let raw = self.last_raw();
+        if find_subslice(raw, needle.as_bytes()).is_some() {
+            panic!(
+                "PtyBackend frame unexpectedly emits {:?}.\nEmitted ({} bytes):\n  escaped: {}\n  hex: {}",
+                needle,
+                raw.len(),
+                escape_bytes(raw),
+                hex_bytes(raw),
+            );
+        }
+    }
+}
+
+/// Byte-substring search (no UTF-8 assumption — escape streams are not valid
+/// UTF-8 in general).
+#[cfg(feature = "pty-test")]
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Render a byte slice with non-printable bytes shown as `\xNN` escapes.
+#[cfg(feature = "pty-test")]
+fn escape_bytes(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            0x1b => s.push_str("\\x1b"),
+            0x20..=0x7e => s.push(b as char),
+            b'\n' => s.push_str("\\n"),
+            b'\r' => s.push_str("\\r"),
+            b'\t' => s.push_str("\\t"),
+            _ => s.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    s
+}
+
+/// Render a byte slice as space-separated two-digit hex.
+#[cfg(feature = "pty-test")]
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,6 +1006,42 @@ mod tests {
     fn event_builder_focus_events_chaining() {
         let events = EventBuilder::new().focus_lost().focus_gained().build();
         assert_eq!(events, vec![Event::FocusLost, Event::FocusGained]);
+    }
+
+    /// Issue #261: `key_modifier` builds a single modifier-only key-press event.
+    #[test]
+    fn event_builder_key_modifier_produces_modifier_event() {
+        let events = EventBuilder::new()
+            .key_modifier(ModifierKey::LeftSuper)
+            .build();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(k) => {
+                assert_eq!(k.code, KeyCode::Modifier(ModifierKey::LeftSuper));
+                assert_eq!(k.modifiers, KeyModifiers::NONE);
+                assert!(matches!(k.kind, KeyEventKind::Press));
+            }
+            _ => panic!("expected key event"),
+        }
+    }
+
+    /// Issue #261: a modifier-only event reaches the frame closure end-to-end.
+    #[test]
+    fn modifier_key_event_reaches_frame_closure() {
+        let mut tb = TestBackend::new(20, 2);
+        let events = EventBuilder::new()
+            .key_modifier(ModifierKey::LeftCtrl)
+            .build();
+        tb.sequence()
+            .events(events, |ui| {
+                if ui.key_code(KeyCode::Modifier(ModifierKey::LeftCtrl)) {
+                    ui.text("ctrl-down");
+                } else {
+                    ui.text("idle");
+                }
+            })
+            .run();
+        tb.assert_contains("ctrl-down");
     }
 
     // ---- #229 record_frames -------------------------------------------------
@@ -961,6 +1266,7 @@ mod tests {
             fg: Some(Color::Red),
             bg: None,
             modifiers: Modifiers::NONE,
+            ..Style::new()
         };
         tb.assert_style_at(0, 0, expected);
     }

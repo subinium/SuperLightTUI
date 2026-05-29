@@ -43,6 +43,64 @@ fn sanitize_cell_char(ch: char) -> char {
     }
 }
 
+/// Returns `true` if `s` contains any codepoint that can trigger
+/// right-to-left or explicit bidirectional reordering under the Unicode
+/// Bidirectional Algorithm (UAX #9).
+///
+/// Pure-LTR strings (ASCII, Latin, CJK, …) return `false` and take the
+/// zero-allocation fast path in [`Buffer::set_string`]: no `String` is
+/// allocated and `unicode-bidi` is never invoked. Only strings that carry
+/// Hebrew, Arabic, Syriac, Thaana, Arabic presentation forms, or the
+/// explicit bidi control characters (RLM/LRM, RLE/LRE, RLO/LRO, PDF,
+/// RLI/LRI/FSI/PDI) need the full reorder pass.
+///
+/// This is intentionally a cheap, conservative character-class scan rather
+/// than a full UAX #9 resolution: a `true` here only *gates* the (possibly
+/// no-op) reorder, so over-inclusion costs at worst one extra reorder call,
+/// never incorrect output. Under-inclusion would silently mirror RTL text,
+/// so the ranges err toward inclusion.
+#[cfg(feature = "bidi")]
+#[inline]
+fn needs_bidi_reorder(s: &str) -> bool {
+    s.chars().any(|c| {
+        let u = c as u32;
+        matches!(u,
+            0x0590..=0x05FF | // Hebrew
+            0x0600..=0x06FF | // Arabic
+            0x0700..=0x074F | // Syriac
+            0x0750..=0x077F | // Arabic Supplement
+            0x0780..=0x07BF | // Thaana
+            0x08A0..=0x08FF | // Arabic Extended-A
+            0xFB1D..=0xFDFF | // Hebrew/Arabic presentation forms-A
+            0xFE70..=0xFEFF   // Arabic presentation forms-B
+        )
+        // explicit bidi controls: LRM, RLM, RLE/LRE/PDF/LRO/RLO, RLI/LRI/FSI/PDI
+        || matches!(u, 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
+    })
+}
+
+/// Reorder one logical-order line into visual (display) order per UAX #9.
+///
+/// The input is treated as a single paragraph (callers already split on
+/// `\n` upstream — see [`Buffer::set_string`]). The base paragraph
+/// direction is resolved from the first strong character (no override),
+/// matching default UAX #9 behavior. Returns the visually-ordered string.
+///
+/// Only ever called after [`needs_bidi_reorder`] returns `true`, so the
+/// `String` allocation here is incurred solely on the RTL path; pure-LTR
+/// input never reaches this function.
+#[cfg(feature = "bidi")]
+fn reorder_line_visual(s: &str) -> String {
+    use unicode_bidi::BidiInfo;
+    // No paragraph override: let the first strong char set base direction.
+    let info = BidiInfo::new(s, None);
+    match info.paragraphs.first() {
+        // A single input line is a single paragraph; reorder its full range.
+        Some(para) => info.reorder_line(para, para.range.clone()).into_owned(),
+        None => s.to_string(), // empty input → no paragraph
+    }
+}
+
 /// Structured Kitty graphics protocol image placement.
 ///
 /// Stored separately from raw escape sequences so the terminal can manage
@@ -71,9 +129,126 @@ pub(crate) struct KittyPlacement {
     pub crop_h: u32,
 }
 
+/// Per-cell coverage state of a [`SprixelPlacement`]'s footprint.
+///
+/// Borrowed from notcurses' sprixel damage model. Each owned cell records how a
+/// pixel graphic relates to the text cell beneath it, so the flush layer can
+/// decide whether a text write forces a re-blit of the whole graphic (issue
+/// #265). Sixel and iTerm2 (OSC 1337) graphics own a footprint of these cells;
+/// Kitty keeps its separate `KittyImageManager` lifecycle.
+///
+/// All four variants form the spec'd damage vocabulary (issue #265): the image
+/// entry points currently emit fully-`Opaque` footprints, while `Mixed` /
+/// `Transparent` are reserved for partial-coverage callers and `Annihilated`
+/// for the flush-time damage flip. The full set is exercised by the flush tests
+/// and is part of the matrix contract, so the unused-construction lint is
+/// suppressed (mirrors [`KittyPlacement`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum SprixelCell {
+    /// Graphic fully covers the cell; a text write here forces a re-blit.
+    Opaque,
+    /// Graphic partially covers the cell; a text write here forces a re-blit.
+    Mixed,
+    /// No graphic ink in this cell; text is free and triggers no re-blit.
+    Transparent,
+    /// Text overwrote graphic ink in this cell this frame, so the owning
+    /// graphic is dirty and must be re-emitted.
+    Annihilated,
+}
+
+/// A non-Kitty pixel-graphic placement (Sixel or iTerm2 OSC 1337) tracked with
+/// a per-cell damage footprint.
+///
+/// Unlike a flat [`Buffer::raw_sequence`] entry, a sprixel records the cell
+/// footprint it covers so the flush layer can re-emit a graphic **only** when a
+/// text cell annihilates its ink or its `(x, y, content_hash)` changed, rather
+/// than re-blitting every stored sequence on any delta (issue #265).
+///
+/// `seq` / `cells` are read only by the `crossterm` flush layer
+/// (`flush_sprixels`), so the unused-field lint is suppressed for
+/// `--no-default-features` builds where that consumer is gated out (mirrors
+/// [`KittyPlacement`]).
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct SprixelPlacement {
+    /// Hash of the source bytes for change detection across frames.
+    pub content_hash: u64,
+    /// Encoded passthrough payload (Sixel `DCS` or iTerm2 OSC 1337).
+    pub seq: String,
+    /// Screen cell position of the top-left corner.
+    pub x: u32,
+    pub y: u32,
+    /// Cell columns/rows the graphic footprint covers.
+    pub cols: u32,
+    pub rows: u32,
+    /// Row-major per-cell coverage state; `cells.len() == (cols * rows)`.
+    pub cells: Vec<SprixelCell>,
+}
+
+impl PartialEq for SprixelPlacement {
+    fn eq(&self, other: &Self) -> bool {
+        // Equality drives the "did this placement change?" flush check. A
+        // re-blit is needed when position or content shifts; the per-cell
+        // damage matrix (`cells`) is recomputed each frame from the text diff
+        // and is deliberately excluded so two structurally identical
+        // placements compare equal regardless of transient annihilation state.
+        self.content_hash == other.content_hash
+            && self.x == other.x
+            && self.y == other.y
+            && self.cols == other.cols
+            && self.rows == other.rows
+    }
+}
+
+/// FNV-1a 64-bit offset basis (the standard seed for the algorithm).
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+/// FNV-1a 64-bit prime multiplier.
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// A tiny, allocation-free [`Hasher`] implementing the FNV-1a algorithm.
+///
+/// Used for internal dirty-row digests ([`Buffer::recompute_line_hashes`]) and
+/// RGBA content hashing ([`hash_rgba`]). Row/image equality is **not** a
+/// security boundary, so the crypto-strength SipHash that
+/// [`std::collections::hash_map::DefaultHasher`] uses is unnecessary tax in the
+/// per-frame flush loop. FNV-1a is a non-cryptographic hash with no DoS
+/// resistance, which is exactly the right trade-off here: it is faster, has no
+/// extra dependency, and is deterministic within (and across) process runs.
+/// The digest is never persisted, so cross-run stability is incidental, not
+/// relied upon.
+pub(crate) struct Fnv1a(u64);
+
+impl Default for Fnv1a {
+    #[inline]
+    fn default() -> Self {
+        Self(FNV_OFFSET_BASIS)
+    }
+}
+
+impl Hasher for Fnv1a {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = self.0;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        self.0 = hash;
+    }
+}
+
 /// Compute a content hash for RGBA pixel data.
+///
+/// Uses a non-cryptographic FNV-1a digest ([`Fnv1a`]) — image dedup is not a
+/// security boundary and the digest is never persisted.
 pub(crate) fn hash_rgba(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = Fnv1a::default();
     data.hash(&mut hasher);
     hasher.finish()
 }
@@ -118,6 +293,10 @@ pub struct Buffer {
     pub content: Vec<Cell>,
     pub(crate) clip_stack: Vec<Rect>,
     pub(crate) raw_sequences: Vec<(u32, u32, String)>,
+    /// Non-Kitty pixel-graphic placements (Sixel / iTerm2) with per-cell damage
+    /// footprints. Drives the sprixel-aware flush that re-emits a graphic only
+    /// when its ink is annihilated or its content/position changed (issue #265).
+    pub(crate) sprixels: Vec<SprixelPlacement>,
     pub(crate) kitty_placements: Vec<KittyPlacement>,
     pub(crate) cursor_pos: Option<(u32, u32)>,
     /// Stack of scroll clip infos set by the run loop before invoking draw
@@ -154,6 +333,7 @@ impl Buffer {
             content: vec![Cell::default(); size],
             clip_stack: Vec::new(),
             raw_sequences: Vec::new(),
+            sprixels: Vec::new(),
             kitty_placements: Vec::new(),
             cursor_pos: None,
             kitty_clip_info_stack: Vec::new(),
@@ -234,6 +414,32 @@ impl Buffer {
         }
 
         self.kitty_placements.push(p);
+    }
+
+    /// Store a non-Kitty pixel-graphic placement (Sixel or iTerm2 OSC 1337)
+    /// with its per-cell damage footprint.
+    ///
+    /// Respects the clip stack the same way [`Buffer::kitty_place`] does:
+    /// placements wholly outside the active clip are dropped. The footprint
+    /// `cells` are recorded as-supplied; the flush layer flips covered cells to
+    /// [`SprixelCell::Annihilated`] when a text write overwrites graphic ink so
+    /// only dirtied graphics are re-emitted (issue #265).
+    ///
+    /// Callers (`sixel_image` / `iterm_image*`) are `crossterm`-gated, so this
+    /// is unused under `--no-default-features`; the lint is suppressed only on
+    /// that build so a genuine dead-code signal still fires by default.
+    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    pub(crate) fn sprixel_place(&mut self, p: SprixelPlacement) {
+        if let Some(clip) = self.effective_clip() {
+            if p.x >= clip.right()
+                || p.y >= clip.bottom()
+                || p.x + p.cols <= clip.x
+                || p.y + p.rows <= clip.y
+            {
+                return;
+            }
+        }
+        self.sprixels.push(p);
     }
 
     /// Push a clipping rectangle onto the clip stack.
@@ -372,6 +578,23 @@ impl Buffer {
         // false positives only cost one redundant hash recompute, never a
         // correctness issue.
         self.mark_row_dirty(y);
+        // Bidi (UAX #9) reorder: convert this logical-order line into visual
+        // (display) order before the positional cell-write loop below. The
+        // loop is purely left-to-right by column, so RTL runs must be
+        // reordered *here* or they render mirrored. `needs_bidi_reorder`
+        // gates the work so pure-LTR input neither allocates nor calls into
+        // `unicode-bidi` — its output is byte-identical to skipping this
+        // block entirely. Width/clip/zero-width/hyperlink handling below is
+        // order-independent and applies unchanged to the reordered glyphs.
+        #[cfg(feature = "bidi")]
+        let reordered;
+        #[cfg(feature = "bidi")]
+        let s: &str = if needs_bidi_reorder(s) {
+            reordered = reorder_line_visual(s);
+            &reordered
+        } else {
+            s
+        };
         let clip = self.effective_clip().copied();
         for ch in s.chars() {
             if x >= self.area.right() {
@@ -466,9 +689,9 @@ impl Buffer {
     ///
     /// This is the only call site that updates [`Self::line_hashes`]; once
     /// a row's hash is refreshed its `line_dirty` entry is cleared. Hashes
-    /// derive from each cell's `(symbol, style, hyperlink)` tuple via
-    /// [`std::collections::hash_map::DefaultHasher`] — sufficient for
-    /// equality detection with no extra dependency.
+    /// derive from each cell's `(symbol, style, hyperlink)` tuple via the
+    /// non-cryptographic [`Fnv1a`] hasher — sufficient for equality detection,
+    /// faster than SipHash in the per-frame loop, and with no extra dependency.
     ///
     /// Called by `flush_buffer_diff` once per frame, before the per-row
     /// skip check (issue #171).
@@ -500,7 +723,7 @@ impl Buffer {
             }
             let row_start = idx * width;
             let row_end = row_start + width;
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut hasher = Fnv1a::default();
             for cell in &self.content[row_start..row_end] {
                 cell.symbol.as_str().hash(&mut hasher);
                 cell.style.hash(&mut hasher);
@@ -587,6 +810,7 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
@@ -605,6 +829,7 @@ impl Buffer {
         }
         self.clip_stack.clear();
         self.raw_sequences.clear();
+        self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
@@ -1344,5 +1569,226 @@ mod tests {
         assert_eq!(buf.line_dirty.len(), 2);
         assert_eq!(buf.line_hashes.len(), 2);
         assert!(buf.line_dirty.iter().all(|d| *d));
+    }
+
+    #[test]
+    fn fnv1a_distinct_rows_distinct_identical_rows_collide() {
+        // After swapping SipHash for FNV-1a, the dirty-row digest must keep its
+        // two contract guarantees: distinct content → distinct digest, and
+        // identical content → identical digest (deterministic within a run).
+        let area = Rect::new(0, 0, 5, 3);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "alpha", Style::new());
+        buf.set_string(0, 1, "alpha", Style::new()); // identical to row 0
+        buf.set_string(0, 2, "omega", Style::new()); // distinct
+        buf.recompute_line_hashes();
+
+        assert_eq!(
+            buf.row_hash(0),
+            buf.row_hash(1),
+            "identical rows must collide"
+        );
+        assert_ne!(
+            buf.row_hash(0),
+            buf.row_hash(2),
+            "distinct rows must not collide"
+        );
+    }
+
+    #[test]
+    fn fnv1a_hash_rgba_is_deterministic_and_content_sensitive() {
+        // `hash_rgba` (now FNV-1a) underpins Kitty image dedup: equal pixels
+        // must dedup (equal hash), differing pixels must not.
+        let a = [1u8, 2, 3, 4];
+        let b = [1u8, 2, 3, 4];
+        let c = [1u8, 2, 3, 5];
+        assert_eq!(hash_rgba(&a), hash_rgba(&b));
+        assert_ne!(hash_rgba(&a), hash_rgba(&c));
+        // Determinism within the run.
+        assert_eq!(hash_rgba(&a), hash_rgba(&a));
+    }
+
+    // ── Bidi (UAX #9) reordering ────────────────────────────────────────
+    //
+    // `line_visual` reads a buffer row left-to-right by column and trims
+    // trailing blanks — exactly the visual order a reader sees, which is the
+    // correct oracle for asserting reorder output.
+    #[cfg(feature = "bidi")]
+    fn line_visual(buf: &Buffer, y: u32) -> String {
+        let mut s = String::new();
+        for x in buf.area.x..buf.area.right() {
+            let sym = buf.get(x, y).symbol.as_str();
+            if sym.is_empty() {
+                continue; // wide-char trailing cell
+            }
+            s.push_str(sym);
+        }
+        s.trim_end().to_string()
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn needs_bidi_reorder_false_for_pure_ltr() {
+        // Pure-LTR strings take the zero-allocation fast path.
+        assert!(!needs_bidi_reorder("Hello, world 123"));
+        assert!(!needs_bidi_reorder(""));
+        assert!(!needs_bidi_reorder("café résumé"));
+        assert!(!needs_bidi_reorder("世界 CJK wide"));
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn needs_bidi_reorder_true_for_rtl_and_controls() {
+        assert!(needs_bidi_reorder("שלום")); // Hebrew
+        assert!(needs_bidi_reorder("شكرا")); // Arabic
+        assert!(needs_bidi_reorder("abc אבג def")); // mixed
+        assert!(needs_bidi_reorder("a\u{202E}bc")); // RLO control
+        assert!(needs_bidi_reorder("\u{200F}")); // RLM
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_ltr_unchanged_by_reorder_path() {
+        // Regression guard: LTR text must NOT be reordered.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "abcde", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "a");
+        assert_eq!(buf.get(1, 0).symbol, "b");
+        assert_eq!(buf.get(2, 0).symbol, "c");
+        assert_eq!(buf.get(3, 0).symbol, "d");
+        assert_eq!(buf.get(4, 0).symbol, "e");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_pure_rtl_reverses_to_visual_order() {
+        // Hebrew "שלום" is logical ש,ל,ו,ם. In visual order the first
+        // logical char (ש) lands on the rightmost column and the last (ם)
+        // on the leftmost — i.e. the row reads "םולש" left-to-right.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string(0, 0, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}", Style::new());
+        // column 0 == last logical char, last column == first logical char
+        assert_eq!(buf.get(0, 0).symbol, "\u{05DD}"); // ם
+        assert_eq!(buf.get(3, 0).symbol, "\u{05E9}"); // ש
+        assert_eq!(line_visual(&buf, 0), "\u{05DD}\u{05D5}\u{05DC}\u{05E9}");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_mixed_ltr_rtl_run() {
+        // Per UAX #9 (unicode-bidi reference vectors): "abc אבג" → "abc גבא".
+        // The Latin segment keeps LTR order; the Hebrew segment reverses.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(0, 0, "abc \u{05D0}\u{05D1}\u{05D2}", Style::new());
+        assert_eq!(line_visual(&buf, 0), "abc \u{05D2}\u{05D1}\u{05D0}");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_numbers_inside_rtl_stay_ltr() {
+        // "123 אבג" → "גבא 123": European numbers are weak LTR and cannot
+        // reorder a strong RTL run, so the digits stay "123" left-to-right
+        // while the Hebrew reverses (unicode-bidi reference vector).
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(0, 0, "123 \u{05D0}\u{05D1}\u{05D2}", Style::new());
+        assert_eq!(line_visual(&buf, 0), "\u{05D2}\u{05D1}\u{05D0} 123");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_wide_char_with_rtl_blanks_trailing_cell() {
+        // A CJK wide glyph mixed with Hebrew: after reorder the wide char's
+        // trailing cell must still be blanked at the correct visual column.
+        // Logical "世 אב" → the wide 世 stays leftmost (LTR base), Hebrew
+        // reverses to "בא". Visual: 世 (cols 0-1), space (col 2), ב (3) א (4).
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "\u{4E16} \u{05D0}\u{05D1}", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "\u{4E16}"); // 世 leading
+        assert!(buf.get(1, 0).symbol.is_empty(), "wide trailing must blank");
+        assert_eq!(buf.get(3, 0).symbol, "\u{05D1}"); // ב
+        assert_eq!(buf.get(4, 0).symbol, "\u{05D0}"); // א
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_linked_hyperlink_survives_reorder() {
+        // Every non-blank emitted cell of an RTL link must carry the URL,
+        // regardless of its new visual column.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string_linked(
+            0,
+            0,
+            "\u{05E9}\u{05DC}\u{05D5}\u{05DD}",
+            Style::new(),
+            "https://example.com",
+        );
+        for x in 0..4 {
+            let cell = buf.get(x, 0);
+            assert!(
+                cell.hyperlink.is_some(),
+                "hyperlink missing at visual column {x}"
+            );
+        }
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn set_string_control_chars_filtered_in_rtl() {
+        // An ESC embedded in an RTL string must still be replaced with
+        // U+FFFD — the reorder path must not bypass sanitize_cell_char.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "\u{05D0}\x1b\u{05D1}", Style::new());
+        let mut found_replacement = false;
+        for x in 0..6 {
+            let sym = buf.get(x, 0).symbol.as_str();
+            assert!(!sym.contains('\x1b'), "ESC leaked into a cell");
+            if sym.contains('\u{FFFD}') {
+                found_replacement = true;
+            }
+        }
+        assert!(found_replacement, "ESC was not replaced with U+FFFD");
+    }
+
+    #[cfg(feature = "bidi")]
+    #[test]
+    fn reorder_line_visual_empty_is_noop() {
+        assert_eq!(reorder_line_visual(""), "");
+    }
+
+    #[cfg(feature = "bidi")]
+    mod bidi_proptest {
+        use super::{needs_bidi_reorder, reorder_line_visual};
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            /// Fast-path no-op: arbitrary ASCII strings never need reordering.
+            #[test]
+            fn ascii_takes_fast_path_and_reorder_is_identity(s in "[ -~]{0,64}") {
+                prop_assert!(!needs_bidi_reorder(&s));
+                // Even if forced through the reorder, ASCII is a no-op permutation.
+                prop_assert_eq!(reorder_line_visual(&s), s);
+            }
+
+            /// Reorder is a pure permutation of scalar values: it never adds,
+            /// drops, or mutates a codepoint.
+            ///
+            /// Note: total *display width* is deliberately NOT asserted —
+            /// `unicode-width` 0.2 is contextual (e.g. Arabic lam+alef forms a
+            /// single-cell ligature while alef+lam does not), so reordering can
+            /// legitimately change the rendered cell count. The invariant that
+            /// actually holds is multiset equality of `char`s.
+            #[test]
+            fn reorder_is_codepoint_permutation(
+                s in "[a-z\\x{05D0}-\\x{05EA}\\x{0627}-\\x{064A}0-9 ]{0,48}"
+            ) {
+                let mut before: Vec<char> = s.chars().collect();
+                let mut after: Vec<char> = reorder_line_visual(&s).chars().collect();
+                before.sort_unstable();
+                after.sort_unstable();
+                prop_assert_eq!(before, after);
+            }
+        }
     }
 }

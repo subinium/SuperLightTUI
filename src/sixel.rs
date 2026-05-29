@@ -284,6 +284,27 @@ mod tests {
     }
 
     #[test]
+    fn sixel_image_on_test_backend_renders_fallback() {
+        // Issue #264: a headless backend has no real TTY, so the probe never
+        // runs and `capabilities()` returns the conservative default. The
+        // sixel path must degrade gracefully (no panic) to the fallback string
+        // rather than emitting raw protocol bytes.
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let mut tb = TestBackend::new(20, 2);
+        tb.render(|ui| {
+            // Conservative default on a non-real terminal.
+            let caps = ui.capabilities();
+            assert!(!caps.sixel);
+            assert!(!caps.kitty_graphics);
+            assert_eq!(caps.best_blitter(), crate::Blitter::HalfBlock);
+            let _ = ui.sixel_image(&rgba, 2, 2, 20, 2);
+        });
+        tb.assert_contains("[sixel unsupported]");
+    }
+
+    #[test]
     fn encode_sixel_rejects_oversized_dimensions() {
         // Would request ~65k × 65k × 1 byte-of-pixel-slot ≈ 4 GiB pre-fix.
         // After the MAX_IMAGE_PIXELS gate, must return empty without

@@ -109,6 +109,29 @@ fn snapshot_calendar() {
 }
 
 #[test]
+fn snapshot_calendar_range() {
+    use slt::{KeyCode, KeyModifiers};
+
+    let mut tb = TestBackend::new(40, 12);
+    let mut calendar = CalendarState::from_ym(2024, 3);
+    calendar.with_range();
+
+    // Anchor March 12, Shift-extend +4 days to March 16.
+    let mut ev = slt::EventBuilder::new();
+    for _ in 0..11 {
+        ev = ev.key_code(KeyCode::Right);
+    }
+    let mut ev = ev.key_code(KeyCode::Enter);
+    for _ in 0..4 {
+        ev = ev.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ev.build(), 0, 1, |ui| {
+        let _ = ui.calendar(&mut calendar);
+    });
+    insta::assert_snapshot!(tb.to_string_trimmed());
+}
+
+#[test]
 fn snapshot_list() {
     let mut tb = TestBackend::new(40, 8);
     let mut list = ListState::new(vec!["Item 1", "Item 2", "Item 3", "Item 4", "Item 5"]);
@@ -123,7 +146,7 @@ fn snapshot_separator() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
         ui.text("Top");
-        ui.separator();
+        let _ = ui.separator();
         ui.text("Bottom");
     });
     insta::assert_snapshot!(tb.to_string_trimmed());

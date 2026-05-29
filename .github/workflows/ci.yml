@@ -141,3 +141,54 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
+
+  # VHS gallery gate (issue #274). Renders every `.tape` in the repo through
+  # VHS and asserts each produces its declared `Output` asset at a non-trivial
+  # byte size. Generated assets are uploaded as a workflow artifact for visual
+  # diff review; they are NOT auto-committed (binary churn + non-determinism).
+  gallery:
+    name: VHS Gallery
+    runs-on: ubuntu-latest
+    # Advisory: VHS rendering needs a virtual TTY + ttyd + ffmpeg and runs the
+    # release examples headlessly, which is inherently finicky in CI. The hard
+    # gate for README <-> tape parity is the `gallery_manifest` test in the Test
+    # job (plain `cargo test`); this job regenerates the demo GIF gallery and
+    # uploads it as a best-effort artifact, so a flake here must not block merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: charmbracelet/vhs-action@v2
+      - name: Build release examples
+        run: cargo build --release --examples
+      - name: Render every tape
+        run: |
+          shopt -s nullglob
+          for t in *.tape; do
+            echo "::group::vhs $t"
+            vhs "$t"
+            echo "::endgroup::"
+          done
+      - name: Assert each tape produced a non-trivial artifact
+        run: |
+          shopt -s nullglob
+          status=0
+          for t in *.tape; do
+            out=$(grep -m1 '^Output' "$t" | awk '{print $2}')
+            if [ ! -s "$out" ]; then
+              echo "::error::$t produced no/empty $out"
+              status=1
+              continue
+            fi
+            size=$(wc -c < "$out")
+            if [ "$size" -lt 1024 ]; then
+              echo "::error::$t produced a trivially small $out ($size bytes)"
+              status=1
+            fi
+          done
+          exit $status
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gallery
+          path: assets/

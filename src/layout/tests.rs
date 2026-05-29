@@ -81,6 +81,62 @@ fn wrap_lines_only_spaces() {
 }
 
 #[test]
+fn wrap_lines_hard_break_basic() {
+    // Embedded '\n' is a hard break even though "a b" fits within max_width.
+    assert_eq!(wrap_lines("a\nb", 10), vec!["a", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_blank_line() {
+    // Consecutive newlines produce a genuine blank line.
+    assert_eq!(wrap_lines("a\n\nb", 10), vec!["a", "", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_leading_newline() {
+    assert_eq!(wrap_lines("\nb", 10), vec!["", "b"]);
+}
+
+#[test]
+fn wrap_lines_hard_break_trailing_newline() {
+    // Trailing '\n' opens a fresh empty line — split('\n'), not str::lines().
+    assert_eq!(wrap_lines("a\n", 10), vec!["a", ""]);
+}
+
+#[test]
+fn wrap_lines_hard_break_then_soft_wrap() {
+    // Soft wrapping still applies independently within each hard-break paragraph.
+    assert_eq!(
+        wrap_lines("hello world\nfoo", 7),
+        vec!["hello", "world", "foo"]
+    );
+}
+
+#[test]
+fn wrap_lines_hard_break_cjk() {
+    assert_eq!(wrap_lines("日本\nhello", 5), vec!["日本", "hello"]);
+}
+
+#[test]
+fn wrap_lines_crlf_normalized() {
+    // "\r\n" collapses to a single break with no stray '\r' in output.
+    assert_eq!(wrap_lines("a\r\nb", 10), vec!["a", "b"]);
+}
+
+#[test]
+fn wrap_lines_no_literal_control_char_in_output() {
+    for line in wrap_lines("alpha\nbeta\r\ngamma", 80) {
+        assert!(!line.contains('\n') && !line.contains('\r'));
+    }
+}
+
+#[test]
+fn wrap_lines_zero_width_honors_hard_break() {
+    // max_width == 0 still splits on '\n' and never emits a literal control char.
+    assert_eq!(wrap_lines("a\nb", 0), vec!["a", "b"]);
+}
+
+#[test]
 fn wrap_segments_empty_returns_single_empty_line() {
     let segs: Vec<(String, Style)> = Vec::new();
     assert_eq!(
@@ -156,6 +212,75 @@ fn wrap_segments_cjk_with_mixed_styles() {
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0], vec![("日本".to_string(), s1)]);
     assert_eq!(lines[1], vec![("語".to_string(), s2)]);
+}
+
+#[test]
+fn wrap_segments_hard_break_basic() {
+    let s = Style::new();
+    let segs = vec![("a\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s)], vec![("b".to_string(), s)]]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_blank_line() {
+    let s = Style::new();
+    let segs = vec![("a\n\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![
+            vec![("a".to_string(), s)],
+            Vec::<(String, Style)>::new(),
+            vec![("b".to_string(), s)],
+        ]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_across_segment_boundary() {
+    // A '\n' that ends one styled segment still breaks the line; styles persist.
+    let s1 = Style::new();
+    let s2 = Style::new().fg(Color::Red);
+    let segs = vec![("a\n".to_string(), s1), ("b".to_string(), s2)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s1)], vec![("b".to_string(), s2)]]
+    );
+}
+
+#[test]
+fn wrap_segments_hard_break_then_soft_wrap() {
+    // Soft word wrap still applies within each hard-break paragraph.
+    let s = Style::new();
+    let segs = vec![("hello world\nfoo".to_string(), s)];
+    let joined: Vec<String> = wrap_segments(&segs, 9)
+        .iter()
+        .map(|l| l.iter().map(|(t, _)| t.as_str()).collect())
+        .collect();
+    assert_eq!(joined, vec!["hello", "world", "foo"]);
+}
+
+#[test]
+fn wrap_segments_crlf_normalized() {
+    let s = Style::new();
+    let segs = vec![("a\r\nb".to_string(), s)];
+    assert_eq!(
+        wrap_segments(&segs, 10),
+        vec![vec![("a".to_string(), s)], vec![("b".to_string(), s)]]
+    );
+}
+
+#[test]
+fn wrap_segments_no_literal_control_char_in_runs() {
+    let s = Style::new();
+    let segs = vec![("alpha\nbeta\r\ngamma".to_string(), s)];
+    for line in wrap_segments(&segs, 80) {
+        for (t, _) in line {
+            assert!(!t.contains('\n') && !t.contains('\r'));
+        }
+    }
 }
 
 #[test]
@@ -1435,4 +1560,989 @@ fn flex_shrink_mixed_only_flagged_scale() {
     assert!(!row.children[1].shrink);
     assert_eq!(row.children[0].size.0, 10);
     assert_eq!(row.children[1].size.0, 20);
+}
+
+// =====================================================================
+// #258 — flex-wrap (multi-line row) + flex-basis
+// =====================================================================
+//
+// Tree-level tests mirroring the #161 flex_shrink_* style: build a command
+// stream with the relevant marker, `build_tree`, `compute` against a fixed
+// `Rect`, and assert child `.pos` / `.size`.
+
+/// Push a Column container holding a single `width`-char text. When `basis`
+/// is `Some`, a `BasisMarker` precedes the container; when `shrink`, a
+/// `ShrinkMarker` precedes it.
+fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: Option<u32>) {
+    if shrink {
+        commands.push(Command::ShrinkMarker);
+    }
+    if let Some(b) = basis {
+        commands.push(Command::BasisMarker(b));
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Column,
+        gap: 0,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+    commands.push(Command::Text {
+        content: "x".repeat(width),
+        cursor_offset: None,
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap: false,
+        truncate: false,
+        margin: Default::default(),
+        constraints: Default::default(),
+    });
+    commands.push(Command::EndContainer);
+}
+
+/// Open a row, optionally wrapping (with the given cross-axis gap) and/or
+/// with a within-line gap. `wrap` pushes a `WrapMarker(cross_gap)` first.
+fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
+    if let Some(cross_gap) = wrap {
+        commands.push(Command::WrapMarker(cross_gap));
+    }
+    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction: Direction::Row,
+        gap,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    })));
+}
+
+#[test]
+fn flex_wrap_two_lines_on_overflow() {
+    // Three 14-wide children in a 30-wide wrapping row (gap 0): two fit on
+    // line 0 (14 + 14 = 28 <= 30), the third overflows to line 1.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(row.wrap_children);
+    assert_eq!(row.children.len(), 3);
+    // Line 0: children 0 and 1 share the top line.
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y);
+    assert_eq!(row.children[0].pos.0, area.x);
+    assert_eq!(row.children[1].pos.0, area.x + 14);
+    // Line 1: the overflowing child wraps down and its x resets to area.x.
+    assert_eq!(row.children[2].pos.1, area.y + 1);
+    assert_eq!(row.children[2].pos.0, area.x);
+}
+
+#[test]
+fn flex_wrap_off_is_single_line() {
+    // Same children, no WrapMarker: all on the top line, overflow preserved.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(!row.wrap_children);
+    for child in &row.children {
+        assert_eq!(child.pos.1, area.y);
+    }
+    // Overflow-by-design: monotonic x advance, third child past the right edge.
+    assert_eq!(row.children[0].pos.0, area.x);
+    assert_eq!(row.children[1].pos.0, area.x + 14);
+    assert_eq!(row.children[2].pos.0, area.x + 28);
+}
+
+#[test]
+fn flex_wrap_row_gap_between_lines() {
+    // Cross-axis gap of 2 between lines. Each line is 1 cell tall, so line 1
+    // lands at area.y + line0_height (1) + cross_gap (2) = area.y + 3.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(2));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 12);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.cross_gap, 2);
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y);
+    assert_eq!(row.children[2].pos.1, area.y + 3);
+}
+
+#[test]
+fn flex_wrap_oversize_child_own_line() {
+    // One child wider than the full area occupies its own line, then a normal
+    // child follows on the next line — no empty line, no panic.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 50, false, None); // wider than the 30-wide row
+    push_textcol(&mut commands, 10, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 8);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 2);
+    // Oversize child on line 0 (clipped to area width), normal child on line 1.
+    assert_eq!(row.children[0].pos.1, area.y);
+    assert_eq!(row.children[1].pos.1, area.y + 1);
+    assert_eq!(row.children[1].pos.0, area.x);
+}
+
+#[test]
+fn flex_wrap_min_height_reserves_lines() {
+    // A wrapping row inside the (implicit) root column must report a multi-line
+    // height so the parent reserves enough rows. Three 14-wide children in a
+    // 30-wide row wrap to 2 lines, each 1 cell tall → row height == 2.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, Some(0));
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    push_textcol(&mut commands, 14, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 12);
+    compute(&mut tree, area);
+
+    let row = &mut tree.children[0];
+    // min_height_for_width drives the parent column's reservation.
+    assert_eq!(row.min_height_for_width(30), 2);
+}
+
+#[test]
+fn flex_basis_feeds_grow() {
+    // Two children with basis(10) and grow(1) each in a 40-wide row.
+    // free = 40 - (10 + 10) = 20, split 10/10 → each grows to 10.
+    // (Grow children resolve to their share of flex_space; basis sets the
+    // base subtracted from available, so flex_space = 40 - 20 = 20.)
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    // Use grow on the wrapper containers — push them manually with basis+grow.
+    for _ in 0..2 {
+        commands.push(Command::BasisMarker(10));
+        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 1,
+            group_name: None,
+        })));
+        commands.push(Command::Text {
+            content: "x".to_string(),
+            cursor_offset: None,
+            style: Style::new(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Default::default(),
+            constraints: Default::default(),
+        });
+        commands.push(Command::EndContainer);
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 40, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children[0].flex_basis(), Some(10));
+    assert_eq!(row.children[1].flex_basis(), Some(10));
+    // Grow children split the full available width 40 → 20 each.
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
+#[test]
+fn flex_basis_feeds_shrink() {
+    // Two children, basis(20), both shrink, in a 30-wide row. The narrow text
+    // (5 chars) makes min_width 5, but basis(20) replaces it as the shrink
+    // base: fixed = 40, scale = min(30,40)/40 = 0.75, each → floor(20*0.75) = 15.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 5, true, Some(20));
+    push_textcol(&mut commands, 5, true, Some(20));
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 30, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert!(row.children[0].shrink);
+    assert_eq!(row.children[0].flex_basis(), Some(20));
+    assert_eq!(row.children[0].size.0, 15);
+    assert_eq!(row.children[1].size.0, 15);
+}
+
+#[test]
+fn flex_basis_none_falls_back_to_min_width() {
+    // No BasisMarker: base size is the child's min_width (20), identical to
+    // the pre-#258 path.
+    let mut commands: Vec<Command> = Vec::new();
+    open_row_cfg(&mut commands, 0, None);
+    push_textcol(&mut commands, 20, false, None);
+    push_textcol(&mut commands, 20, false, None);
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    let area = crate::rect::Rect::new(0, 0, 60, 4);
+    compute(&mut tree, area);
+
+    let row = &tree.children[0];
+    assert_eq!(row.children[0].flex_basis(), None);
+    assert_eq!(row.children[0].size.0, 20);
+    assert_eq!(row.children[1].size.0, 20);
+}
+
+// ---------------------------------------------------------------------------
+// Grapheme-cluster segmentation (issue #259)
+//
+// A break / truncate must never fall inside an extended grapheme cluster.
+// Helpers below re-segment the output and assert no output cluster boundary
+// was introduced that wasn't already an input cluster boundary.
+// ---------------------------------------------------------------------------
+
+/// A regional indicator (U+1F1E6..=U+1F1FF) on its own — i.e. a flag emoji that
+/// was split in half. Its presence in a wrapped line is the failure signature.
+fn contains_lone_regional_indicator(s: &str) -> bool {
+    use unicode_segmentation::UnicodeSegmentation;
+    s.graphemes(true).any(|g| {
+        let mut chars = g.chars();
+        match (chars.next(), chars.next()) {
+            // A single regional indicator with no paired partner: a half flag.
+            (Some(c), None) => ('\u{1F1E6}'..='\u{1F1FF}').contains(&c),
+            _ => false,
+        }
+    })
+}
+
+#[test]
+fn wrap_lines_zwj_flag_not_split() {
+    // 🇰🇷 and 🇯🇵 are each two regional-indicator scalars forming one cluster.
+    // At max_width=2 (one flag is width 2) each flag must stay whole.
+    let lines = wrap_lines("🇰🇷🇯🇵", 2);
+    for line in &lines {
+        assert!(
+            !contains_lone_regional_indicator(line),
+            "flag split mid-cluster: {line:?}"
+        );
+    }
+    // Re-joined output preserves every flag.
+    let joined: String = lines.join("");
+    assert!(joined.contains("🇰🇷"));
+    assert!(joined.contains("🇯🇵"));
+}
+
+#[test]
+fn wrap_lines_family_emoji_at_boundary() {
+    // Family emoji: 👨‍👩‍👧‍👦 is one cluster joined by ZWJ. Put a width-2 char
+    // before it so the family base lands at/over the boundary; the whole
+    // cluster must stay intact on one line (no orphaned ZWJ tail).
+    let input = "日👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    let lines = wrap_lines(input, 2);
+    // The family cluster appears whole on exactly one output line.
+    let whole = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    assert!(
+        lines.iter().any(|l| l.contains(whole)),
+        "family emoji was broken across lines: {lines:?}"
+    );
+    // No output line carries a dangling ZWJ at an edge of the cluster.
+    for line in &lines {
+        // A ZWJ must always be flanked by its joined glyphs — re-segmenting
+        // must not yield a fragment that starts or ends with a bare ZWJ.
+        assert!(
+            !line.starts_with('\u{200D}') && !line.ends_with('\u{200D}'),
+            "dangling ZWJ in {line:?}"
+        );
+    }
+}
+
+#[test]
+fn wrap_lines_devanagari_cluster() {
+    // "क्षि" is base + virama + consonant + vowel sign: one (or few) clusters.
+    // It must not be broken between a base and its combining marks.
+    use unicode_segmentation::UnicodeSegmentation;
+    let input = "क्षि";
+    let lines = wrap_lines(input, 1);
+    let input_clusters: Vec<&str> = input.graphemes(true).collect();
+    // Every output line is a whole sequence of input clusters.
+    for line in &lines {
+        for g in line.graphemes(true) {
+            assert!(
+                input_clusters.contains(&g),
+                "devanagari cluster fragmented: {g:?} not an input cluster"
+            );
+        }
+    }
+}
+
+#[test]
+fn wrap_lines_thai_cluster() {
+    // "กำ" is a Thai consonant + sara am (one cluster). Must stay intact.
+    use unicode_segmentation::UnicodeSegmentation;
+    let input = "กำ";
+    let lines = wrap_lines(input, 1);
+    let input_clusters: Vec<&str> = input.graphemes(true).collect();
+    for line in &lines {
+        for g in line.graphemes(true) {
+            assert!(
+                input_clusters.contains(&g),
+                "thai cluster fragmented: {g:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_long_word_keeps_clusters() {
+    // An over-wide word of concatenated flags chunks only between flags.
+    let lines = wrap_lines("🇰🇷🇯🇵🇺🇸", 2);
+    for line in &lines {
+        assert!(
+            !contains_lone_regional_indicator(line),
+            "long-word chunk split a flag: {line:?}"
+        );
+    }
+    let joined: String = lines.join("");
+    assert!(joined.contains("🇰🇷") && joined.contains("🇯🇵") && joined.contains("🇺🇸"));
+}
+
+#[test]
+fn wrap_segments_zwj_across_break() {
+    // A styled run containing a ZWJ family emoji never splits the cluster
+    // across two visual lines.
+    let whole = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+    let segs = vec![
+        ("日本".to_string(), Style::new()),
+        (whole.to_string(), Style::new()),
+    ];
+    let lines = wrap_segments(&segs, 2);
+    // Find the cluster reassembled on a single line.
+    let any_whole = lines.iter().any(|line| {
+        let joined: String = line.iter().map(|(t, _)| t.as_str()).collect();
+        joined.contains(whole)
+    });
+    assert!(any_whole, "ZWJ cluster split across lines: {lines:?}");
+    // No line fragment dangles a ZWJ at an edge.
+    for line in &lines {
+        for (t, _) in line {
+            assert!(
+                !t.starts_with('\u{200D}') && !t.ends_with('\u{200D}'),
+                "dangling ZWJ in segment {t:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn truncate_with_ellipsis_drops_whole_cluster() {
+    // "🇰🇷abc" truncated to width 2: the flag is width 2 so it cannot fit
+    // alongside the ellipsis (target = 1). It is dropped whole, not halved.
+    let out = super::render::truncate_with_ellipsis("🇰🇷abc", 2);
+    assert_eq!(out, "\u{2026}");
+    assert!(!contains_lone_regional_indicator(&out));
+}
+
+#[test]
+fn truncate_with_ellipsis_ascii_unchanged() {
+    // ASCII regression: identical to scalar behavior.
+    assert_eq!(
+        super::render::truncate_with_ellipsis("hello", 4),
+        "hel\u{2026}"
+    );
+    assert_eq!(
+        super::render::truncate_with_ellipsis("hi", 10),
+        "hi\u{2026}"
+    );
+}
+
+// --- gap_overlap (signed gap) tests (#222) -------------------------------
+
+/// Build a `Direction` container with `gap` (signed) holding `n` fixed-size
+/// children, lay it out in `area`, and return the computed tree. Each child
+/// is a text node constrained to exactly `child_w` x `child_h` so positions
+/// are deterministic regardless of content metrics.
+fn gap_overlap_tree(
+    direction: Direction,
+    gap: i32,
+    child_w: u32,
+    child_h: u32,
+    n: usize,
+    area: crate::rect::Rect,
+) -> LayoutNode {
+    use crate::style::{Align, Constraints, Justify, Margin, Padding};
+
+    let mut commands = vec![Command::BeginContainer(Box::new(BeginContainerArgs {
+        direction,
+        gap,
+        align: Align::Start,
+        align_self: None,
+        justify: Justify::Start,
+        border: None,
+        border_sides: BorderSides::all(),
+        border_style: crate::style::Style::new(),
+        bg_color: None,
+        padding: Padding::default(),
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+        title: None,
+        grow: 0,
+        group_name: None,
+    }))];
+    for _ in 0..n {
+        commands.push(Command::Text {
+            content: "x".into(),
+            cursor_offset: None,
+            style: crate::style::Style::new(),
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default().w(child_w).h(child_h),
+        });
+    }
+    commands.push(Command::EndContainer);
+
+    let mut tree = build_tree(&mut commands);
+    compute(&mut tree, area);
+    tree
+}
+
+#[test]
+fn gap_overlap_1_reduces_total_width() {
+    // Row of two w(10) children in a w(25) parent with gap = -1.
+    // Total used = 10 + 10 - 1 = 19; child 1 starts at child 0 end - 1.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        -1,
+        10,
+        1,
+        2,
+        crate::rect::Rect::new(0, 0, 25, 4),
+    );
+    let row = &tree.children[0];
+    let c0 = &row.children[0];
+    let c1 = &row.children[1];
+    assert_eq!(c0.size.0, 10);
+    assert_eq!(c1.size.0, 10);
+    // Overlap by 1: child 1 starts one column before child 0's end.
+    assert_eq!(
+        c1.pos.0,
+        c0.pos.0 + c0.size.0 - 1,
+        "child 1 must overlap child 0 by one column"
+    );
+    // Total extent from first child start to last child end = 19.
+    assert_eq!(c1.pos.0 + c1.size.0 - c0.pos.0, 19);
+}
+
+#[test]
+fn gap_overlap_zero_is_gap_zero() {
+    // gap_overlap(0) (gap = 0) must lay out identically to gap(0).
+    let area = crate::rect::Rect::new(0, 0, 40, 4);
+    let a = gap_overlap_tree(Direction::Row, 0, 8, 1, 3, area);
+    let b = gap_overlap_tree(Direction::Row, 0, 8, 1, 3, area);
+    for i in 0..3 {
+        assert_eq!(a.children[0].children[i].pos, b.children[0].children[i].pos);
+        assert_eq!(
+            a.children[0].children[i].size,
+            b.children[0].children[i].size
+        );
+    }
+    // And child 1 starts exactly at child 0's end (no overlap, no gap).
+    let row = &a.children[0];
+    assert_eq!(row.children[1].pos.0, row.children[0].pos.0 + 8);
+}
+
+#[test]
+fn gap_overlap_large_value_does_not_panic() {
+    // gap = -1000 with small children: positions saturate at 0, no panic/wrap.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        -1000,
+        5,
+        1,
+        3,
+        crate::rect::Rect::new(0, 0, 20, 4),
+    );
+    let row = &tree.children[0];
+    assert_eq!(row.children.len(), 3);
+    // All children collapse to the same starting column (positions clamped).
+    for child in &row.children {
+        assert_eq!(child.pos.0, row.children[0].pos.0);
+    }
+}
+
+#[test]
+fn gap_positive_unchanged() {
+    // gap = 2 (positive) behaves as before: child 1 starts 2 cols after child 0.
+    let tree = gap_overlap_tree(
+        Direction::Row,
+        2,
+        6,
+        1,
+        2,
+        crate::rect::Rect::new(0, 0, 40, 4),
+    );
+    let row = &tree.children[0];
+    let c0 = &row.children[0];
+    let c1 = &row.children[1];
+    assert_eq!(c1.pos.0, c0.pos.0 + c0.size.0 + 2);
+}
+
+#[test]
+fn gap_overlap_col_direction() {
+    // gap = -1 on a column container overlaps children vertically by one row.
+    let tree = gap_overlap_tree(
+        Direction::Column,
+        -1,
+        4,
+        3,
+        2,
+        crate::rect::Rect::new(0, 0, 10, 25),
+    );
+    let col = &tree.children[0];
+    let c0 = &col.children[0];
+    let c1 = &col.children[1];
+    assert_eq!(c0.size.1, 3);
+    assert_eq!(c1.size.1, 3);
+    assert_eq!(
+        c1.pos.1,
+        c0.pos.1 + c0.size.1 - 1,
+        "child 1 must overlap child 0 by one row"
+    );
+}
+
+mod wrap_lines_grapheme_property {
+    use super::wrap_lines;
+    use proptest::prelude::*;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        // For arbitrary strings (newline-free so we test the soft-wrap kernel),
+        // every cluster on every output line must be a whole input cluster:
+        // no output cluster boundary that wasn't an input boundary.
+        #[test]
+        fn no_partial_cluster(
+            s in "[a-c \\x{1F1E6}-\\x{1F1FF}\\x{0301}\\x{0E33}\\x{0E01}]{0,32}",
+            w in 1u32..6,
+        ) {
+            let input_clusters: std::collections::HashSet<String> =
+                s.graphemes(true).map(str::to_string).collect();
+            for line in wrap_lines(&s, w) {
+                for g in line.graphemes(true) {
+                    // Spaces are inserted as word separators by the wrapper, so
+                    // a bare space is always a legal output cluster.
+                    prop_assert!(
+                        g == " " || input_clusters.contains(g),
+                        "output cluster {:?} was not a whole input cluster (input {:?}, width {})",
+                        g, s, w
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ─── #247: horizontal scroll (scroll_row) layout / collect kernel ──────────
+
+/// Build a scrollable row of fixed-width text children for the #247 tests.
+///
+/// Each child is a 1-row text node sized `cell_w` wide; `gap` is the
+/// inter-child main-axis gap. The container is positioned at the origin and
+/// marked `is_scrollable`, mirroring what `build_children` produces for
+/// `scroll_row`.
+#[cfg(test)]
+fn scrollable_row(children_widths: &[u32], gap: i32, viewport_w: u32) -> LayoutNode {
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    row.is_scrollable = true;
+    row.gap = gap;
+    for (i, &w) in children_widths.iter().enumerate() {
+        let mut t = LayoutNode::text(
+            format!("C{i}"),
+            Style::new(),
+            0,
+            Align::Start,
+            (None, false, false),
+            Margin::default(),
+            Constraints::default().min_w(w).max_w(w),
+        );
+        // Seed the intrinsic width so `min_width` reports `w` regardless of the
+        // 2-char label.
+        t.size = (w, 1);
+        row.children.push(t);
+    }
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    root.children.push(row);
+    compute(&mut root, crate::rect::Rect::new(0, 0, viewport_w, 4));
+    root
+}
+
+#[test]
+fn scrollable_row_overflow_sets_content_width_and_lays_out_horizontally() {
+    // Four 10-wide children + 3 gaps of 1 = 43 natural width into a 20-wide
+    // viewport. The scrollable row must lay out into the oversized virtual
+    // area (children march left→right past the viewport) and record
+    // `content_width == natural_width`.
+    let root = scrollable_row(&[10, 10, 10, 10], 1, 20);
+    let row = &root.children[0];
+    assert!(row.is_scrollable);
+    assert_eq!(
+        row.content_width, 43,
+        "content_width must equal the natural width (4*10 + 3*1)"
+    );
+    assert_eq!(
+        row.content_height, 0,
+        "a scrollable row has no content_height"
+    );
+
+    // Children laid out left→right at the same y, spanning past the viewport.
+    let c = &row.children;
+    assert_eq!(c[0].pos, (0, 0));
+    assert_eq!(c[1].pos.0, 11, "second child after first(10)+gap(1)");
+    assert_eq!(c[2].pos.0, 22);
+    assert_eq!(c[3].pos.0, 33);
+    for child in c {
+        assert_eq!(child.pos.1, 0, "all children share the same row (y)");
+    }
+    assert!(
+        c[3].pos.0 + c[3].size.0 > 20,
+        "the far-right child must overflow the 20-wide viewport"
+    );
+}
+
+#[test]
+fn scrollable_row_fits_reports_content_within_viewport() {
+    // 3*5 + 2*1 = 17 ≤ 20: no overflow. Mirroring the scrollable-column path,
+    // `content_width` records the real content extent (not forced to 0), and
+    // because it is ≤ the viewport width the row reports no scrollable slack:
+    // `can_scroll_right` will be false.
+    let root = scrollable_row(&[5, 5, 5], 1, 20);
+    let row = &root.children[0];
+    assert_eq!(
+        row.content_width, 17,
+        "a fitting scrollable row records its real content width (3*5 + 2*1)"
+    );
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds_x(row.content_width, 20);
+    assert!(
+        !s.can_scroll_right(),
+        "content (17) ≤ viewport (20): no horizontal slack"
+    );
+}
+
+#[test]
+fn scrollable_column_reports_zero_content_width() {
+    // Regression guard: a vertical scrollable must keep content_width == 0 and
+    // a non-zero content_height, so `ScrollState` never sees phantom
+    // horizontal overflow (#247 must not disturb the y-axis).
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut col = LayoutNode::container(Direction::Column, default_container_config());
+    col.is_scrollable = true;
+    for i in 0..10 {
+        let mut t = LayoutNode::text(
+            format!("row {i}"),
+            Style::new(),
+            0,
+            Align::Start,
+            (None, false, false),
+            Margin::default(),
+            Constraints::default(),
+        );
+        t.size = (6, 1);
+        col.children.push(t);
+    }
+    root.children.push(col);
+    compute(&mut root, crate::rect::Rect::new(0, 0, 20, 4));
+    let col = &root.children[0];
+    assert_eq!(
+        col.content_width, 0,
+        "vertical scrollable: content_width == 0"
+    );
+    assert!(
+        col.content_height > 0,
+        "vertical scrollable: content_height > 0"
+    );
+}
+
+#[test]
+fn collect_all_reports_horizontal_axis_for_scrollable_row() {
+    // The collect pass must tag a scrollable row with `is_horizontal = true`
+    // and report content/viewport *widths*, so `Context::scrollable` binds the
+    // x-axis next frame.
+    let root = scrollable_row(&[10, 10, 10, 10], 1, 20);
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    assert_eq!(fd.scroll_infos.len(), 1);
+    let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+    assert!(is_horizontal, "scrollable row must be tagged horizontal");
+    assert_eq!(content, 43, "reports content width");
+    assert_eq!(viewport, 20, "reports viewport width");
+}
+
+#[test]
+fn collect_all_keeps_vertical_axis_flag_false_for_scrollable_column() {
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut col = LayoutNode::container(Direction::Column, default_container_config());
+    col.is_scrollable = true;
+    col.pos = (0, 0);
+    col.size = (20, 4);
+    col.content_height = 30;
+    root.children.push(col);
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+    assert!(!is_horizontal, "scrollable column stays vertical (false)");
+    assert_eq!(content, 30);
+    assert_eq!(viewport, 4);
+}
+
+#[test]
+fn collect_all_shifts_child_x_by_scroll_offset_x() {
+    // A scrollable row with `scroll_offset_x = 7` must report its child focus
+    // rect shifted left by 7 (the on-screen x), mirroring the y-axis offset.
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    row.is_scrollable = true;
+    row.pos = (0, 0);
+    row.size = (20, 1);
+    row.scroll_offset_x = 7;
+    let mut child = LayoutNode::text(
+        "focusable".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+    child.pos = (10, 0);
+    child.size = (9, 1);
+    child.focus_id = Some(3);
+    row.children.push(child);
+    root.children.push(row);
+
+    let mut fd = FrameData::default();
+    collect_all(&root, &mut fd);
+    let (_, rect) = fd
+        .focus_rects
+        .iter()
+        .find(|(id, _)| *id == 3)
+        .expect("focus rect collected");
+    assert_eq!(
+        rect.x, 3,
+        "child at layout x=10 with x-offset 7 must collect at screen x=3"
+    );
+}
+
+#[test]
+fn scroll_row_renders_left_to_right_not_stacked() {
+    // Regression for the core #247 bug: `scroll_row` must NOT silently build a
+    // vertical column. Children must increase in x with a constant y.
+    let mut tb = crate::test_utils::TestBackend::new(20, 6);
+    let mut scroll = crate::widgets::ScrollState::new();
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..6 {
+                ui.text(format!("COL{i}"));
+            }
+        });
+    });
+    // The leftmost columns are visible on the same single line; a vertical
+    // column would have stacked them on separate lines instead.
+    let line0 = tb.line(0);
+    assert!(
+        line0.contains("COL0") && line0.contains("COL1"),
+        "scroll_row must lay COL0 and COL1 on the SAME line (got {line0:?})"
+    );
+    assert_eq!(
+        tb.line(1),
+        "",
+        "a horizontal scroll_row must not stack children onto row 1"
+    );
+}
+
+#[test]
+fn scroll_row_clips_far_right_then_reveals_after_scroll() {
+    // Wide content into a narrow viewport: a far-right column is clipped until
+    // we scroll right, then it appears and the leftmost clips out.
+    let mut tb = crate::test_utils::TestBackend::new(16, 4);
+    let mut scroll = crate::widgets::ScrollState::new();
+
+    // Frame 1 records the scroll bounds; frame 2's `scrollable()` reads them
+    // back via `prev_scroll_infos` and calls `set_bounds_x`, so after frame 2
+    // `scroll` knows its content/viewport widths and `scroll_right` can clamp
+    // correctly. (Same two-frame bounds lifecycle as vertical scroll.)
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.assert_contains("[item00]");
+    tb.assert_not_contains("[item07]");
+
+    // Now bounds are known: scroll right far enough to reveal the last item.
+    scroll.scroll_right(60);
+    tb.render(|ui| {
+        let _ = ui.scroll_row(&mut scroll, |ui| {
+            for i in 0..8 {
+                ui.text(format!("[item{i:02}]"));
+            }
+        });
+    });
+    tb.assert_contains("[item07]");
+    tb.assert_not_contains("[item00]");
+}
+
+#[test]
+fn scroll_state_horizontal_bounds_clamp_and_predicates() {
+    // Drive the bounds/predicate surface directly (no rendering): the x-axis
+    // mirror of the vertical clamp/can_scroll tests.
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds_x(100, 20); // content 100 wide, viewport 20 → max offset 80.
+
+    assert!(!s.can_scroll_left(), "at start, cannot scroll left");
+    assert!(s.can_scroll_right(), "content overflows, can scroll right");
+
+    s.scroll_right(1000); // way past the end
+    assert_eq!(s.offset_x, 80, "scroll_right clamps to content - viewport");
+    assert!(!s.can_scroll_right(), "at end, cannot scroll right");
+    assert!(s.can_scroll_left(), "at end, can scroll left");
+
+    s.scroll_left(1000); // way past the start
+    assert_eq!(s.offset_x, 0, "scroll_left clamps to 0");
+    assert!((s.progress_x() - 0.0).abs() < f64::EPSILON);
+
+    s.scroll_right(40);
+    assert!((s.progress_x() - 0.5).abs() < 1e-9, "40/80 == 0.5 progress");
+}
+
+#[test]
+fn scroll_state_vertical_api_unchanged_by_horizontal_addition() {
+    // The vertical API must remain byte-identical: a column scrollable updates
+    // `offset` only, never `offset_x`.
+    let mut s = crate::widgets::ScrollState::new();
+    s.set_bounds(50, 10);
+    s.scroll_down(5);
+    assert_eq!(s.offset, 5);
+    assert_eq!(s.offset_x, 0, "vertical scroll must not touch offset_x");
+    assert_eq!(s.content_width(), 0);
+    assert_eq!(s.viewport_width(), 0);
+}
+
+mod hscroll_proptest {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        // Invariant 1: for any child widths and viewport, after layout the
+        // scrollable row's `content_width` equals the natural width (sum of
+        // child widths + gaps) — the x-axis mirror of the column path, which
+        // records the real content extent regardless of overflow.
+        //
+        // Invariant 2: `ScrollState::scroll_right(offset)` always clamps
+        // `offset_x` into `[0, content_width - viewport_width]`, so the
+        // rendered viewport never scrolls past the content edge.
+        #[test]
+        fn content_width_and_offset_clamp(
+            widths in prop::collection::vec(1u32..12, 1..8),
+            viewport_w in 4u32..30,
+            requested_offset in 0usize..200,
+        ) {
+            let root = scrollable_row(&widths, 1, viewport_w);
+            let row = &root.children[0];
+
+            let gap: i64 = 1;
+            let gaps = (widths.len() as i64 - 1).max(0) * gap;
+            let natural: i64 = widths.iter().map(|&w| w as i64).sum::<i64>() + gaps;
+            prop_assert_eq!(row.content_width as i64, natural,
+                "scrollable row records the natural content width");
+
+            // Offset clamp invariant via collect (the binding path).
+            let mut fd = FrameData::default();
+            collect_all(&root, &mut fd);
+            let (content, viewport, is_horizontal) = fd.scroll_infos[0];
+            prop_assert!(is_horizontal);
+
+            let mut s = crate::widgets::ScrollState::new();
+            s.set_bounds_x(content, viewport);
+            s.scroll_right(requested_offset);
+            let max = content.saturating_sub(viewport) as usize;
+            prop_assert!(s.offset_x <= max,
+                "offset_x {} must clamp to max {}", s.offset_x, max);
+            // No leak past the clip: every visible cell's screen x is within
+            // [0, viewport). A child at layout x `cx` renders at `cx - offset_x`;
+            // require the visible window to stay within bounds.
+            prop_assert!(s.offset_x as u32 <= content,
+                "offset_x must never exceed total content width");
+        }
+    }
 }

@@ -17,13 +17,17 @@ use crate::style::{
     Modifiers, Padding, Spacing, Style, Theme, ThemeColor, WidgetColors, WidgetTheme,
 };
 use crate::widgets::{
-    ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState, CommandPaletteState,
-    ContextItem, FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, MultiSelectState, RadioState, ScreenState, ScrollState, SelectState,
-    SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
+    color_hex_label, parse_hex_color, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate,
+    CalendarSelect, CalendarState, ColorPickerState, CommandPaletteState, ContextItem,
+    FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
+    HighlightRange, ListState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
+    PickerMode, RadioState, SchedKind, SchedulerSlot, SchedulerState, ScreenState, ScrollState,
+    SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState,
+    TabsState, TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
+    ValidateTrigger,
 };
 use crate::FrameState;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]
@@ -47,7 +51,7 @@ mod widgets_display;
 mod widgets_input;
 mod widgets_interactive;
 mod widgets_viz;
-pub use widgets_display::{Anchor, Breadcrumb, Gauge, GutterOpts, LineGauge};
+pub use widgets_display::{Anchor, Breadcrumb, CodeBlock, Gauge, GutterOpts, LineGauge};
 pub use widgets_viz::TreemapItem;
 
 mod state;
@@ -67,8 +71,22 @@ pub use container::*;
 
 mod runtime;
 
+/// Issue #234: in-frame async task API (`spawn`/`poll`), gated behind `async`.
+#[cfg(feature = "async")]
+mod async_tasks;
+#[cfg(feature = "async")]
+pub(crate) use async_tasks::AsyncTasks;
+#[cfg(feature = "async")]
+pub use async_tasks::TaskHandle;
+
 mod helpers;
 pub(crate) use helpers::*;
 
+#[cfg(all(test, feature = "async"))]
+mod async_tasks_tests;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod scheduler_tests;

@@ -1,5 +1,13 @@
 use super::*;
 
+/// Maximum page count rendered as dots before [`Context::paginator`] falls back
+/// to the compact `{page}/{total}` counter to avoid overflowing the line.
+const PAGINATOR_MAX_DOTS: usize = 12;
+
+/// Per-column cell renderer for [`Context::table_with`]: maps
+/// `(row_view_index, col_index, raw_cell)` to styled content.
+type TableCellRenderer = Box<dyn Fn(usize, usize, &str) -> (String, Style)>;
+
 impl Context {
     /// Render a data table with sortable columns and row selection.
     ///
@@ -13,6 +21,59 @@ impl Context {
 
     /// Render a data table with custom widget colors.
     pub fn table_colored(&mut self, state: &mut TableState, colors: &WidgetColors) -> Response {
+        self.table_inner(state, colors, None)
+    }
+
+    /// Render a data table with a per-column cell renderer.
+    ///
+    /// `cell` maps `(row_view_index, col_index, raw_cell)` to a
+    /// `(content, Style)` pair, letting any column carry its own foreground /
+    /// background / modifiers (a colored badge, a status label, an icon, …).
+    /// Columns whose closure returns the unchanged raw string with a default
+    /// [`Style`] fall back to the plain string-grid behavior. The closure is
+    /// `'static` (it is invoked during deferred row rendering) and is called
+    /// once per visible cell per frame.
+    ///
+    /// Sorting, filtering, pagination, width constraints, and multi-row
+    /// selection all behave exactly as in [`table`](Context::table); only the
+    /// per-cell content/style differs.
+    ///
+    /// Available since v0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Color, Style, widgets::TableState};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut table = TableState::new(
+    ///     vec!["Service", "Status"],
+    ///     vec![vec!["api", "OK"], vec!["db", "DOWN"]],
+    /// );
+    /// ui.table_with(&mut table, |_row, col, raw| {
+    ///     if col == 1 {
+    ///         let color = if raw == "OK" { Color::Green } else { Color::Red };
+    ///         (raw.to_string(), Style::new().fg(color).bold())
+    ///     } else {
+    ///         (raw.to_string(), Style::default())
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn table_with(
+        &mut self,
+        state: &mut TableState,
+        cell: impl Fn(usize, usize, &str) -> (String, Style) + 'static,
+    ) -> Response {
+        let colors = self.widget_theme.table;
+        self.table_inner(state, &colors, Some(Box::new(cell)))
+    }
+
+    fn table_inner(
+        &mut self,
+        state: &mut TableState,
+        colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
+    ) -> Response {
         if state.is_dirty() {
             state.recompute_widths();
         }
@@ -22,6 +83,7 @@ impl Context {
         let old_sort_ascending = state.sort_ascending;
         let old_page = state.page;
         let old_filter = state.filter.clone();
+        let old_multi = state.multi_selected.clone();
 
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -31,14 +93,16 @@ impl Context {
         if state.is_dirty() {
             state.recompute_widths();
         }
+        state.resolve_column_widths(self.area_width);
 
-        self.table_render(state, focused, colors);
+        self.table_render(state, focused, colors, cell);
 
         response.changed = state.selected != old_selected
             || state.sort_column != old_sort_column
             || state.sort_ascending != old_sort_ascending
             || state.page != old_page
-            || state.filter != old_filter;
+            || state.filter != old_filter
+            || state.multi_selected != old_multi;
         response
     }
 
@@ -92,6 +156,14 @@ impl Context {
                 let clicked_idx = (mouse.y - rect.y - 2) as usize;
                 if clicked_idx < visible_len {
                     state.selected = clicked_idx;
+                    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                        let anchor = state.selection_anchor.unwrap_or(clicked_idx);
+                        state.select_range(anchor, clicked_idx);
+                    } else if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                        state.toggle_row(clicked_idx);
+                    } else {
+                        state.select_single(clicked_idx);
+                    }
                     consumed.push(i);
                 }
             }
@@ -99,7 +171,13 @@ impl Context {
         }
     }
 
-    fn table_render(&mut self, state: &mut TableState, focused: bool, colors: &WidgetColors) {
+    fn table_render(
+        &mut self,
+        state: &mut TableState,
+        focused: bool,
+        colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
+    ) {
         let total_visible = state.visible_indices().len();
         let page_start = if state.page_size > 0 {
             state
@@ -137,7 +215,7 @@ impl Context {
             })));
 
         self.render_table_header(state, colors);
-        self.render_table_rows(state, focused, page_start, visible_len, colors);
+        self.render_table_rows(state, focused, page_start, visible_len, colors, cell);
 
         if state.page_size > 0 && state.total_pages() > 1 {
             let current_page = (state.page + 1).to_string();
@@ -166,7 +244,23 @@ impl Context {
 
         let mut consumed_indices = Vec::new();
         for (i, key) in self.available_key_presses() {
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             match key.code {
+                // Shift+Up/Down: extend a contiguous range from the anchor.
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if shift => {
+                    let visible_len = table_visible_len(state);
+                    state.selected = state.selected.min(visible_len.saturating_sub(1));
+                    let anchor = *state.selection_anchor.get_or_insert(state.selected);
+                    handle_vertical_nav(
+                        &mut state.selected,
+                        visible_len.saturating_sub(1),
+                        key.code.clone(),
+                    );
+                    state.select_range(anchor, state.selected);
+                    consumed_indices.push(i);
+                }
+                // Plain Up/Down (or k/j): move the cursor only (back-compat).
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                     let visible_len = table_visible_len(state);
                     state.selected = state.selected.min(visible_len.saturating_sub(1));
@@ -175,6 +269,16 @@ impl Context {
                         visible_len.saturating_sub(1),
                         key.code.clone(),
                     );
+                    consumed_indices.push(i);
+                }
+                // Ctrl+Space: toggle the focused row without clearing the set.
+                // Space: toggle the focused row (additive toggle).
+                KeyCode::Char(' ') if ctrl => {
+                    state.toggle_row(state.selected);
+                    consumed_indices.push(i);
+                }
+                KeyCode::Char(' ') => {
+                    state.toggle_row(state.selected);
                     consumed_indices.push(i);
                 }
                 KeyCode::PageUp => {
@@ -244,21 +348,34 @@ impl Context {
         page_start: usize,
         visible_len: usize,
         colors: &WidgetColors,
+        cell: Option<TableCellRenderer>,
     ) {
         for idx in 0..visible_len {
-            let data_idx = state.visible_indices()[page_start + idx];
+            let view_idx = page_start + idx;
+            let data_idx = state.visible_indices()[view_idx];
             let Some(row) = state.rows.get(data_idx) else {
                 continue;
             };
-            let line = format_table_row(row, state.column_widths(), " │ ");
-            if idx == state.selected {
+
+            // Base style for the whole row, applied to every cell unless the
+            // per-column renderer overrides it. Priority: focused cursor row >
+            // multi-selected row > zebra > plain. When `multi_selected` is empty
+            // (the default), this collapses to the pre-v0.21 behavior verbatim.
+            let base = if idx == state.selected {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
                 if focused {
                     style = style.bold();
                 }
-                self.styled(line, style);
+                style
+            } else if state.is_row_selected(view_idx) {
+                // Dimmer selection background to distinguish set members from
+                // the brighter focused-cursor row.
+                Style::new()
+                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+                    .fg(colors.fg.unwrap_or(self.theme.selected_fg))
+                    .dim()
             } else {
                 let mut style = Style::new().fg(colors.fg.unwrap_or(self.theme.text));
                 if state.zebra {
@@ -271,7 +388,45 @@ impl Context {
                     });
                     style = style.bg(zebra_bg);
                 }
-                self.styled(line, style);
+                style
+            };
+
+            match &cell {
+                None => {
+                    let line = format_table_row(row, state.column_widths(), " │ ");
+                    self.styled(line, base);
+                }
+                Some(render) => {
+                    let widths = state.column_widths();
+                    let mut segments: Vec<(String, Style)> =
+                        Vec::with_capacity(widths.len().saturating_mul(2));
+                    for (col, width) in widths.iter().enumerate() {
+                        if col > 0 {
+                            segments.push((" │ ".to_string(), base));
+                        }
+                        let raw = row.get(col).map(String::as_str).unwrap_or("");
+                        let (content, cell_style) = render(view_idx, col, raw);
+                        // Overlay the per-cell style onto the row base: the cell
+                        // fg / bg win when set, modifiers are unioned. This keeps
+                        // the row selection background unless the cell overrides
+                        // it, while letting a column carry its own colored text.
+                        let mut merged = base;
+                        if cell_style.fg.is_some() {
+                            merged.fg = cell_style.fg;
+                        }
+                        if cell_style.bg.is_some() {
+                            merged.bg = cell_style.bg;
+                        }
+                        merged.modifiers |= cell_style.modifiers;
+                        let padded = clamp_table_cell(&content, *width);
+                        segments.push((padded, merged));
+                    }
+                    self.line(move |ui| {
+                        for (text, style) in segments {
+                            ui.styled(text, style);
+                        }
+                    });
+                }
             }
         }
     }
@@ -343,7 +498,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: tabs_gap,
+                gap: tabs_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -381,6 +536,166 @@ impl Context {
         self.rollback.last_text_idx = None;
 
         response.changed = state.selected != old_selected;
+        response
+    }
+
+    /// Render a standalone paginator, decoupled from any list or table.
+    ///
+    /// Consumes Left/`h`/PageUp (previous page) and Right/`l`/PageDown (next
+    /// page) when focused, and consumes those key events when handled. Clicking
+    /// a dot (in [`PaginatorStyle::Dots`]) jumps to that page; clicking the
+    /// left/right half of the counter (in [`PaginatorStyle::Arabic`]) goes to
+    /// the previous/next page. [`Response::changed`] is `true` iff the page
+    /// changed this frame.
+    ///
+    /// Pass a `&mut PaginatorState` each frame and use
+    /// [`PaginatorState::page_bounds`] to slice your own data.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::PaginatorState;
+    ///
+    /// let mut state = PaginatorState::new(42, 10);
+    /// # slt::run(move |ui: &mut slt::Context| {
+    /// ui.paginator(&mut state);
+    /// # });
+    /// ```
+    pub fn paginator(&mut self, state: &mut PaginatorState) -> Response {
+        // Reuse the tabs WidgetColors slot until a dedicated paginator slot lands.
+        let colors = self.widget_theme.tabs;
+        self.paginator_colored(state, &colors)
+    }
+
+    /// Render a standalone paginator with custom widget colors.
+    ///
+    /// Behaves exactly like [`Context::paginator`] but draws with the provided
+    /// [`WidgetColors`] instead of the theme defaults.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{Color, PaginatorState, WidgetColors};
+    ///
+    /// let mut state = PaginatorState::new(20, 5);
+    /// let colors = WidgetColors {
+    ///     accent: Some(Color::Cyan),
+    ///     ..WidgetColors::default()
+    /// };
+    /// # slt::run(move |ui: &mut slt::Context| {
+    /// ui.paginator_colored(&mut state, &colors);
+    /// # });
+    /// ```
+    pub fn paginator_colored(
+        &mut self,
+        state: &mut PaginatorState,
+        colors: &WidgetColors,
+    ) -> Response {
+        state.page = state.page.min(state.total_pages().saturating_sub(1));
+        let old_page = state.page;
+
+        let focused = self.register_focusable();
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                match key.code {
+                    KeyCode::Left | KeyCode::Char('h') | KeyCode::PageUp => {
+                        state.prev_page();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') | KeyCode::PageDown => {
+                        state.next_page();
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        let total_pages = state.total_pages();
+        // Dots style overflows past 12 pages, so fall back to the compact counter.
+        let use_dots =
+            matches!(state.style, PaginatorStyle::Dots) && total_pages <= PAGINATOR_MAX_DOTS;
+
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                if mouse.y != rect.y {
+                    continue;
+                }
+                let rel_x = mouse.x.saturating_sub(rect.x);
+                if use_dots {
+                    // Dots render with no inter-glyph gap, so dot `n` is at column `n`.
+                    let target = rel_x as usize;
+                    if target < total_pages {
+                        state.set_page(target);
+                        consumed.push(i);
+                    }
+                } else {
+                    // Counter: left half -> prev, right half -> next.
+                    let label = format!("{}/{}", state.page + 1, total_pages);
+                    let width = UnicodeWidthStr::width(label.as_str()) as u32;
+                    if rel_x < width {
+                        if rel_x < width / 2 {
+                            state.prev_page();
+                        } else {
+                            state.next_page();
+                        }
+                        consumed.push(i);
+                    }
+                }
+            }
+            self.consume_indices(consumed);
+        }
+
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+
+        if use_dots {
+            let active_color = colors.accent.unwrap_or(self.theme.primary);
+            let inactive_color = colors.fg.unwrap_or(self.theme.text_dim);
+            for page in 0..total_pages {
+                let (glyph, color) = if page == state.page {
+                    ("●", active_color)
+                } else {
+                    ("○", inactive_color)
+                };
+                let style = if page == state.page && focused {
+                    Style::new().fg(color).bold()
+                } else {
+                    Style::new().fg(color)
+                };
+                self.styled(glyph, style);
+            }
+        } else {
+            let label = format!("{}/{}", state.page + 1, total_pages);
+            let style = Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim));
+            self.styled(label, style);
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        response.changed = state.page != old_page;
         response
     }
 
@@ -607,7 +922,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: cb_gap,
+                gap: cb_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -690,7 +1005,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: toggle_gap,
+                gap: toggle_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -758,6 +1073,16 @@ impl Context {
         let old_selected = state.selected;
 
         self.select_handle_events(state, focused, response.clicked);
+        // Keep the cursor within the filtered subset before rendering.
+        if state.open {
+            let flen = state.filtered_indices().len();
+            let cur = state.cursor();
+            if flen == 0 {
+                state.set_cursor(0);
+            } else if cur >= flen {
+                state.set_cursor(flen - 1);
+            }
+        }
         self.select_render(state, focused, colors);
         response.changed = state.selected != old_selected;
         response
@@ -767,6 +1092,7 @@ impl Context {
         if clicked {
             state.open = !state.open;
             if state.open {
+                state.filter.clear();
                 state.set_cursor(state.selected);
             }
         }
@@ -778,30 +1104,56 @@ impl Context {
         let mut consumed_indices = Vec::new();
         for (i, key) in self.available_key_presses() {
             if state.open {
+                // Cursor indexes into the filtered subset (not `items`); arrow
+                // keys navigate, printable keys type into the filter.
+                let filtered_len = state.filtered_indices().len();
                 match key.code {
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let mut cursor = state.cursor();
-                        let _ = handle_vertical_nav(
-                            &mut cursor,
-                            state.items.len().saturating_sub(1),
-                            key.code.clone(),
-                        );
-                        state.set_cursor(cursor);
+                    KeyCode::Up => {
+                        state.set_cursor(state.cursor().saturating_sub(1));
                         consumed_indices.push(i);
                     }
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        state.selected = state.cursor();
+                    KeyCode::Down => {
+                        if filtered_len > 0 {
+                            let next = (state.cursor() + 1).min(filtered_len - 1);
+                            state.set_cursor(next);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(&real) = state.filtered_indices().get(state.cursor()) {
+                            state.selected = real;
+                        }
                         state.open = false;
+                        state.filter.clear();
                         consumed_indices.push(i);
                     }
                     KeyCode::Esc => {
-                        state.open = false;
+                        // First Esc clears a non-empty query; a second closes.
+                        if state.filter.is_empty() {
+                            state.open = false;
+                        } else {
+                            state.filter.clear();
+                            state.set_cursor(0);
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        state.filter.pop();
+                        state.set_cursor(0);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(c) => {
+                        // Printable keys (including space, 'j', 'k') type into the
+                        // filter — arrows remain the only navigation while open.
+                        state.filter.push(c);
+                        state.set_cursor(0);
                         consumed_indices.push(i);
                     }
                     _ => {}
                 }
             } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                 state.open = true;
+                state.filter.clear();
                 state.set_cursor(state.selected);
                 consumed_indices.push(i);
             }
@@ -863,7 +1215,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: trig_gap,
+                gap: trig_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -897,8 +1249,27 @@ impl Context {
     }
 
     fn render_select_dropdown(&mut self, state: &SelectState, colors: &WidgetColors) {
-        for (idx, item) in state.items.iter().enumerate() {
-            let is_cursor = idx == state.cursor();
+        let filtered = state.filtered_indices();
+
+        // Show the active query so typing has visible feedback.
+        if !state.filter.is_empty() {
+            let dim = self.theme.text_dim;
+            let mut q = String::with_capacity(state.filter.len() + 1);
+            q.push('/');
+            q.push_str(&state.filter);
+            self.styled(q, Style::new().fg(dim).italic());
+        }
+
+        if filtered.is_empty() {
+            let dim = self.theme.text_dim;
+            self.styled("  (no matches)".to_string(), Style::new().fg(dim).dim());
+            return;
+        }
+
+        let cursor = state.cursor();
+        for (pos, &idx) in filtered.iter().enumerate() {
+            let item = &state.items[idx];
+            let is_cursor = pos == cursor;
             let style = if is_cursor {
                 Style::new()
                     .bold()
@@ -1112,5 +1483,338 @@ impl Context {
         response
     }
 
+    // ── color picker ───────────────────────────────────────────────────
+
+    /// Render an interactive color picker over the [`Color`] model.
+    ///
+    /// Shows a grid of color swatches plus an optional hex-entry field. When
+    /// focused, the arrow keys / `hjkl` move the 2D swatch cursor (clamped at
+    /// the grid edges), `Tab` toggles between palette and hex entry, and
+    /// `Enter` / `Space` confirms the current color. Returns `changed` on the
+    /// exact frames where the selected [`Color`] differs from the previous
+    /// frame. Read the chosen color back via
+    /// [`ColorPickerState::selected`](crate::widgets::ColorPickerState::selected).
+    ///
+    /// Each swatch is emitted with a full-RGB background; the terminal backend
+    /// downsamples it to the active [`ColorDepth`](crate::ColorDepth) on flush,
+    /// so the picker degrades correctly on 256-color, 16-color, and no-color
+    /// terminals. Uses the theme's `color_picker` slot for border and cursor
+    /// colors; override per-call with
+    /// [`color_picker_colored`](Self::color_picker_colored).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut picker = ColorPickerState::tailwind();
+    /// if ui.color_picker(&mut picker).changed {
+    ///     let chosen = picker.selected();
+    ///     let _ = chosen;
+    /// }
+    /// # });
+    /// ```
+    pub fn color_picker(&mut self, state: &mut ColorPickerState) -> Response {
+        let colors = self.widget_theme.color_picker;
+        self.color_picker_colored(state, &colors)
+    }
+
+    /// Render a color picker with custom [`WidgetColors`].
+    ///
+    /// Behaves exactly like [`color_picker`](Self::color_picker) but draws the
+    /// border, cursor highlight, and hex field with the supplied colors instead
+    /// of the theme's `color_picker` slot.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ColorPickerState;
+    /// # use slt::{Color, WidgetColors};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut picker = ColorPickerState::tailwind();
+    /// let theme = WidgetColors::new().accent(Color::Cyan);
+    /// ui.color_picker_colored(&mut picker, &theme);
+    /// # });
+    /// ```
+    pub fn color_picker_colored(
+        &mut self,
+        state: &mut ColorPickerState,
+        colors: &WidgetColors,
+    ) -> Response {
+        if state.colors.is_empty() {
+            return Response::none();
+        }
+        let columns = state.columns.max(1);
+        state.selected = state.selected.min(state.colors.len() - 1);
+
+        let focused = self.register_focusable();
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
+        let old_color = state.selected();
+
+        self.color_picker_handle_keys(state, focused, columns);
+        self.color_picker_handle_clicks(state, interaction_id, columns);
+        self.color_picker_render(state, focused, columns, colors);
+
+        response.changed = state.selected() != old_color;
+        response
+    }
+
+    fn color_picker_handle_keys(
+        &mut self,
+        state: &mut ColorPickerState,
+        focused: bool,
+        columns: usize,
+    ) {
+        if !focused {
+            return;
+        }
+        let len = state.colors.len();
+        let mut consumed_indices = Vec::new();
+        for (i, key) in self.available_key_presses() {
+            match state.mode {
+                PickerMode::Palette => match key.code {
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        if state.selected % columns > 0 {
+                            state.selected -= 1;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        if state.selected % columns < columns - 1 && state.selected + 1 < len {
+                            state.selected += 1;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if state.selected >= columns {
+                            state.selected -= columns;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if state.selected + columns < len {
+                            state.selected += columns;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Tab => {
+                        state.mode = PickerMode::Hex;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                },
+                PickerMode::Hex => match key.code {
+                    KeyCode::Tab => {
+                        state.mode = PickerMode::Palette;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(ch) => {
+                        let index =
+                            byte_index_for_char(&state.hex_input.value, state.hex_input.cursor);
+                        state.hex_input.value.insert(index, ch);
+                        state.hex_input.cursor += 1;
+                        color_picker_validate_hex(&mut state.hex_input);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Backspace => {
+                        if state.hex_input.cursor > 0 {
+                            let start = byte_index_for_char(
+                                &state.hex_input.value,
+                                state.hex_input.cursor - 1,
+                            );
+                            let end =
+                                byte_index_for_char(&state.hex_input.value, state.hex_input.cursor);
+                            state.hex_input.value.replace_range(start..end, "");
+                            state.hex_input.cursor -= 1;
+                        }
+                        color_picker_validate_hex(&mut state.hex_input);
+                        consumed_indices.push(i);
+                    }
+                    _ => {}
+                },
+            }
+        }
+        self.consume_indices(consumed_indices);
+    }
+
+    fn color_picker_handle_clicks(
+        &mut self,
+        state: &mut ColorPickerState,
+        interaction_id: usize,
+        columns: usize,
+    ) {
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            // The interaction rect spans the whole bordered container; the
+            // swatch grid starts inside the top border and the left
+            // border + x-padding. Offset clicks back into grid space.
+            let grid_x0 = rect.x + GRID_X_OFFSET;
+            let grid_y0 = rect.y + GRID_Y_OFFSET;
+            let rows = state.colors.len().div_ceil(columns);
+            let mut consumed = Vec::new();
+            for (i, mouse) in clicks {
+                if mouse.x < grid_x0 || mouse.y < grid_y0 {
+                    continue;
+                }
+                let row = (mouse.y - grid_y0) as usize;
+                let col = (mouse.x - grid_x0) as usize / SWATCH_WIDTH;
+                if row < rows && col < columns {
+                    let idx = row * columns + col;
+                    if idx < state.colors.len() {
+                        state.mode = PickerMode::Palette;
+                        state.selected = idx;
+                        consumed.push(i);
+                    }
+                }
+            }
+            self.consume_indices(consumed);
+        }
+    }
+
+    fn color_picker_render(
+        &mut self,
+        state: &ColorPickerState,
+        focused: bool,
+        columns: usize,
+        colors: &WidgetColors,
+    ) {
+        let border_color = if focused {
+            colors.accent.unwrap_or(self.theme.primary)
+        } else {
+            colors.border.unwrap_or(self.theme.border)
+        };
+        let text_color = colors.fg.unwrap_or(self.theme.text);
+
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: Some(Border::Rounded),
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(border_color),
+                bg_color: None,
+                padding: Padding::xy(1, 0),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+
+        // Swatch grid: one Row container per grid row, one cell per swatch.
+        let rows = state.colors.len().div_ceil(columns);
+        for row in 0..rows {
+            self.commands
+                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    direction: Direction::Row,
+                    gap: 0,
+                    align: Align::Start,
+                    align_self: None,
+                    justify: Justify::Start,
+                    border: None,
+                    border_sides: BorderSides::all(),
+                    border_style: Style::new(),
+                    bg_color: None,
+                    padding: Padding::default(),
+                    margin: Margin::default(),
+                    constraints: Constraints::default(),
+                    title: None,
+                    grow: 0,
+                    group_name: None,
+                })));
+            for col in 0..columns {
+                let idx = row * columns + col;
+                let Some(&swatch) = state.colors.get(idx) else {
+                    break;
+                };
+                let is_cursor = idx == state.selected && state.mode == PickerMode::Palette;
+                let marker = if is_cursor { '▣' } else { ' ' };
+                let mut cell = String::with_capacity(SWATCH_WIDTH);
+                cell.push(' ');
+                cell.push(marker);
+                cell.push(' ');
+                // Full-RGB bg; the terminal flush downsamples per ColorDepth.
+                // contrast_fg keeps the cursor marker legible on any swatch.
+                let mut style = Style::new().bg(swatch).fg(Color::contrast_fg(swatch));
+                if is_cursor {
+                    style = style.bold();
+                }
+                self.styled(cell, style);
+            }
+            self.commands.push(Command::EndContainer);
+            self.rollback.last_text_idx = None;
+        }
+
+        // Selected color readout: a `#RRGGBB` label keeps the picker legible
+        // under `ColorDepth::NoColor`, where no background color is emitted.
+        let selected = state.selected();
+        let label = color_hex_label(selected).unwrap_or_else(|| "selected".to_string());
+        let mut readout = String::with_capacity(label.len() + 3);
+        readout.push_str("▸ ");
+        readout.push_str(&label);
+        self.styled(readout, Style::new().fg(text_color).bold());
+
+        // Hex entry line. The embedded field shows the typed value (or its
+        // placeholder); a `✗` flag surfaces the text-input validation error
+        // path on malformed input without panicking.
+        let hex_active = state.mode == PickerMode::Hex;
+        let hex_display = if state.hex_input.value.is_empty() {
+            state.hex_input.placeholder.clone()
+        } else {
+            state.hex_input.value.clone()
+        };
+        let mut hex_line = String::with_capacity(hex_display.len() + 6);
+        hex_line.push_str(if hex_active { "▸ hex " } else { "  hex " });
+        hex_line.push_str(&hex_display);
+        if state.hex_input.validation_error.is_some() {
+            hex_line.push_str(" ✗");
+        }
+        let hex_style = if hex_active {
+            Style::new()
+                .fg(colors.accent.unwrap_or(self.theme.primary))
+                .bold()
+        } else {
+            Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
+        };
+        self.styled(hex_line, hex_style);
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+    }
+
     // ── tree ─────────────────────────────────────────────────────────
+}
+
+/// Display width in cells of one color-picker swatch (` ▣ ` / `   `).
+const SWATCH_WIDTH: usize = 3;
+
+/// Horizontal offset from the picker's interaction rect to the swatch grid:
+/// the rounded left border (1) plus the container's left x-padding (1).
+const GRID_X_OFFSET: u32 = 2;
+
+/// Vertical offset from the picker's interaction rect to the swatch grid:
+/// the rounded top border (1); the container has no top padding.
+const GRID_Y_OFFSET: u32 = 1;
+
+/// Validate the hex-entry field, setting/clearing its `validation_error`.
+///
+/// An empty field is treated as "not yet entered" (no error). Any non-empty
+/// value that does not parse as `#RRGGBB` / `#RGB` records an error so the
+/// widget can surface the text-input validation path.
+fn color_picker_validate_hex(input: &mut TextInputState) {
+    if input.value.is_empty() {
+        input.validation_error = None;
+    } else if parse_hex_color(&input.value).is_none() {
+        input.validation_error = Some("invalid hex".to_string());
+    } else {
+        input.validation_error = None;
+    }
 }

@@ -130,6 +130,192 @@ pub enum ThemeColor {
     Custom(Color),
 }
 
+/// Per-token-category colors for syntax highlighting, resolved through the [`Theme`].
+///
+/// Tree-sitter highlight capture names are mapped onto these nine categories so
+/// that code blocks adopt the active theme's palette instead of a hardcoded
+/// One Dark scheme. Neutral tokens (comments, operators, plain variables,
+/// punctuation) continue to resolve through [`Theme::text`]/[`Theme::text_dim`]
+/// and are not represented here.
+///
+/// # Example
+///
+/// ```
+/// use slt::{SyntaxPalette, Theme};
+///
+/// let theme = Theme::nord();
+/// // `keyword`-class tokens render with Nord's mauve, not One Dark purple.
+/// let kw: slt::Color = theme.syntax.keyword;
+/// assert_eq!(kw, SyntaxPalette::nord().keyword);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SyntaxPalette {
+    /// Keywords (`fn`, `let`, `if`, `return`, ...).
+    pub keyword: Color,
+    /// String and char literals.
+    pub string: Color,
+    /// Numeric literals.
+    pub number: Color,
+    /// Function and method names.
+    pub function: Color,
+    /// Macro invocations (e.g. `println!`).
+    pub macro_: Color,
+    /// Type names, builtins, and constructors.
+    pub type_: Color,
+    /// Constants, builtin constants, and attribute values.
+    pub constant: Color,
+    /// Object/struct properties and fields.
+    pub property: Color,
+    /// Markup tags and tag-like builtin variables.
+    pub tag: Color,
+}
+
+impl SyntaxPalette {
+    /// One Dark (Atom) palette — the historical default used by
+    /// [`Theme::dark`] and [`Theme::one_dark`].
+    pub const fn one_dark() -> Self {
+        Self {
+            keyword: Color::Rgb(198, 120, 221),
+            string: Color::Rgb(152, 195, 121),
+            number: Color::Rgb(209, 154, 102),
+            function: Color::Rgb(97, 175, 239),
+            macro_: Color::Rgb(86, 182, 194),
+            type_: Color::Rgb(229, 192, 123),
+            constant: Color::Rgb(209, 154, 102),
+            property: Color::Rgb(97, 175, 239),
+            tag: Color::Rgb(224, 108, 117),
+        }
+    }
+
+    /// One Light palette — the historical light-variant default used by
+    /// [`Theme::light`] and [`Theme::solarized_light`].
+    pub const fn one_light() -> Self {
+        Self {
+            keyword: Color::Rgb(166, 38, 164),
+            string: Color::Rgb(80, 161, 79),
+            number: Color::Rgb(152, 104, 1),
+            function: Color::Rgb(64, 120, 242),
+            macro_: Color::Rgb(1, 132, 188),
+            type_: Color::Rgb(152, 104, 1),
+            constant: Color::Rgb(152, 104, 1),
+            property: Color::Rgb(64, 120, 242),
+            tag: Color::Rgb(166, 38, 164),
+        }
+    }
+
+    /// Dracula palette.
+    pub const fn dracula() -> Self {
+        Self {
+            keyword: Color::Rgb(255, 121, 198),
+            string: Color::Rgb(241, 250, 140),
+            number: Color::Rgb(189, 147, 249),
+            function: Color::Rgb(80, 250, 123),
+            macro_: Color::Rgb(139, 233, 253),
+            type_: Color::Rgb(139, 233, 253),
+            constant: Color::Rgb(189, 147, 249),
+            property: Color::Rgb(102, 217, 239),
+            tag: Color::Rgb(255, 121, 198),
+        }
+    }
+
+    /// Catppuccin Mocha palette.
+    pub const fn catppuccin() -> Self {
+        Self {
+            keyword: Color::Rgb(203, 166, 247),
+            string: Color::Rgb(166, 227, 161),
+            number: Color::Rgb(250, 179, 135),
+            function: Color::Rgb(137, 180, 250),
+            macro_: Color::Rgb(245, 194, 231),
+            type_: Color::Rgb(249, 226, 175),
+            constant: Color::Rgb(250, 179, 135),
+            property: Color::Rgb(137, 220, 235),
+            tag: Color::Rgb(243, 139, 168),
+        }
+    }
+
+    /// Nord palette.
+    pub const fn nord() -> Self {
+        Self {
+            keyword: Color::Rgb(180, 142, 173),
+            string: Color::Rgb(163, 190, 140),
+            number: Color::Rgb(180, 142, 173),
+            function: Color::Rgb(136, 192, 208),
+            macro_: Color::Rgb(143, 188, 187),
+            type_: Color::Rgb(143, 188, 187),
+            constant: Color::Rgb(208, 135, 112),
+            property: Color::Rgb(129, 161, 193),
+            tag: Color::Rgb(191, 97, 106),
+        }
+    }
+
+    /// Solarized Dark palette.
+    pub const fn solarized_dark() -> Self {
+        Self {
+            keyword: Color::Rgb(133, 153, 0),
+            string: Color::Rgb(42, 161, 152),
+            number: Color::Rgb(211, 54, 130),
+            function: Color::Rgb(38, 139, 210),
+            macro_: Color::Rgb(203, 75, 22),
+            type_: Color::Rgb(181, 137, 0),
+            constant: Color::Rgb(211, 54, 130),
+            property: Color::Rgb(38, 139, 210),
+            tag: Color::Rgb(220, 50, 47),
+        }
+    }
+
+    /// Solarized Light palette.
+    pub const fn solarized_light() -> Self {
+        Self {
+            keyword: Color::Rgb(133, 153, 0),
+            string: Color::Rgb(42, 161, 152),
+            number: Color::Rgb(211, 54, 130),
+            function: Color::Rgb(38, 139, 210),
+            macro_: Color::Rgb(203, 75, 22),
+            type_: Color::Rgb(181, 137, 0),
+            constant: Color::Rgb(211, 54, 130),
+            property: Color::Rgb(38, 139, 210),
+            tag: Color::Rgb(220, 50, 47),
+        }
+    }
+
+    /// Tokyo Night palette.
+    pub const fn tokyo_night() -> Self {
+        Self {
+            keyword: Color::Rgb(187, 154, 247),
+            string: Color::Rgb(158, 206, 106),
+            number: Color::Rgb(255, 158, 100),
+            function: Color::Rgb(122, 162, 247),
+            macro_: Color::Rgb(125, 207, 255),
+            type_: Color::Rgb(43, 178, 187),
+            constant: Color::Rgb(255, 158, 100),
+            property: Color::Rgb(115, 218, 202),
+            tag: Color::Rgb(247, 118, 142),
+        }
+    }
+
+    /// Gruvbox Dark palette.
+    pub const fn gruvbox_dark() -> Self {
+        Self {
+            keyword: Color::Rgb(251, 73, 52),
+            string: Color::Rgb(184, 187, 38),
+            number: Color::Rgb(211, 134, 155),
+            function: Color::Rgb(184, 187, 38),
+            macro_: Color::Rgb(142, 192, 124),
+            type_: Color::Rgb(250, 189, 47),
+            constant: Color::Rgb(211, 134, 155),
+            property: Color::Rgb(131, 165, 152),
+            tag: Color::Rgb(251, 73, 52),
+        }
+    }
+}
+
+impl Default for SyntaxPalette {
+    fn default() -> Self {
+        Self::one_dark()
+    }
+}
+
 /// A color theme that flows through all widgets automatically.
 ///
 /// Construct with [`Theme::dark()`] or [`Theme::light()`], or use
@@ -148,6 +334,7 @@ pub enum ThemeColor {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Theme {
     /// Primary accent color, used for focused borders and highlights.
     pub primary: Color,
@@ -190,6 +377,8 @@ pub struct Theme {
     pub is_dark: bool,
     /// Spacing scale for consistent padding, margin, and gap values.
     pub spacing: Spacing,
+    /// Per-token-category colors used to drive syntax highlighting.
+    pub syntax: SyntaxPalette,
 }
 
 impl Theme {
@@ -250,6 +439,7 @@ impl Theme {
             surface_text: Color::Indexed(250),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::one_dark(),
         }
     }
 
@@ -273,6 +463,7 @@ impl Theme {
             surface_text: Color::Rgb(51, 65, 85),
             is_dark: false,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::one_light(),
         }
     }
 
@@ -311,6 +502,7 @@ impl Theme {
             surface_text: None,
             is_dark: None,
             spacing: None,
+            syntax: None,
         }
     }
 
@@ -352,6 +544,7 @@ impl Theme {
             surface_text: Some(base.surface_text),
             is_dark: Some(base.is_dark),
             spacing: Some(base.spacing),
+            syntax: Some(base.syntax),
         }
     }
 
@@ -396,6 +589,7 @@ impl Theme {
             surface_text: Color::Rgb(191, 194, 210),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::dracula(),
         }
     }
 
@@ -419,6 +613,7 @@ impl Theme {
             surface_text: Color::Rgb(166, 173, 200),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::catppuccin(),
         }
     }
 
@@ -442,6 +637,7 @@ impl Theme {
             surface_text: Color::Rgb(216, 222, 233),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::nord(),
         }
     }
 
@@ -465,6 +661,7 @@ impl Theme {
             surface_text: Color::Rgb(147, 161, 161),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::solarized_dark(),
         }
     }
 
@@ -488,6 +685,7 @@ impl Theme {
             surface_text: Color::Rgb(88, 110, 117),
             is_dark: false,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::solarized_light(),
         }
     }
 
@@ -511,6 +709,7 @@ impl Theme {
             surface_text: Color::Rgb(192, 202, 245),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::tokyo_night(),
         }
     }
 
@@ -534,6 +733,7 @@ impl Theme {
             surface_text: Color::Rgb(189, 174, 147),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::gruvbox_dark(),
         }
     }
 
@@ -644,7 +844,61 @@ impl Theme {
             surface_text: Color::Rgb(152, 159, 172),
             is_dark: true,
             spacing: Spacing::new(1),
+            syntax: SyntaxPalette::one_dark(),
         }
+    }
+
+    /// Parse a [`Theme`] from a TOML document, ignoring any `[widgets]` block.
+    ///
+    /// The colors live under a top-level `[theme]` table; missing fields fall
+    /// back to [`Theme::dark()`]. Color values accept `#rrggbb`/`#rgb` hex,
+    /// named colors (`"cyan"`), or `indexed:N` palette indices. To also read
+    /// per-widget overrides, use [`ThemeFile::from_toml_str`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeLoadError::Parse`] if the document is not valid TOML or
+    /// does not match the expected shape.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Theme;
+    ///
+    /// let toml = r##"
+    /// [theme]
+    /// primary = "#ff6b6b"
+    /// bg = "#1e1e2e"
+    /// is_dark = true
+    /// "##;
+    /// let theme = Theme::from_toml_str(toml).unwrap();
+    /// assert_eq!(theme.primary, slt::Color::Rgb(255, 107, 107));
+    /// ```
+    #[cfg(feature = "serde")]
+    pub fn from_toml_str(src: &str) -> Result<Theme, ThemeLoadError> {
+        ThemeFile::from_toml_str(src).map(|tf| tf.theme)
+    }
+
+    /// Load a [`Theme`] from a TOML file at `path`, ignoring `[widgets]`.
+    ///
+    /// Convenience over [`ThemeFile::load`] when you only need the base theme.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeLoadError::Io`] if the file cannot be read, or
+    /// [`ThemeLoadError::Parse`] if it is not valid TOML.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Theme;
+    ///
+    /// let theme = Theme::load("theme.toml").unwrap();
+    /// println!("primary = {:?}", theme.primary);
+    /// ```
+    #[cfg(feature = "serde")]
+    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Theme, ThemeLoadError> {
+        ThemeFile::load(path).map(|tf| tf.theme)
     }
 }
 
@@ -667,6 +921,7 @@ pub struct ThemeBuilder {
     surface_text: Option<Color>,
     is_dark: Option<bool>,
     spacing: Option<Spacing>,
+    syntax: Option<SyntaxPalette>,
 }
 
 impl ThemeBuilder {
@@ -772,6 +1027,12 @@ impl ThemeBuilder {
         self
     }
 
+    /// Set the syntax-highlighting palette.
+    pub const fn syntax(mut self, syntax: SyntaxPalette) -> Self {
+        self.syntax = Some(syntax);
+        self
+    }
+
     /// Build the theme. Unfilled fields use [`Theme::dark()`] defaults.
     ///
     /// `match` is used in place of [`Option::unwrap_or`] so the entire
@@ -848,6 +1109,10 @@ impl ThemeBuilder {
                 Some(s) => s,
                 None => d.spacing,
             },
+            syntax: match self.syntax {
+                Some(s) => s,
+                None => d.syntax,
+            },
         }
     }
 }
@@ -867,6 +1132,49 @@ mod tests {
         let t = Theme::dark();
         assert_eq!(t.primary, Color::Cyan);
         assert!(t.is_dark);
+    }
+
+    #[test]
+    fn dark_preset_uses_one_dark_syntax_palette() {
+        assert_eq!(Theme::dark().syntax, SyntaxPalette::one_dark());
+        assert_eq!(Theme::one_dark().syntax, SyntaxPalette::one_dark());
+    }
+
+    #[test]
+    fn presets_carry_distinct_syntax_palettes() {
+        // A non-One-Dark preset must override the keyword color.
+        assert_ne!(
+            Theme::nord().syntax.keyword,
+            SyntaxPalette::one_dark().keyword
+        );
+        assert_ne!(
+            Theme::nord().syntax.keyword,
+            Theme::catppuccin().syntax.keyword
+        );
+    }
+
+    #[test]
+    fn builder_syntax_setter_overrides_palette() {
+        let custom = SyntaxPalette {
+            keyword: Color::Rgb(1, 2, 3),
+            ..SyntaxPalette::one_dark()
+        };
+        let theme = Theme::builder().syntax(custom).build();
+        assert_eq!(theme.syntax.keyword, Color::Rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn builder_from_threads_syntax_palette() {
+        let theme = Theme::builder_from(Theme::nord())
+            .primary(Color::Rgb(255, 0, 0))
+            .build();
+        // Syntax palette is preserved from the Nord base.
+        assert_eq!(theme.syntax, Theme::nord().syntax);
+    }
+
+    #[test]
+    fn syntax_palette_default_is_one_dark() {
+        assert_eq!(SyntaxPalette::default(), SyntaxPalette::one_dark());
     }
 
     #[test]

@@ -18,7 +18,9 @@ pub enum Direction {
 #[derive(Debug, Clone)]
 pub(crate) struct BeginContainerArgs {
     pub direction: Direction,
-    pub gap: u32,
+    /// Signed inter-child gap (negative = overlap). See
+    /// [`crate::ContainerBuilder::gap_overlap`] (#222).
+    pub gap: i32,
     pub align: Align,
     pub align_self: Option<Align>,
     pub justify: Justify,
@@ -39,11 +41,15 @@ pub(crate) struct BeginContainerArgs {
 /// Boxed for the same reason as [`BeginContainerArgs`] — keeps the
 /// `Command` enum from being dragged up to the width of this payload.
 ///
-/// Note: `direction` is intentionally omitted — scrollable containers are
-/// always `Direction::Column` (vertical scroll only).
+/// `direction` selects the scroll axis (#247): `Direction::Column` scrolls
+/// vertically (the historic default), `Direction::Row` scrolls horizontally.
+/// Both vertical and horizontal offsets are carried so the tree builder can
+/// apply the one matching `direction` without re-querying state mid-frame.
 #[derive(Debug, Clone)]
 pub(crate) struct BeginScrollableArgs {
     pub grow: u16,
+    /// Scroll axis: `Column` => vertical scroll, `Row` => horizontal (#247).
+    pub direction: Direction,
     pub border: Option<Border>,
     pub border_sides: BorderSides,
     pub border_style: Style,
@@ -55,13 +61,17 @@ pub(crate) struct BeginScrollableArgs {
     pub align_self: Option<Align>,
     /// Main-axis justification. Fixes #142.
     pub justify: Justify,
-    /// Gap between children in pixels. Fixes #142.
-    pub gap: u32,
+    /// Signed gap between children in cells (negative = overlap, #222).
+    /// Fixes #142.
+    pub gap: i32,
     pub padding: Padding,
     pub margin: Margin,
     pub constraints: Constraints,
     pub title: Option<(String, Style)>,
+    /// Vertical scroll offset in rows (used when `direction == Column`).
     pub scroll_offset: u32,
+    /// Horizontal scroll offset in columns (used when `direction == Row`, #247).
+    pub scroll_offset_x: u32,
     /// Group name for hover/focus registration. Fixes #141.
     pub group_name: Option<std::sync::Arc<str>>,
 }
@@ -113,6 +123,28 @@ pub(crate) enum Command {
     /// `pending_shrink`, applied to the next built [`super::tree::LayoutNode`]).
     /// Closes #161.
     ShrinkMarker,
+    /// Marks the next container as a wrapping (multi-line) row, carrying the
+    /// signed cross-axis (between-line) gap.
+    ///
+    /// Pushed by [`crate::context::ContainerBuilder::wrap`] just before the
+    /// matching `BeginContainer` / `BeginScrollable`. Consumed by
+    /// `build_children` like [`Command::ShrinkMarker`] (buffered into
+    /// `pending_wrap`, applied to the next built
+    /// [`super::tree::LayoutNode`]). On a `Row` container the child layout
+    /// flows children onto subsequent lines on main-axis overflow, with the
+    /// payload as the between-line gap; on a `Column` container it is a
+    /// documented no-op. Kept a scalar variant so the `Command` enum stays
+    /// small. Closes #258.
+    WrapMarker(i32),
+    /// Sets the flex-basis (initial main-axis size, in cells) on the next
+    /// container.
+    ///
+    /// Pushed by [`crate::context::ContainerBuilder::basis`] just before the
+    /// matching `BeginContainer` / `BeginScrollable`. Buffered into
+    /// `pending_basis` and applied to the next built
+    /// [`super::tree::LayoutNode::flex_basis`]. A scalar variant so the
+    /// `Command` enum stays small. Closes #258.
+    BasisMarker(u32),
     RawDraw {
         draw_id: usize,
         constraints: Constraints,

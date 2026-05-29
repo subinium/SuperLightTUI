@@ -14,7 +14,7 @@ fn render_counter(ui: &mut Context) {
         *count.get_mut(ui) -= 1;
     }
     let current = *count.get(ui);
-    let squared = *ui.use_memo(&current, |value| value * value);
+    let squared = ui.use_memo(&current, |value| value * value).copied(ui);
     ui.text(format!("count={current} squared={squared}"));
 }
 

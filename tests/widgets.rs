@@ -66,7 +66,7 @@ fn use_memo_caches_when_deps_unchanged() {
             first.set(first.get() + 1);
             d * 2
         });
-        assert_eq!(*val, 10);
+        assert_eq!(val.copied(ui), 10);
     });
 
     let second = call_count.clone();
@@ -75,7 +75,7 @@ fn use_memo_caches_when_deps_unchanged() {
             second.set(second.get() + 1);
             d * 2
         });
-        assert_eq!(*val, 10);
+        assert_eq!(val.copied(ui), 10);
     });
 
     assert_eq!(call_count.get(), 1);
@@ -92,7 +92,7 @@ fn use_memo_recomputes_on_dep_change() {
             first.set(first.get() + 1);
             d * 10
         });
-        assert_eq!(*val, 30);
+        assert_eq!(val.copied(ui), 30);
     });
 
     let second = call_count.clone();
@@ -101,7 +101,7 @@ fn use_memo_recomputes_on_dep_change() {
             second.set(second.get() + 1);
             d * 10
         });
-        assert_eq!(*val, 70);
+        assert_eq!(val.copied(ui), 70);
     });
 
     assert_eq!(call_count.get(), 2);
@@ -253,7 +253,11 @@ fn form_renders_fields() {
     tb.assert_contains("Password");
 }
 
+// Exercises the deprecated positional `FormState::validate` shim (#252):
+// it must keep its exact pre-0.21.0 behavior. New code should attach
+// per-field validators via `FormField::validate` + `validate_all()`.
 #[test]
+#[allow(deprecated)]
 fn form_validation() {
     let mut form = FormState::new()
         .field(FormField::new("Email"))
@@ -769,6 +773,297 @@ fn table_zebra_uses_widget_color_override() {
 
     assert_eq!(tb.buffer().get(0, 3).style.bg, Some(slt::Color::Blue));
     assert_eq!(tb.buffer().get(0, 4).style.bg, Some(slt::Color::Blue));
+}
+
+// ── v0.21.0: column constraints, multi-row selection, per-column renderer ──
+
+use slt::TableColumn;
+
+fn focus_table_events(events: Vec<slt::Event>) -> (Vec<slt::Event>, usize, usize) {
+    (events, 0, 1)
+}
+
+/// Overlay modifier keys onto every mouse event in the sequence.
+///
+/// `MouseEvent` is `#[non_exhaustive]`, so we mutate the public `modifiers`
+/// field on builder-produced events rather than constructing one literally.
+fn with_mouse_modifiers(mut events: Vec<slt::Event>, modifiers: KeyModifiers) -> Vec<slt::Event> {
+    for event in &mut events {
+        if let slt::Event::Mouse(mouse) = event {
+            mouse.modifiers = modifiers;
+        }
+    }
+    events
+}
+
+#[test]
+fn table_column_width_fixed_truncates() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name", "Note"], vec![vec!["averylongname", "x"]]);
+    table.column_widths_spec(&[TableColumn::Fixed(5), TableColumn::Auto]);
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    // The 13-char name is clamped to 5 cells with an ellipsis; the full name
+    // never appears.
+    assert!(!tb.to_string().contains("averylongname"));
+    tb.assert_contains("aver\u{2026}");
+}
+
+#[test]
+fn table_column_width_max_ellipsis() {
+    let mut tb = TestBackend::new(80, 10);
+    let long = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"; // 40 chars
+    let mut table = TableState::new(vec!["Data"], vec![vec![long]]);
+    table.column_widths_spec(&[TableColumn::Max(10)]);
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    let out = tb.to_string();
+    // The surviving prefix (first 9 chars + ellipsis) is present; the overflow
+    // tail is gone.
+    assert!(out.contains("012345678\u{2026}"));
+    assert!(!out.contains("ABCDEF"));
+}
+
+#[test]
+fn table_column_width_min_floors() {
+    // A 1-char column with Min(10) is padded so the header underline spans at
+    // least 10 cells. Observe the rendered separator width.
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["N"], vec![vec!["x"]]);
+    table.column_widths_spec(&[TableColumn::Min(10)]);
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    // The single-column separator is a run of box-drawing dashes at least 10
+    // cells wide (Min floor), far wider than the 1-char content.
+    let out = tb.to_string();
+    assert!(
+        out.contains(&"\u{2500}".repeat(10)),
+        "expected a >=10-cell separator run, got: {out:?}"
+    );
+}
+
+#[test]
+fn table_auto_width_unchanged_regression() {
+    // An all-Auto table renders identically to the pre-v0.21 string grid.
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"]],
+    );
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+    let baseline = tb.to_string_trimmed();
+
+    // Re-render with an explicit empty spec — must be byte-identical.
+    let mut tb2 = TestBackend::new(60, 10);
+    let mut table2 = TableState::new(
+        vec!["Name", "Age"],
+        vec![vec!["Alice", "30"], vec!["Bob", "25"]],
+    );
+    table2.column_widths_spec(&[]);
+    tb2.render(|ui| {
+        ui.table(&mut table2);
+    });
+    assert_eq!(tb2.to_string_trimmed(), baseline);
+}
+
+#[test]
+fn table_multiselect_space_toggles_focused_row() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+
+    let (events, fi, pf) = focus_table_events(slt::EventBuilder::new().key(' ').build());
+    tb.render_with_events(events, fi, pf, |ui| {
+        ui.table(&mut table);
+    });
+    assert!(table.is_row_selected(0));
+    assert_eq!(table.multi_selected.len(), 1);
+}
+
+#[test]
+fn table_multiselect_shift_down_extends_range() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["a"], vec!["b"], vec!["c"], vec!["d"]],
+    );
+
+    // Space anchors row 0, then Shift+Down x2 extends the range to {0,1,2}.
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1, 2]);
+    assert_eq!(table.selected, 2);
+}
+
+#[test]
+fn table_multiselect_ctrl_space_toggles_without_clearing() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+
+    // Select {0,1,2} via Space + Shift+Down x2, then move cursor to row 1 and
+    // Ctrl+Space to toggle it out -> {0,2}.
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    // Cursor is at row 2; move up to row 1 (plain), then Ctrl+Space.
+    let events = slt::EventBuilder::new()
+        .key_code(KeyCode::Up)
+        .key_with(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 2]);
+}
+
+#[test]
+fn table_multiselect_mouse_click_and_shift_click() {
+    let mut tb = TestBackend::new(60, 12);
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["a"], vec!["b"], vec!["c"], vec!["d"]],
+    );
+
+    // Frame 1: render to populate the previous-frame hit map.
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    // Frame 2: plain click on the first data row (header + separator above).
+    // The container top is row 0, so data row 0 is at y = 2.
+    let click = slt::EventBuilder::new().click(1, 2).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.selected, 0);
+    assert!(table.is_row_selected(0));
+    assert_eq!(table.multi_selected.len(), 1);
+
+    // Frame 3: shift+click on data row 2 (y = 4) extends the range -> {0,1,2}.
+    let shift_click = with_mouse_modifiers(
+        slt::EventBuilder::new().click(1, 4).build(),
+        KeyModifiers::SHIFT,
+    );
+    tb.render_with_events(shift_click, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1, 2]);
+}
+
+#[test]
+fn table_selection_pruned_on_filter() {
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["apple"], vec!["banana"], vec!["cherry"]],
+    );
+    // Select all three rows directly via the public toggle path through render.
+    let mut tb = TestBackend::new(60, 10);
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.multi_selected.len(), 3);
+
+    // Filter down to a single row; stale view indices must be pruned.
+    table.set_filter("apple");
+    assert_eq!(table.visible_indices().len(), 1);
+    assert!(table.multi_selected.iter().all(|&i| i < 1));
+}
+
+#[test]
+fn table_selected_rows_ascending_order() {
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"], vec!["c"]]);
+    let mut tb = TestBackend::new(60, 10);
+    // Toggle row 0, move to row 2, toggle it (out-of-order set membership).
+    let events = slt::EventBuilder::new()
+        .key(' ')
+        .key_code(KeyCode::Down)
+        .key_code(KeyCode::Down)
+        .key_with(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    let rows = table.selected_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], "a");
+    assert_eq!(rows[1][0], "c");
+}
+
+#[test]
+fn table_with_per_column_renderer_styles_one_column() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Service", "Status"], vec![vec!["api", "OK"]]);
+
+    tb.render(|ui| {
+        ui.table_with(&mut table, |_row, col, raw| {
+            if col == 1 {
+                (raw.to_string(), slt::Style::new().fg(slt::Color::Green))
+            } else {
+                (raw.to_string(), slt::Style::default())
+            }
+        });
+    });
+
+    tb.assert_contains("api");
+    tb.assert_contains("OK");
+    // The styled status column emits a green foreground somewhere in the buffer.
+    let snapshot = tb.buffer().snapshot_format();
+    assert!(
+        snapshot.contains("green"),
+        "expected a green fg run in snapshot, got: {snapshot}"
+    );
+}
+
+#[test]
+fn table_response_changed_on_selection_toggle() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut table = TableState::new(vec!["Name"], vec![vec!["a"], vec!["b"]]);
+
+    // Idle frame: no change.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        let resp = ui.table(&mut table);
+        assert!(!resp.changed);
+    });
+
+    // Space toggles the selection set -> changed = true.
+    let events = slt::EventBuilder::new().key(' ').build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        let resp = ui.table(&mut table);
+        assert!(resp.changed);
+    });
 }
 
 #[test]
@@ -2031,6 +2326,57 @@ fn select_renders_open() {
 }
 
 #[test]
+fn select_open_filter_narrows_visible_items() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+    state.filter = "an".to_string(); // matches Banana only
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("Banana");
+    tb.assert_contains("/an"); // query feedback line
+    tb.assert_not_contains("Cherry"); // filtered out (and not the trigger value)
+}
+
+#[test]
+fn select_open_filter_no_match_shows_placeholder_line() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana"]);
+    state.open = true;
+    state.filter = "zzz".to_string();
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("(no matches)");
+}
+
+#[test]
+fn select_type_to_filter_then_enter_selects_match() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+    // Type "ch" (narrows to Cherry), then Enter selects it.
+    let events = slt::EventBuilder::new()
+        .key('c')
+        .key('h')
+        .key_code(KeyCode::Enter)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.select(&mut state);
+    });
+
+    assert_eq!(state.selected_item(), Some("Cherry"));
+    assert!(!state.open, "Enter closes the dropdown");
+    assert!(state.filter.is_empty(), "filter resets after selection");
+}
+
+#[test]
 fn radio_renders_options() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = RadioState::new(vec!["One", "Two", "Three"]);
@@ -2209,6 +2555,158 @@ fn virtual_list_renders_items() {
     tb.assert_contains("Item 1");
     tb.assert_contains("Item 2");
     assert!(!tb.to_string().contains("Item 3"));
+}
+
+// ── variable-height virtual_list (#253) ──────────────────────────────────
+// `set_item_heights` / `ensure_row_prefix` / `row_prefix` are crate-private,
+// so their direct unit test lives inline in `src/widgets/collections.rs`.
+
+#[test]
+fn virtual_list_variable_fixed_fallback_matches_uniform() {
+    let items: Vec<String> = (0..8).map(|i| format!("Item {i}")).collect();
+    let mut a = ListState::new(items.clone());
+    let mut b = ListState::new(items);
+
+    let mut tb_uniform = TestBackend::new(40, 12);
+    tb_uniform.render(|ui| {
+        ui.virtual_list(&mut a, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let mut tb_variable = TestBackend::new(40, 12);
+    tb_variable.render(|ui| {
+        // No heights set → must take the byte-identical fast path.
+        ui.virtual_list_variable(&mut b, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    assert_eq!(
+        tb_uniform.to_string(),
+        tb_variable.to_string(),
+        "variable_list with no heights must match virtual_list byte-for-byte"
+    );
+}
+
+#[test]
+fn virtual_list_variable_respects_item_heights() {
+    let mut tb = TestBackend::new(40, 12);
+    // Heights [1, 3, 1, 2, 1]; vh = 4. Rows 0..4 = item0 (1) + item1 (3).
+    // item2 starts at row 4 → clipped out.
+    let mut state = ListState::new(vec!["Item 0", "Item 1", "Item 2", "Item 3", "Item 4"])
+        .with_item_heights(vec![1, 3, 1, 2, 1]);
+
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let out = tb.to_string();
+    assert!(out.contains("Item 0"), "expected Item 0: {out:?}");
+    assert!(out.contains("Item 1"), "expected Item 1: {out:?}");
+    assert!(!out.contains("Item 3"), "Item 3 should be clipped: {out:?}");
+}
+
+#[test]
+fn virtual_list_variable_page_down_by_rows() {
+    let mut tb = TestBackend::new(40, 12);
+    // 20 items; first six heights are [3, 3, 1, 1, 1, 1, ...] then 1s.
+    let mut heights = vec![3u32, 3, 1, 1, 1, 1];
+    heights.extend(std::iter::repeat(1u32).take(14));
+    let items: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
+    let mut state = ListState::new(items).with_item_heights(heights);
+
+    // PageDown with vh = 6 from item 0 (rows 0..6 cover item0 (3) + item1 (3)),
+    // so the target row is 6 which is item 2 — selection should land on item 2,
+    // NOT item 6 (a fixed-count page jump).
+    let events = slt::EventBuilder::new().key_code(KeyCode::PageDown).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.virtual_list_variable(&mut state, 6, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    assert_eq!(
+        state.selected, 2,
+        "PageDown should advance by rows (item 2), not by 6 items"
+    );
+}
+
+#[test]
+fn virtual_list_variable_tall_item_renders() {
+    let mut tb = TestBackend::new(40, 12);
+    // Single item taller than the viewport: it must still render (from its top)
+    // and the range loop must terminate.
+    let mut state = ListState::new(vec!["Tall"]).with_item_heights(vec![10]);
+
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 4, |ui, idx| {
+            ui.text(format!("Tall {idx}"));
+        });
+    });
+
+    assert!(
+        tb.to_string().contains("Tall 0"),
+        "tall item should render from its top: {:?}",
+        tb.to_string()
+    );
+}
+
+#[test]
+fn virtual_list_variable_more_affordance_counts_items() {
+    let mut tb = TestBackend::new(40, 14);
+    // 10 items, all height 1. Force the viewport to start at item 3 by selecting
+    // item 6 with vh = 3 (so start = 4? no — with uniform-via-heights all 1,
+    // selecting 5 and vh 3 keeps viewport sticky). Drive selection to position
+    // the viewport at items 3..5.
+    let mut state = ListState::new((0..10).map(|i| format!("Item {i}")).collect::<Vec<_>>())
+        .with_item_heights(vec![1; 10]);
+    state.selected = 5;
+
+    // First frame anchors the viewport bottom at item 5 (start = 3).
+    tb.render(|ui| {
+        ui.virtual_list_variable(&mut state, 3, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+
+    let out = tb.to_string();
+    assert!(
+        out.contains("↑ 3 more"),
+        "expected '↑ 3 more' (items above), got: {out:?}"
+    );
+    // remaining items below = 10 - end. end = 6 (items 3,4,5) → 4 more.
+    assert!(
+        out.contains("↓ 4 more"),
+        "expected '↓ 4 more' (items below), got: {out:?}"
+    );
+}
+
+#[test]
+fn virtual_list_variable_empty_and_zero_height() {
+    // Empty list returns Response::none() and renders nothing.
+    let mut tb = TestBackend::new(40, 8);
+    let mut empty = ListState::new(Vec::<String>::new());
+    let resp = std::cell::RefCell::new(None);
+    tb.render(|ui| {
+        *resp.borrow_mut() = Some(ui.virtual_list_variable(&mut empty, 4, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        }));
+    });
+    assert!(!resp.borrow().as_ref().unwrap().changed);
+    tb.assert_not_contains("Item");
+
+    // visible_height == 0 renders nothing.
+    let mut tb2 = TestBackend::new(40, 8);
+    let mut state = ListState::new(vec!["Item 0", "Item 1"]).with_item_heights(vec![2, 2]);
+    tb2.render(|ui| {
+        ui.virtual_list_variable(&mut state, 0, |ui, idx| {
+            ui.text(format!("Item {idx}"));
+        });
+    });
+    tb2.assert_not_contains("Item 0");
 }
 
 #[test]
@@ -2396,6 +2894,7 @@ fn markdown_list() {
 }
 
 #[test]
+#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
 fn key_seq_matches_sequence() {
     let mut tb = TestBackend::new(80, 24);
     let events = slt::EventBuilder::new().key('g').key('g').build();
@@ -2409,6 +2908,7 @@ fn key_seq_matches_sequence() {
 }
 
 #[test]
+#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
 fn key_seq_rejects_non_sequence() {
     let mut tb = TestBackend::new(80, 24);
     let events = slt::EventBuilder::new().key('g').key('x').build();
@@ -2751,7 +3251,7 @@ fn scrollbar_renders_thumb() {
                     ui.text(format!("Line {i}"));
                 }
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     tb.render(|ui| {
@@ -2761,7 +3261,7 @@ fn scrollbar_renders_thumb() {
                     ui.text(format!("Line {i}"));
                 }
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     let output = tb.to_string();
@@ -2777,7 +3277,7 @@ fn scrollbar_no_render_when_content_fits() {
             ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
                 ui.text("short content");
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     tb.render(|ui| {
@@ -2785,7 +3285,7 @@ fn scrollbar_no_render_when_content_fits() {
             ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
                 ui.text("short content");
             });
-            ui.scrollbar(&scroll);
+            ui.scrollbar(&mut scroll);
         });
     });
     let output = tb.to_string();
@@ -3362,6 +3862,154 @@ fn empty_state_renders_centered() {
     assert!(output.contains("Add items"));
 }
 
+// --- Issue #242: status-family widgets carry real interaction state ---
+//
+// Before v0.21.0 these returned `Response::none()` unconditionally. Each
+// hover test renders twice: frame 1 registers the rect, frame 2 moves the
+// mouse over it so `prev_hit_map` produces a real `hovered`.
+
+#[test]
+fn badge_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    // Frame 1: register layout. Badge renders " v0.9 " at column 0.
+    tb.render(|ui| {
+        let _ = ui.badge("v0.9");
+    });
+    // Frame 2: mouse over the badge label.
+    tb.run_with_events(vec![slt::Event::mouse_move(2, 0)], |ui| {
+        hovered.set(ui.badge("v0.9").hovered);
+    });
+    assert!(hovered.get(), "badge should report hovered over its rect");
+}
+
+#[test]
+fn badge_not_hovered_when_mouse_elsewhere() {
+    use std::cell::Cell;
+    let hovered = Cell::new(true);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.badge("v0.9");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 2)], |ui| {
+        hovered.set(ui.badge("v0.9").hovered);
+    });
+    assert!(
+        !hovered.get(),
+        "badge should not report hovered when mouse is off its rect"
+    );
+}
+
+#[test]
+fn badge_colored_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.badge_colored("OK", slt::Color::Green);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(1, 0)], |ui| {
+        hovered.set(ui.badge_colored("OK", slt::Color::Green).hovered);
+    });
+    assert!(hovered.get(), "badge_colored should report hovered");
+}
+
+#[test]
+fn key_hint_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let _ = ui.key_hint("Ctrl+S");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(2, 0)], |ui| {
+        hovered.set(ui.key_hint("Ctrl+S").hovered);
+    });
+    assert!(hovered.get(), "key_hint should report hovered");
+}
+
+#[test]
+fn stat_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat("CPU", "72%");
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(0, 0)], |ui| {
+        hovered.set(ui.stat("CPU", "72%").hovered);
+    });
+    assert!(hovered.get(), "stat should report hovered over its column");
+}
+
+#[test]
+fn stat_colored_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat_colored("Err", "0", slt::Color::Green);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(1, 1)], |ui| {
+        hovered.set(ui.stat_colored("Err", "0", slt::Color::Green).hovered);
+    });
+    assert!(hovered.get(), "stat_colored should report hovered");
+}
+
+#[test]
+fn stat_trend_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(20, 5);
+    tb.render(|ui| {
+        let _ = ui.stat_trend("Rev", "$100", slt::Trend::Up);
+    });
+    tb.run_with_events(vec![slt::Event::mouse_move(0, 0)], |ui| {
+        hovered.set(ui.stat_trend("Rev", "$100", slt::Trend::Up).hovered);
+    });
+    assert!(hovered.get(), "stat_trend should report hovered");
+}
+
+#[test]
+fn empty_state_reports_hover() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let mut tb = TestBackend::new(40, 5);
+    tb.render(|ui| {
+        let _ = ui.empty_state("No data", "Add items to begin");
+    });
+    // The placeholder container spans the full width across the title and
+    // description rows; hover over the centered title row (row 0).
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 0)], |ui| {
+        hovered.set(ui.empty_state("No data", "Add items to begin").hovered);
+    });
+    assert!(hovered.get(), "empty_state should report hovered");
+}
+
+#[test]
+fn empty_state_action_reports_hover_and_keeps_clicked() {
+    use std::cell::Cell;
+    let hovered = Cell::new(false);
+    let clicked = Cell::new(true);
+    let mut tb = TestBackend::new(40, 6);
+    tb.render(|ui| {
+        let _ = ui.empty_state_action("Empty", "Get started", "Add");
+    });
+    // No click event: `clicked` must stay false, while hover over the
+    // centered placeholder area is reported.
+    tb.run_with_events(vec![slt::Event::mouse_move(18, 2)], |ui| {
+        let r = ui.empty_state_action("Empty", "Get started", "Add");
+        hovered.set(r.hovered);
+        clicked.set(r.clicked);
+    });
+    assert!(hovered.get(), "empty_state_action should report hovered");
+    assert!(
+        !clicked.get(),
+        "empty_state_action clicked must stay false without a button click"
+    );
+}
+
 #[test]
 fn code_block_renders_code() {
     let mut tb = TestBackend::new(60, 10);
@@ -3376,7 +4024,7 @@ fn code_block_renders_code() {
 fn code_block_numbered_has_line_numbers() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        ui.code_block_numbered("line1\nline2\nline3");
+        ui.code_block("line1\nline2\nline3").numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1"));
@@ -3410,7 +4058,7 @@ fn demo_v094_content_does_not_panic() {
         ui.accordion("Advanced", &mut acc_adv, |ui| {
             ui.definition_list(&[("Log", "debug")]);
         });
-        ui.code_block_numbered("fn main() {}");
+        ui.code_block("fn main() {}").numbered();
         ui.empty_state("No items", "Add some");
     });
     tb.assert_contains("v0.9.4");
@@ -3435,7 +4083,7 @@ fn demo_list_set_items_no_panic() {
 fn code_block_lang_renders_content() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("let x = 1;", "rust");
+        ui.code_block("let x = 1;").lang("rust");
     });
     tb.assert_contains("let");
     tb.assert_contains("1");
@@ -3445,7 +4093,7 @@ fn code_block_lang_renders_content() {
 fn code_block_lang_unknown_falls_back() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("hello world", "brainfuck");
+        ui.code_block("hello world").lang("brainfuck");
     });
     tb.assert_contains("hello");
 }
@@ -3454,7 +4102,9 @@ fn code_block_lang_unknown_falls_back() {
 fn code_block_numbered_lang_renders() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_numbered_lang("fn main() {}\nlet x = 1;", "rust");
+        ui.code_block("fn main() {}\nlet x = 1;")
+            .lang("rust")
+            .numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1"));
@@ -3462,11 +4112,68 @@ fn code_block_numbered_lang_renders() {
     assert!(output.contains("main"));
 }
 
+// The deprecated `code_block_*` variants must remain behavior-preserving
+// aliases of the `CodeBlock` builder. This is the only test that intentionally
+// calls the deprecated names, so the `#[allow(deprecated)]` is scoped here.
+#[test]
+#[allow(deprecated)]
+fn code_block_deprecated_aliases_match_builder() {
+    let code = "fn main() {\n    let x = 1;\n}";
+
+    // numbered + lang
+    let mut tb_alias = slt::TestBackend::new(40, 10);
+    tb_alias.render(|ui| {
+        ui.code_block_numbered_lang(code, "rust");
+    });
+    let mut tb_builder = slt::TestBackend::new(40, 10);
+    tb_builder.render(|ui| {
+        let _ = ui.code_block(code).lang("rust").numbered().show();
+    });
+    assert_eq!(
+        tb_alias.to_string(),
+        tb_builder.to_string(),
+        "code_block_numbered_lang must match code_block(..).lang(..).numbered()"
+    );
+
+    // lang only
+    let mut tb_alias2 = slt::TestBackend::new(40, 10);
+    tb_alias2.render(|ui| {
+        ui.code_block_lang(code, "rust");
+    });
+    let mut tb_builder2 = slt::TestBackend::new(40, 10);
+    tb_builder2.render(|ui| {
+        let _ = ui.code_block(code).lang("rust").show();
+    });
+    assert_eq!(tb_alias2.to_string(), tb_builder2.to_string());
+
+    // numbered only
+    let mut tb_alias3 = slt::TestBackend::new(40, 10);
+    tb_alias3.render(|ui| {
+        ui.code_block_numbered(code);
+    });
+    let mut tb_builder3 = slt::TestBackend::new(40, 10);
+    tb_builder3.render(|ui| {
+        let _ = ui.code_block(code).numbered().show();
+    });
+    assert_eq!(tb_alias3.to_string(), tb_builder3.to_string());
+
+    // default path: `code_block(code)` (drop-render) == old `code_block(code)` Response form
+    let mut tb_default = slt::TestBackend::new(40, 10);
+    tb_default.render(|ui| {
+        ui.code_block(code);
+    });
+    let mut tb_default_show = slt::TestBackend::new(40, 10);
+    tb_default_show.render(|ui| {
+        let _ = ui.code_block(code).show();
+    });
+    assert_eq!(tb_default.to_string(), tb_default_show.to_string());
+}
+
 #[test]
 fn code_block_lang_empty_lang_uses_fallback() {
     let mut tb = slt::TestBackend::new(60, 10);
     tb.render(|ui| {
-        ui.code_block_lang("let x = 1;", "");
+        ui.code_block("let x = 1;").lang("");
     });
     tb.assert_contains("let");
 }
@@ -4153,7 +4860,7 @@ fn code_block_numbered_single_line_gutter_one_digit() {
     // 1 line → gutter width = 1 ("1 │ ")
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.code_block_numbered("only_line");
+        ui.code_block("only_line").numbered();
     });
     let output = tb.to_string();
     assert!(output.contains("1 │"));
@@ -4169,7 +4876,7 @@ fn code_block_numbered_ten_lines_gutter_two_digits() {
         .join("\n");
     let mut tb = TestBackend::new(40, 14);
     tb.render(|ui| {
-        ui.code_block_numbered(&code);
+        ui.code_block(&code).numbered();
     });
     let output = tb.to_string();
     // First line right-padded to width 2
@@ -4187,7 +4894,7 @@ fn code_block_numbered_hundred_lines_gutter_three_digits() {
         .join("\n");
     let mut tb = TestBackend::new(60, 110);
     tb.render(|ui| {
-        ui.code_block_numbered(&code);
+        ui.code_block(&code).numbered();
     });
     let output = tb.to_string();
     // 100th line should appear with no leading space ("100 │")
@@ -4202,7 +4909,7 @@ fn code_block_numbered_empty_input_does_not_panic() {
     // lines.len() == 0 → .max(1).ilog10() == 0 → gutter_w = 1, no panic
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.code_block_numbered("");
+        ui.code_block("").numbered();
     });
     // Empty body still renders the bordered container without crashing.
     let _ = tb.to_string();
@@ -4657,18 +5364,101 @@ fn separator_colored_still_callable_after_move() {
     tb.assert_contains("─");
 }
 
+// ── #241: separator / separator_colored / scrollbar return real Response ────
+
+#[test]
+fn separator_returns_response() {
+    // The interaction rect resolves against the *previous* frame's hit map,
+    // so the rect is empty on frame 1 and populated on frame 2.
+    let mut tb = TestBackend::new(40, 5);
+    let render = |ui: &mut slt::Context| {
+        let r = ui.separator();
+        // A real Response (not a chained `&mut Self`).
+        assert!(!r.clicked, "no click event was injected");
+        r
+    };
+    tb.render(|ui| {
+        render(ui);
+    });
+    let mut width = 0;
+    tb.render(|ui| {
+        width = render(ui).rect.width;
+    });
+    assert!(width > 0, "separator response rect should be sized");
+    tb.assert_contains("─");
+}
+
+#[test]
+fn separator_colored_returns_response() {
+    let mut tb = TestBackend::new(40, 5);
+    let render = |ui: &mut slt::Context| ui.separator_colored(slt::Color::Cyan);
+    tb.render(|ui| {
+        render(ui);
+    });
+    let mut r = slt::Response::none();
+    tb.render(|ui| {
+        r = render(ui);
+    });
+    assert!(r.rect.width > 0);
+    assert!(!r.clicked);
+    tb.assert_contains("─");
+}
+
+#[test]
+fn scrollbar_returns_response_when_rendered() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    let mut last_width = 0;
+    // The track is a `col` container, so its `Response` carries the track
+    // hit-test rect. The rect resolves against the prior frame's hit map and
+    // the scroll metrics take a frame to establish, so prime three frames.
+    for _ in 0..3 {
+        tb.render(|ui| {
+            ui.container().h(8).row(|ui| {
+                ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                    for i in 0..50 {
+                        ui.text(format!("Line {i}"));
+                    }
+                });
+                last_width = ui.scrollbar(&mut scroll).rect.width;
+            });
+        });
+    }
+    // Track region is rendered, so the interaction rect is sized.
+    assert!(last_width > 0, "scrollbar track rect should be sized");
+}
+
+#[test]
+fn scrollbar_returns_response_none_when_content_fits() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut scroll = ScrollState::new();
+    for _ in 0..2 {
+        tb.render(|ui| {
+            ui.container().h(8).row(|ui| {
+                ui.scrollable(&mut scroll).grow(1).h(8).col(|ui| {
+                    ui.text("short content");
+                });
+                let r = ui.scrollbar(&mut scroll);
+                // Nothing rendered → Response::none() (degenerate rect).
+                assert_eq!(r.rect.width, 0, "no scrollbar → empty response rect");
+                assert!(!r.clicked);
+            });
+        });
+    }
+}
+
 // ── #133: use_memo single-downcast cache-hit path ──────────────────────────
 
 #[test]
 fn use_memo_cache_hit_returns_consistent_value() {
     let mut tb = TestBackend::new(20, 5);
     tb.render(|ui| {
-        let v1 = *ui.use_memo(&42i32, |x| x * 2);
+        let v1 = ui.use_memo(&42i32, |x| x * 2).copied(ui);
         // Different compute closure on a different slot: hook cursor must
         // advance correctly even when the cache-hit path returns directly
         // from a single downcast. If the cursor or downcast logic regresses,
         // these reads will conflict.
-        let v2 = *ui.use_memo(&10i32, |x| x * 3);
+        let v2 = ui.use_memo(&10i32, |x| x * 3).copied(ui);
         assert_eq!(v1, 84);
         assert_eq!(v2, 30);
     });
@@ -4681,22 +5471,22 @@ fn use_memo_cache_hit_does_not_recompute() {
 
     let c1 = calls.clone();
     tb.render(|ui| {
-        let v = *ui.use_memo(&7i32, |d| {
+        let v = ui.use_memo(&7i32, |d| {
             c1.set(c1.get() + 1);
             d * 4
         });
-        assert_eq!(v, 28);
+        assert_eq!(v.copied(ui), 28);
     });
 
     let c2 = calls.clone();
     tb.render(|ui| {
         // Same deps — must hit cache and return the stored value via the
         // single-downcast path without invoking `compute`.
-        let v = *ui.use_memo(&7i32, |d| {
+        let v = ui.use_memo(&7i32, |d| {
             c2.set(c2.get() + 1);
             d * 99 // would corrupt result if recomputed
         });
-        assert_eq!(v, 28);
+        assert_eq!(v.copied(ui), 28);
     });
 
     assert_eq!(calls.get(), 1, "compute must run only on first frame");
@@ -5263,4 +6053,682 @@ fn calendar_h_l_move_by_day() {
         ui.calendar(&mut state);
     });
     assert_eq!((state.year, state.month), (2024, 6));
+}
+
+#[test]
+fn paginator_dots_render_active_and_inactive() {
+    let mut state = PaginatorState::new(9, 3); // 3 pages -> dots
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("●");
+    // Page 0 active -> one filled, two empty dots.
+    let line = tb.line(0);
+    assert_eq!(line.matches('●').count(), 1, "one active dot, got {line:?}");
+    assert_eq!(
+        line.matches('○').count(),
+        2,
+        "two inactive dots, got {line:?}"
+    );
+}
+
+#[test]
+fn paginator_arabic_renders_counter() {
+    let mut state = PaginatorState::new(9, 3);
+    state.style = PaginatorStyle::Arabic;
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("1/3");
+}
+
+#[test]
+fn paginator_right_key_advances_and_reports_changed() {
+    let mut state = PaginatorState::new(9, 3);
+    state.style = PaginatorStyle::Arabic;
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    let mut changed = false;
+    tb.render_with_events(right, 0, 1, |ui| {
+        changed = ui.paginator(&mut state).changed;
+    });
+    assert!(changed, "Response.changed should be true after advancing");
+    assert_eq!(state.page, 1);
+    tb.assert_contains("2/3");
+}
+
+#[test]
+fn paginator_left_key_on_first_page_is_no_change() {
+    let mut state = PaginatorState::new(9, 3);
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    let left = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+    let mut changed = true;
+    tb.render_with_events(left, 0, 1, |ui| {
+        changed = ui.paginator(&mut state).changed;
+    });
+    assert!(!changed, "Response.changed should be false at page 0");
+    assert_eq!(state.page, 0);
+}
+
+#[test]
+fn paginator_click_dot_jumps_to_page() {
+    let mut state = PaginatorState::new(9, 3); // 3 dots at columns 0,1,2
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    // Click the third dot (column 2).
+    let click = slt::EventBuilder::new().click(2, 0).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.paginator(&mut state);
+    });
+    assert_eq!(state.page, 2);
+}
+
+#[test]
+fn paginator_next_key_clamps_at_last_page() {
+    let mut state = PaginatorState::new(9, 3); // 3 pages
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+
+    for _ in 0..5 {
+        let right = slt::EventBuilder::new()
+            .key_code(slt::KeyCode::Right)
+            .build();
+        tb.render_with_events(right, 0, 1, |ui| {
+            ui.paginator(&mut state);
+        });
+    }
+    assert_eq!(state.page, 2, "should clamp at last page");
+}
+
+#[test]
+fn paginator_dots_fall_back_to_arabic_past_twelve_pages() {
+    let mut state = PaginatorState::new(13, 1); // 13 pages, Dots default
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    tb.assert_contains("/13");
+    tb.assert_not_contains("●●●");
+}
+
+#[test]
+fn paginator_empty_is_no_op_safe() {
+    let mut state = PaginatorState::new(0, 5); // total_pages == 1
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        ui.paginator(&mut state);
+    });
+    // Single inactive-or-active dot, no panic, page stays 0.
+    let line = tb.line(0);
+    assert!(line.contains('●') || line.contains('○'), "got {line:?}");
+    assert_eq!(state.page, 0);
+}
+
+// ── Color picker ──────────────────────────────────────────────────────
+
+#[test]
+fn color_picker_renders_swatch_grid() {
+    let mut tb = TestBackend::new(40, 12);
+    tb.render(|ui| {
+        let mut s = ColorPickerState::tailwind();
+        ui.color_picker(&mut s);
+    });
+    // The selected-color readout uses the `▸` marker and a #RRGGBB label.
+    tb.assert_contains("▸");
+    tb.assert_contains("hex");
+}
+
+#[test]
+fn color_picker_empty_palette_no_panic() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(Vec::new());
+    tb.render(|ui| {
+        let resp = ui.color_picker(&mut s);
+        assert!(!resp.changed);
+    });
+}
+
+#[test]
+fn color_picker_right_then_down_move_cursor() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // Right moves +1.
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(right, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1);
+
+    // Down moves +columns.
+    let down = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Down)
+        .build();
+    tb.render_with_events(down, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1 + 8);
+}
+
+#[test]
+fn color_picker_cursor_clamps_at_edges_no_wrap() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // Left at column 0 stays put (no wrap to previous row).
+    let left = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Left)
+        .build();
+    tb.render_with_events(left, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 0);
+
+    // Up at row 0 stays put.
+    let up = slt::EventBuilder::new().key_code(slt::KeyCode::Up).build();
+    tb.render_with_events(up, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 0);
+}
+
+#[test]
+fn color_picker_changed_true_on_nav_false_on_noop() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    let right = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    let mut changed = false;
+    tb.render_with_events(right, 0, 1, |ui| {
+        changed = ui.color_picker(&mut s).changed;
+    });
+    assert!(changed, "moving the cursor must report changed");
+
+    // Left at the new column 1 still moves (to 0) — pick a genuine no-op:
+    // Up at row 0 does not change the color.
+    let up = slt::EventBuilder::new().key_code(slt::KeyCode::Up).build();
+    let mut changed2 = true;
+    tb.render_with_events(up, 0, 1, |ui| {
+        changed2 = ui.color_picker(&mut s).changed;
+    });
+    assert!(!changed2, "a clamped no-op move must not report changed");
+}
+
+#[test]
+fn color_picker_tab_toggles_hex_mode_and_typing_sets_color() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(vec![slt::Color::Rgb(239, 68, 68)]);
+
+    // Tab enters hex mode.
+    let tab = slt::EventBuilder::new().key_code(slt::KeyCode::Tab).build();
+    tb.render_with_events(tab, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.mode, PickerMode::Hex);
+
+    // Type a valid hex string; selected() reflects it.
+    for ch in "#3b82f6".chars() {
+        let ev = slt::EventBuilder::new().key(ch).build();
+        tb.render_with_events(ev, 0, 1, |ui| {
+            ui.color_picker(&mut s);
+        });
+    }
+    assert_eq!(s.selected(), slt::Color::Rgb(59, 130, 246));
+    assert!(s.hex_input.validation_error.is_none());
+}
+
+#[test]
+fn color_picker_invalid_hex_surfaces_validation_error() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::new(vec![slt::Color::Rgb(239, 68, 68)]);
+    s.mode = PickerMode::Hex;
+
+    for ch in "zz".chars() {
+        let ev = slt::EventBuilder::new().key(ch).build();
+        tb.render_with_events(ev, 0, 1, |ui| {
+            ui.color_picker(&mut s);
+        });
+    }
+    // Color unchanged (falls back to the swatch), error surfaced.
+    assert_eq!(s.selected(), slt::Color::Rgb(239, 68, 68));
+    assert!(s.hex_input.validation_error.is_some());
+    tb.assert_contains("✗");
+}
+
+#[test]
+fn color_picker_click_selects_swatch() {
+    let mut tb = TestBackend::new(40, 12);
+    let mut s = ColorPickerState::tailwind().columns(8);
+
+    // First render establishes the hit-test rect for the interaction.
+    tb.render(|ui| {
+        ui.color_picker(&mut s);
+    });
+
+    // Click the second swatch cell on the first grid row. Each swatch is
+    // 3 cells wide; the grid starts at x = rect.x + 2 (rounded border + x
+    // padding) and y = rect.y + 1 (top border). Column 1 sits at x = 5, y = 1.
+    let click = slt::EventBuilder::new().click(5, 1).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.color_picker(&mut s);
+    });
+    assert_eq!(s.selected, 1, "click on column 1 should select swatch 1");
+}
+
+/// Default (single) mode still selects one date and never produces a range.
+#[test]
+fn calendar_single_mode_unchanged() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    assert_eq!(state.mode(), slt::CalendarSelect::Single);
+
+    // Walk to June 10 and commit with Enter.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..9 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let events = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    assert_eq!(state.selected_date(), Some((2024, 6, 10)));
+    assert!(
+        state.selected_range().is_none(),
+        "single mode must not expose a range"
+    );
+    assert!(state.selected_time().is_none(), "time is off by default");
+}
+
+/// `Shift+Right` extends the range forward from the anchor.
+#[test]
+fn calendar_shift_right_extends_range() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Walk cursor to June 5, anchor with Enter.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..4 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_range(),
+        Some((
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 5
+            },
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 5
+            }
+        )),
+        "anchor sets a degenerate start==end range"
+    );
+
+    // Shift+Right ×3 → extend to June 8.
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..3 {
+        ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.year, start.month, start.day), (2024, 6, 5));
+    assert_eq!((end.year, end.month, end.day), (2024, 6, 8));
+}
+
+/// A Shift-extended range may cross a month boundary.
+#[test]
+fn calendar_range_spans_month_boundary() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 1);
+    state.with_range();
+
+    // Walk cursor to Jan 30 (29 Right presses from day 1), anchor.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..29 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Shift+Right ×4 → Jan 30 → Jan 31 → Feb 1, 2, 3.
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..4 {
+        ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.year, start.month, start.day), (2024, 1, 30));
+    assert_eq!(
+        (end.year, end.month, end.day),
+        (2024, 2, 3),
+        "extent crossed into February"
+    );
+}
+
+/// Extending backward still yields a normalized `(start, end)` with start <= end.
+#[test]
+fn calendar_range_normalizes_order() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Anchor on June 15.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..14 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Shift+Left ×5 → extent at June 10 (before the anchor).
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..5 {
+        ext = ext.key_with(KeyCode::Left, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert!(
+        (start.year, start.month, start.day) <= (end.year, end.month, end.day),
+        "range must be normalized: {start:?} > {end:?}"
+    );
+    assert_eq!((start.month, start.day), (6, 10));
+    assert_eq!((end.month, end.day), (6, 15));
+}
+
+/// Plain click sets the anchor; Shift+click sets the extent endpoint.
+#[test]
+fn calendar_shift_click_sets_extent() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // June 2024: first weekday (Mo-based) for June 1 is Saturday → first=5.
+    // Grid rows start at rel_y==2; column width is 3 cells; rel_x = col*3.
+    // Day 1 sits at col 5 (rel_x 15), day 8 at col 5 row 1 (rel_y 3), etc.
+    // We compute click positions from first_weekday so the test is robust.
+    // For day d: idx = first + (d - 1); week = idx / 7; col = idx % 7.
+    let click_pos = |day: u32| -> (u32, u32) {
+        let first = 5_u32; // June 2024 starts on Saturday (Mo-indexed = 5)
+        let idx = first + (day - 1);
+        let week = idx / 7;
+        let col = idx % 7;
+        // widget at (0,0): title row 0, weekday row 1, weeks start row 2.
+        // each day cell is 3 wide, centered text but col*3 lands inside cell.
+        (col * 3 + 1, 2 + week)
+    };
+
+    let (ax, ay) = click_pos(3);
+    let (ex, ey) = click_pos(7);
+
+    // Warm-up frame populates the hit map so the next frame's click resolves.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Plain click on June 3 → anchor.
+    tb.render_with_events(slt::EventBuilder::new().click(ax, ay).build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_range(),
+        Some((
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 3
+            },
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 3
+            }
+        )),
+        "plain click should anchor on June 3"
+    );
+
+    // Shift+click on June 7 → extent.
+    tb.render_with_events(
+        slt::EventBuilder::new()
+            .click_with(ex, ey, KeyModifiers::SHIFT)
+            .build(),
+        0,
+        1,
+        |ui| {
+            ui.calendar(&mut state);
+        },
+    );
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.month, start.day), (6, 3));
+    assert_eq!((end.month, end.day), (6, 7));
+}
+
+/// The range band renders each in-band day number, including endpoints.
+#[test]
+fn calendar_range_band_renders() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Anchor June 10, Shift-extend to June 13.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..9 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let mut setup = walk.key_code(KeyCode::Enter);
+    for _ in 0..3 {
+        setup = setup.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(setup.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.day, end.day), (10, 13));
+
+    // All in-band day numbers should be present in the rendered text.
+    for d in ["10", "11", "12", "13"] {
+        tb.assert_contains(d);
+    }
+}
+
+/// Time row is hidden by default and shown after `with_time()`.
+#[test]
+fn calendar_time_disabled_no_row() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    tb.render(|ui| {
+        ui.calendar(&mut state);
+    });
+    tb.assert_not_contains("00:00");
+}
+
+#[test]
+fn calendar_time_enabled_renders() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_time();
+    tb.render(|ui| {
+        ui.calendar(&mut state);
+    });
+    tb.assert_contains("00:00");
+    assert_eq!(state.selected_time(), Some((0, 0)));
+}
+
+/// `Response.changed` flips on range/time changes and is false on no-op frames.
+#[test]
+fn calendar_changed_flag() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Frame 1: anchor via Enter → changed.
+    let mut changed = false;
+    tb.render_with_events(
+        slt::EventBuilder::new().key_code(KeyCode::Enter).build(),
+        0,
+        1,
+        |ui| {
+            changed = ui.calendar(&mut state).changed;
+        },
+    );
+    assert!(changed, "anchoring should flip changed");
+
+    // Frame 2: no events → no change.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        changed = ui.calendar(&mut state).changed;
+    });
+    assert!(!changed, "no-op frame must not report changed");
+
+    // Frame 3: Shift+Right extends the range → changed.
+    tb.render_with_events(
+        slt::EventBuilder::new()
+            .key_with(KeyCode::Right, KeyModifiers::SHIFT)
+            .build(),
+        0,
+        1,
+        |ui| {
+            changed = ui.calendar(&mut state).changed;
+        },
+    );
+    assert!(changed, "range extend should flip changed");
+}
+
+proptest::proptest! {
+    /// Random anchor/extent walks always yield an ordered, inclusive range.
+    #[test]
+    fn calendar_range_always_ordered(anchor_day in 1u32..=28, fwd in 0i32..40, back in 0i32..40) {
+        let mut tb = TestBackend::new(40, 14);
+        let mut state = CalendarState::from_ym(2024, 6);
+        state.with_range();
+
+        // Walk to the anchor day, then anchor.
+        let mut walk = slt::EventBuilder::new();
+        for _ in 1..anchor_day {
+            walk = walk.key_code(KeyCode::Right);
+        }
+        let setup = walk.key_code(KeyCode::Enter).build();
+        tb.render_with_events(setup, 0, 1, |ui| {
+            ui.calendar(&mut state);
+        });
+
+        // Extend forward then backward by arbitrary amounts.
+        let mut ext = slt::EventBuilder::new();
+        for _ in 0..fwd {
+            ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+        }
+        for _ in 0..back {
+            ext = ext.key_with(KeyCode::Left, KeyModifiers::SHIFT);
+        }
+        tb.render_with_events(ext.build(), 0, 1, |ui| {
+            ui.calendar(&mut state);
+        });
+
+        let (start, end) = state.selected_range().expect("range active after anchor");
+        proptest::prop_assert!(
+            (start.year, start.month, start.day) <= (end.year, end.month, end.day),
+            "range not ordered: {start:?} > {end:?}"
+        );
+    }
+}
+
+proptest::proptest! {
+    /// The variable-height visible range is always non-empty, bounded by
+    /// `visible_height` rows (unless a single tall item overflows), keeps the
+    /// selection inside the range, and never panics / indexes out of bounds.
+    #[test]
+    fn prop_virtual_list_variable_range_bounded(
+        len in 1usize..200,
+        heights in proptest::collection::vec(1u32..=8, 1..200),
+        selected in 0usize..200,
+        visible_height in 1u32..=30,
+    ) {
+        // Align the height vector to the item count.
+        let mut h = heights;
+        h.resize(len, 1);
+        let items: Vec<String> = (0..len).map(|i| format!("Item {i}")).collect();
+        let mut state = ListState::new(items).with_item_heights(h.clone());
+        state.selected = selected.min(len - 1);
+        let sel = state.selected;
+
+        let mut tb = TestBackend::new(40, 40);
+        let rendered = std::cell::RefCell::new(Vec::<usize>::new());
+        tb.render(|ui| {
+            ui.virtual_list_variable(&mut state, visible_height, |ui, idx| {
+                rendered.borrow_mut().push(idx);
+                ui.text(format!("Item {idx}"));
+            });
+        });
+
+        let rendered = rendered.into_inner();
+        proptest::prop_assert!(!rendered.is_empty(), "range must be non-empty");
+
+        let start = *rendered.first().unwrap();
+        let end = *rendered.last().unwrap() + 1; // exclusive
+        proptest::prop_assert_eq!(
+            rendered,
+            (start..end).collect::<Vec<_>>(),
+            "rendered indices must be a contiguous start..end slice"
+        );
+
+        // Selection stays inside [start, end).
+        proptest::prop_assert!(
+            start <= sel && sel < end,
+            "selected {} not in range {}..{}",
+            sel, start, end
+        );
+
+        // Total rendered rows <= visible_height, OR exactly one tall item.
+        let total_rows: u32 = (start..end).map(|i| h[i]).sum();
+        let single_tall = end - start == 1 && h[start] > visible_height;
+        proptest::prop_assert!(
+            total_rows <= visible_height || single_tall,
+            "rows {} exceed vh {} without being a single tall item (range {}..{})",
+            total_rows, visible_height, start, end
+        );
+    }
 }

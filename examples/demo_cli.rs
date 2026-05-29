@@ -215,7 +215,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 ui.spacer();
                 ui.text(format!("{} packages", PACKAGES.len())).dim();
             });
-            ui.separator();
+            let _ = ui.separator();
 
             let _ = ui.container().grow(1).row(|ui| {
                 // left: search + list
@@ -226,7 +226,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     .grow(1)
                     .col(|ui| {
                         let _ = ui.text_input(&mut state.search);
-                        ui.separator();
+                        let _ = ui.separator();
                         if filtered.is_empty() {
                             ui.text("No packages found").dim();
                         } else {
@@ -262,7 +262,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                         .col(|ui| {
                             ui.text(pkg.name).bold().fg(Color::Cyan);
                             ui.text(format!("v{}", pkg.version)).dim();
-                            ui.separator();
+                            let _ = ui.separator();
                             ui.text(pkg.desc);
                             let _ = ui.row(|ui| {
                                 ui.text("License:").dim();
@@ -287,7 +287,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                             });
 
                             if state.installing {
-                                ui.separator();
+                                let _ = ui.separator();
                                 let _ = ui.row(|ui| {
                                     let _ = ui.spinner(&state.spinner);
                                     ui.text(format!(
@@ -298,7 +298,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                                 });
                                 let _ = ui.progress(state.install_progress);
                             } else {
-                                ui.separator();
+                                let _ = ui.separator();
                                 let _ = ui.row(|ui| {
                                     let action = match pkg.status {
                                         "installed" => "Reinstall",
@@ -339,7 +339,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 });
             });
 
-            ui.separator();
+            let _ = ui.separator();
             let _ = ui.help(&[
                 ("Ctrl+Q", "quit"),
                 ("Ctrl+T", "theme"),

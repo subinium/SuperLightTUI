@@ -31,11 +31,17 @@ pub struct Context {
     /// The map is moved into `Context::new` from `FrameState` and moved back
     /// at frame end, identical to the `named_states` lifetime.
     pub(crate) keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
+    /// Issue #262: cross-frame partial-chord buffer for [`Context::key_chord`].
+    /// Moved into `Context::new` from `FrameState` and moved back at frame end,
+    /// identical to the `keyed_states` lifetime.
+    pub(crate) chord: crate::widgets::ChordState,
     pub(crate) context_stack: Vec<Box<dyn std::any::Any>>,
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,
     pub(crate) prev_modal_focus_count: usize,
-    pub(crate) prev_scroll_infos: Vec<(u32, u32)>,
+    /// `(content_extent, viewport_extent, is_horizontal)` per scrollable from
+    /// the previous frame (#247).
+    pub(crate) prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub(crate) prev_scroll_rects: Vec<Rect>,
     pub(crate) prev_hit_map: Vec<Rect>,
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
@@ -53,12 +59,41 @@ pub struct Context {
     /// from `state.diagnostics.debug_layer` at frame start and written back
     /// at frame end so [`Context::set_debug_layer`] persists across frames.
     pub(crate) debug_layer: crate::DebugLayer,
+    /// Issue #268: whether the devtools inspector panel (Ctrl+F12) is active.
+    /// Read from `state.diagnostics.inspector_mode` at frame start and written
+    /// back at frame end so [`Context::set_inspector`] persists across frames.
+    pub(crate) inspector_mode: bool,
     pub(crate) theme: Theme,
     pub(crate) is_real_terminal: bool,
+    /// Issue #264: read-only snapshot of negotiated terminal capabilities
+    /// (DA1/DA2/XTGETTCAP), exposed via [`Context::capabilities`]. Populated
+    /// from the process-global probe in `run_frame_kernel`; defaults
+    /// conservatively on headless backends. Diagnostics-only — image rendering
+    /// routes through the automatic blitter ladder, so app code never branches
+    /// on this.
+    #[cfg(feature = "crossterm")]
+    pub(crate) capabilities: crate::terminal::Capabilities,
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) rollback: ContextRollbackState,
     pub(crate) pending_tooltips: Vec<PendingTooltip>,
     pub(crate) hovered_groups: std::collections::HashSet<std::sync::Arc<str>>,
+    /// Issue #273: version keys recorded by [`Context::cached`] regions on the
+    /// PREVIOUS frame, moved in from `FrameState::region_versions`. Indexed by
+    /// the order `cached` regions are declared this frame; consulted by
+    /// `cached` to classify a region as a hit (key unchanged) or miss.
+    pub(crate) region_versions_prev: Vec<u64>,
+    /// Issue #273: version keys recorded by `cached` regions on THIS frame, in
+    /// declaration order. Swapped back into `FrameState::region_versions` at
+    /// frame end to become next frame's `region_versions_prev`.
+    pub(crate) region_versions_cur: Vec<u64>,
+    /// Issue #273: number of `cached` regions this frame whose key matched the
+    /// previous frame (a cache hit). Diagnostics-only — exposed via
+    /// [`Context::region_cache_hits`].
+    pub(crate) region_cache_hits: u32,
+    /// Issue #273: number of `cached` regions this frame whose key changed or
+    /// was new/first-frame (a cache miss). Exposed via
+    /// [`Context::region_cache_misses`].
+    pub(crate) region_cache_misses: u32,
     pub(crate) scroll_lines_per_event: u32,
     pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub(crate) widget_theme: WidgetTheme,
@@ -78,6 +113,23 @@ pub struct Context {
     /// start of the next frame. Outlives a single frame so the resolution
     /// happens against `focus_name_map_prev`.
     pub(crate) pending_focus_name: Option<String>,
+    /// Issue #248: wall-clock instant sampled once at frame start. All
+    /// frame-clock timer deadlines (`schedule`/`every`/`debounce`) compare
+    /// against this single instant so every timer sampled in the same frame
+    /// sees a consistent "now". Deliberately wall-clock, not the frame tick
+    /// (`run_frame_kernel` never advances `diagnostics.tick`).
+    pub(crate) frame_instant: std::time::Instant,
+    /// Issue #248: persistent timer table. Moved in from `FrameState` at
+    /// frame start and moved back at frame end (where untouched slots are
+    /// GC'd), identical to the `named_states` lifetime.
+    pub(crate) scheduler: SchedulerState,
+    /// Issue #234: in-frame async task registry backing
+    /// [`Context::spawn`](crate::Context::spawn) /
+    /// [`Context::poll`](crate::Context::poll). Round-tripped through
+    /// `FrameState` like `scheduler`. Gated behind `async`; the field does not
+    /// exist (zero overhead) when the feature is off.
+    #[cfg(feature = "async")]
+    pub(crate) async_tasks: AsyncTasks,
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
@@ -143,6 +195,11 @@ pub(super) struct ContextCheckpoint {
     deferred_draws_len: usize,
     context_stack_len: usize,
     pending_tooltips_len: usize,
+    /// Issue #273: `cached` region keys recorded so far, so a panicking
+    /// `cached` region inside an `error_boundary` rolls back its key entry
+    /// (and any nested ones) — keeping the recorded keys consistent with the
+    /// commands that actually survived the rollback.
+    region_versions_cur_len: usize,
     rollback: ContextRollbackState,
 }
 
@@ -154,6 +211,7 @@ impl ContextCheckpoint {
             deferred_draws_len: ctx.deferred_draws.len(),
             context_stack_len: ctx.context_stack.len(),
             pending_tooltips_len: ctx.pending_tooltips.len(),
+            region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
         }
     }
@@ -167,5 +225,8 @@ impl ContextCheckpoint {
         // Drop tooltips queued by the panicking widget but keep any that were
         // already pending before the error boundary was entered.
         ctx.pending_tooltips.truncate(self.pending_tooltips_len);
+        // Issue #273: drop `cached` keys recorded by the panicking subtree.
+        ctx.region_versions_cur
+            .truncate(self.region_versions_cur_len);
     }
 }

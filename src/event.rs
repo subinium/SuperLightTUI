@@ -308,6 +308,76 @@ pub enum KeyCode {
     KeypadBegin,
     /// Function key `F1`..`F12` (and beyond). The inner `u8` is the number.
     F(u8),
+    /// A modifier key pressed on its own (a bare Ctrl/Shift/Alt/Super press
+    /// or release, with no accompanying character).
+    ///
+    /// Only delivered when the Kitty keyboard protocol is active **and**
+    /// [`RunConfig::report_all_keys(true)`](crate::RunConfig::report_all_keys)
+    /// was set, on a supporting terminal (kitty, Ghostty, WezTerm). Most
+    /// terminals never emit these, so handlers must treat them as optional.
+    ///
+    /// Since 0.21.0.
+    Modifier(ModifierKey),
+}
+
+/// A modifier key reported on its own (no character), e.g. a bare Ctrl press.
+///
+/// Mirrors crossterm's `ModifierKeyCode` with SLT naming. Only delivered when
+/// the Kitty keyboard protocol is active **and**
+/// [`RunConfig::report_all_keys(true)`](crate::RunConfig::report_all_keys) was
+/// set, on a supporting terminal (kitty, Ghostty, WezTerm). Most terminals
+/// never emit these.
+///
+/// Useful for vi-style leader/chord overlays ("Ctrl is being held") and
+/// hold-to-repeat affordances keyed off a modifier-down → modifier-up window.
+///
+/// Since 0.21.0.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{KeyCode, ModifierKey, RunConfig};
+///
+/// // `report_all_keys` only has an effect with `kitty_keyboard` enabled.
+/// let cfg = RunConfig::default().kitty_keyboard(true).report_all_keys(true);
+/// slt::run_with(cfg, |ui| {
+///     if ui.key_code(KeyCode::Modifier(ModifierKey::LeftCtrl)) {
+///         ui.text("Left Ctrl is down");
+///     }
+/// })
+/// .unwrap();
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModifierKey {
+    /// Left Shift key.
+    LeftShift,
+    /// Left Control key.
+    LeftCtrl,
+    /// Left Alt / Option key.
+    LeftAlt,
+    /// Left Super key (Cmd on macOS, Win on Windows).
+    LeftSuper,
+    /// Right Shift key.
+    RightShift,
+    /// Right Control key.
+    RightCtrl,
+    /// Right Alt / Option key.
+    RightAlt,
+    /// Right Super key (Cmd on macOS, Win on Windows).
+    RightSuper,
+    /// Left Hyper key.
+    LeftHyper,
+    /// Left Meta key.
+    LeftMeta,
+    /// Right Hyper key.
+    RightHyper,
+    /// Right Meta key.
+    RightMeta,
+    /// ISO Level 3 Shift key (AltGr).
+    IsoLevel3Shift,
+    /// ISO Level 5 Shift key.
+    IsoLevel5Shift,
 }
 
 /// Modifier keys held during a key press.
@@ -463,6 +533,27 @@ fn convert_modifiers(modifiers: crossterm_event::KeyModifiers) -> KeyModifiers {
 }
 
 #[cfg(feature = "crossterm")]
+fn convert_modifier_key(mk: crossterm_event::ModifierKeyCode) -> ModifierKey {
+    use crossterm_event::ModifierKeyCode as C;
+    match mk {
+        C::LeftShift => ModifierKey::LeftShift,
+        C::LeftControl => ModifierKey::LeftCtrl,
+        C::LeftAlt => ModifierKey::LeftAlt,
+        C::LeftSuper => ModifierKey::LeftSuper,
+        C::RightShift => ModifierKey::RightShift,
+        C::RightControl => ModifierKey::RightCtrl,
+        C::RightAlt => ModifierKey::RightAlt,
+        C::RightSuper => ModifierKey::RightSuper,
+        C::LeftHyper => ModifierKey::LeftHyper,
+        C::LeftMeta => ModifierKey::LeftMeta,
+        C::RightHyper => ModifierKey::RightHyper,
+        C::RightMeta => ModifierKey::RightMeta,
+        C::IsoLevel3Shift => ModifierKey::IsoLevel3Shift,
+        C::IsoLevel5Shift => ModifierKey::IsoLevel5Shift,
+    }
+}
+
+#[cfg(feature = "crossterm")]
 fn convert_button(button: crossterm_event::MouseButton) -> MouseButton {
     match button {
         crossterm_event::MouseButton::Left => MouseButton::Left,
@@ -505,6 +596,9 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
                 crossterm_event::KeyCode::Menu => KeyCode::Menu,
                 crossterm_event::KeyCode::KeypadBegin => KeyCode::KeypadBegin,
                 crossterm_event::KeyCode::F(n) => KeyCode::F(n),
+                crossterm_event::KeyCode::Modifier(mk) => {
+                    KeyCode::Modifier(convert_modifier_key(mk))
+                }
                 _ => return None,
             };
             let modifiers = convert_modifiers(k.modifiers);
@@ -651,5 +745,80 @@ mod event_constructor_tests {
     fn test_paste() {
         let e = Event::paste("hello");
         assert!(matches!(e, Event::Paste(s) if s == "hello"));
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod crossterm_conversion_tests {
+    use super::*;
+    use crossterm_event::{
+        Event as CtEvent, KeyCode as CtKeyCode, KeyEvent as CtKeyEvent,
+        KeyEventKind as CtKeyEventKind, KeyEventState, KeyModifiers as CtKeyModifiers,
+        ModifierKeyCode,
+    };
+
+    fn ct_modifier_event(mk: ModifierKeyCode, kind: CtKeyEventKind) -> CtEvent {
+        CtEvent::Key(CtKeyEvent {
+            code: CtKeyCode::Modifier(mk),
+            modifiers: CtKeyModifiers::NONE,
+            kind,
+            state: KeyEventState::NONE,
+        })
+    }
+
+    #[test]
+    fn from_crossterm_maps_modifier_key() {
+        let raw = ct_modifier_event(ModifierKeyCode::LeftControl, CtKeyEventKind::Press);
+        let converted = from_crossterm(raw);
+        match converted {
+            Some(Event::Key(k)) => {
+                assert_eq!(k.code, KeyCode::Modifier(ModifierKey::LeftCtrl));
+                assert!(matches!(k.kind, KeyEventKind::Press));
+            }
+            other => panic!("expected modifier key event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_crossterm_modifier_release() {
+        let raw = ct_modifier_event(ModifierKeyCode::LeftControl, CtKeyEventKind::Release);
+        let converted = from_crossterm(raw);
+        match converted {
+            Some(Event::Key(k)) => {
+                assert_eq!(k.code, KeyCode::Modifier(ModifierKey::LeftCtrl));
+                assert!(matches!(k.kind, KeyEventKind::Release));
+            }
+            other => panic!("expected modifier release event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_crossterm_modifier_key_exhaustive() {
+        // Guards against drift if crossterm reorders/extends ModifierKeyCode.
+        let cases: [(ModifierKeyCode, ModifierKey); 14] = [
+            (ModifierKeyCode::LeftShift, ModifierKey::LeftShift),
+            (ModifierKeyCode::LeftControl, ModifierKey::LeftCtrl),
+            (ModifierKeyCode::LeftAlt, ModifierKey::LeftAlt),
+            (ModifierKeyCode::LeftSuper, ModifierKey::LeftSuper),
+            (ModifierKeyCode::RightShift, ModifierKey::RightShift),
+            (ModifierKeyCode::RightControl, ModifierKey::RightCtrl),
+            (ModifierKeyCode::RightAlt, ModifierKey::RightAlt),
+            (ModifierKeyCode::RightSuper, ModifierKey::RightSuper),
+            (ModifierKeyCode::LeftHyper, ModifierKey::LeftHyper),
+            (ModifierKeyCode::LeftMeta, ModifierKey::LeftMeta),
+            (ModifierKeyCode::RightHyper, ModifierKey::RightHyper),
+            (ModifierKeyCode::RightMeta, ModifierKey::RightMeta),
+            (ModifierKeyCode::IsoLevel3Shift, ModifierKey::IsoLevel3Shift),
+            (ModifierKeyCode::IsoLevel5Shift, ModifierKey::IsoLevel5Shift),
+        ];
+        for (ct, expected) in cases {
+            let raw = ct_modifier_event(ct, CtKeyEventKind::Press);
+            match from_crossterm(raw) {
+                Some(Event::Key(k)) => {
+                    assert_eq!(k.code, KeyCode::Modifier(expected), "mismatch for {ct:?}")
+                }
+                other => panic!("expected modifier event for {ct:?}, got {other:?}"),
+            }
+        }
     }
 }

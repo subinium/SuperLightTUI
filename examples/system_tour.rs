@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
             .grow(1)
             .col(|ui| {
                 let _ = ui.tabs(&mut state.tabs);
-                ui.separator();
+                let _ = ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so
                 // description-only tabs (Async / Inline code blocks)
@@ -197,10 +197,12 @@ fn render_async(ui: &mut Context) {
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui.code_block_lang(
-                        "#[tokio::main(flavor = \"current_thread\")]\nasync fn main() -> std::io::Result<()> {\n    let tx = slt::run_async(move |ui, messages: &mut Vec<String>| {\n        for m in messages.drain(..) { /* ... */ }\n        ui.text(\"...\");\n    })?;\n    tokio::spawn(async move {\n        loop { tx.send(\"tick\".into()).await.ok(); }\n    }).await.ok();\n    Ok(())\n}",
-                        "rust",
-                    );
+                    let _ = ui
+                        .code_block(
+                            "#[tokio::main(flavor = \"current_thread\")]\nasync fn main() -> std::io::Result<()> {\n    let tx = slt::run_async(move |ui, messages: &mut Vec<String>| {\n        for m in messages.drain(..) { /* ... */ }\n        ui.text(\"...\");\n    })?;\n    tokio::spawn(async move {\n        loop { tx.send(\"tick\".into()).await.ok(); }\n    }).await.ok();\n    Ok(())\n}",
+                        )
+                        .lang("rust")
+                        .show();
                 });
             ui.text("");
             ui.text("This page is description-only because the tour binary uses")
@@ -288,10 +290,12 @@ fn render_inline(ui: &mut Context) {
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui.code_block_lang(
-                        "fn main() -> std::io::Result<()> {\n    let mut count: i32 = 0;\n    slt::run_inline(4, |ui| {\n        if ui.key('k') { count += 1; }\n        if ui.key('j') { count -= 1; }\n        ui.text(format!(\"Inline count: {count}\"));\n    })\n}",
-                        "rust",
-                    );
+                    let _ = ui
+                        .code_block(
+                            "fn main() -> std::io::Result<()> {\n    let mut count: i32 = 0;\n    slt::run_inline(4, |ui| {\n        if ui.key('k') { count += 1; }\n        if ui.key('j') { count -= 1; }\n        ui.text(format!(\"Inline count: {count}\"));\n    })\n}",
+                        )
+                        .lang("rust")
+                        .show();
                 });
             ui.text("");
             ui.text("This page is description-only because run_inline uses a")

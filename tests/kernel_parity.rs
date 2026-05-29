@@ -14,7 +14,7 @@ fn render_counter(ui: &mut Context) {
         *count.get_mut(ui) -= 1;
     }
     let current = *count.get(ui);
-    let doubled = *ui.use_memo(&current, |value| value * 2);
+    let doubled = ui.use_memo(&current, |value| value * 2).copied(ui);
     ui.text(format!("count={current} doubled={doubled}"));
 }
 

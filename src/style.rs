@@ -5,8 +5,14 @@
 
 mod color;
 mod theme;
+#[cfg(feature = "serde")]
+mod theme_io;
 pub use color::{Color, ColorDepth};
-pub use theme::{Spacing, Theme, ThemeBuilder, ThemeColor};
+pub use theme::{Spacing, SyntaxPalette, Theme, ThemeBuilder, ThemeColor};
+#[cfg(feature = "theme-watch")]
+pub use theme_io::ThemeWatcher;
+#[cfg(feature = "serde")]
+pub use theme_io::{ThemeFile, ThemeLoadError};
 
 /// Terminal size breakpoint for responsive layouts.
 ///
@@ -808,6 +814,10 @@ impl Modifiers {
     pub const REVERSED: Self = Self(1 << 4);
     /// Enable strikethrough text.
     pub const STRIKETHROUGH: Self = Self(1 << 5);
+    /// Enable slow blinking text (SGR 5).
+    pub const BLINK: Self = Self(1 << 6);
+    /// Enable an overline above the text (SGR 53).
+    pub const OVERLINE: Self = Self(1 << 7);
 
     /// Returns `true` if all bits in `other` are set in `self`.
     #[inline]
@@ -860,6 +870,41 @@ impl std::ops::BitOrAssign for Modifiers {
     }
 }
 
+/// Underline rendering style, emitted as the `CSI 4:Nm` subparameter.
+///
+/// `Straight` is the plain `SGR 4` default. The other variants require a
+/// terminal that supports the Kitty/VTE underline-style extension
+/// (Kitty, WezTerm, foot, recent VTE-based terminals); terminals without
+/// support fall back to a plain underline.
+///
+/// # Example
+///
+/// ```
+/// use slt::{Color, Style, UnderlineStyle};
+///
+/// // A red curly "error" underline, like a spell-checker squiggle.
+/// let err = Style::new()
+///     .underline_style(UnderlineStyle::Curly)
+///     .underline_color(Color::Red);
+/// assert_eq!(err.underline_style, UnderlineStyle::Curly);
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UnderlineStyle {
+    /// Plain straight underline (`CSI 4:1m`, the `SGR 4` default).
+    #[default]
+    Straight,
+    /// Double underline (`CSI 4:2m`).
+    Double,
+    /// Curly / "squiggly" underline (`CSI 4:3m`), commonly used for errors.
+    Curly,
+    /// Dotted underline (`CSI 4:4m`).
+    Dotted,
+    /// Dashed underline (`CSI 4:5m`).
+    Dashed,
+}
+
 /// Visual style for a terminal cell (foreground, background, modifiers).
 ///
 /// Styles are applied to text via the builder methods on `Context` widget
@@ -883,6 +928,16 @@ pub struct Style {
     pub bg: Option<Color>,
     /// Text modifiers (bold, italic, underline, etc.).
     pub modifiers: Modifiers,
+    /// Underline color, or `None` to use the same color as the foreground.
+    ///
+    /// Emitted as `SGR 58` when set and `SGR 59` (reset to foreground) when
+    /// cleared. Requires a terminal that supports separate underline colors.
+    pub underline_color: Option<Color>,
+    /// Underline rendering style (straight, curly, dotted, etc.).
+    ///
+    /// Defaults to [`UnderlineStyle::Straight`]. Non-straight styles are
+    /// emitted as `CSI 4:Nm` and require terminal support.
+    pub underline_style: UnderlineStyle,
 }
 
 impl Style {
@@ -892,6 +947,8 @@ impl Style {
             fg: None,
             bg: None,
             modifiers: Modifiers::NONE,
+            underline_color: None,
+            underline_style: UnderlineStyle::Straight,
         }
     }
 
@@ -940,6 +997,56 @@ impl Style {
     /// Add the strikethrough modifier.
     pub fn strikethrough(mut self) -> Self {
         self.modifiers |= Modifiers::STRIKETHROUGH;
+        self
+    }
+
+    /// Add the slow-blink modifier (SGR 5).
+    pub fn blink(mut self) -> Self {
+        self.modifiers |= Modifiers::BLINK;
+        self
+    }
+
+    /// Add the overline modifier (SGR 53).
+    pub fn overline(mut self) -> Self {
+        self.modifiers |= Modifiers::OVERLINE;
+        self
+    }
+
+    /// Set a separate underline color.
+    ///
+    /// Setting this implies the [`Modifiers::UNDERLINE`] bit so the
+    /// underline is actually rendered. Emitted as `SGR 58`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, Modifiers, Style};
+    ///
+    /// let s = Style::new().underline_color(Color::Red);
+    /// assert!(s.modifiers.contains(Modifiers::UNDERLINE));
+    /// ```
+    pub const fn underline_color(mut self, color: Color) -> Self {
+        self.underline_color = Some(color);
+        self.modifiers = Modifiers(self.modifiers.0 | Modifiers::UNDERLINE.0);
+        self
+    }
+
+    /// Set the underline rendering style (straight, curly, dotted, etc.).
+    ///
+    /// Setting a style implies the [`Modifiers::UNDERLINE`] bit so the
+    /// underline is actually rendered. Emitted as `CSI 4:Nm`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Modifiers, Style, UnderlineStyle};
+    ///
+    /// let s = Style::new().underline_style(UnderlineStyle::Curly);
+    /// assert!(s.modifiers.contains(Modifiers::UNDERLINE));
+    /// ```
+    pub const fn underline_style(mut self, style: UnderlineStyle) -> Self {
+        self.underline_style = style;
+        self.modifiers = Modifiers(self.modifiers.0 | Modifiers::UNDERLINE.0);
         self
     }
 }
@@ -1345,6 +1452,7 @@ impl ContainerStyle {
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 /// Per-widget color overrides that fall back to the active theme.
 ///
 /// Literal [`Color`] fields and [`ThemeColor`] fields can be set independently.
@@ -1479,6 +1587,8 @@ impl WidgetColors {
 ///     .button(WidgetColors::new().fg(Color::Cyan));
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct WidgetTheme {
     /// Default colors for buttons.
     pub button: WidgetColors,
@@ -1498,6 +1608,8 @@ pub struct WidgetTheme {
     pub toggle: WidgetColors,
     /// Default colors for text inputs.
     pub text_input: WidgetColors,
+    /// Default colors for color pickers.
+    pub color_picker: WidgetColors,
 }
 
 impl WidgetTheme {
@@ -1513,6 +1625,7 @@ impl WidgetTheme {
             checkbox: WidgetColors::new(),
             toggle: WidgetColors::new(),
             text_input: WidgetColors::new(),
+            color_picker: WidgetColors::new(),
         }
     }
 
@@ -1569,6 +1682,12 @@ impl WidgetTheme {
         self.text_input = colors;
         self
     }
+
+    /// Set default color picker colors.
+    pub const fn color_picker(mut self, colors: WidgetColors) -> Self {
+        self.color_picker = colors;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -1598,6 +1717,55 @@ mod tests {
         assert!(style.modifiers.contains(Modifiers::ITALIC));
         assert!(style.modifiers.contains(Modifiers::UNDERLINE));
         assert!(style.modifiers.contains(Modifiers::DIM));
+    }
+
+    #[test]
+    fn modifiers_blink_overline_occupy_high_bits() {
+        assert_eq!(Modifiers::BLINK.0, 1 << 6);
+        assert_eq!(Modifiers::OVERLINE.0, 1 << 7);
+        // No collision with any existing bit.
+        let existing = [
+            Modifiers::BOLD,
+            Modifiers::DIM,
+            Modifiers::ITALIC,
+            Modifiers::UNDERLINE,
+            Modifiers::REVERSED,
+            Modifiers::STRIKETHROUGH,
+        ];
+        for m in existing {
+            assert_eq!(m.0 & Modifiers::BLINK.0, 0);
+            assert_eq!(m.0 & Modifiers::OVERLINE.0, 0);
+        }
+        assert_eq!(Modifiers::BLINK.0 & Modifiers::OVERLINE.0, 0);
+    }
+
+    #[test]
+    fn style_blink_and_overline_accumulate() {
+        let style = Style::new().blink().overline();
+        assert!(style.modifiers.contains(Modifiers::BLINK));
+        assert!(style.modifiers.contains(Modifiers::OVERLINE));
+    }
+
+    #[test]
+    fn underline_style_default_is_straight() {
+        assert_eq!(UnderlineStyle::default(), UnderlineStyle::Straight);
+        let s = Style::default();
+        assert_eq!(s.underline_style, UnderlineStyle::Straight);
+        assert_eq!(s.underline_color, None);
+    }
+
+    #[test]
+    fn underline_color_sets_field_and_implies_underline() {
+        let s = Style::new().underline_color(Color::Red);
+        assert_eq!(s.underline_color, Some(Color::Red));
+        assert!(s.modifiers.contains(Modifiers::UNDERLINE));
+    }
+
+    #[test]
+    fn underline_style_sets_field_and_implies_underline() {
+        let s = Style::new().underline_style(UnderlineStyle::Curly);
+        assert_eq!(s.underline_style, UnderlineStyle::Curly);
+        assert!(s.modifiers.contains(Modifiers::UNDERLINE));
     }
 
     #[test]

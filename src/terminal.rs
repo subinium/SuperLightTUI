@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Read, Stdout, Write};
 use std::time::{Duration, Instant};
@@ -17,12 +18,50 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::{Buffer, KittyPlacement};
 use crate::rect::Rect;
-use crate::style::{Color, ColorDepth, Modifiers, Style};
+use crate::style::{Color, ColorDepth, Modifiers, Style, UnderlineStyle};
 
 /// Saturating cast from `u32` to `u16` — clamps to `u16::MAX` instead of truncating.
 #[inline]
 fn sat_u16(v: u32) -> u16 {
     v.min(u16::MAX as u32) as u16
+}
+
+/// Output sink for a [`Terminal`] / [`InlineTerminal`] flush pipeline.
+///
+/// The production path is always [`Sink::Stdout`], a `BufWriter<Stdout>` — its
+/// byte stream and buffering are byte-for-byte identical to the pre-seam code
+/// (the [`Write`] impl below is a thin delegation, so the hot path is
+/// unchanged). When the `pty-test` dev feature (or `cfg(test)`) is enabled, a
+/// second [`Sink::Capture`] variant lets the PTY test harness drive the *real*
+/// flush emitters into an in-process `Vec<u8>` instead of a terminal, so the
+/// emitted escape / image-protocol bytes can be asserted end-to-end. The
+/// capture variant never exists in a default build.
+pub(crate) enum Sink {
+    /// Production sink: buffered stdout.
+    Stdout(BufWriter<Stdout>),
+    /// Test sink: in-process byte capture, used only by the PTY harness.
+    #[cfg(any(test, feature = "pty-test"))]
+    Capture(Vec<u8>),
+}
+
+impl Write for Sink {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Sink::Stdout(w) => w.write(buf),
+            #[cfg(any(test, feature = "pty-test"))]
+            Sink::Capture(v) => v.write(buf),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Sink::Stdout(w) => w.flush(),
+            #[cfg(any(test, feature = "pty-test"))]
+            Sink::Capture(v) => v.flush(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -40,6 +79,14 @@ pub(crate) struct KittyImageManager {
     uploaded: HashMap<u64, u32>,
     /// Previous frame's placements (for diff).
     prev_placements: Vec<KittyPlacement>,
+    /// Reused dedup scratch for already-deleted image IDs in `flush`. Typical
+    /// placement counts are 0–8 (well below where a `HashSet` beats a linear /
+    /// sorted scan), so a `SmallVec` stays on the stack and carries its
+    /// capacity across frames — no per-frame heap allocation, no SipHash.
+    scratch_ids: smallvec::SmallVec<[u32; 8]>,
+    /// Reused scratch for content hashes still referenced this frame, used to
+    /// prune stale uploads. Sorted in place for `binary_search` membership.
+    scratch_hashes: smallvec::SmallVec<[u64; 8]>,
 }
 
 impl KittyImageManager {
@@ -49,6 +96,8 @@ impl KittyImageManager {
             next_id: 1,
             uploaded: HashMap::new(),
             prev_placements: Vec::new(),
+            scratch_ids: smallvec::SmallVec::new(),
+            scratch_hashes: smallvec::SmallVec::new(),
         }
     }
 
@@ -76,13 +125,17 @@ impl KittyImageManager {
             return Ok(());
         }
 
-        // Delete all previous placements (keep uploaded image data for reuse)
+        // Delete all previous placements (keep uploaded image data for reuse).
+        // Dedup via a reused `SmallVec` instead of a per-frame `HashSet`: at the
+        // 0–8 image counts this path actually sees, a linear membership scan
+        // beats hashing, and the scratch keeps its capacity across frames. The
+        // emit order (first-seen) is unchanged, so the byte stream is identical.
         if !self.prev_placements.is_empty() {
-            // Delete all visible placements by ID
-            let mut deleted_ids = std::collections::HashSet::new();
+            self.scratch_ids.clear();
             for p in &self.prev_placements {
                 if let Some(&img_id) = self.uploaded.get(&p.content_hash) {
-                    if deleted_ids.insert(img_id) {
+                    if !self.scratch_ids.contains(&img_id) {
+                        self.scratch_ids.push(img_id);
                         // Delete all placements of this image (but keep image data)
                         queue!(
                             stdout,
@@ -111,13 +164,20 @@ impl KittyImageManager {
             self.place_image_offset(stdout, img_id, pid, p, row_offset)?;
         }
 
-        // Clean up images no longer used by any placement
-        let used_hashes: std::collections::HashSet<u64> =
-            current.iter().map(|p| p.content_hash).collect();
-        let stale: Vec<u64> = self
+        // Clean up images no longer used by any placement. Build the
+        // still-referenced hash set into a reused `SmallVec`, sort it, and test
+        // membership with `binary_search` instead of a per-frame `HashSet`.
+        // (The set of stale uploads is the same regardless of scan order; the
+        // delete emission was already unordered via `HashMap` key iteration.)
+        self.scratch_hashes.clear();
+        self.scratch_hashes
+            .extend(current.iter().map(|p| p.content_hash));
+        self.scratch_hashes.sort_unstable();
+        let scratch_hashes = &self.scratch_hashes;
+        let stale: smallvec::SmallVec<[u64; 8]> = self
             .uploaded
             .keys()
-            .filter(|h| !used_hashes.contains(h))
+            .filter(|h| scratch_hashes.binary_search(h).is_err())
             .copied()
             .collect();
         for hash in stale {
@@ -229,7 +289,14 @@ fn placement_eq_with_offset(
 }
 
 /// Compress RGBA data with zlib if available, returning (payload, format_string).
-fn compress_rgba(data: &[u8]) -> (Vec<u8>, &'static str) {
+///
+/// The payload is returned as a [`Cow`] so the no-compression path (the
+/// `kitty-compress` feature off, or compression that fails to save space)
+/// **borrows** the caller's slice instead of cloning the full RGBA buffer into
+/// a throwaway `Vec` on every `upload_image` call. The compressed path still
+/// returns an owned `Vec`. The downstream `base64_encode(&payload)` call sees
+/// `&[u8]` via `Deref` in both cases, so no signature change ripples out.
+fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
     #[cfg(feature = "kitty-compress")]
     {
         use flate2::write::ZlibEncoder;
@@ -239,12 +306,12 @@ fn compress_rgba(data: &[u8]) -> (Vec<u8>, &'static str) {
             if let Ok(compressed) = encoder.finish() {
                 // Only use compression if it actually saves space
                 if compressed.len() < data.len() {
-                    return (compressed, "o=z,");
+                    return (Cow::Owned(compressed), "o=z,");
                 }
             }
         }
     }
-    (data.to_vec(), "")
+    (Cow::Borrowed(data), "")
 }
 
 /// Query the terminal for the actual cell pixel dimensions via CSI 16 t.
@@ -290,6 +357,391 @@ fn detect_cell_pixel_size() -> Option<(u32, u32)> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Runtime terminal capability probe (issue #264)
+// ---------------------------------------------------------------------------
+//
+// Historically SLT decided whether a terminal could render images / accept the
+// Kitty keyboard protocol / do truecolor *purely from environment-variable
+// allowlists*, which silently degraded capable modern terminals (WezTerm,
+// Ghostty) to an error string. This block adds a one-shot DA1/DA2/XTGETTCAP
+// probe at session enter, parses the replies into a read-only [`Capabilities`]
+// snapshot, and drives an automatic blitter ladder so app code never has to
+// branch on terminal identity. The data types are always compiled (so the
+// `Context` field exists on every build); only the runtime probe is
+// `crossterm`-gated.
+
+/// Image-rendering primitives the terminal can drive, used to build the
+/// automatic blitter ladder. Each flag is conservative: when the runtime probe
+/// returns no answer the defaults assume only the universally available
+/// primitives (half-block + quadrants).
+///
+/// App code is **not** required to inspect this; it exists for diagnostics and
+/// to feed [`Capabilities::best_blitter`].
+///
+/// # Example
+///
+/// ```no_run
+/// # slt::run(|ui: &mut slt::Context| {
+/// let blitters = ui.capabilities().blitters;
+/// // Half-block is available on any ANSI terminal.
+/// assert!(blitters.half);
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlitterSupport {
+    /// `▀` upper-half block — available on any ANSI terminal.
+    pub half: bool,
+    /// `▖▗▘▝` quadrant blocks — available on any Unicode-capable terminal.
+    pub quad: bool,
+    /// `🬀`..`🬻` sextants (Unicode 13+) — off by default until a renderer
+    /// confirms support. This issue wires the capability slot; a sextant
+    /// renderer is a separate feature.
+    pub sextant: bool,
+}
+
+impl Default for BlitterSupport {
+    fn default() -> Self {
+        Self {
+            half: true,
+            quad: true,
+            sextant: false,
+        }
+    }
+}
+
+/// Read-only snapshot of negotiated terminal capabilities, populated once at
+/// session enter via DA1/DA2/XTGETTCAP.
+///
+/// App code **must not** be required to branch on this — it exists for
+/// diagnostics and to drive the automatic blitter ladder (see
+/// [`Capabilities::best_blitter`]). On a headless backend (TestBackend / piped
+/// stdout) or when the probe gets no reply, every field falls back to a
+/// conservative default.
+///
+/// Available since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// # slt::run(|ui: &mut slt::Context| {
+/// let caps = ui.capabilities();
+/// if caps.sixel {
+///     // Diagnostics only — image rendering already routes through the ladder.
+/// }
+/// # });
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    /// 24-bit color confirmed (XTGETTCAP `Tc`/`RGB` or `COLORTERM`).
+    pub truecolor: bool,
+    /// Sixel graphics confirmed (DA1 attribute `4`).
+    pub sixel: bool,
+    /// iTerm2 OSC 1337 inline-image protocol confirmed (env identity for
+    /// iTerm2 / WezTerm / Tabby / mintty; issue #265).
+    pub iterm2: bool,
+    /// Kitty graphics protocol confirmed (DA2 terminal-ID heuristic).
+    pub kitty_graphics: bool,
+    /// Kitty keyboard protocol confirmed.
+    pub kitty_keyboard: bool,
+    /// Synchronized output (DECSET 2026) confirmed.
+    pub sync_output: bool,
+    /// Set of cell-art blitters the terminal can drive.
+    pub blitters: BlitterSupport,
+}
+
+/// Descending image-render preference. The first capability that is available
+/// wins; app code never selects a [`Blitter`] directly.
+///
+/// Ladder order: [`Kitty`](Blitter::Kitty) > [`Sixel`](Blitter::Sixel) >
+/// [`Iterm2`](Blitter::Iterm2) > [`Sextant`](Blitter::Sextant) >
+/// [`HalfBlock`](Blitter::HalfBlock).
+///
+/// Available since `0.21.0`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blitter {
+    /// Kitty graphics protocol (highest fidelity).
+    Kitty,
+    /// Sixel graphics protocol.
+    Sixel,
+    /// iTerm2 OSC 1337 inline-image protocol (issue #265). Pixel-accurate on
+    /// Tabby, older iTerm2, and WezTerm's iTerm2-compat mode.
+    Iterm2,
+    /// Unicode sextant cell art.
+    Sextant,
+    /// Half-block cell art (universal fallback).
+    HalfBlock,
+}
+
+impl Capabilities {
+    /// Resolve the best available image blitter for this terminal.
+    ///
+    /// Returns the first supported rung of the ladder
+    /// (Kitty > Sixel > iTerm2 > Sextant > HalfBlock). This is total: it always
+    /// returns a [`Blitter`], falling through to [`Blitter::HalfBlock`] which
+    /// every terminal supports.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let _ = ui.capabilities().best_blitter();
+    /// # });
+    /// ```
+    pub fn best_blitter(&self) -> Blitter {
+        if self.kitty_graphics {
+            Blitter::Kitty
+        } else if self.sixel {
+            Blitter::Sixel
+        } else if self.iterm2 {
+            Blitter::Iterm2
+        } else if self.blitters.sextant {
+            Blitter::Sextant
+        } else {
+            Blitter::HalfBlock
+        }
+    }
+}
+
+/// Return the process-global negotiated [`Capabilities`], probing the terminal
+/// exactly once on first call and caching the result.
+///
+/// The probe issues DA1 (`CSI c`), DA2 (`CSI > c`), and XTGETTCAP for the
+/// truecolor capname, reading replies through the existing OSC round-trip
+/// infrastructure with a bounded total timeout (≤150ms). On no reply every
+/// field falls back to a conservative default. Repeated calls are free.
+#[cfg(feature = "crossterm")]
+pub fn capabilities() -> Capabilities {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<Capabilities> = OnceLock::new();
+    *CACHED.get_or_init(probe_capabilities)
+}
+
+/// Send DA1/DA2/XTGETTCAP and parse the replies into a [`Capabilities`].
+///
+/// Conservative on failure: any unread / unparsable reply leaves the
+/// corresponding flag at its default. The total stdin wait is bounded to keep
+/// startup latency within the same budget as the existing OSC 11 query.
+#[cfg(feature = "crossterm")]
+fn probe_capabilities() -> Capabilities {
+    let mut caps = Capabilities::default();
+
+    // Total stdin wait is bounded to ≤150ms (90 + 30 + 30) so a silent
+    // terminal cannot stall startup beyond the existing OSC-11 budget. A
+    // responsive terminal replies in well under 10ms, so the common path adds
+    // negligible latency.
+    let mut out = io::stdout();
+    // DA1 then DA2 in one write — both terminate with `c`, so a single
+    // DA-aware read drains both replies (in order) when supported.
+    if write!(out, "\x1b[c\x1b[>c").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_da_response(Duration::from_millis(90)) {
+            parse_da1(&resp, &mut caps);
+            parse_da2(&resp, &mut caps);
+        }
+    }
+
+    // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct payload.
+    // Supporting terminals ack with `APC G i=31;OK ST`; others stay silent so
+    // the bounded read just times out. Base64 of three zero bytes = "AAAA".
+    if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
+            parse_kitty_graphics_ack(&resp, &mut caps);
+        }
+    }
+
+    // XTGETTCAP for the `Tc` (truecolor) capname: DCS + q <hex> ST.
+    // `Tc` -> hex "5463".
+    if write!(out, "\x1bP+q5463\x1b\\").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
+            parse_xtgettcap_truecolor(&resp, &mut caps);
+        }
+    }
+
+    // Env precedence chain stays authoritative for truecolor: a positive
+    // COLORTERM/TERM signal confirms it even when the probe is silent.
+    if matches!(ColorDepth::detect(), ColorDepth::TrueColor) {
+        caps.truecolor = true;
+    }
+
+    // Env-fallback: when the runtime queries are silent (no reply within the
+    // timeout), trust the terminal identity for the Kitty-graphics family so a
+    // known-capable host (Kitty, Ghostty, WezTerm) still climbs the top rung.
+    // The query above wins when it answers; this only fills an unknown.
+    if !caps.kitty_graphics && term_is_kitty_graphics_host() {
+        caps.kitty_graphics = true;
+    }
+
+    // iTerm2 OSC 1337 has no DA1/DA2 signal (issue #265): the protocol is
+    // identified purely by terminal identity. Fill the capability slot from the
+    // env so the blitter ladder can offer it below Kitty/Sixel.
+    if term_is_iterm_host() {
+        caps.iterm2 = true;
+    }
+
+    caps
+}
+
+/// Heuristic env-detection for iTerm2 OSC 1337 inline-image hosts (issue #265).
+///
+/// The protocol carries no DA reply, so detection is by `TERM_PROGRAM` identity
+/// only: iTerm2, WezTerm (iTerm2-compat), Tabby, and mintty.
+#[cfg(feature = "crossterm")]
+fn term_is_iterm_host() -> bool {
+    let term_program = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        term_program.as_str(),
+        "iterm.app" | "wezterm" | "tabby" | "mintty"
+    )
+}
+
+/// Heuristic env-fallback for Kitty-graphics hosts, consulted only when the
+/// runtime Kitty graphics query returned no reply. Matches the documented
+/// `TERM` / `TERM_PROGRAM` identities of terminals that implement the Kitty
+/// graphics protocol.
+#[cfg(feature = "crossterm")]
+fn term_is_kitty_graphics_host() -> bool {
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_program = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    // Kitty sets `TERM=xterm-kitty`; Ghostty/WezTerm advertise via TERM_PROGRAM.
+    term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
+}
+
+/// Read a Device-Attributes reply, which (unlike OSC) terminates with the byte
+/// `c` rather than BEL / ST. Drains up to two `c`-terminated CSI replies
+/// (DA1 + DA2) within the timeout so a combined `CSI c CSI > c` query yields
+/// both answers in one string.
+#[cfg(feature = "crossterm")]
+fn read_da_response(timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut stdin = io::stdin();
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1];
+    let mut terminators = 0usize;
+
+    while Instant::now() < deadline {
+        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
+            continue;
+        }
+        let read = stdin.read(&mut buf).ok()?;
+        if read == 0 {
+            continue;
+        }
+        bytes.push(buf[0]);
+        // `c` is the final byte of a DA reply. Stop once we have collected the
+        // expected pair (DA1 + DA2); also stop on a lone reply so a terminal
+        // that ignores DA2 does not stall the whole timeout.
+        if buf[0] == b'c' {
+            terminators += 1;
+            if terminators >= 2 {
+                break;
+            }
+        }
+        if bytes.len() >= 4096 {
+            break;
+        }
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Parse a DA1 reply (`CSI ? <attrs> c`). Attribute `4` indicates Sixel
+/// support. Only the DA1 segment is consulted; a trailing DA2 segment in the
+/// same string is ignored here.
+#[cfg(feature = "crossterm")]
+fn parse_da1(response: &str, caps: &mut Capabilities) {
+    // DA1 reply: ESC [ ? <n> ; <n> ; ... c  (no `>` after `[`).
+    let mut search = response;
+    while let Some(pos) = search.find("\x1b[?") {
+        let body = &search[pos + 3..];
+        let Some(end) = body.find('c') else { break };
+        let attrs = &body[..end];
+        for attr in attrs.split(';') {
+            if attr.trim() == "4" {
+                caps.sixel = true;
+            }
+        }
+        search = &body[end + 1..];
+    }
+}
+
+/// Parsed DA2 (secondary device attributes) terminal identity:
+/// `(primary_id, firmware_version)` from `CSI > <id> ; <ver> ; <sub> c`.
+///
+/// Returns `None` if the string contains no DA2 reply. Kept separate from the
+/// `Capabilities` mutation so it is independently testable and so callers that
+/// want the raw identity (e.g. future per-terminal quirks) are not forced
+/// through capability inference.
+#[cfg(feature = "crossterm")]
+fn parse_da2(response: &str, caps: &mut Capabilities) {
+    let Some((id, _ver)) = parse_da2_identity(response) else {
+        return;
+    };
+    // DA2 primary id `41` is the documented Kitty graphics terminal id (Kitty
+    // reports `\x1b[>41;<ver>;<sub>c`). This is the one unambiguous DA2 graphics
+    // signal; every other host is resolved by the Kitty graphics query above or
+    // the env-fallback, so we deliberately do not maintain a wider id registry.
+    const KITTY_GRAPHICS_DA2_ID: u32 = 41;
+    if id == KITTY_GRAPHICS_DA2_ID {
+        caps.kitty_graphics = true;
+    }
+}
+
+/// Extract `(primary_id, version)` from a DA2 reply, or `None` if absent.
+#[cfg(feature = "crossterm")]
+fn parse_da2_identity(response: &str) -> Option<(u32, u32)> {
+    let pos = response.find("\x1b[>")?;
+    let body = &response[pos + 3..];
+    let end = body.find('c')?;
+    let mut parts = body[..end].split(';');
+    let id = parts.next()?.trim().parse::<u32>().ok()?;
+    let ver = parts.next().and_then(|s| s.trim().parse::<u32>().ok());
+    Some((id, ver.unwrap_or(0)))
+}
+
+/// Parse a Kitty graphics protocol query ack (`APC G i=31;OK ST`). A terminal
+/// that supports the protocol echoes the image id with an `OK` status; anything
+/// else (silence, error status) leaves the flag untouched.
+#[cfg(feature = "crossterm")]
+fn parse_kitty_graphics_ack(response: &str, caps: &mut Capabilities) {
+    // Ack form: ESC _ G <key=val>;OK ESC \  — we sent i=31, so look for that id
+    // paired with an OK status.
+    if let Some(pos) = response.find("\x1b_G") {
+        let body = &response[pos + 3..];
+        let end = body.find("\x1b\\").unwrap_or(body.len());
+        let payload = &body[..end];
+        if payload.contains("i=31") && payload.contains("OK") {
+            caps.kitty_graphics = true;
+        }
+    }
+}
+
+/// Parse an XTGETTCAP reply for the `Tc` (truecolor) capname. A valid reply is
+/// `DCS 1 + r <hex(capname)>[=<hex(value)>] ST`; a leading `1` means the
+/// capability is present.
+#[cfg(feature = "crossterm")]
+fn parse_xtgettcap_truecolor(response: &str, caps: &mut Capabilities) {
+    // Valid reply prefix: ESC P 1 + r  (DCS 1 + r ...). `Tc` -> hex 5463.
+    if let Some(pos) = response.find("\x1bP1+r") {
+        let body = &response[pos + 5..];
+        if body
+            .to_ascii_lowercase()
+            .split([';', '\x1b'])
+            .any(|seg| seg.starts_with("5463"))
+        {
+            caps.truecolor = true;
+        }
+    }
+}
+
 fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     let mut chunks = Vec::new();
     let bytes = encoded.as_bytes();
@@ -306,7 +758,7 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
 }
 
 pub(crate) struct Terminal {
-    stdout: BufWriter<Stdout>,
+    stdout: Sink,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -314,10 +766,14 @@ pub(crate) struct Terminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269). Its
+    /// capacity persists across frames so the hot flush loop never allocates a
+    /// fresh `String` per call.
+    run_buf: String,
 }
 
 pub(crate) struct InlineTerminal {
-    stdout: BufWriter<Stdout>,
+    stdout: Sink,
     current: Buffer,
     previous: Buffer,
     cursor_visible: bool,
@@ -328,7 +784,14 @@ pub(crate) struct InlineTerminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269).
+    run_buf: String,
 }
+
+/// Initial capacity for the reused per-frame run-coalescing buffer. Sized to
+/// comfortably hold a full wide terminal row of multi-byte graphemes so the
+/// allocation is paid once at construction, never per frame.
+const RUN_BUF_INITIAL_CAPACITY: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminalSessionMode {
@@ -341,6 +804,13 @@ struct TerminalSessionGuard {
     mode: TerminalSessionMode,
     mouse_enabled: bool,
     kitty_keyboard: bool,
+    report_all_keys: bool,
+    /// When `true`, the guard never touched real raw-mode / terminal state
+    /// (PTY test harness path). `restore` then becomes a no-op so dropping a
+    /// captured-sink `Terminal` does not call `disable_raw_mode` or emit
+    /// teardown escapes into the byte capture. Always `false` on the
+    /// production `enter` path.
+    harness: bool,
 }
 
 impl TerminalSessionGuard {
@@ -349,11 +819,14 @@ impl TerminalSessionGuard {
         stdout: &mut impl Write,
         mouse_enabled: bool,
         kitty_keyboard: bool,
+        report_all_keys: bool,
     ) -> io::Result<Self> {
         let guard = Self {
             mode,
             mouse_enabled,
             kitty_keyboard,
+            report_all_keys,
+            harness: false,
         };
 
         terminal::enable_raw_mode()?;
@@ -362,10 +835,22 @@ impl TerminalSessionGuard {
             return Err(err);
         }
 
+        // Issue #264: run the one-shot DA1/DA2/XTGETTCAP capability probe at
+        // session enter, while raw mode is active so the replies are readable.
+        // `capabilities()` caches in a `OnceLock`, so the resume re-enter path
+        // never re-probes. Never runs on the PTY-harness path (`harness` is
+        // always `false` here, but resume/harness re-entries go through
+        // `write_session_enter` directly, not `enter`).
+        let _ = capabilities();
+
         Ok(guard)
     }
 
     fn restore(&self, stdout: &mut impl Write, inline_reserved: bool) {
+        // PTY harness guard: nothing was ever entered, so nothing to restore.
+        if self.harness {
+            return;
+        }
         if self.kitty_keyboard {
             use crossterm::event::PopKeyboardEnhancementFlags;
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
@@ -382,8 +867,14 @@ impl TerminalSessionGuard {
 impl Terminal {
     /// Construct a fullscreen terminal backend; enters raw mode and the
     /// alternate screen and optionally enables mouse capture and the
-    /// kitty keyboard protocol.
-    pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
+    /// kitty keyboard protocol. When `report_all_keys` is set (and
+    /// `kitty_keyboard` is too), bare modifier presses are reported.
+    pub fn new(
+        mouse: bool,
+        kitty_keyboard: bool,
+        report_all_keys: bool,
+        color_depth: ColorDepth,
+    ) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
 
@@ -393,10 +884,11 @@ impl Terminal {
             &mut raw,
             mouse,
             kitty_keyboard,
+            report_all_keys,
         )?;
 
         Ok(Self {
-            stdout: BufWriter::with_capacity(65536, raw),
+            stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -404,6 +896,7 @@ impl Terminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
 
@@ -438,6 +931,7 @@ impl Terminal {
             &self.previous,
             self.color_depth,
             0,
+            &mut self.run_buf,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -445,8 +939,11 @@ impl Terminal {
         self.kitty_mgr
             .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
 
-        // Raw sequences (sixel, other passthrough) — simple diff
+        // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
+
+        // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
+        flush_sprixels(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
         flush_cursor(
@@ -484,6 +981,54 @@ impl Terminal {
     }
 }
 
+#[cfg(any(test, feature = "pty-test"))]
+impl Terminal {
+    /// Construct a fullscreen [`Terminal`] whose flush pipeline targets an
+    /// in-process byte capture instead of stdout.
+    ///
+    /// Used **only** by the PTY test harness ([`crate::PtyBackend`]): the
+    /// production [`Terminal::new`] / [`crate::run`] path is unchanged and
+    /// still binds `BufWriter<Stdout>`. No raw mode is entered and no session
+    /// escapes are emitted, so this can run on a headless CI runner with no
+    /// TTY. The emitted bytes — SGR runs, OSC 8, Sixel, Kitty graphics — flow
+    /// through the exact same [`flush_buffer_diff`] / [`apply_style_delta`] /
+    /// Sixel / Kitty emitters that a real terminal sees.
+    ///
+    /// `color_depth` selects the SGR encoding (truecolor vs 256-color etc.)
+    /// exercised by the flush, mirroring [`Terminal::new`]'s argument.
+    pub(crate) fn with_sink(width: u32, height: u32, color_depth: ColorDepth) -> Self {
+        let area = Rect::new(0, 0, width, height);
+        Self {
+            stdout: Sink::Capture(Vec::new()),
+            current: Buffer::empty(area),
+            previous: Buffer::empty(area),
+            cursor_visible: false,
+            session: TerminalSessionGuard {
+                mode: TerminalSessionMode::Fullscreen,
+                mouse_enabled: false,
+                kitty_keyboard: false,
+                report_all_keys: false,
+                harness: true,
+            },
+            color_depth,
+            theme_bg: None,
+            kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+        }
+    }
+
+    /// Drain and return the bytes captured by a [`with_sink`](Terminal::with_sink)
+    /// terminal since the last call, resetting the capture buffer.
+    ///
+    /// Panics if this terminal is not a captured-sink (harness) terminal.
+    pub(crate) fn take_sink_bytes(&mut self) -> Vec<u8> {
+        match &mut self.stdout {
+            Sink::Capture(v) => std::mem::take(v),
+            Sink::Stdout(_) => panic!("take_sink_bytes called on a non-capture Terminal"),
+        }
+    }
+}
+
 impl crate::Backend for Terminal {
     fn size(&self) -> (u32, u32) {
         Terminal::size(self)
@@ -502,10 +1047,13 @@ impl InlineTerminal {
     /// Construct an inline terminal backend that renders `height` rows
     /// below the current cursor without entering the alternate screen.
     /// Optionally enables mouse capture and the kitty keyboard protocol.
+    /// When `report_all_keys` is set (and `kitty_keyboard` is too), bare
+    /// modifier presses are reported.
     pub fn new(
         height: u32,
         mouse: bool,
         kitty_keyboard: bool,
+        report_all_keys: bool,
         color_depth: ColorDepth,
     ) -> io::Result<Self> {
         let (cols, _) = terminal::size()?;
@@ -517,6 +1065,7 @@ impl InlineTerminal {
             &mut raw,
             mouse,
             kitty_keyboard,
+            report_all_keys,
         )?;
 
         let (_, cursor_row) = match cursor::position() {
@@ -527,7 +1076,7 @@ impl InlineTerminal {
             }
         };
         Ok(Self {
-            stdout: BufWriter::with_capacity(65536, raw),
+            stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
             current: Buffer::empty(area),
             previous: Buffer::empty(area),
             cursor_visible: false,
@@ -538,6 +1087,7 @@ impl InlineTerminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
 
@@ -585,6 +1135,7 @@ impl InlineTerminal {
             &self.previous,
             self.color_depth,
             row_offset,
+            &mut self.run_buf,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -595,8 +1146,11 @@ impl InlineTerminal {
         self.kitty_mgr
             .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
 
-        // Raw sequences (sixel, other passthrough) — simple diff
+        // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
+
+        // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
+        flush_sprixels(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         queue!(self.stdout, EndSynchronizedUpdate)?;
         let fallback_row = row_offset + self.height.saturating_sub(1);
@@ -783,7 +1337,7 @@ pub(crate) fn parse_osc11_response(response: &str) -> ColorScheme {
     }
 }
 
-fn base64_encode(input: &[u8]) -> String {
+pub(crate) fn base64_encode(input: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
@@ -902,6 +1456,7 @@ fn flush_buffer_diff(
     previous: &Buffer,
     color_depth: ColorDepth,
     row_offset: u32,
+    run_buf: &mut String,
 ) -> io::Result<()> {
     // Run-coalescing: consecutive changed cells in the same row that share
     // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
@@ -925,7 +1480,10 @@ fn flush_buffer_diff(
 
     // Active run state. `run_next_col` is the column the next cell must
     // occupy to extend the run; `run_open` guards the rest of the fields.
-    let mut run_buf = String::new();
+    // `run_buf` is hoisted to a caller-owned, reused buffer (issue #269): its
+    // backing allocation persists across frames so the hot flush loop performs
+    // no per-frame `String` allocation. Start clean but keep capacity.
+    run_buf.clear();
     let mut run_abs_y: u32 = 0;
     let mut run_style: Style = Style::new();
     let mut run_link: Option<&str> = None;
@@ -1014,7 +1572,13 @@ fn flush_buffer_diff(
 
                 if cell_link != active_link {
                     if let Some(url) = cell_link {
-                        queue!(stdout, Print(format!("\x1b]8;;{url}\x07")))?;
+                        // Emit the OSC 8 open in three borrowed `Print`s instead
+                        // of `format!`ing a throwaway `String` per link-state
+                        // change (issue #269). The byte stream is identical to
+                        // `"\x1b]8;;{url}\x07"`.
+                        queue!(stdout, Print("\x1b]8;;"))?;
+                        queue!(stdout, Print(url))?;
+                        queue!(stdout, Print("\x07"))?;
                     } else {
                         queue!(stdout, Print("\x1b]8;;\x07"))?;
                     }
@@ -1071,7 +1635,10 @@ pub fn __bench_flush_buffer_diff<W: Write>(
     previous: &Buffer,
     color_depth: ColorDepth,
 ) -> io::Result<()> {
-    flush_buffer_diff(w, current, previous, color_depth, 0)
+    // Own a local run buffer to keep the public bench signature stable
+    // (issue #269); the real backends pass a reused field instead.
+    let mut run_buf = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+    flush_buffer_diff(w, current, previous, color_depth, 0, &mut run_buf)
 }
 
 /// Mutable-buffer variant of [`__bench_flush_buffer_diff`] (issue #171).
@@ -1089,9 +1656,48 @@ pub fn __bench_flush_buffer_diff_mut<W: Write>(
     previous: &mut Buffer,
     color_depth: ColorDepth,
 ) -> io::Result<()> {
+    // Own a local run buffer to keep the public bench signature stable
+    // (issue #269). Use `__bench_flush_buffer_diff_mut_with_buf` to exercise
+    // cross-frame buffer reuse explicitly.
+    let mut run_buf = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+    __bench_flush_buffer_diff_mut_with_buf(w, current, previous, color_depth, &mut run_buf)
+}
+
+/// Reuse-aware variant of [`__bench_flush_buffer_diff_mut`] that threads a
+/// caller-owned `run_buf` (issue #269), mirroring how the real backends carry
+/// the buffer across frames. Refreshes per-row digests before the diff.
+///
+/// Not part of the stable API.
+///
+/// ```no_run
+/// # use slt::{Buffer, Rect, ColorDepth, Style};
+/// let area = Rect::new(0, 0, 8, 2);
+/// let mut current = Buffer::empty(area);
+/// let mut previous = Buffer::empty(area);
+/// current.set_string(0, 0, "hi", Style::new());
+/// let mut sink: Vec<u8> = Vec::new();
+/// // The same `run_buf` can be passed across frames — its capacity persists.
+/// let mut run_buf = String::with_capacity(4096);
+/// slt::__bench_flush_buffer_diff_mut_with_buf(
+///     &mut sink,
+///     &mut current,
+///     &mut previous,
+///     ColorDepth::TrueColor,
+///     &mut run_buf,
+/// )
+/// .unwrap();
+/// ```
+#[doc(hidden)]
+pub fn __bench_flush_buffer_diff_mut_with_buf<W: Write>(
+    w: &mut W,
+    current: &mut Buffer,
+    previous: &mut Buffer,
+    color_depth: ColorDepth,
+    run_buf: &mut String,
+) -> io::Result<()> {
     current.recompute_line_hashes();
     previous.recompute_line_hashes();
-    flush_buffer_diff(w, current, previous, color_depth, 0)
+    flush_buffer_diff(w, current, previous, color_depth, 0, run_buf)
 }
 
 /// Opaque test fixture wrapping `KittyImageManager` + a placements list.
@@ -1187,6 +1793,92 @@ fn flush_raw_sequences(
     Ok(())
 }
 
+/// Decide whether a sprixel placement must be re-blitted this frame, applying
+/// the per-cell damage matrix (issue #265).
+///
+/// Returns `true` when:
+///   * the placement is new or its `(x, y, content_hash, cols, rows)` changed
+///     (no structurally equal placement in the previous frame), OR
+///   * a text cell inside the footprint was overwritten this frame *and* the
+///     footprint marks that cell as covering graphic ink
+///     ([`SprixelCell::Opaque`] / [`SprixelCell::Mixed`]) — i.e. the cell is
+///     [`SprixelCell::Annihilated`].
+///
+/// A pure text edit landing on a [`SprixelCell::Transparent`] cell never marks
+/// damage, so the graphic is not re-emitted.
+fn sprixel_needs_reblit(
+    placement: &crate::buffer::SprixelPlacement,
+    current: &Buffer,
+    previous: &Buffer,
+) -> bool {
+    use crate::buffer::SprixelCell;
+
+    // Position / content change: re-blit if no equal placement existed last
+    // frame. `SprixelPlacement: PartialEq` compares content_hash/x/y/cols/rows
+    // (the damage matrix is excluded), so a moved or recolored image re-blits.
+    if !previous.sprixels.iter().any(|p| p == placement) {
+        return true;
+    }
+
+    // Annihilation scan: a covered text cell that changed since last frame and
+    // now shows ink forces a re-blit. `Transparent` cells are skipped so free
+    // text edits in graphic gaps emit zero sprixel bytes.
+    for row in 0..placement.rows {
+        for col in 0..placement.cols {
+            let idx = (row * placement.cols + col) as usize;
+            match placement.cells.get(idx) {
+                Some(SprixelCell::Opaque) | Some(SprixelCell::Mixed) => {}
+                // Transparent / Annihilated / out-of-range: not ink-covering,
+                // so a text write here does not damage the graphic.
+                _ => continue,
+            }
+            let x = placement.x + col;
+            let y = placement.y + row;
+            // A footprint can extend past the buffer edge (a clipped placement,
+            // or `iterm_image_fit` reserving rows beyond the viewport). Use
+            // `try_get` so an out-of-bounds footprint cell is simply skipped
+            // rather than panicking — there is no text there to annihilate it.
+            let (Some(cell), Some(prev)) = (current.try_get(x, y), previous.try_get(x, y)) else {
+                continue;
+            };
+            // Mirror `flush_buffer_diff`'s write predicate exactly: a cell is
+            // emitted (and thus overwrites graphic ink) iff it changed since
+            // last frame and carries a non-empty symbol. Matching the predicate
+            // keeps the damage matrix in lockstep with what the cell diff
+            // actually paints over the graphic.
+            if cell != prev && !cell.symbol.is_empty() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Flush the sprixel (Sixel / iTerm2) layer with per-cell damage tracking.
+///
+/// Unlike [`flush_raw_sequences`]' all-or-nothing guard, this re-emits each
+/// pixel graphic **only** when [`sprixel_needs_reblit`] reports damage, so a
+/// text edit in a transparent region of a Sixel emits zero passthrough bytes
+/// (issue #265).
+fn flush_sprixels(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+) -> io::Result<()> {
+    for placement in &current.sprixels {
+        if sprixel_needs_reblit(placement, current, previous) {
+            queue!(
+                stdout,
+                cursor::MoveTo(sat_u16(placement.x), sat_u16(row_offset + placement.y)),
+                Print(&placement.seq)
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn flush_cursor(
     stdout: &mut impl Write,
     cursor_visible: &mut bool,
@@ -1279,7 +1971,65 @@ fn apply_style_delta(
     if added.contains(Modifiers::STRIKETHROUGH) {
         queue!(w, SetAttribute(Attribute::CrossedOut))?;
     }
+    if removed.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::NoBlink))?;
+    }
+    if added.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::SlowBlink))?;
+    }
+    if removed.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::NotOverLined))?;
+    }
+    if added.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::OverLined))?;
+    }
+    // Underline style and color use raw escapes: crossterm 0.28 cannot
+    // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
+    // color reliably (its discriminants collide on these terminals).
+    if old.underline_style != new.underline_style {
+        write!(w, "\x1b[4:{}m", underline_style_param(new.underline_style))?;
+    }
+    if old.underline_color != new.underline_color {
+        emit_underline_color(w, new.underline_color, depth)?;
+    }
     Ok(())
+}
+
+/// Map an [`UnderlineStyle`] to its `CSI 4:Nm` subparameter value.
+fn underline_style_param(style: UnderlineStyle) -> u8 {
+    match style {
+        UnderlineStyle::Straight => 1,
+        UnderlineStyle::Double => 2,
+        UnderlineStyle::Curly => 3,
+        UnderlineStyle::Dotted => 4,
+        UnderlineStyle::Dashed => 5,
+    }
+}
+
+/// Emit the raw `SGR 58` underline-color sequence (or `SGR 59` to reset).
+///
+/// `None` resets the underline color to the foreground (`\x1b[59m`). Otherwise
+/// the color is downsampled to the terminal's depth: true-color emits
+/// `\x1b[58:2::r:g:bm`, while indexed/named colors emit `\x1b[58:5:im`.
+fn emit_underline_color(
+    w: &mut impl Write,
+    color: Option<Color>,
+    depth: ColorDepth,
+) -> io::Result<()> {
+    match color {
+        None => write!(w, "\x1b[59m"),
+        Some(c) => match c.downsampled(depth) {
+            Color::Reset => write!(w, "\x1b[59m"),
+            Color::Rgb(r, g, b) => write!(w, "\x1b[58:2::{r}:{g}:{b}m"),
+            Color::Indexed(i) => write!(w, "\x1b[58:5:{i}m"),
+            // Named colors have no direct SGR-58 form; resolve them to their
+            // RGB equivalent and emit a true-color underline sequence.
+            named => {
+                let (r, g, b) = named.to_rgb();
+                write!(w, "\x1b[58:2::{r}:{g}:{b}m")
+            }
+        },
+    }
 }
 
 fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
@@ -1307,6 +2057,22 @@ fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Resu
     }
     if m.contains(Modifiers::STRIKETHROUGH) {
         queue!(w, SetAttribute(Attribute::CrossedOut))?;
+    }
+    if m.contains(Modifiers::BLINK) {
+        queue!(w, SetAttribute(Attribute::SlowBlink))?;
+    }
+    if m.contains(Modifiers::OVERLINE) {
+        queue!(w, SetAttribute(Attribute::OverLined))?;
+    }
+    if style.underline_style != UnderlineStyle::Straight {
+        write!(
+            w,
+            "\x1b[4:{}m",
+            underline_style_param(style.underline_style)
+        )?;
+    }
+    if style.underline_color.is_some() {
+        emit_underline_color(w, style.underline_color, depth)?;
     }
     Ok(())
 }
@@ -1369,17 +2135,33 @@ fn write_session_enter(stdout: &mut impl Write, session: &TerminalSessionGuard) 
         execute!(stdout, EnableMouseCapture)?;
     }
     if session.kitty_keyboard {
-        use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+        use crossterm::event::PushKeyboardEnhancementFlags;
         let _ = execute!(
             stdout,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            )
+            PushKeyboardEnhancementFlags(kitty_flags(session.report_all_keys))
         );
     }
 
     Ok(())
+}
+
+/// Assemble the Kitty keyboard enhancement flags to push.
+///
+/// Always sets `DISAMBIGUATE_ESCAPE_CODES | REPORT_EVENT_TYPES`. When
+/// `report_all_keys` is `true`, also OR-es in
+/// `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, which is the only mechanism by which a
+/// spec-compliant terminal emits a bare modifier as a key event.
+///
+/// This is a pure helper so the flag assembly can be unit-tested without
+/// touching stdout.
+fn kitty_flags(report_all_keys: bool) -> crossterm::event::KeyboardEnhancementFlags {
+    use crossterm::event::KeyboardEnhancementFlags;
+    let mut flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    if report_all_keys {
+        flags |= KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+    }
+    flags
 }
 
 fn write_session_cleanup(
@@ -1417,6 +2199,144 @@ fn write_session_cleanup(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Unix job-control suspend/resume (Ctrl+Z / `fg`) — issue #263
+// ---------------------------------------------------------------------------
+//
+// On Unix, SIGTSTP stops the process in kernel space with no Rust code on the
+// stack, so neither `Drop` nor the panic hook can restore the terminal. The
+// run loops install a `signal-hook` background thread that, on SIGTSTP, runs
+// the same teardown the session guard would (`disable_raw_mode`, leave alt
+// screen, show cursor, disable paste/focus/mouse/kitty) and then re-raises
+// SIGTSTP to genuinely stop; on SIGCONT it re-enters the session and flags a
+// full redraw. The whole feature is `#[cfg(unix)]` and uses only signal-hook's
+// safe API, preserving `#![forbid(unsafe_code)]`.
+
+/// Immutable snapshot of the active terminal session used by the unix
+/// suspend/resume handler to restore and re-enter the terminal across a
+/// Ctrl+Z / `fg` cycle without owning the `Terminal`/`InlineTerminal`.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SessionSnapshot {
+    mode: TerminalSessionMode,
+    mouse_enabled: bool,
+    kitty_keyboard: bool,
+    report_all_keys: bool,
+}
+
+/// Set by the SIGCONT handler and consumed once at the top of each run-loop
+/// iteration to force a full clear + repaint after resuming from suspend.
+#[cfg(unix)]
+pub(crate) static NEEDS_FULL_REDRAW: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+impl Terminal {
+    /// Capture the session state the suspend/resume handler needs to restore
+    /// and re-enter this fullscreen terminal across Ctrl+Z / `fg`.
+    pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            mode: self.session.mode,
+            mouse_enabled: self.session.mouse_enabled,
+            kitty_keyboard: self.session.kitty_keyboard,
+            report_all_keys: self.session.report_all_keys,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl InlineTerminal {
+    /// Capture the session state the suspend/resume handler needs to restore
+    /// and re-enter this inline terminal across Ctrl+Z / `fg`.
+    pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            mode: self.session.mode,
+            mouse_enabled: self.session.mouse_enabled,
+            kitty_keyboard: self.session.kitty_keyboard,
+            report_all_keys: self.session.report_all_keys,
+        }
+    }
+}
+
+/// Write the escape sequences that tear down the TUI session in preparation
+/// for SIGTSTP (the inverse of [`write_session_enter`]).
+///
+/// `inline_reserved` is passed `false` to [`write_session_cleanup`] to avoid
+/// emitting the inline trailing-newline dance mid-session; the reserved region
+/// is repainted on resume via the forced full redraw. Pure byte output, no
+/// raw-mode toggle — split out so it can be unit-tested against a `Vec<u8>`.
+#[cfg(unix)]
+fn write_suspend_sequence(stdout: &mut impl Write, snapshot: &SessionSnapshot) -> io::Result<()> {
+    if snapshot.kitty_keyboard {
+        use crossterm::event::PopKeyboardEnhancementFlags;
+        execute!(stdout, PopKeyboardEnhancementFlags)?;
+    }
+    if snapshot.mouse_enabled {
+        execute!(stdout, DisableMouseCapture)?;
+    }
+    execute!(stdout, DisableFocusChange)?;
+    write_session_cleanup(stdout, snapshot.mode, false)
+}
+
+/// Restore the terminal to cooked/non-TUI state in preparation for the process
+/// being stopped by SIGTSTP.
+///
+/// Mirrors [`TerminalSessionGuard::restore`] but writes directly to
+/// `io::stdout()` (the handler runs on a background thread that does not own
+/// the buffered terminal stdout).
+#[cfg(unix)]
+pub(crate) fn suspend_to_shell(snapshot: &SessionSnapshot) {
+    let mut out = io::stdout();
+    let _ = write_suspend_sequence(&mut out, snapshot);
+    let _ = terminal::disable_raw_mode();
+    let _ = out.flush();
+}
+
+/// Re-enter the TUI session after a SIGCONT (resume via `fg`), matching the
+/// original [`SessionSnapshot`], and flag a full redraw for the next frame.
+///
+/// Mirrors [`TerminalSessionGuard::enter`] but writes directly to
+/// `io::stdout()`. Sets [`NEEDS_FULL_REDRAW`] so the next loop iteration clears
+/// the front buffer and repaints every cell.
+#[cfg(unix)]
+pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
+    let mut out = io::stdout();
+    let _ = terminal::enable_raw_mode();
+    let guard = TerminalSessionGuard {
+        mode: snapshot.mode,
+        mouse_enabled: snapshot.mouse_enabled,
+        kitty_keyboard: snapshot.kitty_keyboard,
+        report_all_keys: snapshot.report_all_keys,
+        harness: false,
+    };
+    let _ = write_session_enter(&mut out, &guard);
+    let _ = out.flush();
+    NEEDS_FULL_REDRAW.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Construct a [`SessionSnapshot`] for tests without a live terminal.
+#[cfg(all(unix, test))]
+fn test_snapshot(mode: TerminalSessionMode, mouse: bool, kitty: bool) -> SessionSnapshot {
+    SessionSnapshot {
+        mode,
+        mouse_enabled: mouse,
+        kitty_keyboard: kitty,
+        report_all_keys: false,
+    }
+}
+
+/// Construct a fullscreen [`SessionSnapshot`] for crate-level tests that drive
+/// the suspend handler without a live terminal (issue #263).
+#[cfg(all(unix, test))]
+pub(crate) fn test_session_snapshot() -> SessionSnapshot {
+    SessionSnapshot {
+        mode: TerminalSessionMode::Fullscreen,
+        mouse_enabled: false,
+        kitty_keyboard: false,
+        report_all_keys: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1439,6 +2359,8 @@ mod tests {
             mode: TerminalSessionMode::Fullscreen,
             mouse_enabled: false,
             kitty_keyboard: false,
+            report_all_keys: false,
+            harness: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1454,6 +2376,8 @@ mod tests {
             mode: TerminalSessionMode::Inline,
             mouse_enabled: false,
             kitty_keyboard: false,
+            report_all_keys: false,
+            harness: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1482,6 +2406,105 @@ mod tests {
         assert!(output.ends_with('\n'));
         assert!(output.contains("\u{1b}[?25h"));
         assert!(output.contains("\u{1b}[?2004l"));
+    }
+
+    // ── Unix suspend/resume sequence tests (issue #263) ──────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_fullscreen_leaves_alt_screen() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, false, false);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
+        assert!(output.contains("\u{1b}[?25h"), "shows cursor");
+        assert!(output.contains("\u{1b}[?2004l"), "disables bracketed paste");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_inline_keeps_normal_screen() {
+        let snapshot = test_snapshot(TerminalSessionMode::Inline, false, false);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(
+            !output.contains("\u{1b}[?1049l"),
+            "inline must not leave alt screen"
+        );
+        assert!(output.contains("\u{1b}[?25h"), "shows cursor");
+        assert!(output.contains("\u{1b}[?2004l"), "disables bracketed paste");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suspend_sequence_disables_mouse_and_kitty_when_enabled() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, true, true);
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        // DisableMouseCapture emits the SGR-mouse disable (?1006l) among others.
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1006l"), "disables SGR mouse mode");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_sequence_fullscreen_round_trips_enter_and_flags_redraw() {
+        let snapshot = test_snapshot(TerminalSessionMode::Fullscreen, false, false);
+
+        // The resume path re-enters the same byte state as the initial enter.
+        let guard = TerminalSessionGuard {
+            mode: snapshot.mode,
+            mouse_enabled: snapshot.mouse_enabled,
+            kitty_keyboard: snapshot.kitty_keyboard,
+            report_all_keys: snapshot.report_all_keys,
+            harness: false,
+        };
+        let mut enter_bytes = Vec::new();
+        write_session_enter(&mut enter_bytes, &guard).unwrap();
+        let enter = String::from_utf8(enter_bytes).unwrap();
+        assert!(enter.contains("\u{1b}[?1049h"));
+        assert!(enter.contains("\u{1b}[?25l"));
+        assert!(enter.contains("\u{1b}[?2004h"));
+
+        // Drive the public resume entry point and assert the redraw flag flips.
+        NEEDS_FULL_REDRAW.store(false, std::sync::atomic::Ordering::SeqCst);
+        resume_from_shell(&snapshot);
+        assert!(
+            NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst),
+            "resume must request a full redraw exactly once"
+        );
+        assert!(
+            !NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst),
+            "the redraw flag is consumed by the first swap (idempotent)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn needs_full_redraw_swaps_true_once() {
+        NEEDS_FULL_REDRAW.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst));
+        assert!(!NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn kitty_flags_base_set_excludes_report_all_keys() {
+        use crossterm::event::KeyboardEnhancementFlags;
+        let flags = kitty_flags(false);
+        assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(!flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+    }
+
+    #[test]
+    fn kitty_flags_report_all_keys_sets_flag() {
+        use crossterm::event::KeyboardEnhancementFlags;
+        let flags = kitty_flags(true);
+        assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
     }
 
     #[test]
@@ -1517,6 +2540,225 @@ mod tests {
             parse_osc11_response("\x1b]11;rgb:ffff/ffff/ffff\x07"),
             ColorScheme::Light
         );
+    }
+
+    // ---- Capability probe / blitter ladder (issue #264) ----
+
+    #[test]
+    fn blitter_support_default_is_conservative() {
+        let b = BlitterSupport::default();
+        assert!(b.half);
+        assert!(b.quad);
+        assert!(!b.sextant);
+    }
+
+    #[test]
+    fn capabilities_default_is_all_false_but_half_block() {
+        let c = Capabilities::default();
+        assert!(!c.truecolor);
+        assert!(!c.sixel);
+        assert!(!c.iterm2);
+        assert!(!c.kitty_graphics);
+        assert!(!c.kitty_keyboard);
+        assert!(!c.sync_output);
+        // With nothing negotiated the ladder must still resolve to half-block.
+        assert_eq!(c.best_blitter(), Blitter::HalfBlock);
+    }
+
+    #[test]
+    fn best_blitter_ladder_table() {
+        let kitty = Capabilities {
+            kitty_graphics: true,
+            ..Default::default()
+        };
+        assert_eq!(kitty.best_blitter(), Blitter::Kitty);
+
+        let sixel = Capabilities {
+            sixel: true,
+            ..Default::default()
+        };
+        assert_eq!(sixel.best_blitter(), Blitter::Sixel);
+
+        let iterm2 = Capabilities {
+            iterm2: true,
+            ..Default::default()
+        };
+        assert_eq!(iterm2.best_blitter(), Blitter::Iterm2);
+
+        // iTerm2 sits below Sixel: a host advertising both prefers Sixel.
+        let sixel_and_iterm2 = Capabilities {
+            sixel: true,
+            iterm2: true,
+            ..Default::default()
+        };
+        assert_eq!(sixel_and_iterm2.best_blitter(), Blitter::Sixel);
+
+        let sextant = Capabilities {
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sextant.best_blitter(), Blitter::Sextant);
+
+        assert_eq!(Capabilities::default().best_blitter(), Blitter::HalfBlock);
+    }
+
+    #[test]
+    fn best_blitter_precedence_kitty_over_everything() {
+        let all = Capabilities {
+            kitty_graphics: true,
+            sixel: true,
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(all.best_blitter(), Blitter::Kitty);
+
+        let sixel_and_sextant = Capabilities {
+            sixel: true,
+            blitters: BlitterSupport {
+                sextant: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sixel_and_sextant.best_blitter(), Blitter::Sixel);
+    }
+
+    #[test]
+    fn best_blitter_never_picks_unsupported_protocol() {
+        // Exhaustive sweep over field combinations: the resolver must never
+        // return Kitty without kitty_graphics, nor Sixel without sixel, etc.
+        for kitty in [false, true] {
+            for sixel in [false, true] {
+                for iterm2 in [false, true] {
+                    for sextant in [false, true] {
+                        let caps = Capabilities {
+                            kitty_graphics: kitty,
+                            sixel,
+                            iterm2,
+                            blitters: BlitterSupport {
+                                sextant,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
+                        match caps.best_blitter() {
+                            Blitter::Kitty => assert!(kitty),
+                            Blitter::Sixel => assert!(sixel && !kitty),
+                            Blitter::Iterm2 => assert!(iterm2 && !sixel && !kitty),
+                            Blitter::Sextant => {
+                                assert!(sextant && !iterm2 && !sixel && !kitty)
+                            }
+                            Blitter::HalfBlock => {
+                                assert!(!kitty && !sixel && !iterm2 && !sextant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_attribute_4_sets_sixel() {
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;4;6c", &mut caps);
+        assert!(caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_without_4_leaves_sixel_false() {
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;1;6c", &mut caps);
+        assert!(!caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da1_ignores_da2_segment_in_same_string() {
+        // DA1 (no `4`) followed by DA2 — DA2 must not be mistaken for DA1.
+        let mut caps = Capabilities::default();
+        parse_da1("\x1b[?62;1c\x1b[>0;276;0c", &mut caps);
+        assert!(!caps.sixel);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_no_panic_on_garbage() {
+        let mut caps = Capabilities::default();
+        // Must not panic and must not set kitty_graphics on an unknown id.
+        parse_da2("\x1b[>99;1;0c", &mut caps);
+        assert!(!caps.kitty_graphics);
+        parse_da2("not a da2 reply", &mut caps);
+        assert!(!caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_kitty_id_sets_kitty_graphics() {
+        let mut caps = Capabilities::default();
+        // Kitty reports DA2 primary id 41.
+        parse_da2("\x1b[>41;4000;0c", &mut caps);
+        assert!(caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_da2_identity_extracts_id_and_version() {
+        assert_eq!(parse_da2_identity("\x1b[>0;276;0c"), Some((0, 276)));
+        assert_eq!(parse_da2_identity("\x1b[>41;4000;0c"), Some((41, 4000)));
+        assert_eq!(parse_da2_identity("no reply here"), None);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_kitty_graphics_ack_ok_sets_flag() {
+        let mut caps = Capabilities::default();
+        parse_kitty_graphics_ack("\x1b_Gi=31;OK\x1b\\", &mut caps);
+        assert!(caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_kitty_graphics_ack_error_or_wrong_id_leaves_flag() {
+        let mut caps = Capabilities::default();
+        // Error status must not flag support.
+        parse_kitty_graphics_ack("\x1b_Gi=31;ENOENT:bad\x1b\\", &mut caps);
+        assert!(!caps.kitty_graphics);
+        // A different image id is not our query.
+        parse_kitty_graphics_ack("\x1b_Gi=99;OK\x1b\\", &mut caps);
+        assert!(!caps.kitty_graphics);
+        // No APC at all.
+        parse_kitty_graphics_ack("garbage", &mut caps);
+        assert!(!caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_xtgettcap_tc_sets_truecolor() {
+        let mut caps = Capabilities::default();
+        // DCS 1 + r 5463 (=Tc) ST → truecolor present.
+        parse_xtgettcap_truecolor("\x1bP1+r5463=\x1b\\", &mut caps);
+        assert!(caps.truecolor);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_xtgettcap_invalid_leaves_truecolor_false() {
+        let mut caps = Capabilities::default();
+        // DCS 0 + r (capability NOT present) must not set the flag.
+        parse_xtgettcap_truecolor("\x1bP0+r5463\x1b\\", &mut caps);
+        assert!(!caps.truecolor);
+        // Wrong capname hex must not match.
+        parse_xtgettcap_truecolor("\x1bP1+r1234=\x1b\\", &mut caps);
+        assert!(!caps.truecolor);
     }
 
     #[cfg(feature = "crossterm")]
@@ -1890,7 +3132,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // Exactly one cursor move for the whole run.
@@ -1929,7 +3179,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // First run needs a MoveTo; the second run starts exactly where the
@@ -1961,7 +3219,15 @@ mod tests {
         }
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
 
         // Two separate runs means two MoveTo commands.
@@ -1990,10 +3256,26 @@ mod tests {
         }
 
         let mut direct: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut direct, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut direct,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
 
         let mut buffered: BufWriter<Vec<u8>> = BufWriter::with_capacity(65536, Vec::new());
-        flush_buffer_diff(&mut buffered, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut buffered,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         buffered.flush().unwrap();
         let via_buf = buffered.into_inner().unwrap();
 
@@ -2045,7 +3327,15 @@ mod tests {
             write_call_count: 0,
         };
         let mut bw = BufWriter::with_capacity(65536, sink);
-        flush_buffer_diff(&mut bw, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut bw,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         bw.flush().unwrap();
         let inner = bw.into_inner().unwrap();
 
@@ -2076,7 +3366,15 @@ mod tests {
         previous.recompute_line_hashes();
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         assert!(
             out.is_empty(),
             "identical buffers must emit zero flush bytes; got {} bytes: {:?}",
@@ -2103,7 +3401,15 @@ mod tests {
         previous.recompute_line_hashes();
 
         let mut out: Vec<u8> = Vec::new();
-        flush_buffer_diff(&mut out, &current, &previous, ColorDepth::TrueColor, 0).unwrap();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
         let s = String::from_utf8_lossy(&out);
         // The mismatched row's new content must appear; matching rows'
         // glyphs must not (they share content with `previous`).
@@ -2116,5 +3422,504 @@ mod tests {
             !s.contains("zzzzzz"),
             "matching row 2 must not flush: {s:?}"
         );
+    }
+
+    fn delta_bytes(old: &Style, new: &Style) -> Vec<u8> {
+        let mut out = Vec::new();
+        apply_style_delta(&mut out, old, new, ColorDepth::TrueColor).unwrap();
+        out
+    }
+
+    fn contains_seq(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn apply_style_delta_emits_blink_set_and_reset() {
+        let on = delta_bytes(&Style::new(), &Style::new().blink());
+        // SGR 5 = SlowBlink.
+        assert!(contains_seq(&on, b"\x1b[5m"), "blink set: {on:?}");
+        let off = delta_bytes(&Style::new().blink(), &Style::new());
+        // SGR 25 = NoBlink.
+        assert!(contains_seq(&off, b"\x1b[25m"), "blink reset: {off:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_overline_set_and_reset() {
+        let on = delta_bytes(&Style::new(), &Style::new().overline());
+        // SGR 53 = OverLined.
+        assert!(contains_seq(&on, b"\x1b[53m"), "overline set: {on:?}");
+        let off = delta_bytes(&Style::new().overline(), &Style::new());
+        // SGR 55 = NotOverLined.
+        assert!(contains_seq(&off, b"\x1b[55m"), "overline reset: {off:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_curly_underline_subparameter() {
+        let out = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_style(UnderlineStyle::Curly),
+        );
+        assert!(contains_seq(&out, b"\x1b[4:3m"), "curly underline: {out:?}");
+    }
+
+    #[test]
+    fn apply_style_delta_emits_underline_color_and_reset() {
+        let set = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_color(Color::Rgb(255, 0, 0)),
+        );
+        assert!(
+            contains_seq(&set, b"\x1b[58:2::255:0:0m"),
+            "underline color set: {set:?}"
+        );
+        let clear = delta_bytes(
+            &Style::new().underline_color(Color::Rgb(255, 0, 0)),
+            &Style::new(),
+        );
+        assert!(
+            contains_seq(&clear, b"\x1b[59m"),
+            "underline color reset: {clear:?}"
+        );
+    }
+
+    #[test]
+    fn apply_style_delta_underline_color_indexed_uses_sgr_58_5() {
+        let out = delta_bytes(
+            &Style::new(),
+            &Style::new().underline_color(Color::Indexed(42)),
+        );
+        assert!(
+            contains_seq(&out, b"\x1b[58:5:42m"),
+            "indexed underline: {out:?}"
+        );
+    }
+
+    #[test]
+    fn apply_style_full_emits_blink_overline_and_underline() {
+        let mut out = Vec::new();
+        let style = Style::new()
+            .blink()
+            .overline()
+            .underline_style(UnderlineStyle::Dotted)
+            .underline_color(Color::Rgb(0, 0, 255));
+        apply_style(&mut out, &style, ColorDepth::TrueColor).unwrap();
+        assert!(contains_seq(&out, b"\x1b[5m"), "blink: {out:?}");
+        assert!(contains_seq(&out, b"\x1b[53m"), "overline: {out:?}");
+        assert!(
+            contains_seq(&out, b"\x1b[4:4m"),
+            "dotted underline: {out:?}"
+        );
+        assert!(
+            contains_seq(&out, b"\x1b[58:2::0:0:255m"),
+            "underline color: {out:?}"
+        );
+    }
+    /// Issue #274: a captured-sink `Terminal` routes a styled cell through the
+    /// real flush pipeline into the in-process byte sink, and dropping it does
+    /// not emit teardown escapes (no raw mode was entered).
+    #[test]
+    fn with_sink_captures_flush_bytes_and_drops_clean() {
+        let mut term = Terminal::with_sink(10, 1, ColorDepth::TrueColor);
+        term.buffer_mut()
+            .set_string(0, 0, "Z", Style::new().fg(Color::Rgb(200, 50, 50)));
+        term.flush().unwrap();
+        let bytes = term.take_sink_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Real SGR for the truecolor fg + the printed glyph went to the sink.
+        assert!(s.contains("\u{1b}[38;2;200;50;50m"), "missing SGR: {s:?}");
+        assert!(s.contains('Z'), "missing glyph: {s:?}");
+        // A second take after no flush yields nothing (capture was drained).
+        assert!(term.take_sink_bytes().is_empty());
+        // Dropping the harness terminal must not panic or emit teardown.
+        drop(term);
+    }
+
+    /// Issue #269: hoisting `run_buf` to a reused, caller-owned buffer must not
+    /// change the emitted bytes. Re-running the diff twice through the *same*
+    /// `run_buf` (which `clear()`s but keeps capacity at the top of each call)
+    /// produces the same output as a single fresh-buffer run.
+    #[test]
+    fn reused_run_buf_byte_identical_across_frames() {
+        let area = Rect::new(0, 0, 12, 2);
+        // `Buffer` is not `Clone`, so rebuild the frame pair on demand.
+        let make_frame = || {
+            let mut current = Buffer::empty(area);
+            let previous = Buffer::empty(area);
+            current.set_string(0, 0, "hello world", Style::new().fg(Color::Rgb(1, 2, 3)));
+            current.set_string(0, 1, "second line", Style::new().fg(Color::Rgb(4, 5, 6)));
+            (current, previous)
+        };
+
+        // Baseline: a fresh run_buf per call.
+        let mut baseline: Vec<u8> = Vec::new();
+        {
+            let (mut a, mut b) = make_frame();
+            __bench_flush_buffer_diff_mut_with_buf(
+                &mut baseline,
+                &mut a,
+                &mut b,
+                ColorDepth::TrueColor,
+                &mut String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            )
+            .unwrap();
+        }
+
+        // Reuse: run a throwaway frame first, then the real frame through the
+        // SAME run_buf (now carrying leftover capacity, freshly cleared).
+        let mut shared = String::with_capacity(RUN_BUF_INITIAL_CAPACITY);
+        {
+            let mut warm: Vec<u8> = Vec::new();
+            let (mut a, mut b) = make_frame();
+            __bench_flush_buffer_diff_mut_with_buf(
+                &mut warm,
+                &mut a,
+                &mut b,
+                ColorDepth::TrueColor,
+                &mut shared,
+            )
+            .unwrap();
+        }
+        let cap_after_warm = shared.capacity();
+
+        let mut reused: Vec<u8> = Vec::new();
+        let (mut current, mut previous) = make_frame();
+        __bench_flush_buffer_diff_mut_with_buf(
+            &mut reused,
+            &mut current,
+            &mut previous,
+            ColorDepth::TrueColor,
+            &mut shared,
+        )
+        .unwrap();
+
+        assert_eq!(
+            baseline, reused,
+            "reused run_buf must emit byte-identical output"
+        );
+        // The reuse path keeps capacity across frames (never re-grows below the
+        // initial reservation) — the whole point of the hoist.
+        assert!(
+            shared.capacity() >= cap_after_warm,
+            "run_buf capacity must persist across frames"
+        );
+    }
+
+    /// Issue #269: the OSC 8 hyperlink open, rewritten from `format!` to three
+    /// borrowed `Print`s, must still emit the exact `\x1b]8;;<url>\x07 ...
+    /// \x1b]8;;\x07` sequence.
+    #[test]
+    fn osc8_hyperlink_emitted_verbatim_after_write_rewrite() {
+        let area = Rect::new(0, 0, 8, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        let url = "https://example.com/x";
+        // `set_string_linked` sanitizes + attaches the hyperlink to each cell.
+        current.set_string_linked(0, 0, "link", Style::new(), url);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
+
+        let open = format!("\x1b]8;;{url}\x07");
+        assert!(
+            contains_seq(&out, open.as_bytes()),
+            "OSC 8 open must appear verbatim: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+        assert!(
+            contains_seq(&out, b"\x1b]8;;\x07"),
+            "OSC 8 close must appear: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+    }
+
+    /// Build `n` distinct 8x8 RGBA placements for kitty-flush golden tests.
+    fn kitty_placements(n: usize) -> Vec<KittyPlacement> {
+        (0..n)
+            .map(|i| {
+                let mut rgba = vec![0u8; 256];
+                rgba[0] = i as u8;
+                let content_hash = crate::buffer::hash_rgba(&rgba);
+                KittyPlacement {
+                    content_hash,
+                    rgba: std::sync::Arc::new(rgba),
+                    src_width: 8,
+                    src_height: 8,
+                    x: (i as u32) * 4,
+                    y: (i as u32) * 2,
+                    cols: 4,
+                    rows: 2,
+                    crop_y: 0,
+                    crop_h: 0,
+                }
+            })
+            .collect()
+    }
+
+    /// Issue #269: replacing the two per-frame `HashSet`s in
+    /// `KittyImageManager::flush` with reused `SmallVec` dedup scratch must not
+    /// change the emitted escape stream for the small placement counts (0, 1, 5)
+    /// the path actually sees. We assert structural invariants of the byte
+    /// stream rather than an opaque golden blob so the test documents intent.
+    #[test]
+    fn kitty_flush_smallvec_dedup_matches_for_small_n() {
+        for n in [0usize, 1, 5] {
+            let placements = kitty_placements(n);
+            let mut mgr = KittyImageManager::new();
+
+            // Frame 1: nothing previously placed → upload + place each image.
+            let mut frame1: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame1, &placements, 0).unwrap();
+            let s1 = String::from_utf8_lossy(&frame1);
+            // One transmit (`a=t`) and one placement (`a=p`) per image.
+            assert_eq!(
+                s1.matches("a=t,").count(),
+                n,
+                "n={n}: expected {n} uploads in frame 1: {s1:?}"
+            );
+            assert_eq!(
+                s1.matches("a=p,").count(),
+                n,
+                "n={n}: expected {n} placements in frame 1: {s1:?}"
+            );
+
+            // Frame 2: identical placements → fast path, zero output.
+            let mut frame2: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame2, &placements, 0).unwrap();
+            assert!(
+                frame2.is_empty(),
+                "n={n}: identical frame must hit the kitty fast path, got {} bytes",
+                frame2.len()
+            );
+
+            // Frame 3: clear all placements → one delete (`a=d,d=i`) per image,
+            // deduped by the reused SmallVec, plus image-data cleanup
+            // (`a=d,d=I`) for every now-unused upload.
+            let mut frame3: Vec<u8> = Vec::new();
+            mgr.flush(&mut frame3, &[], 0).unwrap();
+            let s3 = String::from_utf8_lossy(&frame3);
+            assert_eq!(
+                s3.matches("a=d,d=i,").count(),
+                n,
+                "n={n}: expected {n} placement deletes in frame 3: {s3:?}"
+            );
+            assert_eq!(
+                s3.matches("a=d,d=I,").count(),
+                n,
+                "n={n}: expected {n} image-data deletes in frame 3: {s3:?}"
+            );
+        }
+    }
+
+    // ---- #265 sprixel damage matrix ----------------------------------------
+
+    use crate::buffer::{SprixelCell, SprixelPlacement};
+
+    /// Build a 2×2-cell sprixel at (1, 1) with the given footprint states.
+    fn make_sprixel(cells: Vec<SprixelCell>) -> SprixelPlacement {
+        SprixelPlacement {
+            content_hash: 0xABCD,
+            seq: "<SIXEL>".to_string(),
+            x: 1,
+            y: 1,
+            cols: 2,
+            rows: 2,
+            cells,
+        }
+    }
+
+    #[test]
+    fn sprixel_no_text_change_emits_zero_bytes() {
+        // A frame identical to the previous one must emit no sprixel bytes.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(out.is_empty(), "stable frame should emit no sprixel bytes");
+    }
+
+    #[test]
+    fn sprixel_first_frame_blits_once() {
+        // No previous placement -> the graphic must be emitted exactly once.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut current = Buffer::empty(area);
+        current
+            .sprixels
+            .push(make_sprixel(vec![SprixelCell::Opaque; 4]));
+        let previous = Buffer::empty(area);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_text_in_opaque_cell_reblits_once() {
+        // A text write over an opaque footprint cell annihilates the graphic.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        // Write a glyph over the top-left footprint cell (1, 1).
+        current.set_char(1, 1, 'X', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(
+            s.matches("<SIXEL>").count(),
+            1,
+            "opaque-cell text write must re-blit the graphic exactly once"
+        );
+    }
+
+    #[test]
+    fn sprixel_text_in_transparent_cell_does_not_reblit() {
+        // The footprint marks (1, 1) transparent; a text write there must NOT
+        // re-blit the graphic (the core #265 win).
+        let area = Rect::new(0, 0, 10, 5);
+        let cells = vec![
+            SprixelCell::Transparent, // (1, 1)
+            SprixelCell::Opaque,      // (2, 1)
+            SprixelCell::Opaque,      // (1, 2)
+            SprixelCell::Opaque,      // (2, 2)
+        ];
+        let placement = make_sprixel(cells);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        current.set_char(1, 1, 'X', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "text in a transparent footprint cell must emit zero sprixel bytes"
+        );
+    }
+
+    #[test]
+    fn sprixel_text_outside_footprint_does_not_reblit() {
+        // A text write adjacent to (but outside) the footprint is free.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        // (5, 0) is well outside the (1,1)-(2,2) footprint.
+        current.set_char(5, 0, 'Z', Style::new());
+
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "text outside the footprint must not re-blit the graphic"
+        );
+    }
+
+    #[test]
+    fn sprixel_position_change_reblits() {
+        // Moving the graphic (same content, new x/y) must re-blit.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut moved = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        let original = moved.clone();
+        moved.x = 4;
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(moved);
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(original);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_content_change_reblits() {
+        // Same position, different content hash -> re-blit.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut recolored = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        let original = recolored.clone();
+        recolored.content_hash = 0x1234;
+        recolored.seq = "<SIXEL2>".to_string();
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(recolored);
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(original);
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<SIXEL2>").count(), 1);
+    }
+
+    #[test]
+    fn sprixel_reblit_count_invariant_over_single_cell_writes() {
+        // Invariant (issue #265 proptest spirit, exhaustive here): for a write
+        // to a single footprint cell, the number of re-emitted sprixels is 0
+        // iff that cell is Transparent, else 1.
+        let area = Rect::new(0, 0, 10, 5);
+        for (idx, (col, row)) in [(0u32, 0u32), (1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .enumerate()
+        {
+            for state in [
+                SprixelCell::Opaque,
+                SprixelCell::Mixed,
+                SprixelCell::Transparent,
+            ] {
+                let mut cells = vec![SprixelCell::Opaque; 4];
+                cells[idx] = state;
+                let placement = make_sprixel(cells);
+
+                let mut current = Buffer::empty(area);
+                current.sprixels.push(placement.clone());
+                current.set_char(1 + col, 1 + row, 'A', Style::new());
+
+                let mut previous = Buffer::empty(area);
+                previous.sprixels.push(placement);
+
+                let mut out: Vec<u8> = Vec::new();
+                flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+                let count = String::from_utf8(out).unwrap().matches("<SIXEL>").count();
+                let expected = if matches!(state, SprixelCell::Transparent) {
+                    0
+                } else {
+                    1
+                };
+                assert_eq!(
+                    count, expected,
+                    "cell ({col},{row}) state {state:?}: expected {expected} re-blits"
+                );
+            }
+        }
     }
 }

@@ -69,6 +69,7 @@
 //! | Flag | Description |
 //! |------|-------------|
 //! | `crossterm` | Built-in terminal runtime (`run`, `run_inline`, clipboard query helpers). Enabled by default. |
+//! | `bidi` | Reorder right-to-left text (Hebrew, Arabic, …) to visual order per UAX #9 before rendering. Enabled by default; pure-LTR text takes a zero-cost fast path. Since 0.21.0. |
 //! | `async` | Enable `run_async()` with tokio channel-based message passing |
 //! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
 //! | `image` | Enable image-loading helpers for terminal image widgets |
@@ -97,6 +98,8 @@ pub mod context;
 pub mod event;
 /// Half-block image rendering.
 pub mod halfblock;
+#[cfg(feature = "crossterm")]
+mod iterm;
 /// Keyboard shortcut mapping.
 pub mod keymap;
 /// Flexbox layout engine and command tree.
@@ -139,13 +142,25 @@ pub use terminal::__bench_flush_buffer_diff;
 pub use terminal::__bench_flush_buffer_diff_mut;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
+pub use terminal::__bench_flush_buffer_diff_mut_with_buf;
+#[cfg(feature = "crossterm")]
+#[doc(hidden)]
 pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
+/// Runtime terminal capability probe (issue #264): read-only [`Capabilities`]
+/// snapshot plus the [`Blitter`] ladder it drives. Diagnostics-only — image
+/// rendering routes through the ladder automatically.
+#[cfg(feature = "crossterm")]
+pub use terminal::{capabilities, Blitter, BlitterSupport, Capabilities};
 #[cfg(feature = "crossterm")]
 pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
 #[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence};
+/// PTY/sink test harness for end-to-end escape-byte assertions (issue #274).
+/// Gated behind the dev-only `pty-test` feature; absent from default builds.
+#[cfg(feature = "pty-test")]
+pub use crate::test_utils::{PtyBackend, PtyFrame};
 // Animation primitives (builder types) are re-exported at crate root for
 // ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
 // live under `slt::anim::*` — they are rarely imported in isolation and
@@ -158,31 +173,45 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
-    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CodeBlock,
+    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State, TreemapItem,
+    Widget,
 };
+// Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
+#[cfg(feature = "async")]
+pub use context::TaskHandle;
 pub use event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
+    MouseKind,
 };
 pub use halfblock::HalfBlockImage;
 pub use keymap::{Binding, KeyMap, PublishedKeymap, WidgetKeyHelp};
 pub use layout::Direction;
 pub use palette::Palette;
 pub use rect::Rect;
+#[cfg(feature = "theme-watch")]
+pub use style::ThemeWatcher;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, Theme, ThemeBuilder,
-    ThemeColor, WidgetColors, WidgetTheme, WidthSpec,
+    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, SyntaxPalette, Theme,
+    ThemeBuilder, ThemeColor, UnderlineStyle, WidgetColors, WidgetTheme, WidthSpec,
 };
+#[cfg(feature = "serde")]
+pub use style::{ThemeFile, ThemeLoadError};
+pub use widgets::validators;
+#[cfg(feature = "async")]
+pub use widgets::AsyncValidation;
 pub use widgets::{
-    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalendarState,
-    CommandPaletteState, ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField,
-    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, ModeState,
-    MultiSelectState, PaletteCommand, RadioState, RichLogEntry, RichLogState, ScreenState,
-    ScrollState, SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend,
+    AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
+    CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
+    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
+    GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
+    NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState,
+    RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
+    SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState,
+    StreamingTextState, TableColumn, TableState, TabsState, TextInputState, TextareaState,
+    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
+    ValidateTrigger, Validator, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.
@@ -417,6 +446,90 @@ fn install_panic_hook() {
     });
 }
 
+/// RAII guard owning the unix suspend/resume (`SIGTSTP`/`SIGCONT`) handler
+/// thread for the duration of a run loop (issue #263).
+///
+/// Dropping the guard closes the `signal-hook` registration so the background
+/// thread breaks out of `Signals::forever()` and is joined, leaving no signal
+/// handlers installed after the loop exits.
+#[cfg(all(feature = "crossterm", unix))]
+struct SuspendGuard {
+    handle: signal_hook::iterator::Handle,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(all(feature = "crossterm", unix))]
+impl Drop for SuspendGuard {
+    fn drop(&mut self) {
+        // Closing the handle wakes `Signals::forever()` so the thread returns.
+        self.handle.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Install the unix job-control suspend/resume handler for one run loop.
+///
+/// Spawns a `signal-hook` background thread that, on `SIGTSTP`, restores the
+/// terminal and re-raises the default-disposition stop, and on `SIGCONT`
+/// re-enters the session and flags a full redraw. Uses only signal-hook's safe
+/// API, preserving `#![forbid(unsafe_code)]`. Returns the guard that owns the
+/// thread; dropping it uninstalls the handler.
+#[cfg(all(feature = "crossterm", unix))]
+fn install_suspend_handler(snapshot: terminal::SessionSnapshot) -> io::Result<SuspendGuard> {
+    use signal_hook::consts::{SIGCONT, SIGTSTP};
+    use signal_hook::iterator::Signals;
+
+    let mut signals = Signals::new([SIGTSTP, SIGCONT])?;
+    let handle = signals.handle();
+    let thread = std::thread::Builder::new()
+        .name("slt-suspend".to_string())
+        .spawn(move || {
+            // `has_terminal` tracks whether the TUI session is currently
+            // entered, so a stray SIGCONT (no prior SIGTSTP) or a repeated
+            // SIGTSTP cannot double-leave / double-enter (idempotency).
+            let mut has_terminal = true;
+            for signal in &mut signals {
+                match signal {
+                    SIGTSTP if has_terminal => {
+                        terminal::suspend_to_shell(&snapshot);
+                        has_terminal = false;
+                        // Genuinely stop the process now that the terminal is
+                        // restored; control returns to the shell.
+                        let _ = signal_hook::low_level::emulate_default_handler(SIGTSTP);
+                    }
+                    SIGCONT if !has_terminal => {
+                        terminal::resume_from_shell(&snapshot);
+                        has_terminal = true;
+                    }
+                    // Repeated SIGTSTP/SIGCONT or out-of-order delivery is a
+                    // no-op — the `has_terminal` guard keeps enter/leave
+                    // balanced (idempotency, issue #263).
+                    _ => {}
+                }
+            }
+        })?;
+
+    Ok(SuspendGuard {
+        handle,
+        thread: Some(thread),
+    })
+}
+
+/// Consume the pending full-redraw request raised by a `SIGCONT` resume and, if
+/// set, clear + repaint the whole frame (issue #263).
+///
+/// Called at the top of each run-loop iteration. No-op on non-unix builds.
+#[cfg(all(feature = "crossterm", unix))]
+fn drain_resume_redraw(handle_resize: &mut impl FnMut() -> io::Result<()>) -> io::Result<()> {
+    use std::sync::atomic::Ordering;
+    if terminal::NEEDS_FULL_REDRAW.swap(false, Ordering::SeqCst) {
+        handle_resize()?;
+    }
+    Ok(())
+}
+
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`] or [`run_inline_with`] to customize behavior.
@@ -455,6 +568,20 @@ pub struct RunConfig {
     /// Terminals that don't support it silently ignore the request.
     /// Defaults to `false`.
     pub kitty_keyboard: bool,
+    /// Whether to request modifier-only key events (bare Ctrl/Shift/Alt/Super
+    /// presses and releases, with no accompanying character).
+    ///
+    /// Has **no effect** unless [`kitty_keyboard`](Self::kitty_keyboard) is also
+    /// `true`: it OR-es the Kitty `REPORT_ALL_KEYS_AS_ESCAPE_CODES`
+    /// progressive-enhancement flag into the pushed flag set. On supporting
+    /// terminals (kitty, Ghostty, WezTerm) this makes bare modifier presses
+    /// arrive as [`KeyCode::Modifier`] events; other terminals never emit them.
+    ///
+    /// Kept opt-in to avoid flooding apps with modifier events they don't want.
+    /// Defaults to `false`.
+    ///
+    /// Since 0.21.0.
+    pub report_all_keys: bool,
     /// The color theme applied to all widgets automatically.
     ///
     /// Defaults to [`Theme::dark()`].
@@ -505,6 +632,31 @@ pub struct RunConfig {
     /// }).unwrap();
     /// ```
     pub handle_ctrl_c: bool,
+    /// Whether the runtime restores the terminal on Ctrl+Z (`SIGTSTP`) and
+    /// re-enters it on resume (`SIGCONT`).
+    ///
+    /// When `true` (the default) on Unix, pressing Ctrl+Z runs the full
+    /// session teardown — leave the alternate screen (fullscreen only), show
+    /// the cursor, disable raw mode / bracketed paste / focus / mouse / kitty
+    /// — *before* the process is suspended, so the shell prompt returns to a
+    /// clean terminal. Resuming with `fg` re-enters the same session and forces
+    /// a full redraw. This matches helix/zellij/bubbletea job-control behavior.
+    ///
+    /// When `false`, no signal handler is installed and Ctrl+Z falls through to
+    /// crossterm as a regular key event in raw mode (the pre-0.21 behavior).
+    ///
+    /// Unix only; ignored on Windows, WASM, and non-`crossterm` builds where
+    /// there is no `SIGTSTP`. Defaults to `true`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// // Opt out: let Ctrl+Z reach the frame closure as a key event.
+    /// let cfg = RunConfig::default().handle_suspend(false);
+    /// assert!(!cfg.handle_suspend);
+    /// ```
+    pub handle_suspend: bool,
 }
 
 impl Default for RunConfig {
@@ -513,6 +665,7 @@ impl Default for RunConfig {
             tick_rate: Duration::from_millis(16),
             mouse: false,
             kitty_keyboard: false,
+            report_all_keys: false,
             theme: Theme::dark(),
             color_depth: None,
             max_fps: Some(60),
@@ -520,6 +673,7 @@ impl Default for RunConfig {
             title: None,
             widget_theme: style::WidgetTheme::new(),
             handle_ctrl_c: true,
+            handle_suspend: true,
         }
     }
 }
@@ -540,6 +694,28 @@ impl RunConfig {
     /// Enable or disable Kitty keyboard protocol.
     pub fn kitty_keyboard(mut self, enabled: bool) -> Self {
         self.kitty_keyboard = enabled;
+        self
+    }
+
+    /// Enable or disable modifier-only key reporting (Kitty
+    /// `REPORT_ALL_KEYS_AS_ESCAPE_CODES`).
+    ///
+    /// Requires [`kitty_keyboard(true)`](Self::kitty_keyboard) to have any
+    /// effect. When enabled on a supporting terminal, bare modifier presses
+    /// and releases arrive as [`KeyCode::Modifier`] events. Defaults to
+    /// `false`.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().kitty_keyboard(true).report_all_keys(true);
+    /// assert!(cfg.report_all_keys);
+    /// ```
+    pub fn report_all_keys(mut self, enabled: bool) -> Self {
+        self.report_all_keys = enabled;
         self
     }
 
@@ -614,6 +790,26 @@ impl RunConfig {
         self.handle_ctrl_c = enabled;
         self
     }
+
+    /// Configure whether the runtime restores the terminal on Ctrl+Z
+    /// (`SIGTSTP`) and re-enters it on resume (`SIGCONT`).
+    ///
+    /// Defaults to `true`. Set to `false` to disable the suspend handler so
+    /// Ctrl+Z falls through to crossterm as a regular key event — see
+    /// [`RunConfig::handle_suspend`] for the full behavior. Unix only; ignored
+    /// elsewhere.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().handle_suspend(false);
+    /// assert!(!cfg.handle_suspend);
+    /// ```
+    pub fn handle_suspend(mut self, enabled: bool) -> Self {
+        self.handle_suspend = enabled;
+        self
+    }
 }
 
 #[derive(Default)]
@@ -638,7 +834,10 @@ pub(crate) struct FocusState {
 
 #[derive(Default)]
 pub(crate) struct LayoutFeedbackState {
-    pub prev_scroll_infos: Vec<(u32, u32)>,
+    /// `(content_extent, viewport_extent, is_horizontal)` per scrollable last
+    /// frame (#247). `is_horizontal` selects which `ScrollState` axis the
+    /// `scrollable` binding updates.
+    pub prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
     pub prev_group_rects: Vec<(std::sync::Arc<str>, rect::Rect)>,
@@ -654,6 +853,10 @@ pub(crate) struct DiagnosticsState {
     pub notification_queue: Vec<(String, ToastLevel, u64)>,
     pub debug_mode: bool,
     pub debug_layer: DebugLayer,
+    /// Issue #268: whether the devtools inspector panel (Ctrl+F12) is active.
+    /// Independent of `debug_mode`/`debug_layer`. Round-trips through
+    /// `Context::inspector_mode` like `debug_layer` so `set_inspector` persists.
+    pub inspector_mode: bool,
     pub fps_ema: f32,
 }
 
@@ -725,6 +928,21 @@ pub(crate) struct FrameState {
     /// across frames; survives panics inside `error_boundary` (matching the
     /// `named_states` policy).
     pub keyed_states: std::collections::HashMap<String, Box<dyn std::any::Any>>,
+    /// Issue #262: cross-frame partial-chord buffer for [`Context::key_chord`].
+    /// Round-trips across frames using the same `std::mem::take` out/in policy
+    /// as `keyed_states` (moved out in `Context::new`, restored at frame end in
+    /// `run_frame_kernel`).
+    pub chord_states: widgets::ChordState,
+    /// Issue #248: persistent frame-clock timer table. Round-tripped through
+    /// `Context` exactly like `named_states` — moved out at frame start, moved
+    /// back at frame end where untouched slots are garbage-collected.
+    pub scheduler: widgets::SchedulerState,
+    /// Issue #234: persistent async task registry backing `Context::spawn` /
+    /// `Context::poll`. Round-tripped through `Context` exactly like
+    /// `scheduler` — moved out at frame start, moved back at frame end. Gated
+    /// behind `async`; absent (zero overhead) when the feature is off.
+    #[cfg(feature = "async")]
+    pub async_tasks: context::AsyncTasks,
     pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
@@ -754,6 +972,21 @@ pub(crate) struct FrameState {
     /// Recycled `Context::hovered_groups` set (issue #204). Cleared at the
     /// start of each frame by `build_hovered_groups`.
     pub hovered_groups_buf: std::collections::HashSet<std::sync::Arc<str>>,
+    /// Issue #273: per-call-site version keys recorded by
+    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) on the
+    /// previous frame, indexed by the order `cached` regions were declared.
+    /// Compared against this frame's keys to classify each cached region as a
+    /// hit (key unchanged) or miss (key changed / new slot / first frame).
+    /// Cleared on resize by [`clear_frame_layout_cache`] so every cached
+    /// region misses after a geometry change. Round-trips through `Context`
+    /// exactly like `commands_buf` (moved out at frame start, moved back at
+    /// frame end). Empty (zero overhead) for apps that never call `cached`.
+    pub region_versions: Vec<u64>,
+    /// Issue #273: recycled scratch Vec for the CURRENT frame's `cached`
+    /// region keys (same alloc-reuse discipline as `commands_buf`). Cleared
+    /// before reuse; swapped into `region_versions` at frame end so the keys
+    /// recorded this frame become next frame's comparison baseline.
+    pub region_versions_buf: Vec<u64>,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }
@@ -850,16 +1083,31 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = Terminal::new(
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -939,8 +1187,13 @@ pub fn run_async_with<M: Send + 'static>(
     let handle =
         tokio::runtime::Handle::try_current().map_err(|err| io::Error::other(err.to_string()))?;
 
+    // Issue #234: clone the runtime handle into the render loop so
+    // `Context::spawn` has a runtime to launch tasks onto. The render loop runs
+    // on `spawn_blocking` (no ambient runtime), so the handle must be passed
+    // explicitly rather than recovered via `Handle::try_current()` inside.
+    let loop_handle = handle.clone();
     handle.spawn_blocking(move || {
-        let _ = run_async_loop(config, f, rx);
+        let _ = run_async_loop(config, f, rx, loop_handle);
     });
 
     Ok(tx)
@@ -951,6 +1204,7 @@ fn run_async_loop<M: Send + 'static>(
     config: RunConfig,
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
     mut rx: tokio::sync::mpsc::Receiver<M>,
+    runtime: tokio::runtime::Handle,
 ) -> io::Result<()> {
     if !io::stdout().is_terminal() {
         return Ok(());
@@ -958,17 +1212,36 @@ fn run_async_loop<M: Send + 'static>(
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = Terminal::new(
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut messages: Vec<M> = Vec::new();
     let mut state = FrameState::default();
+    // Issue #234: inject the ambient runtime so `Context::spawn` works inside
+    // the frame closure. Set once before the loop; round-tripped through
+    // `Context` from here on (see `run_frame_kernel`).
+    state.async_tasks.set_runtime(runtime);
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         messages.clear();
         while let Ok(message) = rx.try_recv() {
             messages.push(message);
@@ -1052,16 +1325,32 @@ pub fn run_inline_with(
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = InlineTerminal::new(height, config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = InlineTerminal::new(
+        height,
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -1139,18 +1428,29 @@ pub fn run_static_with(
         dynamic_height,
         config.mouse,
         config.kitty_keyboard,
+        config.report_all_keys,
         color_depth,
     )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
     }
+    // Issue #263: install the unix Ctrl+Z / `fg` suspend handler for the loop.
+    #[cfg(unix)]
+    let _suspend_guard = if config.handle_suspend {
+        Some(install_suspend_handler(term.session_snapshot())?)
+    } else {
+        None
+    };
 
     let mut events: Vec<Event> = Vec::new();
     let mut state = FrameState::default();
 
     loop {
         let frame_start = Instant::now();
+        // Issue #263: after a SIGCONT resume, repaint the whole frame.
+        #[cfg(unix)]
+        drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w == 0 || h == 0 {
             sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
@@ -1291,6 +1591,16 @@ pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_res
         Event::FocusLost => {
             state.layout_feedback.last_mouse_pos = None;
         }
+        // Issue #268: Ctrl+F12 toggles the devtools inspector panel
+        // independently of the F12 outline overlay and the Shift+F12 layer
+        // cycle. Match before the Shift/NONE arms so the Control branch wins.
+        Event::Key(event::KeyEvent {
+            code: KeyCode::F(12),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        }) if modifiers.contains(event::KeyModifiers::CONTROL) => {
+            state.diagnostics.inspector_mode = !state.diagnostics.inspector_mode;
+        }
         // Issue #201: Shift+F12 cycles the active `DebugLayer`. Match
         // before the plain-F12 arm so the modifier branch wins. Plain
         // F12 keeps its legacy on/off toggle when no modifiers are
@@ -1416,8 +1726,28 @@ pub(crate) fn run_frame_kernel(
     // entries; entries from the previous frame must not leak through
     // `named_states` persistence.
     clear_keymap_registry(state);
+    // Issue #273: invalidate every `cached` region's persisted version key on a
+    // resize. The real run loop also clears region keys via
+    // `clear_frame_layout_cache` (driven by its `has_resize` flag), but the
+    // headless `TestBackend` / `frame_owned` paths feed the kernel directly
+    // and never run that flag, so we detect the resize event here too. This
+    // keeps the "resize forces a cache miss for all cached regions" invariant
+    // path-independent: a geometry change cannot be silently treated as a hit.
+    // Cheap when unused — `region_versions` is empty for apps without `cached`.
+    if !state.region_versions.is_empty() && events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+    {
+        state.region_versions.clear();
+    }
     let mut ctx = Context::new(events, w, h, state, config.theme);
     ctx.is_real_terminal = is_real_terminal;
+    // Issue #264: surface the negotiated capability snapshot read-only. The
+    // probe ran once at session enter (cached in a `OnceLock`); on a headless
+    // backend it never ran, so we keep the conservative default rather than
+    // forcing a probe that would block on stdin.
+    #[cfg(feature = "crossterm")]
+    if is_real_terminal {
+        ctx.capabilities = terminal::capabilities();
+    }
     ctx.set_scroll_speed(config.scroll_speed);
     ctx.widget_theme = config.widget_theme;
 
@@ -1451,9 +1781,31 @@ pub(crate) fn run_frame_kernel(
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
         state.keyed_states = ctx.keyed_states;
+        // Issue #262: persist the partial-chord buffer on quit too (TestBackend
+        // reuses `FrameState` across `render()` calls — same rationale as the
+        // keyed-state reclaim).
+        state.chord_states = ctx.chord;
+        // Issue #248: hand the scheduler table back and GC abandoned timers.
+        let mut scheduler = ctx.scheduler;
+        scheduler.gc_untouched();
+        state.scheduler = scheduler;
+        // Issue #234: hand the async task registry back so in-flight tasks and
+        // pending results survive to the next frame (TestBackend reuses
+        // `FrameState` across `render()` calls — same rationale as the
+        // scheduler reclaim).
+        #[cfg(feature = "async")]
+        {
+            // Pump the registry every frame so a handle dropped on a frame that
+            // calls neither spawn nor poll still has its cancellation processed
+            // (and completed results moved in) before the round-trip.
+            ctx.async_tasks.maintain();
+            state.async_tasks = ctx.async_tasks;
+        }
         state.screen_hook_map = ctx.screen_hook_map;
         state.diagnostics.notification_queue = ctx.rollback.notification_queue;
         state.diagnostics.debug_layer = ctx.debug_layer;
+        // Issue #268: persist any in-frame `set_inspector` change on quit too.
+        state.diagnostics.inspector_mode = ctx.inspector_mode;
         // Issue #208 / #217: persist focus tracking state on quit so a later
         // resumed run starts in a sensible place. (Real TUI exits before
         // resuming, but tests reuse `FrameState` across calls.)
@@ -1472,6 +1824,13 @@ pub(crate) fn run_frame_kernel(
         state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
         state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
         state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+        // Issue #273: reclaim the region-cache key buffers on quit too
+        // (TestBackend reuses `FrameState` across `render()` calls — same
+        // rationale as #204). The quit path skips `build_tree`, but the keys
+        // recorded by any `cached` regions before `quit()` are still valid as
+        // next frame's baseline.
+        state.region_versions = std::mem::take(&mut ctx.region_versions_cur);
+        state.region_versions_buf = std::mem::take(&mut ctx.region_versions_prev);
         // Issue #150: reclaim `commands` on quit too (TestBackend reuses
         // `FrameState` across `render()` calls — same rationale as #204).
         // The Vec was never `build_tree`'d on the quit path so it may still
@@ -1605,10 +1964,31 @@ pub(crate) fn run_frame_kernel(
     // frame can pick it up via `Context::new`. Mirrors the `named_states`
     // round-trip exactly.
     state.keyed_states = ctx.keyed_states;
+    // Issue #262: hand the partial-chord buffer back so a chord spanning
+    // multiple frames survives between them. Same round-trip as `keyed_states`.
+    state.chord_states = ctx.chord;
+    // Issue #248: hand the scheduler table back and GC any timer slot that was
+    // not sampled this frame (mirrors the `named_states` round-trip lifecycle).
+    let mut scheduler = ctx.scheduler;
+    scheduler.gc_untouched();
+    state.scheduler = scheduler;
+    // Issue #234: hand the async task registry back so in-flight tasks and
+    // pending results survive to the next frame (same round-trip lifecycle as
+    // the scheduler table).
+    #[cfg(feature = "async")]
+    {
+        // Pump the registry every frame (see the quit-path note): drains
+        // completed results and honours handle-drop cancellations even on a
+        // frame that called neither spawn nor poll.
+        ctx.async_tasks.maintain();
+        state.async_tasks = ctx.async_tasks;
+    }
     state.screen_hook_map = ctx.screen_hook_map;
     state.diagnostics.notification_queue = ctx.rollback.notification_queue;
     // Issue #201: persist any in-frame `set_debug_layer` change.
     state.diagnostics.debug_layer = ctx.debug_layer;
+    // Issue #268: persist any in-frame `set_inspector` change.
+    state.diagnostics.inspector_mode = ctx.inspector_mode;
     // Issue #208: remember the focus index that finished this frame so the
     // next frame can compute `Response::gained_focus` / `lost_focus`.
     state.focus.prev_focus_index = Some(ctx.focus_index);
@@ -1647,6 +2027,11 @@ pub(crate) fn run_frame_kernel(
     state.text_color_stack_buf = std::mem::take(&mut ctx.rollback.text_color_stack);
     state.pending_tooltips_buf = std::mem::take(&mut ctx.pending_tooltips);
     state.hovered_groups_buf = std::mem::take(&mut ctx.hovered_groups);
+    // Issue #273: this frame's recorded `cached` keys become next frame's
+    // comparison baseline; the (now-stale) previous keys are reclaimed as the
+    // recycled scratch buffer. Same alloc-reuse discipline as `commands_buf`.
+    state.region_versions = std::mem::take(&mut ctx.region_versions_cur);
+    state.region_versions_buf = std::mem::take(&mut ctx.region_versions_prev);
     // Issue #150: reclaim the drained command Vec so the next `Context::new`
     // picks it up via `mem::take(&mut state.commands_buf)`. After
     // `build_tree(&mut ctx.commands)` the Vec is at `len == 0` with capacity
@@ -1675,6 +2060,20 @@ pub(crate) fn run_frame_kernel(
             state.diagnostics.fps_ema,
             state.diagnostics.debug_layer,
         );
+    }
+    // Issue #268: render the devtools inspector panel (Ctrl+F12) on top of the
+    // frame. Reuses the already-built tree and the focus snapshot threaded in
+    // from `FrameState` (no new traversal beyond one focused-node DFS). The
+    // name map was already swapped into `focus_name_map_prev` above, so it
+    // reflects this frame's registrations.
+    if state.diagnostics.inspector_mode {
+        let focus = layout::InspectorFocus {
+            focus_index: state.focus.focus_index,
+            focus_count: state.focus.prev_focus_count,
+            names: &state.focus.focus_name_map_prev,
+            theme: &config.theme,
+        };
+        layout::render_inspector(&tree, buffer, &focus);
     }
 
     FrameKernelResult {
@@ -1743,6 +2142,11 @@ fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.prev_scroll_infos.clear();
     state.layout_feedback.prev_scroll_rects.clear();
     state.layout_feedback.last_mouse_pos = None;
+    // Issue #273: a resize may change the geometry of every cached region, so
+    // the previous frame's version keys are no longer a safe stability signal.
+    // Dropping them forces a cache miss for all `cached` regions on the next
+    // frame, matching the layout-feedback invalidation above.
+    state.region_versions.clear();
 }
 
 #[cfg(feature = "crossterm")]
@@ -1853,5 +2257,114 @@ mod run_loop_tests {
         let before = state.diagnostics.debug_layer;
         process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
         assert_eq!(state.diagnostics.debug_layer, before);
+    }
+
+    // ── Issue #268: Ctrl+F12 devtools inspector toggle ───────────────────
+
+    #[test]
+    fn ctrl_f12_toggles_inspector_independently() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        assert!(!state.diagnostics.inspector_mode);
+
+        // Ctrl+F12 flips the inspector without touching debug overlay state.
+        process_run_loop_event(
+            &key(event::KeyModifiers::CONTROL),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(state.diagnostics.inspector_mode);
+        assert!(
+            !state.diagnostics.debug_mode,
+            "Ctrl+F12 must not toggle the F12 outline overlay"
+        );
+        assert_eq!(
+            state.diagnostics.debug_layer,
+            DebugLayer::All,
+            "Ctrl+F12 must not cycle the debug layer"
+        );
+
+        // A second Ctrl+F12 toggles it back off.
+        process_run_loop_event(
+            &key(event::KeyModifiers::CONTROL),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(!state.diagnostics.inspector_mode);
+    }
+
+    #[test]
+    fn plain_and_shift_f12_do_not_touch_inspector() {
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        // Plain F12 (overlay toggle) leaves the inspector alone.
+        process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
+        assert!(state.diagnostics.debug_mode);
+        assert!(!state.diagnostics.inspector_mode);
+        // Shift+F12 (layer cycle) also leaves the inspector alone.
+        process_run_loop_event(
+            &key(event::KeyModifiers::SHIFT),
+            &mut state,
+            &mut has_resize,
+        );
+        assert!(!state.diagnostics.inspector_mode);
+    }
+
+    // ── Issue #263: RunConfig::handle_suspend ────────────────────────────
+
+    #[test]
+    fn handle_suspend_defaults_to_true() {
+        assert!(RunConfig::default().handle_suspend);
+    }
+
+    #[test]
+    fn handle_suspend_builder_opts_out() {
+        let cfg = RunConfig::default().handle_suspend(false);
+        assert!(!cfg.handle_suspend);
+    }
+
+    #[test]
+    fn handle_suspend_builder_is_independent_of_ctrl_c() {
+        // Toggling suspend must not perturb the unrelated Ctrl+C toggle.
+        let cfg = RunConfig::default()
+            .handle_ctrl_c(false)
+            .handle_suspend(false);
+        assert!(!cfg.handle_ctrl_c);
+        assert!(!cfg.handle_suspend);
+
+        let cfg = RunConfig::default().handle_suspend(true);
+        assert!(cfg.handle_suspend);
+        assert!(cfg.handle_ctrl_c, "Ctrl+C default preserved");
+    }
+
+    /// End-to-end test of the real signal-delivery wiring: install the
+    /// handler, deliver a real `SIGCONT` through signal-hook's registry +
+    /// background thread, then drop the guard and confirm it closes the
+    /// registration and joins the thread without hanging or panicking.
+    ///
+    /// `SIGCONT`'s default disposition is "continue", so it is safe to raise on
+    /// the running test process — unlike `SIGTSTP`, which would stop the test
+    /// runner. The suspend (`SIGTSTP`) sequence itself is covered hermetically
+    /// by the `write_suspend_sequence` unit tests in `terminal`.
+    #[cfg(unix)]
+    #[test]
+    fn suspend_handler_installs_delivers_and_tears_down() {
+        // In constrained sandboxes signal registration can fail; if so the
+        // wiring under test cannot be exercised, so skip rather than flake.
+        let Ok(guard) = install_suspend_handler(terminal::test_session_snapshot()) else {
+            return;
+        };
+
+        // Deliver a real SIGCONT; the background thread must drain it. With no
+        // prior SIGTSTP the handler's `has_terminal` guard makes this a no-op
+        // re-enter (idempotency), which is exactly what we want to verify does
+        // not corrupt state or crash the thread.
+        let _ = signal_hook::low_level::raise(signal_hook::consts::SIGCONT);
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Dropping the guard closes the registration and joins the thread.
+        // If `Handle::close` failed to wake `Signals::forever`, this hangs and
+        // the test times out — a real regression signal.
+        drop(guard);
     }
 }

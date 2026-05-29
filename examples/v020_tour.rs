@@ -141,7 +141,7 @@ fn main() -> std::io::Result<()> {
             .grow(1)
             .col(|ui| {
                 let _ = ui.tabs(&mut state.tabs);
-                ui.separator();
+                let _ = ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so tabs that
                 // stack multiple sub-demos (notably Hooks: three demos in
@@ -329,10 +329,12 @@ fn render_log(ui: &mut Context) {
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui.code_block_lang(
-                        "if frame % 5 == 0 {\n    ui.static_log(format!(\"[tick] count = {count}\"));\n}",
-                        "rust",
-                    );
+                    let _ = ui
+                        .code_block(
+                            "if frame % 5 == 0 {\n    ui.static_log(format!(\"[tick] count = {count}\"));\n}",
+                        )
+                        .lang("rust")
+                        .show();
                 });
             ui.text("");
             ui.text("This page is description-only because calling static_log on")

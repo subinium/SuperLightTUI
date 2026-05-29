@@ -1,30 +1,39 @@
 use super::*;
 
+/// Test whether a grapheme cluster is "alphanumeric" for word-boundary
+/// navigation: its first scalar is alphanumeric (a cluster's base scalar
+/// determines its class; trailing combining marks do not change it).
+fn cluster_is_alphanumeric(cluster: &str) -> bool {
+    cluster.chars().next().is_some_and(|c| c.is_alphanumeric())
+}
+
 /// Move a logical column index backward to the start of the previous word.
 ///
-/// Word boundary: a run of one-or-more alphanumeric characters. Leading
-/// non-alphanumerics before the cursor are skipped first, then the run of
-/// alphanumerics is consumed.
+/// Columns are **grapheme-cluster** indices. Word boundary: a run of
+/// one-or-more alphanumeric clusters. Leading non-alphanumeric clusters before
+/// the cursor are skipped first, then the run of alphanumerics is consumed.
 fn prev_word_col(line: &str, col: usize) -> usize {
-    let chars: Vec<char> = line.chars().collect();
-    let mut pos = col.min(chars.len());
-    while pos > 0 && !chars[pos - 1].is_alphanumeric() {
+    let clusters: Vec<&str> = line.graphemes(true).collect();
+    let mut pos = col.min(clusters.len());
+    while pos > 0 && !cluster_is_alphanumeric(clusters[pos - 1]) {
         pos -= 1;
     }
-    while pos > 0 && chars[pos - 1].is_alphanumeric() {
+    while pos > 0 && cluster_is_alphanumeric(clusters[pos - 1]) {
         pos -= 1;
     }
     pos
 }
 
 /// Move a logical column index forward past the end of the next word.
+///
+/// Columns are **grapheme-cluster** indices (see [`prev_word_col`]).
 fn next_word_col(line: &str, col: usize) -> usize {
-    let chars: Vec<char> = line.chars().collect();
-    let mut pos = col.min(chars.len());
-    while pos < chars.len() && !chars[pos].is_alphanumeric() {
+    let clusters: Vec<&str> = line.graphemes(true).collect();
+    let mut pos = col.min(clusters.len());
+    while pos < clusters.len() && !cluster_is_alphanumeric(clusters[pos]) {
         pos += 1;
     }
-    while pos < chars.len() && chars[pos].is_alphanumeric() {
+    while pos < clusters.len() && cluster_is_alphanumeric(clusters[pos]) {
         pos += 1;
     }
     pos
@@ -50,7 +59,7 @@ impl Context {
         state.cursor_row = state.cursor_row.min(state.lines.len().saturating_sub(1));
         state.cursor_col = state
             .cursor_col
-            .min(state.lines[state.cursor_row].chars().count());
+            .min(grapheme_count(&state.lines[state.cursor_row]));
 
         let focused = self.register_focusable();
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
@@ -74,10 +83,10 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        let line_len = state.lines[state.cursor_row].chars().count();
+                        let line_len = grapheme_count(&state.lines[state.cursor_row]);
                         if state.cursor_col < line_len {
                             state.push_history();
-                            let cut = byte_index_for_char(
+                            let cut = byte_index_for_grapheme(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col,
                             );
@@ -95,7 +104,7 @@ impl Context {
                                 prev_word_col(&state.lines[state.cursor_row], state.cursor_col);
                         } else if state.cursor_row > 0 {
                             state.cursor_row -= 1;
-                            state.cursor_col = state.lines[state.cursor_row].chars().count();
+                            state.cursor_col = grapheme_count(&state.lines[state.cursor_row]);
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
@@ -104,7 +113,7 @@ impl Context {
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             || key.modifiers.contains(KeyModifiers::ALT) =>
                     {
-                        let line_len = state.lines[state.cursor_row].chars().count();
+                        let line_len = grapheme_count(&state.lines[state.cursor_row]);
                         if state.cursor_col < line_len {
                             state.cursor_col =
                                 next_word_col(&state.lines[state.cursor_row], state.cursor_col);
@@ -118,7 +127,7 @@ impl Context {
                     KeyCode::Char(ch) => {
                         if let Some(max) = state.max_length {
                             let total: usize =
-                                state.lines.iter().map(|line| line.chars().count()).sum();
+                                state.lines.iter().map(|line| grapheme_count(line)).sum();
                             if total >= max {
                                 continue;
                             }
@@ -128,8 +137,10 @@ impl Context {
                         if !state.last_was_char_insert {
                             state.push_history();
                         }
-                        let index =
-                            byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
+                        let index = byte_index_for_grapheme(
+                            &state.lines[state.cursor_row],
+                            state.cursor_col,
+                        );
                         state.lines[state.cursor_row].insert(index, ch);
                         state.cursor_col += 1;
                         state.last_was_char_insert = true;
@@ -137,8 +148,10 @@ impl Context {
                     }
                     KeyCode::Enter => {
                         state.push_history();
-                        let split_index =
-                            byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
+                        let split_index = byte_index_for_grapheme(
+                            &state.lines[state.cursor_row],
+                            state.cursor_col,
+                        );
                         let remainder = state.lines[state.cursor_row].split_off(split_index);
                         state.cursor_row += 1;
                         state.lines.insert(state.cursor_row, remainder);
@@ -151,11 +164,11 @@ impl Context {
                             state.push_history();
                         }
                         if state.cursor_col > 0 {
-                            let start = byte_index_for_char(
+                            let start = byte_index_for_grapheme(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col - 1,
                             );
-                            let end = byte_index_for_char(
+                            let end = byte_index_for_grapheme(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col,
                             );
@@ -164,7 +177,7 @@ impl Context {
                         } else if state.cursor_row > 0 {
                             let current = state.lines.remove(state.cursor_row);
                             state.cursor_row -= 1;
-                            state.cursor_col = state.lines[state.cursor_row].chars().count();
+                            state.cursor_col = grapheme_count(&state.lines[state.cursor_row]);
                             state.lines[state.cursor_row].push_str(&current);
                         }
                         state.last_was_char_insert = false;
@@ -175,13 +188,13 @@ impl Context {
                             state.cursor_col -= 1;
                         } else if state.cursor_row > 0 {
                             state.cursor_row -= 1;
-                            state.cursor_col = state.lines[state.cursor_row].chars().count();
+                            state.cursor_col = grapheme_count(&state.lines[state.cursor_row]);
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
                     KeyCode::Right => {
-                        let line_len = state.lines[state.cursor_row].chars().count();
+                        let line_len = grapheme_count(&state.lines[state.cursor_row]);
                         if state.cursor_col < line_len {
                             state.cursor_col += 1;
                         } else if state.cursor_row + 1 < state.lines.len() {
@@ -208,7 +221,7 @@ impl Context {
                             state.cursor_row -= 1;
                             state.cursor_col = state
                                 .cursor_col
-                                .min(state.lines[state.cursor_row].chars().count());
+                                .min(grapheme_count(&state.lines[state.cursor_row]));
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
@@ -230,7 +243,7 @@ impl Context {
                             state.cursor_row += 1;
                             state.cursor_col = state
                                 .cursor_col
-                                .min(state.lines[state.cursor_row].chars().count());
+                                .min(grapheme_count(&state.lines[state.cursor_row]));
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
@@ -241,18 +254,18 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Delete => {
-                        let line_len = state.lines[state.cursor_row].chars().count();
+                        let line_len = grapheme_count(&state.lines[state.cursor_row]);
                         let will_mutate =
                             state.cursor_col < line_len || state.cursor_row + 1 < state.lines.len();
                         if will_mutate {
                             state.push_history();
                         }
                         if state.cursor_col < line_len {
-                            let start = byte_index_for_char(
+                            let start = byte_index_for_grapheme(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col,
                             );
-                            let end = byte_index_for_char(
+                            let end = byte_index_for_grapheme(
                                 &state.lines[state.cursor_row],
                                 state.cursor_col + 1,
                             );
@@ -265,7 +278,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.cursor_col = state.lines[state.cursor_row].chars().count();
+                        state.cursor_col = grapheme_count(&state.lines[state.cursor_row]);
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
@@ -281,7 +294,7 @@ impl Context {
                 // Hoist total char count once per paste event and update
                 // incrementally — recomputing via `.iter().map(...).sum()`
                 // inside the loop would be O(n²) on large pastes.
-                let mut total_chars: usize = state.lines.iter().map(|l| l.chars().count()).sum();
+                let mut total_chars: usize = state.lines.iter().map(|l| grapheme_count(l)).sum();
                 for ch in text.chars() {
                     if let Some(max) = state.max_length {
                         if total_chars >= max {
@@ -289,16 +302,20 @@ impl Context {
                         }
                     }
                     if ch == '\n' || ch == '\r' {
-                        let split_index =
-                            byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
+                        let split_index = byte_index_for_grapheme(
+                            &state.lines[state.cursor_row],
+                            state.cursor_col,
+                        );
                         let remainder = state.lines[state.cursor_row].split_off(split_index);
                         state.cursor_row += 1;
                         state.lines.insert(state.cursor_row, remainder);
                         state.cursor_col = 0;
                         total_chars += 1;
                     } else {
-                        let index =
-                            byte_index_for_char(&state.lines[state.cursor_row], state.cursor_col);
+                        let index = byte_index_for_grapheme(
+                            &state.lines[state.cursor_row],
+                            state.cursor_col,
+                        );
                         state.lines[state.cursor_row].insert(index, ch);
                         state.cursor_col += 1;
                         total_chars += 1;
@@ -350,8 +367,10 @@ impl Context {
             let actual_vi = state.scroll_offset + vi;
             let (seg_text, is_cursor_line) = if let Some(vl) = vlines.get(actual_vi) {
                 let line = &state.lines[vl.logical_row];
+                // `char_start` / `char_count` are grapheme-cluster indices, so
+                // slice by cluster to keep each cluster whole on its segment.
                 let text: String = line
-                    .chars()
+                    .graphemes(true)
                     .skip(vl.char_start)
                     .take(vl.char_count)
                     .collect();
@@ -370,14 +389,18 @@ impl Context {
 
             if is_cursor_line && focused {
                 rendered.clear();
-                for (idx, ch) in seg_text.chars().enumerate() {
+                // Iterate by cluster: `cursor_vcol` is a cluster index. The
+                // emitted `cursor_offset` is the *scalar* length of `rendered`
+                // before the cursor glyph, which is what the renderer consumes
+                // (`text.chars().take(cursor_offset)` in render.rs).
+                for (idx, g) in seg_text.graphemes(true).enumerate() {
                     if idx == cursor_vcol {
                         cursor_offset = Some(rendered.chars().count());
                         rendered.push('▎');
                     }
-                    rendered.push(ch);
+                    rendered.push_str(g);
                 }
-                if cursor_vcol >= seg_text.chars().count() {
+                if cursor_vcol >= grapheme_count(&seg_text) {
                     cursor_offset = Some(rendered.chars().count());
                     rendered.push('▎');
                 }

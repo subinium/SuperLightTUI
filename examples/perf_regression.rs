@@ -35,10 +35,10 @@ fn main() {
                 .col(|ui| {
                     ui.text("Input cursor path").bold();
                     let _ = ui.text_input(&mut input);
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text("Wrapped text path").bold();
                     ui.text(long_text.clone()).wrap();
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text("Textarea cursor path").bold();
                     let _ = ui.textarea(&mut textarea, 8);
                 });

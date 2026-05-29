@@ -16,7 +16,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: help_gap,
+                gap: help_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -60,7 +60,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: help_gap,
+                gap: help_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -674,5 +674,55 @@ impl Context {
     /// ```
     pub fn set_debug_layer(&mut self, layer: crate::DebugLayer) {
         self.debug_layer = layer;
+    }
+
+    /// Return whether the devtools inspector panel is active (issue #268).
+    ///
+    /// The inspector is toggled with **Ctrl+F12** at runtime, or
+    /// programmatically via [`set_inspector`](Self::set_inspector). It is
+    /// independent of the F12 outline overlay and the Shift+F12 layer cycle.
+    /// When on, the inspector draws a resolved-style panel for the focused
+    /// widget and a focus-chain panel listing every focusable in order.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Context;
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     if ui.inspector() {
+    ///         ui.text("inspector on (Ctrl+F12 to hide)");
+    ///     }
+    /// })
+    /// .unwrap();
+    /// ```
+    pub fn inspector(&self) -> bool {
+        self.inspector_mode
+    }
+
+    /// Show or hide the devtools inspector panel (issue #268).
+    ///
+    /// Symmetric with [`set_debug_layer`](Self::set_debug_layer): the change
+    /// persists across frames. Enables (or disables) the focused-widget
+    /// resolved-style panel and the focus-chain inspector. Equivalent to the
+    /// runtime **Ctrl+F12** toggle; does not affect the F12 outline overlay.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::Context;
+    ///
+    /// slt::run(|ui: &mut Context| {
+    ///     // Open the inspector from a custom debug menu.
+    ///     ui.set_inspector(true);
+    /// })
+    /// .unwrap();
+    /// ```
+    pub fn set_inspector(&mut self, on: bool) {
+        self.inspector_mode = on;
     }
 }

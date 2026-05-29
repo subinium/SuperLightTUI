@@ -373,7 +373,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                     ui.text(&state.formula_bar);
                 }
             });
-            ui.separator();
+            let _ = ui.separator();
 
             // column headers
             let _ = ui.scrollable(&mut state.scroll).grow(1).col(|ui| {
@@ -453,7 +453,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
             });
 
-            ui.separator();
+            let _ = ui.separator();
             // status bar
             let _ = ui.row(|ui| {
                 ui.text(format!(

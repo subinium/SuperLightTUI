@@ -2,6 +2,21 @@ use super::*;
 
 impl Context {
     /// Render an alert banner with icon and level-based coloring.
+    ///
+    /// Argument order is `(message, level)` — message first, then the
+    /// [`AlertLevel`](crate::widgets::AlertLevel). This is the executable
+    /// proof that [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md)
+    /// Rule 3 matches the shipped signature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::AlertLevel;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.alert("Disk full", AlertLevel::Error);
+    /// ui.alert("Saved", AlertLevel::Success);
+    /// # });
+    /// ```
     pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
         use crate::widgets::AlertLevel;
 
@@ -297,11 +312,17 @@ impl Context {
 
     /// Render a badge with the theme's primary color.
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers (`ui.badge("NEW");`) compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.badge("NEW");
+    /// let r = ui.badge("NEW");
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn badge(&mut self, label: &str) -> Response {
@@ -313,12 +334,18 @@ impl Context {
     ///
     /// Foreground is auto-selected for contrast via [`Color::contrast_fg`].
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the badge's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # use slt::Color;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.badge_colored("ALPHA", Color::Magenta);
+    /// let r = ui.badge_colored("ALPHA", Color::Magenta);
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn badge_colored(&mut self, label: &str, color: Color) -> Response {
@@ -327,12 +354,20 @@ impl Context {
         label_text.push(' ');
         label_text.push_str(label);
         label_text.push(' ');
+        // Reserve the interaction slot *before* the text so the marker
+        // attaches to the badge's rect (same pattern as `spinner` / `gauge`).
+        let response = self.interaction();
         self.text(label_text).fg(fg).bg(color);
 
-        Response::none()
+        response
     }
 
     /// Render a keyboard shortcut hint with reversed styling.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `right_clicked` state
+    /// for the hint's rect, so callers can attach `.on_hover(...)` tooltips.
+    /// Prior to v0.21.0 this always returned [`Response::none()`]; statement-form
+    /// callers compile unchanged.
     ///
     /// # Example
     ///
@@ -340,7 +375,8 @@ impl Context {
     /// # slt::run(|ui: &mut slt::Context| {
     /// ui.line(|ui| {
     ///     ui.text("Quit: ");
-    ///     ui.key_hint("Ctrl+Q");
+    ///     let r = ui.key_hint("Ctrl+Q");
+    ///     if r.hovered { /* attach a tooltip */ }
     /// });
     /// # });
     /// ```
@@ -350,9 +386,12 @@ impl Context {
         key_text.push(' ');
         key_text.push_str(key);
         key_text.push(' ');
+        // Reserve the interaction slot *before* the text so the marker
+        // attaches to the hint's rect.
+        let response = self.interaction();
         self.text(key_text).reversed().fg(theme.text_dim);
 
-        Response::none()
+        response
     }
 
     /// Render a label-value stat pair.
@@ -360,48 +399,61 @@ impl Context {
     /// Renders as a column: a dim label above a bold value. Pair multiple
     /// stats in a [`row`](Self::row) for a compact dashboard strip.
     ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// ui.row(|ui| {
-    ///     ui.stat("Users", "1.2k");
+    ///     let r = ui.stat("Users", "1.2k");
+    ///     if r.hovered { /* attach a tooltip */ }
     ///     ui.stat("Revenue", "$8,420");
     /// });
     /// # });
     /// ```
     pub fn stat(&mut self, label: &str, value: &str) -> Response {
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold();
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a stat pair with a custom value color.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// # Example
     ///
     /// ```no_run
     /// # use slt::Color;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.stat_colored("Errors", "0", Color::Green);
+    /// let r = ui.stat_colored("Errors", "0", Color::Green);
+    /// if r.hovered { /* attach a tooltip */ }
     /// # });
     /// ```
     pub fn stat_colored(&mut self, label: &str, value: &str, color: Color) -> Response {
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.text(value).bold().fg(color);
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a stat pair with an up/down trend arrow.
     ///
     /// The arrow color follows the theme: `success` for [`Trend::Up`],
     /// `error` for [`Trend::Down`].
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the stat's column rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// [`Trend::Up`]: crate::widgets::Trend::Up
     /// [`Trend::Down`]: crate::widgets::Trend::Down
@@ -411,7 +463,8 @@ impl Context {
     /// ```no_run
     /// # use slt::widgets::Trend;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.stat_trend("MRR", "$24.5k", Trend::Up);
+    /// let r = ui.stat_trend("MRR", "$24.5k", Trend::Up);
+    /// if r.hovered { /* attach a tooltip */ }
     /// ui.stat_trend("Churn", "1.8%", Trend::Down);
     /// # });
     /// ```
@@ -426,7 +479,7 @@ impl Context {
             crate::widgets::Trend::Up => ("↑", theme.success),
             crate::widgets::Trend::Down => ("↓", theme.error),
         };
-        let _ = self.col(|ui| {
+        self.col(|ui| {
             ui.text(label).dim();
             ui.line(|ui| {
                 ui.text(value).bold();
@@ -435,15 +488,18 @@ impl Context {
                 arrow_text.push_str(arrow);
                 ui.text(arrow_text).fg(color);
             });
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a centered empty-state placeholder.
     ///
     /// Title is rendered prominently; description is dimmed below. Both are
     /// centered horizontally and vertically inside the available space.
+    ///
+    /// Returns a [`Response`] carrying real `hovered` / `clicked` /
+    /// `right_clicked` state for the placeholder rect, so callers can attach
+    /// `.on_hover(...)` tooltips. Prior to v0.21.0 this always returned
+    /// [`Response::none()`]; statement-form callers compile unchanged.
     ///
     /// # Example
     ///
@@ -456,18 +512,20 @@ impl Context {
     /// # });
     /// ```
     pub fn empty_state(&mut self, title: &str, description: &str) -> Response {
-        let _ = self.container().center().col(|ui| {
+        self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
-        });
-
-        Response::none()
+        })
     }
 
     /// Render a centered empty-state placeholder with an action button.
     ///
     /// Returns a [`Response`] whose `clicked` field is `true` on the frame
-    /// the action button is activated.
+    /// the action button is activated. As of v0.21.0 the response also carries
+    /// real `hovered` / `right_clicked` state (and the laid-out `rect`) for the
+    /// placeholder area, so callers can attach `.on_hover(...)` tooltips. The
+    /// `clicked` / `changed` fields still track the action button specifically,
+    /// not the whole placeholder.
     ///
     /// # Example
     ///
@@ -489,7 +547,9 @@ impl Context {
         action_label: &str,
     ) -> Response {
         let mut clicked = false;
-        let _ = self.container().center().col(|ui| {
+        // The container response carries hover / right-click / rect for the
+        // whole placeholder area; `clicked` still tracks the action button.
+        let mut response = self.container().center().col(|ui| {
             ui.text(title).align(Align::Center);
             ui.text(description).dim().align(Align::Center);
             if ui.button(action_label).clicked {
@@ -497,55 +557,126 @@ impl Context {
             }
         });
 
-        Response {
-            clicked,
-            changed: clicked,
-            ..Response::none()
-        }
+        response.clicked = clicked;
+        response.changed = clicked;
+        response
     }
 
-    /// Render a code block with keyword-based syntax highlighting.
-    pub fn code_block(&mut self, code: &str) -> Response {
-        self.code_block_lang(code, "")
+    /// Begin building a syntax-highlighted code block.
+    ///
+    /// Chain `.lang(...)` for language-aware highlighting and `.numbered()`
+    /// for a line-number gutter. The returned [`CodeBlock`] auto-renders when
+    /// dropped, so a bare `ui.code_block(code);` produces a default block.
+    /// Call `.show()` (instead of dropping) to capture the [`Response`].
+    ///
+    /// This is the consuming-builder shape shared with [`Context::gauge`] /
+    /// [`Context::breadcrumb`] — see [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md) Rule 1.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.code_block("let x = 1;");
+    /// let r = ui.code_block("fn main() {}").lang("rust").numbered().show();
+    /// if r.hovered { /* attach tooltip */ }
+    /// # });
+    /// ```
+    pub fn code_block<'a>(&'a mut self, code: &'a str) -> CodeBlock<'a> {
+        CodeBlock::new(self, code)
     }
 
     /// Render a code block with language-aware syntax highlighting.
+    #[deprecated(since = "0.21.0", note = "use `code_block(code).lang(lang)`")]
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
-        let theme = self.theme;
-        let pad = theme.spacing.xs();
-        let highlighted: Option<Vec<Vec<(String, Style)>>> =
-            crate::syntax::highlight_code(code, lang, &theme);
-        let _ = self
-            .bordered(Border::Rounded)
-            .bg(theme.surface)
-            .p(pad)
-            .col(|ui| {
-                if let Some(ref lines) = highlighted {
-                    render_tree_sitter_lines(ui, lines);
-                } else {
-                    for line in code.lines() {
-                        ui.line(|ui| render_highlighted_line(ui, line));
-                    }
-                }
-            });
-
-        Response::none()
+        render_code_block(self, code, lang, false)
     }
 
     /// Render a code block with line numbers and keyword highlighting.
+    #[deprecated(since = "0.21.0", note = "use `code_block(code).numbered()`")]
     pub fn code_block_numbered(&mut self, code: &str) -> Response {
-        self.code_block_numbered_lang(code, "")
+        render_code_block(self, code, "", true)
     }
 
     /// Render a code block with line numbers and language-aware highlighting.
+    #[deprecated(
+        since = "0.21.0",
+        note = "use `code_block(code).lang(lang).numbered()`"
+    )]
     pub fn code_block_numbered_lang(&mut self, code: &str, lang: &str) -> Response {
+        render_code_block(self, code, lang, true)
+    }
+}
+
+/// Syntax-highlighted code block builder. Auto-renders on `Drop`.
+///
+/// Constructed via [`Context::code_block`]. Chain `.lang(...)` for
+/// language-aware highlighting and `.numbered()` for a line-number gutter.
+/// Drop the value to render without capturing a response, or call
+/// [`Self::show`] to render and obtain a [`Response`].
+///
+/// Consuming-builder shape, mirroring [`Gauge`](super::Gauge) /
+/// [`Breadcrumb`]: `Drop` is intentional so `ui.code_block(code);` is the
+/// idiomatic form when the response isn't needed (egui's `ui.add(...)` idiom).
+pub struct CodeBlock<'a> {
+    ctx: Option<&'a mut Context>,
+    code: &'a str,
+    lang: &'a str,
+    numbered: bool,
+}
+
+impl<'a> CodeBlock<'a> {
+    fn new(ctx: &'a mut Context, code: &'a str) -> Self {
+        Self {
+            ctx: Some(ctx),
+            code,
+            lang: "",
+            numbered: false,
+        }
+    }
+
+    /// Set the language for syntax highlighting (e.g. `"rust"`). Empty string
+    /// (the default) falls back to keyword-based highlighting.
+    pub fn lang(mut self, lang: &'a str) -> Self {
+        self.lang = lang;
+        self
+    }
+
+    /// Enable the line-number gutter.
+    pub fn numbered(mut self) -> Self {
+        self.numbered = true;
+        self
+    }
+
+    /// Render now and return the [`Response`].
+    pub fn show(mut self) -> Response {
+        // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
+        let ctx = self.ctx.take().expect("CodeBlock::show called twice");
+        render_code_block(ctx, self.code, self.lang, self.numbered)
+    }
+}
+
+impl Drop for CodeBlock<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.ctx.take() {
+            let _ = render_code_block(ctx, self.code, self.lang, self.numbered);
+        }
+    }
+}
+
+/// Internal code-block rendering shared by the [`CodeBlock`] builder and the
+/// deprecated `code_block_*` aliases. Folds the language-aware and
+/// line-numbered paths on the `numbered` flag — no behavior change versus the
+/// previous separate `code_block_lang` / `code_block_numbered_lang` bodies.
+fn render_code_block(ctx: &mut Context, code: &str, lang: &str, numbered: bool) -> Response {
+    let theme = ctx.theme;
+    let pad = theme.spacing.xs();
+    let highlighted: Option<Vec<Vec<(String, Style)>>> =
+        crate::syntax::highlight_code(code, lang, &theme);
+
+    if numbered {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
-        let theme = self.theme;
-        let pad = theme.spacing.xs();
-        let highlighted: Option<Vec<Vec<(String, Style)>>> =
-            crate::syntax::highlight_code(code, lang, &theme);
-        let _ = self
+        let _ = ctx
             .bordered(Border::Rounded)
             .bg(theme.surface)
             .p(pad)
@@ -570,9 +701,23 @@ impl Context {
                     }
                 }
             });
-
-        Response::none()
+    } else {
+        let _ = ctx
+            .bordered(Border::Rounded)
+            .bg(theme.surface)
+            .p(pad)
+            .col(|ui| {
+                if let Some(ref lines) = highlighted {
+                    render_tree_sitter_lines(ui, lines);
+                } else {
+                    for line in code.lines() {
+                        ui.line(|ui| render_highlighted_line(ui, line));
+                    }
+                }
+            });
     }
+
+    Response::none()
 }
 
 /// Breadcrumb navigation bar builder. Auto-renders on `Drop`.
@@ -665,5 +810,66 @@ fn render_breadcrumb(
     BreadcrumbResponse {
         response,
         clicked_segment,
+    }
+}
+
+#[cfg(test)]
+mod code_block_tests {
+    use crate::test_utils::TestBackend;
+    use crate::widgets::AlertLevel;
+
+    #[test]
+    fn code_block_builder_renders_lang_and_gutter() {
+        let mut tb = TestBackend::new(40, 8);
+        tb.render(|ui| {
+            let _ = ui.code_block("let x = 1;").lang("rust").numbered().show();
+        });
+        tb.assert_contains("let");
+        // Line-number gutter from the numbered path (`status.rs` render).
+        tb.assert_contains("1 │");
+    }
+
+    #[test]
+    fn code_block_default_drop_renders() {
+        // Bare drop-render (no chain) must produce the same content as `.show()`.
+        let mut tb_drop = TestBackend::new(40, 8);
+        tb_drop.render(|ui| {
+            ui.code_block("a\nb");
+        });
+        let mut tb_show = TestBackend::new(40, 8);
+        tb_show.render(|ui| {
+            let _ = ui.code_block("a\nb").show();
+        });
+        assert_eq!(tb_drop.to_string(), tb_show.to_string());
+    }
+
+    #[test]
+    fn code_block_deprecated_alias_byte_identical() {
+        let code = "fn main() {}\nlet y = 2;";
+        let mut tb_builder = TestBackend::new(40, 8);
+        tb_builder.render(|ui| {
+            let _ = ui.code_block(code).lang("rust").numbered().show();
+        });
+        let mut tb_alias = TestBackend::new(40, 8);
+        tb_alias.render(|ui| {
+            #[allow(deprecated)]
+            let _ = ui.code_block_numbered_lang(code, "rust");
+        });
+        assert_eq!(
+            tb_builder.to_string(),
+            tb_alias.to_string(),
+            "deprecated alias must be behavior-preserving"
+        );
+    }
+
+    #[test]
+    fn alert_message_first_then_level() {
+        // Regression guard for the API_DESIGN.md arg-order drift: `(message,
+        // level)` is the shipped order. Compiles == doc order matches code.
+        let mut tb = TestBackend::new(40, 5);
+        tb.render(|ui| {
+            let _ = ui.alert("Disk full", AlertLevel::Error);
+        });
+        tb.assert_contains("Disk full");
     }
 }

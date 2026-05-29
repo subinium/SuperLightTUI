@@ -60,7 +60,11 @@ impl Default for ModalOptions {
 #[must_use = "ContainerBuilder does nothing until .col(), .row(), .line(), or .draw() is called"]
 pub struct ContainerBuilder<'a> {
     pub(crate) ctx: &'a mut Context,
-    pub(crate) gap: u32,
+    /// Resolved main-axis gap, in cells. Signed (#222): negative means
+    /// adjacent children overlap, set via [`ContainerBuilder::gap_overlap`].
+    /// The public [`ContainerBuilder::gap`] setter takes `u32` and is
+    /// source-compatible; only `gap_overlap` can store a negative value.
+    pub(crate) gap: i32,
     pub(crate) row_gap: Option<u32>,
     pub(crate) col_gap: Option<u32>,
     pub(crate) align: Align,
@@ -87,7 +91,24 @@ pub struct ContainerBuilder<'a> {
     /// if its parent row/column overflows. Default `false` keeps the
     /// historic overflow-by-design behavior. Closes #161.
     pub(crate) shrink_flag: bool,
+    /// Opt-in container-level flex-wrap flag. Set via
+    /// [`ContainerBuilder::wrap`].
+    ///
+    /// When `true` on a row, children that overflow the available width flow
+    /// onto subsequent lines instead of overflowing past the right edge.
+    /// Default `false` keeps the historic single-line behavior. No-op on a
+    /// column. Closes #258.
+    pub(crate) wrap_flag: bool,
+    /// Optional flex-basis (initial main-axis size, in cells). Set via
+    /// [`ContainerBuilder::basis`]. `None` (default) falls back to the
+    /// child's min size, preserving current behavior. Closes #258.
+    pub(crate) basis: Option<u32>,
     pub(crate) scroll_offset: Option<u32>,
+    /// Horizontal scroll offset for a scrollable row (#247). Set internally by
+    /// [`crate::Context::scrollable`] from `ScrollState::offset_x`; carried into
+    /// `BeginScrollableArgs` and applied by the tree builder only when the
+    /// finalizing direction is `Direction::Row`.
+    pub(crate) scroll_offset_x: Option<u32>,
     pub(crate) theme_override: Option<Theme>,
 }
 
@@ -694,7 +715,9 @@ impl<'a> ContainerBuilder<'a> {
             self.margin = v;
         }
         if let Some(v) = style.gap {
-            self.gap = v;
+            // `ContainerStyle::gap` stays `Option<u32>` (positive only); only
+            // `gap_overlap` produces a negative builder gap (#222).
+            self.gap = v as i32;
         }
         if let Some(v) = style.row_gap {
             self.row_gap = Some(v);
@@ -1132,7 +1155,59 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the gap (in cells) between child elements.
     pub fn gap(mut self, gap: u32) -> Self {
-        self.gap = gap;
+        self.gap = gap as i32;
+        self
+    }
+
+    /// Set a *negative* gap, causing adjacent children to overlap by `overlap`
+    /// cells on the main axis.
+    ///
+    /// This is SLT's analogue of ratatui's `Layout::spacing(-1)`. The common
+    /// use is collapsing the duplicate border between two adjacent bordered
+    /// panels: with `gap_overlap(1)` each panel's shared edge lands in the
+    /// same column (row layout) or row (column layout), so the doubled border
+    ///
+    /// ```text
+    /// ┌────┐┌────┐
+    /// │    ││    │
+    /// └────┘└────┘
+    /// ```
+    ///
+    /// collapses to a single shared edge.
+    ///
+    /// `gap_overlap(0)` is identical to `gap(0)` (no overlap). It composes with
+    /// the existing `gap` family: the last call wins, so call exactly one of
+    /// `gap` / `gap_overlap` per builder.
+    ///
+    /// # Rendering note
+    ///
+    /// SLT does not (yet) merge the shared cells into junction glyphs (`┬`,
+    /// `┼`, `┴`). When two bordered panels overlap, both write the shared
+    /// column/row and the later panel's border character wins by buffer-diff
+    /// order. To get a clean seam, give the panels compatible border styles or
+    /// drop one panel's shared side (e.g. `border_sides` without the left edge).
+    ///
+    /// Large overlaps saturate gracefully — `gap_overlap(N)` past a child's
+    /// extent never panics or wraps; positions clamp at 0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Border;
+    /// // Two bordered panels sharing one border column.
+    /// ui.container().gap_overlap(1).row(|ui| {
+    ///     ui.bordered(Border::Single).w(10).col(|ui| {
+    ///         ui.text("left");
+    ///     });
+    ///     ui.bordered(Border::Single).w(10).col(|ui| {
+    ///         ui.text("right");
+    ///     });
+    /// });
+    /// # });
+    /// ```
+    pub fn gap_overlap(mut self, overlap: u32) -> Self {
+        self.gap = -(overlap as i32);
         self
     }
 
@@ -1237,6 +1312,70 @@ impl<'a> ContainerBuilder<'a> {
     /// the flagged ones contribute to the shrink budget.
     pub fn shrink(mut self) -> Self {
         self.shrink_flag = true;
+        self
+    }
+
+    /// Allow row children to wrap onto subsequent lines on main-axis overflow.
+    ///
+    /// When a `.row()` finalized with `wrap()` has children whose combined
+    /// width exceeds the available width, the overflowing children flow onto
+    /// the next line, and lines stack on the cross axis. This is the
+    /// immediate-mode primitive for tag clouds, chip lists, wrapping toolbars,
+    /// and responsive card grids that reflow as the terminal resizes — without
+    /// per-frame breakpoint math. Equivalent to CSS `flex-wrap: wrap`.
+    ///
+    /// Spacing: within-line (main-axis) spacing uses `gap` / `col_gap` as
+    /// usual; between-line (cross-axis) spacing uses `row_gap` when set, else
+    /// `gap`. A child wider than the full available width occupies its own
+    /// line (clipped, as a single-line row would clip) rather than producing
+    /// an empty line.
+    ///
+    /// Row only. On `col()` this is a documented no-op (vertical-axis wrap is
+    /// out of scope). Default: no wrap (single-line, current
+    /// overflow-by-design behavior). Closes #258.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // A chip list that reflows onto as many lines as the width needs.
+    /// ui.container().wrap().gap(1).row(|ui| {
+    ///     for tag in ["rust", "tui", "flexbox", "wrap", "immediate-mode"] {
+    ///         ui.container().p(1).col(|ui| { ui.text(tag); });
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    #[doc(alias = "flex-wrap")]
+    pub fn wrap(mut self) -> Self {
+        self.wrap_flag = true;
+        self
+    }
+
+    /// Set the flex-basis: the initial main-axis size (in cells) that `grow`
+    /// grows from and `shrink` (#161) shrinks from.
+    ///
+    /// CSS resolves flex sizing as `basis` (initial) → distribute free space
+    /// by `grow` → distribute the deficit by `shrink`. By default SLT uses a
+    /// child's min size as that base; `basis(n)` overrides it so a child can
+    /// say "start at `n` cells, then grow / shrink from there". `None`
+    /// (default, i.e. not calling this) falls back to the min size, preserving
+    /// current behavior. Equivalent to CSS `flex-basis: <n>`. Closes #258.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Two cards that each start at 10 cells, then split the leftover.
+    /// ui.row(|ui| {
+    ///     ui.container().basis(10).grow(1).col(|ui| { ui.text("a"); });
+    ///     ui.container().basis(10).grow(1).col(|ui| { ui.text("b"); });
+    /// });
+    /// # });
+    /// ```
+    #[doc(alias = "flex-basis")]
+    pub fn basis(mut self, cells: u32) -> Self {
+        self.basis = Some(cells);
         self
     }
 
@@ -1413,6 +1552,70 @@ impl<'a> ContainerBuilder<'a> {
         f(self)
     }
 
+    // ── opt-in scoped cache (issue #273) ───────────────────────────────
+
+    /// Opt-in: declare a subtree **stable** when `version_key` is unchanged
+    /// from the previous frame at this call site.
+    ///
+    /// This is an **author-controlled cache, not reactive binding**. Your
+    /// closure is still the app ([Principle 2 — "Your Closure IS the App"]):
+    /// `f` runs **every frame** exactly like `.col(f)`, so the rendered output
+    /// is **byte-for-byte identical** to an uncached container — there is no
+    /// retained widget identity, no message passing, no reactive subscription,
+    /// and no behavior change whatsoever when you do not call `cached`.
+    ///
+    /// What `cached` adds is a single, principle-preserving signal: it records
+    /// the `version_key` you supply (a value you already own — e.g. a hash of
+    /// the non-streaming inputs, or `StreamingTextState::version` of the
+    /// *other* panes) and compares it to the key this call site recorded last
+    /// frame. A match is a *cache hit* (the subtree is declared unchanged); a
+    /// change, a new call site, the first frame, or a terminal resize is a
+    /// *miss*. The hit/miss tally is exposed via
+    /// [`Context::region_cache_hits`](crate::Context::region_cache_hits) /
+    /// [`Context::region_cache_misses`](crate::Context::region_cache_misses).
+    ///
+    /// # Why output is identical even on a hit (current implementation)
+    ///
+    /// Skipping `f` on a hit would require splicing the prior frame's recorded
+    /// `Command`s, replaying its focus / hit-map / scroll / raw-draw feedback,
+    /// and reusing its rendered cells — without that full replay the immediate-
+    /// mode invariant breaks (focus and interaction would silently drop). That
+    /// replay is deliberately **out of scope** here (it risks reintroducing a
+    /// retained tree, the thing Principle 2 forbids). So `cached` keeps the
+    /// invariant absolute — `f` always runs — and instead lands the *safe,
+    /// reversible* half: a measured, author-keyed stability gate plus
+    /// diagnostics. The streaming benchmark `bench_streaming_append_chat`
+    /// (`benches/benchmarks.rs`) quantifies the upstream cost this gate is
+    /// designed to eventually elide; see `docs/PERFORMANCE.md`.
+    ///
+    /// # Pattern: cache the chrome, not the stream
+    ///
+    /// During token streaming, wrap the *static* surroundings (chat history,
+    /// sidebar, status bar) keyed off everything *except* the stream, and
+    /// leave the stream itself uncached — it changes every token:
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// # let history_version = 3u64;
+    /// # let mut stream = slt::StreamingTextState::new();
+    /// ui.container().cached(history_version, |ui| {
+    ///     ui.text("…long chat transcript…"); // unchanged this token
+    /// });
+    /// ui.streaming_text(&mut stream);         // changes every token
+    /// # });
+    /// ```
+    ///
+    /// [Principle 2 — "Your Closure IS the App"]: https://docs.rs/slt
+    pub fn cached(self, version_key: u64, f: impl FnOnce(&mut Context)) -> Response {
+        // Record the key / classify hit-vs-miss BEFORE running the body so the
+        // declaration order (and thus the per-call-site slot index) matches
+        // the order regions are authored, exactly like the hook cursor.
+        let _hit = self.ctx.record_cached_region(version_key);
+        // Always run the body: byte-identical output, immediate-mode invariant
+        // preserved. `_hit` is the gate a future cell-level cache would use.
+        self.col(f)
+    }
+
     // ── internal ─────────────────────────────────────────────────────
 
     /// Set the vertical scroll offset in rows. Used internally by [`Context::scrollable`].
@@ -1574,10 +1777,16 @@ impl<'a> ContainerBuilder<'a> {
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
-        let resolved_gap = match direction {
-            Direction::Column => self.row_gap.unwrap_or(self.gap),
-            Direction::Row => self.col_gap.unwrap_or(self.gap),
+        // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
+        // to the signed builder `gap`, which alone can carry an overlap (#222).
+        let resolved_gap: i32 = match direction {
+            Direction::Column => self.row_gap.map(|g| g as i32).unwrap_or(self.gap),
+            Direction::Row => self.col_gap.map(|g| g as i32).unwrap_or(self.gap),
         };
+        // Cross-axis (between-line) gap for a wrapping row (#258): `row_gap`
+        // when set, else the builder `gap`. Only consulted by the layout pass
+        // when this container is a wrapping `Direction::Row`.
+        let resolved_cross_gap: i32 = self.row_gap.map(|g| g as i32).unwrap_or(self.gap);
 
         let in_hovered_group = self
             .group_name
@@ -1638,11 +1847,29 @@ impl<'a> ContainerBuilder<'a> {
             self.ctx.commands.push(Command::ShrinkMarker);
         }
 
+        // Opt-in flex-wrap / flex-basis (#258). Same marker pattern as shrink:
+        // pushed just before the matching `Begin*`, picked up by the layout
+        // pass and applied to the next node. Both default off / `None`, so
+        // unflagged containers are byte-identical to pre-#258.
+        if self.wrap_flag {
+            self.ctx
+                .commands
+                .push(Command::WrapMarker(resolved_cross_gap));
+        }
+        if let Some(basis) = self.basis {
+            self.ctx.commands.push(Command::BasisMarker(basis));
+        }
+
         if let Some(scroll_offset) = self.scroll_offset {
+            // #247: carry the finalizing `.row()` / `.col()` direction and both
+            // axis offsets. The tree builder applies the offset matching
+            // `direction`; the cross-axis offset is `0` for a single-axis
+            // scroller (the common case).
             self.ctx
                 .commands
                 .push(Command::BeginScrollable(Box::new(BeginScrollableArgs {
                     grow: self.grow,
+                    direction,
                     border: self.border,
                     border_sides: self.border_sides,
                     border_style,
@@ -1656,6 +1883,7 @@ impl<'a> ContainerBuilder<'a> {
                     constraints: self.constraints,
                     title: self.title,
                     scroll_offset,
+                    scroll_offset_x: self.scroll_offset_x.unwrap_or(0),
                     group_name,
                 })));
         } else {
@@ -1817,5 +2045,286 @@ mod hotfix_tests {
     #[test]
     fn scroll_offset_is_crate_internal_api() {
         let _ = ContainerBuilder::scroll_offset;
+    }
+}
+
+#[cfg(test)]
+mod flex_wrap_tests {
+    //! Render-level regression tests for flex-wrap / flex-basis (#258).
+
+    use crate::test_utils::TestBackend;
+
+    /// A wrapping row of labels wider than the backend must flow the
+    /// overflowing label onto the second terminal row, not clip it off the
+    /// right edge. Each label is a 1-cell-tall text node, so a line is one
+    /// cell tall and a wrap is visible as text on row 1.
+    #[test]
+    fn wrap_row_flows_overflow_to_second_line() {
+        // Backend is 12 wide. `col_gap(1)` sets within-line spacing only, so
+        // the cross-axis (between-line) gap falls back to 0. "alpha"(5) + 1 +
+        // "bravo"(5) = 11 fits line 0; "gamma" overflows (11 + 1 + 5 = 17 >
+        // 12) to line 1, immediately below with no blank gap row.
+        let mut tb = TestBackend::new(12, 4);
+        tb.render(|ui| {
+            let _ = ui.container().wrap().col_gap(1).row(|ui| {
+                ui.text("alpha");
+                ui.text("bravo");
+                ui.text("gamma");
+            });
+        });
+
+        // Line 0 holds the first two labels; the third wrapped to line 1.
+        tb.assert_line_contains(0, "alpha");
+        tb.assert_line_contains(0, "bravo");
+        tb.assert_line_contains(1, "gamma");
+    }
+
+    /// `wrap()` is opt-in: without it the overflowing label clips off the
+    /// right edge rather than wrapping, so nothing appears on row 1.
+    #[test]
+    fn no_wrap_row_keeps_single_line() {
+        let mut tb = TestBackend::new(12, 4);
+        tb.render(|ui| {
+            let _ = ui.container().col_gap(1).row(|ui| {
+                ui.text("alpha");
+                ui.text("bravo");
+                ui.text("gamma");
+            });
+        });
+
+        // Single line: first label on row 0, nothing wrapped to row 1.
+        tb.assert_line_contains(0, "alpha");
+        assert_eq!(tb.line(1), "");
+    }
+}
+
+#[cfg(test)]
+mod cached_region_tests {
+    //! Issue #273 — opt-in scoped cached region.
+    //!
+    //! The invariant under test: `cached(key, f)` is byte-identical to an
+    //! uncached container in EVERY case (the body always runs), and it
+    //! correctly classifies each call site as a hit (key unchanged) or miss
+    //! (key changed / new / first frame / post-resize) so the hit/miss
+    //! diagnostics — and a future cell-level cache — have a sound gate.
+
+    use crate::event::Event;
+    use crate::test_utils::{EventBuilder, TestBackend};
+    use std::cell::Cell;
+
+    /// First frame is always a miss, output identical to a plain container.
+    #[test]
+    fn cached_region_byte_identical_on_first_frame() {
+        let mut cached = TestBackend::new(40, 6);
+        cached.render(|ui| {
+            let _ = ui.container().cached(7, |ui| {
+                ui.text("static chrome line one");
+                ui.text("static chrome line two");
+            });
+        });
+
+        let mut plain = TestBackend::new(40, 6);
+        plain.render(|ui| {
+            let _ = ui.container().col(|ui| {
+                ui.text("static chrome line one");
+                ui.text("static chrome line two");
+            });
+        });
+
+        assert_eq!(
+            cached.buffer().snapshot_format(),
+            plain.buffer().snapshot_format(),
+            "cached region must render byte-identically to an uncached container"
+        );
+    }
+
+    /// An unchanged key is a hit on the second frame. The body still runs
+    /// every frame (immediate-mode invariant), so the content stays visible
+    /// and identical — `cached` only flips the hit classification.
+    #[test]
+    fn cached_region_hit_on_unchanged_key_body_still_runs() {
+        let mut tb = TestBackend::new(40, 4);
+        let runs = Cell::new(0u32);
+        let hits = Cell::new(0u32);
+        let misses = Cell::new(0u32);
+
+        let frame = |tb: &mut TestBackend| {
+            tb.render(|ui| {
+                let _ = ui.container().cached(99, |ui| {
+                    runs.set(runs.get() + 1);
+                    ui.text("stable");
+                });
+                hits.set(ui.region_cache_hits());
+                misses.set(ui.region_cache_misses());
+            });
+        };
+
+        frame(&mut tb);
+        assert_eq!(runs.get(), 1, "first frame runs the body");
+        assert_eq!(misses.get(), 1, "first frame is a miss");
+        assert_eq!(hits.get(), 0);
+        tb.assert_contains("stable");
+
+        frame(&mut tb);
+        // Body STILL runs (byte-identical guarantee) even though the key
+        // matched — the only observable change is the hit classification.
+        assert_eq!(runs.get(), 2, "body re-runs every frame regardless of hit");
+        assert_eq!(hits.get(), 1, "unchanged key on the second frame is a hit");
+        assert_eq!(misses.get(), 0);
+        tb.assert_contains("stable");
+    }
+
+    /// A changed key is a miss and the new content renders.
+    #[test]
+    fn cached_region_miss_on_key_change() {
+        let mut tb = TestBackend::new(40, 4);
+        let hits = Cell::new(0u32);
+        let misses = Cell::new(0u32);
+
+        tb.render(|ui| {
+            let _ = ui.container().cached(1, |ui| {
+                ui.text("first");
+            });
+            hits.set(ui.region_cache_hits());
+            misses.set(ui.region_cache_misses());
+        });
+        assert_eq!(misses.get(), 1);
+        tb.assert_contains("first");
+
+        tb.render(|ui| {
+            let _ = ui.container().cached(2, |ui| {
+                ui.text("second");
+            });
+            hits.set(ui.region_cache_hits());
+            misses.set(ui.region_cache_misses());
+        });
+        assert_eq!(hits.get(), 0, "changed key is not a hit");
+        assert_eq!(misses.get(), 1, "changed key is a miss");
+        tb.assert_contains("second");
+    }
+
+    /// A resize clears the persisted keys, forcing the next frame to miss even
+    /// when the author passes the same key.
+    #[test]
+    fn cached_region_invalidates_on_resize() {
+        let mut tb = TestBackend::new(40, 4);
+        let hits = Cell::new(0u32);
+
+        tb.render(|ui| {
+            let _ = ui.container().cached(5, |ui| {
+                ui.text("body");
+            });
+        });
+        // Second frame, same key, no resize → hit.
+        tb.render(|ui| {
+            let _ = ui.container().cached(5, |ui| {
+                ui.text("body");
+            });
+            hits.set(ui.region_cache_hits());
+        });
+        assert_eq!(hits.get(), 1, "same key without resize is a hit");
+
+        // Now resize: the persisted region keys are cleared, so the SAME key
+        // is treated as a fresh slot (miss) on the post-resize frame.
+        tb.render_with_events(vec![Event::Resize(60, 8)], 0, 0, |ui| {
+            let _ = ui.container().cached(5, |ui| {
+                ui.text("body");
+            });
+            hits.set(ui.region_cache_hits());
+        });
+        assert_eq!(hits.get(), 0, "resize forces a cache miss for all regions");
+    }
+
+    /// Focus + hit-map continuity: a button inside a cached region keeps
+    /// firing `clicked` across cached (hit) frames because the body always
+    /// runs, so its focusable + hit-area are re-registered every frame.
+    #[test]
+    fn cached_region_preserves_focus_and_hit_map() {
+        let mut tb = TestBackend::new(30, 5);
+        let clicked = Cell::new(false);
+
+        // Frame 1: register the button so its hit-area lands in the feedback
+        // map for the next frame's click resolution. Same key both frames.
+        tb.render(|ui| {
+            let _ = ui.container().cached(3, |ui| {
+                let _ = ui.button("Go");
+            });
+        });
+
+        // Frame 2: click on the button's cell — even though the region is a
+        // cache hit, the body re-ran and re-registered the hit-area, so the
+        // click resolves.
+        tb.render_with_events(EventBuilder::new().click(2, 0).build(), 0, 1, |ui| {
+            let _ = ui.container().cached(3, |ui| {
+                let resp = ui.button("Go");
+                if resp.clicked {
+                    clicked.set(true);
+                }
+            });
+        });
+        assert!(
+            clicked.get(),
+            "button inside a cached region must still receive clicks across hit frames"
+        );
+    }
+
+    /// Raw-draw inside a cached region: the deferred draw runs on every frame
+    /// including cache-hit frames (deferred draws are one-shot per frame, and
+    /// the body always runs, so they re-register).
+    #[test]
+    fn cached_region_raw_draw_replays() {
+        let mut tb = TestBackend::new(20, 3);
+
+        let frame = |tb: &mut TestBackend| {
+            tb.render(|ui| {
+                let _ = ui.container().cached(8, |ui| {
+                    ui.container().w(5).h(1).draw(|buf, rect| {
+                        buf.set_string(rect.x, rect.y, "XXXXX", crate::style::Style::new());
+                    });
+                });
+            });
+        };
+
+        frame(&mut tb);
+        tb.assert_contains("XXXXX");
+
+        // Second frame is a cache hit, but the raw draw must still paint.
+        frame(&mut tb);
+        tb.assert_contains("XXXXX");
+    }
+
+    /// Two adjacent cached regions get independent per-call-site slots; one
+    /// changing its key does not disturb the other's hit classification.
+    #[test]
+    fn cached_regions_do_not_collide_per_call_site() {
+        let mut tb = TestBackend::new(40, 6);
+        let hits = Cell::new(0u32);
+        let misses = Cell::new(0u32);
+
+        // Frame 1: both new → 2 misses.
+        tb.render(|ui| {
+            let _ = ui.container().cached(10, |ui| {
+                ui.text("region A");
+            });
+            let _ = ui.container().cached(20, |ui| {
+                ui.text("region B");
+            });
+        });
+
+        // Frame 2: A unchanged (hit), B changed (miss).
+        tb.render(|ui| {
+            let _ = ui.container().cached(10, |ui| {
+                ui.text("region A");
+            });
+            let _ = ui.container().cached(21, |ui| {
+                ui.text("region B2");
+            });
+            hits.set(ui.region_cache_hits());
+            misses.set(ui.region_cache_misses());
+        });
+        assert_eq!(hits.get(), 1, "region A unchanged → exactly one hit");
+        assert_eq!(misses.get(), 1, "region B changed → exactly one miss");
+        tb.assert_contains("region A");
+        tb.assert_contains("region B2");
     }
 }

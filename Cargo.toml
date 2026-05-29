@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.20.1"
+version = "0.21.0"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -30,11 +30,21 @@ name = "slt"
 [dependencies]
 crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
+# Upper-bounded for MSRV 1.81: unicode-segmentation 1.13+ requires rustc 1.85.
+unicode-segmentation = ">=1.0, <1.13"
 smallvec = "1"
+# MSRV 1.81 pin only (not used directly): a transitive dep via `toml`
+# (the `serde`/`theme-watch` features). indexmap 2.10+ requires the
+# `edition2024` Cargo feature (rustc 1.85), which breaks the MSRV gate's
+# `cargo generate-lockfile` + 1.81 check. Bound it below that.
+indexmap = ">=2.0, <2.10"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+toml = { version = "0.8", optional = true }
+notify = { version = "6", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
+unicode-bidi = { version = "0.3", optional = true }
 flate2 = { version = "1", optional = true }
 qrcode = { version = "0.14", optional = true, default-features = false }
 tree-sitter-highlight = { version = "0.26", optional = true }
@@ -54,6 +64,13 @@ tree-sitter-css = { version = "0.25", optional = true }
 tree-sitter-html = { version = "0.23", optional = true }
 tree-sitter-yaml = { version = "0.7", optional = true }
 
+# Unix job-control suspend/resume (Ctrl+Z / `fg`). Safe API only — used to
+# restore the terminal before SIGTSTP stops the process and re-enter it on
+# SIGCONT, preserving `#![forbid(unsafe_code)]` (issue #263). Target-gated so
+# non-unix builds (Windows/WASM) never pull it.
+[target.'cfg(unix)'.dependencies]
+signal-hook = { version = "0.3", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
@@ -61,10 +78,12 @@ proptest = "1"
 serde_json = "1"
 
 [features]
-crossterm = ["dep:crossterm"]
-default = ["crossterm"]
+crossterm = ["dep:crossterm", "dep:signal-hook"]
+bidi = ["dep:unicode-bidi"]
+default = ["crossterm", "bidi"]
 async = ["dep:tokio", "crossterm"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:toml"]
+theme-watch = ["serde", "dep:notify"]
 image = ["dep:image"]
 qrcode = ["dep:qrcode"]
 syntax-rust = ["dep:tree-sitter-highlight", "dep:tree-sitter-rust"]
@@ -100,7 +119,12 @@ syntax = [
     "syntax-yaml",
 ]
 kitty-compress = ["dep:flate2"]
-full = ["crossterm", "async", "serde", "image", "qrcode", "kitty-compress"]
+# Dev-only test harness (issue #274): exposes `PtyBackend`/`PtyFrame`, which
+# drive the real `Terminal` flush pipeline into an in-process byte sink for
+# end-to-end escape-code / image-protocol assertions. Off by default; pulls
+# `crossterm` for the SGR/queue! emitters. Not part of `full`.
+pty-test = ["crossterm"]
+full = ["crossterm", "async", "serde", "theme-watch", "image", "qrcode", "kitty-compress", "bidi"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -142,6 +166,10 @@ name = "hello"
 path = "examples/hello.rs"
 
 [[example]]
+name = "color_picker"
+path = "examples/color_picker.rs"
+
+[[example]]
 name = "counter"
 path = "examples/counter.rs"
 
@@ -172,6 +200,11 @@ path = "examples/test_mouse.rs"
 [[example]]
 name = "demo_key_test"
 path = "examples/demo_key_test.rs"
+
+[[example]]
+name = "theme_hot_reload"
+path = "examples/theme_hot_reload.rs"
+required-features = ["theme-watch"]
 
 # ── v0.20 non-interactive reports (2) — kept standalone because they
 #    print to stdout rather than render a TUI, so they don't compose

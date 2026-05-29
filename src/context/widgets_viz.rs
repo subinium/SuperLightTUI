@@ -189,7 +189,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Column,
-                gap: bar_gap as u32,
+                gap: bar_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -371,7 +371,7 @@ impl Context {
             self.commands
                 .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                     direction: Direction::Row,
-                    gap: bar_gap as u32,
+                    gap: bar_gap as i32,
                     align: Align::Start,
                     align_self: None,
                     justify: Justify::Start,
@@ -438,7 +438,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Row,
-                gap: bar_gap as u32,
+                gap: bar_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -539,7 +539,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Column,
-                gap: config.group_gap as u32,
+                gap: config.group_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -560,7 +560,7 @@ impl Context {
             self.commands
                 .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                     direction: Direction::Column,
-                    gap: config.bar_gap as u32,
+                    gap: config.bar_gap as i32,
                     align: Align::Start,
                     align_self: None,
                     justify: Justify::Start,
@@ -641,7 +641,7 @@ impl Context {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
                 direction: Direction::Column,
-                gap: config.group_gap as u32,
+                gap: config.group_gap as i32,
                 align: Align::Start,
                 align_self: None,
                 justify: Justify::Start,
@@ -1966,7 +1966,7 @@ impl Context {
 
         let chart_height = max_height.max(1) as usize;
         let bar_width = config.bar_width.max(1) as usize;
-        let gap = config.bar_gap as u32;
+        let gap = config.bar_gap as i32;
 
         const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
 

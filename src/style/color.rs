@@ -5,7 +5,6 @@
 /// default foreground or background.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Color {
     /// Reset to the terminal's default color.
     Reset,
@@ -61,7 +60,7 @@ impl Color {
     ///
     /// Named colors map to their typical terminal palette values.
     /// [`Color::Reset`] maps to black; [`Color::Indexed`] maps to the xterm-256 palette.
-    fn to_rgb(self) -> (u8, u8, u8) {
+    pub(crate) fn to_rgb(self) -> (u8, u8, u8) {
         match self {
             Color::Rgb(r, g, b) => (r, g, b),
             Color::Black => (0, 0, 0),
@@ -229,6 +228,183 @@ impl Color {
             },
             ColorDepth::NoColor => Color::Reset,
         }
+    }
+
+    /// Parse a hex string (`#rgb` or `#rrggbb`) into [`Color::Rgb`].
+    ///
+    /// The leading `#` is required. Short form `#rgb` expands each nibble
+    /// (`#abc` → `Rgb(0xaa, 0xbb, 0xcc)`). Returns `None` for any malformed
+    /// input (wrong length, non-hex digits, missing `#`).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!(Color::from_hex("#ff6b6b"), Some(Color::Rgb(255, 107, 107)));
+    /// assert_eq!(Color::from_hex("#abc"), Some(Color::Rgb(170, 187, 204)));
+    /// assert_eq!(Color::from_hex("ff6b6b"), None); // missing '#'
+    /// assert_eq!(Color::from_hex("#xyz"), None); // non-hex
+    /// ```
+    #[doc(alias = "parse")]
+    pub fn from_hex(s: &str) -> Option<Color> {
+        let hex = s.strip_prefix('#')?;
+        match hex.len() {
+            3 => {
+                let mut it = hex.chars().map(|c| c.to_digit(16));
+                let r = it.next()??;
+                let g = it.next()??;
+                let b = it.next()??;
+                // Expand each nibble: 0xa -> 0xaa.
+                Some(Color::Rgb((r * 17) as u8, (g * 17) as u8, (b * 17) as u8))
+            }
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some(Color::Rgb(r, g, b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Format an `Rgb` color as a `#rrggbb` hex string.
+    ///
+    /// Non-`Rgb` variants are first resolved to their RGB equivalent via the
+    /// internal palette, so the result is always a valid `#rrggbb` token.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!(Color::Rgb(255, 107, 107).to_hex(), "#ff6b6b");
+    /// ```
+    pub fn to_hex(self) -> String {
+        let (r, g, b) = self.to_rgb();
+        format!("#{r:02x}{g:02x}{b:02x}")
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Color {
+    /// Serialized token for a named color, or `None` for non-named variants.
+    fn named_token(self) -> Option<&'static str> {
+        Some(match self {
+            Color::Reset => "reset",
+            Color::Black => "black",
+            Color::Red => "red",
+            Color::Green => "green",
+            Color::Yellow => "yellow",
+            Color::Blue => "blue",
+            Color::Magenta => "magenta",
+            Color::Cyan => "cyan",
+            Color::White => "white",
+            Color::DarkGray => "darkgray",
+            Color::LightRed => "lightred",
+            Color::LightGreen => "lightgreen",
+            Color::LightYellow => "lightyellow",
+            Color::LightBlue => "lightblue",
+            Color::LightMagenta => "lightmagenta",
+            Color::LightCyan => "lightcyan",
+            Color::LightWhite => "lightwhite",
+            Color::Rgb(..) | Color::Indexed(_) => return None,
+        })
+    }
+
+    /// Parse a color from a human-friendly token used in theme files.
+    ///
+    /// Accepts `#rgb` / `#rrggbb` hex, named colors (case-insensitive, e.g.
+    /// `"cyan"`, `"lightblue"`, `"darkgray"`, `"reset"`), and `indexed:N`
+    /// palette indices (`0..=255`).
+    fn from_token(s: &str) -> Option<Color> {
+        if let Some(c) = Color::from_hex(s) {
+            return Some(c);
+        }
+        let lower = s.trim().to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("indexed:") {
+            return rest.trim().parse::<u8>().ok().map(Color::Indexed);
+        }
+        Some(match lower.as_str() {
+            "reset" | "default" => Color::Reset,
+            "black" => Color::Black,
+            "red" => Color::Red,
+            "green" => Color::Green,
+            "yellow" => Color::Yellow,
+            "blue" => Color::Blue,
+            "magenta" => Color::Magenta,
+            "cyan" => Color::Cyan,
+            "white" => Color::White,
+            "darkgray" | "darkgrey" | "gray" | "grey" => Color::DarkGray,
+            "lightred" => Color::LightRed,
+            "lightgreen" => Color::LightGreen,
+            "lightyellow" => Color::LightYellow,
+            "lightblue" => Color::LightBlue,
+            "lightmagenta" => Color::LightMagenta,
+            "lightcyan" => Color::LightCyan,
+            "lightwhite" => Color::LightWhite,
+            _ => return None,
+        })
+    }
+
+    /// The canonical serialized token for this color.
+    ///
+    /// Named colors emit their lowercase name, `Rgb` emits `#rrggbb`,
+    /// `Indexed(n)` emits `indexed:n`. This is the inverse of [`Color::from_token`].
+    fn to_token(self) -> String {
+        if let Some(name) = self.named_token() {
+            return name.to_string();
+        }
+        match self {
+            Color::Indexed(n) => format!("indexed:{n}"),
+            // `Rgb` and any other true-color variant.
+            other => other.to_hex(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Color {
+    /// Serialize as a human-friendly string token (`#rrggbb`, a named color,
+    /// or `indexed:N`) so theme files stay hand-editable and round-trip.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_token())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Color {
+    /// Deserialize from a token string: `#rgb`/`#rrggbb`, a named color
+    /// (case-insensitive), or `indexed:N`.
+    fn deserialize<D>(deserializer: D) -> Result<Color, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ColorVisitor;
+
+        impl serde::de::Visitor<'_> for ColorVisitor {
+            type Value = Color;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a color token like \"#ff6b6b\", \"cyan\", or \"indexed:245\"")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Color, E>
+            where
+                E: serde::de::Error,
+            {
+                Color::from_token(value).ok_or_else(|| {
+                    E::custom(format!(
+                        "invalid color token {value:?}: expected #rgb/#rrggbb, a named color, or indexed:N"
+                    ))
+                })
+            }
+        }
+
+        deserializer.deserialize_str(ColorVisitor)
     }
 }
 

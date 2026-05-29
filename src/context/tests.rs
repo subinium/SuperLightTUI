@@ -66,13 +66,112 @@ fn use_memo_type_mismatch_includes_index_and_expected_type() {
         "panic message should include hook index, got: {message}"
     );
     assert!(
-        message.contains(std::any::type_name::<(u8, u8)>()),
-        "panic message should include expected type, got: {message}"
+        message.contains(std::any::type_name::<MemoSlot<u8>>()),
+        "panic message should include expected MemoSlot type, got: {message}"
     );
     assert!(
         message.contains("Hooks must be called in the same order every frame."),
         "panic message should explain hook ordering requirement, got: {message}"
     );
+}
+
+#[test]
+fn use_memo_handle_releases_borrow() {
+    // The handle composes with an intervening `ui.*` mutation — the exact
+    // pattern that failed to compile when `use_memo` returned `&T`.
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let m = ui.use_memo(&21i32, |d| d * 2);
+        // Intervening mutation: would conflict with a live `&T` borrow.
+        ui.text("memo:");
+        let v = m.copied(ui);
+        ui.text(format!("{v}"));
+    });
+    tb.assert_contains("memo:");
+    tb.assert_contains("42");
+}
+
+#[test]
+fn use_memo_recomputes_only_on_dep_change() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut tb = TestBackend::new(20, 3);
+
+    // Frame 1: dep = 2 — first compute.
+    let c1 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c1.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "first frame computes once");
+
+    // Frame 2: same dep — no recompute (cache hit).
+    let c2 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "stable deps must not recompute"
+    );
+
+    // Frame 3: changed dep — recompute.
+    let c3 = calls.clone();
+    tb.render(move |ui| {
+        let dep = ui.use_state(|| 2i32);
+        *dep.get_mut(ui) = 5; // change the dependency
+        let d = *dep.get(ui);
+        let m = ui.use_memo(&d, |x| {
+            c3.fetch_add(1, Ordering::SeqCst);
+            x * 10
+        });
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "changed deps must recompute"
+    );
+    tb.assert_contains("50");
+}
+
+#[test]
+fn use_memo_copied_matches_get() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        let m = ui.use_memo(&7i32, |d| d * 3);
+        assert_eq!(m.copied(ui), *m.get(ui));
+        ui.text(format!("{}", m.copied(ui)));
+    });
+    tb.assert_contains("21");
+}
+
+#[test]
+fn use_memo_ref_still_compiles() {
+    // The deprecated `&T`-returning alias remains a drop-in for existing
+    // callers and yields the same value as the handle form.
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        #[allow(deprecated)]
+        let v = *ui.use_memo_ref(&8i32, |d| d * 2);
+        assert_eq!(v, 16);
+        ui.text(format!("{v}"));
+    });
+    tb.assert_contains("16");
 }
 
 #[test]
@@ -652,6 +751,252 @@ fn render_notifications_preserves_queue_after_render() {
         // Queue must still hold the entry after rendering.
         assert_eq!(ui.rollback.notification_queue.len(), 1);
     });
+}
+
+// ── key_chord (issue #262) ───────────────────────────────────────────
+
+#[test]
+fn key_chord_matches_across_frames() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    let mut tb = TestBackend::new(40, 4);
+    let frame1 = Cell::new(false);
+    let frame2 = Cell::new(false);
+
+    tb.sequence()
+        .key(KeyCode::Char('g'), |ui| {
+            frame1.set(ui.key_chord("gg"));
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('g'), |ui| {
+            frame2.set(ui.key_chord("gg"));
+            ui.text("hi");
+        })
+        .run();
+
+    assert!(!frame1.get(), "first `g` must not complete the chord");
+    assert!(
+        frame2.get(),
+        "second `g` on the next frame completes the chord"
+    );
+}
+
+#[test]
+fn key_chord_resets_on_mismatch() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    fn bump(fired: &Cell<u32>, ui: &mut Context) {
+        if ui.key_chord("gg") {
+            fired.set(fired.get() + 1);
+        }
+        ui.text("hi");
+    }
+
+    let mut tb = TestBackend::new(40, 4);
+    let fired = Cell::new(0u32);
+
+    tb.sequence()
+        .key(KeyCode::Char('g'), |ui| bump(&fired, ui))
+        .key(KeyCode::Char('x'), |ui| bump(&fired, ui)) // cancels the pending `gg`
+        .key(KeyCode::Char('g'), |ui| bump(&fired, ui))
+        .key(KeyCode::Char('g'), |ui| bump(&fired, ui)) // re-armed: this completes
+        .run();
+
+    assert_eq!(
+        fired.get(),
+        1,
+        "chord fires once, only on the trailing `gg`"
+    );
+}
+
+#[test]
+fn key_chord_overlap_rearm() {
+    // `g g g` should complete on the second `g` via longest-suffix overlap.
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    fn bump(fired: &Cell<u32>, ui: &mut Context) {
+        if ui.key_chord("gg") {
+            fired.set(fired.get() + 1);
+        }
+        ui.text("hi");
+    }
+
+    let mut tb = TestBackend::new(40, 4);
+    let fired = Cell::new(0u32);
+
+    tb.sequence()
+        .key(KeyCode::Char('g'), |ui| bump(&fired, ui))
+        .key(KeyCode::Char('g'), |ui| bump(&fired, ui)) // completes here
+        .run();
+
+    assert_eq!(fired.get(), 1);
+}
+
+#[test]
+fn key_chord_timeout_expires() {
+    // Drive `Context::new` directly so we can advance the tick clock, which
+    // `TestBackend` does not bump between `render` calls.
+    let mut state = FrameState::default();
+
+    // Frame at tick 0: type `g`, arming the chord.
+    state.diagnostics.tick = 0;
+    let mut ctx = Context::new(vec![Event::key_char('g')], 40, 4, &mut state, Theme::dark());
+    assert!(!ctx.key_chord("gg"));
+    state.chord_states = std::mem::take(&mut ctx.chord);
+    assert_eq!(state.chord_states.pending, "g");
+
+    // Frame well past the default timeout, with no key: prefix must expire.
+    state.diagnostics.tick = crate::DEFAULT_CHORD_TIMEOUT_TICKS + 5;
+    let mut ctx = Context::new(Vec::new(), 40, 4, &mut state, Theme::dark());
+    assert!(!ctx.key_chord("gg"));
+    state.chord_states = std::mem::take(&mut ctx.chord);
+    assert_eq!(
+        state.chord_states.pending, "",
+        "stale prefix must be cleared after timeout"
+    );
+
+    // A fresh `g` after expiry only arms again; it must not complete.
+    let mut ctx = Context::new(vec![Event::key_char('g')], 40, 4, &mut state, Theme::dark());
+    assert!(!ctx.key_chord("gg"), "post-timeout `g` must not complete");
+}
+
+#[test]
+fn key_chord_consumes_final_key() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    let mut tb = TestBackend::new(40, 4);
+    let completed = Cell::new(false);
+    let leftover = Cell::new(true);
+
+    tb.sequence()
+        .key(KeyCode::Char('g'), |ui| {
+            ui.key_chord("gg");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('g'), |ui| {
+            completed.set(ui.key_chord("gg"));
+            // The completing `g` was consumed, so a sibling `key('g')` check
+            // in the same frame must see nothing.
+            leftover.set(ui.key('g'));
+            ui.text("hi");
+        })
+        .run();
+
+    assert!(completed.get());
+    assert!(!leftover.get(), "completing key must be consumed");
+}
+
+#[test]
+fn key_chord_leader_notation() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    // `<space>` token form.
+    let mut tb = TestBackend::new(40, 4);
+    let fired = Cell::new(false);
+    tb.sequence()
+        .key(KeyCode::Char(' '), |ui| {
+            ui.key_chord("<space>ff");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('f'), |ui| {
+            ui.key_chord("<space>ff");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('f'), |ui| {
+            fired.set(ui.key_chord("<space>ff"));
+            ui.text("hi");
+        })
+        .run();
+    assert!(fired.get(), "`<space>ff` matches space then f f");
+
+    // Literal-space form must behave identically.
+    let mut tb = TestBackend::new(40, 4);
+    let fired_literal = Cell::new(false);
+    tb.sequence()
+        .key(KeyCode::Char(' '), |ui| {
+            ui.key_chord(" ff");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('f'), |ui| {
+            ui.key_chord(" ff");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('f'), |ui| {
+            fired_literal.set(ui.key_chord(" ff"));
+            ui.text("hi");
+        })
+        .run();
+    assert!(fired_literal.get(), "literal `\" ff\"` matches identically");
+}
+
+#[test]
+fn key_chord_leader_alias_token() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    let mut tb = TestBackend::new(40, 4);
+    let fired = Cell::new(false);
+    tb.sequence()
+        .key(KeyCode::Char(' '), |ui| {
+            ui.key_chord("<leader>w");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('w'), |ui| {
+            fired.set(ui.key_chord("<leader>w"));
+            ui.text("hi");
+        })
+        .run();
+    assert!(fired.get(), "`<leader>w` maps the leader token to space");
+}
+
+#[test]
+fn key_chord_empty_returns_false() {
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(vec![Event::key_char('g')], 40, 4, &mut state, Theme::dark());
+    assert!(!ctx.key_chord(""), "empty sequence is always false");
+}
+
+#[test]
+fn key_chord_modal_guard() {
+    // With a modal active last frame and no overlay layered on top, a fully
+    // typed chord must not fire.
+    let mut state = FrameState::default();
+    state.focus.prev_modal_active = true;
+    let events = vec![Event::key_char('g'), Event::key_char('g')];
+    let mut ctx = Context::new(events, 40, 4, &mut state, Theme::dark());
+    assert!(
+        !ctx.key_chord("gg"),
+        "modal guard suppresses chords (overlay_depth == 0)"
+    );
+}
+
+#[test]
+#[allow(deprecated)] // regression-lock the deprecated `key_seq` delegation
+fn key_seq_deprecated_alias_matches_across_frames() {
+    use crate::test_utils::TestBackend;
+    use std::cell::Cell;
+
+    let mut tb = TestBackend::new(40, 4);
+    let frame2 = Cell::new(false);
+    tb.sequence()
+        .key(KeyCode::Char('g'), |ui| {
+            ui.key_seq("gg");
+            ui.text("hi");
+        })
+        .key(KeyCode::Char('g'), |ui| {
+            frame2.set(ui.key_seq("gg"));
+            ui.text("hi");
+        })
+        .run();
+    assert!(
+        frame2.get(),
+        "deprecated `key_seq` now matches across frames via `key_chord`"
+    );
 }
 
 fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {

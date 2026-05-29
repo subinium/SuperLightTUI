@@ -219,7 +219,13 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
-        let sixel_supported = self.is_real_terminal && terminal_supports_sixel();
+        // Issue #264: consult the negotiated capability snapshot first (the
+        // DA1 probe is authoritative when it answered). Fall back to the env
+        // allowlist (now including WezTerm/Ghostty) / `SLT_FORCE_SIXEL` when the
+        // probe returned unknown. App code never selects a protocol — the
+        // blitter ladder resolves it.
+        let sixel_supported =
+            self.is_real_terminal && (self.capabilities.sixel || terminal_supports_sixel());
         if !sixel_supported {
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
@@ -231,6 +237,7 @@ impl Context {
         }
 
         let rgba = normalize_rgba(rgba, pixel_width, pixel_height);
+        let content_hash = crate::buffer::hash_rgba(&rgba);
         let encoded = crate::sixel::encode_sixel(&rgba, pixel_width, pixel_height, 256);
 
         if encoded.is_empty() {
@@ -243,11 +250,186 @@ impl Context {
             return Response::none();
         }
 
+        // Issue #265: route through the sprixel damage matrix instead of a flat
+        // `raw_sequence`, so a text edit adjacent to the image no longer forces
+        // a full re-blit. The footprint is recorded as fully `Opaque`; the flush
+        // layer flips cells to `Annihilated` only where text overwrites ink.
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
-            buf.raw_sequence(rect.x, rect.y, encoded);
+            let cells = (rect.width as usize).saturating_mul(rect.height as usize);
+            buf.sprixel_place(crate::buffer::SprixelPlacement {
+                content_hash,
+                seq: encoded,
+                x: rect.x,
+                y: rect.y,
+                cols: rect.width,
+                rows: rect.height,
+                cells: vec![crate::buffer::SprixelCell::Opaque; cells],
+            });
+        });
+        Response::none()
+    }
+
+    /// Render an image via iTerm2's OSC 1337 inline-image protocol.
+    ///
+    /// Unlike [`Context::kitty_image`] (raw RGBA) or [`Context::sixel_image`]
+    /// (raw RGBA, quantized), `data` is **encoded image-file bytes**
+    /// (PNG/JPEG/GIF): the terminal decodes and scales the file itself. This is
+    /// the pixel-accurate path on Tabby, older iTerm2 builds, and WezTerm's
+    /// iTerm2-compat mode (issue #265).
+    ///
+    /// `cols`/`rows` reserve the cell box for the image. On a terminal without
+    /// OSC 1337 support the area is reserved and `[iterm2 unsupported]` is
+    /// drawn, mirroring the Sixel fallback. Set `SLT_FORCE_ITERM=1` to skip
+    /// detection.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // `png` holds encoded PNG bytes loaded from disk or memory.
+    /// let png = [0x89u8, b'P', b'N', b'G'];
+    /// ui.iterm_image(&png, 20, 4);
+    /// # });
+    /// ```
+    #[cfg(feature = "crossterm")]
+    pub fn iterm_image(&mut self, data: &[u8], cols: u32, rows: u32) -> Response {
+        // Issue #264 ladder integration: consult the negotiated capability
+        // snapshot first, then the env allowlist / `SLT_FORCE_ITERM`. App code
+        // never selects a protocol directly.
+        let supported =
+            self.is_real_terminal && (self.capabilities.iterm2 || terminal_supports_iterm());
+        if !supported {
+            return self.iterm_placeholder(cols, rows);
+        }
+
+        let content_hash = crate::buffer::hash_rgba(data);
+        let encoded = crate::iterm::encode_iterm_osc1337(data, cols, rows, false);
+        if encoded.is_empty() {
+            return self.iterm_placeholder(cols, rows);
+        }
+
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            let cells = (rect.width as usize).saturating_mul(rect.height as usize);
+            buf.sprixel_place(crate::buffer::SprixelPlacement {
+                content_hash,
+                seq: encoded,
+                x: rect.x,
+                y: rect.y,
+                cols: rect.width,
+                rows: rect.height,
+                cells: vec![crate::buffer::SprixelCell::Opaque; cells],
+            });
+        });
+        Response::none()
+    }
+
+    /// Render an iTerm2 OSC 1337 inline image preserving aspect ratio.
+    ///
+    /// `data` is **encoded image-file bytes** (PNG/JPEG/GIF). The container is
+    /// `cols` cells wide; height is reserved from the detected cell pixel
+    /// dimensions (falling back to 8×16) and the OSC 1337 `height=auto` /
+    /// `preserveAspectRatio=1` flags let the terminal scale to fit. Mirrors
+    /// [`Context::kitty_image_fit`] (issue #265).
+    ///
+    /// Falls back to `[iterm2 unsupported]` on terminals without OSC 1337.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let png = [0x89u8, b'P', b'N', b'G'];
+    /// ui.iterm_image_fit(&png, 20);
+    /// # });
+    /// ```
+    #[cfg(feature = "crossterm")]
+    pub fn iterm_image_fit(&mut self, data: &[u8], cols: u32) -> Response {
+        let supported =
+            self.is_real_terminal && (self.capabilities.iterm2 || terminal_supports_iterm());
+
+        // Reserve rows from the cell aspect using a 1:1 source assumption — the
+        // terminal does the real aspect math from the decoded file; this only
+        // sizes the cell box so layout below the image is not clobbered. Use a
+        // square-ish default of `cols / 2` rows (cells are ~2:1 tall), min 1.
+        let (cell_w, cell_h) = crate::terminal::cell_pixel_size();
+        let rows = if cell_h == 0 {
+            cols.max(1)
+        } else {
+            ((cols as f64 * cell_w as f64) / cell_h as f64)
+                .ceil()
+                .max(1.0) as u32
+        };
+
+        if !supported {
+            return self.iterm_placeholder(cols, rows);
+        }
+
+        let content_hash = crate::buffer::hash_rgba(data);
+        // `rows == 0` signals `height=auto`; the reserved cell box is `rows`.
+        let encoded = crate::iterm::encode_iterm_osc1337(data, cols, 0, true);
+        if encoded.is_empty() {
+            return self.iterm_placeholder(cols, rows);
+        }
+
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            let cells = (rect.width as usize).saturating_mul(rect.height as usize);
+            buf.sprixel_place(crate::buffer::SprixelPlacement {
+                content_hash,
+                seq: encoded,
+                x: rect.x,
+                y: rect.y,
+                cols: rect.width,
+                rows: rect.height,
+                cells: vec![crate::buffer::SprixelCell::Opaque; cells],
+            });
+        });
+        Response::none()
+    }
+
+    /// Reserve a `cols`×`rows` container and draw the unsupported placeholder,
+    /// matching the Sixel fallback pattern.
+    #[cfg(feature = "crossterm")]
+    fn iterm_placeholder(&mut self, cols: u32, rows: u32) -> Response {
+        self.container().w(cols).h(rows).draw(|buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
+        });
+        Response::none()
+    }
+
+    /// Render an image via iTerm2's OSC 1337 inline-image protocol.
+    #[cfg(not(feature = "crossterm"))]
+    pub fn iterm_image(&mut self, _data: &[u8], cols: u32, rows: u32) -> Response {
+        self.container().w(cols).h(rows).draw(|buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
+        });
+        Response::none()
+    }
+
+    /// Render an iTerm2 OSC 1337 inline image preserving aspect ratio.
+    #[cfg(not(feature = "crossterm"))]
+    pub fn iterm_image_fit(&mut self, _data: &[u8], cols: u32) -> Response {
+        // Without `crossterm` there is no cell-pixel probe; reserve a
+        // square-ish box so layout below the image is stable.
+        let rows = (cols / 2).max(1);
+        self.container().w(cols).h(rows).draw(|buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
         });
         Response::none()
     }

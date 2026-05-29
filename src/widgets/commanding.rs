@@ -1,3 +1,37 @@
+/// Default tick budget (~1s at 60Hz) after which a partially-typed chord
+/// is abandoned. Matches the tick clock used by notifications/animation.
+///
+/// Override per call site with
+/// [`Context::key_chord_timeout`](crate::Context::key_chord_timeout).
+pub const DEFAULT_CHORD_TIMEOUT_TICKS: u64 = 60;
+
+/// Cross-frame partial-sequence buffer for
+/// [`Context::key_chord`](crate::Context::key_chord).
+///
+/// Persisted in `FrameState` across frames (same out/in policy as
+/// `keyed_states`). Holds at most one in-flight chord prefix; a mismatching
+/// key or a timeout clears it. You never construct this directly — SLT owns a
+/// single instance per [`Context`](crate::Context) and threads it through the
+/// frame loop for you.
+///
+/// # Example
+///
+/// ```no_run
+/// slt::run(|ui: &mut slt::Context| {
+///     // The buffer is managed internally; just call `key_chord`.
+///     if ui.key_chord("gg") {
+///         // jump to top
+///     }
+/// });
+/// ```
+#[derive(Debug, Default, Clone)]
+pub struct ChordState {
+    /// Characters accumulated so far toward some registered chord.
+    pub(crate) pending: String,
+    /// Tick of the most recent accepted key; used for timeout expiry.
+    pub(crate) last_tick: u64,
+}
+
 /// State for a command palette overlay.
 ///
 /// Renders as a modal with a search input and filtered command list.
@@ -45,7 +79,7 @@ impl CommandPaletteState {
         }
     }
 
-    fn fuzzy_score(pattern: &str, text: &str) -> Option<i32> {
+    pub(crate) fn fuzzy_score(pattern: &str, text: &str) -> Option<i32> {
         let pattern = pattern.trim();
         if pattern.is_empty() {
             return Some(0);
@@ -175,6 +209,9 @@ pub struct StreamingTextState {
     /// Cursor blink state (for the typing indicator).
     pub(crate) cursor_visible: bool,
     pub(crate) cursor_tick: u64,
+    /// Monotonic content version, bumped on every content mutation
+    /// (`push` / `start` / `clear`). See [`StreamingTextState::version`].
+    pub(crate) version: u64,
 }
 
 impl StreamingTextState {
@@ -185,12 +222,14 @@ impl StreamingTextState {
             streaming: false,
             cursor_visible: true,
             cursor_tick: 0,
+            version: 0,
         }
     }
 
     /// Append a chunk of text (e.g., from an LLM stream delta).
     pub fn push(&mut self, chunk: &str) {
         self.content.push_str(chunk);
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Mark the stream as complete (hides the typing cursor).
@@ -204,6 +243,7 @@ impl StreamingTextState {
         self.streaming = true;
         self.cursor_visible = true;
         self.cursor_tick = 0;
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Clear all content and reset state.
@@ -212,6 +252,34 @@ impl StreamingTextState {
         self.streaming = false;
         self.cursor_visible = true;
         self.cursor_tick = 0;
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Monotonic version counter, bumped on every content mutation
+    /// (`push` / `start` / `clear`).
+    ///
+    /// The stream itself changes every token, so this value is **not** a
+    /// useful cache key for the streaming region. Its purpose is the
+    /// inverse: it lets you detect when the stream *did* change so you can
+    /// decide whether the *surrounding static chrome* is stable. Combine a
+    /// hash of your non-streaming inputs into a key for
+    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) and wrap
+    /// the chrome — not the stream — in it.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut stream = slt::StreamingTextState::new();
+    /// stream.push("hello");
+    /// assert_eq!(stream.version(), 1);
+    /// stream.push(" world");
+    /// assert_eq!(stream.version(), 2);
+    /// # });
+    /// ```
+    pub fn version(&self) -> u64 {
+        self.version
     }
 }
 
@@ -239,6 +307,9 @@ pub struct StreamingMarkdownState {
     pub in_code_block: bool,
     /// Language label of the active fenced code block.
     pub code_block_lang: String,
+    /// Monotonic content version, bumped on every content mutation
+    /// (`push` / `start` / `clear`). See [`StreamingMarkdownState::version`].
+    pub(crate) version: u64,
 }
 
 impl StreamingMarkdownState {
@@ -251,12 +322,14 @@ impl StreamingMarkdownState {
             cursor_tick: 0,
             in_code_block: false,
             code_block_lang: String::new(),
+            version: 0,
         }
     }
 
     /// Append a markdown chunk (e.g., from an LLM stream delta).
     pub fn push(&mut self, chunk: &str) {
         self.content.push_str(chunk);
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Start a new streaming session, clearing previous content.
@@ -267,6 +340,7 @@ impl StreamingMarkdownState {
         self.cursor_tick = 0;
         self.in_code_block = false;
         self.code_block_lang.clear();
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Mark the stream as complete (hides the typing cursor).
@@ -282,6 +356,29 @@ impl StreamingMarkdownState {
         self.cursor_tick = 0;
         self.in_code_block = false;
         self.code_block_lang.clear();
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Monotonic version counter, bumped on every content mutation
+    /// (`push` / `start` / `clear`).
+    ///
+    /// As with [`StreamingTextState::version`], use this to detect stream
+    /// deltas and key the *surrounding static chrome* into
+    /// [`ContainerBuilder::cached`](crate::ContainerBuilder::cached) — not to
+    /// cache the stream region itself.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut md = slt::StreamingMarkdownState::new();
+    /// md.push("# Title");
+    /// assert_eq!(md.version(), 1);
+    /// # });
+    /// ```
+    pub fn version(&self) -> u64 {
+        self.version
     }
 }
 
@@ -479,6 +576,50 @@ mod mode_state_tests {
         assert!(!modes.try_switch_mode("nonexistent"));
         // Active mode must not change when the switch is rejected.
         assert_eq!(modes.active_mode(), "settings");
+    }
+}
+
+#[cfg(test)]
+mod streaming_version_tests {
+    //! Issue #273 — the monotonic `version()` counter on streaming states.
+    use super::{StreamingMarkdownState, StreamingTextState};
+
+    #[test]
+    fn text_version_starts_at_zero_and_bumps_on_mutation() {
+        let mut s = StreamingTextState::new();
+        assert_eq!(s.version(), 0, "fresh state has version 0");
+        s.push("a");
+        assert_eq!(s.version(), 1);
+        s.push("b");
+        assert_eq!(s.version(), 2);
+        s.start();
+        assert_eq!(s.version(), 3, "start() is a mutation");
+        s.clear();
+        assert_eq!(s.version(), 4, "clear() is a mutation");
+    }
+
+    #[test]
+    fn text_finish_does_not_bump_version() {
+        let mut s = StreamingTextState::new();
+        s.push("x");
+        let v = s.version();
+        s.finish();
+        assert_eq!(s.version(), v, "finish() only toggles the streaming flag");
+    }
+
+    #[test]
+    fn markdown_version_bumps_on_mutation() {
+        let mut s = StreamingMarkdownState::new();
+        assert_eq!(s.version(), 0);
+        s.push("# h");
+        assert_eq!(s.version(), 1);
+        s.start();
+        assert_eq!(s.version(), 2);
+        s.clear();
+        assert_eq!(s.version(), 3);
+        let v = s.version();
+        s.finish();
+        assert_eq!(s.version(), v, "finish() does not bump");
     }
 }
 

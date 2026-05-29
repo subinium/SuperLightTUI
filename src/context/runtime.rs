@@ -14,6 +14,19 @@ impl Context {
         // lifetime as `named_states`: moved out at frame start, moved back
         // at frame end (see `run_frame_kernel`).
         let keyed_states = std::mem::take(&mut state.keyed_states);
+        // Issue #262: hand off the partial-chord buffer for this frame. Same
+        // lifetime as `keyed_states`: moved out at frame start, moved back at
+        // frame end (see `run_frame_kernel`).
+        let chord = std::mem::take(&mut state.chord_states);
+        // Issue #248: hand off the scheduler timer table for this frame. Same
+        // lifetime as `named_states`: moved out at frame start, moved back at
+        // frame end (where untouched slots are GC'd; see `run_frame_kernel`).
+        let scheduler = std::mem::take(&mut state.scheduler);
+        // Issue #234: hand off the async task registry for this frame. Same
+        // lifetime as `scheduler`: moved out at frame start, moved back at
+        // frame end (see `run_frame_kernel`).
+        #[cfg(feature = "async")]
+        let async_tasks = std::mem::take(&mut state.async_tasks);
         let screen_hook_map = std::mem::take(&mut state.screen_hook_map);
         let focus = &mut state.focus;
         // Issue #217: name→index map from the previous frame, used to resolve
@@ -113,6 +126,14 @@ impl Context {
         // immediately below, so we do not pre-clear here — capacity is
         // preserved across frames.
 
+        // Issue #273: hand off the previous frame's `cached` region keys and a
+        // recycled (cleared) buffer to record this frame's keys into. Both
+        // round-trip back into `FrameState` at frame end. Empty (zero
+        // overhead) for apps that never call `cached`.
+        let region_versions_prev = std::mem::take(&mut state.region_versions);
+        let mut region_versions_cur = std::mem::take(&mut state.region_versions_buf);
+        region_versions_cur.clear();
+
         let mut ctx = Self {
             commands,
             events,
@@ -125,6 +146,7 @@ impl Context {
             hook_states: std::mem::take(hook_states),
             named_states,
             keyed_states,
+            chord,
             context_stack,
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,
@@ -141,8 +163,13 @@ impl Context {
             clipboard_text: None,
             debug: diagnostics.debug_mode,
             debug_layer: diagnostics.debug_layer,
+            inspector_mode: diagnostics.inspector_mode,
             theme,
             is_real_terminal: false,
+            // Issue #264: conservative default; overwritten by the probed
+            // snapshot in `run_frame_kernel` on a real terminal.
+            #[cfg(feature = "crossterm")]
+            capabilities: crate::terminal::Capabilities::default(),
             deferred_draws,
             rollback: ContextRollbackState {
                 last_text_idx: None,
@@ -164,6 +191,10 @@ impl Context {
             },
             pending_tooltips,
             hovered_groups,
+            region_versions_prev,
+            region_versions_cur,
+            region_cache_hits: 0,
+            region_cache_misses: 0,
             scroll_lines_per_event: 1,
             screen_hook_map,
             widget_theme: WidgetTheme::new(),
@@ -171,6 +202,13 @@ impl Context {
             focus_name_map_prev,
             focus_name_map: std::collections::HashMap::new(),
             pending_focus_name: still_pending,
+            // Issue #248: sample a single wall-clock "now" for every timer
+            // method called this frame.
+            frame_instant: std::time::Instant::now(),
+            scheduler,
+            // Issue #234: async task registry round-tripped like `scheduler`.
+            #[cfg(feature = "async")]
+            async_tasks,
         };
         ctx.build_hovered_groups();
         ctx
@@ -238,6 +276,32 @@ impl Context {
     #[allow(clippy::misnamed_getters)]
     pub fn focus_count(&self) -> usize {
         self.prev_focus_count
+    }
+
+    /// Read-only snapshot of the terminal's negotiated capabilities
+    /// (issue #264).
+    ///
+    /// Populated once at session enter via a DA1/DA2/XTGETTCAP probe. This is
+    /// **diagnostics-only**: image rendering already routes through the
+    /// automatic blitter ladder (Kitty > Sixel > sextant > half-block), so app
+    /// code is never required to branch on the returned value. On a headless
+    /// backend (e.g. [`TestBackend`](crate::TestBackend)) or piped stdout, the
+    /// probe is skipped and every field is a conservative default.
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let caps = ui.capabilities();
+    /// // e.g. surface a "truecolor: on" line in a diagnostics panel.
+    /// let _ = caps.truecolor;
+    /// # });
+    /// ```
+    #[cfg(feature = "crossterm")]
+    pub fn capabilities(&self) -> &crate::terminal::Capabilities {
+        &self.capabilities
     }
 
     pub(crate) fn process_focus_keys(&mut self) {
@@ -389,6 +453,79 @@ impl Context {
     /// participate in hit-map indexing.
     pub(crate) fn skip_interaction_slot(&mut self) {
         self.reserve_interaction_slot();
+    }
+
+    /// Issue #273: record a [`ContainerBuilder::cached`] region's version key
+    /// at its (declaration-ordered) call site and classify it as a hit or
+    /// miss versus the previous frame.
+    ///
+    /// Returns `true` if `version_key` matches the value this call site
+    /// recorded last frame (a hit), `false` on a key change, a brand-new slot,
+    /// the first frame, or after a resize (all misses).
+    ///
+    /// This is purely an *author-declared stability signal*: the caller still
+    /// re-runs its closure every frame, so output stays byte-identical and the
+    /// immediate-mode invariant is preserved exactly. The hit/miss result is
+    /// recorded for diagnostics ([`Context::region_cache_hits`] /
+    /// [`Context::region_cache_misses`]) and to give a future cell-level cache
+    /// a sound, principle-preserving gate. See the type-level docs on
+    /// [`ContainerBuilder::cached`] for the full design rationale.
+    pub(crate) fn record_cached_region(&mut self, version_key: u64) -> bool {
+        let idx = self.region_versions_cur.len();
+        let hit = self
+            .region_versions_prev
+            .get(idx)
+            .is_some_and(|&prev| prev == version_key);
+        self.region_versions_cur.push(version_key);
+        if hit {
+            self.region_cache_hits = self.region_cache_hits.saturating_add(1);
+        } else {
+            self.region_cache_misses = self.region_cache_misses.saturating_add(1);
+        }
+        hit
+    }
+
+    /// Number of [`ContainerBuilder::cached`] regions this frame whose version
+    /// key was unchanged from the previous frame (cache hits).
+    ///
+    /// Diagnostics for the opt-in streaming cache (issue #273). A region is a
+    /// hit when its author-supplied `version_key` matches the value the same
+    /// call site recorded last frame; it misses on a key change, a new call
+    /// site, the first frame, or after a terminal resize.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.container().cached(42, |ui| {
+    ///     ui.text("stable chrome");
+    /// });
+    /// let _hits = ui.region_cache_hits();
+    /// # });
+    /// ```
+    pub fn region_cache_hits(&self) -> u32 {
+        self.region_cache_hits
+    }
+
+    /// Number of [`ContainerBuilder::cached`] regions this frame whose version
+    /// key changed (or was new / first-frame / post-resize) — cache misses.
+    ///
+    /// The counterpart to [`Context::region_cache_hits`]. See issue #273.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.container().cached(7, |ui| {
+    ///     ui.text("chrome");
+    /// });
+    /// let _misses = ui.region_cache_misses();
+    /// # });
+    /// ```
+    pub fn region_cache_misses(&self) -> u32 {
+        self.region_cache_misses
     }
 
     /// Reserve the next interaction ID and emit a marker command.
@@ -657,18 +794,26 @@ impl Context {
     /// occur in the tree. Pick unique ids — for example, prefix with a
     /// component name (`"counter::value"`).
     ///
+    /// # Naming
+    ///
+    /// The no-suffix form takes an `init` closure, matching
+    /// [`use_state`](Self::use_state)`(init)` and
+    /// [`use_state_keyed`](Self::use_state_keyed)`(id, init)`. Use
+    /// [`use_state_named_default`](Self::use_state_named_default) for the
+    /// `T: Default` shorthand.
+    ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// fn counter(ui: &mut slt::Context) {
-    ///     let count = ui.use_state_named_with("counter::value", || 0i32);
+    ///     let count = ui.use_state_named("counter::value", || 0i32);
     ///     ui.text(format!("Count: {}", count.get(ui)));
     ///     if ui.button("+1").clicked {
     ///         *count.get_mut(ui) += 1;
     ///     }
     /// }
     /// ```
-    pub fn use_state_named_with<T: 'static>(
+    pub fn use_state_named<T: 'static>(
         &mut self,
         id: &'static str,
         init: impl FnOnce() -> T,
@@ -679,16 +824,52 @@ impl Context {
         State::from_named(id)
     }
 
-    /// Like [`use_state_named_with`](Self::use_state_named_with), but uses
+    /// Like [`use_state_named`](Self::use_state_named), but uses
     /// [`Default::default()`] to initialize the value on first call.
+    ///
+    /// Mirrors [`use_state_keyed_default`](Self::use_state_keyed_default): the
+    /// `_default` suffix means "no init closure, `T: Default` required".
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let value = ui.use_state_named::<i32>("counter::value");
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let value = ui.use_state_named_default::<i32>("counter::value");
+    /// ui.text(format!("{}", value.get(ui)));
+    /// # });
     /// ```
-    pub fn use_state_named<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
-        self.use_state_named_with(id, T::default)
+    pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
+        self.use_state_named(id, T::default)
+    }
+
+    /// Deprecated alias for [`use_state_named`](Self::use_state_named).
+    ///
+    /// **Deprecated since 0.21.0**: the `_named` family now follows the
+    /// "no-suffix = init closure" convention so it matches
+    /// [`use_state`](Self::use_state) and
+    /// [`use_state_keyed`](Self::use_state_keyed). The init-closure form is now
+    /// spelled `use_state_named(id, init)`; the `T: Default` shorthand is
+    /// [`use_state_named_default`](Self::use_state_named_default).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Old: ui.use_state_named_with("counter::value", || 0i32)
+    /// let count = ui.use_state_named("counter::value", || 0i32);
+    /// ui.text(format!("{}", count.get(ui)));
+    /// # });
+    /// ```
+    #[deprecated(
+        since = "0.21.0",
+        note = "Renamed to `use_state_named` — the no-suffix form now takes the init closure, matching `use_state` / `use_state_keyed`."
+    )]
+    pub fn use_state_named_with<T: 'static>(
+        &mut self,
+        id: &'static str,
+        init: impl FnOnce() -> T,
+    ) -> State<T> {
+        self.use_state_named(id, init)
     }
 
     /// Smoothly animate between `0.0` and `1.0` driven by a boolean.
@@ -739,7 +920,7 @@ impl Context {
     /// Use this shorthand when you want zero boilerplate and linear easing
     /// is acceptable. For custom easing, a non-static key, or
     /// non-tick-based control, construct a [`crate::Tween`] explicitly via
-    /// [`Context::use_state_named_with`](Self::use_state_named_with).
+    /// [`Context::use_state_named`](Self::use_state_named).
     pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
         let tick = self.tick;
         let entry = self
@@ -755,6 +936,280 @@ impl Context {
                 )
             });
         state.sample(target, duration_ticks, tick)
+    }
+
+    /// One-shot frame-clock timer (issue #248).
+    ///
+    /// Returns `true` exactly once — on the first frame at or after `dur` has
+    /// elapsed since the first `schedule` call for `id` — and `false` on every
+    /// other frame, both before and after. Re-arm by calling
+    /// [`cancel`](Self::cancel) and then `schedule` again.
+    ///
+    /// Wall-clock based ([`std::time::Instant`] sampled once at frame start),
+    /// so it works with the default feature set and without the `async`
+    /// feature. Precision is bounded by the run loop's `tick_rate` (the
+    /// deadline is observed on the next frame after it elapses), so durations
+    /// well below the frame cadence are not meaningful.
+    ///
+    /// The id lives in the same per-context namespace as
+    /// [`use_state_named`](Self::use_state_named): pick a unique key per call
+    /// site.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.schedule("splash::dismiss", Duration::from_millis(800)) {
+    ///         // Runs once, ~800ms after the first frame that called this.
+    ///         ui.text("Splash dismissed.");
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn schedule(&mut self, id: &'static str, dur: std::time::Duration) -> bool {
+        let now = self.frame_instant;
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Once {
+                    deadline: now + dur,
+                    fired: false,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Once { deadline, fired } if !*fired && now >= *deadline => {
+                *fired = true;
+                true
+            }
+            // Not yet due, already fired, or a re-used id bound to a different
+            // timer kind: do not fire (a typo can't crash the app).
+            _ => false,
+        }
+    }
+
+    /// Recurring frame-clock timer (issue #248).
+    ///
+    /// Returns the number of whole `dur` intervals that elapsed since the
+    /// previous frame this `id` was sampled: `0` on most frames, `1` typically,
+    /// and `> 1` if the frame loop stalled past several intervals — so no ticks
+    /// are silently dropped. The internal clock advances by exactly the
+    /// returned number of intervals each frame, so counts never drift.
+    ///
+    /// Wall-clock based and `async`-free, like [`schedule`](Self::schedule).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     let ticks = ui.every("clock::second", Duration::from_secs(1));
+    ///     if ticks > 0 {
+    ///         // Advance a once-per-second animation by `ticks` steps.
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn every(&mut self, id: &'static str, dur: std::time::Duration) -> u32 {
+        let now = self.frame_instant;
+        let interval = dur.max(std::time::Duration::from_nanos(1));
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Every {
+                    interval,
+                    last: now,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Every { interval, last } => {
+                let elapsed = now.saturating_duration_since(*last);
+                let fired = crate::widgets::intervals_elapsed(elapsed, *interval);
+                if fired > 0 {
+                    // Advance by exactly the intervals reported so counts never
+                    // drift, even across stalled frames.
+                    *last += *interval * fired;
+                }
+                fired
+            }
+            _ => 0,
+        }
+    }
+
+    /// Debounce timer — the typeahead / search-as-you-type primitive (#248).
+    ///
+    /// Each frame where `dirty == true` resets the quiet window to `dur`.
+    /// Returns `true` exactly once on the first frame after `dur` of quiet (no
+    /// `dirty`), then stays `false` until the next dirty frame re-arms it. This
+    /// mirrors Textual's `@work(exclusive=True)` debounce: collapse a burst of
+    /// keystrokes so only the final, settled query runs.
+    ///
+    /// Wall-clock based and `async`-free, like [`schedule`](Self::schedule).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use slt::TextInputState;
+    ///
+    /// let mut query = TextInputState::with_placeholder("Search...");
+    /// slt::run(move |ui: &mut slt::Context| {
+    ///     // `resp.changed` is true on the keystroke frame -> the dirty signal.
+    ///     let resp = ui.text_input(&mut query);
+    ///     // Fire the search only after 250ms of no typing.
+    ///     if ui.debounce("search::run", Duration::from_millis(250), resp.changed) {
+    ///         // run_search(&query.value());
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn debounce(&mut self, id: &'static str, dur: std::time::Duration, dirty: bool) -> bool {
+        let now = self.frame_instant;
+        let slot = self
+            .scheduler
+            .named
+            .entry(id)
+            .or_insert_with(|| SchedulerSlot {
+                started: now,
+                kind: SchedKind::Debounce {
+                    dur,
+                    deadline: now + dur,
+                    fired: false,
+                },
+                touched_this_frame: false,
+            });
+        slot.touched_this_frame = true;
+        match &mut slot.kind {
+            SchedKind::Debounce {
+                dur: slot_dur,
+                deadline,
+                fired,
+            } => {
+                *slot_dur = dur;
+                if dirty {
+                    // Re-arm the quiet window from this frame.
+                    *deadline = now + dur;
+                    *fired = false;
+                    false
+                } else if !*fired && now >= *deadline {
+                    *fired = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Exclusive-group claim — cancel stale work on supersede (issue #248).
+    ///
+    /// Within a `group`, only the most-recently-claimed `id` returns `true`;
+    /// once a newer `id` claims the group, every prior `id` returns `false`
+    /// from then on. Use it to cancel an in-flight typeahead query when a newer
+    /// query supersedes it: pair with [`debounce`](Self::debounce) to fire the
+    /// settled query, then guard the work with `exclusive` so only the latest
+    /// claim proceeds.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     let query_id = "q-42"; // e.g. a per-keystroke sequence id
+    ///     if ui.exclusive("search", query_id) {
+    ///         // Only the latest claimed query runs; older ones are cancelled.
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn exclusive(&mut self, group: &'static str, id: &str) -> bool {
+        let entry = self
+            .scheduler
+            .exclusive
+            .entry(group.to_string())
+            .or_default();
+        if entry.winner == id {
+            // The reigning claim re-polls itself: still the winner.
+            return true;
+        }
+        if entry.retired.contains(id) {
+            // A previously-superseded id can never win again: stale work stays
+            // cancelled even if re-polled.
+            return false;
+        }
+        // A new id supersedes the group: retire the old winner (if any) and
+        // become the active claim.
+        if !entry.winner.is_empty() {
+            let old = std::mem::take(&mut entry.winner);
+            entry.retired.insert(old);
+        }
+        entry.winner = id.to_string();
+        true
+    }
+
+    /// Drop the scheduler slot for `id`, re-arming it on the next
+    /// [`schedule`](Self::schedule) / [`every`](Self::every) /
+    /// [`debounce`](Self::debounce) call (issue #248).
+    ///
+    /// Accepts both `&'static str` and runtime-`String` ids: clears the slot
+    /// from the named map and the dynamic-id map.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.schedule("retry", Duration::from_secs(5)) {
+    ///         // ...
+    ///     }
+    ///     if ui.key('r') {
+    ///         ui.cancel("retry"); // next `schedule("retry", ..)` starts fresh
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn cancel(&mut self, id: &str) {
+        self.scheduler.named.remove(id);
+        self.scheduler.keyed.remove(id);
+    }
+
+    /// Wall-clock time elapsed since `id` was first scheduled, or `None` if no
+    /// live timer slot exists for `id` (issue #248).
+    ///
+    /// Useful for progress UIs ("retrying in 3s…") that want the raw elapsed
+    /// duration rather than a fire/no-fire signal. Measured against the same
+    /// frame instant the timer methods use.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.schedule("upload", Duration::from_secs(30));
+    ///     if let Some(elapsed) = ui.elapsed("upload") {
+    ///         ui.text(format!("Uploading for {}s", elapsed.as_secs()));
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn elapsed(&self, id: &str) -> Option<std::time::Duration> {
+        let started = self
+            .scheduler
+            .named
+            .get(id)
+            .or_else(|| self.scheduler.keyed.get(id))
+            .map(|slot| slot.started)?;
+        Some(self.frame_instant.saturating_duration_since(started))
     }
 
     /// Push a value onto the context stack for the duration of `body`.
@@ -795,6 +1250,98 @@ impl Context {
         }
     }
 
+    /// Spawn a fire-and-forget async task from inside the frame closure.
+    ///
+    /// Returns a [`TaskHandle<T>`](crate::TaskHandle) you store and pass to
+    /// [`poll`](Self::poll) on later frames to retrieve the result. This closes
+    /// the ergonomics gap of the channel pattern (`run_async` + an external
+    /// `Sender`) for the common case: "click a button, kick off one async call,
+    /// show its result next frame" — without wiring a channel yourself.
+    ///
+    /// **Dropping the returned handle cancels the in-flight task.** Keep it
+    /// alive (e.g. in `use_state`) for as long as you care about the result.
+    /// Each handle carries a unique id, so two `TaskHandle<String>` live at the
+    /// same time never cross their results.
+    ///
+    /// Requires the `async` feature and an active Tokio runtime — call it
+    /// inside [`run_async`](crate::run_async) /
+    /// [`run_async_with`](crate::run_async_with), which inject the runtime
+    /// handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no Tokio runtime was injected (e.g. when called from the sync
+    /// [`run`](crate::run) loop or `TestBackend` without a runtime).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "async")]
+    /// # async fn run() -> std::io::Result<()> {
+    /// use slt::{Context, RunConfig, TaskHandle};
+    ///
+    /// async fn fetch() -> String {
+    ///     // e.g. an HTTP request
+    ///     "result".to_string()
+    /// }
+    ///
+    /// slt::run_async_with(RunConfig::default(), |ui: &mut Context, _: &mut Vec<()>| {
+    ///     // One handle, stored across frames via `use_state`.
+    ///     let handle = ui.use_state(|| None::<TaskHandle<String>>);
+    ///
+    ///     if ui.button("Fetch").clicked && handle.get(ui).is_none() {
+    ///         *handle.get_mut(ui) = Some(ui.spawn(async { fetch().await }));
+    ///     }
+    ///
+    ///     // Take the handle out of state to poll it: `ui.poll` needs `&mut ui`,
+    ///     // which cannot coexist with a `&TaskHandle` borrowed from `ui`'s own
+    ///     // state. Put it back if the task is still pending.
+    ///     if let Some(h) = handle.get_mut(ui).take() {
+    ///         match ui.poll(&h) {
+    ///             Some(result) => {
+    ///                 ui.text(format!("Got: {result}"));
+    ///             }
+    ///             None => {
+    ///                 *handle.get_mut(ui) = Some(h);
+    ///                 ui.text("Loading...");
+    ///             }
+    ///         }
+    ///     }
+    /// })?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub fn spawn<T: Send + 'static>(
+        &mut self,
+        fut: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> TaskHandle<T> {
+        self.async_tasks.spawn(fut)
+    }
+
+    /// Poll a [`TaskHandle`](crate::TaskHandle) for its result.
+    ///
+    /// Returns `Some(result)` exactly once — on the first frame after the task
+    /// completes — then `None` on every subsequent call. Returns `None` while
+    /// the task is still in flight.
+    ///
+    /// Pairs with [`spawn`](Self::spawn). Requires the `async` feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "async")]
+    /// # fn ex(ui: &mut slt::Context, handle: &slt::TaskHandle<u32>) {
+    /// if let Some(value) = ui.poll(handle) {
+    ///     ui.text(format!("done: {value}"));
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "async")]
+    pub fn poll<T: 'static>(&mut self, handle: &TaskHandle<T>) -> Option<T> {
+        self.async_tasks.poll::<T>(handle.id())
+    }
+
     /// Look up the nearest provided value of type `T` on the context stack.
     ///
     /// Searches from the top of the stack (most-recent
@@ -824,12 +1371,98 @@ impl Context {
 
     /// Memoize a computed value. Recomputes only when `deps` changes.
     ///
+    /// Returns a [`Memo<T>`] *index handle*, mirroring [`use_state`]'s
+    /// [`State<T>`]. The handle holds **no** borrow of `ui`, so it composes with
+    /// later `ui.*` calls — read the value on demand with `.get(ui)` /
+    /// `.copied(ui)`.
+    ///
+    /// Before v0.21.0 this returned `&T`, a live borrow of `&mut Context` that
+    /// could not be held across subsequent `ui.*` mutations. That form is now
+    /// [`use_memo_ref`](Self::use_memo_ref) (deprecated). Migrate
+    /// `let x = *ui.use_memo(&d, f);` to `let x = ui.use_memo(&d, f).copied(ui);`.
+    ///
+    /// [`use_state`]: Self::use_state
+    ///
     /// # Example
-    /// ```ignore
-    /// let doubled = ui.use_memo(&count, |c| c * 2);
-    /// ui.text(format!("Doubled: {doubled}"));
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let count = ui.use_state(|| 0i32);
+    /// let count_val = *count.get(ui);
+    /// let doubled = ui.use_memo(&count_val, |c| c * 2);
+    /// // The handle survives an intervening `ui.*` call (this is the whole point).
+    /// ui.text("doubled:");
+    /// ui.text(format!("{}", doubled.copied(ui)));
+    /// # });
     /// ```
     pub fn use_memo<T: 'static, D: PartialEq + Clone + 'static>(
+        &mut self,
+        deps: &D,
+        compute: impl FnOnce(&D) -> T,
+    ) -> Memo<T> {
+        let idx = self.rollback.hook_cursor;
+        self.rollback.hook_cursor += 1;
+
+        // First call at this slot: allocate fresh state. Deps are stored
+        // type-erased so the read path (`Memo::get`) can downcast `MemoSlot<T>`
+        // without restating `D`.
+        if idx >= self.hook_states.len() {
+            self.hook_states.push(Box::new(MemoSlot {
+                deps: Box::new(deps.clone()),
+                value: compute(deps),
+            }));
+            return Memo::from_idx(idx);
+        }
+
+        // Slot already exists: it must be the same `MemoSlot<T>` shape we used
+        // last frame, or the caller broke the rules-of-hooks contract.
+        match self.hook_states[idx].downcast_mut::<MemoSlot<T>>() {
+            Some(slot) => {
+                // Compare against the previous (type-erased) deps. A failed
+                // downcast of the stored deps to `&D` is treated as stale so the
+                // value is recomputed rather than silently kept.
+                let stale = slot
+                    .deps
+                    .downcast_ref::<D>()
+                    .map(|prev| *prev != *deps)
+                    .unwrap_or(true);
+                if stale {
+                    slot.deps = Box::new(deps.clone());
+                    slot.value = compute(deps);
+                }
+            }
+            None => panic!(
+                "Hook type mismatch at index {}: expected {}. Hooks must be called in the same order every frame.",
+                idx,
+                std::any::type_name::<MemoSlot<T>>()
+            ),
+        }
+        Memo::from_idx(idx)
+    }
+
+    /// Deprecated `&T`-returning form of [`use_memo`](Self::use_memo).
+    ///
+    /// **Deprecated since 0.21.0**: [`use_memo`](Self::use_memo) now returns a
+    /// [`Memo<T>`] handle that does not borrow `ui`, so it composes with later
+    /// `ui.*` calls. This alias preserves the original behaviour (returning a
+    /// `&T` borrow of `ui`) for callers that cannot migrate immediately; the
+    /// borrow keeps `ui` immutably borrowed until the reference is dropped.
+    ///
+    /// Migrate `let x = *ui.use_memo_ref(&d, f);` to
+    /// `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// # #[allow(deprecated)]
+    /// let doubled = *ui.use_memo_ref(&21i32, |c| c * 2);
+    /// ui.text(format!("{doubled}"));
+    /// # });
+    /// ```
+    #[deprecated(
+        since = "0.21.0",
+        note = "use_memo now returns a Memo<T> handle; call `.get(ui)` / `.copied(ui)`"
+    )]
+    pub fn use_memo_ref<T: 'static, D: PartialEq + Clone + 'static>(
         &mut self,
         deps: &D,
         compute: impl FnOnce(&D) -> T,
