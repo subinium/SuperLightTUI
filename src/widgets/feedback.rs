@@ -98,6 +98,64 @@ impl Default for RichLogState {
     }
 }
 
+/// An absolute calendar date `(year, month 1–12, day 1–31)`.
+///
+/// Used by [`CalendarState`] to represent range endpoints that can span
+/// month and year boundaries (a `selected_day` alone is scoped to the
+/// currently displayed month). Available since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::CalDate;
+///
+/// let d = CalDate { year: 2024, month: 12, day: 31 };
+/// assert_eq!((d.year, d.month, d.day), (2024, 12, 31));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalDate {
+    /// Calendar year.
+    pub year: i32,
+    /// Month of year, `1`–`12`.
+    pub month: u32,
+    /// Day of month, `1`–`31`.
+    pub day: u32,
+}
+
+impl CalDate {
+    /// Sort key ordering this date against another by year, then month, then day.
+    fn key(&self) -> (i32, u32, u32) {
+        (self.year, self.month, self.day)
+    }
+}
+
+/// Selection behavior for [`CalendarState`].
+///
+/// Defaults to [`Single`](CalendarSelect::Single), preserving the original
+/// single-date pick. Switch to [`Range`](CalendarSelect::Range) via
+/// [`CalendarState::with_range`] for start/end range selection. Available
+/// since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{CalendarSelect, CalendarState};
+///
+/// let mut cal = CalendarState::from_ym(2024, 3);
+/// assert_eq!(cal.mode(), CalendarSelect::Single);
+/// cal.with_range();
+/// assert_eq!(cal.mode(), CalendarSelect::Range);
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CalendarSelect {
+    /// Pick exactly one date (default).
+    #[default]
+    Single,
+    /// Pick a start/end date range via Shift-extend.
+    Range,
+}
+
 /// State for the calendar date picker widget.
 #[derive(Debug, Clone)]
 pub struct CalendarState {
@@ -105,9 +163,15 @@ pub struct CalendarState {
     pub year: i32,
     /// Current display month (1–12).
     pub month: u32,
-    /// Currently selected day, if any.
+    /// Currently selected day, if any (single-date mode).
     pub selected_day: Option<u32>,
     pub(crate) cursor_day: u32,
+    pub(crate) mode: CalendarSelect,
+    pub(crate) anchor: Option<CalDate>,
+    pub(crate) extent: Option<CalDate>,
+    pub(crate) time_enabled: bool,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
 }
 
 impl CalendarState {
@@ -125,12 +189,160 @@ impl CalendarState {
             month,
             selected_day: None,
             cursor_day: 1,
+            mode: CalendarSelect::Single,
+            anchor: None,
+            extent: None,
+            time_enabled: false,
+            hour: 0,
+            minute: 0,
         }
+    }
+
+    /// Enable date-range selection (start/end via Shift-extend).
+    ///
+    /// Single-date mode remains the default; call this to opt in. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// ```
+    pub fn with_range(&mut self) -> &mut Self {
+        self.mode = CalendarSelect::Range;
+        self
+    }
+
+    /// Enable hour/minute selection, rendered as `HH:MM` below the grid.
+    ///
+    /// Off by default — no time row is rendered unless enabled. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_time();
+    /// ```
+    pub fn with_time(&mut self) -> &mut Self {
+        self.time_enabled = true;
+        self
+    }
+
+    /// The active selection mode (`Single` by default).
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{CalendarSelect, CalendarState};
+    ///
+    /// let cal = CalendarState::from_ym(2024, 3);
+    /// assert_eq!(cal.mode(), CalendarSelect::Single);
+    /// ```
+    pub fn mode(&self) -> CalendarSelect {
+        self.mode
     }
 
     /// Returns the selected date as `(year, month, day)`, if any.
     pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
         self.selected_day.map(|day| (self.year, self.month, day))
+    }
+
+    /// The normalized selected range as `(start, end)` with `start <= end`.
+    ///
+    /// Returns `None` in single-date mode or until an anchor has been set in
+    /// range mode. Endpoints are absolute [`CalDate`]s, so a range may span
+    /// month or year boundaries. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// assert!(cal.selected_range().is_none());
+    /// ```
+    pub fn selected_range(&self) -> Option<(CalDate, CalDate)> {
+        if self.mode != CalendarSelect::Range {
+            return None;
+        }
+        let anchor = self.anchor?;
+        let extent = self.extent.unwrap_or(anchor);
+        if anchor.key() <= extent.key() {
+            Some((anchor, extent))
+        } else {
+            Some((extent, anchor))
+        }
+    }
+
+    /// The selected `(hour, minute)` when time is enabled, else `None`.
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// assert!(cal.selected_time().is_none());
+    /// cal.with_time();
+    /// assert_eq!(cal.selected_time(), Some((0, 0)));
+    /// ```
+    pub fn selected_time(&self) -> Option<(u8, u8)> {
+        self.time_enabled.then_some((self.hour, self.minute))
+    }
+
+    /// The cursor day as an absolute [`CalDate`] in the displayed month.
+    pub(crate) fn cursor_date(&self) -> CalDate {
+        CalDate {
+            year: self.year,
+            month: self.month,
+            day: self.cursor_day,
+        }
+    }
+
+    /// Set the range anchor to the cursor, clearing any prior extent.
+    pub(crate) fn set_anchor_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        self.anchor = Some(cur);
+        self.extent = None;
+    }
+
+    /// Set the range extent endpoint to the cursor.
+    ///
+    /// If no anchor exists yet, the cursor becomes the anchor.
+    pub(crate) fn extend_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        if self.anchor.is_none() {
+            self.anchor = Some(cur);
+        }
+        self.extent = Some(cur);
+    }
+
+    /// Whether the given absolute date falls inside the selected range
+    /// (inclusive of both endpoints).
+    pub(crate) fn in_range(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => start.key() <= d.key() && d.key() <= end.key(),
+            None => false,
+        }
+    }
+
+    /// Whether the given absolute date is one of the range endpoints.
+    pub(crate) fn is_range_endpoint(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => d == start || d == end,
+            None => false,
+        }
     }
 
     /// Navigate to the previous month.

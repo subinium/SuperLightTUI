@@ -84,6 +84,23 @@ impl EventBuilder {
         self
     }
 
+    /// Append a left-button press at `(x, y)` carrying the given modifiers.
+    ///
+    /// Use this to simulate `Shift`+click (e.g. range extension in the
+    /// calendar widget). The plain [`click`](EventBuilder::click) helper
+    /// always sends `KeyModifiers::NONE`.
+    pub fn click_with(mut self, x: u32, y: u32, modifiers: KeyModifiers) -> Self {
+        self.events.push(Event::Mouse(MouseEvent {
+            kind: MouseKind::Down(MouseButton::Left),
+            x,
+            y,
+            modifiers,
+            pixel_x: None,
+            pixel_y: None,
+        }));
+        self
+    }
+
     /// Append a left mouse button release at terminal position `(x, y)`.
     pub fn mouse_up(mut self, x: u32, y: u32) -> Self {
         self.events.push(Event::mouse_up(x, y));

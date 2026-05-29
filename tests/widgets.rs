@@ -5264,3 +5264,341 @@ fn calendar_h_l_move_by_day() {
     });
     assert_eq!((state.year, state.month), (2024, 6));
 }
+
+/// Default (single) mode still selects one date and never produces a range.
+#[test]
+fn calendar_single_mode_unchanged() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    assert_eq!(state.mode(), slt::CalendarSelect::Single);
+
+    // Walk to June 10 and commit with Enter.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..9 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let events = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    assert_eq!(state.selected_date(), Some((2024, 6, 10)));
+    assert!(
+        state.selected_range().is_none(),
+        "single mode must not expose a range"
+    );
+    assert!(state.selected_time().is_none(), "time is off by default");
+}
+
+/// `Shift+Right` extends the range forward from the anchor.
+#[test]
+fn calendar_shift_right_extends_range() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Walk cursor to June 5, anchor with Enter.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..4 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_range(),
+        Some((
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 5
+            },
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 5
+            }
+        )),
+        "anchor sets a degenerate start==end range"
+    );
+
+    // Shift+Right ×3 → extend to June 8.
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..3 {
+        ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.year, start.month, start.day), (2024, 6, 5));
+    assert_eq!((end.year, end.month, end.day), (2024, 6, 8));
+}
+
+/// A Shift-extended range may cross a month boundary.
+#[test]
+fn calendar_range_spans_month_boundary() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 1);
+    state.with_range();
+
+    // Walk cursor to Jan 30 (29 Right presses from day 1), anchor.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..29 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Shift+Right ×4 → Jan 30 → Jan 31 → Feb 1, 2, 3.
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..4 {
+        ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.year, start.month, start.day), (2024, 1, 30));
+    assert_eq!(
+        (end.year, end.month, end.day),
+        (2024, 2, 3),
+        "extent crossed into February"
+    );
+}
+
+/// Extending backward still yields a normalized `(start, end)` with start <= end.
+#[test]
+fn calendar_range_normalizes_order() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Anchor on June 15.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..14 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let setup = walk.key_code(KeyCode::Enter).build();
+    tb.render_with_events(setup, 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Shift+Left ×5 → extent at June 10 (before the anchor).
+    let mut ext = slt::EventBuilder::new();
+    for _ in 0..5 {
+        ext = ext.key_with(KeyCode::Left, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(ext.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert!(
+        (start.year, start.month, start.day) <= (end.year, end.month, end.day),
+        "range must be normalized: {start:?} > {end:?}"
+    );
+    assert_eq!((start.month, start.day), (6, 10));
+    assert_eq!((end.month, end.day), (6, 15));
+}
+
+/// Plain click sets the anchor; Shift+click sets the extent endpoint.
+#[test]
+fn calendar_shift_click_sets_extent() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // June 2024: first weekday (Mo-based) for June 1 is Saturday → first=5.
+    // Grid rows start at rel_y==2; column width is 3 cells; rel_x = col*3.
+    // Day 1 sits at col 5 (rel_x 15), day 8 at col 5 row 1 (rel_y 3), etc.
+    // We compute click positions from first_weekday so the test is robust.
+    // For day d: idx = first + (d - 1); week = idx / 7; col = idx % 7.
+    let click_pos = |day: u32| -> (u32, u32) {
+        let first = 5_u32; // June 2024 starts on Saturday (Mo-indexed = 5)
+        let idx = first + (day - 1);
+        let week = idx / 7;
+        let col = idx % 7;
+        // widget at (0,0): title row 0, weekday row 1, weeks start row 2.
+        // each day cell is 3 wide, centered text but col*3 lands inside cell.
+        (col * 3 + 1, 2 + week)
+    };
+
+    let (ax, ay) = click_pos(3);
+    let (ex, ey) = click_pos(7);
+
+    // Warm-up frame populates the hit map so the next frame's click resolves.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    // Plain click on June 3 → anchor.
+    tb.render_with_events(slt::EventBuilder::new().click(ax, ay).build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+    assert_eq!(
+        state.selected_range(),
+        Some((
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 3
+            },
+            slt::CalDate {
+                year: 2024,
+                month: 6,
+                day: 3
+            }
+        )),
+        "plain click should anchor on June 3"
+    );
+
+    // Shift+click on June 7 → extent.
+    tb.render_with_events(
+        slt::EventBuilder::new()
+            .click_with(ex, ey, KeyModifiers::SHIFT)
+            .build(),
+        0,
+        1,
+        |ui| {
+            ui.calendar(&mut state);
+        },
+    );
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.month, start.day), (6, 3));
+    assert_eq!((end.month, end.day), (6, 7));
+}
+
+/// The range band renders each in-band day number, including endpoints.
+#[test]
+fn calendar_range_band_renders() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Anchor June 10, Shift-extend to June 13.
+    let mut walk = slt::EventBuilder::new();
+    for _ in 0..9 {
+        walk = walk.key_code(KeyCode::Right);
+    }
+    let mut setup = walk.key_code(KeyCode::Enter);
+    for _ in 0..3 {
+        setup = setup.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    tb.render_with_events(setup.build(), 0, 1, |ui| {
+        ui.calendar(&mut state);
+    });
+
+    let (start, end) = state.selected_range().expect("range active");
+    assert_eq!((start.day, end.day), (10, 13));
+
+    // All in-band day numbers should be present in the rendered text.
+    for d in ["10", "11", "12", "13"] {
+        tb.assert_contains(d);
+    }
+}
+
+/// Time row is hidden by default and shown after `with_time()`.
+#[test]
+fn calendar_time_disabled_no_row() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    tb.render(|ui| {
+        ui.calendar(&mut state);
+    });
+    tb.assert_not_contains("00:00");
+}
+
+#[test]
+fn calendar_time_enabled_renders() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_time();
+    tb.render(|ui| {
+        ui.calendar(&mut state);
+    });
+    tb.assert_contains("00:00");
+    assert_eq!(state.selected_time(), Some((0, 0)));
+}
+
+/// `Response.changed` flips on range/time changes and is false on no-op frames.
+#[test]
+fn calendar_changed_flag() {
+    let mut tb = TestBackend::new(40, 14);
+    let mut state = CalendarState::from_ym(2024, 6);
+    state.with_range();
+
+    // Frame 1: anchor via Enter → changed.
+    let mut changed = false;
+    tb.render_with_events(
+        slt::EventBuilder::new().key_code(KeyCode::Enter).build(),
+        0,
+        1,
+        |ui| {
+            changed = ui.calendar(&mut state).changed;
+        },
+    );
+    assert!(changed, "anchoring should flip changed");
+
+    // Frame 2: no events → no change.
+    tb.render_with_events(Vec::new(), 0, 1, |ui| {
+        changed = ui.calendar(&mut state).changed;
+    });
+    assert!(!changed, "no-op frame must not report changed");
+
+    // Frame 3: Shift+Right extends the range → changed.
+    tb.render_with_events(
+        slt::EventBuilder::new()
+            .key_with(KeyCode::Right, KeyModifiers::SHIFT)
+            .build(),
+        0,
+        1,
+        |ui| {
+            changed = ui.calendar(&mut state).changed;
+        },
+    );
+    assert!(changed, "range extend should flip changed");
+}
+
+proptest::proptest! {
+    /// Random anchor/extent walks always yield an ordered, inclusive range.
+    #[test]
+    fn calendar_range_always_ordered(anchor_day in 1u32..=28, fwd in 0i32..40, back in 0i32..40) {
+        let mut tb = TestBackend::new(40, 14);
+        let mut state = CalendarState::from_ym(2024, 6);
+        state.with_range();
+
+        // Walk to the anchor day, then anchor.
+        let mut walk = slt::EventBuilder::new();
+        for _ in 1..anchor_day {
+            walk = walk.key_code(KeyCode::Right);
+        }
+        let setup = walk.key_code(KeyCode::Enter).build();
+        tb.render_with_events(setup, 0, 1, |ui| {
+            ui.calendar(&mut state);
+        });
+
+        // Extend forward then backward by arbitrary amounts.
+        let mut ext = slt::EventBuilder::new();
+        for _ in 0..fwd {
+            ext = ext.key_with(KeyCode::Right, KeyModifiers::SHIFT);
+        }
+        for _ in 0..back {
+            ext = ext.key_with(KeyCode::Left, KeyModifiers::SHIFT);
+        }
+        tb.render_with_events(ext.build(), 0, 1, |ui| {
+            ui.calendar(&mut state);
+        });
+
+        let (start, end) = state.selected_range().expect("range active after anchor");
+        proptest::prop_assert!(
+            (start.year, start.month, start.day) <= (end.year, end.month, end.day),
+            "range not ordered: {start:?} > {end:?}"
+        );
+    }
+}
