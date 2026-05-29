@@ -1,4 +1,4 @@
-use crate::{KeyCode, KeyModifiers};
+use crate::{KeyCode, KeyModifiers, ModifierKey};
 
 /// A single key binding with display text and description.
 #[derive(Debug, Clone)]
@@ -145,6 +145,26 @@ fn display_for_key_code(key: &KeyCode) -> String {
         KeyCode::Menu => "Menu".to_string(),
         KeyCode::KeypadBegin => "KP5".to_string(),
         KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Modifier(m) => display_for_modifier_key(*m).to_string(),
+    }
+}
+
+fn display_for_modifier_key(m: ModifierKey) -> &'static str {
+    match m {
+        ModifierKey::LeftShift => "LShift",
+        ModifierKey::LeftCtrl => "LCtrl",
+        ModifierKey::LeftAlt => "LAlt",
+        ModifierKey::LeftSuper => "LSuper",
+        ModifierKey::RightShift => "RShift",
+        ModifierKey::RightCtrl => "RCtrl",
+        ModifierKey::RightAlt => "RAlt",
+        ModifierKey::RightSuper => "RSuper",
+        ModifierKey::LeftHyper => "LHyper",
+        ModifierKey::LeftMeta => "LMeta",
+        ModifierKey::RightHyper => "RHyper",
+        ModifierKey::RightMeta => "RMeta",
+        ModifierKey::IsoLevel3Shift => "ISO3",
+        ModifierKey::IsoLevel5Shift => "ISO5",
     }
 }
 

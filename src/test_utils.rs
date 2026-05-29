@@ -7,7 +7,8 @@
 use crate::buffer::Buffer;
 use crate::context::Context;
 use crate::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
+    MouseKind,
 };
 use crate::rect::Rect;
 use crate::style::Style;
@@ -66,6 +67,36 @@ impl EventBuilder {
         self.events.push(Event::Key(KeyEvent {
             code,
             modifiers,
+            kind: KeyEventKind::Press,
+        }));
+        self
+    }
+
+    /// Append a modifier-only key-press event (a bare Ctrl/Shift/Alt/Super
+    /// press with no accompanying character).
+    ///
+    /// Mirrors what the Kitty keyboard protocol delivers when
+    /// [`RunConfig::report_all_keys(true)`](crate::RunConfig::report_all_keys)
+    /// is enabled, so widget tests can simulate modifier-only presses without
+    /// poking crossterm. The event carries [`KeyCode::Modifier`] with
+    /// [`KeyModifiers::NONE`].
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{EventBuilder, KeyCode, ModifierKey};
+    ///
+    /// let events = EventBuilder::new()
+    ///     .key_modifier(ModifierKey::LeftCtrl)
+    ///     .build();
+    /// assert_eq!(events.len(), 1);
+    /// ```
+    pub fn key_modifier(mut self, m: ModifierKey) -> Self {
+        self.events.push(Event::Key(KeyEvent {
+            code: KeyCode::Modifier(m),
+            modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
         }));
         self
@@ -737,6 +768,42 @@ mod tests {
     fn event_builder_focus_events_chaining() {
         let events = EventBuilder::new().focus_lost().focus_gained().build();
         assert_eq!(events, vec![Event::FocusLost, Event::FocusGained]);
+    }
+
+    /// Issue #261: `key_modifier` builds a single modifier-only key-press event.
+    #[test]
+    fn event_builder_key_modifier_produces_modifier_event() {
+        let events = EventBuilder::new()
+            .key_modifier(ModifierKey::LeftSuper)
+            .build();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(k) => {
+                assert_eq!(k.code, KeyCode::Modifier(ModifierKey::LeftSuper));
+                assert_eq!(k.modifiers, KeyModifiers::NONE);
+                assert!(matches!(k.kind, KeyEventKind::Press));
+            }
+            _ => panic!("expected key event"),
+        }
+    }
+
+    /// Issue #261: a modifier-only event reaches the frame closure end-to-end.
+    #[test]
+    fn modifier_key_event_reaches_frame_closure() {
+        let mut tb = TestBackend::new(20, 2);
+        let events = EventBuilder::new()
+            .key_modifier(ModifierKey::LeftCtrl)
+            .build();
+        tb.sequence()
+            .events(events, |ui| {
+                if ui.key_code(KeyCode::Modifier(ModifierKey::LeftCtrl)) {
+                    ui.text("ctrl-down");
+                } else {
+                    ui.text("idle");
+                }
+            })
+            .run();
+        tb.assert_contains("ctrl-down");
     }
 
     // ---- #229 record_frames -------------------------------------------------
