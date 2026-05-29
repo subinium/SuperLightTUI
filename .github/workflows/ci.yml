@@ -149,6 +149,12 @@ jobs:
   gallery:
     name: VHS Gallery
     runs-on: ubuntu-latest
+    # Advisory: VHS rendering needs a virtual TTY + ttyd + ffmpeg and runs the
+    # release examples headlessly, which is inherently finicky in CI. The hard
+    # gate for README <-> tape parity is the `gallery_manifest` test in the Test
+    # job (plain `cargo test`); this job regenerates the demo GIF gallery and
+    # uploads it as a best-effort artifact, so a flake here must not block merge.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
