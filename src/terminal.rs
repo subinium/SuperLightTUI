@@ -341,6 +341,7 @@ struct TerminalSessionGuard {
     mode: TerminalSessionMode,
     mouse_enabled: bool,
     kitty_keyboard: bool,
+    report_all_keys: bool,
 }
 
 impl TerminalSessionGuard {
@@ -349,11 +350,13 @@ impl TerminalSessionGuard {
         stdout: &mut impl Write,
         mouse_enabled: bool,
         kitty_keyboard: bool,
+        report_all_keys: bool,
     ) -> io::Result<Self> {
         let guard = Self {
             mode,
             mouse_enabled,
             kitty_keyboard,
+            report_all_keys,
         };
 
         terminal::enable_raw_mode()?;
@@ -382,8 +385,14 @@ impl TerminalSessionGuard {
 impl Terminal {
     /// Construct a fullscreen terminal backend; enters raw mode and the
     /// alternate screen and optionally enables mouse capture and the
-    /// kitty keyboard protocol.
-    pub fn new(mouse: bool, kitty_keyboard: bool, color_depth: ColorDepth) -> io::Result<Self> {
+    /// kitty keyboard protocol. When `report_all_keys` is set (and
+    /// `kitty_keyboard` is too), bare modifier presses are reported.
+    pub fn new(
+        mouse: bool,
+        kitty_keyboard: bool,
+        report_all_keys: bool,
+        color_depth: ColorDepth,
+    ) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
 
@@ -393,6 +402,7 @@ impl Terminal {
             &mut raw,
             mouse,
             kitty_keyboard,
+            report_all_keys,
         )?;
 
         Ok(Self {
@@ -502,10 +512,13 @@ impl InlineTerminal {
     /// Construct an inline terminal backend that renders `height` rows
     /// below the current cursor without entering the alternate screen.
     /// Optionally enables mouse capture and the kitty keyboard protocol.
+    /// When `report_all_keys` is set (and `kitty_keyboard` is too), bare
+    /// modifier presses are reported.
     pub fn new(
         height: u32,
         mouse: bool,
         kitty_keyboard: bool,
+        report_all_keys: bool,
         color_depth: ColorDepth,
     ) -> io::Result<Self> {
         let (cols, _) = terminal::size()?;
@@ -517,6 +530,7 @@ impl InlineTerminal {
             &mut raw,
             mouse,
             kitty_keyboard,
+            report_all_keys,
         )?;
 
         let (_, cursor_row) = match cursor::position() {
@@ -1369,17 +1383,33 @@ fn write_session_enter(stdout: &mut impl Write, session: &TerminalSessionGuard) 
         execute!(stdout, EnableMouseCapture)?;
     }
     if session.kitty_keyboard {
-        use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+        use crossterm::event::PushKeyboardEnhancementFlags;
         let _ = execute!(
             stdout,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            )
+            PushKeyboardEnhancementFlags(kitty_flags(session.report_all_keys))
         );
     }
 
     Ok(())
+}
+
+/// Assemble the Kitty keyboard enhancement flags to push.
+///
+/// Always sets `DISAMBIGUATE_ESCAPE_CODES | REPORT_EVENT_TYPES`. When
+/// `report_all_keys` is `true`, also OR-es in
+/// `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, which is the only mechanism by which a
+/// spec-compliant terminal emits a bare modifier as a key event.
+///
+/// This is a pure helper so the flag assembly can be unit-tested without
+/// touching stdout.
+fn kitty_flags(report_all_keys: bool) -> crossterm::event::KeyboardEnhancementFlags {
+    use crossterm::event::KeyboardEnhancementFlags;
+    let mut flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    if report_all_keys {
+        flags |= KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+    }
+    flags
 }
 
 fn write_session_cleanup(
@@ -1439,6 +1469,7 @@ mod tests {
             mode: TerminalSessionMode::Fullscreen,
             mouse_enabled: false,
             kitty_keyboard: false,
+            report_all_keys: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1454,6 +1485,7 @@ mod tests {
             mode: TerminalSessionMode::Inline,
             mouse_enabled: false,
             kitty_keyboard: false,
+            report_all_keys: false,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -1482,6 +1514,24 @@ mod tests {
         assert!(output.ends_with('\n'));
         assert!(output.contains("\u{1b}[?25h"));
         assert!(output.contains("\u{1b}[?2004l"));
+    }
+
+    #[test]
+    fn kitty_flags_base_set_excludes_report_all_keys() {
+        use crossterm::event::KeyboardEnhancementFlags;
+        let flags = kitty_flags(false);
+        assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(!flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+    }
+
+    #[test]
+    fn kitty_flags_report_all_keys_sets_flag() {
+        use crossterm::event::KeyboardEnhancementFlags;
+        let flags = kitty_flags(true);
+        assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
     }
 
     #[test]

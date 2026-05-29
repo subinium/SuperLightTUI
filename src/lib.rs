@@ -163,7 +163,8 @@ pub use context::{
     ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Response, State, TreemapItem, Widget,
 };
 pub use event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
+    MouseKind,
 };
 pub use halfblock::HalfBlockImage;
 pub use keymap::{Binding, KeyMap, PublishedKeymap, WidgetKeyHelp};
@@ -456,6 +457,20 @@ pub struct RunConfig {
     /// Terminals that don't support it silently ignore the request.
     /// Defaults to `false`.
     pub kitty_keyboard: bool,
+    /// Whether to request modifier-only key events (bare Ctrl/Shift/Alt/Super
+    /// presses and releases, with no accompanying character).
+    ///
+    /// Has **no effect** unless [`kitty_keyboard`](Self::kitty_keyboard) is also
+    /// `true`: it OR-es the Kitty `REPORT_ALL_KEYS_AS_ESCAPE_CODES`
+    /// progressive-enhancement flag into the pushed flag set. On supporting
+    /// terminals (kitty, Ghostty, WezTerm) this makes bare modifier presses
+    /// arrive as [`KeyCode::Modifier`] events; other terminals never emit them.
+    ///
+    /// Kept opt-in to avoid flooding apps with modifier events they don't want.
+    /// Defaults to `false`.
+    ///
+    /// Since 0.21.0.
+    pub report_all_keys: bool,
     /// The color theme applied to all widgets automatically.
     ///
     /// Defaults to [`Theme::dark()`].
@@ -514,6 +529,7 @@ impl Default for RunConfig {
             tick_rate: Duration::from_millis(16),
             mouse: false,
             kitty_keyboard: false,
+            report_all_keys: false,
             theme: Theme::dark(),
             color_depth: None,
             max_fps: Some(60),
@@ -541,6 +557,28 @@ impl RunConfig {
     /// Enable or disable Kitty keyboard protocol.
     pub fn kitty_keyboard(mut self, enabled: bool) -> Self {
         self.kitty_keyboard = enabled;
+        self
+    }
+
+    /// Enable or disable modifier-only key reporting (Kitty
+    /// `REPORT_ALL_KEYS_AS_ESCAPE_CODES`).
+    ///
+    /// Requires [`kitty_keyboard(true)`](Self::kitty_keyboard) to have any
+    /// effect. When enabled on a supporting terminal, bare modifier presses
+    /// and releases arrive as [`KeyCode::Modifier`] events. Defaults to
+    /// `false`.
+    ///
+    /// Since 0.21.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().kitty_keyboard(true).report_all_keys(true);
+    /// assert!(cfg.report_all_keys);
+    /// ```
+    pub fn report_all_keys(mut self, enabled: bool) -> Self {
+        self.report_all_keys = enabled;
         self
     }
 
@@ -851,7 +889,12 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = Terminal::new(
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -959,7 +1002,12 @@ fn run_async_loop<M: Send + 'static>(
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = Terminal::new(config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = Terminal::new(
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -1053,7 +1101,13 @@ pub fn run_inline_with(
 
     install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
-    let mut term = InlineTerminal::new(height, config.mouse, config.kitty_keyboard, color_depth)?;
+    let mut term = InlineTerminal::new(
+        height,
+        config.mouse,
+        config.kitty_keyboard,
+        config.report_all_keys,
+        color_depth,
+    )?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -1140,6 +1194,7 @@ pub fn run_static_with(
         dynamic_height,
         config.mouse,
         config.kitty_keyboard,
+        config.report_all_keys,
         color_depth,
     )?;
     set_terminal_title(&config.title);
