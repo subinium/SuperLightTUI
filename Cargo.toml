@@ -235,6 +235,19 @@ path = "examples/v020_perf_audit.rs"
 name = "v020_test_utils"
 path = "examples/v020_test_utils.rs"
 
+# ── v0.21 coverage ──────────────────────────────────────────────────
+# v0210_widgets: paginator / number_input / variable-height virtual_list /
+#   scheduler / devtools inspector (widgets that shipped in 0.21.0 without a
+#   dedicated example). v0211_tour: the 0.21.1 API additions.
+
+[[example]]
+name = "v0210_widgets"
+path = "examples/v0210_widgets.rs"
+
+[[example]]
+name = "v0211_tour"
+path = "examples/v0211_tour.rs"
+
 [[bench]]
 name = "benchmarks"
 harness = false

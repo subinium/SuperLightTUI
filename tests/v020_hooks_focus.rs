@@ -749,11 +749,11 @@ fn scroll_delta_is_hover_gated() {
 
     // Wheel down off the widget -> 0 for the widget (hover-gated).
     let off = Cell::new(99i32);
-    let ofr = &off;
+    let off_ref = &off;
     let ox = (r.right() + 2).min(19);
     let oy = (r.bottom() + 1).min(3);
     tb.run_with_events(EventBuilder::new().scroll_down(ox, oy).build(), |ui| {
-        ofr.set(ui.button("ok").scroll_delta);
+        off_ref.set(ui.button("ok").scroll_delta);
     });
     assert_eq!(
         off.get(),

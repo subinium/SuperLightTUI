@@ -143,11 +143,13 @@ pub use terminal::__bench_flush_buffer_diff_mut;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::__bench_flush_buffer_diff_mut_with_buf;
+#[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::__bench_flush_kitty;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
+#[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::{__BenchSprixelFixture, __bench_flush_sprixels, __bench_new_sprixel_fixture};
 /// Runtime terminal capability probe (issue #264): read-only [`Capabilities`]

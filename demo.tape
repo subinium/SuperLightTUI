@@ -15,12 +15,6 @@ Set Margin 0
 Require cargo
 
 Hide
-Type "cargo build --release --example demo 2>&1"
-Enter
-Sleep 60s
-Type "clear"
-Enter
-Sleep 1s
 Type "./target/release/examples/demo"
 Enter
 Sleep 2s
