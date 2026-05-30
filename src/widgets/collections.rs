@@ -200,6 +200,78 @@ impl ListState {
         self.items.get(data_idx).map(String::as_str)
     }
 
+    /// Move the item at data index `from` to data index `to`, preserving
+    /// selection on the moved item.
+    ///
+    /// Indices address the underlying [`items`](ListState::items) vector (the
+    /// unfiltered order), not the filtered view. Out-of-range indices and a
+    /// no-op `from == to` move leave the list untouched and return `false`.
+    /// The parallel search cache and any per-item heights are kept in sync, and
+    /// the filtered view is rebuilt so `selected` continues to point at the item
+    /// that was moved when it remains visible.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::ListState;
+    ///
+    /// let mut state = ListState::new(vec!["a", "b", "c"]);
+    /// assert!(state.move_item(0, 2));
+    /// assert_eq!(state.selected_item(), Some("a"));
+    /// ```
+    ///
+    /// Available since `0.21.1`.
+    pub fn move_item(&mut self, from: usize, to: usize) -> bool {
+        let len = self.items.len();
+        if from >= len || to >= len || from == to {
+            return false;
+        }
+
+        // Remember which data index is currently selected so selection can
+        // follow the moved item (or stay on whatever item the user had).
+        let selected_data = self.view_indices.get(self.selected).copied();
+
+        let item = self.items.remove(from);
+        self.items.insert(to, item);
+
+        // Keep the lowercase search cache aligned with `items`.
+        if from < self.item_search_cache.len() {
+            let cached = self.item_search_cache.remove(from);
+            self.item_search_cache.insert(to.min(self.item_search_cache.len()), cached);
+        }
+
+        // Keep per-item heights aligned with `items` when present.
+        if let Some(heights) = self.item_heights.as_mut() {
+            if from < heights.len() {
+                let h = heights.remove(from);
+                heights.insert(to.min(heights.len()), h);
+            }
+        }
+        self.heights_dirty = true;
+
+        self.rebuild_view();
+
+        // Re-point `selected` at the same data item if it is still visible.
+        if let Some(data_idx) = selected_data {
+            // The moved item's data index is now `to`; anything that was
+            // `selected` shifts with the rotation, so re-derive from data idx.
+            let new_data_idx = if data_idx == from {
+                to
+            } else if from < to && data_idx > from && data_idx <= to {
+                data_idx - 1
+            } else if to < from && data_idx >= to && data_idx < from {
+                data_idx + 1
+            } else {
+                data_idx
+            };
+            if let Some(view_pos) = self.view_indices.iter().position(|&i| i == new_data_idx) {
+                self.selected = view_pos;
+            }
+        }
+
+        true
+    }
+
     fn rebuild_view(&mut self) {
         let tokens: Vec<String> = self
             .filter
@@ -222,6 +294,44 @@ impl ListState {
         if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
             self.selected = self.view_indices.len() - 1;
         }
+    }
+}
+
+/// Response from [`Context::list_reorderable`](crate::Context::list_reorderable).
+///
+/// Wraps the row-level [`Response`] (selection/hover/rect/focus) and additionally
+/// exposes the `(from, to)` data indices of an item that was reordered this frame
+/// via the keyboard. Implements `Deref<Target = Response>` so `r.changed`,
+/// `r.hovered`, `r.rect`, etc. work directly.
+///
+/// # Example
+///
+/// ```no_run
+/// # use slt::widgets::ListState;
+/// # let mut list = ListState::new(vec!["a", "b", "c"]);
+/// # slt::run(move |ui: &mut slt::Context| {
+/// let r = ui.list_reorderable(&mut list);
+/// if let Some((from, to)) = r.reordered {
+///     // persist the new order: item moved from `from` to `to`
+///     let _ = (from, to);
+/// }
+/// # });
+/// ```
+///
+/// Available since `0.21.1`.
+#[derive(Debug, Clone, Default)]
+#[must_use = "ListResponse contains interaction state — check .reordered, .changed, or .hovered"]
+pub struct ListResponse {
+    /// The row-level interaction response (selection change, hover, rect, focus).
+    pub response: Response,
+    /// `(from, to)` data indices of the item moved this frame, if any.
+    pub reordered: Option<(usize, usize)>,
+}
+
+impl std::ops::Deref for ListResponse {
+    type Target = Response;
+    fn deref(&self) -> &Response {
+        &self.response
     }
 }
 
@@ -1891,5 +2001,88 @@ mod scroll_state_progress_tests {
         let expected = state.progress_ratio() as f32;
         assert_eq!(state.progress(), expected);
         assert!((state.progress() - 0.5).abs() < f32::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod list_state_reorder_tests {
+    use super::ListState;
+
+    #[test]
+    fn move_item_forward_reorders_and_keeps_selection() {
+        let mut state = ListState::new(vec!["a", "b", "c", "d"]);
+        state.selected = 0; // "a"
+        assert!(state.move_item(0, 2));
+        assert_eq!(state.items, vec!["b", "c", "a", "d"]);
+        // Selection follows the moved item.
+        assert_eq!(state.selected_item(), Some("a"));
+        assert_eq!(state.selected, 2);
+    }
+
+    #[test]
+    fn move_item_backward_reorders_and_keeps_selection() {
+        let mut state = ListState::new(vec!["a", "b", "c", "d"]);
+        state.selected = 3; // "d"
+        assert!(state.move_item(3, 1));
+        assert_eq!(state.items, vec!["a", "d", "b", "c"]);
+        assert_eq!(state.selected_item(), Some("d"));
+        assert_eq!(state.selected, 1);
+    }
+
+    #[test]
+    fn move_item_keeps_search_cache_aligned() {
+        let mut state = ListState::new(vec!["Apple", "Banana", "Cherry"]);
+        assert!(state.move_item(0, 2));
+        // After the move the filter must address the reordered items.
+        state.set_filter("apple");
+        assert_eq!(state.visible_indices().len(), 1);
+        assert_eq!(state.selected_item(), Some("Apple"));
+    }
+
+    #[test]
+    fn move_item_keeps_per_item_heights_aligned() {
+        let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(vec![1, 2, 3]);
+        assert!(state.move_item(0, 2));
+        state.ensure_row_prefix();
+        // Heights travel with their items: order is now b(2), c(3), a(1).
+        assert_eq!(state.item_height(0), 2);
+        assert_eq!(state.item_height(1), 3);
+        assert_eq!(state.item_height(2), 1);
+    }
+
+    #[test]
+    fn move_item_noop_when_from_equals_to() {
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        state.selected = 1;
+        assert!(!state.move_item(1, 1));
+        assert_eq!(state.items, vec!["a", "b", "c"]);
+        assert_eq!(state.selected, 1);
+    }
+
+    #[test]
+    fn move_item_out_of_bounds_is_rejected() {
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        assert!(!state.move_item(0, 9));
+        assert!(!state.move_item(9, 0));
+        assert_eq!(state.items, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn move_item_empty_list_is_rejected() {
+        let mut state = ListState::new(Vec::<String>::new());
+        assert!(!state.move_item(0, 0));
+        assert!(state.items.is_empty());
+    }
+
+    #[test]
+    fn move_item_leaves_unrelated_selection_in_place() {
+        // Moving an item that is not selected should keep selection on the
+        // same logical item.
+        let mut state = ListState::new(vec!["a", "b", "c", "d"]);
+        state.selected = 3; // "d"
+        assert!(state.move_item(0, 1)); // swap a/b; "d" stays last
+        assert_eq!(state.items, vec!["b", "a", "c", "d"]);
+        assert_eq!(state.selected_item(), Some("d"));
+        assert_eq!(state.selected, 3);
     }
 }

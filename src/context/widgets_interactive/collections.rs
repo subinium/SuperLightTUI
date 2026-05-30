@@ -326,6 +326,189 @@ impl Context {
         response
     }
 
+    /// Render a selectable list that supports keyboard reordering of items.
+    ///
+    /// Behaves exactly like [`list`](Context::list) for navigation (Up/Down and
+    /// `k`/`j` move the selection) and click selection, but additionally lets the
+    /// focused user reorder the selected item with `Shift+Up`/`Shift+Down` or
+    /// `Alt+Up`/`Alt+Down`. Reordering operates on the underlying item order via
+    /// [`ListState::move_item`], keeping the selection on the moved item.
+    ///
+    /// Returns a [`ListResponse`] which derefs to the standard [`Response`] and
+    /// exposes [`reordered`](ListResponse::reordered) — `Some((from, to))` with
+    /// the data indices when an item moved this frame, otherwise `None`.
+    ///
+    /// The plain [`list`](Context::list) entry point is unchanged; opt into
+    /// reordering by calling this method instead.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::ListState;
+    /// # let mut list = ListState::new(vec!["First", "Second", "Third"]);
+    /// # slt::run(move |ui: &mut slt::Context| {
+    /// let r = ui.list_reorderable(&mut list);
+    /// if let Some((from, to)) = r.reordered {
+    ///     let _ = (from, to); // persist new order
+    /// }
+    /// # });
+    /// ```
+    ///
+    /// Available since `0.21.1`.
+    pub fn list_reorderable(&mut self, state: &mut ListState) -> crate::widgets::ListResponse {
+        let colors = self.widget_theme.list;
+        self.list_reorderable_colored(state, &colors)
+    }
+
+    /// Render a reorderable list with custom widget colors.
+    ///
+    /// See [`list_reorderable`](Context::list_reorderable) for the reorder
+    /// keybindings and return semantics.
+    ///
+    /// Available since `0.21.1`.
+    pub fn list_reorderable_colored(
+        &mut self,
+        state: &mut ListState,
+        colors: &WidgetColors,
+    ) -> crate::widgets::ListResponse {
+        let visible = state.visible_indices().to_vec();
+        if visible.is_empty() && state.items.is_empty() {
+            state.selected = 0;
+            return crate::widgets::ListResponse::default();
+        }
+
+        if !visible.is_empty() {
+            state.selected = state.selected.min(visible.len().saturating_sub(1));
+        }
+
+        let old_selected = state.selected;
+        let focused = self.register_focusable();
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
+
+        let mut reordered: Option<(usize, usize)> = None;
+
+        if focused {
+            let mut consumed_indices = Vec::new();
+            for (i, key) in self.available_key_presses() {
+                // Reorder takes precedence over navigation when a Shift/Alt
+                // modifier is held with a vertical-movement key.
+                let modded = key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers.contains(KeyModifiers::ALT);
+                // Direction of the move: -1 (up) or +1 (down) for the selected
+                // view row, `None` for non-movement keys.
+                let dir: Option<isize> = match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => Some(-1),
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => Some(1),
+                    _ => None,
+                };
+
+                if modded {
+                    if let Some(delta) = dir {
+                        let cur_view = state.selected;
+                        let target_view = if delta < 0 {
+                            cur_view.checked_sub(1)
+                        } else {
+                            let next = cur_view + 1;
+                            (next < visible.len()).then_some(next)
+                        };
+                        // Map both endpoints from view positions to data indices
+                        // so reordering survives an active filter.
+                        if let Some(target_view) = target_view {
+                            if let (Some(&from), Some(&to)) =
+                                (visible.get(cur_view), visible.get(target_view))
+                            {
+                                if state.move_item(from, to) {
+                                    reordered = Some((from, to));
+                                }
+                            }
+                        }
+                        // Consume regardless so a held modifier never also
+                        // triggers a plain navigation step on the same key.
+                        consumed_indices.push(i);
+                    }
+                    continue;
+                }
+
+                if dir.is_some() {
+                    let _ = handle_vertical_nav(
+                        &mut state.selected,
+                        visible.len().saturating_sub(1),
+                        key.code.clone(),
+                    );
+                    consumed_indices.push(i);
+                }
+            }
+            self.consume_indices(consumed_indices);
+        }
+
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            // `visible` may be stale after a reorder rebuilt the view; re-read
+            // the current visible count for bounds.
+            let visible_len = state.visible_indices().len();
+            for (i, mouse) in clicks {
+                let clicked_idx = (mouse.y - rect.y) as usize;
+                if clicked_idx < visible_len {
+                    state.selected = clicked_idx;
+                    consumed.push(i);
+                }
+            }
+            self.consume_indices(consumed);
+        }
+
+        // Re-read the (possibly reordered) view for rendering.
+        let visible = state.visible_indices().to_vec();
+
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(colors.border.unwrap_or(self.theme.border)),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+
+        for (view_idx, &item_idx) in visible.iter().enumerate() {
+            let item = &state.items[item_idx];
+            if view_idx == state.selected {
+                let mut selected_style = Style::new()
+                    .bg(colors.accent.unwrap_or(self.theme.selected_bg))
+                    .fg(colors.fg.unwrap_or(self.theme.selected_fg));
+                if focused {
+                    selected_style = selected_style.bold();
+                }
+                let mut row = String::with_capacity(2 + item.len());
+                row.push_str("▸ ");
+                row.push_str(item);
+                self.styled(row, selected_style);
+            } else {
+                let mut row = String::with_capacity(2 + item.len());
+                row.push_str("  ");
+                row.push_str(item);
+                self.styled(row, Style::new().fg(colors.fg.unwrap_or(self.theme.text)));
+            }
+        }
+
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+
+        response.changed = state.selected != old_selected || reordered.is_some();
+        crate::widgets::ListResponse {
+            response,
+            reordered,
+        }
+    }
+
     /// Render a calendar date picker with month navigation.
     ///
     /// Single-date mode is the default. Opt into range selection with
@@ -838,4 +1021,94 @@ fn collect_grid_elements(child_commands: Vec<Command>) -> Vec<Vec<Command>> {
         elements.push(pending_markers);
     }
     elements
+}
+
+#[cfg(test)]
+mod list_reorder_render_tests {
+    use crate::widgets::ListState;
+    use crate::{EventBuilder, KeyCode, KeyModifiers, TestBackend};
+
+    #[test]
+    fn shift_down_reorders_selected_item() {
+        let mut backend = TestBackend::new(20, 6);
+        let mut state = ListState::new(vec!["alpha", "beta", "gamma"]);
+        state.selected = 0; // "alpha"
+
+        let events = EventBuilder::new()
+            .key_with(KeyCode::Down, KeyModifiers::SHIFT)
+            .build();
+
+        let mut reordered = None;
+        backend.run_with_events(events, |ui| {
+            let r = ui.list_reorderable(&mut state);
+            reordered = r.reordered;
+        });
+
+        // "alpha" (data 0) swapped down with "beta" (data 1).
+        assert_eq!(reordered, Some((0, 1)));
+        assert_eq!(state.items, vec!["beta", "alpha", "gamma"]);
+        // Selection follows the moved item to its new position.
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.selected_item(), Some("alpha"));
+    }
+
+    #[test]
+    fn alt_up_reorders_selected_item() {
+        let mut backend = TestBackend::new(20, 6);
+        let mut state = ListState::new(vec!["one", "two", "three"]);
+        state.selected = 2; // "three"
+
+        let events = EventBuilder::new()
+            .key_with(KeyCode::Up, KeyModifiers::ALT)
+            .build();
+
+        let mut reordered = None;
+        backend.run_with_events(events, |ui| {
+            reordered = ui.list_reorderable(&mut state).reordered;
+        });
+
+        assert_eq!(reordered, Some((2, 1)));
+        assert_eq!(state.items, vec!["one", "three", "two"]);
+        assert_eq!(state.selected, 1);
+    }
+
+    #[test]
+    fn shift_up_at_top_is_a_noop() {
+        let mut backend = TestBackend::new(20, 6);
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        state.selected = 0;
+
+        let events = EventBuilder::new()
+            .key_with(KeyCode::Up, KeyModifiers::SHIFT)
+            .build();
+
+        let mut reordered = Some((9, 9));
+        backend.run_with_events(events, |ui| {
+            reordered = ui.list_reorderable(&mut state).reordered;
+        });
+
+        // No room to move up from the top: nothing reordered.
+        assert_eq!(reordered, None);
+        assert_eq!(state.items, vec!["a", "b", "c"]);
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn plain_down_navigates_without_reordering() {
+        let mut backend = TestBackend::new(20, 6);
+        let mut state = ListState::new(vec!["a", "b", "c"]);
+        state.selected = 0;
+
+        let events = EventBuilder::new().key_code(KeyCode::Down).build();
+
+        let mut reordered = Some((9, 9));
+        backend.run_with_events(events, |ui| {
+            reordered = ui.list_reorderable(&mut state).reordered;
+        });
+
+        // Without a modifier, Down moves the selection but never reorders.
+        assert_eq!(reordered, None);
+        assert_eq!(state.items, vec!["a", "b", "c"]);
+        assert_eq!(state.selected, 1);
+    }
 }
