@@ -41,20 +41,53 @@ impl Context {
         let diagnostics = &mut state.diagnostics;
         let consumed = vec![false; events.len()];
 
+        // Single wall-clock sample for this frame, reused for double-click
+        // timing below and for `frame_instant` (the timer/scheduler clock).
+        let frame_now = std::time::Instant::now();
         let mut mouse_pos = layout_feedback.last_mouse_pos;
         let mut click_pos = None;
         let mut right_click_pos = None;
+        let mut double_click_pos = None;
+        let mut scroll_pos = None;
+        let mut scroll_delta_frame: i32 = 0;
         for event in &events {
             if let Event::Mouse(mouse) = event {
                 mouse_pos = Some((mouse.x, mouse.y));
                 match mouse.kind {
                     MouseKind::Down(MouseButton::Left) => {
                         click_pos = Some((mouse.x, mouse.y));
+                        // v0.21.1: a left click on the same cell as the previous
+                        // click, within `DOUBLE_CLICK_WINDOW`, is a double-click.
+                        // Clear the tracker after firing so a third click starts
+                        // a fresh pair (no triple-counting).
+                        let pos = (mouse.x, mouse.y);
+                        let is_double = layout_feedback.last_click_pos == Some(pos)
+                            && layout_feedback.last_click_at.is_some_and(|t| {
+                                frame_now.duration_since(t) <= crate::DOUBLE_CLICK_WINDOW
+                            });
+                        if is_double {
+                            double_click_pos = Some(pos);
+                            layout_feedback.last_click_at = None;
+                            layout_feedback.last_click_pos = None;
+                        } else {
+                            layout_feedback.last_click_at = Some(frame_now);
+                            layout_feedback.last_click_pos = Some(pos);
+                        }
                     }
                     MouseKind::Down(MouseButton::Right) => {
                         // Issue #208: capture last right-click position so
                         // `response_for` can hit-test against per-widget rects.
                         right_click_pos = Some((mouse.x, mouse.y));
+                    }
+                    // v0.21.1: accumulate net vertical wheel delta + the cursor
+                    // position, hover-gated per-widget by `response_for`.
+                    MouseKind::ScrollUp => {
+                        scroll_pos = Some((mouse.x, mouse.y));
+                        scroll_delta_frame = scroll_delta_frame.saturating_add(1);
+                    }
+                    MouseKind::ScrollDown => {
+                        scroll_pos = Some((mouse.x, mouse.y));
+                        scroll_delta_frame = scroll_delta_frame.saturating_sub(1);
                     }
                     _ => {}
                 }
@@ -159,6 +192,9 @@ impl Context {
             mouse_pos,
             click_pos,
             right_click_pos,
+            double_click_pos,
+            scroll_pos,
+            scroll_delta_frame,
             prev_modal_active: focus.prev_modal_active,
             clipboard_text: None,
             debug: diagnostics.debug_mode,
@@ -203,8 +239,10 @@ impl Context {
             focus_name_map: std::collections::HashMap::new(),
             pending_focus_name: still_pending,
             // Issue #248: sample a single wall-clock "now" for every timer
-            // method called this frame.
-            frame_instant: std::time::Instant::now(),
+            // method called this frame. v0.21.1: reuse the `frame_now` sampled
+            // above (also used for double-click timing) so the frame has one
+            // coherent clock reading.
+            frame_instant: frame_now,
             scheduler,
             // Issue #234: async task registry round-tripped like `scheduler`.
             #[cfg(feature = "async")]
@@ -278,6 +316,111 @@ impl Context {
         self.prev_focus_count
     }
 
+    /// Advance keyboard focus one step, honoring an active modal's focus trap.
+    /// `forward` selects next vs previous; both wrap. Shared by
+    /// [`focus_next`](Self::focus_next) / [`focus_prev`](Self::focus_prev) and
+    /// the `Tab`/`Shift+Tab` handler in `process_focus_keys` (v0.21.1).
+    pub(crate) fn advance_focus(&mut self, forward: bool) {
+        if self.prev_modal_active && self.prev_modal_focus_count > 0 {
+            let mut modal_local = self.focus_index.saturating_sub(self.prev_modal_focus_start);
+            modal_local %= self.prev_modal_focus_count;
+            let next = if forward {
+                (modal_local + 1) % self.prev_modal_focus_count
+            } else if modal_local == 0 {
+                self.prev_modal_focus_count - 1
+            } else {
+                modal_local - 1
+            };
+            self.focus_index = self.prev_modal_focus_start + next;
+        } else if self.prev_focus_count > 0 {
+            self.focus_index = if forward {
+                (self.focus_index + 1) % self.prev_focus_count
+            } else if self.focus_index == 0 {
+                self.prev_focus_count - 1
+            } else {
+                self.focus_index - 1
+            };
+        }
+    }
+
+    /// Move keyboard focus to the next focusable widget (wrapping), exactly as
+    /// pressing `Tab` would. Honors an active modal's focus trap. Pairs with
+    /// [`set_focus_index`](Self::set_focus_index) / [`focus_count`](Self::focus_count)
+    /// for programmatic focus control (e.g. an app-level shortcut). Available
+    /// since v0.21.1.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// if ui.key_pressed(slt::KeyCode::Char('j')) {
+    ///     ui.focus_next();
+    /// }
+    /// # });
+    /// ```
+    pub fn focus_next(&mut self) {
+        self.advance_focus(true);
+    }
+
+    /// Move keyboard focus to the previous focusable widget (wrapping), exactly
+    /// as `Shift+Tab` would. Honors an active modal's focus trap. Available
+    /// since v0.21.1.
+    pub fn focus_prev(&mut self) {
+        self.advance_focus(false);
+    }
+
+    /// Move focus to the next focusable widget belonging to the named focus
+    /// group, wrapping within the group. If focus is currently outside the
+    /// group it jumps to the group's first member. No-op if the group had no
+    /// focusable widgets on the previous frame.
+    ///
+    /// Focus groups are declared with [`group`](Self::group); this is the
+    /// scoped counterpart to [`focus_next`](Self::focus_next) for building a
+    /// focus trap around a panel or sub-form without a modal. Available since
+    /// v0.21.1.
+    pub fn focus_next_in_group(&mut self, group: &str) {
+        self.advance_focus_in_group(group, true);
+    }
+
+    /// Move focus to the previous focusable widget in the named group
+    /// (wrapping). See [`focus_next_in_group`](Self::focus_next_in_group).
+    /// Available since v0.21.1.
+    pub fn focus_prev_in_group(&mut self, group: &str) {
+        self.advance_focus_in_group(group, false);
+    }
+
+    fn advance_focus_in_group(&mut self, group: &str, forward: bool) {
+        // Membership comes from the previous frame's `index -> group` table,
+        // the same source `is_group_focused` consults. Indices are valid
+        // focus indices (0..prev_focus_count).
+        let members: Vec<usize> = self
+            .prev_focus_groups
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, g)| match g.as_deref() {
+                Some(name) if name == group => Some(idx),
+                _ => None,
+            })
+            .collect();
+        if members.is_empty() {
+            return;
+        }
+        let new_pos = match members.iter().position(|&m| m == self.focus_index) {
+            Some(p) => {
+                if forward {
+                    (p + 1) % members.len()
+                } else if p == 0 {
+                    members.len() - 1
+                } else {
+                    p - 1
+                }
+            }
+            // Focus is outside the group: jump to its first member.
+            None => 0,
+        };
+        self.focus_index = members[new_pos];
+    }
+
     /// Read-only snapshot of the terminal's negotiated capabilities
     /// (issue #264).
     ///
@@ -305,6 +448,12 @@ impl Context {
     }
 
     pub(crate) fn process_focus_keys(&mut self) {
+        // Scan for Tab / Shift+Tab / BackTab, recording the direction of each
+        // and consuming the event. The mutation (`advance_focus`) is applied
+        // after the scan: it borrows `&mut self` wholesale, which cannot run
+        // while `self.events` is iterated by reference. Collecting first
+        // preserves the original "each Tab advances once" semantics.
+        let mut actions: Vec<bool> = Vec::new();
         for (i, event) in self.events.iter().enumerate() {
             if self.consumed[i] {
                 continue;
@@ -314,39 +463,18 @@ impl Context {
                     continue;
                 }
                 if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::SHIFT) {
-                    if self.prev_modal_active && self.prev_modal_focus_count > 0 {
-                        let mut modal_local =
-                            self.focus_index.saturating_sub(self.prev_modal_focus_start);
-                        modal_local %= self.prev_modal_focus_count;
-                        let next = (modal_local + 1) % self.prev_modal_focus_count;
-                        self.focus_index = self.prev_modal_focus_start + next;
-                    } else if self.prev_focus_count > 0 {
-                        self.focus_index = (self.focus_index + 1) % self.prev_focus_count;
-                    }
+                    actions.push(true);
                     self.consumed[i] = true;
                 } else if (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
                     || key.code == KeyCode::BackTab
                 {
-                    if self.prev_modal_active && self.prev_modal_focus_count > 0 {
-                        let mut modal_local =
-                            self.focus_index.saturating_sub(self.prev_modal_focus_start);
-                        modal_local %= self.prev_modal_focus_count;
-                        let prev = if modal_local == 0 {
-                            self.prev_modal_focus_count - 1
-                        } else {
-                            modal_local - 1
-                        };
-                        self.focus_index = self.prev_modal_focus_start + prev;
-                    } else if self.prev_focus_count > 0 {
-                        self.focus_index = if self.focus_index == 0 {
-                            self.prev_focus_count - 1
-                        } else {
-                            self.focus_index - 1
-                        };
-                    }
+                    actions.push(false);
                     self.consumed[i] = true;
                 }
             }
+        }
+        for forward in actions {
+            self.advance_focus(forward);
         }
     }
 
@@ -552,25 +680,38 @@ impl Context {
         self.response_for(id)
     }
 
-    pub(crate) fn begin_widget_interaction(&mut self, focused: bool) -> (usize, Response) {
-        let interaction_id = self.next_interaction_id();
-        let mut response = self.response_for(interaction_id);
-        response.focused = focused;
-        // Issue #208: compute focus transitions from the most recent
-        // `register_focusable` call. If that focusable lined up with the
-        // previously-focused widget index from the prior frame, focus
-        // changes since map directly to gained/lost.
-        if let Some(this_id) = self.rollback.last_focusable_id {
+    /// Compute and consume the `(gained_focus, lost_focus)` edge flags for the
+    /// widget most recently registered via [`register_focusable`].
+    ///
+    /// If that focusable lined up with the previously-focused widget index from
+    /// the prior frame, the focus change since maps directly to gained/lost.
+    /// Takes (consumes) the `last_focusable_id` marker so a single
+    /// `register_focusable` powers exactly one transition computation.
+    ///
+    /// Shared by [`begin_widget_interaction`](Self::begin_widget_interaction)
+    /// and the widgets that assemble their `Response` by hand rather than
+    /// through it (`text_input`, `slider`, `number_input`) — issue #208 left
+    /// those three reporting `gained_focus`/`lost_focus` as always-false; this
+    /// closes that gap (v0.21.1).
+    pub(crate) fn focus_transitions(&mut self, focused: bool) -> (bool, bool) {
+        if let Some(this_id) = self.rollback.last_focusable_id.take() {
             let was_focused = self
                 .prev_focus_index
                 .map(|prev| prev == this_id)
                 .unwrap_or(false);
-            response.gained_focus = focused && !was_focused;
-            response.lost_focus = !focused && was_focused;
-            // Consume the marker so a single `register_focusable` powers
-            // exactly one `begin_widget_interaction` call.
-            self.rollback.last_focusable_id = None;
+            (focused && !was_focused, !focused && was_focused)
+        } else {
+            (false, false)
         }
+    }
+
+    pub(crate) fn begin_widget_interaction(&mut self, focused: bool) -> (usize, Response) {
+        let interaction_id = self.next_interaction_id();
+        let mut response = self.response_for(interaction_id);
+        response.focused = focused;
+        let (gained, lost) = self.focus_transitions(focused);
+        response.gained_focus = gained;
+        response.lost_focus = lost;
         (interaction_id, response)
     }
 

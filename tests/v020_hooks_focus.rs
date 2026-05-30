@@ -466,11 +466,12 @@ fn response_none_has_all_signals_false() {
 #[test]
 fn gained_and_lost_focus_track_focus_transitions() {
     // Buttons go through `begin_widget_interaction`, so the new focus
-    // transition signals appear on their `Response`. Custom widgets that
-    // bypass `begin_widget_interaction` (e.g. text_input which assembles
-    // a Response from the container path) are intentionally out of scope
-    // for this test — those widgets will pick up the signals as they're
-    // migrated to the unified interaction path in follow-up issues.
+    // transition signals appear on their `Response`. The widgets that assemble
+    // a Response by hand (text_input/slider/number_input) bypassed that path
+    // and were out of scope here originally; v0.21.1 closed that gap via the
+    // shared `focus_transitions` helper — see the dedicated tests below
+    // (`text_input_reports_focus_transitions`, `slider_reports_focus_transitions`,
+    // `number_input_reports_focus_transitions`).
     let mut tb = TestBackend::new(40, 4);
 
     // Frame 0: two buttons. Default `focus_index` is 0, so #1 gains focus.
@@ -542,4 +543,291 @@ fn gained_focus_and_lost_focus_are_mutually_exclusive() {
             "still mutually exclusive on stable frame"
         );
     });
+}
+
+// ===========================================================================
+// v0.21.1 — interaction-signal follow-ups
+// focus-edge for hand-assembled widgets, Enter -> submitted, double-click,
+// hover-gated scroll_delta, programmatic focus traversal, Response callbacks.
+// ===========================================================================
+
+#[test]
+fn text_input_reports_focus_transitions() {
+    let mut tb = TestBackend::new(40, 6);
+    let mut a = slt::widgets::TextInputState::default();
+    let mut b = slt::widgets::TextInputState::default();
+
+    // Frame 0: two inputs; focus_index 0 -> A focused, first frame -> gained.
+    let ga = Cell::new(false);
+    let gar = &ga;
+    tb.render(|ui| {
+        let ra = ui.text_input(&mut a);
+        let _rb = ui.text_input(&mut b);
+        gar.set(ra.gained_focus);
+        assert!(ra.focused, "A is focused at index 0");
+    });
+    assert!(ga.get(), "text_input A gains focus on the first frame");
+
+    // Frame 1: stable focus -> no edge.
+    tb.render(|ui| {
+        let ra = ui.text_input(&mut a);
+        let _rb = ui.text_input(&mut b);
+        assert!(
+            !ra.gained_focus && !ra.lost_focus,
+            "stable focus produces no edge"
+        );
+    });
+
+    // Frame 2: jump focus to B -> A loses, B gains.
+    let la = Cell::new(false);
+    let gb = Cell::new(false);
+    let lar = &la;
+    let gbr = &gb;
+    tb.render(|ui| {
+        ui.set_focus_index(1);
+        let ra = ui.text_input(&mut a);
+        let rb = ui.text_input(&mut b);
+        lar.set(ra.lost_focus);
+        gbr.set(rb.gained_focus);
+    });
+    assert!(la.get(), "text_input A reports lost_focus when focus moves away");
+    assert!(gb.get(), "text_input B reports gained_focus when it receives focus");
+}
+
+#[test]
+fn slider_reports_focus_transitions() {
+    let mut tb = TestBackend::new(40, 4);
+    let mut v = 0.5f64;
+    let gained = Cell::new(false);
+    let gr = &gained;
+    tb.render(|ui| {
+        let r = ui.slider("vol", &mut v, 0.0..=1.0);
+        gr.set(r.gained_focus);
+        assert!(r.focused, "single slider is focused at index 0");
+    });
+    assert!(gained.get(), "slider gains focus on the first frame");
+    // Stable frame: no fresh edge.
+    tb.render(|ui| {
+        let r = ui.slider("vol", &mut v, 0.0..=1.0);
+        assert!(!r.gained_focus && !r.lost_focus, "stable slider focus");
+    });
+}
+
+#[test]
+fn number_input_reports_focus_transitions() {
+    let mut tb = TestBackend::new(40, 4);
+    let mut st = slt::widgets::NumberInputState::new(5.0, 0.0, 10.0);
+    let gained = Cell::new(false);
+    let gr = &gained;
+    tb.render(|ui| {
+        let r = ui.number_input(&mut st);
+        gr.set(r.gained_focus);
+        assert!(r.focused, "single number_input is focused at index 0");
+    });
+    assert!(gained.get(), "number_input gains focus on the first frame");
+    tb.render(|ui| {
+        let r = ui.number_input(&mut st);
+        assert!(!r.gained_focus && !r.lost_focus, "stable number_input focus");
+    });
+}
+
+#[test]
+fn text_input_enter_reports_submitted() {
+    let mut tb = TestBackend::new(40, 4);
+    let mut input = slt::widgets::TextInputState::default();
+
+    // No event -> not submitted.
+    tb.render(|ui| {
+        let r = ui.text_input(&mut input);
+        assert!(!r.submitted, "a quiet frame does not submit");
+    });
+
+    // Focused input + Enter -> submitted.
+    let submitted = Cell::new(false);
+    let sr = &submitted;
+    let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+    tb.run_with_events(events, |ui| {
+        let r = ui.text_input(&mut input);
+        assert!(r.focused, "input is focused at index 0");
+        sr.set(r.submitted);
+    });
+    assert!(
+        submitted.get(),
+        "Enter in a focused single-line input reports submitted"
+    );
+}
+
+#[test]
+fn double_click_detected_on_same_cell() {
+    let mut tb = TestBackend::new(20, 4);
+
+    // Discover the button's rect so we click squarely inside it.
+    let rect = Cell::new(slt::Rect::default());
+    let rr = &rect;
+    tb.render(|ui| {
+        rr.set(ui.button("ok").rect);
+    });
+    let r = rect.get();
+    let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+
+    // First click: a single click, not yet a double.
+    let d1 = Cell::new(true);
+    let d1r = &d1;
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        d1r.set(ui.button("ok").double_clicked);
+    });
+    assert!(!d1.get(), "first click is a single click");
+
+    // Second click on the same cell (well within the window): double-click.
+    let d2 = Cell::new(false);
+    let d2r = &d2;
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        let resp = ui.button("ok");
+        d2r.set(resp.double_clicked);
+        assert!(resp.clicked, "the second click still reports clicked");
+    });
+    assert!(d2.get(), "second same-cell click reports double_clicked");
+}
+
+#[test]
+fn double_click_resets_after_firing() {
+    // A third rapid click on the same cell must NOT report a double (the pair
+    // resets after each double so triple-click is not counted as two doubles).
+    let mut tb = TestBackend::new(20, 4);
+    let rect = Cell::new(slt::Rect::default());
+    let rr = &rect;
+    tb.render(|ui| {
+        rr.set(ui.button("ok").rect);
+    });
+    let r = rect.get();
+    let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        let _ = ui.button("ok");
+    });
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        assert!(ui.button("ok").double_clicked, "second click is a double");
+    });
+    let third = Cell::new(true);
+    let tr = &third;
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        tr.set(ui.button("ok").double_clicked);
+    });
+    assert!(!third.get(), "third click starts a fresh pair, not another double");
+}
+
+#[test]
+fn scroll_delta_is_hover_gated() {
+    let mut tb = TestBackend::new(20, 4);
+    let rect = Cell::new(slt::Rect::default());
+    let rr = &rect;
+    tb.render(|ui| {
+        rr.set(ui.button("ok").rect);
+    });
+    let r = rect.get();
+    let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+
+    // Wheel up over the widget -> +1.
+    let up = Cell::new(0i32);
+    let ur = &up;
+    tb.run_with_events(EventBuilder::new().scroll_up(cx, cy).build(), |ui| {
+        ur.set(ui.button("ok").scroll_delta);
+    });
+    assert_eq!(up.get(), 1, "wheel-up over the widget yields +1");
+
+    // Wheel down off the widget -> 0 for the widget (hover-gated).
+    let off = Cell::new(99i32);
+    let ofr = &off;
+    let ox = (r.right() + 2).min(19);
+    let oy = (r.bottom() + 1).min(3);
+    tb.run_with_events(EventBuilder::new().scroll_down(ox, oy).build(), |ui| {
+        ofr.set(ui.button("ok").scroll_delta);
+    });
+    assert_eq!(off.get(), 0, "wheel motion off the widget is not attributed to it");
+}
+
+#[test]
+fn focus_next_and_prev_wrap() {
+    let mut tb = TestBackend::new(40, 8);
+    // Frame 0: register three focusables so prev_focus_count == 3 next frame.
+    tb.render(|ui| {
+        ui.button("a");
+        ui.button("b");
+        ui.button("c");
+    });
+    // Frame 1: drive programmatic traversal.
+    tb.render(|ui| {
+        assert_eq!(ui.focus_index(), 0);
+        ui.focus_next();
+        assert_eq!(ui.focus_index(), 1);
+        ui.focus_next();
+        ui.focus_next();
+        assert_eq!(ui.focus_index(), 0, "focus_next wraps past the last widget");
+        ui.focus_prev();
+        assert_eq!(ui.focus_index(), 2, "focus_prev wraps backward");
+        ui.button("a");
+        ui.button("b");
+        ui.button("c");
+    });
+}
+
+#[test]
+fn focus_next_in_group_stays_within_group() {
+    let mut tb = TestBackend::new(50, 10);
+    let render_groups = |ui: &mut slt::Context| {
+        ui.group("g1").col(|ui| {
+            ui.button("a");
+            ui.button("b");
+        });
+        ui.group("g2").col(|ui| {
+            ui.button("c");
+            ui.button("d");
+        });
+    };
+    // Frame 0: establish the group membership table.
+    tb.render(render_groups);
+    // Frame 1: traverse within g1, then jump into g2.
+    tb.render(|ui| {
+        // Focus starts at index 0 (in g1). Next within g1 -> index 1.
+        ui.focus_next_in_group("g1");
+        assert_eq!(ui.focus_index(), 1, "advances to the next g1 member");
+        // Wraps within g1: 1 -> 0.
+        ui.focus_next_in_group("g1");
+        assert_eq!(ui.focus_index(), 0, "wraps within the group");
+        // Jumping to g2 from outside lands on its first member (index 2).
+        ui.focus_next_in_group("g2");
+        assert_eq!(ui.focus_index(), 2, "jumps into g2's first member");
+        render_groups(ui);
+    });
+}
+
+#[test]
+fn response_callbacks_fire_on_their_signal() {
+    let mut tb = TestBackend::new(20, 4);
+
+    // Discover the button rect, then click it and assert on_click fires.
+    let rect = Cell::new(slt::Rect::default());
+    let rr = &rect;
+    tb.render(|ui| {
+        rr.set(ui.button("go").rect);
+    });
+    let r = rect.get();
+    let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+
+    let clicked = Rc::new(Cell::new(false));
+    let clicked_in = Rc::clone(&clicked);
+    tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
+        ui.button("go").on_click(ui, move |_| clicked_in.set(true));
+    });
+    assert!(clicked.get(), "on_click runs the closure when clicked");
+
+    // on_submit fires for a focused text_input receiving Enter.
+    let mut input = slt::widgets::TextInputState::default();
+    let submitted = Rc::new(Cell::new(false));
+    let submitted_in = Rc::clone(&submitted);
+    tb.run_with_events(EventBuilder::new().key_code(KeyCode::Enter).build(), |ui| {
+        ui.text_input(&mut input)
+            .on_submit(ui, move |_| submitted_in.set(true));
+    });
+    assert!(submitted.get(), "on_submit runs the closure on Enter");
 }

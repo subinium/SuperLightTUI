@@ -32,6 +32,13 @@ impl Context {
             "text_input got a newline — use textarea instead",
         );
         let focused = self.register_focusable();
+        // v0.21.1: capture the focus-edge flags immediately — this consumes the
+        // `register_focusable` marker, so the result is correct regardless of
+        // the child containers rendered below. Issue #208 left text_input never
+        // populating gained_focus/lost_focus because it assembles its Response
+        // by hand instead of via `begin_widget_interaction`.
+        let (gained_focus, lost_focus) = self.focus_transitions(focused);
+        let mut submitted = false;
         let old_value = state.value.clone();
         state.cursor = state.cursor.min(grapheme_count(&state.value));
 
@@ -149,6 +156,26 @@ impl Context {
                     }
                     KeyCode::End => {
                         state.cursor = grapheme_count(&state.value);
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Enter => {
+                        // v0.21.1: Enter submits the input. If the suggestion
+                        // dropdown is open, accept the highlighted suggestion
+                        // instead (Tab also accepts) — only a bare Enter with
+                        // no open suggestions reports `submitted`.
+                        if suggestions_visible {
+                            if let Some(selected) = matched_suggestions
+                                .get(state.suggestion_index)
+                                .or_else(|| matched_suggestions.first())
+                            {
+                                state.value = selected.clone();
+                                state.cursor = grapheme_count(&state.value);
+                                state.show_suggestions = false;
+                                state.suggestion_index = 0;
+                            }
+                        } else {
+                            submitted = true;
+                        }
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -296,6 +323,9 @@ impl Context {
             });
         response.focused = focused;
         response.changed = state.value != old_value;
+        response.gained_focus = gained_focus;
+        response.lost_focus = lost_focus;
+        response.submitted = submitted;
 
         let errors = state.errors();
         if !errors.is_empty() {

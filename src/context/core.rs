@@ -52,6 +52,19 @@ pub struct Context {
     /// event in this frame. Mirrors `click_pos` for the right-button. Used
     /// by `response_for` to populate `Response::right_clicked`.
     pub(crate) right_click_pos: Option<(u32, u32)>,
+    /// v0.21.1: position of a detected double-click this frame (second
+    /// `MouseButton::Left` `Down` on the same cell within the double-click
+    /// window). `None` when no double-click occurred. Hit-tested by
+    /// `response_for` to populate `Response::double_clicked`.
+    pub(crate) double_click_pos: Option<(u32, u32)>,
+    /// v0.21.1: position of the most recent scroll-wheel event this frame, used
+    /// to hover-gate `Response::scroll_delta`. `None` when the wheel did not
+    /// move.
+    pub(crate) scroll_pos: Option<(u32, u32)>,
+    /// v0.21.1: net vertical wheel delta accumulated this frame (positive =
+    /// up, negative = down). Surfaced per-widget through
+    /// `Response::scroll_delta` when `scroll_pos` falls inside the widget rect.
+    pub(crate) scroll_delta_frame: i32,
     pub(crate) prev_modal_active: bool,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) debug: bool,

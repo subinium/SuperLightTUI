@@ -1335,20 +1335,44 @@ impl Context {
                     mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
                 })
                 .unwrap_or(false);
+            // v0.21.1: double-click hit-test mirrors the left-click logic. The
+            // second click of a double also reports `clicked`, so callers that
+            // only check `clicked` are unaffected.
+            let double_clicked = self
+                .double_click_pos
+                .map(|(mx, my)| {
+                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
+                })
+                .unwrap_or(false);
             let hovered = self
                 .mouse_pos
                 .map(|(mx, my)| {
                     mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
                 })
                 .unwrap_or(false);
+            // v0.21.1: per-widget wheel delta is hover-gated — only the widget
+            // under the cursor when the wheel moved sees a non-zero delta.
+            let scroll_delta = self
+                .scroll_pos
+                .map(|(mx, my)| {
+                    if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
+                        self.scroll_delta_frame
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0);
             Response {
                 clicked,
                 right_clicked,
+                double_clicked,
                 hovered,
                 changed: false,
                 focused: false,
                 gained_focus: false,
                 lost_focus: false,
+                submitted: false,
+                scroll_delta,
                 rect: *rect,
             }
         } else {

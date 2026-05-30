@@ -832,6 +832,10 @@ pub(crate) struct FocusState {
     pub pending_focus_name: Option<String>,
 }
 
+/// v0.21.1: maximum gap between two same-cell left clicks for them to count as
+/// a double-click. Tuned to the common desktop default (~400ms).
+pub(crate) const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
+
 #[derive(Default)]
 pub(crate) struct LayoutFeedbackState {
     /// `(content_extent, viewport_extent, is_horizontal)` per scrollable last
@@ -845,6 +849,14 @@ pub(crate) struct LayoutFeedbackState {
     pub prev_focus_rects: Vec<(usize, rect::Rect)>,
     pub prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub last_mouse_pos: Option<(u32, u32)>,
+    /// v0.21.1: wall-clock time of the previous left-click `Down`, used to
+    /// detect a double-click (a second click on the same cell within
+    /// `DOUBLE_CLICK_WINDOW`, ~400ms). `None` after a double-click fires (so a
+    /// triple click is not double-counted) or when no click has occurred.
+    pub last_click_at: Option<std::time::Instant>,
+    /// v0.21.1: cell position of the previous left-click `Down`, paired with
+    /// `last_click_at` for same-cell double-click detection.
+    pub last_click_pos: Option<(u32, u32)>,
 }
 
 #[derive(Default)]
