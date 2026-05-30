@@ -1,3 +1,4 @@
+use crate::event::{KeyEvent, KeyEventKind};
 use crate::{KeyCode, KeyModifiers, ModifierKey};
 
 /// A single key binding with display text and description.
@@ -13,6 +14,61 @@ pub struct Binding {
     pub description: String,
     /// Whether to show in help bar.
     pub visible: bool,
+}
+
+impl Binding {
+    /// Returns `true` if `key` is a press of this binding's registered chord.
+    ///
+    /// This is the dispatch primitive that mirrors bubbletea's
+    /// `key.Matches`: a [`KeyEvent`] matches when it is a **press** (releases
+    /// and repeats never match), its [`KeyCode`] equals [`Binding::key`], and
+    /// its modifiers satisfy [`Binding::modifiers`]:
+    ///
+    /// - `modifiers: None` requires that **no** modifiers are held (so a plain
+    ///   `q` binding does not fire on `Ctrl+q`).
+    /// - `modifiers: Some(mods)` requires that *at least* every modifier in
+    ///   `mods` is held, matching the lenient semantics of
+    ///   [`Context::key_mod`](crate::Context::key_mod).
+    ///
+    /// # Examples
+    /// ```
+    /// use slt::{Event, KeyCode, KeyMap, KeyModifiers};
+    ///
+    /// let km = KeyMap::new().bind('q', "Quit");
+    /// let binding = &km.bindings[0];
+    ///
+    /// let Event::Key(quit) = Event::key_char('q') else { unreachable!() };
+    /// assert!(binding.matches(&quit));
+    ///
+    /// // A plain binding ignores modified presses of the same key.
+    /// let Event::Key(ctrl_q) = Event::key_ctrl('q') else { unreachable!() };
+    /// assert!(!binding.matches(&ctrl_q));
+    ///
+    /// // A different key never matches.
+    /// let Event::Key(other) = Event::key_char('x') else { unreachable!() };
+    /// assert!(!binding.matches(&other));
+    ///
+    /// // Modifier bindings use `contains` semantics.
+    /// let save = KeyMap::new().bind_mod('s', KeyModifiers::CONTROL, "Save");
+    /// let Event::Key(ctrl_s) =
+    ///     Event::key_mod(KeyCode::Char('s'), KeyModifiers::CONTROL)
+    /// else {
+    ///     unreachable!()
+    /// };
+    /// assert!(save.bindings[0].matches(&ctrl_s));
+    /// ```
+    pub fn matches(&self, key: &KeyEvent) -> bool {
+        if key.kind != KeyEventKind::Press {
+            return false;
+        }
+        if key.code != self.key {
+            return false;
+        }
+        match self.modifiers {
+            None => key.modifiers == KeyModifiers::NONE,
+            Some(mods) => key.modifiers.contains(mods),
+        }
+    }
 }
 
 /// Declarative key binding map.
@@ -115,6 +171,31 @@ impl KeyMap {
     /// Get visible bindings for help bar rendering.
     pub fn visible_bindings(&self) -> impl Iterator<Item = &Binding> {
         self.bindings.iter().filter(|binding| binding.visible)
+    }
+
+    /// Return the first registered binding whose chord matches `key`.
+    ///
+    /// Bindings are checked in registration order, so if two bindings could
+    /// match the same key the earlier `.bind*()` call wins. Returns `None`
+    /// when no binding matches (including for release / repeat events, which
+    /// [`Binding::matches`] never accepts).
+    ///
+    /// # Examples
+    /// ```
+    /// use slt::{Event, KeyCode, KeyMap};
+    ///
+    /// let km = KeyMap::new()
+    ///     .bind('q', "Quit")
+    ///     .bind_code(KeyCode::Up, "Move up");
+    ///
+    /// let Event::Key(up) = Event::key(KeyCode::Up) else { unreachable!() };
+    /// assert_eq!(km.matched(&up).unwrap().description, "Move up");
+    ///
+    /// let Event::Key(unbound) = Event::key_char('z') else { unreachable!() };
+    /// assert!(km.matched(&unbound).is_none());
+    /// ```
+    pub fn matched(&self, key: &KeyEvent) -> Option<&Binding> {
+        self.bindings.iter().find(|binding| binding.matches(key))
     }
 }
 
@@ -303,5 +384,159 @@ impl PublishedKeymap {
         bindings: &'static [(&'static str, &'static str)],
     ) -> Self {
         Self { name, bindings }
+    }
+}
+
+impl crate::Context {
+    /// Match the current frame's unconsumed key presses against `map` and
+    /// return the first [`Binding`] that fires.
+    ///
+    /// This is the [`KeyMap`] counterpart to the per-key peek helpers like
+    /// [`key`](crate::Context::key) and [`key_code`](crate::Context::key_code):
+    /// it scans every unconsumed key-**press** event for this frame, in arrival
+    /// order, and returns the first binding in `map` whose chord matches (see
+    /// [`Binding::matches`]). The event is **not** consumed — callers can react
+    /// to the returned binding and, if desired, still let other handlers see
+    /// the key. Returns `None` when no press matches any binding.
+    ///
+    /// Like the other peek helpers, this respects the modal/overlay guard: when
+    /// a modal is active and the caller is outside an overlay, no presses are
+    /// visible and the method returns `None`.
+    ///
+    /// # Examples
+    /// ```
+    /// use slt::{KeyCode, KeyMap, TestBackend};
+    ///
+    /// let km = KeyMap::new()
+    ///     .bind('q', "Quit")
+    ///     .bind_code(KeyCode::Up, "Move up");
+    ///
+    /// let mut tb = TestBackend::new(20, 3);
+    /// tb.run_with_events(vec![slt::Event::key_char('q')], |ui| {
+    ///     let hit = ui.keymap_match(&km);
+    ///     ui.text(hit.map(|b| b.description.as_str()).unwrap_or("none"));
+    /// });
+    /// tb.assert_contains("Quit");
+    /// ```
+    pub fn keymap_match<'m>(&self, map: &'m KeyMap) -> Option<&'m Binding> {
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return None;
+        }
+        self.available_key_presses()
+            .find_map(|(_, key)| map.matched(key))
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::event::Event;
+    use crate::TestBackend;
+
+    fn key_event(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        match Event::key_mod(code, modifiers) {
+            Event::Key(k) => k,
+            _ => unreachable!("key_mod always builds a Key event"),
+        }
+    }
+
+    fn release_event(c: char) -> KeyEvent {
+        match Event::key_release(c) {
+            Event::Key(k) => k,
+            _ => unreachable!("key_release always builds a Key event"),
+        }
+    }
+
+    #[test]
+    fn binding_matches_plain_char() {
+        let km = KeyMap::new().bind('q', "Quit");
+        let binding = &km.bindings[0];
+        assert!(binding.matches(&key_event(KeyCode::Char('q'), KeyModifiers::NONE)));
+        // Different char does not match.
+        assert!(!binding.matches(&key_event(KeyCode::Char('x'), KeyModifiers::NONE)));
+        // Plain binding rejects a modified press of the same key.
+        assert!(!binding.matches(&key_event(KeyCode::Char('q'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn binding_matches_modifier_chord_contains() {
+        let km = KeyMap::new().bind_mod('s', KeyModifiers::CONTROL, "Save");
+        let binding = &km.bindings[0];
+        // Exact modifier matches.
+        assert!(binding.matches(&key_event(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        // Extra modifiers still satisfy `contains` semantics.
+        let ctrl_shift = KeyModifiers(KeyModifiers::CONTROL.0 | KeyModifiers::SHIFT.0);
+        assert!(binding.matches(&key_event(KeyCode::Char('s'), ctrl_shift)));
+        // Missing the required modifier does not match.
+        assert!(!binding.matches(&key_event(KeyCode::Char('s'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn binding_rejects_release_events() {
+        let km = KeyMap::new().bind('q', "Quit");
+        // Edge case: a release of the bound key must never match.
+        assert!(!km.bindings[0].matches(&release_event('q')));
+    }
+
+    #[test]
+    fn matched_returns_first_registered_binding() {
+        let km = KeyMap::new()
+            .bind('q', "Quit")
+            .bind_code(KeyCode::Up, "Move up")
+            .bind_mod('s', KeyModifiers::CONTROL, "Save");
+
+        let up = km
+            .matched(&key_event(KeyCode::Up, KeyModifiers::NONE))
+            .expect("Up should match");
+        assert_eq!(up.description, "Move up");
+
+        let save = km
+            .matched(&key_event(KeyCode::Char('s'), KeyModifiers::CONTROL))
+            .expect("Ctrl+S should match");
+        assert_eq!(save.description, "Save");
+
+        // Non-matching key returns None.
+        assert!(km
+            .matched(&key_event(KeyCode::Char('z'), KeyModifiers::NONE))
+            .is_none());
+    }
+
+    #[test]
+    fn matched_first_registration_wins_on_overlap() {
+        // Two bindings claim the same chord; the earlier registration wins.
+        let km = KeyMap::new().bind('a', "First").bind('a', "Second");
+        let hit = km
+            .matched(&key_event(KeyCode::Char('a'), KeyModifiers::NONE))
+            .expect("'a' should match");
+        assert_eq!(hit.description, "First");
+    }
+
+    #[test]
+    fn context_keymap_match_returns_binding_for_frame_press() {
+        let km = KeyMap::new()
+            .bind('q', "Quit")
+            .bind_code(KeyCode::Up, "Move up");
+
+        let mut tb = TestBackend::new(20, 3);
+        tb.run_with_events(vec![Event::key(KeyCode::Up)], |ui| {
+            let hit = ui.keymap_match(&km);
+            ui.text(hit.map(|b| b.description.as_str()).unwrap_or("none"));
+        });
+        tb.assert_contains("Move up");
+    }
+
+    #[test]
+    fn context_keymap_match_none_when_no_press_matches() {
+        let km = KeyMap::new().bind('q', "Quit");
+
+        let mut tb = TestBackend::new(20, 3);
+        // A press the map does not bind yields no match.
+        tb.run_with_events(vec![Event::key_char('z')], |ui| {
+            let hit = ui.keymap_match(&km);
+            ui.text(hit.map(|b| b.description.as_str()).unwrap_or("none"));
+        });
+        tb.assert_contains("none");
     }
 }

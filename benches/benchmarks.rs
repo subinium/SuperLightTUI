@@ -731,6 +731,62 @@ fn bench_streaming_append_chat(c: &mut Criterion) {
     group.finish();
 }
 
+/// Kitty image-layer flush (issue #206 alloc suite, now timed). Builds an
+/// `__BenchKittyFixture` of `n` distinct 8×8 RGBA placements and measures the
+/// inline-mode flush emit cost against a hermetic `Vec<u8>` sink, mirroring the
+/// `flush` group's reused-sink pattern. The first flush in the timed loop
+/// transmits + places every image; the `KittyImageManager`'s internal
+/// `prev_placements` then make subsequent identical flushes near-no-ops, so the
+/// steady state measures the manager's per-frame placement-diff scan rather than
+/// repeated retransmission — the same damage-skip shape as the sprixel scan.
+#[cfg(feature = "crossterm")]
+fn bench_flush_kitty_images(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush_kitty");
+    for n in [1_usize, 8, 32] {
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let mut fixture = slt::__bench_new_kitty_fixture(n);
+            debug_assert_eq!(fixture.len(), n);
+            debug_assert_eq!(fixture.is_empty(), n == 0);
+
+            let mut sink: Vec<u8> = Vec::with_capacity(64 * 1024);
+            b.iter(|| {
+                sink.clear();
+                fixture
+                    .flush_inline(&mut sink, black_box(0))
+                    .expect("kitty flush into Vec<u8> cannot fail");
+                black_box(sink.len());
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Sprixel re-blit scan on a steady-state (no-damage) frame — the path the
+/// v0.21.1 terminal change optimized (hash-set build + per-row clean/hash
+/// shortcut). A structurally-identical current/previous frame re-blits nothing,
+/// so this measures pure scan cost as the placement count grows.
+#[cfg(feature = "crossterm")]
+fn bench_flush_sprixel_reblit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush_sprixel_reblit");
+    for n in [1_usize, 8, 32] {
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let fixture = slt::__bench_new_sprixel_fixture(n);
+            debug_assert_eq!(fixture.len(), n);
+            debug_assert_eq!(fixture.is_empty(), n == 0);
+
+            let mut sink: Vec<u8> = Vec::with_capacity(64 * 1024);
+            b.iter(|| {
+                sink.clear();
+                fixture
+                    .flush(&mut sink, black_box(0))
+                    .expect("sprixel reblit into Vec<u8> cannot fail");
+                black_box(sink.len());
+            });
+        });
+    }
+    group.finish();
+}
+
 /// Register flush-path benches (only when `crossterm` feature is enabled,
 /// which is the default for benches). When the feature is off, this is a
 /// no-op so the file still compiles under `--no-default-features`.
@@ -742,6 +798,8 @@ fn bench_flush_group(c: &mut Criterion) {
         bench_flush_static_200x60(c);
         bench_flush_full_redraw_300x100(c);
         bench_flush_sparse_change_300x100(c);
+        bench_flush_kitty_images(c);
+        bench_flush_sprixel_reblit(c);
     }
     let _ = c;
 }

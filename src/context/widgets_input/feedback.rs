@@ -124,6 +124,9 @@ impl Context {
         step: f64,
     ) -> Response {
         let focused = self.register_focusable();
+        // v0.21.1: capture focus-edge flags (issue #208 gap — slider assembled
+        // its Response by hand and never set gained_focus/lost_focus).
+        let (gained_focus, lost_focus) = self.focus_transitions(focused);
         let mut changed = false;
 
         let start = *range.start();
@@ -209,6 +212,8 @@ impl Context {
         });
         response.focused = focused;
         response.changed = changed;
+        response.gained_focus = gained_focus;
+        response.lost_focus = lost_focus;
         response
     }
 
@@ -242,6 +247,9 @@ impl Context {
     /// ```
     pub fn number_input(&mut self, state: &mut NumberInputState) -> Response {
         let focused = self.register_focusable();
+        // v0.21.1: capture focus-edge flags (issue #208 gap — number_input
+        // assembled its Response by hand and never set gained/lost_focus).
+        let (gained_focus, lost_focus) = self.focus_transitions(focused);
 
         // Normalize the committed value before processing input so the
         // pre-frame baseline used for `changed` is itself in-range.
@@ -387,6 +395,8 @@ impl Context {
         response.focused = focused;
         // `changed` is true iff the committed value actually moved this frame.
         response.changed = (state.value - old).abs() > f64::EPSILON;
+        response.gained_focus = gained_focus;
+        response.lost_focus = lost_focus;
         response
     }
 }

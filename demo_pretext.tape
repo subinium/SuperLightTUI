@@ -18,12 +18,6 @@ Set LoopOffset 20%
 Require cargo
 
 Hide
-Type "cargo build --release --example demo_pretext 2>&1"
-Enter
-Sleep 60s
-Type "clear"
-Enter
-Sleep 1s
 Show
 
 Type "./target/release/examples/demo_pretext"

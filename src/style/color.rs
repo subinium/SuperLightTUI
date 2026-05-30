@@ -284,6 +284,342 @@ impl Color {
         let (r, g, b) = self.to_rgb();
         format!("#{r:02x}{g:02x}{b:02x}")
     }
+
+    /// Construct an [`Color::Rgb`] from HSL components.
+    ///
+    /// `h` is the hue in degrees (wrapped into `0..360`), `s` is the
+    /// saturation and `l` the lightness, both clamped to `[0.0, 1.0]`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!(Color::from_hsl(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+    /// assert_eq!(Color::from_hsl(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
+    /// assert_eq!(Color::from_hsl(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+    /// ```
+    pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
+        let (r, g, b) = hsl_to_rgb(h, s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
+        Color::Rgb(r, g, b)
+    }
+
+    /// Construct an [`Color::Rgb`] from HSV (a.k.a. HSB) components.
+    ///
+    /// `h` is the hue in degrees (wrapped into `0..360`), `s` is the
+    /// saturation and `v` the value/brightness, both clamped to `[0.0, 1.0]`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!(Color::from_hsv(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
+    /// assert_eq!(Color::from_hsv(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
+    /// assert_eq!(Color::from_hsv(0.0, 0.0, 1.0), Color::Rgb(255, 255, 255));
+    /// ```
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
+        let (r, g, b) = hsv_to_rgb(h, s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+        Color::Rgb(r, g, b)
+    }
+
+    /// Rotate the hue of this color by `degrees` around the HSL color wheel.
+    ///
+    /// The color is resolved to RGB, converted to HSL, rotated, and converted
+    /// back to [`Color::Rgb`]. Positive values rotate forward (red → green →
+    /// blue); negative values rotate backward. The result is always an
+    /// `Rgb` color regardless of the input variant — named and indexed colors
+    /// are first resolved via the internal palette.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// // Rotating pure red by 120° lands on pure green.
+    /// assert_eq!(Color::Rgb(255, 0, 0).rotate_hue(120.0), Color::Rgb(0, 255, 0));
+    /// ```
+    pub fn rotate_hue(self, degrees: f32) -> Color {
+        let (r, g, b) = self.to_rgb();
+        let (h, s, l) = rgb_to_hsl(r, g, b);
+        let (nr, ng, nb) = hsl_to_rgb(h + degrees, s, l);
+        Color::Rgb(nr, ng, nb)
+    }
+}
+
+impl From<(u8, u8, u8)> for Color {
+    /// Construct an [`Color::Rgb`] from an `(r, g, b)` tuple.
+    fn from((r, g, b): (u8, u8, u8)) -> Color {
+        Color::Rgb(r, g, b)
+    }
+}
+
+impl From<[u8; 3]> for Color {
+    /// Construct an [`Color::Rgb`] from an `[r, g, b]` array.
+    fn from([r, g, b]: [u8; 3]) -> Color {
+        Color::Rgb(r, g, b)
+    }
+}
+
+impl From<u32> for Color {
+    /// Construct an [`Color::Rgb`] from a packed `0xRRGGBB` integer.
+    ///
+    /// The high byte (alpha / `0xAA______`) is ignored.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!(Color::from(0xff6b6b), Color::Rgb(255, 107, 107));
+    /// ```
+    fn from(value: u32) -> Color {
+        let r = ((value >> 16) & 0xff) as u8;
+        let g = ((value >> 8) & 0xff) as u8;
+        let b = (value & 0xff) as u8;
+        Color::Rgb(r, g, b)
+    }
+}
+
+/// Error returned when [`Color`] fails to parse from a string.
+///
+/// Produced by the [`std::str::FromStr`] implementation for [`Color`].
+///
+/// # Example
+///
+/// ```
+/// use slt::Color;
+///
+/// let err = "#zz0011".parse::<Color>().unwrap_err();
+/// // Display renders a human-readable reason.
+/// assert!(err.to_string().contains("non-hex digit"));
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ColorParseError {
+    /// The input had a hex form (`#…` or all hex-looking) but the wrong
+    /// number of digits (only 3 or 6 are accepted).
+    InvalidLength,
+    /// The input contained a character that is not a valid hex digit.
+    InvalidHexDigit,
+    /// The input did not match any known hex form or named color.
+    Unknown,
+}
+
+impl std::fmt::Display for ColorParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            ColorParseError::InvalidLength => "invalid color: hex form must have 3 or 6 digits",
+            ColorParseError::InvalidHexDigit => "invalid color: non-hex digit in hex form",
+            ColorParseError::Unknown => {
+                "invalid color: expected #rgb/#rrggbb, rrggbb, or a named color"
+            }
+        };
+        f.write_str(msg)
+    }
+}
+
+impl std::error::Error for ColorParseError {}
+
+impl std::str::FromStr for Color {
+    type Err = ColorParseError;
+
+    /// Parse a color from a string.
+    ///
+    /// Accepts hex (`#rgb`, `#rrggbb`, or bare `rrggbb` / `rgb` without the
+    /// leading `#`) and case-insensitive named colors (`"red"`, `"lightblue"`,
+    /// `"darkgray"`, `"reset"`, …).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ColorParseError`] when the input matches no known form:
+    /// [`ColorParseError::InvalidLength`] for a hex token of the wrong
+    /// length, [`ColorParseError::InvalidHexDigit`] for non-hex digits in a
+    /// `#`-prefixed token, and [`ColorParseError::Unknown`] otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::Color;
+    ///
+    /// assert_eq!("#ff6b6b".parse::<Color>(), Ok(Color::Rgb(255, 107, 107)));
+    /// assert_eq!("ff6b6b".parse::<Color>(), Ok(Color::Rgb(255, 107, 107)));
+    /// assert_eq!("#abc".parse::<Color>(), Ok(Color::Rgb(170, 187, 204)));
+    /// assert_eq!("cyan".parse::<Color>(), Ok(Color::Cyan));
+    /// assert!("nope".parse::<Color>().is_err());
+    /// ```
+    fn from_str(s: &str) -> Result<Color, ColorParseError> {
+        let trimmed = s.trim();
+
+        // Named colors take priority over the no-`#` hex path so that a name
+        // like "red" is never mistaken for a hex token.
+        if let Some(c) = named_color(trimmed) {
+            return Ok(c);
+        }
+
+        let had_hash = trimmed.starts_with('#');
+        let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+
+        match hex.len() {
+            3 => {
+                let mut it = hex.chars().map(|c| c.to_digit(16));
+                let r = it
+                    .next()
+                    .flatten()
+                    .ok_or(ColorParseError::InvalidHexDigit)?;
+                let g = it
+                    .next()
+                    .flatten()
+                    .ok_or(ColorParseError::InvalidHexDigit)?;
+                let b = it
+                    .next()
+                    .flatten()
+                    .ok_or(ColorParseError::InvalidHexDigit)?;
+                Ok(Color::Rgb((r * 17) as u8, (g * 17) as u8, (b * 17) as u8))
+            }
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16)
+                    .map_err(|_| ColorParseError::InvalidHexDigit)?;
+                let g = u8::from_str_radix(&hex[2..4], 16)
+                    .map_err(|_| ColorParseError::InvalidHexDigit)?;
+                let b = u8::from_str_radix(&hex[4..6], 16)
+                    .map_err(|_| ColorParseError::InvalidHexDigit)?;
+                Ok(Color::Rgb(r, g, b))
+            }
+            // A `#`-prefixed token that isn't 3 or 6 digits is clearly a
+            // malformed hex token; an unprefixed token of an odd length is
+            // simply an unknown name.
+            _ if had_hash => Err(ColorParseError::InvalidLength),
+            _ => Err(ColorParseError::Unknown),
+        }
+    }
+}
+
+/// Resolve a case-insensitive named color token (no `#`, no `indexed:`).
+///
+/// Returns `None` for anything that is not one of the 16 standard names plus
+/// the common aliases (`grey`, `default`).
+fn named_color(s: &str) -> Option<Color> {
+    let lower = s.to_ascii_lowercase();
+    Some(match lower.as_str() {
+        "reset" | "default" => Color::Reset,
+        "black" => Color::Black,
+        "red" => Color::Red,
+        "green" => Color::Green,
+        "yellow" => Color::Yellow,
+        "blue" => Color::Blue,
+        "magenta" => Color::Magenta,
+        "cyan" => Color::Cyan,
+        "white" => Color::White,
+        "darkgray" | "darkgrey" | "gray" | "grey" => Color::DarkGray,
+        "lightred" => Color::LightRed,
+        "lightgreen" => Color::LightGreen,
+        "lightyellow" => Color::LightYellow,
+        "lightblue" => Color::LightBlue,
+        "lightmagenta" => Color::LightMagenta,
+        "lightcyan" => Color::LightCyan,
+        "lightwhite" => Color::LightWhite,
+        _ => return None,
+    })
+}
+
+/// Convert HSL (`h` in degrees, `s`/`l` in `[0.0, 1.0]`) to `(r, g, b)`.
+///
+/// The hue is wrapped into `0..360`. Inputs are assumed already clamped by
+/// the caller.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let h = wrap_hue(h);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r1, g1, b1) = hue_sextant(h, c, x);
+    (
+        round_channel(r1 + m),
+        round_channel(g1 + m),
+        round_channel(b1 + m),
+    )
+}
+
+/// Convert HSV (`h` in degrees, `s`/`v` in `[0.0, 1.0]`) to `(r, g, b)`.
+///
+/// The hue is wrapped into `0..360`. Inputs are assumed already clamped by
+/// the caller.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let h = wrap_hue(h);
+    let c = v * s;
+    let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
+    let m = v - c;
+    let (r1, g1, b1) = hue_sextant(h, c, x);
+    (
+        round_channel(r1 + m),
+        round_channel(g1 + m),
+        round_channel(b1 + m),
+    )
+}
+
+/// Convert `(r, g, b)` to HSL with `h` in degrees `[0, 360)` and `s`/`l` in
+/// `[0.0, 1.0]`.
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let rf = r as f32 / 255.0;
+    let gf = g as f32 / 255.0;
+    let bf = b as f32 / 255.0;
+    let max = rf.max(gf).max(bf);
+    let min = rf.min(gf).min(bf);
+    let delta = max - min;
+    let l = (max + min) / 2.0;
+
+    if delta <= f32::EPSILON {
+        // Achromatic: hue is undefined, conventionally 0.
+        return (0.0, 0.0, l);
+    }
+
+    let s = if l > 0.5 {
+        delta / (2.0 - max - min)
+    } else {
+        delta / (max + min)
+    };
+
+    let h = if max == rf {
+        let h = (gf - bf) / delta;
+        h % 6.0
+    } else if max == gf {
+        (bf - rf) / delta + 2.0
+    } else {
+        (rf - gf) / delta + 4.0
+    } * 60.0;
+
+    (wrap_hue(h), s, l)
+}
+
+/// Map a hue (already wrapped into `0..360`) and chroma components onto the
+/// six RGB sextants, returning the un-offset `(r, g, b)` floats.
+#[inline]
+fn hue_sextant(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+    match h {
+        h if h < 60.0 => (c, x, 0.0),
+        h if h < 120.0 => (x, c, 0.0),
+        h if h < 180.0 => (0.0, c, x),
+        h if h < 240.0 => (0.0, x, c),
+        h if h < 300.0 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    }
+}
+
+/// Wrap a hue in degrees into the half-open range `[0.0, 360.0)`.
+#[inline]
+fn wrap_hue(h: f32) -> f32 {
+    let h = h % 360.0;
+    if h < 0.0 {
+        h + 360.0
+    } else {
+        h
+    }
+}
+
+/// Scale a `[0.0, 1.0]` channel to a rounded, clamped `u8`.
+#[inline]
+fn round_channel(v: f32) -> u8 {
+    (v * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 #[cfg(feature = "serde")]
@@ -733,5 +1069,159 @@ mod tests {
             Color::Rgb(80, 80, 80).downsampled(ColorDepth::Basic),
             Color::DarkGray
         );
+    }
+
+    // --- v0.21.1: ergonomic constructors / conversions ---
+
+    use std::str::FromStr;
+
+    #[test]
+    fn from_tuple_and_array() {
+        assert_eq!(Color::from((255, 107, 107)), Color::Rgb(255, 107, 107));
+        assert_eq!(Color::from([1u8, 2, 3]), Color::Rgb(1, 2, 3));
+        // Generic `.into()` path resolves through the same impls.
+        let c: Color = (10, 20, 30).into();
+        assert_eq!(c, Color::Rgb(10, 20, 30));
+    }
+
+    #[test]
+    fn from_u32_packs_rrggbb() {
+        assert_eq!(Color::from(0xff6b6b_u32), Color::Rgb(255, 107, 107));
+        assert_eq!(Color::from(0x000000_u32), Color::Rgb(0, 0, 0));
+        assert_eq!(Color::from(0xffffff_u32), Color::Rgb(255, 255, 255));
+        // High byte (alpha) is ignored.
+        assert_eq!(Color::from(0xff00ff00_u32), Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn from_str_hex_round_trips() {
+        assert_eq!(
+            Color::from_str("#ff6b6b").unwrap(),
+            Color::Rgb(255, 107, 107)
+        );
+        // No leading '#'.
+        assert_eq!(
+            Color::from_str("ff6b6b").unwrap(),
+            Color::Rgb(255, 107, 107)
+        );
+        // Short form expands nibbles.
+        assert_eq!(Color::from_str("#abc").unwrap(), Color::Rgb(170, 187, 204));
+        assert_eq!(Color::from_str("abc").unwrap(), Color::Rgb(170, 187, 204));
+        // Whitespace is trimmed.
+        assert_eq!(
+            Color::from_str("  #ff6b6b  ").unwrap(),
+            Color::Rgb(255, 107, 107)
+        );
+        // Hex parse matches to_hex round-trip.
+        let c = Color::Rgb(18, 52, 86);
+        assert_eq!(Color::from_str(&c.to_hex()).unwrap(), c);
+    }
+
+    #[test]
+    fn from_str_named_colors() {
+        assert_eq!(Color::from_str("cyan").unwrap(), Color::Cyan);
+        assert_eq!(Color::from_str("LightBlue").unwrap(), Color::LightBlue);
+        assert_eq!(Color::from_str("DARKGRAY").unwrap(), Color::DarkGray);
+        assert_eq!(Color::from_str("grey").unwrap(), Color::DarkGray);
+        assert_eq!(Color::from_str("reset").unwrap(), Color::Reset);
+        assert_eq!(Color::from_str("default").unwrap(), Color::Reset);
+    }
+
+    #[test]
+    fn from_str_error_cases() {
+        // Wrong length with '#' → InvalidLength.
+        assert_eq!(
+            Color::from_str("#ff6b").unwrap_err(),
+            ColorParseError::InvalidLength
+        );
+        // Non-hex digit in a '#'-prefixed 6-char token → InvalidHexDigit.
+        assert_eq!(
+            Color::from_str("#zz0011").unwrap_err(),
+            ColorParseError::InvalidHexDigit
+        );
+        // Non-hex digit in a 3-char token → InvalidHexDigit.
+        assert_eq!(
+            Color::from_str("#xyz").unwrap_err(),
+            ColorParseError::InvalidHexDigit
+        );
+        // Unknown name of non-hex length → Unknown.
+        assert_eq!(
+            Color::from_str("nope").unwrap_err(),
+            ColorParseError::Unknown
+        );
+        assert_eq!(Color::from_str("").unwrap_err(), ColorParseError::Unknown);
+    }
+
+    #[test]
+    fn color_parse_error_display_and_error_trait() {
+        // Display is non-empty and Error trait is implemented.
+        let e = ColorParseError::InvalidLength;
+        assert!(!e.to_string().is_empty());
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn from_hsl_primaries() {
+        assert_eq!(Color::from_hsl(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+        assert_eq!(Color::from_hsl(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
+        assert_eq!(Color::from_hsl(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+        // Lightness extremes.
+        assert_eq!(Color::from_hsl(0.0, 1.0, 0.0), Color::Rgb(0, 0, 0));
+        assert_eq!(Color::from_hsl(0.0, 1.0, 1.0), Color::Rgb(255, 255, 255));
+        // Zero saturation → gray regardless of hue.
+        assert_eq!(Color::from_hsl(123.0, 0.0, 0.5), Color::Rgb(128, 128, 128));
+    }
+
+    #[test]
+    fn from_hsl_wraps_and_clamps() {
+        // Hue 360 wraps to 0 → red.
+        assert_eq!(Color::from_hsl(360.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+        // Negative hue wraps: -120 == 240 → blue.
+        assert_eq!(Color::from_hsl(-120.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+        // Out-of-range s/l are clamped, no panic.
+        assert_eq!(Color::from_hsl(0.0, 5.0, 2.0), Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn from_hsv_primaries() {
+        assert_eq!(Color::from_hsv(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
+        assert_eq!(Color::from_hsv(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
+        assert_eq!(Color::from_hsv(240.0, 1.0, 1.0), Color::Rgb(0, 0, 255));
+        // White and black.
+        assert_eq!(Color::from_hsv(0.0, 0.0, 1.0), Color::Rgb(255, 255, 255));
+        assert_eq!(Color::from_hsv(0.0, 0.0, 0.0), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn rotate_hue_primary_round_trip() {
+        // Red rotated 120° → green, another 120° → blue.
+        assert_eq!(
+            Color::Rgb(255, 0, 0).rotate_hue(120.0),
+            Color::Rgb(0, 255, 0)
+        );
+        assert_eq!(
+            Color::Rgb(0, 255, 0).rotate_hue(120.0),
+            Color::Rgb(0, 0, 255)
+        );
+        // 180° on red lands on cyan.
+        assert_eq!(
+            Color::Rgb(255, 0, 0).rotate_hue(180.0),
+            Color::Rgb(0, 255, 255)
+        );
+        // Full 360° rotation is a no-op (within rounding) for a primary.
+        assert_eq!(
+            Color::Rgb(255, 0, 0).rotate_hue(360.0),
+            Color::Rgb(255, 0, 0)
+        );
+    }
+
+    #[test]
+    fn rotate_hue_resolves_named_to_rgb() {
+        // Named/indexed colors resolve through the palette and yield Rgb.
+        let rotated = Color::Red.rotate_hue(0.0);
+        assert_eq!(rotated, Color::Rgb(205, 49, 49));
+        let gray = Color::Rgb(120, 120, 120).rotate_hue(90.0);
+        // Achromatic input stays achromatic (gray) after rotation.
+        assert_eq!(gray, Color::Rgb(120, 120, 120));
     }
 }

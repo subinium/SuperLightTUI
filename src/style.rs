@@ -7,7 +7,7 @@ mod color;
 mod theme;
 #[cfg(feature = "serde")]
 mod theme_io;
-pub use color::{Color, ColorDepth};
+pub use color::{Color, ColorDepth, ColorParseError};
 pub use theme::{Spacing, SyntaxPalette, Theme, ThemeBuilder, ThemeColor};
 #[cfg(feature = "theme-watch")]
 pub use theme_io::ThemeWatcher;

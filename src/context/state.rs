@@ -290,6 +290,30 @@ pub struct Response {
     /// `false` on subsequent frames. Mutually exclusive with
     /// [`gained_focus`](Self::gained_focus). Available since v0.20.0.
     pub lost_focus: bool,
+    /// Whether the widget was double-clicked this frame.
+    ///
+    /// Detected when two `MouseButton::Left` `Down` events land on the same
+    /// terminal cell within the double-click window (~400ms). When `true`,
+    /// `clicked` is also `true` for the same frame (the second click is still a
+    /// click). This is the standard open/activate gesture for file pickers,
+    /// lists, tables, and trees. Suppressed for non-overlay widgets while a
+    /// modal is active, consistent with `clicked`. Available since v0.21.1.
+    pub double_clicked: bool,
+    /// Whether the widget submitted its value this frame.
+    ///
+    /// Set by widgets that have an explicit submit gesture — e.g. pressing
+    /// `Enter` in a focused single-line [`text_input`](Context::text_input).
+    /// Always `false` for widgets with no submit semantics. Available since
+    /// v0.21.1.
+    pub submitted: bool,
+    /// Net vertical scroll-wheel delta over this widget this frame.
+    ///
+    /// Positive = wheel scrolled up, negative = down, `0` when the wheel did
+    /// not move while the cursor was over the widget's `rect`. Hover-gated, so
+    /// each widget consumes only the wheel motion that occurred above it — a
+    /// chart, canvas, or custom viewport can scroll/zoom locally without a
+    /// frame-global scroll handler. Available since v0.21.1.
+    pub scroll_delta: i32,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,
 }
@@ -359,6 +383,63 @@ impl Response {
     #[must_use = "on_hover_ui returns the Response for further chaining"]
     pub fn on_hover_ui(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.hovered && self.rect.width > 0 && self.rect.height > 0 {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run `f` if the widget was clicked this frame, then return the Response
+    /// for further chaining.
+    ///
+    /// The closure receives the same `&mut Context` so it can issue UI commands
+    /// (e.g. queue a toast); ignore the argument with `|_|` if you only need to
+    /// mutate application state.
+    ///
+    /// ```ignore
+    /// ui.button("Save").on_click(ui, |_| save());
+    /// ```
+    pub fn on_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.clicked {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run `f` if the widget's value changed this frame, then return the
+    /// Response for chaining. See [`on_click`](Self::on_click) for the closure
+    /// argument convention. Available since v0.21.1.
+    pub fn on_changed(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.changed {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run `f` on the frame the widget *gained* keyboard focus, then return the
+    /// Response for chaining. Fires once per focus acquisition (mirrors
+    /// [`gained_focus`](Self::gained_focus)). Available since v0.21.1.
+    pub fn on_focus(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.gained_focus {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run `f` if the widget submitted this frame (e.g. `Enter` in a focused
+    /// single-line text input), then return the Response for chaining. Mirrors
+    /// [`submitted`](Self::submitted). Available since v0.21.1.
+    pub fn on_submit(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.submitted {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run `f` if the widget was double-clicked this frame, then return the
+    /// Response for chaining. Mirrors [`double_clicked`](Self::double_clicked).
+    /// Available since v0.21.1.
+    pub fn on_double_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
+        if self.double_clicked {
             f(ctx);
         }
         self

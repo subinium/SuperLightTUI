@@ -259,6 +259,20 @@ impl Context {
     }
 
     /// Render a key-value definition list with aligned columns.
+    ///
+    /// Keys are right-padded to the widest key so the value column lines up.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.definition_list(&[
+    ///     ("Name", "SuperLightTUI"),
+    ///     ("Version", "0.21.1"),
+    ///     ("License", "MIT"),
+    /// ]);
+    /// # });
+    /// ```
     pub fn definition_list(&mut self, items: &[(&str, &str)]) -> Response {
         let max_key_width = items
             .iter()
@@ -285,6 +299,17 @@ impl Context {
     }
 
     /// Render a horizontal divider with a centered text label.
+    ///
+    /// The label is padded with one space on each side and centered between
+    /// two `─` separator runs spanning the available width.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.divider_text("Settings");
+    /// # });
+    /// ```
     pub fn divider_text(&mut self, label: &str) -> Response {
         let w = self.width();
         let label_len = UnicodeWidthStr::width(label) as u32;

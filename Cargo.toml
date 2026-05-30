@@ -3,7 +3,7 @@ members = [".", "crates/slt-wasm"]
 
 [package]
 name = "superlighttui"
-version = "0.21.0"
+version = "0.21.1"
 edition = "2021"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -14,7 +14,24 @@ readme = "README.md"
 keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
 categories = ["command-line-interface"]
 rust-version = "1.81"
-exclude = ["examples/", ".github/", "assets/", "AUDIT-REPORT.md", "CLAUDE.md"]
+# Keep the published crate to library + docs only. The agent/skill scaffolding,
+# VHS recordings, and dev/CI config are not needed by downstream consumers
+# (they were leaking into 0.21.0's tarball — ~140KB of non-library content).
+exclude = [
+    "examples/",
+    ".github/",
+    "assets/",
+    "AUDIT-REPORT.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".agents/",
+    ".claude/",
+    "scripts/",
+    "deny.toml",
+    "_typos.toml",
+    "*.tape",
+    ".gitignore",
+]
 # Disable cargo's `examples/*.rs` auto-discovery: only the binaries listed
 # below as `[[example]]` are exposed via `cargo run --example`. Source
 # demos that compose into a tour (v020_*, cookbook_*, most demo_*,
@@ -217,6 +234,19 @@ path = "examples/v020_perf_audit.rs"
 [[example]]
 name = "v020_test_utils"
 path = "examples/v020_test_utils.rs"
+
+# ── v0.21 coverage ──────────────────────────────────────────────────
+# v0210_widgets: paginator / number_input / variable-height virtual_list /
+#   scheduler / devtools inspector (widgets that shipped in 0.21.0 without a
+#   dedicated example). v0211_tour: the 0.21.1 API additions.
+
+[[example]]
+name = "v0210_widgets"
+path = "examples/v0210_widgets.rs"
+
+[[example]]
+name = "v0211_tour"
+path = "examples/v0211_tour.rs"
 
 [[bench]]
 name = "benchmarks"

@@ -34,6 +34,16 @@ impl Context {
     /// if r.hovered { /* attach tooltip */ }
     /// # });
     /// ```
+    ///
+    /// # Family
+    ///
+    /// The gauge family covers ratio-based progress indicators:
+    ///
+    /// - [`gauge`](Self::gauge) — block-fill bar with a centered label (this method).
+    /// - [`line_gauge`](Self::line_gauge) — single-line bar with a trailing label
+    ///   and configurable fill/empty chars.
+    /// - [`progress_bar`](Self::progress_bar) / [`progress`](Self::progress) —
+    ///   unlabeled progress bars.
     pub fn gauge(&mut self, ratio: f64) -> Gauge<'_> {
         Gauge::new(self, ratio)
     }
@@ -52,6 +62,16 @@ impl Context {
     /// ui.line_gauge(0.78).label("Memory").width(48).filled('━');
     /// # });
     /// ```
+    ///
+    /// # Family
+    ///
+    /// The gauge family covers ratio-based progress indicators:
+    ///
+    /// - [`line_gauge`](Self::line_gauge) — single-line bar with a trailing
+    ///   label (this method).
+    /// - [`gauge`](Self::gauge) — block-fill bar with a centered label.
+    /// - [`progress_bar`](Self::progress_bar) / [`progress`](Self::progress) —
+    ///   unlabeled progress bars.
     pub fn line_gauge(&mut self, ratio: f64) -> LineGauge<'_> {
         LineGauge::new(self, ratio)
     }

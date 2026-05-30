@@ -526,10 +526,10 @@ pub fn capabilities() -> Capabilities {
 fn probe_capabilities() -> Capabilities {
     let mut caps = Capabilities::default();
 
-    // Total stdin wait is bounded to ≤150ms (90 + 30 + 30) so a silent
-    // terminal cannot stall startup beyond the existing OSC-11 budget. A
-    // responsive terminal replies in well under 10ms, so the common path adds
-    // negligible latency.
+    // Total stdin wait is bounded to ≤180ms (90 + 30 + 30 + 30) so a silent
+    // terminal cannot stall startup beyond a small multiple of the existing
+    // OSC-11 budget. A responsive terminal replies in well under 10ms per
+    // query, so the common path adds negligible latency.
     let mut out = io::stdout();
     // DA1 then DA2 in one write — both terminate with `c`, so a single
     // DA-aware read drains both replies (in order) when supported.
@@ -554,6 +554,28 @@ fn probe_capabilities() -> Capabilities {
     if write!(out, "\x1bP+q5463\x1b\\").is_ok() && out.flush().is_ok() {
         if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
             parse_xtgettcap_truecolor(&resp, &mut caps);
+        }
+    }
+
+    // DECRQM for synchronized output (mode ?2026): CSI ? 2026 $ p. A supporting
+    // terminal replies CSI ? 2026 ; <Ps> $ y, where Ps ∈ {1,2} (set / reset)
+    // both mean *recognized*; Ps = 0 means the mode is not recognized. The
+    // reply terminates with `y` rather than BEL / ST, so it needs the
+    // DECRPM-aware reader. A silent terminal leaves the resolution `Unknown`,
+    // which the flush gate treats as "keep emitting" — preserving the historic
+    // always-emit behavior on headless / non-answering hosts.
+    if write!(out, "\x1b[?2026$p").is_ok() && out.flush().is_ok() {
+        if let Some(resp) = read_decrpm_response(Duration::from_millis(30)) {
+            match parse_decrpm_sync_output(&resp) {
+                Some(true) => {
+                    caps.sync_output = true;
+                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Supported);
+                }
+                Some(false) => {
+                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Unsupported);
+                }
+                None => {}
+            }
         }
     }
 
@@ -742,6 +764,97 @@ fn parse_xtgettcap_truecolor(response: &str, caps: &mut Capabilities) {
     }
 }
 
+/// Tri-state outcome of the DECRQM ?2026 (synchronized output) probe.
+///
+/// The synchronized-output BSU/ESU emission is gated on this rather than on the
+/// public [`Capabilities::sync_output`] bool alone, because the public flag is
+/// only ever set on *positive* support evidence. Gating emission on that flag
+/// directly would flip the historic always-emit behavior to never-emit on every
+/// headless / non-answering host (a regression). This tri-state lets the gate
+/// suppress BSU/ESU **only** when the terminal definitively reported the mode
+/// unrecognized, and keep emitting in the `Unknown` (silent / headless) case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncOutputResolution {
+    /// DECRQM confirmed mode ?2026 is recognized (set or reset).
+    Supported,
+    /// DECRQM explicitly reported mode ?2026 as not recognized (Ps = 0).
+    Unsupported,
+}
+
+/// Process-global resolution of the synchronized-output probe, populated at most
+/// once by [`probe_capabilities`]. Absent (`Unknown`) until the probe answers.
+static SYNC_OUTPUT_RESOLUTION: std::sync::OnceLock<SyncOutputResolution> =
+    std::sync::OnceLock::new();
+
+/// Whether the flush pipeline should wrap a frame in synchronized-output
+/// BSU/ESU guards.
+///
+/// Returns `true` (emit) unless the DECRQM ?2026 probe *definitively* reported
+/// the mode as unrecognized. A silent / headless / never-run probe leaves the
+/// resolution `Unknown`, in which case this keeps emitting exactly as the
+/// pre-gate code always did. This is the behavior-preserving half of the
+/// capability gate: positive support and the unknown default both emit; only a
+/// confirmed-unsupported terminal suppresses.
+fn should_emit_synchronized_update() -> bool {
+    !matches!(
+        SYNC_OUTPUT_RESOLUTION.get(),
+        Some(SyncOutputResolution::Unsupported)
+    )
+}
+
+/// Read a DECRPM reply, which terminates with the byte `y` rather than BEL / ST
+/// (used for the DECRQM ?2026 synchronized-output probe). Bounded by `timeout`
+/// so a terminal that ignores the query cannot stall startup.
+#[cfg(feature = "crossterm")]
+fn read_decrpm_response(timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut stdin = io::stdin();
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1];
+
+    while Instant::now() < deadline {
+        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
+            continue;
+        }
+        let read = stdin.read(&mut buf).ok()?;
+        if read == 0 {
+            continue;
+        }
+        bytes.push(buf[0]);
+        // `y` is the final byte of a DECRPM reply (`CSI ? <mode> ; <Ps> $ y`).
+        if buf[0] == b'y' {
+            break;
+        }
+        if bytes.len() >= 4096 {
+            break;
+        }
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Parse a DECRPM reply for synchronized output (mode `2026`):
+/// `CSI ? 2026 ; <Ps> $ y`.
+///
+/// Returns:
+///   * `Some(true)`  — mode recognized (`Ps` ∈ {1, 2, 3, 4}: set / reset /
+///     permanently-set / permanently-reset all mean *supported*),
+///   * `Some(false)` — mode not recognized (`Ps` = 0),
+///   * `None`        — no DECRPM reply for mode 2026 in the string.
+#[cfg(feature = "crossterm")]
+fn parse_decrpm_sync_output(response: &str) -> Option<bool> {
+    // Reply body: ESC [ ? 2026 ; <Ps> $ y
+    let pos = response.find("\x1b[?2026;")?;
+    let body = &response[pos + "\x1b[?2026;".len()..];
+    let end = body.find("$y")?;
+    let ps = body[..end].trim().parse::<u32>().ok()?;
+    // Ps = 0 → not recognized; any other reported state means the mode exists.
+    Some(ps != 0)
+}
+
 fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     let mut chunks = Vec::new();
     let bytes = encoded.as_bytes();
@@ -918,7 +1031,13 @@ impl Terminal {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
 
-        queue!(self.stdout, BeginSynchronizedUpdate)?;
+        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
+        // (v0.21.1): emit unless the terminal definitively reported the mode
+        // unrecognized. A silent / headless probe keeps emitting as before.
+        let sync_guard = should_emit_synchronized_update();
+        if sync_guard {
+            queue!(self.stdout, BeginSynchronizedUpdate)?;
+        }
         // Issue #171: refresh both buffers' per-row digests so the per-row
         // skip inside `flush_buffer_diff` can short-circuit unchanged rows.
         // `previous` only needs a recompute when the prior frame mutated
@@ -945,7 +1064,9 @@ impl Terminal {
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
         flush_sprixels(&mut self.stdout, &self.current, &self.previous, 0)?;
 
-        queue!(self.stdout, EndSynchronizedUpdate)?;
+        if sync_guard {
+            queue!(self.stdout, EndSynchronizedUpdate)?;
+        }
         flush_cursor(
             &mut self.stdout,
             &mut self.cursor_visible,
@@ -1109,7 +1230,12 @@ impl InlineTerminal {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
 
-        queue!(self.stdout, BeginSynchronizedUpdate)?;
+        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
+        // (v0.21.1); see `Terminal::flush`. Silent / headless keeps emitting.
+        let sync_guard = should_emit_synchronized_update();
+        if sync_guard {
+            queue!(self.stdout, BeginSynchronizedUpdate)?;
+        }
 
         if !self.reserved {
             queue!(self.stdout, cursor::MoveToColumn(0))?;
@@ -1152,7 +1278,9 @@ impl InlineTerminal {
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
         flush_sprixels(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
-        queue!(self.stdout, EndSynchronizedUpdate)?;
+        if sync_guard {
+            queue!(self.stdout, EndSynchronizedUpdate)?;
+        }
         let fallback_row = row_offset + self.height.saturating_sub(1);
         flush_cursor(
             &mut self.stdout,
@@ -1386,7 +1514,38 @@ fn parse_osc52_response(response: &str) -> Option<String> {
     base64_decode(encoded)
 }
 
-/// Read clipboard contents via OSC 52 terminal query.
+/// Read clipboard contents via an OSC 52 terminal query.
+///
+/// Writes the OSC 52 read request (`ESC ] 52 ; c ; ? BEL`) to stdout, then
+/// blocks reading the terminal's reply from stdin for up to ~200 ms. Returns
+/// the decoded clipboard text, or `None` if the terminal does not answer, the
+/// reply is empty, or it cannot be decoded. Many terminals disable OSC 52 reads
+/// by default for security, in which case this always returns `None`.
+///
+/// # Note
+///
+/// This call reads the **same stdin** the [`run`](crate::run) event loop polls,
+/// **synchronously and outside** the loop's own event dispatch. That creates a
+/// typeahead-swallow hazard: during the blocking read window, any bytes the user
+/// types — and any other terminal report in flight (mouse, focus, paste, a
+/// different OSC reply) — land in this function's byte reader instead of the
+/// event queue. Keystrokes consumed here are silently lost, and a foreign report
+/// interleaved with the OSC 52 reply can corrupt parsing so the read returns
+/// `None`. There is no locking between this reader and the run loop's poll, so
+/// calling it concurrently from another thread while the loop is running races
+/// on stdin.
+///
+/// Recommended usage:
+///   * Call it from the main thread, **not** from a spawned thread, and never
+///     concurrently with a running [`run`](crate::run) loop on another thread.
+///   * Trigger it only in direct response to an explicit user action (e.g. a
+///     paste keybinding) and keep the window brief, so the typeahead lost to the
+///     blocking read is bounded to that moment.
+///   * Prefer the OS clipboard via a dedicated crate when reliable, race-free
+///     clipboard reads are required; reserve this for the no-dependency,
+///     terminal-only fallback.
+///   * For *writing* the clipboard there is no such hazard — that path only
+///     emits bytes and never reads stdin.
 #[cfg(feature = "crossterm")]
 pub fn read_clipboard() -> Option<String> {
     let mut stdout = io::stdout();
@@ -1772,6 +1931,123 @@ impl __BenchKittyFixture {
     }
 }
 
+/// Benchmark-only entry point for the Kitty image flush path.
+///
+/// Builds an `n`-image fixture and runs [`KittyImageManager::flush`] once into
+/// the supplied sink at `row_offset`, mirroring the [`__bench_flush_buffer_diff`]
+/// free-function style. `KittyPlacement` / `KittyImageManager` are `pub(crate)`,
+/// so an external bench crate cannot construct them directly — this wrapper owns
+/// the construction and only the `Write` sink crosses the crate boundary.
+///
+/// Not part of the stable API.
+#[doc(hidden)]
+pub fn __bench_flush_kitty<W: Write>(sink: &mut W, n: usize, row_offset: u32) -> io::Result<()> {
+    let mut fixture = __bench_new_kitty_fixture(n);
+    fixture.flush_inline(sink, row_offset)
+}
+
+/// Opaque test/bench fixture wrapping two `Buffer`s populated with structurally
+/// identical sprixel placements, used to drive the [`flush_sprixels`] re-blit
+/// path. `SprixelPlacement` is `pub(crate)`, so this fixture owns construction
+/// and exposes only `Write`-based flush entry points across the crate boundary.
+///
+/// Returned by [`__bench_new_sprixel_fixture`].
+#[doc(hidden)]
+pub struct __BenchSprixelFixture {
+    current: Buffer,
+    previous: Buffer,
+}
+
+/// Build a self-contained sprixel-reblit fixture for the perf suite (v0.21.1).
+///
+/// Creates `n` opaque sprixel placements laid out down the buffer and mirrors
+/// them into both the current and previous frame so the steady-state flush
+/// re-blits nothing. Per-row digests are refreshed (as the real `flush` does)
+/// so the per-row clean+hash shortcut in [`sprixel_needs_reblit`] is exercised.
+///
+/// Not part of the stable API.
+#[doc(hidden)]
+pub fn __bench_new_sprixel_fixture(n: usize) -> __BenchSprixelFixture {
+    use crate::buffer::{SprixelCell, SprixelPlacement};
+
+    // A buffer tall enough to stack `n` 2-row sprixels with a 1-row gap.
+    let height = (n as u32 * 3).max(1);
+    let area = Rect::new(0, 0, 8, height);
+    let mut current = Buffer::empty(area);
+    let mut previous = Buffer::empty(area);
+
+    for i in 0..n {
+        let placement = SprixelPlacement {
+            content_hash: 0x5000 + i as u64,
+            seq: "<SIXEL>".to_string(),
+            x: 0,
+            y: i as u32 * 3,
+            cols: 4,
+            rows: 2,
+            cells: vec![SprixelCell::Opaque; 8],
+        };
+        current.sprixels.push(placement.clone());
+        previous.sprixels.push(placement);
+    }
+
+    // Refresh digests so the per-row shortcut can fire, matching the real
+    // `Terminal::flush` ordering (recompute happens before `flush_sprixels`).
+    current.recompute_line_hashes();
+    previous.recompute_line_hashes();
+
+    __BenchSprixelFixture { current, previous }
+}
+
+// The bench fixture's inherent methods are reachable only once the crate root
+// re-exports `__BenchSprixelFixture` (an integrator step listed in the release
+// notes); until then the lib-target dead-code lint flags them, exactly as it
+// would the already-shipped `__BenchKittyFixture` methods without their
+// `lib.rs` re-export. They are also exercised by the in-crate tests below.
+// Suppress the lint on the impl rather than gating the items behind `cfg(test)`,
+// which would make them invisible to the external `benches/` crate they exist
+// to serve.
+#[allow(dead_code)]
+impl __BenchSprixelFixture {
+    /// Run [`flush_sprixels`] once, writing any re-blitted graphics into `sink`.
+    /// A steady-state fixture emits nothing; this measures the no-damage scan
+    /// cost (hash-set build + per-row shortcut) on the hot path.
+    #[doc(hidden)]
+    pub fn flush<W: Write>(&self, sink: &mut W, row_offset: u32) -> io::Result<()> {
+        flush_sprixels(sink, &self.current, &self.previous, row_offset)
+    }
+
+    /// Number of sprixel placements in this fixture.
+    #[doc(hidden)]
+    pub fn len(&self) -> usize {
+        self.current.sprixels.len()
+    }
+
+    /// Whether this fixture has zero placements.
+    #[doc(hidden)]
+    pub fn is_empty(&self) -> bool {
+        self.current.sprixels.is_empty()
+    }
+}
+
+/// Benchmark-only entry point for the optimized sprixel re-blit scan (v0.21.1).
+///
+/// Builds an `n`-placement steady-state fixture and runs [`flush_sprixels`] once
+/// into `sink` at `row_offset`, mirroring the [`__bench_flush_buffer_diff`]
+/// free-function style. A steady frame re-blits nothing, so this measures the
+/// no-damage scan cost (hashed-key build + per-row clean/hash shortcut). When
+/// the fixture is empty the early-out fires and no work is done.
+///
+/// Not part of the stable API.
+#[doc(hidden)]
+pub fn __bench_flush_sprixels<W: Write>(sink: &mut W, n: usize, row_offset: u32) -> io::Result<()> {
+    let fixture = __bench_new_sprixel_fixture(n);
+    if fixture.is_empty() {
+        return Ok(());
+    }
+    debug_assert_eq!(fixture.len(), n);
+    fixture.flush(sink, row_offset)
+}
+
 fn flush_raw_sequences(
     stdout: &mut impl Write,
     current: &Buffer,
@@ -1793,12 +2069,25 @@ fn flush_raw_sequences(
     Ok(())
 }
 
+/// Structural identity key for a [`crate::buffer::SprixelPlacement`], matching
+/// its [`PartialEq`] contract (`content_hash`/`x`/`y`/`cols`/`rows`, damage
+/// matrix excluded). Hashing this lets [`flush_sprixels`] answer "did an equal
+/// placement exist last frame?" in O(1) instead of an O(n·m) linear scan.
+type SprixelKey = (u64, u32, u32, u32, u32);
+
+/// Build the structural identity key for a placement.
+#[inline]
+fn sprixel_key(p: &crate::buffer::SprixelPlacement) -> SprixelKey {
+    (p.content_hash, p.x, p.y, p.cols, p.rows)
+}
+
 /// Decide whether a sprixel placement must be re-blitted this frame, applying
 /// the per-cell damage matrix (issue #265).
 ///
 /// Returns `true` when:
 ///   * the placement is new or its `(x, y, content_hash, cols, rows)` changed
-///     (no structurally equal placement in the previous frame), OR
+///     (its key is absent from `prev_keys`, the precomputed set of last frame's
+///     placement keys), OR
 ///   * a text cell inside the footprint was overwritten this frame *and* the
 ///     footprint marks that cell as covering graphic ink
 ///     ([`SprixelCell::Opaque`] / [`SprixelCell::Mixed`]) — i.e. the cell is
@@ -1806,17 +2095,27 @@ fn flush_raw_sequences(
 ///
 /// A pure text edit landing on a [`SprixelCell::Transparent`] cell never marks
 /// damage, so the graphic is not re-emitted.
+///
+/// The footprint scan short-circuits an entire footprint row when that row was
+/// untouched this frame *and* hashes identically to the previous frame
+/// (`current.row_clean(y) && current.row_hash(y) == previous.row_hash(y)`):
+/// no cell in such a row can have changed, so no ink can have been annihilated.
+/// On the headless / direct-call path (where `recompute_line_hashes` was not
+/// run) every row reports dirty, so the shortcut never fires and the per-cell
+/// scan runs exactly as before — preserving correctness.
 fn sprixel_needs_reblit(
     placement: &crate::buffer::SprixelPlacement,
     current: &Buffer,
     previous: &Buffer,
+    prev_keys: &std::collections::HashSet<SprixelKey>,
 ) -> bool {
     use crate::buffer::SprixelCell;
 
     // Position / content change: re-blit if no equal placement existed last
-    // frame. `SprixelPlacement: PartialEq` compares content_hash/x/y/cols/rows
-    // (the damage matrix is excluded), so a moved or recolored image re-blits.
-    if !previous.sprixels.iter().any(|p| p == placement) {
+    // frame. The key mirrors `SprixelPlacement: PartialEq` (content_hash/x/y/
+    // cols/rows; damage matrix excluded), so a moved or recolored image
+    // re-blits. O(1) lookup vs the former O(n·m) `iter().any(..)` scan.
+    if !prev_keys.contains(&sprixel_key(placement)) {
         return true;
     }
 
@@ -1824,6 +2123,13 @@ fn sprixel_needs_reblit(
     // now shows ink forces a re-blit. `Transparent` cells are skipped so free
     // text edits in graphic gaps emit zero sprixel bytes.
     for row in 0..placement.rows {
+        let y = placement.y + row;
+        // Per-row shortcut: a row that was not touched this frame and whose
+        // cached digest matches the previous frame's cannot contain a changed
+        // cell, so the whole footprint row is skipped without per-cell work.
+        if current.row_clean(y) && current.row_hash(y) == previous.row_hash(y) {
+            continue;
+        }
         for col in 0..placement.cols {
             let idx = (row * placement.cols + col) as usize;
             match placement.cells.get(idx) {
@@ -1833,7 +2139,6 @@ fn sprixel_needs_reblit(
                 _ => continue,
             }
             let x = placement.x + col;
-            let y = placement.y + row;
             // A footprint can extend past the buffer edge (a clipped placement,
             // or `iterm_image_fit` reserving rows beyond the viewport). Use
             // `try_get` so an out-of-bounds footprint cell is simply skipped
@@ -1861,14 +2166,28 @@ fn sprixel_needs_reblit(
 /// pixel graphic **only** when [`sprixel_needs_reblit`] reports damage, so a
 /// text edit in a transparent region of a Sixel emits zero passthrough bytes
 /// (issue #265).
+///
+/// The previous frame's placement keys are hashed once up front so the
+/// position/content change check is O(1) per placement (vs the former O(n·m)
+/// linear scan), and the per-row clean+hash shortcut inside
+/// [`sprixel_needs_reblit`] skips untouched footprint rows entirely.
 fn flush_sprixels(
     stdout: &mut impl Write,
     current: &Buffer,
     previous: &Buffer,
     row_offset: u32,
 ) -> io::Result<()> {
+    // Early out: no graphics to emit. Avoids building the key set on the
+    // common text-only frame.
+    if current.sprixels.is_empty() {
+        return Ok(());
+    }
+
+    let prev_keys: std::collections::HashSet<SprixelKey> =
+        previous.sprixels.iter().map(sprixel_key).collect();
+
     for placement in &current.sprixels {
-        if sprixel_needs_reblit(placement, current, previous) {
+        if sprixel_needs_reblit(placement, current, previous, &prev_keys) {
             queue!(
                 stdout,
                 cursor::MoveTo(sat_u16(placement.x), sat_u16(row_offset + placement.y)),
@@ -2738,6 +3057,46 @@ mod tests {
         // No APC at all.
         parse_kitty_graphics_ack("garbage", &mut caps);
         assert!(!caps.kitty_graphics);
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_decrpm_sync_output_recognized_states_are_supported() {
+        // Ps = 1 (set), 2 (reset), 3 (perm set), 4 (perm reset) all mean the
+        // mode is recognized → supported.
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;1$y"), Some(true));
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;2$y"), Some(true));
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;3$y"), Some(true));
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;4$y"), Some(true));
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_decrpm_sync_output_ps0_is_unsupported() {
+        // Ps = 0 → mode not recognized.
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;0$y"), Some(false));
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn parse_decrpm_sync_output_garbage_is_none() {
+        // No DECRPM reply for mode 2026 in the string → inconclusive.
+        assert_eq!(parse_decrpm_sync_output("not a decrpm reply"), None);
+        // A reply for a *different* mode must not match.
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2004;1$y"), None);
+        // Truncated reply (missing `$y` terminator) → None, not a panic.
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;1"), None);
+        // Non-numeric Ps → None.
+        assert_eq!(parse_decrpm_sync_output("\x1b[?2026;x$y"), None);
+    }
+
+    #[test]
+    fn sync_output_gate_defaults_to_emit() {
+        // With the probe never having run (the unit-test process never enters a
+        // real terminal session), the resolution stays `Unknown`, so the gate
+        // must keep emitting BSU/ESU — preserving the historic always-emit
+        // behavior on headless / non-answering hosts.
+        assert!(should_emit_synchronized_update());
     }
 
     #[cfg(feature = "crossterm")]
@@ -3921,5 +4280,181 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---- v0.21.1 sprixel reblit-scan optimization regression ---------------
+    //
+    // These drive the hashed-key position lookup and the per-row clean+hash
+    // shortcut with `recompute_line_hashes` engaged (the real `flush` ordering),
+    // proving the optimization preserves the exact #265 re-blit semantics.
+
+    #[test]
+    fn sprixel_unchanged_with_hashes_engaged_emits_zero_bytes() {
+        // Regression: a steady frame (identical to previous) with per-row
+        // digests refreshed must NOT re-blit. This exercises the per-row
+        // clean+hash shortcut: every footprint row is clean and hash-matched, so
+        // the per-cell scan is skipped and nothing is emitted.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        // Match `Terminal::flush`: refresh digests before the sprixel pass.
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+        // Sanity: the footprint rows are clean and hash-identical, so the
+        // shortcut is the path actually taken.
+        assert!(current.row_clean(1) && current.row_clean(2));
+        assert_eq!(current.row_hash(1), previous.row_hash(1));
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "unchanged sprixel must not be re-blitted (per-row shortcut)"
+        );
+    }
+
+    #[test]
+    fn sprixel_changed_text_with_hashes_engaged_reblits_once() {
+        // Regression: a text write over an opaque footprint cell must still
+        // re-blit exactly once even with digests refreshed. The touched row is
+        // dirty (or hash-mismatched), so the shortcut correctly does NOT skip it
+        // and the per-cell annihilation scan fires.
+        let area = Rect::new(0, 0, 10, 5);
+        let placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        current.set_char(1, 1, 'X', Style::new());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+        // The footprint's top row differs from the previous frame.
+        assert_ne!(current.row_hash(1), previous.row_hash(1));
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(
+            s.matches("<SIXEL>").count(),
+            1,
+            "annihilating text write must re-blit exactly once"
+        );
+    }
+
+    #[test]
+    fn sprixel_changed_text_in_transparent_cell_with_hashes_does_not_reblit() {
+        // Regression edge case: even though the touched row is dirty/hash-mismatched
+        // (so the per-row shortcut does NOT skip it), a write landing only on a
+        // Transparent footprint cell must still emit zero bytes — the per-cell
+        // damage matrix governs, exactly as in the unoptimized path.
+        let area = Rect::new(0, 0, 10, 5);
+        let cells = vec![
+            SprixelCell::Transparent, // (1, 1)
+            SprixelCell::Opaque,      // (2, 1)
+            SprixelCell::Opaque,      // (1, 2)
+            SprixelCell::Opaque,      // (2, 2)
+        ];
+        let placement = make_sprixel(cells);
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement.clone());
+        current.set_char(1, 1, 'X', Style::new());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(placement);
+
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "transparent-cell text write must not re-blit even with hashes engaged"
+        );
+    }
+
+    #[test]
+    fn sprixel_key_matches_partial_eq_contract() {
+        // The hashed identity key must agree with `SprixelPlacement: PartialEq`:
+        // equal placements share a key; any field the PartialEq compares
+        // produces a distinct key.
+        let base = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        assert_eq!(sprixel_key(&base), sprixel_key(&base.clone()));
+
+        let mut moved = base.clone();
+        moved.x = 7;
+        assert_ne!(sprixel_key(&base), sprixel_key(&moved));
+
+        let mut recolored = base.clone();
+        recolored.content_hash = 0x9999;
+        assert_ne!(sprixel_key(&base), sprixel_key(&recolored));
+
+        // The damage matrix is excluded from both PartialEq and the key.
+        let mut annihilated = base.clone();
+        annihilated.cells = vec![SprixelCell::Annihilated; 4];
+        assert_eq!(sprixel_key(&base), sprixel_key(&annihilated));
+        assert_eq!(base, annihilated);
+    }
+
+    #[test]
+    fn sprixel_multi_placement_only_changed_one_reblits() {
+        // With several stacked sprixels, moving one must re-blit only that one;
+        // the others (clean, hash-matched) stay silent. Exercises the hash-set
+        // position lookup across multiple placements.
+        let area = Rect::new(0, 0, 10, 9);
+        let mut current = Buffer::empty(area);
+        let mut previous = Buffer::empty(area);
+        for i in 0..3u32 {
+            let p = SprixelPlacement {
+                content_hash: 0x100 + i as u64,
+                seq: format!("<S{i}>"),
+                x: 0,
+                y: i * 3,
+                cols: 2,
+                rows: 2,
+                cells: vec![SprixelCell::Opaque; 4],
+            };
+            current.sprixels.push(p.clone());
+            previous.sprixels.push(p);
+        }
+        // Move only the middle sprixel.
+        current.sprixels[1].x = 5;
+
+        current.recompute_line_hashes();
+        previous.recompute_line_hashes();
+
+        let mut out: Vec<u8> = Vec::new();
+        flush_sprixels(&mut out, &current, &previous, 0).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.matches("<S0>").count(), 0);
+        assert_eq!(
+            s.matches("<S1>").count(),
+            1,
+            "only the moved sprixel reblits"
+        );
+        assert_eq!(s.matches("<S2>").count(), 0);
+    }
+
+    #[test]
+    fn bench_sprixel_fixture_steady_state_emits_nothing() {
+        // The bench fixture must represent a steady frame (no re-blit) so it
+        // measures the no-damage scan cost. Guards against the wrapper silently
+        // emitting work.
+        let fixture = __bench_new_sprixel_fixture(4);
+        assert_eq!(fixture.len(), 4);
+        assert!(!fixture.is_empty());
+        let mut out: Vec<u8> = Vec::new();
+        fixture.flush(&mut out, 0).unwrap();
+        assert!(
+            out.is_empty(),
+            "steady-state bench fixture re-blits nothing"
+        );
     }
 }

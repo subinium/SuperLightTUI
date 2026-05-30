@@ -275,6 +275,107 @@ pub(crate) fn textarea_visual_to_logical(
     }
 }
 
+/// Intrinsic-size measurement API (v0.21.1).
+///
+/// These read-only queries expose the layout engine's text-wrapping math and
+/// the previous frame's named-container geometry without changing any rendering
+/// path. They let app code reserve space, decide pagination, or position
+/// floating UI relative to a widget that was laid out last frame.
+impl Context {
+    /// The intrinsic `(width, height_in_rows)` `text` would occupy, in cells.
+    ///
+    /// Reuses the exact word-wrap kernel the layout engine runs
+    /// ([`wrap_lines`](crate::layout::wrap_lines) via this crate's `tree`
+    /// module), so the answer always matches what a `ui.text(text).wrap()`
+    /// would actually render — width logic is never duplicated here.
+    ///
+    /// * When `max_width` is `None`, the text is measured unwrapped: width is
+    ///   the widest hard-break line, height is the number of `'\n'`-separated
+    ///   lines (at least 1).
+    /// * When `max_width` is `Some(w)` with `w > 0`, the text is wrapped to
+    ///   `w` columns; the returned width is the widest wrapped line (`<= w`)
+    ///   and the height is the wrapped line count.
+    /// * `Some(0)` is treated like `None` (no width budget — honor hard breaks
+    ///   only), mirroring the layout kernel's zero-width contract.
+    ///
+    /// Width is the terminal display width (wide CJK glyphs count as 2,
+    /// zero-width combining marks as 0). The result is clamped to `u16`; a
+    /// pathological line wider than `u16::MAX` cells saturates rather than
+    /// wrapping.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// // Unwrapped: width is the longest line, height the line count.
+    /// let (w, h) = ui.measure_text("hello\nworld!", None);
+    /// assert_eq!((w, h), (6, 2));
+    ///
+    /// // Wrapped to 5 columns: the long word breaks across rows.
+    /// let (w, h) = ui.measure_text("alpha beta gamma", Some(5));
+    /// assert!(w <= 5 && h >= 1);
+    /// # });
+    /// ```
+    pub fn measure_text(&self, text: &str, max_width: Option<u16>) -> (u16, u16) {
+        // `Some(0)` collapses to the "no budget" path so we never feed a
+        // zero-width wrap (which the kernel treats as hard-break-only anyway).
+        let budget = match max_width {
+            Some(w) if w > 0 => w as u32,
+            // `u32::MAX` is the layout engine's "unbounded width" sentinel
+            // (see `textarea_build_visual_lines`); `wrap_lines` honors only
+            // hard breaks at that width, giving the unwrapped measurement.
+            _ => u32::MAX,
+        };
+
+        let lines = crate::layout::wrap_lines(text, budget);
+        let height = lines.len().max(1);
+        let width = lines
+            .iter()
+            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .max()
+            .unwrap_or(0);
+
+        (clamp_u16(width), clamp_u16(height))
+    }
+
+    /// The [`Rect`] a named widget/container occupied on the **last completed
+    /// frame**, or `None` if no group with that `name` was rendered.
+    ///
+    /// Reads the same `name → rect` bookkeeping that powers group hover/focus
+    /// styling (`prev_group_rects`), captured at the end of the previous
+    /// frame's collect pass. Register a name with
+    /// [`Context::group`](crate::Context::group):
+    ///
+    /// ```ignore
+    /// ui.group("sidebar").border(slt::Border::Rounded).col(|ui| { /* … */ });
+    /// // …next frame:
+    /// if let Some(r) = ui.measured_rect("sidebar") {
+    ///     ui.text(format!("sidebar is {}x{}", r.width, r.height));
+    /// }
+    /// ```
+    ///
+    /// Returns `None` on the first frame (nothing measured yet) and for any
+    /// name that was not rendered as a `group(...)` last frame. If the same
+    /// name is used for multiple groups, the first match in render order is
+    /// returned.
+    pub fn measured_rect(&self, name: &str) -> Option<Rect> {
+        self.prev_group_rects
+            .iter()
+            .find(|(group_name, _)| group_name.as_ref() == name)
+            .map(|(_, rect)| *rect)
+    }
+}
+
+/// Saturating `usize -> u16` for intrinsic-size results.
+///
+/// A measured extent wider/taller than `u16::MAX` cells is pathological (no
+/// real terminal is that large); saturating keeps the public return type a
+/// compact `u16` without an overflow panic.
+#[inline]
+fn clamp_u16(value: usize) -> u16 {
+    value.min(u16::MAX as usize) as u16
+}
+
 #[allow(unused_variables)]
 pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
@@ -292,4 +393,102 @@ pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
             .spawn()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod measure_tests {
+    use crate::test_utils::TestBackend;
+    use crate::{Border, Context, FrameState, Theme};
+
+    #[test]
+    fn measure_text_unwrapped_reports_widest_line_and_line_count() {
+        let mut state = FrameState::default();
+        let ui = Context::new(Vec::new(), 40, 10, &mut state, Theme::dark());
+
+        // Two hard-break lines: width = widest line, height = line count.
+        let (w, h) = ui.measure_text("hello\nworld!", None);
+        assert_eq!((w, h), (6, 2));
+
+        // Single line, no breaks → height 1.
+        assert_eq!(ui.measure_text("abc", None), (3, 1));
+
+        // Empty string is one blank line of zero width.
+        assert_eq!(ui.measure_text("", None), (0, 1));
+    }
+
+    #[test]
+    fn measure_text_wraps_to_budget_and_never_exceeds_it() {
+        let mut state = FrameState::default();
+        let ui = Context::new(Vec::new(), 40, 10, &mut state, Theme::dark());
+
+        // "alpha beta gamma" wrapped to 5 columns: every word is <= 5 wide so
+        // it lands one word per line → 3 rows, widest line "gamma" = 5.
+        let (w, h) = ui.measure_text("alpha beta gamma", Some(5));
+        assert!(w <= 5, "wrapped width {w} must not exceed the budget");
+        assert_eq!(h, 3, "three 5-wide words wrap onto three rows");
+        assert_eq!(w, 5);
+
+        // A word longer than the budget is hard-split across rows; height
+        // grows but width still stays within the budget.
+        let (w, h) = ui.measure_text("abcdefghij", Some(4));
+        assert!(w <= 4);
+        assert!(h >= 3, "10 chars at width 4 need at least 3 rows, got {h}");
+    }
+
+    #[test]
+    fn measure_text_some_zero_is_treated_as_unbounded() {
+        // Edge case: `Some(0)` must not feed a zero-width wrap. It honors hard
+        // breaks only, identical to `None`.
+        let mut state = FrameState::default();
+        let ui = Context::new(Vec::new(), 40, 10, &mut state, Theme::dark());
+        assert_eq!(
+            ui.measure_text("a b c\nlonger line", Some(0)),
+            ui.measure_text("a b c\nlonger line", None),
+        );
+    }
+
+    #[test]
+    fn measure_text_counts_wide_cjk_glyphs_as_two_cells() {
+        let mut state = FrameState::default();
+        let ui = Context::new(Vec::new(), 40, 10, &mut state, Theme::dark());
+        // Two double-width CJK glyphs measure as 4 cells, one row.
+        assert_eq!(ui.measure_text("한글", None), (4, 1));
+    }
+
+    #[test]
+    fn measured_rect_is_none_on_first_frame() {
+        let mut state = FrameState::default();
+        let ui = Context::new(Vec::new(), 40, 10, &mut state, Theme::dark());
+        // Nothing has been rendered yet → no prior geometry.
+        assert!(ui.measured_rect("panel").is_none());
+    }
+
+    #[test]
+    fn measured_rect_returns_group_geometry_after_a_render() {
+        // Render a named group on frame 1; on frame 2 the previous frame's
+        // collected `prev_group_rects` makes the rect queryable.
+        let mut backend = TestBackend::new(40, 10);
+
+        backend.render(|ui| {
+            let _ = ui.group("panel").border(Border::Rounded).col(|ui| {
+                ui.text("hi");
+            });
+        });
+
+        let mut seen: Option<crate::Rect> = None;
+        backend.render(|ui| {
+            seen = ui.measured_rect("panel");
+            // A name that was never rendered stays `None` — edge case guard.
+            assert!(ui.measured_rect("does-not-exist").is_none());
+        });
+
+        let rect = seen.expect("named group must have a measured rect after render");
+        assert!(
+            rect.width > 0 && rect.height > 0,
+            "measured rect must be non-empty, got {rect:?}"
+        );
+        // The group fits inside the 40x10 backend area.
+        assert!(rect.x + rect.width <= 40);
+        assert!(rect.y + rect.height <= 10);
+    }
 }
