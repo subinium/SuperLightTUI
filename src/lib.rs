@@ -1631,12 +1631,40 @@ pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_res
     }
 }
 
+/// Number of `on_resize` invocations a batch of events should trigger.
+///
+/// v0.21.1 resize coalescing: a single poll batch may deliver a burst of
+/// `Event::Resize` events while a user drags the window edge. Each
+/// [`Terminal::handle_resize`](crate::terminal::Terminal::handle_resize) does a
+/// `terminal::size()` syscall, two buffer reallocations, and a `Clear(All)`, so
+/// firing it per-event is pure waste — only the *final* geometry matters and
+/// `handle_resize` always reads the live terminal size, not the per-event
+/// payload. This helper returns `1` if the batch contains any resize and `0`
+/// otherwise, so the caller can collapse the burst into one end-of-batch call.
+///
+/// Kept as a pure function (no I/O) so the coalescing rule is unit-testable
+/// without a real crossterm event source.
+#[cfg(feature = "crossterm")]
+#[inline]
+fn resize_invocations_for_batch(events: &[Event]) -> usize {
+    usize::from(events.iter().any(|e| matches!(e, Event::Resize(_, _))))
+}
+
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
 ///
 /// `handle_ctrl_c` controls whether Ctrl+C exits the loop (`true`, default
 /// v0.19 behavior) or is delivered to the frame closure as a regular key
 /// event (`false`, RataTUI parity, issue #238).
+///
+/// v0.21.1: resize events within one poll batch are *coalesced* — `on_resize`
+/// is invoked at most once, after the whole batch is drained, using the final
+/// terminal size (`handle_resize` re-reads `terminal::size()`). Dragging a
+/// window edge can emit dozens of `Event::Resize` per poll; firing the
+/// `Clear(All)` + double realloc + `size()` syscall for each is wasted work
+/// when only the last geometry survives. The SIGCONT/resume redraw path in
+/// [`run_with`] is unaffected — it calls `handle_resize` directly, outside this
+/// function.
 #[cfg(feature = "crossterm")]
 fn poll_events(
     events: &mut Vec<Event>,
@@ -1657,9 +1685,9 @@ fn poll_events(
             if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
-            if matches!(ev, Event::Resize(_, _)) {
-                on_resize()?;
-            }
+            // Resize is recorded (via `has_resize`) but not yet acted on — the
+            // single `on_resize` call is deferred to end-of-batch so a burst
+            // collapses into one geometry sync.
             process_ev(&ev, state, &mut has_resize);
             events.push(ev);
         }
@@ -1670,13 +1698,22 @@ fn poll_events(
                 if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
                 }
-                if matches!(ev, Event::Resize(_, _)) {
-                    on_resize()?;
-                }
                 process_ev(&ev, state, &mut has_resize);
                 events.push(ev);
             }
         }
+    }
+
+    // Coalesced resize: fire `on_resize` exactly once for the whole batch,
+    // after every event has been read, so it picks up the final terminal size.
+    // `has_resize` is the per-batch "saw a resize" flag set by `process_ev`.
+    debug_assert_eq!(
+        usize::from(has_resize),
+        resize_invocations_for_batch(events),
+        "has_resize must agree with the coalescing helper"
+    );
+    if has_resize {
+        on_resize()?;
     }
 
     // #90: clear cache first (which also resets last_mouse_pos to None),
@@ -2335,6 +2372,56 @@ mod run_loop_tests {
         let cfg = RunConfig::default().handle_suspend(true);
         assert!(cfg.handle_suspend);
         assert!(cfg.handle_ctrl_c, "Ctrl+C default preserved");
+    }
+
+    // ── v0.21.1: resize debounce / coalesce ─────────────────────────────
+
+    fn resize(w: u32, h: u32) -> Event {
+        Event::Resize(w, h)
+    }
+
+    #[test]
+    fn resize_batch_coalesces_to_single_invocation() {
+        // Three resize events in one poll batch must collapse to exactly one
+        // `on_resize` call (the helper that drives the single end-of-batch
+        // call in `poll_events`). The final size is irrelevant to the count —
+        // `handle_resize` re-reads `terminal::size()` — but we feed distinct
+        // sizes to mirror a real drag burst.
+        let batch = vec![resize(80, 24), resize(100, 30), resize(120, 40)];
+        assert_eq!(
+            resize_invocations_for_batch(&batch),
+            1,
+            "a burst of resizes must coalesce to one on_resize"
+        );
+    }
+
+    #[test]
+    fn resize_batch_without_resize_invokes_zero_times() {
+        // A batch with no resize event must not trigger `on_resize` at all.
+        let batch = vec![key(event::KeyModifiers::NONE)];
+        assert_eq!(resize_invocations_for_batch(&batch), 0);
+        // Empty batch is likewise a no-op.
+        assert_eq!(resize_invocations_for_batch(&[]), 0);
+    }
+
+    #[test]
+    fn resize_coalesce_uses_final_size_via_has_resize_flag() {
+        // The single deferred `on_resize` is gated on `has_resize`, which
+        // `process_run_loop_event` sets to `true` for any resize in the batch.
+        // Feeding three resizes leaves the flag set once (idempotent), and the
+        // coalescing helper agrees — this is exactly the `debug_assert_eq!`
+        // invariant `poll_events` checks before its single `on_resize` call.
+        let mut state = FrameState::default();
+        let mut has_resize = false;
+        let batch = vec![resize(80, 24), resize(100, 30), resize(120, 40)];
+        for ev in &batch {
+            process_run_loop_event(ev, &mut state, &mut has_resize);
+        }
+        assert!(has_resize, "any resize in the batch must set has_resize");
+        assert_eq!(
+            usize::from(has_resize),
+            resize_invocations_for_batch(&batch)
+        );
     }
 
     /// End-to-end test of the real signal-delivery wiring: install the
