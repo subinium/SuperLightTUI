@@ -574,6 +574,240 @@ impl TestBackend {
         );
     }
 
+    // ---- Region queries + snapshot diffing (#283) -------------------------
+
+    /// Find the first buffer position where `needle` begins in the rendered
+    /// text grid, scanning rows top-to-bottom and columns left-to-right.
+    ///
+    /// Each cell contributes its glyph at the cell's own column; empty cells
+    /// (blanks and wide-char trailing cells) count as a single space so the
+    /// returned `x` is the actual buffer column where the match starts. The
+    /// search is per-row — a needle that wraps across a row boundary is not
+    /// matched. Returns `None` if `needle` is empty or absent.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::TestBackend;
+    ///
+    /// let mut tb = TestBackend::new(20, 2);
+    /// tb.render(|ui| {
+    ///     ui.text("  hello");
+    /// });
+    /// assert_eq!(tb.find_text("hello"), Some((2, 0)));
+    /// assert_eq!(tb.find_text("nope"), None);
+    /// ```
+    pub fn find_text(&self, needle: &str) -> Option<(u32, u32)> {
+        if needle.is_empty() {
+            return None;
+        }
+        for y in 0..self.height {
+            // Build the row text alongside a per-character map back to the
+            // originating buffer column, so a byte match in `row` resolves to
+            // the correct `x`. Empty cells render as a single space.
+            let mut row = String::new();
+            // byte offset in `row` -> buffer column x
+            let mut col_at_byte: Vec<u32> = Vec::with_capacity(self.width as usize);
+            for x in 0..self.width {
+                let cell = self.buffer.get(x, y);
+                let sym: &str = if cell.symbol.is_empty() {
+                    " "
+                } else {
+                    cell.symbol.as_str()
+                };
+                for _ in 0..sym.len() {
+                    col_at_byte.push(x);
+                }
+                row.push_str(sym);
+            }
+            if let Some(byte_idx) = row.find(needle) {
+                let x = col_at_byte.get(byte_idx).copied().unwrap_or(0);
+                return Some((x, y));
+            }
+        }
+        None
+    }
+
+    /// Assert that the rectangular region anchored at `(x, y)` with width `w`
+    /// and height `h` renders exactly `expected` (rows joined with `\n`).
+    ///
+    /// Each region row is the slice of buffer columns `x..x+w` on buffer row
+    /// `y..y+h`, with empty cells rendered as a space and **trailing** spaces
+    /// of each region row preserved (so width is significant). Columns or rows
+    /// that fall outside the buffer are treated as blanks. Panics with an
+    /// aligned expected-vs-actual diff on mismatch.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::TestBackend;
+    ///
+    /// let mut tb = TestBackend::new(10, 3);
+    /// tb.render(|ui| {
+    ///     let _ = ui.col(|ui| {
+    ///         ui.text("ab");
+    ///         ui.text("cd");
+    ///     });
+    /// });
+    /// tb.assert_region(0, 0, 2, 2, "ab\ncd");
+    /// ```
+    pub fn assert_region(&self, x: u32, y: u32, w: u32, h: u32, expected: &str) {
+        let actual = self.region(x, y, w, h);
+        if actual != expected {
+            panic!(
+                "Region ({x}, {y}, {w}x{h}) mismatch.\n--- expected ---\n{expected}\n--- actual ---\n{actual}\n----------------"
+            );
+        }
+    }
+
+    /// Render the rectangular region anchored at `(x, y)` with width `w` and
+    /// height `h` as a multi-line string (rows joined with `\n`).
+    ///
+    /// Empty cells render as a single space and trailing spaces are preserved,
+    /// so the result is exactly `w` columns wide per row. Columns or rows
+    /// outside the buffer are blank-filled. Useful for scoping a snapshot to a
+    /// sub-rectangle without asserting on the full buffer.
+    pub fn region(&self, x: u32, y: u32, w: u32, h: u32) -> String {
+        let mut rows = Vec::with_capacity(h as usize);
+        for row in y..y.saturating_add(h) {
+            let mut s = String::new();
+            for col in x..x.saturating_add(w) {
+                if row < self.height && col < self.width {
+                    let cell = self.buffer.get(col, row);
+                    if cell.symbol.is_empty() {
+                        s.push(' ');
+                    } else {
+                        s.push_str(cell.symbol.as_str());
+                    }
+                } else {
+                    s.push(' ');
+                }
+            }
+            rows.push(s);
+        }
+        rows.join("\n")
+    }
+
+    /// Assert that `needle` is rendered somewhere in the buffer AND every cell
+    /// of the matched run satisfies `predicate` (applied to each cell's
+    /// [`Style`]).
+    ///
+    /// Combines a content check with a per-cell style check, which is more
+    /// ergonomic than pairing [`find_text`](TestBackend::find_text) with
+    /// repeated [`assert_style_at`](TestBackend::assert_style_at) calls. The
+    /// run is located with `find_text` (per-row, left-to-right), then each of
+    /// the `needle`'s `char`-count cells starting at the match is tested.
+    /// Panics if the needle is absent or any covered cell fails the predicate.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{Color, TestBackend};
+    ///
+    /// let mut tb = TestBackend::new(20, 1);
+    /// tb.render(|ui| {
+    ///     ui.text("hi").fg(Color::Red).bold();
+    /// });
+    /// tb.assert_styled_contains("hi", |s| {
+    ///     s.fg == Some(Color::Red) && s.modifiers.contains(slt::Modifiers::BOLD)
+    /// });
+    /// ```
+    pub fn assert_styled_contains(&self, needle: &str, predicate: impl Fn(&Style) -> bool) {
+        let Some((x, y)) = self.find_text(needle) else {
+            let mut all_lines = String::new();
+            for row in 0..self.height {
+                all_lines.push_str(&format!("{}: {}\n", row, self.line(row)));
+            }
+            panic!("Buffer does not contain {needle:?}.\nBuffer:\n{all_lines}");
+        };
+        // The match spans one cell per `char` in the needle. Wide glyphs occupy
+        // their own cell; the trailing blank cell is not part of the run.
+        let span = needle.chars().count() as u32;
+        for offset in 0..span {
+            let cx = x + offset;
+            let style = self.buffer.get(cx, y).style;
+            assert!(
+                predicate(&style),
+                "Style predicate failed for {needle:?} at cell ({cx}, {y}): style is {style:?}"
+            );
+        }
+    }
+
+    /// Produce a stable, plain-text snapshot of the whole buffer.
+    ///
+    /// Every buffer row is rendered exactly `width` columns wide (empty cells
+    /// as spaces, no trailing trim) and joined with `\n`. Unlike
+    /// [`to_string_trimmed`](TestBackend::to_string_trimmed), no trailing blank
+    /// rows are dropped and per-row width is fixed, giving a deterministic
+    /// snapshot suitable for [`assert_snapshot_eq`](TestBackend::assert_snapshot_eq)
+    /// or external snapshot tooling.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::TestBackend;
+    ///
+    /// let mut tb = TestBackend::new(3, 2);
+    /// tb.render(|ui| {
+    ///     ui.text("ab");
+    /// });
+    /// assert_eq!(tb.snapshot(), "ab \n   ");
+    /// ```
+    pub fn snapshot(&self) -> String {
+        self.region(0, 0, self.width, self.height)
+    }
+
+    /// Assert the buffer [`snapshot`](TestBackend::snapshot) equals `expected`,
+    /// panicking with a unified-diff-style report on mismatch.
+    ///
+    /// Trailing whitespace on each line of `expected` is ignored (the actual
+    /// snapshot is right-padded to the buffer width), so callers can write
+    /// trimmed expected strings. The panic message lists each differing row
+    /// with `-` (expected) / `+` (actual) markers.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::TestBackend;
+    ///
+    /// let mut tb = TestBackend::new(5, 2);
+    /// tb.render(|ui| {
+    ///     ui.text("hi");
+    /// });
+    /// tb.assert_snapshot_eq("hi\n");
+    /// ```
+    pub fn assert_snapshot_eq(&self, expected: &str) {
+        let actual = self.snapshot();
+        // Compare row-by-row, ignoring trailing whitespace differences so the
+        // expected literal can be written without padding to the full width.
+        let actual_rows: Vec<&str> = actual.lines().collect();
+        let expected_rows: Vec<&str> = expected.lines().collect();
+        let row_count = actual_rows.len().max(expected_rows.len());
+        let mut mismatched = false;
+        for i in 0..row_count {
+            let a = actual_rows.get(i).copied().unwrap_or("");
+            let e = expected_rows.get(i).copied().unwrap_or("");
+            if a.trim_end() != e.trim_end() {
+                mismatched = true;
+                break;
+            }
+        }
+        if mismatched {
+            let mut diff = String::new();
+            for i in 0..row_count {
+                let a = actual_rows.get(i).copied().unwrap_or("");
+                let e = expected_rows.get(i).copied().unwrap_or("");
+                if a.trim_end() == e.trim_end() {
+                    diff.push_str(&format!("  {}\n", a.trim_end()));
+                } else {
+                    diff.push_str(&format!("- {}\n", e.trim_end()));
+                    diff.push_str(&format!("+ {}\n", a.trim_end()));
+                }
+            }
+            panic!("Snapshot mismatch (- expected, + actual):\n{diff}");
+        }
+    }
+
     // ---- Multi-step sequences + type_string (#230) ------------------------
 
     /// Begin building a multi-step interaction sequence.
@@ -1281,5 +1515,188 @@ mod tests {
         });
         let expected = Style::new().fg(Color::Blue);
         tb.assert_style_at(0, 0, expected);
+    }
+
+    // ---- #283 region queries + snapshot diffing -----------------------------
+
+    #[test]
+    fn find_text_returns_first_match_position() {
+        let mut tb = TestBackend::new(20, 2);
+        tb.render(|ui| {
+            ui.text("  hello");
+        });
+        assert_eq!(tb.find_text("hello"), Some((2, 0)));
+    }
+
+    #[test]
+    fn find_text_scans_rows_top_to_bottom() {
+        let mut tb = TestBackend::new(20, 3);
+        tb.render(|ui| {
+            let _ = ui.col(|ui| {
+                ui.text("alpha");
+                ui.text("beta");
+            });
+        });
+        assert_eq!(tb.find_text("beta"), Some((0, 1)));
+    }
+
+    #[test]
+    fn find_text_returns_none_when_absent() {
+        let mut tb = TestBackend::new(10, 1);
+        tb.render(|ui| {
+            ui.text("present");
+        });
+        assert_eq!(tb.find_text("missing"), None);
+    }
+
+    #[test]
+    fn find_text_empty_needle_is_none() {
+        // Edge case: an empty needle never yields a position.
+        let mut tb = TestBackend::new(10, 1);
+        tb.render(|ui| {
+            ui.text("x");
+        });
+        assert_eq!(tb.find_text(""), None);
+    }
+
+    #[test]
+    fn region_returns_padded_rectangle() {
+        let mut tb = TestBackend::new(10, 3);
+        tb.render(|ui| {
+            let _ = ui.col(|ui| {
+                ui.text("ab");
+                ui.text("cd");
+            });
+        });
+        // Width 3 keeps a trailing space; rows are exactly 3 wide.
+        assert_eq!(tb.region(0, 0, 3, 2), "ab \ncd ");
+    }
+
+    #[test]
+    fn region_out_of_bounds_blank_fills() {
+        // Edge case: a region partly past the buffer pads with spaces.
+        let mut tb = TestBackend::new(2, 1);
+        tb.render(|ui| {
+            ui.text("z");
+        });
+        assert_eq!(tb.region(0, 0, 4, 2), "z   \n    ");
+    }
+
+    #[test]
+    fn assert_region_passes_for_match() {
+        let mut tb = TestBackend::new(10, 3);
+        tb.render(|ui| {
+            let _ = ui.col(|ui| {
+                ui.text("ab");
+                ui.text("cd");
+            });
+        });
+        tb.assert_region(0, 0, 2, 2, "ab\ncd");
+    }
+
+    #[test]
+    #[should_panic(expected = "Region (0, 0, 2x2) mismatch")]
+    fn assert_region_panics_on_mismatch() {
+        let mut tb = TestBackend::new(10, 3);
+        tb.render(|ui| {
+            let _ = ui.col(|ui| {
+                ui.text("ab");
+                ui.text("cd");
+            });
+        });
+        tb.assert_region(0, 0, 2, 2, "ab\nXY");
+    }
+
+    #[test]
+    fn assert_styled_contains_passes_for_styled_run() {
+        use crate::style::{Color, Modifiers};
+        let mut tb = TestBackend::new(20, 1);
+        tb.render(|ui| {
+            ui.text("hi").fg(Color::Red).bold();
+        });
+        tb.assert_styled_contains("hi", |s| {
+            s.fg == Some(Color::Red) && s.modifiers.contains(Modifiers::BOLD)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Style predicate failed")]
+    fn assert_styled_contains_panics_on_style_mismatch() {
+        use crate::style::Color;
+        let mut tb = TestBackend::new(20, 1);
+        tb.render(|ui| {
+            ui.text("hi").fg(Color::Red);
+        });
+        // Content is present but the color predicate fails.
+        tb.assert_styled_contains("hi", |s| s.fg == Some(Color::Blue));
+    }
+
+    #[test]
+    #[should_panic(expected = "Buffer does not contain")]
+    fn assert_styled_contains_panics_when_absent() {
+        let mut tb = TestBackend::new(20, 1);
+        tb.render(|ui| {
+            ui.text("hi");
+        });
+        tb.assert_styled_contains("bye", |_| true);
+    }
+
+    #[test]
+    fn snapshot_is_full_width_and_height() {
+        let mut tb = TestBackend::new(3, 2);
+        tb.render(|ui| {
+            ui.text("ab");
+        });
+        // No trailing trim, fixed width, trailing blank row preserved.
+        assert_eq!(tb.snapshot(), "ab \n   ");
+    }
+
+    #[test]
+    fn assert_snapshot_eq_passes_ignoring_trailing_ws() {
+        let mut tb = TestBackend::new(5, 2);
+        tb.render(|ui| {
+            ui.text("hi");
+        });
+        // Expected lacks the padding spaces — trailing whitespace is ignored.
+        tb.assert_snapshot_eq("hi\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "Snapshot mismatch")]
+    fn assert_snapshot_eq_panics_with_diff() {
+        let mut tb = TestBackend::new(5, 1);
+        tb.render(|ui| {
+            ui.text("hi");
+        });
+        tb.assert_snapshot_eq("bye");
+    }
+
+    #[test]
+    fn assert_snapshot_eq_diff_marks_offending_row() {
+        // Failure-message smoke test: catch the panic and inspect the diff
+        // markers rather than asserting only on the panic message prefix.
+        let mut tb = TestBackend::new(5, 2);
+        tb.render(|ui| {
+            let _ = ui.col(|ui| {
+                ui.text("ok");
+                ui.text("bad");
+            });
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tb.assert_snapshot_eq("ok\nXXX");
+        }));
+        let err = result.expect_err("expected snapshot assertion to panic");
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| err.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            msg.contains("- XXX"),
+            "diff should mark expected row: {msg}"
+        );
+        assert!(msg.contains("+ bad"), "diff should mark actual row: {msg}");
+        // The matching first row is shown without a +/- marker.
+        assert!(msg.contains("  ok"), "diff should echo matching row: {msg}");
     }
 }
