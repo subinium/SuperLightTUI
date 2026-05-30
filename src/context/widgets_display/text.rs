@@ -226,6 +226,182 @@ impl Context {
         self
     }
 
+    /// Apply a per-character multi-stop foreground gradient to the last text.
+    ///
+    /// `stops` is a slice of `(position, color)` pairs where `position` lies in
+    /// `0.0..=1.0`. Stops do not need to be pre-sorted. The text is colored by
+    /// linearly interpolating between adjacent stops across its displayed
+    /// columns, using the same column-mapping and clamping as [`gradient`].
+    ///
+    /// - An empty slice is a no-op (the text keeps its current style).
+    /// - A single stop produces a solid color.
+    ///
+    /// [`gradient`]: Self::gradient
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// ui.text("rainbow").gradient_stops(&[
+    ///     (0.0, Color::Red),
+    ///     (0.5, Color::Yellow),
+    ///     (1.0, Color::Green),
+    /// ]);
+    /// # });
+    /// ```
+    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        if stops.is_empty() {
+            return self;
+        }
+        let sorted = Self::sorted_gradient_stops(stops);
+        self.apply_char_gradient(false, |t| Self::sample_gradient_stops(&sorted, t));
+        self
+    }
+
+    /// Apply a per-character background gradient to the last rendered text.
+    ///
+    /// The two-stop background analogue of [`gradient`]. Colors the cell
+    /// background instead of the foreground, using identical column-mapping and
+    /// clamping so width handling stays consistent.
+    ///
+    /// [`gradient`]: Self::gradient
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// ui.text("banner").bg_gradient(Color::Blue, Color::Magenta);
+    /// # });
+    /// ```
+    pub fn bg_gradient(&mut self, from: Color, to: Color) -> &mut Self {
+        self.apply_char_gradient(true, |t| from.blend(to, t));
+        self
+    }
+
+    /// Apply a per-character multi-stop background gradient to the last text.
+    ///
+    /// The background analogue of [`gradient_stops`]: identical stop handling
+    /// (positions in `0.0..=1.0`, unsorted-safe, empty = no-op, single stop =
+    /// solid) but applied to the cell background instead of the foreground.
+    ///
+    /// [`gradient_stops`]: Self::gradient_stops
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::Color;
+    /// ui.text("header").bg_gradient_stops(&[
+    ///     (0.0, Color::Blue),
+    ///     (1.0, Color::Magenta),
+    /// ]);
+    /// # });
+    /// ```
+    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        if stops.is_empty() {
+            return self;
+        }
+        let sorted = Self::sorted_gradient_stops(stops);
+        self.apply_char_gradient(true, |t| Self::sample_gradient_stops(&sorted, t));
+        self
+    }
+
+    /// Return `stops` sorted ascending by clamped position. Positions are
+    /// clamped into `0.0..=1.0` so out-of-range inputs degrade gracefully.
+    fn sorted_gradient_stops(stops: &[(f32, Color)]) -> Vec<(f32, Color)> {
+        let mut sorted: Vec<(f32, Color)> = stops
+            .iter()
+            .map(|(pos, color)| (pos.clamp(0.0, 1.0), *color))
+            .collect();
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        sorted
+    }
+
+    /// Sample the color at position `t` (in `0.0..=1.0`) from pre-sorted,
+    /// non-empty `stops`, linearly interpolating between the bracketing stops.
+    fn sample_gradient_stops(stops: &[(f32, Color)], t: f32) -> Color {
+        let t = t.clamp(0.0, 1.0);
+        // Non-empty is guaranteed by callers; fall back defensively otherwise.
+        let first = match stops.first() {
+            Some(stop) => *stop,
+            None => return Color::Rgb(0, 0, 0),
+        };
+        let last = *stops.last().unwrap_or(&first);
+        if t <= first.0 {
+            return first.1;
+        }
+        if t >= last.0 {
+            return last.1;
+        }
+        for window in stops.windows(2) {
+            let (p0, c0) = window[0];
+            let (p1, c1) = window[1];
+            if t >= p0 && t <= p1 {
+                let span = p1 - p0;
+                if span <= f32::EPSILON {
+                    return c1;
+                }
+                let local = (t - p0) / span;
+                // blend(self, other, alpha) = self*alpha + other*(1-alpha):
+                // c1.blend(c0, local) yields c0 at local=0 and c1 at local=1.
+                return c1.blend(c0, local);
+            }
+        }
+        last.1
+    }
+
+    /// Replace the last `Text` command with a `RichText` gradient, mapping each
+    /// character's column to a position in `0.0..=1.0` exactly like
+    /// [`gradient`](Self::gradient). `is_bg` selects background vs foreground.
+    fn apply_char_gradient(&mut self, is_bg: bool, color_at: impl Fn(f32) -> Color) {
+        if let Some(idx) = self.rollback.last_text_idx {
+            let replacement = match &self.commands[idx] {
+                Command::Text {
+                    content,
+                    style,
+                    wrap,
+                    align,
+                    margin,
+                    constraints,
+                    ..
+                } => {
+                    let chars: Vec<char> = content.chars().collect();
+                    let len = chars.len();
+                    let denom = len.saturating_sub(1).max(1) as f32;
+                    let segments = chars
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, ch)| {
+                            let mut seg_style = *style;
+                            let color = color_at(i as f32 / denom);
+                            if is_bg {
+                                seg_style.bg = Some(color);
+                            } else {
+                                seg_style.fg = Some(color);
+                            }
+                            (ch.to_string(), seg_style)
+                        })
+                        .collect();
+
+                    Some(Command::RichText {
+                        segments,
+                        wrap: *wrap,
+                        align: *align,
+                        margin: *margin,
+                        constraints: *constraints,
+                    })
+                }
+                _ => None,
+            };
+
+            if let Some(command) = replacement {
+                self.commands[idx] = command;
+            }
+        }
+    }
+
     /// Set foreground color when the current group is hovered or focused.
     pub fn group_hover_fg(&mut self, color: Color) -> &mut Self {
         let apply_group_style = self
@@ -532,5 +708,156 @@ impl Context {
     pub fn with(&mut self, f: impl FnOnce(&mut Self)) -> &mut Self {
         f(self);
         self
+    }
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+    use crate::TestBackend;
+
+    #[test]
+    fn gradient_stops_interpolates_fg_across_columns() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABC").gradient_stops(&[(0.0, red), (1.0, blue)]);
+        });
+
+        let buf = backend.buffer();
+        // i=0 → t=0 → stop at 0.0 (red); i=2 → t=1 → stop at 1.0 (blue);
+        // i=1 → t=0.5 → halfway blend.
+        assert_eq!(
+            buf.get(0, 0).style.fg,
+            Some(red),
+            "first column should be red"
+        );
+        assert_eq!(
+            buf.get(1, 0).style.fg,
+            Some(Color::Rgb(128, 0, 128)),
+            "middle column should be the halfway blend"
+        );
+        assert_eq!(
+            buf.get(2, 0).style.fg,
+            Some(blue),
+            "last column should be blue"
+        );
+    }
+
+    #[test]
+    fn gradient_stops_unsorted_input_is_sorted() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            // Deliberately out of order — must behave identically to sorted.
+            ui.text("ABC").gradient_stops(&[(1.0, blue), (0.0, red)]);
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.fg, Some(red));
+        assert_eq!(buf.get(2, 0).style.fg, Some(blue));
+    }
+
+    #[test]
+    fn gradient_stops_multi_stop_hits_middle_stop_exactly() {
+        let red = Color::Rgb(255, 0, 0);
+        let green = Color::Rgb(0, 255, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            // len=3, denom=2 → columns map to t = 0.0, 0.5, 1.0.
+            ui.text("ABC")
+                .gradient_stops(&[(0.0, red), (0.5, green), (1.0, blue)]);
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.fg, Some(red), "t=0 → first stop");
+        assert_eq!(
+            buf.get(1, 0).style.fg,
+            Some(green),
+            "t=0.5 → middle stop exactly"
+        );
+        assert_eq!(buf.get(2, 0).style.fg, Some(blue), "t=1 → last stop");
+    }
+
+    #[test]
+    fn gradient_stops_single_stop_is_solid() {
+        let cyan = Color::Rgb(0, 200, 200);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABCD").gradient_stops(&[(0.0, cyan)]);
+        });
+
+        let buf = backend.buffer();
+        for x in 0..4 {
+            assert_eq!(
+                buf.get(x, 0).style.fg,
+                Some(cyan),
+                "every column should be the single solid stop"
+            );
+        }
+    }
+
+    #[test]
+    fn gradient_stops_empty_is_noop() {
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            // Empty slice must not panic and must leave content intact.
+            ui.text("HELLO").gradient_stops(&[]);
+        });
+
+        backend.assert_contains("HELLO");
+    }
+
+    #[test]
+    fn bg_gradient_applies_to_background() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABC").bg_gradient(red, blue);
+        });
+
+        let buf = backend.buffer();
+        // bg_gradient mirrors gradient(): from.blend(to, t) — at t=0 that is `to`
+        // (blue), at t=1 that is `from` (red). Foreground stays untouched.
+        assert_eq!(buf.get(0, 0).style.bg, Some(blue), "first column bg = to");
+        assert_eq!(buf.get(2, 0).style.bg, Some(red), "last column bg = from");
+        assert_eq!(
+            buf.get(1, 0).style.bg,
+            Some(Color::Rgb(128, 0, 128)),
+            "middle column bg = halfway blend"
+        );
+    }
+
+    #[test]
+    fn bg_gradient_stops_interpolates_background() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABC").bg_gradient_stops(&[(0.0, red), (1.0, blue)]);
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.bg, Some(red), "first column bg = red");
+        assert_eq!(
+            buf.get(1, 0).style.bg,
+            Some(Color::Rgb(128, 0, 128)),
+            "middle column bg = halfway blend"
+        );
+        assert_eq!(buf.get(2, 0).style.bg, Some(blue), "last column bg = blue");
+    }
+
+    #[test]
+    fn bg_gradient_stops_empty_is_noop() {
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("WORLD").bg_gradient_stops(&[]);
+        });
+
+        backend.assert_contains("WORLD");
     }
 }
