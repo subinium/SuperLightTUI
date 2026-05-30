@@ -143,9 +143,13 @@ pub use terminal::__bench_flush_buffer_diff_mut;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::__bench_flush_buffer_diff_mut_with_buf;
+#[doc(hidden)]
+pub use terminal::__bench_flush_kitty;
 #[cfg(feature = "crossterm")]
 #[doc(hidden)]
 pub use terminal::{__BenchKittyFixture, __bench_new_kitty_fixture};
+#[doc(hidden)]
+pub use terminal::{__BenchSprixelFixture, __bench_flush_sprixels, __bench_new_sprixel_fixture};
 /// Runtime terminal capability probe (issue #264): read-only [`Capabilities`]
 /// snapshot plus the [`Blitter`] ladder it drives. Diagnostics-only — image
 /// rendering routes through the ladder automatically.
@@ -192,9 +196,9 @@ pub use rect::Rect;
 #[cfg(feature = "theme-watch")]
 pub use style::ThemeWatcher;
 pub use style::{
-    Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints, ContainerStyle,
-    HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, SyntaxPalette, Theme,
-    ThemeBuilder, ThemeColor, UnderlineStyle, WidgetColors, WidgetTheme, WidthSpec,
+    Align, Border, BorderSides, Breakpoint, Color, ColorDepth, ColorParseError, Constraints,
+    ContainerStyle, HeightSpec, Justify, Margin, Modifiers, Padding, Spacing, Style, SyntaxPalette,
+    Theme, ThemeBuilder, ThemeColor, UnderlineStyle, WidgetColors, WidgetTheme, WidthSpec,
 };
 #[cfg(feature = "serde")]
 pub use style::{ThemeFile, ThemeLoadError};
@@ -205,13 +209,13 @@ pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
     DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
-    GridColumn, GutterResponse, HighlightRange, ListState, ModeState, MultiSelectState,
-    NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode, RadioState,
-    RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
-    SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState,
-    StreamingTextState, TableColumn, TableState, TabsState, TextInputState, TextareaState,
-    ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState, Trend,
-    ValidateTrigger, Validator, DEFAULT_CHORD_TIMEOUT_TICKS,
+    GridColumn, GutterResponse, HighlightRange, ListResponse, ListState, ModeState,
+    MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode,
+    RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
+    SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
+    Trend, ValidateTrigger, Validator, DEFAULT_CHORD_TIMEOUT_TICKS,
 };
 
 /// Rendering backend for SLT.

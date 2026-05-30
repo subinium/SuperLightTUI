@@ -470,7 +470,7 @@ mod measure_tests {
         let mut backend = TestBackend::new(40, 10);
 
         backend.render(|ui| {
-            ui.group("panel").border(Border::Rounded).col(|ui| {
+            let _ = ui.group("panel").border(Border::Rounded).col(|ui| {
                 ui.text("hi");
             });
         });

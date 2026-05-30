@@ -353,7 +353,8 @@ impl Context {
     ///
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
-    /// if ui.key_pressed(slt::KeyCode::Char('j')) {
+    /// // Advance focus on a custom shortcut (e.g. a vim-style 'j').
+    /// if ui.key('j') {
     ///     ui.focus_next();
     /// }
     /// # });

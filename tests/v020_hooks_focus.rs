@@ -590,8 +590,14 @@ fn text_input_reports_focus_transitions() {
         lar.set(ra.lost_focus);
         gbr.set(rb.gained_focus);
     });
-    assert!(la.get(), "text_input A reports lost_focus when focus moves away");
-    assert!(gb.get(), "text_input B reports gained_focus when it receives focus");
+    assert!(
+        la.get(),
+        "text_input A reports lost_focus when focus moves away"
+    );
+    assert!(
+        gb.get(),
+        "text_input B reports gained_focus when it receives focus"
+    );
 }
 
 #[test]
@@ -627,7 +633,10 @@ fn number_input_reports_focus_transitions() {
     assert!(gained.get(), "number_input gains focus on the first frame");
     tb.render(|ui| {
         let r = ui.number_input(&mut st);
-        assert!(!r.gained_focus && !r.lost_focus, "stable number_input focus");
+        assert!(
+            !r.gained_focus && !r.lost_focus,
+            "stable number_input focus"
+        );
     });
 }
 
@@ -713,7 +722,10 @@ fn double_click_resets_after_firing() {
     tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
         tr.set(ui.button("ok").double_clicked);
     });
-    assert!(!third.get(), "third click starts a fresh pair, not another double");
+    assert!(
+        !third.get(),
+        "third click starts a fresh pair, not another double"
+    );
 }
 
 #[test]
@@ -743,7 +755,11 @@ fn scroll_delta_is_hover_gated() {
     tb.run_with_events(EventBuilder::new().scroll_down(ox, oy).build(), |ui| {
         ofr.set(ui.button("ok").scroll_delta);
     });
-    assert_eq!(off.get(), 0, "wheel motion off the widget is not attributed to it");
+    assert_eq!(
+        off.get(),
+        0,
+        "wheel motion off the widget is not attributed to it"
+    );
 }
 
 #[test]
@@ -751,9 +767,9 @@ fn focus_next_and_prev_wrap() {
     let mut tb = TestBackend::new(40, 8);
     // Frame 0: register three focusables so prev_focus_count == 3 next frame.
     tb.render(|ui| {
-        ui.button("a");
-        ui.button("b");
-        ui.button("c");
+        let _ = ui.button("a");
+        let _ = ui.button("b");
+        let _ = ui.button("c");
     });
     // Frame 1: drive programmatic traversal.
     tb.render(|ui| {
@@ -765,9 +781,9 @@ fn focus_next_and_prev_wrap() {
         assert_eq!(ui.focus_index(), 0, "focus_next wraps past the last widget");
         ui.focus_prev();
         assert_eq!(ui.focus_index(), 2, "focus_prev wraps backward");
-        ui.button("a");
-        ui.button("b");
-        ui.button("c");
+        let _ = ui.button("a");
+        let _ = ui.button("b");
+        let _ = ui.button("c");
     });
 }
 
@@ -775,13 +791,13 @@ fn focus_next_and_prev_wrap() {
 fn focus_next_in_group_stays_within_group() {
     let mut tb = TestBackend::new(50, 10);
     let render_groups = |ui: &mut slt::Context| {
-        ui.group("g1").col(|ui| {
-            ui.button("a");
-            ui.button("b");
+        let _ = ui.group("g1").col(|ui| {
+            let _ = ui.button("a");
+            let _ = ui.button("b");
         });
-        ui.group("g2").col(|ui| {
-            ui.button("c");
-            ui.button("d");
+        let _ = ui.group("g2").col(|ui| {
+            let _ = ui.button("c");
+            let _ = ui.button("d");
         });
     };
     // Frame 0: establish the group membership table.
@@ -817,7 +833,7 @@ fn response_callbacks_fire_on_their_signal() {
     let clicked = Rc::new(Cell::new(false));
     let clicked_in = Rc::clone(&clicked);
     tb.run_with_events(EventBuilder::new().click(cx, cy).build(), |ui| {
-        ui.button("go").on_click(ui, move |_| clicked_in.set(true));
+        let _ = ui.button("go").on_click(ui, move |_| clicked_in.set(true));
     });
     assert!(clicked.get(), "on_click runs the closure when clicked");
 
@@ -826,7 +842,8 @@ fn response_callbacks_fire_on_their_signal() {
     let submitted = Rc::new(Cell::new(false));
     let submitted_in = Rc::clone(&submitted);
     tb.run_with_events(EventBuilder::new().key_code(KeyCode::Enter).build(), |ui| {
-        ui.text_input(&mut input)
+        let _ = ui
+            .text_input(&mut input)
             .on_submit(ui, move |_| submitted_in.set(true));
     });
     assert!(submitted.get(), "on_submit runs the closure on Enter");
