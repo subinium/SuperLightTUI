@@ -1036,6 +1036,12 @@ impl Context {
     /// let opacity = ui.animate_bool("sidebar::visible", is_open);
     /// // 0.0 ≤ opacity ≤ 1.0; use as alpha or visibility threshold.
     /// ```
+    ///
+    /// # See also
+    ///
+    /// - [`animate_value`](Self::animate_value) — the underlying primitive this
+    ///   delegates to; use it for a custom duration or a non-binary target.
+    /// - [`Tween`](crate::Tween) — full control over easing and lifecycle.
     pub fn animate_bool(&mut self, id: &'static str, value: bool) -> f64 {
         let target = if value { 1.0 } else { 0.0 };
         self.animate_value(id, target, crate::anim::DEFAULT_ANIMATE_TICKS)
@@ -1052,6 +1058,19 @@ impl Context {
     ///
     /// `duration_ticks == 0` snaps immediately to the new target.
     ///
+    /// # Panics
+    ///
+    /// Panics if `id` is already bound in the named-state map to a value of a
+    /// different type (e.g. a [`use_state_named`](Self::use_state_named) call
+    /// reused the same id), since the stored entry then fails to downcast to
+    /// the internal animation state:
+    ///
+    /// ```text
+    /// animate_value: id {id} is already used for a different state type
+    /// ```
+    ///
+    /// Pick a unique id per call site to avoid the collision.
+    ///
     /// # Example
     /// ```ignore
     /// let bar_height = ui.animate_value("loading::bar", target_height, 30);
@@ -1063,6 +1082,12 @@ impl Context {
     /// is acceptable. For custom easing, a non-static key, or
     /// non-tick-based control, construct a [`crate::Tween`] explicitly via
     /// [`Context::use_state_named`](Self::use_state_named).
+    ///
+    /// # See also
+    ///
+    /// - [`animate_bool`](Self::animate_bool) — boolean-driven shorthand that
+    ///   tweens between `0.0` and `1.0`.
+    /// - [`Tween`](crate::Tween) — explicit easing and lifecycle control.
     pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
         let tick = self.tick;
         let entry = self
@@ -1525,6 +1550,19 @@ impl Context {
     ///
     /// [`use_state`]: Self::use_state
     ///
+    /// # Panics
+    ///
+    /// Panics if the hook slot at this call position was previously used for a
+    /// different hook (a rules-of-hooks / call-order violation), since the
+    /// type-erased slot then fails to downcast to `MemoSlot<T>`:
+    ///
+    /// ```text
+    /// Hook type mismatch at index {idx}: expected {type}. Hooks must be called in the same order every frame.
+    /// ```
+    ///
+    /// Keep hook calls in the same order every frame — do not call this inside
+    /// an `if`/`else` whose branch changes between frames.
+    ///
     /// # Example
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
@@ -1591,6 +1629,16 @@ impl Context {
     ///
     /// Migrate `let x = *ui.use_memo_ref(&d, f);` to
     /// `let x = ui.use_memo(&d, f).copied(ui);` (or `.get(ui)` for a reference).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hook slot at this call position was previously used for a
+    /// different hook (a rules-of-hooks / call-order violation), since the
+    /// type-erased slot then fails to downcast to `(D, T)`:
+    ///
+    /// ```text
+    /// Hook type mismatch at index {idx}: expected {type}. Hooks must be called in the same order every frame.
+    /// ```
     ///
     /// # Example
     /// ```no_run
@@ -1801,6 +1849,16 @@ impl Context {
     /// the hook slots. For non-idempotent side effects (network requests,
     /// payments) put the effect outside the boundary or guard with an
     /// idempotency key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hook slot at this call position was previously used for a
+    /// different hook (a rules-of-hooks / call-order violation), since the
+    /// type-erased slot then fails to downcast to the deps type `D`:
+    ///
+    /// ```text
+    /// Hook type mismatch at index {idx}: expected {type}. Hooks must be called in the same order every frame.
+    /// ```
     ///
     /// # Common patterns
     ///
