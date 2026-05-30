@@ -136,7 +136,6 @@ cargo deny check
 | Deny Check | `cargo deny check {advisories,bans,licenses,sources}` | Yes (advisories soft) |
 | Doc Coverage | `RUSTFLAGS="-Wmissing_docs" cargo check` | No (soft) |
 | Semver Check | `cargo-semver-checks` | No (soft) |
-| Commit Style | `committed --no-merge-commit` | No (PR only, soft) |
 
 ### Pre-PR Additional Gate
 Before creating a PR, wait for CI to pass on the pushed branch:

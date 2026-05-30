@@ -1,5 +1,97 @@
 # Changelog
 
+## [0.21.1] - 2026-05-30
+
+Interaction-signal completeness, API ergonomics, WASM parity, perf, and
+published-crate hygiene. This release closes the post-0.21.0 competitive-gap
+audit: every confirmed additive (non-breaking) gap is implemented. Headline —
+the widgets that assembled their `Response` by hand (`text_input` / `slider` /
+`number_input`) now report focus edges; `Response` gains `submitted` /
+`double_clicked` / `scroll_delta` plus chainable callbacks; ergonomic
+`Color` / gradient / `KeyMap` / focus-traversal / measurement APIs; WASM DOM
+diffing and input-event parity; sprixel / resize / sync-output perf; and the
+published crate no longer ships agent/CI scaffolding.
+
+### Added
+
+- **Response interaction signals** — `Response::submitted` (Enter in a focused
+  single-line `text_input`), `Response::double_clicked` (two same-cell left
+  clicks within ~400ms; the second still reports `clicked`), and
+  `Response::scroll_delta: i32` (hover-gated net wheel delta, so a chart/canvas
+  can scroll or zoom locally). Chainable callbacks `on_click` / `on_changed` /
+  `on_focus` / `on_submit` / `on_double_click`, each taking `&mut Context`.
+- **Focus edges for hand-assembled widgets** — `text_input`, `slider`, and
+  `number_input` now populate `gained_focus` / `lost_focus` via a shared
+  `focus_transitions` helper (closes the #208 follow-up that left those three
+  always-false).
+- **Programmatic focus traversal** — `Context::focus_next` / `focus_prev`
+  (modal-trap aware, equivalent to Tab / Shift+Tab) and group-scoped
+  `focus_next_in_group` / `focus_prev_in_group` for a panel-local focus trap
+  without a modal.
+- **Ergonomic `Color`** — `From<(u8,u8,u8)>`, `From<[u8;3]>`, `From<u32>`
+  (`0xRRGGBB`), and `FromStr` (`#RRGGBB` / `RRGGBB` / `#RGB` / named, with the
+  new `ColorParseError`); plus `Color::from_hsl`, `from_hsv`, and `rotate_hue`.
+- **Text gradients** — `gradient_stops(&[(f32, Color)])` (multi-stop horizontal,
+  auto-sorted, empty = no-op, single = solid) and the background variants
+  `bg_gradient` / `bg_gradient_stops`.
+- **KeyMap dispatch** (bubbletea `key.Matches` parity) — `Binding::matches`,
+  `KeyMap::matched`, and `Context::keymap_match` for declarative key routing.
+- **Spinner presets** — `SpinnerPreset` enum + `SpinnerState::moon` / `bounce` /
+  `circle` / `points` / `arc` / `toggle` / `arrow` / `preset` / `frame_count`
+  (cli-spinners / ratatui-throbber parity); `dots()` / `line()` unchanged.
+- **List reorder** — `ListState::move_item(from, to)` and the opt-in
+  `Context::list_reorderable` / `list_reorderable_colored`, returning
+  `ListResponse` (Deref to `Response`, with `.reordered: Option<(usize, usize)>`);
+  Shift+Up/Down or Alt+Up/Down moves the selected item. Plain `list` unchanged.
+- **Intrinsic measurement** — `Context::measure_text(text, Option<max_width>)
+  -> (width, rows)` using the layout engine's own wrap kernel, and
+  `Context::measured_rect(name) -> Option<Rect>` (the rect a named `group`
+  occupied on the previous frame).
+- **WASM input parity** — `DomBackend::resize` plus mouse-wheel, window-resize,
+  focus/blur, and clipboard-paste event wiring (Phase 1-2; native parity).
+- **TestBackend query/assertions** — `find_text`, `region` / `assert_region`,
+  `assert_styled_contains`, and `snapshot` / `assert_snapshot_eq`
+  (unified-diff panic on mismatch).
+- **Examples** — a v0.21.1 API tour plus coverage for previously-undemoed
+  v0.21.0 widgets (paginator, number_input, variable-height virtual_list,
+  scheduler, devtools inspector).
+
+### Changed
+
+- Synchronized-output (BSU/ESU) emission is now gated on a DECRQM `?2026`
+  capability probe; silent/headless terminals keep emitting exactly as before
+  (only a confirmed-unsupported terminal suppresses the guard).
+  `Capabilities::sync_output` is now populated.
+
+### Perf
+
+- **WASM DOM flush** diffs against a previous-frame buffer and mutates only the
+  cells that changed (steady-state DOM writes drop toward zero), mirroring the
+  native ANSI diff.
+- **Sprixel re-blit scan** — replaced the per-frame O(n·m) placement lookup with
+  a hashed-key set plus a per-row clean/hash shortcut that skips untouched
+  footprint rows.
+- **Resize coalescing** — a burst of resize events within one poll batch now
+  fires the `Clear(All)` + double realloc + `size()` syscall once at
+  end-of-batch using the final size (SIGCONT/resume redraw path unchanged).
+- New criterion benches for the kitty image-flush and sprixel re-blit paths.
+
+### Docs
+
+- `read_clipboard` documents the stdin typeahead-swallow concurrency hazard and
+  recommended usage.
+- Closed the remaining #244 rustdoc gaps (`definition_list` / `divider_text`
+  examples, hook `# Panics` sections, Gauge / LineGauge family cross-references).
+
+### Housekeeping
+
+- The published crate no longer ships agent/skill scaffolding, VHS recordings,
+  or dev/CI config (`AGENTS.md`, `.agents/`, `.claude/`, `*.tape`, `deny.toml`,
+  `_typos.toml`, `.gitignore` — ~140KB of non-library content that leaked into
+  the 0.21.0 tarball).
+- Removed the orphaned `committed.toml` (its CI gate was dropped in 0.21.0) and
+  the stale Commit-Style row from the CI reference table.
+
 ## [0.21.0] - 2026-05-29
 
 This release closes the competitive-analysis gap audit versus ratatui / bubbletea / ink — 35 issues spanning new widgets, layout primitives, terminal protocols, async/scheduling, correctness fixes, perf, and a breaking hook/API cleanup. Highlights: flex-wrap + flex-basis, a runtime capability probe with an automatic image-blitter ladder, an iTerm2 OSC 1337 image path, a color picker, paginator, number stepper, variable-height virtual list, external TOML themes with hot-reload, a frame-clock scheduler, in-frame async `spawn`/`poll`, RTL/bidi text reordering, grapheme-cluster-correct wrapping, SIGTSTP/SIGCONT job control, and a devtools inspector.
