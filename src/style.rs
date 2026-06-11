@@ -10,8 +10,10 @@ mod theme_io;
 pub use color::{Color, ColorDepth, ColorParseError};
 pub use theme::{Spacing, SyntaxPalette, Theme, ThemeBuilder, ThemeColor};
 #[cfg(feature = "theme-watch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "theme-watch")))]
 pub use theme_io::ThemeWatcher;
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use theme_io::{ThemeFile, ThemeLoadError};
 
 /// Terminal size breakpoint for responsive layouts.

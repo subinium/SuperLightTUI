@@ -241,11 +241,11 @@ impl ListState {
         }
 
         // Keep per-item heights aligned with `items` when present.
-        if let Some(heights) = self.item_heights.as_mut() {
-            if from < heights.len() {
-                let h = heights.remove(from);
-                heights.insert(to.min(heights.len()), h);
-            }
+        if let Some(heights) = self.item_heights.as_mut()
+            && from < heights.len()
+        {
+            let h = heights.remove(from);
+            heights.insert(to.min(heights.len()), h);
         }
         self.heights_dirty = true;
 
@@ -920,10 +920,10 @@ impl TableState {
     fn prune_selection(&mut self) {
         let view_len = self.view_indices.len();
         self.multi_selected.retain(|&idx| idx < view_len);
-        if let Some(anchor) = self.selection_anchor {
-            if anchor >= view_len {
-                self.selection_anchor = None;
-            }
+        if let Some(anchor) = self.selection_anchor
+            && anchor >= view_len
+        {
+            self.selection_anchor = None;
         }
     }
 

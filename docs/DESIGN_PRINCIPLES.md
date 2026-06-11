@@ -420,12 +420,17 @@ SLT follows [Semantic Versioning](https://semver.org/).
 
 ### R9 — Dependencies
 
-**Minimal by design.**
+**Minimal by design.** Four direct required deps; 25 crates resolved with
+default features, 10 with `default-features = false` (cargo tree, deduped) —
+versus 68 for a ratatui + crossterm app. "Light" here means the dependency
+tree and public API surface, not stripped binary size or build speed.
 
 | Dependency | Purpose | Required? |
 |------------|---------|-----------|
 | `crossterm` | Built-in terminal runtime and terminal helpers | Default feature |
 | `unicode-width` | Character width measurement | Yes |
+| `unicode-segmentation` | Grapheme-cluster segmentation | Yes |
+| `smallvec` | Inline small-vector scratch buffers | Yes |
 | `compact_str` | String optimization | Yes |
 | `tokio` | Async runtime | Optional (`async` feature) |
 | `serde` | Serialization | Optional (`serde` feature) |

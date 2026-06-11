@@ -1,7 +1,7 @@
 #![allow(clippy::print_stderr)]
 #![allow(clippy::unwrap_used)]
 
-use super::tree::{default_container_config, ContainerConfig};
+use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
 #[test]
@@ -2545,4 +2545,111 @@ mod hscroll_proptest {
                 "offset_x must never exceed total content width");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame intrinsic-size memo (v0.22.0): the memoization of `min_width` /
+// `min_height` / `min_height_for_width` must stay byte-identical to the
+// uncached computation. The subtle case is a `Pct`/`Ratio` constraint: such a
+// node is measured by its grandparent while still unresolved, then resolved
+// (`Pct` -> `Fixed`) by its parent's layout pass. The cache must be discarded
+// at the resolution point so the post-resolution query reflects the resolved
+// width, not the stale pre-resolution value.
+// ---------------------------------------------------------------------------
+
+/// Build a `Direction::Row` container holding `children`.
+fn row_with(children: Vec<LayoutNode>) -> LayoutNode {
+    let mut n = LayoutNode::container(Direction::Row, default_container_config());
+    n.children = children;
+    n
+}
+
+/// Build a `Direction::Column` container holding `children`.
+fn col_with(children: Vec<LayoutNode>) -> LayoutNode {
+    let mut n = LayoutNode::container(Direction::Column, default_container_config());
+    n.children = children;
+    n
+}
+
+#[test]
+fn pct_width_child_resolves_after_being_measured_unresolved() {
+    // Tree: col > row > [ pct-50 col > text , fixed text ]
+    // The inner pct column is measured by the outer row/col chain while its
+    // `Pct(50)` width is still unresolved (min_width returns None for Pct),
+    // then the row resolves it to Fixed(width/2). The memo must not pin the
+    // pre-resolution value.
+    let leaf = LayoutNode::text(
+        "x".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+    let mut pct_col = col_with(vec![leaf]);
+    pct_col.constraints = Constraints::default().w_pct(50);
+
+    let fixed_text = LayoutNode::text(
+        "y".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+
+    let mut root = col_with(vec![row_with(vec![pct_col, fixed_text])]);
+    let area = crate::rect::Rect::new(0, 0, 40, 10);
+    compute(&mut root, area);
+
+    // The pct child must occupy exactly 50% of the 40-wide area = 20 cells,
+    // identical to the uncached path. A stale `min_width` (cached as the
+    // unresolved Pct min of 0) would have collapsed it.
+    let row = &root.children[0];
+    assert_eq!(
+        row.children[0].constraints.width,
+        crate::style::WidthSpec::Fixed(20),
+        "pct constraint must resolve to Fixed(20)"
+    );
+    assert_eq!(
+        row.children[0].size.0, 20,
+        "pct child must be sized to its resolved 50% width, not a stale memo"
+    );
+}
+
+#[test]
+fn min_width_memo_matches_uncached_after_resolution() {
+    // Direct check that the cached `min_width` equals a freshly-resolved
+    // computation. Build a node, force a cold `min_width` while its Pct is
+    // unresolved, then resolve + invalidate and confirm the value updates.
+    let mut node = LayoutNode::container(Direction::Column, default_container_config());
+    node.constraints = Constraints::default().w_pct(50);
+    node.children.push(LayoutNode::text(
+        "abcd".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    ));
+
+    // Cold query with Pct unresolved: Pct contributes no min, so the min_width
+    // is driven by the child text width (4).
+    let unresolved = node.min_width();
+    assert_eq!(unresolved, 4);
+    // A second call hits the memo and returns the same value.
+    assert_eq!(node.min_width(), 4);
+
+    // Resolve the Pct against a 40-wide area -> Fixed(20), then invalidate as
+    // the flex loop does. The memo must now reflect the resolved min (20).
+    super::flexbox::resolve_axis_specs(&mut node.constraints, crate::rect::Rect::new(0, 0, 40, 4));
+    node.invalidate_size_cache();
+    assert_eq!(
+        node.min_width(),
+        20,
+        "after Pct resolves to Fixed(20), min_width must update, not return the stale cached 4"
+    );
 }

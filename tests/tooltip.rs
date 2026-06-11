@@ -1,6 +1,6 @@
 use slt::event::Event;
 use slt::rect::Rect;
-use slt::{frame, Backend, Buffer, RunConfig};
+use slt::{Backend, Buffer, RunConfig, frame};
 
 struct FrameBackend {
     buffer: Buffer,

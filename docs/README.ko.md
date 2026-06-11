@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**빠르게 만들고. 가볍게 실행합니다.**
+**빠르게 작성하고. 가벼운 의존성 트리**(직접 필수 의존성 4개, 기본 기능 기준 25개 resolved — ratatui + crossterm은 68개).
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]

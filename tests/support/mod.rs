@@ -1,6 +1,6 @@
 use std::io;
 
-use slt::{frame, AppState, Backend, Buffer, Context, Event, Rect, RunConfig};
+use slt::{AppState, Backend, Buffer, Context, Event, Rect, RunConfig, frame};
 
 pub struct RecordingBackend {
     buffer: Buffer,

@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use slt::widgets::{TextInputState, TextareaState};
 use slt::TestBackend;
+use slt::widgets::{TextInputState, TextareaState};
 
 fn main() {
     let mut tb = TestBackend::new(120, 40);

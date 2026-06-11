@@ -1187,14 +1187,14 @@ fn render_v011(
         let _ = ui.col(|ui| {
             card(ui, |ui| {
                 ui.text("File Picker").bold().fg(theme.accent);
-                if ui.file_picker(file_picker).changed {
-                    if let Some(path) = file_picker.selected_file() {
-                        let name = path
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("selected file");
-                        ui.notify(&format!("Picked: {name}"), ToastLevel::Success);
-                    }
+                if ui.file_picker(file_picker).changed
+                    && let Some(path) = file_picker.selected_file()
+                {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("selected file");
+                    ui.notify(&format!("Picked: {name}"), ToastLevel::Success);
                 }
                 ui.text(format!("Dir: {}", file_picker.current_dir.display()))
                     .fg(theme.surface_text)

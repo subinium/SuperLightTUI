@@ -211,6 +211,7 @@ impl Context {
     /// # });
     /// ```
     #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn sixel_image(
         &mut self,
         rgba: &[u8],
@@ -295,6 +296,7 @@ impl Context {
     /// # });
     /// ```
     #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn iterm_image(&mut self, data: &[u8], cols: u32, rows: u32) -> Response {
         // Issue #264 ladder integration: consult the negotiated capability
         // snapshot first, then the env allowlist / `SLT_FORCE_ITERM`. App code
@@ -348,6 +350,7 @@ impl Context {
     /// # });
     /// ```
     #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn iterm_image_fit(&mut self, data: &[u8], cols: u32) -> Response {
         let supported =
             self.is_real_terminal && (self.capabilities.iterm2 || terminal_supports_iterm());
@@ -471,7 +474,7 @@ impl Context {
     pub fn streaming_text(&mut self, state: &mut StreamingTextState) -> Response {
         if state.streaming {
             state.cursor_tick = state.cursor_tick.wrapping_add(1);
-            state.cursor_visible = (state.cursor_tick / 8) % 2 == 0;
+            state.cursor_visible = (state.cursor_tick / 8).is_multiple_of(2);
         }
 
         if state.content.is_empty() && state.streaming {
@@ -515,7 +518,7 @@ impl Context {
     ) -> Response {
         if state.streaming {
             state.cursor_tick = state.cursor_tick.wrapping_add(1);
-            state.cursor_visible = (state.cursor_tick / 8) % 2 == 0;
+            state.cursor_visible = (state.cursor_tick / 8).is_multiple_of(2);
         }
 
         if state.content.is_empty() && state.streaming {

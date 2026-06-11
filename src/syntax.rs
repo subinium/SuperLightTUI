@@ -902,12 +902,14 @@ mod tests {
     #[test]
     fn highlight_java_basic() {
         let theme = Theme::dark();
-        assert!(highlight_code(
-            "public class Main { public static void main(String[] args) {} }",
-            "java",
-            &theme
-        )
-        .is_some());
+        assert!(
+            highlight_code(
+                "public class Main { public static void main(String[] args) {} }",
+                "java",
+                &theme
+            )
+            .is_some()
+        );
     }
 
     #[cfg(feature = "syntax-ruby")]

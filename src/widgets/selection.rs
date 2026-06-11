@@ -333,11 +333,10 @@ fn selected_label_in_nodes<'a>(
             return Some(node.label.as_str());
         }
         *cursor += 1;
-        if node.expanded {
-            if let Some(found) = selected_label_in_nodes(&node.children, target, cursor) {
+        if node.expanded
+            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor) {
                 return Some(found);
             }
-        }
     }
     None
 }
@@ -534,11 +533,10 @@ impl ColorPickerState {
     /// assert_eq!(picker.selected(), Color::Rgb(59, 130, 246));
     /// ```
     pub fn selected(&self) -> crate::Color {
-        if self.mode == PickerMode::Hex {
-            if let Some(c) = parse_hex_color(&self.hex_input.value) {
+        if self.mode == PickerMode::Hex
+            && let Some(c) = parse_hex_color(&self.hex_input.value) {
                 return c;
             }
-        }
         self.colors
             .get(self.selected)
             .copied()

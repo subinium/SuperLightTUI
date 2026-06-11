@@ -340,27 +340,27 @@ fn compose_bar(
     let width_usize = width as usize;
     let filled = filled_cells(ratio, width);
 
-    if let LabelMode::Centered(label) = mode {
-        if !label.is_empty() {
-            let label_w = UnicodeWidthStr::width(label);
-            if label_w + 2 <= width_usize {
-                // Build the bar then overlay the centered label.
-                let mut cells: Vec<char> = Vec::with_capacity(width_usize);
-                for i in 0..width {
-                    cells.push(if i < filled { fill_ch } else { empty_ch });
-                }
-                let label_start = (width_usize.saturating_sub(label_w)) / 2;
-                let label_end = label_start + label_w;
-                let mut out = String::with_capacity(width_usize * 4 + label.len());
-                for ch in cells.iter().take(label_start) {
-                    out.push(*ch);
-                }
-                out.push_str(label);
-                for ch in cells.iter().take(width_usize).skip(label_end) {
-                    out.push(*ch);
-                }
-                return out;
+    if let LabelMode::Centered(label) = mode
+        && !label.is_empty()
+    {
+        let label_w = UnicodeWidthStr::width(label);
+        if label_w + 2 <= width_usize {
+            // Build the bar then overlay the centered label.
+            let mut cells: Vec<char> = Vec::with_capacity(width_usize);
+            for i in 0..width {
+                cells.push(if i < filled { fill_ch } else { empty_ch });
             }
+            let label_start = (width_usize.saturating_sub(label_w)) / 2;
+            let label_end = label_start + label_w;
+            let mut out = String::with_capacity(width_usize * 4 + label.len());
+            for ch in cells.iter().take(label_start) {
+                out.push(*ch);
+            }
+            out.push_str(label);
+            for ch in cells.iter().take(width_usize).skip(label_end) {
+                out.push(*ch);
+            }
+            return out;
         }
     }
 

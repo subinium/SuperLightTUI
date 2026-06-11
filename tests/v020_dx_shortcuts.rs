@@ -9,7 +9,7 @@
 use slt::anim::DEFAULT_ANIMATE_TICKS;
 use slt::event::Event;
 use slt::{
-    frame, AppState, Backend, Buffer, ContainerStyle, Context, Rect, RunConfig, TestBackend,
+    AppState, Backend, Buffer, ContainerStyle, Context, Rect, RunConfig, TestBackend, frame,
 };
 
 /// Minimal Backend impl that drives `frame()` against an in-memory buffer.

@@ -10,14 +10,14 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthStr;
 
-use crate::context::Response;
 use crate::Style;
+use crate::context::Response;
 
 /// Bare function-pointer validator used by the deprecated positional
 /// [`FormState::validate`](crate::widgets::FormState::validate) API.
 ///
 /// Retained for backward compatibility. New code should attach
-/// [`Validator`](crate::widgets::Validator) closures per field via
+/// [`Validator`] closures per field via
 /// [`FormField::validate`](crate::widgets::FormField::validate); see the
 /// [`validators`] module for built-ins.
 pub type FormValidator = fn(&str) -> Result<(), String>;

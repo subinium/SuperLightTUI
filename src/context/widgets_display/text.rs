@@ -49,10 +49,8 @@ impl Context {
 
         let activated = response.clicked || self.consume_activation_keys(focused);
 
-        if activated {
-            if let Err(e) = open_url(&url_str) {
-                eprintln!("[slt] failed to open URL: {e}");
-            }
+        if activated && let Err(e) = open_url(&url_str) {
+            eprintln!("[slt] failed to open URL: {e}");
         }
 
         let style = if focused {
@@ -461,10 +459,10 @@ impl Context {
 
     /// Enable word-boundary wrapping on the last rendered text element.
     pub fn wrap(&mut self) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            if let Command::Text { wrap, .. } = &mut self.commands[idx] {
-                *wrap = true;
-            }
+        if let Some(idx) = self.rollback.last_text_idx
+            && let Command::Text { wrap, .. } = &mut self.commands[idx]
+        {
+            *wrap = true;
         }
         self
     }
@@ -472,10 +470,10 @@ impl Context {
     /// Truncate the last rendered text with `…` when it exceeds its allocated width.
     /// Use with `.w()` to set a fixed width, or let the parent container constrain it.
     pub fn truncate(&mut self) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            if let Command::Text { truncate, .. } = &mut self.commands[idx] {
-                *truncate = true;
-            }
+        if let Some(idx) = self.rollback.last_text_idx
+            && let Command::Text { truncate, .. } = &mut self.commands[idx]
+        {
+            *truncate = true;
         }
         self
     }
@@ -516,23 +514,22 @@ impl Context {
     /// A value of `1` causes the element to expand and fill remaining space
     /// along the main axis.
     pub fn grow(&mut self, value: u16) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            if let Command::Text { grow, .. } = &mut self.commands[idx] {
-                *grow = value;
-            }
+        if let Some(idx) = self.rollback.last_text_idx
+            && let Command::Text { grow, .. } = &mut self.commands[idx]
+        {
+            *grow = value;
         }
         self
     }
 
     /// Set the text alignment of the last rendered text element.
     pub fn align(&mut self, align: Align) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            if let Command::Text {
+        if let Some(idx) = self.rollback.last_text_idx
+            && let Command::Text {
                 align: text_align, ..
             } = &mut self.commands[idx]
-            {
-                *text_align = align;
-            }
+        {
+            *text_align = align;
         }
         self
     }

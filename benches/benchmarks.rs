@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use slt::buffer::Buffer;
 use slt::rect::Rect;
 use slt::style::Style;
@@ -71,6 +71,57 @@ fn bench_layout_nested(c: &mut Criterion) {
                             }
                         });
                     }
+                });
+            });
+        });
+    });
+}
+
+/// Deep-tree layout stress (release-mod-only relevance): 14 levels of
+/// alternating bordered row/col panels, each level wrapping the next plus a
+/// text leaf, on a 120x40 buffer. The existing `layout_nested_rows_cols` bench
+/// is only depth 2-3, so it cannot observe the super-linear cost of the
+/// top-down intrinsic-size recomputation (`min_width` / `min_height` /
+/// `min_height_for_width` re-walking the same subtrees at every flex call
+/// site). This bench drives a deliberately deep chain so that O(nodes x depth)
+/// behavior shows up in the sample.
+const DEEP_TREE_DEPTH: usize = 14;
+
+fn render_deep_tree(ui: &mut slt::Context, depth: usize) {
+    if depth == 0 {
+        ui.text("leaf");
+        return;
+    }
+    // Alternate row/col at each level and wrap each panel in a border so the
+    // intrinsic-size queries traverse the full inset/padding/constraint path.
+    // Each level also carries a few sibling text leaves next to the recursive
+    // child: the extra siblings widen the tree so the parent's repeated
+    // `min_width` / `min_height` sweeps re-walk a non-trivial subtree at every
+    // level — the O(nodes x depth) pathology the memo targets.
+    if depth.is_multiple_of(2) {
+        let _ = ui.bordered(slt::Border::Single).row(move |ui| {
+            ui.text(format!("L{depth}"));
+            ui.text("a");
+            ui.text("bb");
+            render_deep_tree(ui, depth - 1);
+        });
+    } else {
+        let _ = ui.bordered(slt::Border::Single).col(move |ui| {
+            ui.text(format!("L{depth}"));
+            ui.text("a");
+            ui.text("bb");
+            render_deep_tree(ui, depth - 1);
+        });
+    }
+}
+
+fn bench_layout_deep_tree(c: &mut Criterion) {
+    c.bench_function("layout_deep_tree_120x40", |b| {
+        let mut backend = TestBackend::new(120, 40);
+        b.iter(|| {
+            backend.render(|ui| {
+                let _ = ui.col(|ui| {
+                    render_deep_tree(ui, black_box(DEEP_TREE_DEPTH));
                 });
             });
         });
@@ -444,7 +495,7 @@ fn fill_realistic(buf: &mut Buffer, seed: u32) {
             let mut style = row_style;
 
             // Every 17th cell flips fg (single-cell break in the run).
-            if (x.wrapping_add(y.wrapping_mul(7)) + seed) % 17 == 0 {
+            if (x.wrapping_add(y.wrapping_mul(7)) + seed).is_multiple_of(17) {
                 style = style.fg(colors[((x + seed) as usize) % colors.len()]);
             }
             // Every 31st cell toggles bold (modifier-only change).
@@ -452,7 +503,7 @@ fn fill_realistic(buf: &mut Buffer, seed: u32) {
                 style.modifiers |= Modifiers::BOLD;
             }
             // Every 53rd cell toggles underline.
-            if (x + y + seed) % 53 == 0 {
+            if (x + y + seed).is_multiple_of(53) {
                 style.modifiers |= Modifiers::UNDERLINE;
             }
 
@@ -467,7 +518,7 @@ fn fill_realistic(buf: &mut Buffer, seed: u32) {
         // One hyperlink span per few rows (8 cells) to exercise OSC 8.
         // Use the public `set_string_linked` helper so we never touch
         // `Cell::hyperlink`'s CompactString type directly from the bench.
-        if (y + seed) % 4 == 0 && width >= 8 {
+        if (y + seed).is_multiple_of(4) && width >= 8 {
             let start = ((y * 7) + seed) % (width - 7);
             buf.set_string_linked(start, y, "linkcell", row_style, "https://example.com/bench");
         }
@@ -810,6 +861,7 @@ criterion_group!(
     bench_buffer_diff,
     bench_layout_simple,
     bench_layout_nested,
+    bench_layout_deep_tree,
     bench_full_render,
     bench_full_render_dims,
     bench_animation_churn,

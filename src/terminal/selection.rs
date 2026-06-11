@@ -12,7 +12,7 @@ impl SelectionState {
     /// Record a left-mouse-down anchor point and identify the widget
     /// rect under the cursor; resets the active flag so a single click
     /// without drag clears any prior selection.
-    pub fn mouse_down(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
+    pub(crate) fn mouse_down(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
         self.anchor = Some((x, y));
         self.current = Some((x, y));
         self.widget_rect = find_innermost_rect(hit_map, x, y);
@@ -23,22 +23,22 @@ impl SelectionState {
     /// Marks the selection active once the cursor has moved more than one
     /// cell horizontally or any cell vertically. Re-resolves the owning
     /// widget rect if the cursor has left the original widget.
-    pub fn mouse_drag(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
+    pub(crate) fn mouse_drag(&mut self, x: u32, y: u32, hit_map: &[(Rect, Rect)]) {
         if let Some(anchor) = self.anchor {
             self.current = Some((x, y));
             if x.abs_diff(anchor.0) > 1 || y.abs_diff(anchor.1) > 0 {
                 self.active = true;
             }
-            if let Some(rect) = self.widget_rect {
-                if y < rect.y || y >= rect.bottom() || x < rect.x || x >= rect.right() {
-                    self.widget_rect = find_containing_rect(hit_map, anchor, (x, y));
-                }
+            if let Some(rect) = self.widget_rect
+                && (y < rect.y || y >= rect.bottom() || x < rect.x || x >= rect.right())
+            {
+                self.widget_rect = find_containing_rect(hit_map, anchor, (x, y));
             }
         }
     }
 
     /// Reset the selection back to the empty default state.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         *self = Self::default();
     }
 }

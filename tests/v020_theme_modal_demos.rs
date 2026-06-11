@@ -9,7 +9,7 @@
 
 #![allow(unused_must_use)]
 
-use slt::{context::ModalOptions, Border, ButtonVariant, Context, TestBackend, Theme};
+use slt::{Border, ButtonVariant, Context, TestBackend, Theme, context::ModalOptions};
 
 // ── v020_theme_subtree demo ──────────────────────────────────────────
 

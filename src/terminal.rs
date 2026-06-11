@@ -91,7 +91,7 @@ pub(crate) struct KittyImageManager {
 
 impl KittyImageManager {
     /// Construct a new image manager with no uploaded images.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             next_id: 1,
             uploaded: HashMap::new(),
@@ -107,7 +107,7 @@ impl KittyImageManager {
     /// diff comparison against `prev_placements`. Stored placements always
     /// include the offset (the displayed `y`) so re-emit detection works
     /// across resize even when the offset itself changes (issue #206).
-    pub fn flush(
+    pub(crate) fn flush(
         &mut self,
         stdout: &mut impl Write,
         current: &[KittyPlacement],
@@ -133,15 +133,15 @@ impl KittyImageManager {
         if !self.prev_placements.is_empty() {
             self.scratch_ids.clear();
             for p in &self.prev_placements {
-                if let Some(&img_id) = self.uploaded.get(&p.content_hash) {
-                    if !self.scratch_ids.contains(&img_id) {
-                        self.scratch_ids.push(img_id);
-                        // Delete all placements of this image (but keep image data)
-                        queue!(
-                            stdout,
-                            Print(format!("\x1b_Ga=d,d=i,i={},q=2\x1b\\", img_id))
-                        )?;
-                    }
+                if let Some(&img_id) = self.uploaded.get(&p.content_hash)
+                    && !self.scratch_ids.contains(&img_id)
+                {
+                    self.scratch_ids.push(img_id);
+                    // Delete all placements of this image (but keep image data)
+                    queue!(
+                        stdout,
+                        Print(format!("\x1b_Ga=d,d=i,i={},q=2\x1b\\", img_id))
+                    )?;
                 }
             }
         }
@@ -261,7 +261,7 @@ impl KittyImageManager {
     }
 
     /// Delete all images from the terminal (used on drop/cleanup).
-    pub fn delete_all(&self, stdout: &mut impl Write) -> io::Result<()> {
+    pub(crate) fn delete_all(&self, stdout: &mut impl Write) -> io::Result<()> {
         queue!(stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))
     }
 }
@@ -299,15 +299,15 @@ fn placement_eq_with_offset(
 fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
     #[cfg(feature = "kitty-compress")]
     {
-        use flate2::write::ZlibEncoder;
         use flate2::Compression;
+        use flate2::write::ZlibEncoder;
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
-        if encoder.write_all(data).is_ok() {
-            if let Ok(compressed) = encoder.finish() {
-                // Only use compression if it actually saves space
-                if compressed.len() < data.len() {
-                    return (Cow::Owned(compressed), "o=z,");
-                }
+        if encoder.write_all(data).is_ok()
+            && let Ok(compressed) = encoder.finish()
+        {
+            // Only use compression if it actually saves space
+            if compressed.len() < data.len() {
+                return (Cow::Owned(compressed), "o=z,");
             }
         }
     }
@@ -320,7 +320,7 @@ fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
 /// detection fails. Used by `kitty_image_fit` for accurate aspect ratio.
 ///
 /// Cached after first successful detection.
-pub fn cell_pixel_size() -> (u32, u32) {
+pub(crate) fn cell_pixel_size() -> (u32, u32) {
     use std::sync::OnceLock;
     static CACHED: OnceLock<(u32, u32)> = OnceLock::new();
     *CACHED.get_or_init(|| detect_cell_pixel_size().unwrap_or((8, 16)))
@@ -335,18 +335,23 @@ fn detect_cell_pixel_size() -> Option<(u32, u32)> {
     let response = read_osc_response(Duration::from_millis(100))?;
 
     // Parse: ESC [ 6 ; <height> ; <width> t
-    let body = response.strip_prefix("\x1b[6;").or_else(|| {
-        // CSI can also start with 0x9B (single-byte CSI)
-        let bytes = response.as_bytes();
-        if bytes.len() > 3 && bytes[0] == 0x9b && bytes[1] == b'6' && bytes[2] == b';' {
-            Some(&response[3..])
-        } else {
-            None
-        }
-    })?;
-    let body = body
-        .strip_suffix('t')
-        .or_else(|| body.strip_suffix("t\x1b"))?;
+    // Locate the reply anywhere in the buffer rather than anchoring to its
+    // start/end: interleaved control bytes — e.g. a pump-retirement nudge
+    // answer (`CSI 0 n`) from a previous reply session — may surround it.
+    let bytes = response.as_bytes();
+    let start = bytes
+        .windows(4)
+        .position(|w| w == b"\x1b[6;")
+        .map(|pos| pos + 4)
+        .or_else(|| {
+            // CSI can also start with 0x9B (single-byte CSI).
+            bytes
+                .windows(3)
+                .position(|w| w == [0x9b, b'6', b';'])
+                .map(|pos| pos + 3)
+        })?;
+    let tail = response.get(start..)?;
+    let body = &tail[..tail.find('t')?];
     let mut parts = body.split(';');
     let ch: u32 = parts.next()?.parse().ok()?;
     let cw: u32 = parts.next()?.parse().ok()?;
@@ -511,6 +516,7 @@ impl Capabilities {
 /// infrastructure with a bounded total timeout (≤150ms). On no reply every
 /// field falls back to a conservative default. Repeated calls are free.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn capabilities() -> Capabilities {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Capabilities> = OnceLock::new();
@@ -533,28 +539,31 @@ fn probe_capabilities() -> Capabilities {
     let mut out = io::stdout();
     // DA1 then DA2 in one write — both terminate with `c`, so a single
     // DA-aware read drains both replies (in order) when supported.
-    if write!(out, "\x1b[c\x1b[>c").is_ok() && out.flush().is_ok() {
-        if let Some(resp) = read_da_response(Duration::from_millis(90)) {
-            parse_da1(&resp, &mut caps);
-            parse_da2(&resp, &mut caps);
-        }
+    if write!(out, "\x1b[c\x1b[>c").is_ok()
+        && out.flush().is_ok()
+        && let Some(resp) = read_da_response(Duration::from_millis(90))
+    {
+        parse_da1(&resp, &mut caps);
+        parse_da2(&resp, &mut caps);
     }
 
     // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct payload.
     // Supporting terminals ack with `APC G i=31;OK ST`; others stay silent so
     // the bounded read just times out. Base64 of three zero bytes = "AAAA".
-    if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok() && out.flush().is_ok() {
-        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
-            parse_kitty_graphics_ack(&resp, &mut caps);
-        }
+    if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok()
+        && out.flush().is_ok()
+        && let Some(resp) = read_osc_response(Duration::from_millis(30))
+    {
+        parse_kitty_graphics_ack(&resp, &mut caps);
     }
 
     // XTGETTCAP for the `Tc` (truecolor) capname: DCS + q <hex> ST.
     // `Tc` -> hex "5463".
-    if write!(out, "\x1bP+q5463\x1b\\").is_ok() && out.flush().is_ok() {
-        if let Some(resp) = read_osc_response(Duration::from_millis(30)) {
-            parse_xtgettcap_truecolor(&resp, &mut caps);
-        }
+    if write!(out, "\x1bP+q5463\x1b\\").is_ok()
+        && out.flush().is_ok()
+        && let Some(resp) = read_osc_response(Duration::from_millis(30))
+    {
+        parse_xtgettcap_truecolor(&resp, &mut caps);
     }
 
     // DECRQM for synchronized output (mode ?2026): CSI ? 2026 $ p. A supporting
@@ -564,18 +573,19 @@ fn probe_capabilities() -> Capabilities {
     // DECRPM-aware reader. A silent terminal leaves the resolution `Unknown`,
     // which the flush gate treats as "keep emitting" — preserving the historic
     // always-emit behavior on headless / non-answering hosts.
-    if write!(out, "\x1b[?2026$p").is_ok() && out.flush().is_ok() {
-        if let Some(resp) = read_decrpm_response(Duration::from_millis(30)) {
-            match parse_decrpm_sync_output(&resp) {
-                Some(true) => {
-                    caps.sync_output = true;
-                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Supported);
-                }
-                Some(false) => {
-                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Unsupported);
-                }
-                None => {}
+    if write!(out, "\x1b[?2026$p").is_ok()
+        && out.flush().is_ok()
+        && let Some(resp) = read_decrpm_response(Duration::from_millis(30))
+    {
+        match parse_decrpm_sync_output(&resp) {
+            Some(true) => {
+                caps.sync_output = true;
+                let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Supported);
             }
+            Some(false) => {
+                let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Unsupported);
+            }
+            None => {}
         }
     }
 
@@ -634,45 +644,210 @@ fn term_is_kitty_graphics_host() -> bool {
     term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
 }
 
+/// Process-wide pump that owns the only blocking `stdin` read used for
+/// terminal-reply probing. See [`read_stdin_reply`] for why it exists.
+#[cfg(feature = "crossterm")]
+struct ReplyPump {
+    rx: std::sync::mpsc::Receiver<u8>,
+    /// `true` while a reader session wants bytes. The pump thread re-checks it
+    /// after every successful read and exits once it is cleared.
+    serve: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set by the pump thread on exit, distinguishing "parked inside a
+    /// blocking `read()`" (reusable) from "gone" (must respawn).
+    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(feature = "crossterm")]
+static REPLY_PUMP: std::sync::Mutex<Option<ReplyPump>> = std::sync::Mutex::new(None);
+
+/// Read one terminal reply from raw stdin, hard-bounded by `timeout`, stopping
+/// early once `is_complete` recognizes a full reply (or at the 4096-byte cap).
+///
+/// Why a pump thread: the previous readers gated a blocking
+/// `io::stdin().read()` behind `crossterm::event::poll()`. Those two observe
+/// different things — `poll()` answers "does crossterm's *internal event
+/// queue* have something?", while the raw `read()` waits for bytes on the
+/// stdin descriptor — and crossterm's poller consumes bytes from that same
+/// descriptor into its own parser. On a host that never answers probe queries
+/// (a detached tmux pane, `script`-style PTY wrappers, CI runners), `poll()`
+/// could return `true` for a queued non-byte event while raw stdin stayed
+/// empty, so the one-byte `read()` blocked forever *inside* the deadline loop
+/// and the application hung on a blank alternate screen before its first
+/// frame; later keystrokes were swallowed by crossterm's queue instead of
+/// unblocking it. Moving the only blocking `read()` onto a dedicated thread
+/// and waiting on a channel with `recv_timeout` makes every reply read
+/// genuinely bounded by its budget no matter what the host does.
+///
+/// The pump is a process-wide singleton so back-to-back probes share one byte
+/// stream instead of racing two readers for the same reply. After each
+/// session the thread is retired: `serve` is cleared and a DSR status query
+/// (`CSI 5 n`) nudges the terminal — an answering host replies `CSI 0 n`,
+/// which wakes the parked `read()`, the thread observes `serve == false` and
+/// exits, and the nudge bytes stay in the channel where the next session's
+/// drain discards them (they never reach the application's input stream). A
+/// host that answers nothing leaves the thread parked; it is reused by the
+/// next session, and at worst it swallows one byte of typeahead on a host
+/// class where, before this fix, startup deadlocked outright.
+#[cfg(feature = "crossterm")]
+fn read_stdin_reply(
+    timeout: Duration,
+    mut is_complete: impl FnMut(&[u8]) -> bool,
+) -> Option<String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+
+    let deadline = Instant::now() + timeout;
+
+    let Ok(mut slot) = REPLY_PUMP.lock() else {
+        // Poisoned: a prior session panicked mid-read. Skip probing entirely
+        // rather than risk a second fault; every caller treats `None` as "the
+        // terminal stayed silent".
+        return None;
+    };
+
+    let pump = match slot.take().filter(|p| !p.exited.load(Ordering::Acquire)) {
+        Some(pump) => {
+            // A parked pump from an earlier session: its thread is still
+            // blocked in `read()` on a silent host. Reusing it (instead of
+            // spawning a second thread) is what prevents two readers from
+            // racing each other for the same reply bytes.
+            pump.serve.store(true, Ordering::Release);
+            pump
+        }
+        None => {
+            let (tx, rx) = mpsc::channel::<u8>();
+            let serve = Arc::new(AtomicBool::new(true));
+            let exited = Arc::new(AtomicBool::new(false));
+            let thread_serve = Arc::clone(&serve);
+            let thread_exited = Arc::clone(&exited);
+            let spawned = std::thread::Builder::new()
+                .name("slt-reply-pump".into())
+                .spawn(move || {
+                    let mut stdin = io::stdin();
+                    // One byte per read on purpose: a parked thread that wakes
+                    // on real key input forwards at most this single byte
+                    // before observing `serve == false` and exiting, so the
+                    // worst-case typeahead loss on a silent host is exactly
+                    // one byte (replies are short; the syscall-per-byte cost
+                    // is irrelevant for one-shot probes).
+                    let mut buf = [0u8; 1];
+                    loop {
+                        match stdin.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => {
+                                if tx.send(buf[0]).is_err() {
+                                    thread_exited.store(true, Ordering::Release);
+                                    return;
+                                }
+                            }
+                        }
+                        if !thread_serve.load(Ordering::Acquire) {
+                            break;
+                        }
+                    }
+                    thread_exited.store(true, Ordering::Release);
+                });
+            if spawned.is_err() {
+                return None;
+            }
+            ReplyPump { rx, serve, exited }
+        }
+    };
+
+    // Discard bytes left over from a previous session: a reply that arrived
+    // after its deadline, or the retirement nudge's `CSI 0 n` answer.
+    while pump.rx.try_recv().is_ok() {}
+
+    let bytes = collect_reply(&pump.rx, deadline, &mut is_complete);
+
+    // Retire the thread so it does not sit on a pending `read()` competing
+    // with crossterm's event loop for real key input once the session ends.
+    // The nudge fires only under raw mode (the `run()` / session-enter probe
+    // paths): in cooked mode — e.g. a standalone `detect_color_scheme()`
+    // call — the terminal would *echo* its `CSI 0 n` answer into the user's
+    // scrollback as visible garbage, so there the parked thread is simply
+    // left for the next session to reuse.
+    pump.serve.store(false, Ordering::Release);
+    if crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) {
+        let mut out = io::stdout();
+        let _ = write!(out, "\x1b[5n");
+        let _ = out.flush();
+    }
+    *slot = Some(pump);
+    drop(slot);
+
+    if bytes.is_empty() {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Deadline-bounded accumulation loop shared by every reply reader: pull bytes
+/// off the pump channel until `is_complete` fires, the 4096-byte cap is hit,
+/// the deadline passes, or the pump disconnects (stdin EOF). Returns whatever
+/// arrived — callers map an empty buffer to "no reply" and a partial buffer to
+/// a best-effort parse, matching the pre-pump readers exactly.
+#[cfg(feature = "crossterm")]
+fn collect_reply(
+    rx: &std::sync::mpsc::Receiver<u8>,
+    deadline: Instant,
+    is_complete: &mut dyn FnMut(&[u8]) -> bool,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok(byte) => {
+                bytes.push(byte);
+                if is_complete(&bytes) || bytes.len() >= 4096 {
+                    break;
+                }
+            }
+            // Timed out, or the pump thread is gone (stdin EOF / error).
+            Err(_) => break,
+        }
+    }
+    bytes
+}
+
+/// Completion predicate for OSC / DCS / CSI-`t` style replies, which terminate
+/// with BEL (`\x07`) or ST (`ESC \`).
+#[cfg(feature = "crossterm")]
+fn osc_reply_complete(bytes: &[u8]) -> bool {
+    let len = bytes.len();
+    bytes[len - 1] == b'\x07' || (len >= 2 && bytes[len - 2] == 0x1B && bytes[len - 1] == b'\\')
+}
+
+/// Completion predicate builder for Device-Attributes replies: `c` is the
+/// final byte of each DA reply, and a combined `CSI c CSI > c` query yields
+/// two of them, so completion fires on the second `c`.
+#[cfg(feature = "crossterm")]
+fn da_reply_complete() -> impl FnMut(&[u8]) -> bool {
+    let mut terminators = 0usize;
+    move |bytes: &[u8]| {
+        if bytes[bytes.len() - 1] == b'c' {
+            terminators += 1;
+        }
+        terminators >= 2
+    }
+}
+
+/// Completion predicate for DECRPM replies (`CSI ? <mode> ; <Ps> $ y`).
+#[cfg(feature = "crossterm")]
+fn decrpm_reply_complete(bytes: &[u8]) -> bool {
+    bytes[bytes.len() - 1] == b'y'
+}
+
 /// Read a Device-Attributes reply, which (unlike OSC) terminates with the byte
 /// `c` rather than BEL / ST. Drains up to two `c`-terminated CSI replies
 /// (DA1 + DA2) within the timeout so a combined `CSI c CSI > c` query yields
 /// both answers in one string.
 #[cfg(feature = "crossterm")]
 fn read_da_response(timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
-    let mut stdin = io::stdin();
-    let mut bytes = Vec::new();
-    let mut buf = [0u8; 1];
-    let mut terminators = 0usize;
-
-    while Instant::now() < deadline {
-        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
-            continue;
-        }
-        let read = stdin.read(&mut buf).ok()?;
-        if read == 0 {
-            continue;
-        }
-        bytes.push(buf[0]);
-        // `c` is the final byte of a DA reply. Stop once we have collected the
-        // expected pair (DA1 + DA2); also stop on a lone reply so a terminal
-        // that ignores DA2 does not stall the whole timeout.
-        if buf[0] == b'c' {
-            terminators += 1;
-            if terminators >= 2 {
-                break;
-            }
-        }
-        if bytes.len() >= 4096 {
-            break;
-        }
-    }
-
-    if bytes.is_empty() {
-        return None;
-    }
-    String::from_utf8(bytes).ok()
+    read_stdin_reply(timeout, da_reply_complete())
 }
 
 /// Parse a DA1 reply (`CSI ? <attrs> c`). Attribute `4` indicates Sixel
@@ -807,33 +982,7 @@ fn should_emit_synchronized_update() -> bool {
 /// so a terminal that ignores the query cannot stall startup.
 #[cfg(feature = "crossterm")]
 fn read_decrpm_response(timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
-    let mut stdin = io::stdin();
-    let mut bytes = Vec::new();
-    let mut buf = [0u8; 1];
-
-    while Instant::now() < deadline {
-        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
-            continue;
-        }
-        let read = stdin.read(&mut buf).ok()?;
-        if read == 0 {
-            continue;
-        }
-        bytes.push(buf[0]);
-        // `y` is the final byte of a DECRPM reply (`CSI ? <mode> ; <Ps> $ y`).
-        if buf[0] == b'y' {
-            break;
-        }
-        if bytes.len() >= 4096 {
-            break;
-        }
-    }
-
-    if bytes.is_empty() {
-        return None;
-    }
-    String::from_utf8(bytes).ok()
+    read_stdin_reply(timeout, decrpm_reply_complete)
 }
 
 /// Parse a DECRPM reply for synchronized output (mode `2026`):
@@ -982,7 +1131,7 @@ impl Terminal {
     /// alternate screen and optionally enables mouse capture and the
     /// kitty keyboard protocol. When `report_all_keys` is set (and
     /// `kitty_keyboard` is too), bare modifier presses are reported.
-    pub fn new(
+    pub(crate) fn new(
         mouse: bool,
         kitty_keyboard: bool,
         report_all_keys: bool,
@@ -1014,19 +1163,19 @@ impl Terminal {
     }
 
     /// Return the fullscreen terminal's current `(cols, rows)`.
-    pub fn size(&self) -> (u32, u32) {
+    pub(crate) fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
     /// Mutable access to the back buffer used by the next render pass.
-    pub fn buffer_mut(&mut self) -> &mut Buffer {
+    pub(crate) fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
     /// Diff the back buffer against the front buffer, write the changed
     /// cells to stdout under a synchronized-output guard, then swap
     /// front and back buffers.
-    pub fn flush(&mut self) -> io::Result<()> {
+    pub(crate) fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
@@ -1088,7 +1237,7 @@ impl Terminal {
 
     /// Re-query the terminal size and resize the front and back buffers
     /// to match. Called from the SIGWINCH handler.
-    pub fn handle_resize(&mut self) -> io::Result<()> {
+    pub(crate) fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
         self.current.resize(area);
@@ -1170,7 +1319,7 @@ impl InlineTerminal {
     /// Optionally enables mouse capture and the kitty keyboard protocol.
     /// When `report_all_keys` is set (and `kitty_keyboard` is too), bare
     /// modifier presses are reported.
-    pub fn new(
+    pub(crate) fn new(
         height: u32,
         mouse: bool,
         kitty_keyboard: bool,
@@ -1213,19 +1362,19 @@ impl InlineTerminal {
     }
 
     /// Return the inline terminal's current `(cols, rows)`.
-    pub fn size(&self) -> (u32, u32) {
+    pub(crate) fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
     /// Mutable access to the back buffer used by the next render pass.
-    pub fn buffer_mut(&mut self) -> &mut Buffer {
+    pub(crate) fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
     /// Diff the back buffer against the front buffer, write changed
     /// cells to stdout under a synchronized-output guard at the
     /// inline rows reserved below the cursor, then swap buffers.
-    pub fn flush(&mut self) -> io::Result<()> {
+    pub(crate) fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
@@ -1299,7 +1448,7 @@ impl InlineTerminal {
 
     /// Re-query the terminal size and resize the inline buffers to match
     /// the new column count, preserving the inline row height.
-    pub fn handle_resize(&mut self) -> io::Result<()> {
+    pub(crate) fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, _) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, self.height);
         self.current.resize(area);
@@ -1345,13 +1494,14 @@ impl Drop for InlineTerminal {
 }
 
 mod selection;
-pub(crate) use selection::{apply_selection_overlay, extract_selection_text, SelectionState};
+pub(crate) use selection::{SelectionState, apply_selection_overlay, extract_selection_text};
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 
 /// Detected terminal color scheme from OSC 11.
 #[non_exhaustive]
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorScheme {
     /// Dark background detected.
@@ -1362,47 +1512,15 @@ pub enum ColorScheme {
     Unknown,
 }
 
+/// Read an OSC-style reply (BEL- or ST-terminated), hard-bounded by `timeout`.
 #[cfg(feature = "crossterm")]
 fn read_osc_response(timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
-    let mut stdin = io::stdin();
-    let mut bytes = Vec::new();
-    let mut buf = [0u8; 1];
-
-    while Instant::now() < deadline {
-        if !crossterm::event::poll(Duration::from_millis(10)).ok()? {
-            continue;
-        }
-
-        let read = stdin.read(&mut buf).ok()?;
-        if read == 0 {
-            continue;
-        }
-
-        bytes.push(buf[0]);
-
-        if buf[0] == b'\x07' {
-            break;
-        }
-        let len = bytes.len();
-        if len >= 2 && bytes[len - 2] == 0x1B && bytes[len - 1] == b'\\' {
-            break;
-        }
-
-        if bytes.len() >= 4096 {
-            break;
-        }
-    }
-
-    if bytes.is_empty() {
-        return None;
-    }
-
-    String::from_utf8(bytes).ok()
+    read_stdin_reply(timeout, osc_reply_complete)
 }
 
 /// Query the terminal's background color via OSC 11 and return the detected scheme.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn detect_color_scheme() -> ColorScheme {
     let mut stdout = io::stdout();
     if write!(stdout, "\x1b]11;?\x07").is_err() {
@@ -1547,6 +1665,7 @@ fn parse_osc52_response(response: &str) -> Option<String> {
 ///   * For *writing* the clipboard there is no such hazard — that path only
 ///     emits bytes and never reads stdin.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn read_clipboard() -> Option<String> {
     let mut stdout = io::stdout();
     write!(stdout, "\x1b]52;c;?\x07").ok()?;
@@ -1713,7 +1832,7 @@ fn flush_buffer_diff(
                 // SGR sequence exactly matching the per-cell flush.
                 has_updates = true;
 
-                let need_move = last_cursor.map_or(true, |(lx, ly)| lx != x || ly != abs_y);
+                let need_move = last_cursor.is_none_or(|(lx, ly)| lx != x || ly != abs_y);
                 if need_move {
                     queue!(stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
                 }
@@ -2660,6 +2779,134 @@ pub(crate) fn test_session_snapshot() -> SessionSnapshot {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    /// Feed `bytes` to a channel from a helper thread after `delay`, then run
+    /// [`collect_reply`] against it with the given budget and predicate.
+    fn collect_with_feed(
+        bytes: &'static [u8],
+        delay: Duration,
+        budget: Duration,
+        is_complete: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> (Vec<u8>, Duration) {
+        let (tx, rx) = std::sync::mpsc::channel::<u8>();
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            for &b in bytes {
+                if tx.send(b).is_err() {
+                    return;
+                }
+            }
+            // Keep the sender alive past the collector's budget: the real
+            // pump thread only drops its sender on stdin EOF, so dropping it
+            // here right after the payload would disconnect the channel and
+            // end the wait early, masking deadline behavior.
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        let start = Instant::now();
+        let out = collect_reply(&rx, start + budget, is_complete);
+        (out, start.elapsed())
+    }
+
+    #[test]
+    fn collect_reply_osc_bel_terminator_completes_early() {
+        let reply = b"\x1b]11;rgb:0000/0000/0000\x07";
+        let (out, elapsed) = collect_with_feed(
+            reply,
+            Duration::ZERO,
+            Duration::from_secs(2),
+            &mut osc_reply_complete,
+        );
+        assert_eq!(out, reply);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "should not wait out the budget"
+        );
+    }
+
+    #[test]
+    fn collect_reply_osc_st_terminator_completes_early() {
+        let reply = b"\x1bP>|tmux 3.5a\x1b\\";
+        let (out, elapsed) = collect_with_feed(
+            reply,
+            Duration::ZERO,
+            Duration::from_secs(2),
+            &mut osc_reply_complete,
+        );
+        assert_eq!(out, reply);
+        assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn collect_reply_silence_returns_empty_at_deadline() {
+        // The silent-host case that used to deadlock startup: no bytes ever
+        // arrive. The collector must give up at the deadline, not block.
+        let budget = Duration::from_millis(150);
+        let (out, elapsed) =
+            collect_with_feed(b"", Duration::from_secs(5), budget, &mut osc_reply_complete);
+        assert!(out.is_empty());
+        assert!(elapsed >= budget);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "must not block past the budget"
+        );
+    }
+
+    #[test]
+    fn collect_reply_da_drains_two_replies() {
+        let reply = b"\x1b[?62;4c\x1b[>1;10;0c";
+        let (out, elapsed) = collect_with_feed(
+            reply,
+            Duration::ZERO,
+            Duration::from_secs(2),
+            &mut da_reply_complete(),
+        );
+        assert_eq!(out, reply);
+        assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn collect_reply_da_lone_reply_returns_partial_at_deadline() {
+        // A terminal that answers DA1 but ignores DA2: the collector waits out
+        // the budget, then hands back the partial reply for best-effort parse
+        // (pre-pump behavior, preserved).
+        let budget = Duration::from_millis(150);
+        let (out, elapsed) = collect_with_feed(
+            b"\x1b[?62;4c",
+            Duration::ZERO,
+            budget,
+            &mut da_reply_complete(),
+        );
+        assert_eq!(out, b"\x1b[?62;4c");
+        assert!(elapsed >= budget);
+    }
+
+    #[test]
+    fn collect_reply_unterminated_caps_at_4096_bytes() {
+        static BIG: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        let big = BIG.get_or_init(|| vec![b'x'; 5000]).as_slice();
+        let (tx, rx) = std::sync::mpsc::channel::<u8>();
+        for &b in big {
+            tx.send(b).unwrap();
+        }
+        let out = collect_reply(
+            &rx,
+            Instant::now() + Duration::from_secs(2),
+            &mut osc_reply_complete,
+        );
+        assert_eq!(out.len(), 4096);
+    }
+
+    #[test]
+    fn decrpm_predicate_terminates_on_y() {
+        let reply = b"\x1b[?2026;1$y";
+        let (out, _) = collect_with_feed(
+            reply,
+            Duration::ZERO,
+            Duration::from_secs(2),
+            &mut decrpm_reply_complete,
+        );
+        assert_eq!(out, reply);
+    }
 
     #[test]
     fn reset_current_buffer_applies_theme_background() {

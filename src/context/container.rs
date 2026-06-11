@@ -1488,11 +1488,7 @@ impl<'a> ContainerBuilder<'a> {
     /// # });
     /// ```
     pub fn with_if(self, cond: bool, f: impl FnOnce(Self) -> Self) -> Self {
-        if cond {
-            f(self)
-        } else {
-            self
-        }
+        if cond { f(self) } else { self }
     }
 
     /// Override the active theme for all widgets rendered inside this container.

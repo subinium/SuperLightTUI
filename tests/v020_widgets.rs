@@ -397,8 +397,8 @@ fn issue_235_highlight_next_scrolls_viewport() {
     state.set_highlights(&[HighlightRange::line(30)]);
     // Manually populate bounds. We use the public scroll API to set offset.
     state.scroll_down(0); // no-op; bounds set by widget on first frame.
-                          // The set_bounds path is private, so simulate by accessing the
-                          // highlight scroll-to via the public API; the math should clamp.
+    // The set_bounds path is private, so simulate by accessing the
+    // highlight scroll-to via the public API; the math should clamp.
     state.scroll_to_current_highlight();
     // With viewport_height=0 (no widget run yet), scroll math no-ops, so
     // offset stays at 0 — but at least the call must not panic.

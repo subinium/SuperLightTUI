@@ -8,9 +8,9 @@
 //! See the rustdoc on [`slt::Buffer::snapshot_format`] for the format spec
 //! and stability guarantees.
 
+use slt::Rect;
 use slt::buffer::Buffer;
 use slt::style::{Color, Modifiers, Style};
-use slt::Rect;
 
 /// Default-style buffer renders trailing spaces verbatim, no markers.
 #[test]

@@ -135,7 +135,7 @@ fluid. Text becomes alive. The terminal transforms from a static grid \
 into a dynamic, responsive canvas. SuperLightTUI makes this possible with \
 zero dependencies on ncurses, zero unsafe code in the widget layer, and a \
 single cargo add superlighttui to get started. The minimum supported Rust \
-version is 1.81. The library compiles to WebAssembly via the slt-wasm \
+version is 1.88. The library compiles to WebAssembly via the slt-wasm \
 crate, bringing terminal UIs to the browser. Feature flags control optional \
 functionality: async for tokio integration, serde for serialization. The \
 test suite runs over 250 tests across widgets, layout, animation, and \

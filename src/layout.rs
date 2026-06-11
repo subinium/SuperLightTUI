@@ -17,12 +17,12 @@ mod flexbox;
 mod render;
 mod tree;
 
-pub(crate) use collect::{collect_all, FrameData};
+pub(crate) use collect::{FrameData, collect_all};
 pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
-pub(crate) use render::{render, render_debug_overlay, render_inspector, InspectorFocus};
-pub(crate) use tree::{build_tree, wrap_lines, wrap_segments, LayoutNode, NodeKind};
+pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
+pub(crate) use tree::{LayoutNode, NodeKind, build_tree, wrap_lines, wrap_segments};
 
 /// Test-only entry point exposing `wrap_segments` for allocation-budget tests.
 ///

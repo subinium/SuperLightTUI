@@ -100,7 +100,7 @@ impl Context {
             for &(fid, rect) in &layout_feedback.prev_focus_rects {
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
                     let area = rect.width as u64 * rect.height as u64;
-                    if best.map_or(true, |(_, ba)| area < ba) {
+                    if best.is_none_or(|(_, ba)| area < ba) {
                         best = Some((fid, area));
                     }
                 }
@@ -444,6 +444,7 @@ impl Context {
     /// # });
     /// ```
     #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn capabilities(&self) -> &crate::terminal::Capabilities {
         &self.capabilities
     }
@@ -1479,6 +1480,7 @@ impl Context {
     /// # }
     /// ```
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub fn spawn<T: Send + 'static>(
         &mut self,
         fut: impl std::future::Future<Output = T> + Send + 'static,
@@ -1505,6 +1507,7 @@ impl Context {
     /// # }
     /// ```
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub fn poll<T: 'static>(&mut self, handle: &TaskHandle<T>) -> Option<T> {
         self.async_tasks.poll::<T>(handle.id())
     }
@@ -1695,11 +1698,7 @@ impl Context {
 
     /// Returns `light` color if current theme is light mode, `dark` color if dark mode.
     pub fn light_dark(&self, light: Color, dark: Color) -> Color {
-        if self.theme.is_dark {
-            dark
-        } else {
-            light
-        }
+        if self.theme.is_dark { dark } else { light }
     }
 
     /// Show a toast notification without managing ToastState.
@@ -1923,7 +1922,7 @@ impl Context {
     ///    inherits the name.
     ///
     /// Names are re-registered each frame; the previous frame's map is
-    /// kept under `focus_name_map_prev` so [`focus_by_name`] can resolve
+    /// kept under `focus_name_map_prev` so [`focus_by_name`](Context::focus_by_name) can resolve
     /// a name that has already been registered.
     ///
     /// # Two valid usage shapes
@@ -2168,10 +2167,10 @@ impl Context {
     /// `ui.static_log(...)` emitted during a [`crate::TestBackend::render`]
     /// call.
     pub fn take_static_log(&mut self) -> Vec<String> {
-        if let Some(boxed) = self.named_states.get_mut(STATIC_LOG_KEY) {
-            if let Some(buf) = boxed.downcast_mut::<Vec<String>>() {
-                return std::mem::take(buf);
-            }
+        if let Some(boxed) = self.named_states.get_mut(STATIC_LOG_KEY)
+            && let Some(buf) = boxed.downcast_mut::<Vec<String>>()
+        {
+            return std::mem::take(buf);
         }
         Vec::new()
     }
@@ -2228,10 +2227,10 @@ impl Context {
     /// Empty if no widget called [`Context::publish_keymap`] yet on the
     /// current frame. The registry is reset at the start of every frame.
     pub fn published_keymaps(&self) -> &[crate::keymap::PublishedKeymap] {
-        if let Some(boxed) = self.named_states.get(KEYMAP_REGISTRY_KEY) {
-            if let Some(vec) = boxed.downcast_ref::<Vec<crate::keymap::PublishedKeymap>>() {
-                return vec;
-            }
+        if let Some(boxed) = self.named_states.get(KEYMAP_REGISTRY_KEY)
+            && let Some(vec) = boxed.downcast_ref::<Vec<crate::keymap::PublishedKeymap>>()
+        {
+            return vec;
         }
         &[]
     }

@@ -127,8 +127,8 @@ async fn two_handles_same_type_do_not_cross_results() {
 
 #[tokio::test]
 async fn dropping_handle_cancels_task() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let mut tb = TestBackend::new(40, 3);
     tb.set_async_runtime(tokio::runtime::Handle::current());

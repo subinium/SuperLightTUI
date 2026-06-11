@@ -232,16 +232,15 @@ impl Context {
         for (i, mouse) in events {
             match mouse.kind {
                 MouseKind::Down(MouseButton::Left) => {
-                    if let Some(rect) = handle_rect {
-                        if rect.width > 0
-                            && mouse.x >= rect.x
-                            && mouse.x < rect.right()
-                            && mouse.y >= rect.y
-                            && mouse.y < rect.bottom()
-                        {
-                            state.dragging = true;
-                            consumed.push(i);
-                        }
+                    if let Some(rect) = handle_rect
+                        && rect.width > 0
+                        && mouse.x >= rect.x
+                        && mouse.x < rect.right()
+                        && mouse.y >= rect.y
+                        && mouse.y < rect.bottom()
+                    {
+                        state.dragging = true;
+                        consumed.push(i);
                     }
                 }
                 MouseKind::Drag(MouseButton::Left) if state.dragging => {

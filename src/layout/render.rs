@@ -34,12 +34,27 @@ pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
 /// Retained for the fallback path in [`render`] when a modal has zero size
 /// (degenerate, but possible during transitions). The hot path uses
 /// [`dim_buffer_around`] which scans only the four strips outside the modal.
+///
+/// Walks `buf.content` as one contiguous slice rather than per-cell
+/// `get_mut` so the per-cell bounds assert is paid zero times and the
+/// compiler can vectorize the modifier OR over the whole grid.
 fn dim_entire_buffer(buf: &mut Buffer) {
-    for y in buf.area.y..buf.area.bottom() {
-        for x in buf.area.x..buf.area.right() {
-            let cell = buf.get_mut(x, y);
-            cell.style.modifiers |= crate::style::Modifiers::DIM;
-        }
+    for cell in &mut buf.content {
+        cell.style.modifiers |= crate::style::Modifiers::DIM;
+    }
+}
+
+/// OR the `DIM` modifier into a contiguous run of cells `[start, end)` in
+/// `buf.content`. `end` is clamped to the content length defensively, but
+/// callers always pass in-bounds indices derived from `area`.
+#[inline]
+fn dim_cell_range(content: &mut [crate::cell::Cell], start: usize, end: usize) {
+    let end = end.min(content.len());
+    if start >= end {
+        return;
+    }
+    for cell in &mut content[start..end] {
+        cell.style.modifiers |= crate::style::Modifiers::DIM;
     }
 }
 
@@ -76,33 +91,41 @@ fn dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
         return;
     }
 
-    // Top strip: rows above the modal, full width of the buffer.
-    for y in area.y..clip_y {
-        for x in area.x..area.right() {
-            let cell = buf.get_mut(x, y);
-            cell.style.modifiers |= crate::style::Modifiers::DIM;
-        }
+    // Operate on `buf.content` directly as contiguous per-row slices: each
+    // strip becomes a flat index range with no per-cell bounds assert, which
+    // the compiler can vectorize. Row-major layout means a single row's
+    // columns `[col_lo, col_hi)` are the contiguous range
+    // `row_base + (col_lo - area.x) .. row_base + (col_hi - area.x)`.
+    let width = area.width;
+    let content = &mut buf.content;
+
+    // Column offsets within a row, relative to the buffer's left edge
+    // (`area.x`). The left strip starts at offset 0, so it has no explicit
+    // `full_lo`.
+    let full_hi = (area.right() - area.x) as usize;
+    let left_hi = (clip_x - area.x) as usize;
+    let right_lo = (clip_right - area.x) as usize;
+
+    // Top strip: full-width rows above the modal. These rows are fully
+    // contiguous from content index 0, so dim them as one span.
+    if clip_y > area.y {
+        let end = ((clip_y - area.y) * width) as usize;
+        dim_cell_range(content, 0, end);
     }
-    // Bottom strip: rows below the modal, full width of the buffer.
-    for y in clip_bottom..area.bottom() {
-        for x in area.x..area.right() {
-            let cell = buf.get_mut(x, y);
-            cell.style.modifiers |= crate::style::Modifiers::DIM;
-        }
+    // Bottom strip: full-width rows below the modal — one contiguous span.
+    if area.bottom() > clip_bottom {
+        let start = ((clip_bottom - area.y) * width) as usize;
+        let end = ((area.bottom() - area.y) * width) as usize;
+        dim_cell_range(content, start, end);
     }
-    // Left strip: columns left of the modal, only across the modal's row band.
+    // Left and right strips: only across the modal's row band. Each row's
+    // left/right segment is contiguous within that row.
     for y in clip_y..clip_bottom {
-        for x in area.x..clip_x {
-            let cell = buf.get_mut(x, y);
-            cell.style.modifiers |= crate::style::Modifiers::DIM;
-        }
-    }
-    // Right strip: columns right of the modal, only across the modal's row band.
-    for y in clip_y..clip_bottom {
-        for x in clip_right..area.right() {
-            let cell = buf.get_mut(x, y);
-            cell.style.modifiers |= crate::style::Modifiers::DIM;
-        }
+        let row_base = ((y - area.y) * width) as usize;
+        // Left segment: columns [area.x, clip_x) -> offsets [0, left_hi).
+        dim_cell_range(content, row_base, row_base + left_hi);
+        // Right segment: columns [clip_right, area.right()).
+        dim_cell_range(content, row_base + right_lo, row_base + full_hi);
     }
 }
 
@@ -863,13 +886,13 @@ fn render_inner(
         }
         NodeKind::Spacer | NodeKind::RawDraw(_) => {}
         NodeKind::Container(_) => {
-            if let Some(color) = node.bg_color {
-                if let Some(area) = visible_area(node, x_offset, y_offset) {
-                    let fill_style = Style::new().bg(color);
-                    for y in area.y..area.bottom() {
-                        for x in area.x..area.right() {
-                            buf.set_string(x, y, " ", fill_style);
-                        }
+            if let Some(color) = node.bg_color
+                && let Some(area) = visible_area(node, x_offset, y_offset)
+            {
+                let fill_style = Style::new().bg(color);
+                for y in area.y..area.bottom() {
+                    for x in area.x..area.right() {
+                        buf.set_string(x, y, " ", fill_style);
                     }
                 }
             }
@@ -1057,35 +1080,36 @@ fn render_container_border(
         }
     }
 
-    if sides.top && top_i >= 0 {
-        if let Some((title, title_style)) = &node.title {
-            let mut ts = *title_style;
-            if ts.bg.is_none() {
-                ts.bg = inherit_bg;
-            }
-            let y = top_i as u32;
-            let title_x = left_i + 2;
-            // The right corner sits at `right_i`. When the right side is drawn
-            // we must keep that column intact, so the writable title area ends
-            // at `right_i - 1`. With no right border we can use the full row.
-            let title_right = if sides.right { right_i - 1 } else { right_i };
-            if title_x <= title_right && title_right >= 0 {
-                // `max_width` is the title window width measured from `title_x`
-                // (which may be negative when scrolled left); the clipped writer
-                // trims any leading columns past the left edge (#247).
-                let max_width = (title_right - title_x + 1).max(0) as usize;
-                let mut trimmed = String::new();
-                let mut col_used = 0usize;
-                for ch in title.chars() {
-                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-                    if col_used + cw > max_width {
-                        break;
-                    }
-                    trimmed.push(ch);
-                    col_used += cw;
+    if sides.top
+        && top_i >= 0
+        && let Some((title, title_style)) = &node.title
+    {
+        let mut ts = *title_style;
+        if ts.bg.is_none() {
+            ts.bg = inherit_bg;
+        }
+        let y = top_i as u32;
+        let title_x = left_i + 2;
+        // The right corner sits at `right_i`. When the right side is drawn
+        // we must keep that column intact, so the writable title area ends
+        // at `right_i - 1`. With no right border we can use the full row.
+        let title_right = if sides.right { right_i - 1 } else { right_i };
+        if title_x <= title_right && title_right >= 0 {
+            // `max_width` is the title window width measured from `title_x`
+            // (which may be negative when scrolled left); the clipped writer
+            // trims any leading columns past the left edge (#247).
+            let max_width = (title_right - title_x + 1).max(0) as usize;
+            let mut trimmed = String::new();
+            let mut col_used = 0usize;
+            for ch in title.chars() {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if col_used + cw > max_width {
+                    break;
                 }
-                set_string_clipped_x(buf, title_x, y, &trimmed, ts, None);
+                trimmed.push(ch);
+                col_used += cw;
             }
+            set_string_clipped_x(buf, title_x, y, &trimmed, ts, None);
         }
     }
 }

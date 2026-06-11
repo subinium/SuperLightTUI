@@ -125,29 +125,27 @@ impl Context {
         // no entry yet, so we fall back to assuming the row starts at (0,0)
         // — same behaviour as the prior implementation.
         let q_width = UnicodeWidthStr::width(question) as u32;
-        if !clicked {
-            if let Some((mx, my)) = self.click_pos {
-                let next_id = self.rollback.interaction_count;
-                let prev_rect = self.prev_hit_map.get(next_id).copied();
-                let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
-                let in_row_y = match prev_rect {
-                    Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
-                    _ => true,
-                };
-                if in_row_y {
-                    let yes_start = row_x + q_width + 1;
-                    let yes_end = yes_start + 5;
-                    let no_start = yes_end + 1;
-                    let no_end = no_start + 4; // "[No]" = 4 display columns
-                    if mx >= yes_start && mx < yes_end {
-                        is_yes = true;
-                        *result = true;
-                        clicked = true;
-                    } else if mx >= no_start && mx < no_end {
-                        is_yes = false;
-                        *result = false;
-                        clicked = true;
-                    }
+        if !clicked && let Some((mx, my)) = self.click_pos {
+            let next_id = self.rollback.interaction_count;
+            let prev_rect = self.prev_hit_map.get(next_id).copied();
+            let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
+            let in_row_y = match prev_rect {
+                Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
+                _ => true,
+            };
+            if in_row_y {
+                let yes_start = row_x + q_width + 1;
+                let yes_end = yes_start + 5;
+                let no_start = yes_end + 1;
+                let no_end = no_start + 4; // "[No]" = 4 display columns
+                if mx >= yes_start && mx < yes_end {
+                    is_yes = true;
+                    *result = true;
+                    clicked = true;
+                } else if mx >= no_start && mx < no_end {
+                    is_yes = false;
+                    *result = false;
+                    clicked = true;
                 }
             }
         }
@@ -286,7 +284,7 @@ impl Context {
                     let key_display_w = UnicodeWidthStr::width(*key);
                     let pad = max_key_width.saturating_sub(key_display_w);
                     let mut padded = String::with_capacity(key.len() + pad);
-                    padded.extend(std::iter::repeat(' ').take(pad));
+                    padded.extend(std::iter::repeat_n(' ', pad));
                     padded.push_str(key);
                     ui.text(padded).dim();
                     ui.text("  ");

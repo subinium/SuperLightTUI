@@ -368,13 +368,13 @@ fn render_highlighted_line(ui: &mut Context, line: &str) {
     while pos < trimmed.len() {
         let ch = trimmed.as_bytes()[pos];
 
-        if ch == b'"' {
-            if let Some(end) = trimmed[pos + 1..].find('"') {
-                let s = &trimmed[pos..pos + end + 2];
-                ui.text(s).fg(string_color);
-                pos += end + 2;
-                continue;
-            }
+        if ch == b'"'
+            && let Some(end) = trimmed[pos + 1..].find('"')
+        {
+            let s = &trimmed[pos..pos + end + 2];
+            ui.text(s).fg(string_color);
+            pos += end + 2;
+            continue;
         }
 
         if ch.is_ascii_digit() && (pos == 0 || !trimmed.as_bytes()[pos - 1].is_ascii_alphanumeric())
@@ -517,39 +517,48 @@ mod sixel_detection_tests {
     // concurrent test threads don't observe each other's set_var() calls.
     static ENV_GUARD: Mutex<()> = Mutex::new(());
 
+    // edition 2024: env mutation is `unsafe`; ENV_GUARD makes it sound here.
+    #[allow(unsafe_code)]
     fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
         let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let prev_term = std::env::var("TERM").ok();
         let prev_program = std::env::var("TERM_PROGRAM").ok();
         let prev_force = std::env::var("SLT_FORCE_SIXEL").ok();
 
-        match term {
-            Some(v) => std::env::set_var("TERM", v),
-            None => std::env::remove_var("TERM"),
-        }
-        match term_program {
-            Some(v) => std::env::set_var("TERM_PROGRAM", v),
-            None => std::env::remove_var("TERM_PROGRAM"),
-        }
-        if force {
-            std::env::set_var("SLT_FORCE_SIXEL", "1");
-        } else {
-            std::env::remove_var("SLT_FORCE_SIXEL");
+        // SAFETY (edition 2024): set_var/remove_var are unsafe because env
+        // mutation races concurrent reads. ENV_GUARD above serializes these
+        // test helpers, so no other thread observes a torn update.
+        unsafe {
+            match term {
+                Some(v) => std::env::set_var("TERM", v),
+                None => std::env::remove_var("TERM"),
+            }
+            match term_program {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            if force {
+                std::env::set_var("SLT_FORCE_SIXEL", "1");
+            } else {
+                std::env::remove_var("SLT_FORCE_SIXEL");
+            }
         }
 
         f();
 
-        match prev_term {
-            Some(v) => std::env::set_var("TERM", v),
-            None => std::env::remove_var("TERM"),
-        }
-        match prev_program {
-            Some(v) => std::env::set_var("TERM_PROGRAM", v),
-            None => std::env::remove_var("TERM_PROGRAM"),
-        }
-        match prev_force {
-            Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
-            None => std::env::remove_var("SLT_FORCE_SIXEL"),
+        unsafe {
+            match prev_term {
+                Some(v) => std::env::set_var("TERM", v),
+                None => std::env::remove_var("TERM"),
+            }
+            match prev_program {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            match prev_force {
+                Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
+                None => std::env::remove_var("SLT_FORCE_SIXEL"),
+            }
         }
     }
 
@@ -631,39 +640,48 @@ mod iterm_detection_tests {
     // concurrent test threads don't observe each other's set_var() calls.
     static ENV_GUARD: Mutex<()> = Mutex::new(());
 
+    // edition 2024: env mutation is `unsafe`; ENV_GUARD makes it sound here.
+    #[allow(unsafe_code)]
     fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
         let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let prev_term = std::env::var("TERM").ok();
         let prev_program = std::env::var("TERM_PROGRAM").ok();
         let prev_force = std::env::var("SLT_FORCE_ITERM").ok();
 
-        match term {
-            Some(v) => std::env::set_var("TERM", v),
-            None => std::env::remove_var("TERM"),
-        }
-        match term_program {
-            Some(v) => std::env::set_var("TERM_PROGRAM", v),
-            None => std::env::remove_var("TERM_PROGRAM"),
-        }
-        if force {
-            std::env::set_var("SLT_FORCE_ITERM", "1");
-        } else {
-            std::env::remove_var("SLT_FORCE_ITERM");
+        // SAFETY (edition 2024): set_var/remove_var are unsafe because env
+        // mutation races concurrent reads. ENV_GUARD above serializes these
+        // test helpers, so no other thread observes a torn update.
+        unsafe {
+            match term {
+                Some(v) => std::env::set_var("TERM", v),
+                None => std::env::remove_var("TERM"),
+            }
+            match term_program {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            if force {
+                std::env::set_var("SLT_FORCE_ITERM", "1");
+            } else {
+                std::env::remove_var("SLT_FORCE_ITERM");
+            }
         }
 
         f();
 
-        match prev_term {
-            Some(v) => std::env::set_var("TERM", v),
-            None => std::env::remove_var("TERM"),
-        }
-        match prev_program {
-            Some(v) => std::env::set_var("TERM_PROGRAM", v),
-            None => std::env::remove_var("TERM_PROGRAM"),
-        }
-        match prev_force {
-            Some(v) => std::env::set_var("SLT_FORCE_ITERM", v),
-            None => std::env::remove_var("SLT_FORCE_ITERM"),
+        unsafe {
+            match prev_term {
+                Some(v) => std::env::set_var("TERM", v),
+                None => std::env::remove_var("TERM"),
+            }
+            match prev_program {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            match prev_force {
+                Some(v) => std::env::set_var("SLT_FORCE_ITERM", v),
+                None => std::env::remove_var("SLT_FORCE_ITERM"),
+            }
         }
     }
 

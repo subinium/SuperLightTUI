@@ -45,8 +45,8 @@ impl std::fmt::Display for ThemeLoadError {
     }
 }
 
-impl std::error::Error for ThemeLoadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for ThemeLoadError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             ThemeLoadError::Io(e) => Some(e),
             ThemeLoadError::Parse(_) => None,
@@ -185,6 +185,7 @@ impl ThemeFile {
 /// .unwrap();
 /// ```
 #[cfg(feature = "theme-watch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "theme-watch")))]
 pub struct ThemeWatcher {
     // Held to keep the watch alive; dropping it stops the background thread.
     _watcher: notify::RecommendedWatcher,

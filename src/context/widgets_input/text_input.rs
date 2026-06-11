@@ -99,10 +99,10 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char(ch) => {
-                        if let Some(max) = state.max_length {
-                            if grapheme_count(&state.value) >= max {
-                                continue;
-                            }
+                        if let Some(max) = state.max_length
+                            && grapheme_count(&state.value) >= max
+                        {
+                            continue;
                         }
                         let index = byte_index_for_grapheme(&state.value, state.cursor);
                         state.value.insert(index, ch);
@@ -193,10 +193,10 @@ impl Context {
                     if (ch as u32) < 0x20 || ch == '\u{7f}' {
                         continue;
                     }
-                    if let Some(max) = state.max_length {
-                        if char_count >= max {
-                            break;
-                        }
+                    if let Some(max) = state.max_length
+                        && char_count >= max
+                    {
+                        break;
                     }
                     let index = byte_index_for_grapheme(&state.value, state.cursor);
                     state.value.insert(index, ch);

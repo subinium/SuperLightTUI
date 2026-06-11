@@ -812,11 +812,7 @@ impl Context {
                     let (v1, _) = data[idx];
                     let (v2, _) = data[(idx + 1).min(data.len() - 1)];
                     let value = if v1.is_nan() || v2.is_nan() {
-                        if frac < 0.5 {
-                            v1
-                        } else {
-                            v2
-                        }
+                        if frac < 0.5 { v1 } else { v2 }
                     } else {
                         v1 * (1.0 - frac) + v2 * frac
                     };
@@ -1461,6 +1457,7 @@ impl Context {
     }
 
     #[cfg(feature = "qrcode")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "qrcode")))]
     /// Render a QR code using half-block characters.
     pub fn qr_code(&mut self, data: impl AsRef<str>) -> Response {
         let code = match qrcode::QrCode::new(data.as_ref()) {
@@ -1502,11 +1499,7 @@ impl Context {
                                     matches!(modules.get(idx), Some(qrcode::types::Color::Dark))
                                 };
 
-                            if dark {
-                                theme_text
-                            } else {
-                                theme_bg
-                            }
+                            if dark { theme_text } else { theme_bg }
                         };
 
                         let upper = resolve_module_color(x, upper_y);

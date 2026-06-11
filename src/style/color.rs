@@ -189,11 +189,7 @@ impl Color {
     pub fn contrast_ratio(a: Color, b: Color) -> f32 {
         let la = a.luminance() + 0.05;
         let lb = b.luminance() + 0.05;
-        if la > lb {
-            la / lb
-        } else {
-            lb / la
-        }
+        if la > lb { la / lb } else { lb / la }
     }
 
     /// Returns `true` if the contrast ratio between two colors meets WCAG AA
@@ -419,7 +415,7 @@ impl std::fmt::Display for ColorParseError {
     }
 }
 
-impl std::error::Error for ColorParseError {}
+impl core::error::Error for ColorParseError {}
 
 impl std::str::FromStr for Color {
     type Err = ColorParseError;
@@ -609,11 +605,7 @@ fn hue_sextant(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
 #[inline]
 fn wrap_hue(h: f32) -> f32 {
     let h = h % 360.0;
-    if h < 0.0 {
-        h + 360.0
-    } else {
-        h
-    }
+    if h < 0.0 { h + 360.0 } else { h }
 }
 
 /// Scale a `[0.0, 1.0]` channel to a rounded, clamped `u8`.
@@ -724,7 +716,7 @@ impl<'de> serde::Deserialize<'de> for Color {
         impl serde::de::Visitor<'_> for ColorVisitor {
             type Value = Color;
 
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("a color token like \"#ff6b6b\", \"cyan\", or \"indexed:245\"")
             }
 
@@ -806,10 +798,10 @@ impl ColorDepth {
                 return Self::TrueColor;
             }
         }
-        if let Ok(term) = std::env::var("TERM") {
-            if term.contains("256color") {
-                return Self::EightBit;
-            }
+        if let Ok(term) = std::env::var("TERM")
+            && term.contains("256color")
+        {
+            return Self::EightBit;
         }
         Self::Basic
     }

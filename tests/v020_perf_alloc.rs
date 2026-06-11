@@ -27,8 +27,8 @@
 #![allow(clippy::unwrap_used)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct CountingAllocator;
 
@@ -37,14 +37,16 @@ static MEASURING: AtomicBool = AtomicBool::new(false);
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if MEASURING.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+        unsafe {
+            if MEASURING.load(Ordering::Relaxed) {
+                ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+            System.alloc(layout)
         }
-        System.alloc(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
+        unsafe { System.dealloc(ptr, layout) }
     }
 }
 

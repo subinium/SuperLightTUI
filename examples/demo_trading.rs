@@ -465,7 +465,7 @@ fn tick(s: &mut St) {
     }
 
     // new trade every other tick
-    if s.tick % 2 == 0 {
+    if s.tick.is_multiple_of(2) {
         let is_buy = s.rng.coin();
         let px = s.price * (1.0 + s.rng.range(-0.0003, 0.0003));
         s.trades.push_front(Trade {

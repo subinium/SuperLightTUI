@@ -177,7 +177,7 @@ impl Rect {
     /// assert_eq!(rows, vec![2, 3, 4]);
     /// ```
     #[inline]
-    pub fn rows(&self) -> impl Iterator<Item = u32> {
+    pub fn rows(&self) -> impl Iterator<Item = u32> + use<> {
         self.y..self.bottom()
     }
 
@@ -194,7 +194,7 @@ impl Rect {
     /// assert_eq!(positions, vec![(0, 0), (1, 0), (0, 1), (1, 1)]);
     /// ```
     #[inline]
-    pub fn positions(&self) -> impl Iterator<Item = (u32, u32)> {
+    pub fn positions(&self) -> impl Iterator<Item = (u32, u32)> + use<> {
         let x_start = self.x;
         let x_end = self.right();
         let y_start = self.y;

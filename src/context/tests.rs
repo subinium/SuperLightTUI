@@ -1,6 +1,6 @@
 use super::*;
-use crate::test_utils::TestBackend;
 use crate::EventBuilder;
+use crate::test_utils::TestBackend;
 
 #[derive(Debug, PartialEq, Eq)]
 struct SnapshotShape {
@@ -93,8 +93,8 @@ fn use_memo_handle_releases_borrow() {
 
 #[test]
 fn use_memo_recomputes_only_on_dep_change() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let calls = Arc::new(AtomicUsize::new(0));
     let mut tb = TestBackend::new(20, 3);

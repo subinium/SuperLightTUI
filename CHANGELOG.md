@@ -1,5 +1,112 @@
 # Changelog
 
+## [0.22.0] - 2026-06-11
+
+Rust modernization and optimization release. No new public widgets or features —
+this cycle migrates the crate to the 2024 edition, adopts let-chains across the
+core, tightens the lint posture, removes a dead dependency, memoizes layout
+intrinsic sizing, and fixes a measured rendering regression. The public API
+surface is unchanged.
+
+### Changed
+
+- **Edition 2024** — both `superlighttui` and `slt-wasm` now build on the 2024
+  edition.
+- **MSRV 1.85 → 1.88** — the core adopts let-chains (`if let … && let …`,
+  flattening ~50 nested if-let sites across the codebase), stabilized in Rust
+  1.88.0. The CI MSRV gate and docs are pinned to 1.88 accordingly. (MSRV bumps
+  are permitted in minor releases per the MSRV policy.)
+- **Workspace lints** — shared `[workspace.lints]` config (`rust_2018_idioms`,
+  rustdoc broken/private intra-doc links), opted into by both packages via
+  `[lints] workspace = true`. Library-only hygiene lints (`missing_docs`,
+  `unreachable_pub`, clippy `unwrap_in_result`/`unwrap_used`/`dbg_macro`/
+  `print_stdout`/`print_stderr`, and the cfg-conditional `unsafe_code` policy)
+  stay as lib-target inner attributes in both `lib.rs` files, since `[lints]`
+  is package-scoped and would otherwise fire on examples and integration tests.
+  `cargo clippy --all-features --all-targets -- -D warnings` is now clean.
+- **`unicode-segmentation` bound relaxed** — `>=1.0, <1.13` → `1`; the upper
+  bound only existed to keep the dropped 1.81 MSRV gate green.
+- **Error impls on `core::error::Error`** — `ColorParseError` and
+  `ThemeLoadError` now implement `core::error::Error` (drop-in; `std::error::
+  Error` is the same trait re-exported).
+- **`OnceLock` → `LazyLock`** where initialization is a plain constant
+  (`SEP_LINE`); fallible tree-sitter configs stay on `OnceLock`.
+
+### Removed
+
+- **`indexmap` direct dependency** — it had zero uses in `src/`; the manifest
+  entry existed only as an MSRV-compatibility version pin for the transitive
+  copy pulled by `toml` (`serde`/`theme-watch` features). Resolved dependency
+  tree shrinks from 13 → 10 crates with `default-features = false` and
+  28 → 25 with default features (vs 68 for a ratatui + crossterm app).
+
+### Fixed
+
+- **Startup deadlock on terminals that never answer capability probes** — the
+  DA1/DA2, Kitty-graphics, XTGETTCAP, DECRQM, and OSC reply readers gated a
+  blocking `stdin` read behind `crossterm::event::poll()`, which reports
+  crossterm's *internal event queue*, not raw-descriptor readability — and
+  crossterm's poller consumes bytes from the same descriptor. On hosts that
+  answer nothing (detached tmux panes, `script`/CI PTY wrappers), applications
+  hung forever on a blank alternate screen before the first frame, and typed
+  keys were swallowed instead of unblocking the read. Replies are now pumped
+  through a dedicated reader thread and awaited with `recv_timeout`, so every
+  probe is hard-bounded by its documented budget (≤180 ms total at startup)
+  regardless of host behavior. Residual on fully silent hosts: the parked
+  reader can swallow at most one byte of typeahead — bounded, versus the
+  previous unbounded hang. Affects `run()` startup, `detect_color_scheme`,
+  `read_clipboard`, and the Kitty cell-size query.
+
+### Perf
+
+- **Layout intrinsic-size memoization** — `min_width` / `min_height` /
+  `min_height_for_width` recursed over the entire subtree at every ancestor
+  level each frame (O(nodes × depth)). They are now memoized per node per
+  frame via `Cell` fields on `LayoutNode`, invalidated at the
+  `resolve_axis_specs` points (row and column passes) where a Pct/Ratio
+  constraint resolves mid-layout.
+  Output is byte-identical (regression tests + full proptest suite); a new
+  `layout_deep_tree_120x40` bench (14-level nested panels) tracks the
+  asymptotic win.
+- **`dim_buffer_around` / `dim_entire_buffer` rewrite** — the modal dimming
+  strips now OR the `DIM` modifier over contiguous buffer-row slices instead
+  of per-cell `get_mut` with bounds asserts. All `v020_perf_audit` dim arms
+  improved (small modal 61.9 → 53.5 µs, large modal 59.2 → 48.2 µs, full scan
+  106.4 → 55.0 µs at 200×60 on the reference machine), fixing a measured
+  regression from the original strip optimization (#228).
+- Audited the double-buffer line-hash path for redundant re-hashing of the
+  previous buffer: the existing `line_dirty` tracking already makes the second
+  `recompute_line_hashes` call near-free in steady state (verified by
+  `flush/static_200x60` at ~114 ns); no change needed.
+
+### Docs
+
+- **Lightness claims corrected to measured reality** — the "Dependencies: 2"
+  claim in `COMPETITIVE_ANALYSIS.md` was false and is replaced with measured
+  numbers (4 direct required deps; 25 resolved with default features vs 68 for
+  ratatui + crossterm). README taglines (all languages), `FEATURES.md`, and
+  `DESIGN_PRINCIPLES.md` now frame "light" as dependency footprint + API
+  surface, and explicitly do not claim a smaller stripped binary (a minimal
+  SLT hello is ~1.45× ratatui's) or faster cold build.
+- **docs.rs feature badges** — 36 `#[cfg_attr(docsrs, doc(cfg(feature =
+  "…")))]` annotations added so every public feature-gated item (entry points,
+  `PtyBackend`, `TaskHandle`, `ThemeWatcher`, syntax/image/qrcode widgets, …)
+  shows its required feature on docs.rs.
+- `#[must_use]` added to `ThemeBuilder` and `EventBuilder` (the remaining
+  builders and `Response` already carried it).
+
+### Internal
+
+- Edition-2024 fallout: `std::env::set_var` is now `unsafe`, so the
+  `#![forbid(unsafe_code)]` policy became cfg-conditional — `forbid` for every
+  shipping build, `deny` with two audited, mutex-serialized exemptions in
+  `#[cfg(test)]` env helpers. The published library remains 100% safe code.
+- RPIT precise-capture (`+ use<>`) on `Rect::rows()` / `Rect::positions()`;
+  `expr_2021` → `expr` macro fragment in the internal `flush_run!` macro.
+- 17 never-public `Terminal` / `InlineTerminal` / `KittyImageManager` /
+  `SelectionState` methods downgraded `pub` → `pub(crate)` (flagged by
+  `unreachable_pub`; none were reachable outside the crate).
+
 ## [0.21.1] - 2026-05-30
 
 Interaction-signal completeness, API ergonomics, WASM parity, perf, and

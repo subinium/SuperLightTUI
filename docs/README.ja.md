@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**書くのは速く。動くのは軽く。**
+**書くのは速く。依存ツリーは軽量**（直接の必須依存は 4 つ、デフォルト機能で解決後 25 クレート。ratatui + crossterm は 68）。
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]

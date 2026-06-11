@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**Se escribe rápido. Se ejecuta ligero.**
+**Rápido de escribir. Árbol de dependencias ligero** (4 dependencias directas requeridas, 25 resueltas con las características por defecto, frente a 68 de ratatui + crossterm).
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]

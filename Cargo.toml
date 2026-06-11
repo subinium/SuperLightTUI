@@ -1,10 +1,30 @@
 [workspace]
 members = [".", "crates/slt-wasm"]
 
+# Shared lint configuration applied to every workspace member via
+# `[lints] workspace = true`. NOTE: `[lints]` is package-scoped, so these
+# apply to ALL targets in a package (lib, examples, benches, tests), not just
+# the library. Library-API hygiene lints are therefore deliberately NOT listed
+# here and stay as lib-only inner attributes in src/lib.rs (mirrored in
+# crates/slt-wasm/src/lib.rs): `missing_docs`, `unreachable_pub`, and the
+# clippy unwrap/print/dbg family — example binaries and integration tests
+# legitimately print to stdout and unwrap, so package-wide enforcement would
+# flood them with warnings. The cfg-conditional `unsafe_code` policy (forbid
+# in shipping builds, deny under #[cfg(test)] because edition 2024 made env
+# mutation unsafe) likewise cannot be expressed here and stays in src/lib.rs.
+[workspace.lints.rust]
+# rust-2018-idioms is a lint group; priority -1 lets individual lints below
+# override members of the group if needed.
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "warn"
+private_intra_doc_links = "warn"
+
 [package]
 name = "superlighttui"
-version = "0.21.1"
-edition = "2021"
+version = "0.22.0"
+edition = "2024"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
 repository = "https://github.com/subinium/SuperLightTUI"
@@ -13,7 +33,9 @@ documentation = "https://docs.rs/superlighttui"
 readme = "README.md"
 keywords = ["tui", "terminal", "cli", "ui", "immediate-mode"]
 categories = ["command-line-interface"]
-rust-version = "1.81"
+# let-chains (`if let … && let …`) used across the core were stabilized in
+# Rust 1.88.0; edition 2024 alone (1.85) is not enough. MSRV is therefore 1.88.
+rust-version = "1.88"
 # Keep the published crate to library + docs only. The agent/skill scaffolding,
 # VHS recordings, and dev/CI config are not needed by downstream consumers
 # (they were leaking into 0.21.0's tarball — ~140KB of non-library content).
@@ -41,20 +63,17 @@ exclude = [
 # v0.20 release notes for why these were merged into tours.
 autoexamples = false
 
+[lints]
+workspace = true
+
 [lib]
 name = "slt"
 
 [dependencies]
 crossterm = { version = "0.28", features = ["bracketed-paste"], optional = true }
 unicode-width = "0.2"
-# Upper-bounded for MSRV 1.81: unicode-segmentation 1.13+ requires rustc 1.85.
-unicode-segmentation = ">=1.0, <1.13"
+unicode-segmentation = "1"
 smallvec = "1"
-# MSRV 1.81 pin only (not used directly): a transitive dep via `toml`
-# (the `serde`/`theme-watch` features). indexmap 2.10+ requires the
-# `edition2024` Cargo feature (rustc 1.85), which breaks the MSRV gate's
-# `cargo generate-lockfile` + 1.81 check. Bound it below that.
-indexmap = ">=2.0, <2.10"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 toml = { version = "0.8", optional = true }
