@@ -235,7 +235,7 @@ impl Default for TextInputState {
 /// Unlike the deprecated [`FormValidator`] function pointer, a `Validator`
 /// wraps a closure, so it can capture surrounding state — a compiled matcher,
 /// a min/max pulled from config, or a sibling field's value. Built-in
-/// constructors live in the [`validators`](crate::widgets::validators) module.
+/// constructors live in the [`validators`] module.
 ///
 /// You rarely construct one directly: [`FormField::validate`] accepts a closure
 /// and boxes it for you. Use [`Validator::new`] when you need to build a
@@ -282,6 +282,7 @@ impl std::fmt::Debug for Validator {
 /// [`Context::form_field`](crate::Context::form_field) (or directly via
 /// [`FormField::poll_async`]). Gated behind the `async` feature.
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub struct AsyncValidation {
     rx: tokio::sync::oneshot::Receiver<Result<(), String>>,
 }
@@ -391,7 +392,7 @@ impl FormField {
     ///
     /// The closure may capture state, unlike the deprecated positional
     /// [`FormValidator`]. Built-ins live in
-    /// [`validators`](crate::widgets::validators).
+    /// [`validators`].
     ///
     /// # Example
     ///
@@ -489,6 +490,7 @@ impl FormField {
     /// # }
     /// ```
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub fn validate_async<F>(&mut self, future: F)
     where
         F: std::future::Future<Output = Result<(), String>> + Send + 'static,
@@ -505,6 +507,7 @@ impl FormField {
     ///
     /// Requires the `async` feature.
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub fn is_validating(&self) -> bool {
         self.pending.is_some()
     }
@@ -517,6 +520,7 @@ impl FormField {
     ///
     /// Requires the `async` feature.
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub fn poll_async(&mut self) -> bool {
         use tokio::sync::oneshot::error::TryRecvError;
         let Some(pending) = self.pending.as_mut() else {

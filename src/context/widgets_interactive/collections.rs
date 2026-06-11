@@ -334,8 +334,9 @@ impl Context {
     /// `Alt+Up`/`Alt+Down`. Reordering operates on the underlying item order via
     /// [`ListState::move_item`], keeping the selection on the moved item.
     ///
-    /// Returns a [`ListResponse`] which derefs to the standard [`Response`] and
-    /// exposes [`reordered`](ListResponse::reordered) — `Some((from, to))` with
+    /// Returns a [`ListResponse`](crate::ListResponse) which derefs to the
+    /// standard [`Response`] and exposes
+    /// [`reordered`](crate::ListResponse::reordered) — `Some((from, to))` with
     /// the data indices when an item moved this frame, otherwise `None`.
     ///
     /// The plain [`list`](Context::list) entry point is unchanged; opt into
@@ -413,14 +414,12 @@ impl Context {
                         };
                         // Map both endpoints from view positions to data indices
                         // so reordering survives an active filter.
-                        if let Some(target_view) = target_view {
-                            if let (Some(&from), Some(&to)) =
+                        if let Some(target_view) = target_view
+                            && let (Some(&from), Some(&to)) =
                                 (visible.get(cur_view), visible.get(target_view))
-                            {
-                                if state.move_item(from, to) {
-                                    reordered = Some((from, to));
-                                }
-                            }
+                            && state.move_item(from, to)
+                        {
+                            reordered = Some((from, to));
                         }
                         // Consume regardless so a held modifier never also
                         // triggers a plain navigation step on the same key.

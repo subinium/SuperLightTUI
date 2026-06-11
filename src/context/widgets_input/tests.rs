@@ -58,7 +58,7 @@ fn text_input_empty_value_shows_no_suggestions() {
 
 // ── Form field validation triggers ────────────────────────────────────────
 
-use crate::widgets::{validators, FormField, ValidateTrigger};
+use crate::widgets::{FormField, ValidateTrigger, validators};
 
 /// Render one form field (focusable #0) followed by a button (focusable #1).
 /// `focus_index` selects which is focused; `prev_focus_count` is 2.

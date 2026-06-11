@@ -63,11 +63,7 @@ pub(super) fn draw_braille_dataset(
             let a = points[idx];
             let b = points[idx + 1];
             let seg_color = if let (Some(up), Some(down)) = (dataset.up_color, dataset.down_color) {
-                if b.2 > a.2 {
-                    up
-                } else {
-                    down
-                }
+                if b.2 > a.2 { up } else { down }
             } else {
                 dataset.color
             };

@@ -16,12 +16,12 @@ pub(crate) use bar::build_histogram_config;
 pub(crate) use grid::truncate_label;
 pub(crate) use render::render_chart;
 
-use axis::{build_tui_ticks, format_number, resolve_bounds, TickSpec};
+use axis::{TickSpec, build_tui_ticks, format_number, resolve_bounds};
 use bar::draw_bar_dataset;
 use braille::draw_braille_dataset;
 use grid::{
-    apply_grid, build_legend_items, build_x_tick_col_map, build_y_tick_row_map, center_text,
-    map_value_to_cell, marker_char, overlay_legend_on_plot, sturges_bin_count, GridSpec,
+    GridSpec, apply_grid, build_legend_items, build_x_tick_col_map, build_y_tick_row_map,
+    center_text, map_value_to_cell, marker_char, overlay_legend_on_plot, sturges_bin_count,
 };
 
 const BRAILLE_BASE: u32 = 0x2800;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{RichLogState, DEFAULT_CHORD_TIMEOUT_TICKS};
+use crate::{DEFAULT_CHORD_TIMEOUT_TICKS, RichLogState};
 
 impl Context {
     /// Render a scrollable rich log view with styled entries.
@@ -872,22 +872,22 @@ impl Context {
         let items = Self::split_md_links(text);
 
         // Fast path: no links/images found
-        if items.len() == 1 {
-            if let MdInline::Text(ref t) = items[0] {
-                let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
-                if segs.len() <= 1 {
-                    self.text(text)
-                        .wrap()
-                        .fg(text_style.fg.unwrap_or(Color::Reset));
-                } else {
-                    self.line_wrap(|ui| {
-                        for (s, st) in segs {
-                            ui.styled(s, st);
-                        }
-                    });
-                }
-                return;
+        if items.len() == 1
+            && let MdInline::Text(ref t) = items[0]
+        {
+            let segs = Self::parse_inline_segments(t, text_style, bold_style, code_style);
+            if segs.len() <= 1 {
+                self.text(text)
+                    .wrap()
+                    .fg(text_style.fg.unwrap_or(Color::Reset));
+            } else {
+                self.line_wrap(|ui| {
+                    for (s, st) in segs {
+                        ui.styled(s, st);
+                    }
+                });
             }
+            return;
         }
 
         // Mixed content — line_wrap collects both Text and Link commands
@@ -953,29 +953,31 @@ impl Context {
 
         while i < chars.len() {
             // Image: ![alt](url)
-            if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-                if let Some((alt, _url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1) {
-                    if !current.is_empty() {
-                        items.push(MdInline::Text(std::mem::take(&mut current)));
-                    }
-                    items.push(MdInline::Image { alt });
-                    i += 1 + consumed;
-                    continue;
+            if chars[i] == '!'
+                && i + 1 < chars.len()
+                && chars[i + 1] == '['
+                && let Some((alt, _url, consumed)) = Self::parse_md_bracket_paren(&chars, i + 1)
+            {
+                if !current.is_empty() {
+                    items.push(MdInline::Text(std::mem::take(&mut current)));
                 }
+                items.push(MdInline::Image { alt });
+                i += 1 + consumed;
+                continue;
             }
             // Link: [text](url)
-            if chars[i] == '[' {
-                if let Some((link_text, url, consumed)) = Self::parse_md_bracket_paren(&chars, i) {
-                    if !current.is_empty() {
-                        items.push(MdInline::Text(std::mem::take(&mut current)));
-                    }
-                    items.push(MdInline::Link {
-                        text: link_text,
-                        url,
-                    });
-                    i += consumed;
-                    continue;
+            if chars[i] == '['
+                && let Some((link_text, url, consumed)) = Self::parse_md_bracket_paren(&chars, i)
+            {
+                if !current.is_empty() {
+                    items.push(MdInline::Text(std::mem::take(&mut current)));
                 }
+                items.push(MdInline::Link {
+                    text: link_text,
+                    url,
+                });
+                i += consumed;
+                continue;
             }
             current.push(chars[i]);
             i += 1;
@@ -1061,20 +1063,22 @@ impl Context {
 
         while ci < chars.len() {
             // Image: ![alt](url) — char-based bracket scanner is reused as-is.
-            if chars[ci] == '!' && ci + 1 < chars.len() && chars[ci + 1] == '[' {
-                if let Some((alt, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci + 1) {
-                    result.push_str(&alt);
-                    ci += 1 + consumed;
-                    continue;
-                }
+            if chars[ci] == '!'
+                && ci + 1 < chars.len()
+                && chars[ci + 1] == '['
+                && let Some((alt, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci + 1)
+            {
+                result.push_str(&alt);
+                ci += 1 + consumed;
+                continue;
             }
             // Link: [text](url)
-            if chars[ci] == '[' {
-                if let Some((link_text, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci) {
-                    result.push_str(&link_text);
-                    ci += consumed;
-                    continue;
-                }
+            if chars[ci] == '['
+                && let Some((link_text, _, consumed)) = Self::parse_md_bracket_paren(&chars, ci)
+            {
+                result.push_str(&link_text);
+                ci += consumed;
+                continue;
             }
 
             let bi = char_to_byte[ci];
@@ -1130,7 +1134,7 @@ impl Context {
     /// (vi `gg`, leader keys).
     ///
     /// Unlike a single-frame matcher, `key_chord` buffers partial input in
-    /// [`FrameState`](crate::FrameState) across frames: typing `g` on one frame
+    /// crate-internal `FrameState` across frames: typing `g` on one frame
     /// and `g` on the next returns `true` on the second frame. The partial
     /// prefix is cleared on a non-matching key press (vi semantics: `g` then
     /// `x` cancels a pending `gg`) or after

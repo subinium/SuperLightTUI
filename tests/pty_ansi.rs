@@ -45,7 +45,9 @@ fn sixel_image_emits_envelope() {
     // SAFETY-equivalent note: `set_var` is process-global. This test owns the
     // var for its duration and restores it; it asserts on the forced path.
     let prev = std::env::var("SLT_FORCE_SIXEL").ok();
-    std::env::set_var("SLT_FORCE_SIXEL", "1");
+    // SAFETY (edition 2024): set_var is unsafe; this single-threaded test owns
+    // the var for its duration and restores it below.
+    unsafe { std::env::set_var("SLT_FORCE_SIXEL", "1") };
 
     let mut pb = PtyBackend::new(20, 2);
     // 2x2 red square (RGBA: 4 pixels x 4 bytes).
@@ -56,9 +58,11 @@ fn sixel_image_emits_envelope() {
     pb.assert_emits("\u{1b}Pq");
     pb.assert_emits("\u{1b}\\");
 
-    match prev {
-        Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
-        None => std::env::remove_var("SLT_FORCE_SIXEL"),
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
+            None => std::env::remove_var("SLT_FORCE_SIXEL"),
+        }
     }
 }
 

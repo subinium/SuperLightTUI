@@ -1,6 +1,6 @@
 use std::io;
 
-use slt::{frame, AppState, Backend, Buffer, Context, EventBuilder, Rect, RunConfig};
+use slt::{AppState, Backend, Buffer, Context, EventBuilder, Rect, RunConfig, frame};
 
 struct ContractBackend {
     buffer: Buffer,

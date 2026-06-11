@@ -20,7 +20,7 @@
 //!   └─────────────────────────────────────┘      └───────────┘
 
 use slt::{
-    context::ModalOptions, Border, ButtonVariant, Context, KeyCode, KeyModifiers, RunConfig,
+    Border, ButtonVariant, Context, KeyCode, KeyModifiers, RunConfig, context::ModalOptions,
 };
 
 /// Mutable demo state. Bundling these into a struct keeps `main()` minimal

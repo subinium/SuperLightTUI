@@ -3,7 +3,7 @@ mod support;
 use slt::widgets::TabsState;
 use slt::{AppState, Context, EventBuilder, TestBackend};
 
-use support::{render_with_frame_backend, RecordingBackend};
+use support::{RecordingBackend, render_with_frame_backend};
 
 fn render_counter(ui: &mut Context) {
     let count = ui.use_state(|| 0i32);

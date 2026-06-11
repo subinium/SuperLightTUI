@@ -25,7 +25,19 @@ use super::*;
 /// `scroll_offset_x: u32` (4 bytes) and `content_width: u32` (4 bytes), the
 /// x-axis mirror of `scroll_offset` / `content_height`. Same scalar rationale
 /// as #258 — boxing 4-byte fields would cost more than it saves.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 336);
+/// Bumped 336 → 360 for the per-frame intrinsic-size memo (v0.22.0):
+/// `cached_min_width` / `cached_min_height` (`Cell<Option<u32>>`, 8 bytes
+/// each) and `cached_min_height_for_width` (`Cell<Option<(u32, u32)>>`,
+/// 12 bytes). These memoize the previously-recomputed top-down intrinsic
+/// queries (`min_width` / `min_height` / `min_height_for_width`) so each
+/// node is measured at most once per width per frame instead of being
+/// re-walked O(depth) times by the flexbox call sites. The fields are
+/// `Cell`s so memoization works through the `&self` query signatures; the
+/// tree is rebuilt fresh every frame, so they start `None` and need no
+/// invalidation. Scalars (no heap), so this is the minimum footprint —
+/// boxing the cache would cost a per-node allocation every frame, defeating
+/// the optimization.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 360);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -157,6 +169,19 @@ pub(crate) struct LayoutNode {
     /// rather than a fresh `String` → `Arc<str>` allocation per group node.
     pub(crate) group_name: Option<std::sync::Arc<str>>,
     pub(crate) overlays: Vec<OverlayLayer>,
+    /// Per-frame memo for [`LayoutNode::min_width`]. `None` until the first
+    /// query; the value is width-independent, so it never needs a key. The
+    /// tree is rebuilt fresh every frame, so a new node starts `None` — no
+    /// invalidation logic exists or is needed.
+    pub(crate) cached_min_width: std::cell::Cell<Option<u32>>,
+    /// Per-frame memo for [`LayoutNode::min_height`]. Same width-independent
+    /// semantics as [`LayoutNode::cached_min_width`].
+    pub(crate) cached_min_height: std::cell::Cell<Option<u32>>,
+    /// Per-frame memo for [`LayoutNode::min_height_for_width`], keyed by the
+    /// `available_width` it was computed for: `Some((width, result))`. A query
+    /// at a different width recomputes and overwrites (the flex pipeline queries
+    /// each node at one settled width, so this is effectively a one-slot cache).
+    pub(crate) cached_min_height_for_width: std::cell::Cell<Option<(u32, u32)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +292,9 @@ impl LayoutNode {
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
+            cached_min_width: std::cell::Cell::new(None),
+            cached_min_height: std::cell::Cell::new(None),
+            cached_min_height_for_width: std::cell::Cell::new(None),
         }
     }
 
@@ -320,6 +348,9 @@ impl LayoutNode {
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
+            cached_min_width: std::cell::Cell::new(None),
+            cached_min_height: std::cell::Cell::new(None),
+            cached_min_height_for_width: std::cell::Cell::new(None),
         }
     }
 
@@ -360,6 +391,9 @@ impl LayoutNode {
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
+            cached_min_width: std::cell::Cell::new(None),
+            cached_min_height: std::cell::Cell::new(None),
+            cached_min_height_for_width: std::cell::Cell::new(None),
         }
     }
 
@@ -418,6 +452,9 @@ impl LayoutNode {
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
+            cached_min_width: std::cell::Cell::new(None),
+            cached_min_height: std::cell::Cell::new(None),
+            cached_min_height_for_width: std::cell::Cell::new(None),
         }
     }
 
@@ -458,15 +495,14 @@ impl LayoutNode {
             link_url: None,
             group_name: None,
             overlays: Vec::new(),
+            cached_min_width: std::cell::Cell::new(None),
+            cached_min_height: std::cell::Cell::new(None),
+            cached_min_height_for_width: std::cell::Cell::new(None),
         }
     }
 
     pub(crate) fn border_inset(&self) -> u32 {
-        if self.border.is_some() {
-            1
-        } else {
-            0
-        }
+        if self.border.is_some() { 1 } else { 0 }
     }
 
     pub(crate) fn border_left_inset(&self) -> u32 {
@@ -509,7 +545,27 @@ impl LayoutNode {
         self.padding.vertical() + self.border_top_inset() + self.border_bottom_inset()
     }
 
+    /// Width-independent intrinsic minimum width, memoized for the frame.
+    ///
+    /// The result is a pure function of this node's (post-build, immutable)
+    /// subtree and its own constraints. The flexbox call sites query the same
+    /// node's `min_width` repeatedly (base widths, cross-align, overflow sums),
+    /// and `min_width` itself recurses over the whole subtree, so without the
+    /// memo the cost is O(nodes x depth). The cache is cleared whenever a
+    /// parent resolves this node's `Pct`/`Ratio` constraints into `Fixed`
+    /// (see [`LayoutNode::invalidate_size_cache`]) — the only mutation that can
+    /// change the result mid-frame — so the memoized value stays byte-identical
+    /// to the uncached computation.
     pub(crate) fn min_width(&self) -> u32 {
+        if let Some(cached) = self.cached_min_width.get() {
+            return cached;
+        }
+        let width = self.min_width_uncached();
+        self.cached_min_width.set(Some(width));
+        width
+    }
+
+    fn min_width_uncached(&self) -> u32 {
         let width = match self.kind {
             NodeKind::Text => self.size.0,
             NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
@@ -542,7 +598,37 @@ impl LayoutNode {
         width.saturating_add(self.margin.horizontal())
     }
 
+    /// Clear this node's per-frame intrinsic-size memos.
+    ///
+    /// Called by the flexbox layout loops at the exact point a parent resolves
+    /// a child's `Pct`/`Ratio` constraints into concrete `Fixed` values
+    /// (`flexbox::resolve_axis_specs`). That resolution is the only mid-frame
+    /// mutation that can change `min_width` / `min_height` /
+    /// `min_height_for_width`, so discarding any value cached during an
+    /// ancestor's measurement pass (when the constraint was still unresolved)
+    /// keeps the post-resolution query byte-identical to the uncached path.
+    /// For the common `Auto` / `Fixed` / `MinMax` case the resolution is a
+    /// no-op and the clear is cheap (three `Cell::set(None)`).
+    #[inline]
+    pub(crate) fn invalidate_size_cache(&self) {
+        self.cached_min_width.set(None);
+        self.cached_min_height.set(None);
+        self.cached_min_height_for_width.set(None);
+    }
+
+    /// Width-independent intrinsic minimum height, memoized for the frame.
+    ///
+    /// Same caching contract as [`LayoutNode::min_width`].
     pub(crate) fn min_height(&self) -> u32 {
+        if let Some(cached) = self.cached_min_height.get() {
+            return cached;
+        }
+        let height = self.min_height_uncached();
+        self.cached_min_height.set(Some(height));
+        height
+    }
+
+    fn min_height_uncached(&self) -> u32 {
         let height = match self.kind {
             NodeKind::Text => 1,
             NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
@@ -606,6 +692,12 @@ impl LayoutNode {
     pub(crate) fn min_height_for_width(&mut self, available_width: u32) -> u32 {
         match self.kind {
             NodeKind::Text if self.wrap => {
+                // Not memoized via `cached_min_height_for_width`: the wrap
+                // cache populated by `ensure_wrapped_for_width` (keyed by its
+                // own `cached_wrap_width`) is the side effect `compute_body` /
+                // `render` depend on, and it already short-circuits repeated
+                // same-width calls. Adding a second memo here would risk
+                // skipping that population, so we defer to the existing cache.
                 let inner_width = available_width.saturating_sub(self.margin.horizontal());
                 let lines = self.ensure_wrapped_for_width(inner_width);
                 lines.saturating_add(self.margin.vertical())
@@ -615,9 +707,24 @@ impl LayoutNode {
             // width-independent `min_height`. Partition the children greedily
             // (mirroring `flexbox::layout_row`'s wrap pass) and sum each line's
             // tallest child plus the between-line cross-axis gap. Closes #258.
+            //
+            // Memoized keyed by `available_width`: the partition re-walks the
+            // children, so caching the (width, result) pair avoids recomputing
+            // it when the flex pipeline re-queries the same row at the same
+            // settled width. A query at a different width recomputes and
+            // overwrites the single slot.
             NodeKind::Container(Direction::Row) if self.wrap_children => {
-                self.wrapped_min_height(available_width)
+                if let Some((w, h)) = self.cached_min_height_for_width.get()
+                    && w == available_width
+                {
+                    return h;
+                }
+                let h = self.wrapped_min_height(available_width);
+                self.cached_min_height_for_width
+                    .set(Some((available_width, h)));
+                h
             }
+            // Width-independent: delegates to the (cached) `min_height`.
             _ => self.min_height(),
         }
     }

@@ -14,11 +14,13 @@
 | Rendering Model | Immediate (closure) | Immediate (Widget trait) | Retained (Event + CSS) | Component (React) | Elm (MVU) |
 | Built-in Widgets | Broad built-in catalog | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
 | Ecosystem | Small | **2,928 deps, 50+ widget crates** | Moderate | **3.9K deps** | **25K deps** |
-| Dependencies | 2 (unicode-width, compact_str; crossterm optional) | 1+ (crossterm, etc.) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
+| Dependencies | 4 direct required, 25 resolved (default features) | 68 resolved (crossterm) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
 
 ---
 
 Widget counts are not perfectly apples-to-apples across frameworks, so this document avoids treating every public helper method or specialized primitive as a separate widget type.
+
+**On "light"**: SLT's lightness is its dependency footprint and small public API, not binary size or build speed. The four direct required deps are `unicode-width`, `unicode-segmentation`, `smallvec`, and `compact_str`; `crossterm` is a default feature, not a hard requirement. The full resolved tree is 10 crates with `default-features = false`, 25 with default features, and 67 with `--features full` — versus 68 for a ratatui + crossterm app (cargo tree, normal deduped edges). SLT does **not** claim a smaller stripped binary or faster cold build: on a minimal hello-world (ratatui 0.30, stripped, macOS arm64) SLT default features is ~905 KiB vs ratatui's ~624 KiB (~1.45× larger), and SLT's cold release build is slightly slower. The win is the dependency tree (25 vs 68) and API surface, not the artifact.
 
 ---
 

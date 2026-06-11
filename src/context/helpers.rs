@@ -95,7 +95,7 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     if cell_width <= width {
         let mut out = String::with_capacity(width);
         out.push_str(cell);
-        out.extend(std::iter::repeat(' ').take(width - cell_width));
+        out.extend(std::iter::repeat_n(' ', width - cell_width));
         return out;
     }
     if width == 0 {
@@ -118,7 +118,7 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     out.push('\u{2026}');
     // Pad in case the last char was wide and left a one-cell gap before `…`.
     let out_width = UnicodeWidthStr::width(out.as_str());
-    out.extend(std::iter::repeat(' ').take(width.saturating_sub(out_width)));
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(out_width)));
     out
 }
 
@@ -179,9 +179,9 @@ pub(crate) fn center_text(text: &str, width: usize) -> String {
     let left = total / 2;
     let right = total - left;
     let mut centered = String::with_capacity(width);
-    centered.extend(std::iter::repeat(' ').take(left));
+    centered.extend(std::iter::repeat_n(' ', left));
     centered.push_str(text);
-    centered.extend(std::iter::repeat(' ').take(right));
+    centered.extend(std::iter::repeat_n(' ', right));
     centered
 }
 
@@ -253,7 +253,7 @@ pub(crate) fn textarea_logical_to_visual(
         if logical_col == seg_end {
             let is_last_seg = vlines
                 .get(i + 1)
-                .map_or(true, |next| next.logical_row != logical_row);
+                .is_none_or(|next| next.logical_row != logical_row);
             if is_last_seg {
                 return (i, logical_col - vl.char_start);
             }
@@ -285,7 +285,7 @@ impl Context {
     /// The intrinsic `(width, height_in_rows)` `text` would occupy, in cells.
     ///
     /// Reuses the exact word-wrap kernel the layout engine runs
-    /// ([`wrap_lines`](crate::layout::wrap_lines) via this crate's `tree`
+    /// (`wrap_lines` via this crate's `tree`
     /// module), so the answer always matches what a `ui.text(text).wrap()`
     /// would actually render — width logic is never duplicated here.
     ///

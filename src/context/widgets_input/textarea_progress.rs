@@ -296,10 +296,10 @@ impl Context {
                 // inside the loop would be O(n²) on large pastes.
                 let mut total_chars: usize = state.lines.iter().map(|l| grapheme_count(l)).sum();
                 for ch in text.chars() {
-                    if let Some(max) = state.max_length {
-                        if total_chars >= max {
-                            break;
-                        }
+                    if let Some(max) = state.max_length
+                        && total_chars >= max
+                    {
+                        break;
                     }
                     if ch == '\n' || ch == '\r' {
                         let split_index = byte_index_for_grapheme(

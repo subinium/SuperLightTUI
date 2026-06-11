@@ -124,7 +124,7 @@ git push --tags
 ```
 
 The release workflow (`.github/workflows/release.yml`) will:
-1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.81
+1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.88
 2. Verify tag matches `Cargo.toml` version
 3. Publish to crates.io
 4. Create GitHub Release with notes extracted from CHANGELOG.md

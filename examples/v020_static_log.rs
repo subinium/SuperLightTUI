@@ -74,7 +74,7 @@ fn main() -> std::io::Result<()> {
 
         // Throttle so a held key cannot flood scrollback faster than the
         // user can read it.
-        if count != last_logged && count % LOG_EVERY == 0 {
+        if count != last_logged && count.is_multiple_of(LOG_EVERY) {
             ui.static_log(format!("[tick] counter reached {count}"));
             last_logged = count;
         }

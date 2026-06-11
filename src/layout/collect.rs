@@ -66,13 +66,13 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
         data.scroll_rects
             .push(Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1));
     }
-    if let Some(id) = node.focus_id {
-        if node.pos.1 + node.size.1 > 0 {
-            data.focus_rects.push((
-                id,
-                Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
-            ));
-        }
+    if let Some(id) = node.focus_id
+        && node.pos.1 + node.size.1 > 0
+    {
+        data.focus_rects.push((
+            id,
+            Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
+        ));
     }
     if let Some(id) = node.interaction_id {
         let rect = if node.pos.1 + node.size.1 > 0 {
@@ -212,13 +212,14 @@ fn collect_all_inner(
     // collect-time handoff costs zero allocations regardless of group depth.
     let node_group_arc: Option<Arc<str>> = node.group_name.clone();
 
-    if let Some(name) = &node_group_arc {
-        if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
-            data.group_rects.push((
-                Arc::clone(name),
-                Rect::new(adj_x, adj_y, node.size.0, node.size.1),
-            ));
-        }
+    if let Some(name) = &node_group_arc
+        && node.pos.1 + node.size.1 > y_offset
+        && node.pos.0 + node.size.0 > x_offset
+    {
+        data.group_rects.push((
+            Arc::clone(name),
+            Rect::new(adj_x, adj_y, node.size.0, node.size.1),
+        ));
     }
 
     if matches!(node.kind, NodeKind::Container(_)) {
@@ -231,11 +232,12 @@ fn collect_all_inner(
         data.content_areas.push((full, content));
     }
 
-    if let Some(id) = node.focus_id {
-        if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
-            data.focus_rects
-                .push((id, Rect::new(adj_x, adj_y, node.size.0, node.size.1)));
-        }
+    if let Some(id) = node.focus_id
+        && node.pos.1 + node.size.1 > y_offset
+        && node.pos.0 + node.size.0 > x_offset
+    {
+        data.focus_rects
+            .push((id, Rect::new(adj_x, adj_y, node.size.0, node.size.1)));
     }
 
     let current_group = node_group_arc.as_ref().or(active_group);

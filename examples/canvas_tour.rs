@@ -613,10 +613,11 @@ impl MinesweeperGame {
         while placed < MINE_COUNT {
             let x = (self.next_rand() % MINE_W as u64) as usize;
             let y = (self.next_rand() % MINE_H as u64) as usize;
-            if let Some((ax, ay)) = avoid {
-                if x == ax && y == ay {
-                    continue;
-                }
+            if let Some((ax, ay)) = avoid
+                && x == ax
+                && y == ay
+            {
+                continue;
             }
             if self.board[y][x].mine {
                 continue;
@@ -1258,7 +1259,7 @@ fn format_score(n: u64) -> String {
     let len = bytes.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(b as char);
@@ -1799,7 +1800,7 @@ fn checkerboard_image(
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
-            let is_dark = ((x / cell_size) + (y / cell_size)) % 2 == 0;
+            let is_dark = ((x / cell_size) + (y / cell_size)).is_multiple_of(2);
             let v = if is_dark { 40u8 } else { 200u8 };
             rgba.extend_from_slice(&[v, v, v, 255]);
         }

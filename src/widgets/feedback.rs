@@ -62,12 +62,12 @@ impl RichLogState {
     pub fn push_segments(&mut self, segments: Vec<(String, Style)>) {
         self.entries.push(RichLogEntry { segments });
 
-        if let Some(max_entries) = self.max_entries {
-            if self.entries.len() > max_entries {
-                let remove_count = self.entries.len() - max_entries;
-                self.entries.drain(0..remove_count);
-                self.scroll_offset = self.scroll_offset.saturating_sub(remove_count);
-            }
+        if let Some(max_entries) = self.max_entries
+            && self.entries.len() > max_entries
+        {
+            let remove_count = self.entries.len() - max_entries;
+            self.entries.drain(0..remove_count);
+            self.scroll_offset = self.scroll_offset.saturating_sub(remove_count);
         }
 
         if self.auto_scroll {

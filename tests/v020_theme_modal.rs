@@ -9,7 +9,7 @@
 
 #![allow(unused_must_use)]
 
-use slt::{context::ModalOptions, Color, EventBuilder, KeyCode, Spacing, TestBackend, Theme};
+use slt::{Color, EventBuilder, KeyCode, Spacing, TestBackend, Theme, context::ModalOptions};
 
 // ── #226 per-subtree theme override ─────────────────────────────────
 

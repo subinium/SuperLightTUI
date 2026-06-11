@@ -871,7 +871,10 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-10",
         title: "Announcing SLT v0.1.0",
         reading_time: "5 min read",
-        tags: &[("release", TagTone::Success), ("announcement", TagTone::Primary)],
+        tags: &[
+            ("release", TagTone::Success),
+            ("announcement", TagTone::Primary),
+        ],
         excerpt: "The first public release of Super Light TUI is here. Two dependencies, zero unsafe, 14 widgets, and an API that gets out of your way.",
         render: render_post_announcement,
     },
@@ -879,7 +882,10 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-08",
         title: "Why Immediate Mode for TUIs?",
         reading_time: "8 min read",
-        tags: &[("architecture", TagTone::Accent), ("deep-dive", TagTone::Warning)],
+        tags: &[
+            ("architecture", TagTone::Accent),
+            ("deep-dive", TagTone::Warning),
+        ],
         excerpt: "How egui-style rendering makes terminal UI development 10x faster, and why retained-mode frameworks add complexity you don't need.",
         render: render_post_immediate_mode,
     },
@@ -887,7 +893,10 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-05",
         title: "Building a Dashboard in 50 Lines",
         reading_time: "4 min read",
-        tags: &[("tutorial", TagTone::Secondary), ("beginner", TagTone::Success)],
+        tags: &[
+            ("tutorial", TagTone::Secondary),
+            ("beginner", TagTone::Success),
+        ],
         excerpt: "Step-by-step guide to building a real-time system dashboard with SLT. Metrics, tables, and live updates in under a minute of reading.",
         render: render_post_dashboard_tutorial,
     },
@@ -895,7 +904,10 @@ const BLOG_POSTS: &[BlogPost] = &[
         date: "2025-03-01",
         title: "The Case for u32 Coordinates",
         reading_time: "3 min read",
-        tags: &[("technical", TagTone::Error), ("design-decision", TagTone::Accent)],
+        tags: &[
+            ("technical", TagTone::Error),
+            ("design-decision", TagTone::Accent),
+        ],
         excerpt: "Why every TUI library using u16 coordinates has a latent overflow bug, and how SLT avoids it with u32 at zero runtime cost.",
         render: render_post_u32,
     },
@@ -1023,18 +1035,21 @@ fn render_post_announcement(ui: &mut Context) {
     );
 
     md_h2(ui, "What's Included in v0.1.0");
-    md_bullet(ui, &[
-        "14 widgets: TextInput, Textarea, Button, Checkbox, Toggle, Tabs, List, Table, Spinner, Progress, Scrollable, Toast, Separator, HelpBar",
-        "Flexbox layout engine with row/col, gap, grow, shrink, alignment",
-        "Double-buffer diff rendering (only changed cells hit the terminal)",
-        "Mouse support: click, hover, drag-to-scroll",
-        "Automatic focus management with Tab/Shift+Tab",
-        "Dark and light theme presets, or bring your own",
-        "Animation primitives: Tween with 9 easings, Spring physics",
-        "Inline mode for rendering below the prompt",
-        "Optional async/tokio integration",
-        "Layout debugger (F12)",
-    ]);
+    md_bullet(
+        ui,
+        &[
+            "14 widgets: TextInput, Textarea, Button, Checkbox, Toggle, Tabs, List, Table, Spinner, Progress, Scrollable, Toast, Separator, HelpBar",
+            "Flexbox layout engine with row/col, gap, grow, shrink, alignment",
+            "Double-buffer diff rendering (only changed cells hit the terminal)",
+            "Mouse support: click, hover, drag-to-scroll",
+            "Automatic focus management with Tab/Shift+Tab",
+            "Dark and light theme presets, or bring your own",
+            "Animation primitives: Tween with 9 easings, Spring physics",
+            "Inline mode for rendering below the prompt",
+            "Optional async/tokio integration",
+            "Layout debugger (F12)",
+        ],
+    );
 
     md_h2(ui, "What's Next");
     md_p(ui, "v0.2.0 will focus on:");
@@ -1335,11 +1350,14 @@ fn render_post_u32(ui: &mut Context) {
 
     md_h2(ui, "Why Not Just Use i32 or usize?");
     md_p(ui, "We considered all options:");
-    md_bullet(ui, &[
-        "i32: Negative coordinates are meaningless for layout. Wastes a sign bit and allows invalid states.",
-        "usize: 64-bit on most platforms. Wastes memory in the character buffer (millions of cells).",
-        "u32: 4 billion max. More than enough for intermediate arithmetic. Same size as u16 after padding on most structs.",
-    ]);
+    md_bullet(
+        ui,
+        &[
+            "i32: Negative coordinates are meaningless for layout. Wastes a sign bit and allows invalid states.",
+            "usize: 64-bit on most platforms. Wastes memory in the character buffer (millions of cells).",
+            "u32: 4 billion max. More than enough for intermediate arithmetic. Same size as u16 after padding on most structs.",
+        ],
+    );
 
     md_p(
         ui,
@@ -1405,10 +1423,13 @@ fn render_post_flexbox(ui: &mut Context) {
     md_h2(ui, "How Layout Works Internally");
     md_p(ui, "SLT's layout algorithm runs in two passes:");
 
-    md_numbered(ui, &[
-        "Measure pass: each node computes its minimum size. Text measures its string width. Containers sum their children (column = sum heights, row = sum widths).",
-        "Layout pass: starting from the root (terminal size), each container distributes space to children. Fixed-size children get their minimum. Remaining space goes to children with grow > 0, proportional to their grow factor.",
-    ]);
+    md_numbered(
+        ui,
+        &[
+            "Measure pass: each node computes its minimum size. Text measures its string width. Containers sum their children (column = sum heights, row = sum widths).",
+            "Layout pass: starting from the root (terminal size), each container distributes space to children. Fixed-size children get their minimum. Remaining space goes to children with grow > 0, proportional to their grow factor.",
+        ],
+    );
 
     md_h2(ui, "Where We Diverge from CSS");
     md_p(

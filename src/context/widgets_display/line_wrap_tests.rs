@@ -1,6 +1,6 @@
 use super::*;
-use crate::event::Event;
 use crate::FrameState;
+use crate::event::Event;
 
 #[test]
 fn line_wrap_without_links_compacts_to_rich_text() {
@@ -32,9 +32,10 @@ fn line_wrap_with_links_keeps_interactive_commands() {
         ctx.commands.first(),
         Some(Command::BeginContainer(_))
     ));
-    assert!(ctx
-        .commands
-        .iter()
-        .any(|cmd| matches!(cmd, Command::Link { text, .. } if text == "Docs")));
+    assert!(
+        ctx.commands
+            .iter()
+            .any(|cmd| matches!(cmd, Command::Link { text, .. } if text == "Docs"))
+    );
     assert!(matches!(ctx.commands.last(), Some(Command::EndContainer)));
 }

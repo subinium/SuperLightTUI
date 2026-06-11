@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**Superfast** to write. **Superlight** to run.
+**Superfast** to write. **Superlight** dependency tree (4 direct required deps, 25 resolved with default features vs 68 for ratatui + crossterm).
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -57,7 +57,7 @@ fn main() -> std::io::Result<()> {
 
 5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop. Ctrl+C just works.
 
-MSRV: Rust 1.81. Default features enable the `crossterm` backend.
+MSRV: Rust 1.88. Default features enable the `crossterm` backend.
 
 ## 60-Second Grammar
 

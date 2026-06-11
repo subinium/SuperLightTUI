@@ -7,7 +7,8 @@
 //! functions and `docs/ARCHITECTURE.md` for the 5-layer model that
 //! organizes which method lives where.
 
-use crate::chart::{build_histogram_config, render_chart, Candle, ChartBuilder, HistogramBuilder};
+use crate::FrameState;
+use crate::chart::{Candle, ChartBuilder, HistogramBuilder, build_histogram_config, render_chart};
 use crate::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseKind};
 use crate::halfblock::HalfBlockImage;
 use crate::layout::{BeginContainerArgs, BeginScrollableArgs, Command, Direction};
@@ -17,16 +18,15 @@ use crate::style::{
     Modifiers, Padding, Spacing, Style, Theme, ThemeColor, WidgetColors, WidgetTheme,
 };
 use crate::widgets::{
-    color_hex_label, parse_hex_color, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate,
-    CalendarSelect, CalendarState, ColorPickerState, CommandPaletteState, ContextItem,
-    FilePickerState, FormField, FormState, GaugeResponse, GridColumn, GutterResponse,
-    HighlightRange, ListState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
-    PickerMode, RadioState, SchedKind, SchedulerSlot, SchedulerState, ScreenState, ScrollState,
-    SelectState, SpinnerState, SplitPaneResponse, SplitPaneState, StreamingTextState, TableState,
-    TabsState, TextInputState, TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState,
-    ValidateTrigger,
+    ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect, CalendarState,
+    ColorPickerState, CommandPaletteState, ContextItem, FilePickerState, FormField, FormState,
+    GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, MultiSelectState,
+    NumberInputState, PaginatorState, PaginatorStyle, PickerMode, RadioState, SchedKind,
+    SchedulerSlot, SchedulerState, ScreenState, ScrollState, SelectState, SpinnerState,
+    SplitPaneResponse, SplitPaneState, StreamingTextState, TableState, TabsState, TextInputState,
+    TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
+    color_hex_label, parse_hex_color,
 };
-use crate::FrameState;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -77,6 +77,7 @@ mod async_tasks;
 #[cfg(feature = "async")]
 pub(crate) use async_tasks::AsyncTasks;
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use async_tasks::TaskHandle;
 
 mod helpers;

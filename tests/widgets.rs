@@ -376,10 +376,12 @@ fn file_picker_lists_directories_before_files() {
     state.refresh();
 
     assert!(state.entries.iter().any(|e| e.name == "alpha" && e.is_dir));
-    assert!(state
-        .entries
-        .iter()
-        .any(|e| e.name == "zeta.txt" && !e.is_dir));
+    assert!(
+        state
+            .entries
+            .iter()
+            .any(|e| e.name == "zeta.txt" && !e.is_dir)
+    );
 
     let first_file = state.entries.iter().position(|e| !e.is_dir);
     if let Some(first_file_idx) = first_file {
@@ -432,10 +434,12 @@ fn file_picker_extension_filter() {
     state.refresh();
 
     assert!(state.entries.iter().any(|e| e.name == "dir_a" && e.is_dir));
-    assert!(state
-        .entries
-        .iter()
-        .any(|e| e.name == "main.rs" && !e.is_dir));
+    assert!(
+        state
+            .entries
+            .iter()
+            .any(|e| e.name == "main.rs" && !e.is_dir)
+    );
     assert!(!state.entries.iter().any(|e| e.name == "notes.txt"));
 
     fs::remove_dir_all(root).expect("failed to clean temp dir");
@@ -2450,9 +2454,11 @@ fn tree_renders_root() {
 #[test]
 fn tree_renders_expanded() {
     let mut tb = TestBackend::new(80, 24);
-    let mut state = TreeState::new(vec![TreeNode::new("Root")
-        .expanded()
-        .children(vec![TreeNode::new("Child A"), TreeNode::new("Child B")])]);
+    let mut state = TreeState::new(vec![
+        TreeNode::new("Root")
+            .expanded()
+            .children(vec![TreeNode::new("Child A"), TreeNode::new("Child B")]),
+    ]);
 
     tb.render(|ui| {
         ui.tree(&mut state);
@@ -2467,7 +2473,7 @@ fn tree_renders_expanded() {
 fn tree_renders_collapsed() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = TreeState::new(vec![
-        TreeNode::new("Root").children(vec![TreeNode::new("Hidden Child")])
+        TreeNode::new("Root").children(vec![TreeNode::new("Hidden Child")]),
     ]);
 
     tb.render(|ui| {
@@ -2614,7 +2620,7 @@ fn virtual_list_variable_page_down_by_rows() {
     let mut tb = TestBackend::new(40, 12);
     // 20 items; first six heights are [3, 3, 1, 1, 1, 1, ...] then 1s.
     let mut heights = vec![3u32, 3, 1, 1, 1, 1];
-    heights.extend(std::iter::repeat(1u32).take(14));
+    heights.extend(std::iter::repeat_n(1u32, 14));
     let items: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
     let mut state = ListState::new(items).with_item_heights(heights);
 

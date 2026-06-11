@@ -76,10 +76,10 @@ fn repo_tape_stems(root: &Path) -> BTreeSet<String> {
     for entry in fs::read_dir(root).expect("read repo root") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("tape") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                stems.insert(stem.to_string());
-            }
+        if path.extension().and_then(|e| e.to_str()) == Some("tape")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            stems.insert(stem.to_string());
         }
     }
     stems

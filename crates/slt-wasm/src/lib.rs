@@ -1,3 +1,19 @@
+//! WASM/browser backend for SuperLightTUI.
+//!
+//! Renders an SLT [`Context`] into a grid of `<span>` elements inside a host
+//! container and drives it from `requestAnimationFrame`, translating DOM
+//! keyboard/mouse/wheel/resize/paste events into SLT [`Event`]s.
+
+// Mirror the library-only hygiene lints kept out of [workspace.lints]; this
+// crate has no example targets so they apply cleanly to its single lib.
+#![warn(missing_docs)]
+#![warn(unreachable_pub)]
+#![deny(clippy::unwrap_in_result)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::dbg_macro)]
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
@@ -6,14 +22,16 @@ use slt::{
     AppState, Backend, Buffer, Color, Context, Event, KeyCode, KeyModifiers, Modifiers,
     MouseButton, MouseEvent as SltMouseEvent, MouseKind, Rect, RunConfig,
 };
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{Document, HtmlElement, HtmlPreElement, KeyboardEvent, MouseEvent, Window};
 
 /// Shared, re-entrant handle to the `requestAnimationFrame` callback so the
 /// closure can schedule its own next tick by name.
 type RafHandle = Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>>;
 
+/// SLT [`Backend`] that paints into a DOM `<pre>`/`<span>` grid and diffs
+/// against the previously flushed frame so only changed cells are rewritten.
 pub struct DomBackend {
     buffer: Buffer,
     /// Snapshot of the buffer as it was last flushed to the DOM. Used to diff
@@ -28,6 +46,8 @@ pub struct DomBackend {
 }
 
 impl DomBackend {
+    /// Create a backend that renders a `width`×`height` cell grid into
+    /// `container`. The DOM grid is built lazily on the first flush.
     pub fn new(container: HtmlElement, width: u32, height: u32) -> Self {
         Self {
             buffer: Buffer::empty(Rect::new(0, 0, width, height)),
@@ -478,11 +498,7 @@ fn paste_event_text(target: &JsValue) -> Option<String> {
         .call1(&clipboard_data, &JsValue::from_str("text"))
         .ok()?
         .as_string()?;
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn install_event_listeners(
@@ -656,6 +672,17 @@ fn install_event_listeners(
     Ok(())
 }
 
+/// Mount `app` into `container` as a `width`×`height` cell grid and run it on
+/// the browser's `requestAnimationFrame` loop until the closure requests exit.
+///
+/// Installs the DOM event listeners (keyboard, mouse, wheel, resize, focus,
+/// paste) that feed SLT [`Event`]s into the run loop. Returns once the loop is
+/// scheduled; the closure keeps running via the retained RAF callback.
+///
+/// # Errors
+///
+/// Returns a [`JsValue`] error when the `window` is unavailable, a listener
+/// fails to install, or the initial frame cannot be scheduled.
 pub fn run_wasm<F>(container: HtmlElement, width: u32, height: u32, app: F) -> Result<(), JsValue>
 where
     F: FnMut(&mut Context) + 'static,
@@ -734,6 +761,10 @@ where
     Ok(())
 }
 
+/// `wasm-bindgen` entry point that mounts an empty SLT app into `container`.
+///
+/// Thin wrapper over [`run_wasm`] with a no-op closure, exported to JS so the
+/// browser harness can smoke-test the backend wiring. Errors are dropped.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn run_wasm_raw(container: HtmlElement, width: u32, height: u32) {
     let _ = run_wasm(container, width, height, |_ui| {});

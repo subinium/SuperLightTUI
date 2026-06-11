@@ -19,20 +19,27 @@
 //! }
 //! ```
 
-// Safety
-#![forbid(unsafe_code)]
-// Documentation
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![warn(rustdoc::broken_intra_doc_links)]
+// Safety: the shipping library is 100% safe. Unit tests are excused only
+// because edition 2024 made `std::env::set_var`/`remove_var` `unsafe`, and a
+// few `#[cfg(test)]` terminal-detection helpers must mutate process env (they
+// serialize via a mutex). `forbid` stays on for every non-test build.
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![cfg_attr(test, deny(unsafe_code))]
+// Cross-target lints (rustdoc links, rust-2018-idioms) are configured
+// centrally in [workspace.lints] and applied via `[lints] workspace = true` in
+// Cargo.toml. The lints below stay here as lib-only inner attributes on
+// purpose: `[lints]` is package-scoped and would otherwise fire on the
+// package's example binaries and integration tests, which legitimately expose
+// undocumented `pub` helpers, print to stdout, and unwrap. The cfg-conditional
+// unsafe_code policy above likewise can't live in workspace.lints.
 #![warn(missing_docs)]
-#![warn(rustdoc::private_intra_doc_links)]
-// Correctness
+#![warn(unreachable_pub)]
 #![deny(clippy::unwrap_in_result)]
 #![warn(clippy::unwrap_used)]
-// Library hygiene — a library must not write to stdout/stderr
 #![warn(clippy::dbg_macro)]
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # SLT — Super Light TUI
 //!
@@ -156,9 +163,11 @@ pub use terminal::{__BenchSprixelFixture, __bench_flush_sprixels, __bench_new_sp
 /// snapshot plus the [`Blitter`] ladder it drives. Diagnostics-only — image
 /// rendering routes through the ladder automatically.
 #[cfg(feature = "crossterm")]
-pub use terminal::{capabilities, Blitter, BlitterSupport, Capabilities};
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+pub use terminal::{Blitter, BlitterSupport, Capabilities, capabilities};
 #[cfg(feature = "crossterm")]
-pub use terminal::{detect_color_scheme, read_clipboard, ColorScheme};
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+pub use terminal::{ColorScheme, detect_color_scheme, read_clipboard};
 #[cfg(feature = "crossterm")]
 use terminal::{InlineTerminal, Terminal};
 
@@ -166,6 +175,7 @@ pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence
 /// PTY/sink test harness for end-to-end escape-byte assertions (issue #274).
 /// Gated behind the dev-only `pty-test` feature; absent from default builds.
 #[cfg(feature = "pty-test")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pty-test")))]
 pub use crate::test_utils::{PtyBackend, PtyFrame};
 // Animation primitives (builder types) are re-exported at crate root for
 // ergonomic `use slt::{Tween, Spring, ...}`. The easing functions and `lerp`
@@ -185,6 +195,7 @@ pub use context::{
 };
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use context::TaskHandle;
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
@@ -196,6 +207,7 @@ pub use layout::Direction;
 pub use palette::Palette;
 pub use rect::Rect;
 #[cfg(feature = "theme-watch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "theme-watch")))]
 pub use style::ThemeWatcher;
 pub use style::{
     Align, Border, BorderSides, Breakpoint, Color, ColorDepth, ColorParseError, Constraints,
@@ -203,21 +215,23 @@ pub use style::{
     Theme, ThemeBuilder, ThemeColor, UnderlineStyle, WidgetColors, WidgetTheme, WidthSpec,
 };
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use style::{ThemeFile, ThemeLoadError};
-pub use widgets::validators;
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use widgets::AsyncValidation;
+pub use widgets::validators;
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
-    DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState, GaugeResponse,
-    GridColumn, GutterResponse, HighlightRange, ListResponse, ListState, ModeState,
-    MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode,
-    RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
-    SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerState, FormField,
+    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState,
+    ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand,
+    PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
+    SelectState, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
     StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend, ValidateTrigger, Validator, DEFAULT_CHORD_TIMEOUT_TICKS,
+    Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.
@@ -1060,6 +1074,7 @@ pub(crate) struct FrameState {
 /// }
 /// ```
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
     run_with(RunConfig::default(), f)
 }
@@ -1094,6 +1109,7 @@ fn set_terminal_title(title: &Option<String>) {
 /// }
 /// ```
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
     if !io::stdout().is_terminal() {
         return Ok(());
@@ -1184,6 +1200,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 /// # }
 /// ```
 #[cfg(all(feature = "crossterm", feature = "async"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub fn run_async<M: Send + 'static>(
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
 ) -> io::Result<tokio::sync::mpsc::Sender<M>> {
@@ -1197,6 +1214,7 @@ pub fn run_async<M: Send + 'static>(
 ///
 /// Returns a [`tokio::sync::mpsc::Sender`] for pushing messages into the UI.
 #[cfg(all(feature = "crossterm", feature = "async"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub fn run_async_with<M: Send + 'static>(
     config: RunConfig,
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
@@ -1323,6 +1341,7 @@ fn run_async_loop<M: Send + 'static>(
 /// }
 /// ```
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_inline(height: u32, f: impl FnMut(&mut Context)) -> io::Result<()> {
     run_inline_with(height, RunConfig::default(), f)
 }
@@ -1332,6 +1351,7 @@ pub fn run_inline(height: u32, f: impl FnMut(&mut Context)) -> io::Result<()> {
 /// Like [`run_inline`], but accepts a [`RunConfig`] to control tick rate,
 /// mouse support, and theming.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_inline_with(
     height: u32,
     config: RunConfig,
@@ -1413,6 +1433,7 @@ pub fn run_inline_with(
 ///
 /// Use this when you want a log-style output stream above a live inline UI.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_static(
     output: &mut StaticOutput,
     dynamic_height: u32,
@@ -1426,6 +1447,7 @@ pub fn run_static(
 /// Like [`run_static`] but accepts a [`RunConfig`] for theme, mouse, tick rate,
 /// and other settings.
 #[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_static_with(
     output: &mut StaticOutput,
     dynamic_height: u32,
@@ -1538,10 +1560,10 @@ pub(crate) const KEYMAP_REGISTRY_NAMED_STATE_KEY: &str = "__slt_keymap_registry"
 /// `Context::publish_keymap` always sees a fresh empty buffer. Capacity is
 /// preserved by clearing the inner `Vec` rather than removing the entry.
 pub(crate) fn clear_keymap_registry(state: &mut FrameState) {
-    if let Some(boxed) = state.named_states.get_mut(KEYMAP_REGISTRY_NAMED_STATE_KEY) {
-        if let Some(vec) = boxed.downcast_mut::<Vec<crate::keymap::PublishedKeymap>>() {
-            vec.clear();
-        }
+    if let Some(boxed) = state.named_states.get_mut(KEYMAP_REGISTRY_NAMED_STATE_KEY)
+        && let Some(vec) = boxed.downcast_mut::<Vec<crate::keymap::PublishedKeymap>>()
+    {
+        vec.clear();
     }
 }
 
@@ -1555,10 +1577,10 @@ pub(crate) fn clear_keymap_registry(state: &mut FrameState) {
 /// drop them with a debug warning).
 #[cfg(feature = "crossterm")]
 pub(crate) fn drain_static_log(state: &mut FrameState) -> Vec<String> {
-    if let Some(boxed) = state.named_states.get_mut(STATIC_LOG_NAMED_STATE_KEY) {
-        if let Some(buf) = boxed.downcast_mut::<Vec<String>>() {
-            return std::mem::take(buf);
-        }
+    if let Some(boxed) = state.named_states.get_mut(STATIC_LOG_NAMED_STATE_KEY)
+        && let Some(buf) = boxed.downcast_mut::<Vec<String>>()
+    {
+        return std::mem::take(buf);
     }
     Vec::new()
 }

@@ -109,10 +109,10 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             .unwrap_or(0);
         state.table.sort_by(next);
     }
-    if ui.consume_key_code(KeyCode::Enter) {
-        if let Some(c) = state.table.sort_column {
-            state.table.toggle_sort(c);
-        }
+    if ui.consume_key_code(KeyCode::Enter)
+        && let Some(c) = state.table.sort_column
+    {
+        state.table.toggle_sort(c);
     }
 }
 

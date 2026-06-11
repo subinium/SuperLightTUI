@@ -6,8 +6,8 @@
 //! pure interval arithmetic is proptested separately, without sleeps, via
 //! [`crate::widgets::intervals_elapsed`].
 
-use crate::test_utils::TestBackend;
 use crate::EventBuilder;
+use crate::test_utils::TestBackend;
 use std::time::Duration;
 
 fn sleep(ms: u64) {

@@ -125,7 +125,7 @@ cargo deny check
 |-----|---------|---------------|
 | Format | `cargo fmt -- --check` | Yes |
 | Check (stable) | `cargo check --all-features` | Yes |
-| Check (MSRV 1.81) | `cargo check --features async,serde` (toolchain 1.81) | Yes |
+| Check (MSRV 1.88) | `cargo check --features async,serde` (toolchain 1.88) | Yes |
 | Clippy | `cargo clippy --all-features -- -D warnings` | Yes |
 | Test | `cargo test --all-features` | Yes |
 | Typos | `typos` | Yes |

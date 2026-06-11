@@ -374,10 +374,10 @@ impl Buffer {
     /// Used for Sixel images and other passthrough sequences.
     /// Respects the clip stack: sequences fully outside the current clip are skipped.
     pub fn raw_sequence(&mut self, x: u32, y: u32, seq: String) {
-        if let Some(clip) = self.effective_clip() {
-            if x >= clip.right() || y >= clip.bottom() {
-                return;
-            }
+        if let Some(clip) = self.effective_clip()
+            && (x >= clip.right() || y >= clip.bottom())
+        {
+            return;
         }
         self.raw_sequences.push((x, y, seq));
     }
@@ -390,14 +390,13 @@ impl Buffer {
     /// `kitty_clip_info_stack` (set via [`Buffer::push_kitty_clip`]).
     pub(crate) fn kitty_place(&mut self, mut p: KittyPlacement) {
         // Apply clip check
-        if let Some(clip) = self.effective_clip() {
-            if p.x >= clip.right()
+        if let Some(clip) = self.effective_clip()
+            && (p.x >= clip.right()
                 || p.y >= clip.bottom()
                 || p.x + p.cols <= clip.x
-                || p.y + p.rows <= clip.y
-            {
-                return;
-            }
+                || p.y + p.rows <= clip.y)
+        {
+            return;
         }
 
         // Apply scroll crop info if any frame is active
@@ -430,14 +429,13 @@ impl Buffer {
     /// that build so a genuine dead-code signal still fires by default.
     #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
     pub(crate) fn sprixel_place(&mut self, p: SprixelPlacement) {
-        if let Some(clip) = self.effective_clip() {
-            if p.x >= clip.right()
+        if let Some(clip) = self.effective_clip()
+            && (p.x >= clip.right()
                 || p.y >= clip.bottom()
                 || p.x + p.cols <= clip.x
-                || p.y + p.rows <= clip.y
-            {
-                return;
-            }
+                || p.y + p.rows <= clip.y)
+        {
+            return;
         }
         self.sprixels.push(p);
     }
@@ -606,7 +604,7 @@ impl Buffer {
                 // Append zero-width char (combining mark, ZWJ, variation selector)
                 // to the previous cell so grapheme clusters stay intact.
                 if x > self.area.x {
-                    let prev_in_clip = clip.map_or(true, |clip| {
+                    let prev_in_clip = clip.is_none_or(|clip| {
                         (x - 1) >= clip.x
                             && (x - 1) < clip.right()
                             && y >= clip.y
@@ -622,7 +620,7 @@ impl Buffer {
                 continue;
             }
 
-            let in_clip = clip.map_or(true, |clip| {
+            let in_clip = clip.is_none_or(|clip| {
                 x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
             });
 
@@ -655,9 +653,9 @@ impl Buffer {
     ///
     /// No-ops if `(x, y)` is out of bounds or outside the current clip region.
     pub fn set_char(&mut self, x: u32, y: u32, ch: char, style: Style) {
-        let in_clip = self.effective_clip().map_or(true, |clip| {
-            x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
-        });
+        let in_clip = self
+            .effective_clip()
+            .is_none_or(|clip| x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom());
         if !self.in_bounds(x, y) || !in_clip {
             return;
         }

@@ -20,7 +20,7 @@ use slt::TestBackend;
 #[path = "../examples/v020_regression_panel.rs"]
 mod v020_regression_panel;
 
-use v020_regression_panel::{render, DemoState};
+use v020_regression_panel::{DemoState, render};
 
 /// Width / height generous enough to fit the full panel (gauges row,
 /// table + gutter row, footer, plus four corner anchors and the center

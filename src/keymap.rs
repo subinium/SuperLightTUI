@@ -324,7 +324,7 @@ fn display_for_mod_char(mods: KeyModifiers, key: char) -> String {
 ///
 /// In other words, this trait is the same shape as `std::fmt::Display`: zero
 /// blanket / built-in impls; you opt in by implementing it on your own type.
-/// If you prefer a free-function call, [`Context::publish_keymap`] takes the
+/// If you prefer a free-function call, [`publish_keymap`](crate::Context::publish_keymap) takes the
 /// same `(name, &'static [...])` signature without the trait.
 ///
 /// # Format
@@ -432,8 +432,8 @@ impl crate::Context {
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
-    use crate::event::Event;
     use crate::TestBackend;
+    use crate::event::Event;
 
     fn key_event(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         match Event::key_mod(code, modifiers) {
@@ -498,9 +498,10 @@ mod dispatch_tests {
         assert_eq!(save.description, "Save");
 
         // Non-matching key returns None.
-        assert!(km
-            .matched(&key_event(KeyCode::Char('z'), KeyModifiers::NONE))
-            .is_none());
+        assert!(
+            km.matched(&key_event(KeyCode::Char('z'), KeyModifiers::NONE))
+                .is_none()
+        );
     }
 
     #[test]

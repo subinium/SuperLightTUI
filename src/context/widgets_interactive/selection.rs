@@ -518,11 +518,7 @@ impl Context {
                 let s = Style::new()
                     .fg(colors.accent.unwrap_or(self.theme.primary))
                     .bold();
-                if focused {
-                    s.underline()
-                } else {
-                    s
-                }
+                if focused { s.underline() } else { s }
             } else {
                 Style::new().fg(colors.fg.unwrap_or(self.theme.text_dim))
             };
@@ -1574,7 +1570,7 @@ impl Context {
             match state.mode {
                 PickerMode::Palette => match key.code {
                     KeyCode::Left | KeyCode::Char('h') => {
-                        if state.selected % columns > 0 {
+                        if !state.selected.is_multiple_of(columns) {
                             state.selected -= 1;
                         }
                         consumed_indices.push(i);

@@ -212,16 +212,9 @@ impl Context {
         {
             return false;
         }
-        let index =
-            self.available_key_presses().find_map(
-                |(i, key)| {
-                    if key.code == code {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                },
-            );
+        let index = self
+            .available_key_presses()
+            .find_map(|(i, key)| if key.code == code { Some(i) } else { None });
         if let Some(index) = index {
             self.consume_indices([index]);
             true
@@ -266,10 +259,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(mouse.kind, MouseKind::Down(MouseButton::Left)) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(mouse.kind, MouseKind::Down(MouseButton::Left))
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -289,10 +282,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(mouse.kind, MouseKind::Drag(MouseButton::Left)) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(mouse.kind, MouseKind::Drag(MouseButton::Left))
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -311,10 +304,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(mouse.kind, MouseKind::Up(MouseButton::Left)) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(mouse.kind, MouseKind::Up(MouseButton::Left))
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -334,10 +327,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(&mouse.kind, MouseKind::Down(b) if *b == button) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(&mouse.kind, MouseKind::Down(b) if *b == button)
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -354,10 +347,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(&mouse.kind, MouseKind::Drag(b) if *b == button) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(&mouse.kind, MouseKind::Drag(b) if *b == button)
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -374,10 +367,10 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Mouse(mouse) = event {
-                if matches!(&mouse.kind, MouseKind::Up(b) if *b == button) {
-                    return Some((mouse.x, mouse.y));
-                }
+            if let Event::Mouse(mouse) = event
+                && matches!(&mouse.kind, MouseKind::Up(b) if *b == button)
+            {
+                return Some((mouse.x, mouse.y));
             }
             None
         })
@@ -402,7 +395,7 @@ impl Context {
             if self.consumed[i] {
                 return None;
             }
-            if let Event::Paste(ref text) = event {
+            if let Event::Paste(text) = event {
                 return Some(text.as_str());
             }
             None

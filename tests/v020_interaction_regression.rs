@@ -31,7 +31,7 @@ mod named_focus_demo;
 #[allow(dead_code)]
 mod modal_trap_demo;
 
-use slt::{context::ModalOptions, Border, ButtonVariant, Context, EventBuilder, TestBackend};
+use slt::{Border, ButtonVariant, Context, EventBuilder, TestBackend, context::ModalOptions};
 use std::cell::RefCell;
 use std::rc::Rc;
 

@@ -525,6 +525,12 @@ fn layout_row_line(
 
     for child in children.iter_mut() {
         resolve_axis_specs(&mut child.constraints, area);
+        // Resolving `Pct`/`Ratio` -> `Fixed` is the only mid-frame mutation
+        // that can change a child's intrinsic min sizes, so drop any value
+        // memoized during an ancestor's measurement pass (which saw the
+        // pre-resolution constraint). For `Auto`/`Fixed`/`MinMax` this is a
+        // no-op resolution and a cheap cache clear.
+        child.invalidate_size_cache();
     }
 
     let n = children.len() as u32;
@@ -725,6 +731,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
 
     for child in &mut node.children {
         resolve_axis_specs(&mut child.constraints, area);
+        // See `layout_row_line`: discard any intrinsic-size memo cached before
+        // this child's `Pct`/`Ratio` constraints were resolved.
+        child.invalidate_size_cache();
     }
 
     let n = node.children.len() as u32;

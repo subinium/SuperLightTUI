@@ -12,7 +12,7 @@ use crate::event::{
 };
 use crate::rect::Rect;
 use crate::style::Style;
-use crate::{run_frame_kernel, FrameState, RunConfig};
+use crate::{FrameState, RunConfig, run_frame_kernel};
 
 /// Builder for constructing a sequence of input [`Event`]s.
 ///
@@ -32,6 +32,7 @@ use crate::{run_frame_kernel, FrameState, RunConfig};
 ///     .build();
 /// assert_eq!(events.len(), 2);
 /// ```
+#[must_use = "EventBuilder does nothing until .build() is called"]
 pub struct EventBuilder {
     events: Vec<Event>,
 }
@@ -995,6 +996,7 @@ impl std::fmt::Display for TestBackend {
 ///
 /// Since 0.21.0.
 #[cfg(feature = "pty-test")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pty-test")))]
 #[derive(Clone, Debug)]
 pub struct PtyFrame {
     /// Raw bytes emitted for this frame (SGR runs, OSC 8, Sixel, Kitty).
@@ -1034,6 +1036,7 @@ pub struct PtyFrame {
 /// # }
 /// ```
 #[cfg(feature = "pty-test")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pty-test")))]
 pub struct PtyBackend {
     width: u32,
     height: u32,

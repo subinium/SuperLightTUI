@@ -875,6 +875,7 @@ impl Theme {
     /// assert_eq!(theme.primary, slt::Color::Rgb(255, 107, 107));
     /// ```
     #[cfg(feature = "serde")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
     pub fn from_toml_str(src: &str) -> Result<Theme, ThemeLoadError> {
         ThemeFile::from_toml_str(src).map(|tf| tf.theme)
     }
@@ -897,12 +898,14 @@ impl Theme {
     /// println!("primary = {:?}", theme.primary);
     /// ```
     #[cfg(feature = "serde")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Theme, ThemeLoadError> {
         ThemeFile::load(path).map(|tf| tf.theme)
     }
 }
 
 /// Builder for creating custom themes with defaults from `Theme::dark()`.
+#[must_use = "ThemeBuilder does nothing until .build() is called"]
 pub struct ThemeBuilder {
     primary: Option<Color>,
     secondary: Option<Color>,
@@ -1036,7 +1039,7 @@ impl ThemeBuilder {
     /// Build the theme. Unfilled fields use [`Theme::dark()`] defaults.
     ///
     /// `match` is used in place of [`Option::unwrap_or`] so the entire
-    /// builder chain compiles in `const` context (MSRV 1.81). All fields
+    /// builder chain compiles in `const` context. All fields
     /// involved are `Copy`, so `Some(c) => c` is a plain bit-copy.
     pub const fn build(self) -> Theme {
         let d = Theme::dark();

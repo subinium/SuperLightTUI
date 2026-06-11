@@ -1,10 +1,10 @@
 use super::*;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-static SEP_LINE: OnceLock<String> = OnceLock::new();
+static SEP_LINE: LazyLock<String> = LazyLock::new(|| "─".repeat(200));
 
 fn sep_line() -> &'static str {
-    SEP_LINE.get_or_init(|| "─".repeat(200))
+    &SEP_LINE
 }
 
 /// Compass-rose anchor for [`Context::overlay_at`] / [`Context::modal_at`].
