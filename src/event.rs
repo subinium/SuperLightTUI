@@ -564,10 +564,16 @@ fn convert_button(button: crossterm_event::MouseButton) -> MouseButton {
 
 // ── crossterm conversions ────────────────────────────────────────────
 
-/// Convert a raw crossterm event into our lightweight [`Event`].
-/// Returns `None` for event kinds we don't handle.
+/// Convert a raw crossterm event into SLT's lightweight [`Event`].
+///
+/// Returns `None` for event kinds SLT does not model. Public so external
+/// integrations (custom event loops, embeddings that bring their own
+/// crossterm reader — see issue #278) can reuse SLT's conversion instead of
+/// reimplementing it. The `crossterm` crate is re-exported at the crate root
+/// as [`crate::crossterm`] so callers can name the input type without pinning
+/// their own (potentially mismatched) crossterm version.
 #[cfg(feature = "crossterm")]
-pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
+pub fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
     match raw {
         crossterm_event::Event::Key(k) => {
             let code = match k.code {
@@ -659,6 +665,18 @@ pub(crate) fn from_crossterm(raw: crossterm_event::Event) -> Option<Event> {
 #[cfg(test)]
 mod event_constructor_tests {
     use super::*;
+
+    // Issue #278: compile-time proof that the crossterm backend types and the
+    // event conversion are publicly reachable from the crate root, so external
+    // integrations can drive SLT's render pipeline with their own event loop.
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn issue_278_backend_and_conversion_are_public() {
+        fn _accepts_terminal(_t: Option<crate::Terminal>) {}
+        fn _accepts_inline(_t: Option<crate::InlineTerminal>) {}
+        let _convert: fn(crate::crossterm::event::Event) -> Option<Event> =
+            crate::event::from_crossterm;
+    }
 
     #[test]
     fn test_key_char() {

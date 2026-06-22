@@ -79,6 +79,8 @@ slt::RunConfig::default()
 
 `Backend` trait (for non-terminal targets): implement `fn size(&self) -> (u32, u32)`, `fn buffer_mut(&mut self) -> &mut Buffer`, `fn flush(&mut self) -> io::Result<()>`. Drive with `slt::frame`.
 
+Embedding with your own event loop (issue #278): the built-in crossterm backends `slt::Terminal` / `slt::InlineTerminal` are public — construct one, render into `buffer_mut()`, call `flush()`, and feed input you read yourself through `slt::event::from_crossterm`. The `crossterm` crate is re-exported as `slt::crossterm` so you never pin a mismatched version.
+
 `AppState::new()` holds frame-to-frame state; reuse the same instance across frames. `AppState::tick()`, `::fps()`, `::set_debug(bool)`.
 
 ---
@@ -280,6 +282,7 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.tooltip(text)` | `()` | Shown near cursor on hover. |
 | `ui.group(name)` | `ContainerBuilder` | Named group for shared hover/focus styling. |
 | `ui.screen(name, &mut screens, |ui|{...})` | `()` | Render only when `screens.current() == name`. Isolates hook state and focus per screen. |
+| `ui.push_screen(name)` / `ui.pop_screen()` / `ui.reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. Deferred and applied when the closure returns (issue #279). |
 | `ui.form(&mut form_state, |ui|{...})` | `&mut Self` | Form container. |
 | `ui.form_field(&mut field)` | `&mut Self` | One field (label + input + error). |
 | `ui.form_submit(label)` | `Response` | Submit button. |
@@ -504,14 +507,22 @@ fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
 let mut screens = ScreenState::new("home");
 slt::run(|ui| {
     ui.screen("home", &mut screens, |ui| {
-        if ui.button("Settings").clicked { screens.push("settings"); }
+        if ui.button("Settings").clicked { ui.push_screen("settings"); }
     });
     ui.screen("settings", &mut screens, |ui| {
-        if ui.button("Back").clicked { screens.pop(); }
+        if ui.button("Back").clicked { ui.pop_screen(); }
     });
 });
 ```
 Each `screen(...)` call isolates hook state and focus.
+
+Navigate from **inside** a `screen(...)` closure with `ui.push_screen(name)`,
+`ui.pop_screen()`, or `ui.reset_screen()`. These record a deferred navigation
+that is applied to your `ScreenState` the moment the closure returns — calling
+`screens.push(...)` directly inside the closure does **not** compile, because
+`screen(...)` already holds a `&mut ScreenState` borrow for the duration of the
+closure (issue #279). Outside any `screen(...)` closure you can still mutate the
+`ScreenState` directly (`screens.push("x")`, `screens.pop()`).
 
 ### 6.6 Multi-mode app
 ```rust

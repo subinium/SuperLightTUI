@@ -137,6 +137,12 @@ use std::io::Write;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+/// Re-export of the [`crossterm`] crate (issue #278) so callers can name the
+/// input type accepted by [`event::from_crossterm`] without depending on — and
+/// risking a version mismatch against — crossterm directly.
+#[cfg(feature = "crossterm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+pub use crossterm;
 #[doc(hidden)]
 pub use layout::__bench_dim_buffer_around;
 #[doc(hidden)]
@@ -168,8 +174,13 @@ pub use terminal::{Blitter, BlitterSupport, Capabilities, capabilities};
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub use terminal::{ColorScheme, detect_color_scheme, read_clipboard};
+/// Concrete crossterm terminal backends, exposed (issue #278) so external
+/// integrations can drive SLT's render pipeline with their own event loop —
+/// pair with [`event::from_crossterm`]. Most apps should use [`run`] /
+/// [`run_inline`], which build and drive these internally.
 #[cfg(feature = "crossterm")]
-use terminal::{InlineTerminal, Terminal};
+#[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+pub use terminal::{InlineTerminal, Terminal};
 
 pub use crate::test_utils::{EventBuilder, FrameRecord, TestBackend, TestSequence};
 /// PTY/sink test harness for end-to-end escape-byte assertions (issue #274).

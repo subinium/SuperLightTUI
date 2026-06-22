@@ -1019,7 +1019,14 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     chunks
 }
 
-pub(crate) struct Terminal {
+/// Fullscreen crossterm terminal backend: owns raw mode + the alternate
+/// screen, double-buffers cells, and flushes only the diff each frame.
+///
+/// Exposed (issue #278) so external integrations can drive SLT's rendering
+/// with their own event loop instead of reimplementing the backend. Pair with
+/// [`crate::event::from_crossterm`] to translate input. The built-in
+/// [`crate::run`] entry point uses this same type internally.
+pub struct Terminal {
     stdout: Sink,
     current: Buffer,
     previous: Buffer,
@@ -1034,7 +1041,12 @@ pub(crate) struct Terminal {
     run_buf: String,
 }
 
-pub(crate) struct InlineTerminal {
+/// Inline crossterm terminal backend: renders into a fixed-height region
+/// below the cursor instead of taking over the whole screen.
+///
+/// Like [`Terminal`], exposed (issue #278) for custom integrations. Backs the
+/// [`crate::run_inline`] entry point.
+pub struct InlineTerminal {
     stdout: Sink,
     current: Buffer,
     previous: Buffer,
@@ -1131,7 +1143,7 @@ impl Terminal {
     /// alternate screen and optionally enables mouse capture and the
     /// kitty keyboard protocol. When `report_all_keys` is set (and
     /// `kitty_keyboard` is too), bare modifier presses are reported.
-    pub(crate) fn new(
+    pub fn new(
         mouse: bool,
         kitty_keyboard: bool,
         report_all_keys: bool,
@@ -1163,19 +1175,19 @@ impl Terminal {
     }
 
     /// Return the fullscreen terminal's current `(cols, rows)`.
-    pub(crate) fn size(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
     /// Mutable access to the back buffer used by the next render pass.
-    pub(crate) fn buffer_mut(&mut self) -> &mut Buffer {
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
     /// Diff the back buffer against the front buffer, write the changed
     /// cells to stdout under a synchronized-output guard, then swap
     /// front and back buffers.
-    pub(crate) fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
@@ -1237,7 +1249,7 @@ impl Terminal {
 
     /// Re-query the terminal size and resize the front and back buffers
     /// to match. Called from the SIGWINCH handler.
-    pub(crate) fn handle_resize(&mut self) -> io::Result<()> {
+    pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
         self.current.resize(area);
@@ -1319,7 +1331,7 @@ impl InlineTerminal {
     /// Optionally enables mouse capture and the kitty keyboard protocol.
     /// When `report_all_keys` is set (and `kitty_keyboard` is too), bare
     /// modifier presses are reported.
-    pub(crate) fn new(
+    pub fn new(
         height: u32,
         mouse: bool,
         kitty_keyboard: bool,
@@ -1362,19 +1374,19 @@ impl InlineTerminal {
     }
 
     /// Return the inline terminal's current `(cols, rows)`.
-    pub(crate) fn size(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         (self.current.area.width, self.current.area.height)
     }
 
     /// Mutable access to the back buffer used by the next render pass.
-    pub(crate) fn buffer_mut(&mut self) -> &mut Buffer {
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
         &mut self.current
     }
 
     /// Diff the back buffer against the front buffer, write changed
     /// cells to stdout under a synchronized-output guard at the
     /// inline rows reserved below the cursor, then swap buffers.
-    pub(crate) fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) -> io::Result<()> {
         if self.current.area.width < self.previous.area.width {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
@@ -1448,7 +1460,7 @@ impl InlineTerminal {
 
     /// Re-query the terminal size and resize the inline buffers to match
     /// the new column count, preserving the inline row height.
-    pub(crate) fn handle_resize(&mut self) -> io::Result<()> {
+    pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, _) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, self.height);
         self.current.resize(area);
