@@ -159,12 +159,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # vhs-action's bundled ffmpeg installer is flaky on the GitHub runner
-      # (observed: "Failed to install ffmpeg"). Pre-install it from apt so the
-      # action finds it already present and skips its own download.
-      - name: Install ffmpeg for VHS
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - uses: charmbracelet/vhs-action@v2
+      # `charmbracelet/vhs-action@v2` unconditionally runs its own bundled
+      # ffmpeg installer, which is persistently broken on the GitHub runner
+      # (observed across reruns: "Failed to install ffmpeg") and ignores an
+      # ffmpeg that is already present. Install the toolchain ourselves instead:
+      #   - ffmpeg from apt (the package the action fails to fetch as a static
+      #     build),
+      #   - ttyd from its upstream release binary (not reliably in apt), and
+      #   - vhs via `go install` (Go is preinstalled on ubuntu-latest).
+      # This drops the flaky action entirely while producing the same toolchain.
+      - name: Install VHS toolchain (ffmpeg, ttyd, vhs)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          sudo curl -fsSL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 \
+            -o /usr/local/bin/ttyd
+          sudo chmod +x /usr/local/bin/ttyd
+          go install github.com/charmbracelet/vhs@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Verify VHS toolchain
+        run: |
+          vhs --version
+          ttyd --version
+          ffmpeg -version | head -1
       - name: Build release examples
         run: cargo build --release --examples
       - name: Render every tape
