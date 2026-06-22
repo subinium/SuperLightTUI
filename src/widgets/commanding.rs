@@ -459,6 +459,16 @@ impl ScreenState {
         self.stack.truncate(1);
     }
 
+    /// Apply a deferred navigation request recorded inside a
+    /// [`crate::Context::screen`] closure (issue #279).
+    pub(crate) fn apply_nav(&mut self, nav: ScreenNav) {
+        match nav {
+            ScreenNav::Push(name) => self.push(name),
+            ScreenNav::Pop => self.pop(),
+            ScreenNav::Reset => self.reset(),
+        }
+    }
+
     pub(crate) fn save_focus(&mut self, name: &str, focus_index: usize, focus_count: usize) {
         self.focus_state
             .insert(name.to_string(), (focus_index, focus_count));
@@ -467,6 +477,19 @@ impl ScreenState {
     pub(crate) fn restore_focus(&self, name: &str) -> (usize, usize) {
         self.focus_state.get(name).copied().unwrap_or((0, 0))
     }
+}
+
+/// A deferred screen-navigation request recorded inside a
+/// [`crate::Context::screen`] closure and applied to the active
+/// [`ScreenState`] after the closure returns (issue #279).
+#[derive(Debug, Clone)]
+pub(crate) enum ScreenNav {
+    /// Push a new screen onto the stack.
+    Push(String),
+    /// Pop the current screen, preserving the root.
+    Pop,
+    /// Reset to only the root screen.
+    Reset,
 }
 
 /// Named mode system with independent screen stacks.

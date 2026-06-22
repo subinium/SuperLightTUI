@@ -226,6 +226,7 @@ impl Context {
                 text_color_stack,
             },
             pending_tooltips,
+            pending_screen_nav: Vec::new(),
             hovered_groups,
             region_versions_prev,
             region_versions_cur,

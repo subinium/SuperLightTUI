@@ -291,12 +291,65 @@ impl Context {
 
             // Restore outer focus
             self.focus_index = outer_focus_index;
+
+            // Issue #279: apply navigation requested from inside the closure
+            // now that the closure's `&mut Context` borrow has ended. We still
+            // hold `&mut screens` here, so there is no double mutable borrow —
+            // app code can call `ui.push_screen(...)` / `ui.pop_screen()` from
+            // within the closure without the borrow conflict from the issue.
+            if !self.pending_screen_nav.is_empty() {
+                let navs = std::mem::take(&mut self.pending_screen_nav);
+                for nav in navs {
+                    screens.apply_nav(nav);
+                }
+            }
         } else {
             // Skip: advance hook cursor past the reserved segment
             if seg_count > 0 && seg_start >= self.rollback.hook_cursor {
                 self.rollback.hook_cursor = seg_start + seg_count;
             }
         }
+    }
+
+    /// Request pushing a new screen onto the active [`ScreenState`] stack.
+    ///
+    /// Call this from inside a [`Context::screen`] closure to navigate forward.
+    /// The push is deferred and applied to your `ScreenState` the moment the
+    /// closure returns, so it does not conflict with the `&mut ScreenState`
+    /// already borrowed by `screen(...)` (issue #279).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let mut screens = slt::ScreenState::new("home");
+    /// # slt::run(|ui| {
+    /// ui.screen("home", &mut screens, |ui| {
+    ///     if ui.button("Settings").clicked {
+    ///         ui.push_screen("settings");
+    ///     }
+    /// });
+    /// # });
+    /// ```
+    pub fn push_screen(&mut self, name: impl Into<String>) {
+        self.pending_screen_nav.push(ScreenNav::Push(name.into()));
+    }
+
+    /// Request popping the current screen off the active [`ScreenState`] stack
+    /// (the root screen is preserved).
+    ///
+    /// Like [`Self::push_screen`], the pop is deferred and applied when the
+    /// enclosing [`Context::screen`] closure returns (issue #279).
+    pub fn pop_screen(&mut self) {
+        self.pending_screen_nav.push(ScreenNav::Pop);
+    }
+
+    /// Request resetting the active [`ScreenState`] stack to just its root
+    /// screen.
+    ///
+    /// Deferred and applied when the enclosing [`Context::screen`] closure
+    /// returns (issue #279).
+    pub fn reset_screen(&mut self) {
+        self.pending_screen_nav.push(ScreenNav::Reset);
     }
 
     /// Create a vertical (column) container.

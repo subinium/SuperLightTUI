@@ -89,6 +89,13 @@ pub struct Context {
     pub(crate) deferred_draws: Vec<Option<RawDrawCallback>>,
     pub(crate) rollback: ContextRollbackState,
     pub(crate) pending_tooltips: Vec<PendingTooltip>,
+    /// Issue #279: screen-navigation requests recorded by
+    /// [`Context::push_screen`] / [`Context::pop_screen`] /
+    /// [`Context::reset_screen`] from inside a [`Context::screen`] closure.
+    /// Drained and applied to the active [`crate::ScreenState`] right after the
+    /// closure returns. Deferring the mutation here lets app code navigate from
+    /// within the closure without a double mutable borrow of its `ScreenState`.
+    pub(crate) pending_screen_nav: Vec<ScreenNav>,
     pub(crate) hovered_groups: std::collections::HashSet<std::sync::Arc<str>>,
     /// Issue #273: version keys recorded by [`Context::cached`] regions on the
     /// PREVIOUS frame, moved in from `FrameState::region_versions`. Indexed by
@@ -208,6 +215,10 @@ pub(super) struct ContextCheckpoint {
     deferred_draws_len: usize,
     context_stack_len: usize,
     pending_tooltips_len: usize,
+    /// Issue #279: drop deferred screen-navigation requests recorded by a
+    /// panicking subtree inside an `error_boundary`, so a rolled-back screen
+    /// closure does not leave a phantom push/pop queued for its `ScreenState`.
+    pending_screen_nav_len: usize,
     /// Issue #273: `cached` region keys recorded so far, so a panicking
     /// `cached` region inside an `error_boundary` rolls back its key entry
     /// (and any nested ones) — keeping the recorded keys consistent with the
@@ -224,6 +235,7 @@ impl ContextCheckpoint {
             deferred_draws_len: ctx.deferred_draws.len(),
             context_stack_len: ctx.context_stack.len(),
             pending_tooltips_len: ctx.pending_tooltips.len(),
+            pending_screen_nav_len: ctx.pending_screen_nav.len(),
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
         }
@@ -238,6 +250,9 @@ impl ContextCheckpoint {
         // Drop tooltips queued by the panicking widget but keep any that were
         // already pending before the error boundary was entered.
         ctx.pending_tooltips.truncate(self.pending_tooltips_len);
+        // Issue #279: drop screen-navigation requests queued by the panicking
+        // subtree but keep any recorded before the error boundary was entered.
+        ctx.pending_screen_nav.truncate(self.pending_screen_nav_len);
         // Issue #273: drop `cached` keys recorded by the panicking subtree.
         ctx.region_versions_cur
             .truncate(self.region_versions_cur_len);

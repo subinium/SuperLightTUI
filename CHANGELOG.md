@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.22.1] - 2026-06-22
+
+Patch release closing two community issues (#278, #279). Additive only — no
+existing public items changed.
+
+### Added
+
+- **Navigate from inside `ui.screen(...)` closures** (#279) — new
+  `Context::push_screen(name)`, `Context::pop_screen()`, and
+  `Context::reset_screen()`. Each records a deferred navigation that is applied
+  to the active `ScreenState` the moment the closure returns. Previously the
+  only way to navigate was to mutate the `ScreenState` outside the closure:
+  calling `screens.push(...)` *inside* it does not compile, because
+  `screen(...)` holds a `&mut ScreenState` borrow for the closure's duration.
+- **Public crossterm backend for custom render loops** (#278) — `Terminal`,
+  `InlineTerminal`, and `event::from_crossterm` are now `pub`, and the
+  `crossterm` crate is re-exported as `slt::crossterm`. External integrations
+  can drive SLT's render pipeline with their own event loop — the way ratatui
+  exposes `CrosstermBackend` — without reimplementing the backend or risking a
+  mismatched crossterm version.
+
+### Fixed
+
+- **`docs/COMPLETE_REFERENCE.md` §6.5** — the screen-navigation example no
+  longer shows the non-compiling `screens.push(...)`-inside-closure pattern; it
+  now uses `ui.push_screen(...)` / `ui.pop_screen()`.
+
 ## [0.22.0] - 2026-06-11
 
 Rust modernization and optimization release. No new public widgets or features —

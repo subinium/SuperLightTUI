@@ -428,6 +428,77 @@ fn screen_helper_renders_only_current_screen() {
     assert!(!rendered.contains("Home Screen"));
 }
 
+// === Issue #279: navigate from inside a `ui.screen` closure ===
+
+#[test]
+fn push_screen_inside_closure_navigates() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+
+    // `ui.push_screen` records a deferred nav that is applied once the active
+    // closure returns — so it does not double-borrow `screens` (issue #279).
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.push_screen("settings");
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
+        });
+    });
+
+    assert_eq!(screens.current(), "settings");
+    // The push is applied mid-frame, so the settings screen renders the same
+    // frame the navigation happened.
+    assert!(backend.to_string().contains("Settings Screen"));
+}
+
+#[test]
+fn pop_screen_inside_closure_navigates() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+    screens.push("settings");
+
+    backend.render(|ui| {
+        ui.screen("settings", &mut screens, |ui| {
+            ui.pop_screen();
+        });
+    });
+
+    assert_eq!(screens.current(), "home");
+}
+
+#[test]
+fn reset_screen_inside_closure_returns_to_root() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+    screens.push("settings");
+    screens.push("advanced");
+
+    backend.render(|ui| {
+        ui.screen("advanced", &mut screens, |ui| {
+            ui.reset_screen();
+        });
+    });
+
+    assert_eq!(screens.current(), "home");
+    assert_eq!(screens.depth(), 1);
+}
+
+#[test]
+fn screen_nav_no_op_without_request() {
+    // A screen closure that records no navigation leaves the stack untouched.
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home");
+        });
+    });
+
+    assert_eq!(screens.current(), "home");
+}
+
 // === Issue #54: mouse_drag / mouse_up convenience methods ===
 
 #[test]

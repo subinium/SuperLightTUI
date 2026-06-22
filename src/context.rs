@@ -22,7 +22,7 @@ use crate::widgets::{
     ColorPickerState, CommandPaletteState, ContextItem, FilePickerState, FormField, FormState,
     GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListState, MultiSelectState,
     NumberInputState, PaginatorState, PaginatorStyle, PickerMode, RadioState, SchedKind,
-    SchedulerSlot, SchedulerState, ScreenState, ScrollState, SelectState, SpinnerState,
+    SchedulerSlot, SchedulerState, ScreenNav, ScreenState, ScrollState, SelectState, SpinnerState,
     SplitPaneResponse, SplitPaneState, StreamingTextState, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
     color_hex_label, parse_hex_color,
