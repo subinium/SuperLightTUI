@@ -448,13 +448,13 @@ Use manual `push()` / `pop()` logic on `ScreenState` when you need explicit navi
 ```rust
 ui.screen("home", &mut screens, |ui| {
     if ui.button("Settings").clicked {
-        screens.push("settings");
+        ui.push_screen("settings");
     }
 });
 
 ui.screen("settings", &mut screens, |ui| {
     if ui.button("Back").clicked {
-        screens.pop();
+        ui.pop_screen();
     }
 });
 
