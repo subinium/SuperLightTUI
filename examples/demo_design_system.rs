@@ -223,7 +223,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             let _ = ui.container().gap(sp.xs()).row(|ui| {
                 for (label, bg_color) in test_bgs {
                     let fg = Color::contrast_fg(bg_color);
-                    let ratio = Color::contrast_ratio(fg, bg_color);
+                    let ratio = Color::contrast_ratio_f64(fg, bg_color);
                     let _ = ui.container().bg(bg_color).p(1).grow(1).col(|ui| {
                         ui.text(label).fg(fg).bold();
                         ui.text(format!("ratio: {:.1}", ratio)).fg(fg);

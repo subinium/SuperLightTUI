@@ -584,8 +584,8 @@ fn debug_color_for_depth(tint: LayerTint, depth: u32) -> Color {
     };
     match depth {
         0..=1 => base,
-        2..=3 => base.lighten(0.25),
-        _ => base.lighten(0.5),
+        2..=3 => base.lighten_f64(0.25),
+        _ => base.lighten_f64(0.5),
     }
 }
 

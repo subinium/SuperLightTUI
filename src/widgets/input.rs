@@ -285,12 +285,20 @@ impl std::fmt::Debug for Validator {
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub struct AsyncValidation {
     rx: tokio::sync::oneshot::Receiver<Result<(), String>>,
+    join: tokio::task::JoinHandle<()>,
 }
 
 #[cfg(feature = "async")]
 impl std::fmt::Debug for AsyncValidation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AsyncValidation(<pending>)")
+    }
+}
+
+#[cfg(feature = "async")]
+impl Drop for AsyncValidation {
+    fn drop(&mut self) {
+        self.join.abort();
     }
 }
 
@@ -496,11 +504,11 @@ impl FormField {
         F: std::future::Future<Output = Result<(), String>> + Send + 'static,
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
+        let join = tokio::spawn(async move {
             let result = future.await;
             let _ = tx.send(result);
         });
-        self.pending = Some(AsyncValidation { rx });
+        self.pending = Some(AsyncValidation { rx, join });
     }
 
     /// Whether an async validation is currently in flight.
@@ -700,6 +708,54 @@ impl FormState {
 impl Default for FormState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, feature = "async"))]
+mod async_validation_tests {
+    use super::FormField;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn replacing_async_validation_aborts_previous_task() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_in_task = Arc::clone(&completed);
+        let mut field = FormField::new("Username");
+
+        field.validate_async(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            completed_in_task.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        field.validate_async(async { Ok(()) });
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "superseded validation task must be aborted"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_field_aborts_pending_validation_task() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_in_task = Arc::clone(&completed);
+        let mut field = FormField::new("Username");
+
+        field.validate_async(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            completed_in_task.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        drop(field);
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "dropping a field must abort its pending validation task"
+        );
     }
 }
 

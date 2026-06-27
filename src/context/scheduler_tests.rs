@@ -258,6 +258,32 @@ fn no_default_features_smoke() {
     });
 }
 
+#[test]
+fn huge_durations_do_not_overflow_instant_arithmetic() {
+    let mut tb = TestBackend::new(20, 3);
+    tb.render(|ui| {
+        assert!(
+            !ui.schedule("huge-once", Duration::MAX),
+            "a huge one-shot timer should arm without firing immediately"
+        );
+        assert_eq!(
+            ui.every("huge-every", Duration::MAX),
+            0,
+            "a huge interval should not fire on the arming frame"
+        );
+        assert!(
+            !ui.debounce("huge-debounce", Duration::MAX, false),
+            "a huge debounce window should arm without firing immediately"
+        );
+    });
+
+    tb.render(|ui| {
+        assert!(!ui.schedule("huge-once", Duration::MAX));
+        assert_eq!(ui.every("huge-every", Duration::MAX), 0);
+        assert!(!ui.debounce("huge-debounce", Duration::MAX, true));
+    });
+}
+
 mod proptests {
     use super::*;
     use crate::widgets::intervals_elapsed;

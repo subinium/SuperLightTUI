@@ -28,16 +28,16 @@ That makes it work equally well for humans prototyping a tool and for coding age
 <table>
   <tr>
     <td align="center"><img src="assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
-    <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example demo_spreadsheet</code></sub></td>
-    <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
-    <td align="center"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
+    <td align="center"><img src="assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — text reflows around the mouse cursor in real time<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+    <td align="center" colspan="3"><img src="assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — text reflows around the mouse cursor in real time<br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
 </table>
 
@@ -134,7 +134,7 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.21", features = ["async", "image"] }
+superlighttui = { version = "0.22.2", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |
@@ -267,13 +267,13 @@ For composition advice, see [Patterns Guide].
 | `hello` | `cargo run --example hello` | Smallest possible app |
 | `counter` | `cargo run --example counter` | State + keyboard input |
 | `demo` | `cargo run --example demo` | Broad widget tour |
-| `demo_dashboard` | `cargo run --example demo_dashboard` | Dashboard layout |
-| `demo_cli` | `cargo run --example demo_cli` | CLI tool layout |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | Charts and data viz |
-| `demo_game` | `cargo run --example demo_game` | Immediate-mode interaction |
-| `demo_design_system` | `cargo run --example demo_design_system` | Design tokens, theming, style inheritance |
-| `inline` | `cargo run --example inline` | Inline rendering below a normal prompt |
-| `async_demo` | `cargo run --example async_demo --features async` | Background messages |
+| `showcase_tour` | `cargo run --example showcase_tour` | Dashboard, CLI, website, game, and showcase layouts |
+| `cookbook_tour` | `cargo run --example cookbook_tour` | Form, table, modal, file picker, dashboard recipes |
+| `text_tour` | `cargo run --example text_tour` | CJK, pretext, image, and rich text demos |
+| `canvas_tour` | `cargo run --example canvas_tour` | Canvas and raw drawing |
+| `system_tour` | `cargo run --example system_tour --features async` | Inline, static output, async messages, and system demos |
+| `v020_tour` | `cargo run --example v020_tour` | v0.20 API feature tour |
+| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API additions |
 
 The full categorized index — including per-release feature tours and showcase demos — lives in [Examples Guide].
 

@@ -70,6 +70,9 @@ impl ListState {
         self.items = items.into_iter().map(Into::into).collect();
         self.item_search_cache = self.items.iter().map(|s| s.to_lowercase()).collect();
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        if let Some(heights) = self.item_heights.as_mut() {
+            heights.truncate(self.items.len());
+        }
         // Item count changed, so any cached prefix sum is stale.
         self.heights_dirty = true;
         self.rebuild_view();
@@ -1940,9 +1943,20 @@ mod list_state_height_tests {
         state.set_items(vec!["x", "y"]);
         assert!(state.heights_dirty);
         state.ensure_row_prefix();
-        // item_heights still carries 3 entries; items now has 2 → height 1 for
-        // out-of-range indices is not consulted, the prefix matches the 2 items.
         assert_eq!(state.row_prefix(), &[0, 2, 4]);
+    }
+
+    #[test]
+    fn set_items_truncates_stale_per_item_heights() {
+        let mut state = ListState::new(vec!["a", "b", "c", "d"])
+            .with_item_heights(vec![2, 3, 4, 5]);
+        state.set_items(vec!["x", "y"]);
+
+        assert_eq!(state.item_height(0), 2);
+        assert_eq!(state.item_height(1), 3);
+        assert_eq!(state.item_height(2), 1);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), &[0, 2, 5]);
     }
 }
 

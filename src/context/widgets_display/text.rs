@@ -194,13 +194,13 @@ impl Context {
                 } => {
                     let chars: Vec<char> = content.chars().collect();
                     let len = chars.len();
-                    let denom = len.saturating_sub(1).max(1) as f32;
+                    let denom = len.saturating_sub(1).max(1) as f64;
                     let segments = chars
                         .into_iter()
                         .enumerate()
                         .map(|(i, ch)| {
                             let mut seg_style = *style;
-                            seg_style.fg = Some(from.blend(to, i as f32 / denom));
+                            seg_style.fg = Some(from.blend_f64(to, i as f64 / denom));
                             (ch.to_string(), seg_style)
                         })
                         .collect();
@@ -241,20 +241,33 @@ impl Context {
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::Color;
-    /// ui.text("rainbow").gradient_stops(&[
+    /// ui.text("rainbow").gradient_stops_f64(&[
     ///     (0.0, Color::Red),
     ///     (0.5, Color::Yellow),
     ///     (1.0, Color::Green),
     /// ]);
     /// # });
     /// ```
-    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+    pub fn gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
         if stops.is_empty() {
             return self;
         }
         let sorted = Self::sorted_gradient_stops(stops);
         self.apply_char_gradient(false, |t| Self::sample_gradient_stops(&sorted, t));
         self
+    }
+
+    /// Deprecated `f32` alias for [`gradient_stops_f64`](Self::gradient_stops_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Context::gradient_stops_f64() to keep public float APIs on f64"
+    )]
+    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        let stops: Vec<(f64, Color)> = stops
+            .iter()
+            .map(|(pos, color)| (f64::from(*pos), *color))
+            .collect();
+        self.gradient_stops_f64(&stops)
     }
 
     /// Apply a per-character background gradient to the last rendered text.
@@ -274,7 +287,7 @@ impl Context {
     /// # });
     /// ```
     pub fn bg_gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        self.apply_char_gradient(true, |t| from.blend(to, t));
+        self.apply_char_gradient(true, |t| from.blend_f64(to, t));
         self
     }
 
@@ -291,13 +304,13 @@ impl Context {
     /// ```no_run
     /// # slt::run(|ui: &mut slt::Context| {
     /// use slt::Color;
-    /// ui.text("header").bg_gradient_stops(&[
+    /// ui.text("header").bg_gradient_stops_f64(&[
     ///     (0.0, Color::Blue),
     ///     (1.0, Color::Magenta),
     /// ]);
     /// # });
     /// ```
-    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+    pub fn bg_gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
         if stops.is_empty() {
             return self;
         }
@@ -306,10 +319,23 @@ impl Context {
         self
     }
 
+    /// Deprecated `f32` alias for [`bg_gradient_stops_f64`](Self::bg_gradient_stops_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Context::bg_gradient_stops_f64() to keep public float APIs on f64"
+    )]
+    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        let stops: Vec<(f64, Color)> = stops
+            .iter()
+            .map(|(pos, color)| (f64::from(*pos), *color))
+            .collect();
+        self.bg_gradient_stops_f64(&stops)
+    }
+
     /// Return `stops` sorted ascending by clamped position. Positions are
     /// clamped into `0.0..=1.0` so out-of-range inputs degrade gracefully.
-    fn sorted_gradient_stops(stops: &[(f32, Color)]) -> Vec<(f32, Color)> {
-        let mut sorted: Vec<(f32, Color)> = stops
+    fn sorted_gradient_stops(stops: &[(f64, Color)]) -> Vec<(f64, Color)> {
+        let mut sorted: Vec<(f64, Color)> = stops
             .iter()
             .map(|(pos, color)| (pos.clamp(0.0, 1.0), *color))
             .collect();
@@ -319,7 +345,7 @@ impl Context {
 
     /// Sample the color at position `t` (in `0.0..=1.0`) from pre-sorted,
     /// non-empty `stops`, linearly interpolating between the bracketing stops.
-    fn sample_gradient_stops(stops: &[(f32, Color)], t: f32) -> Color {
+    fn sample_gradient_stops(stops: &[(f64, Color)], t: f64) -> Color {
         let t = t.clamp(0.0, 1.0);
         // Non-empty is guaranteed by callers; fall back defensively otherwise.
         let first = match stops.first() {
@@ -338,13 +364,11 @@ impl Context {
             let (p1, c1) = window[1];
             if t >= p0 && t <= p1 {
                 let span = p1 - p0;
-                if span <= f32::EPSILON {
+                if span <= f64::EPSILON {
                     return c1;
                 }
                 let local = (t - p0) / span;
-                // blend(self, other, alpha) = self*alpha + other*(1-alpha):
-                // c1.blend(c0, local) yields c0 at local=0 and c1 at local=1.
-                return c1.blend(c0, local);
+                return c1.blend_f64(c0, local);
             }
         }
         last.1
@@ -353,7 +377,7 @@ impl Context {
     /// Replace the last `Text` command with a `RichText` gradient, mapping each
     /// character's column to a position in `0.0..=1.0` exactly like
     /// [`gradient`](Self::gradient). `is_bg` selects background vs foreground.
-    fn apply_char_gradient(&mut self, is_bg: bool, color_at: impl Fn(f32) -> Color) {
+    fn apply_char_gradient(&mut self, is_bg: bool, color_at: impl Fn(f64) -> Color) {
         if let Some(idx) = self.rollback.last_text_idx {
             let replacement = match &self.commands[idx] {
                 Command::Text {
@@ -367,13 +391,13 @@ impl Context {
                 } => {
                     let chars: Vec<char> = content.chars().collect();
                     let len = chars.len();
-                    let denom = len.saturating_sub(1).max(1) as f32;
+                    let denom = len.saturating_sub(1).max(1) as f64;
                     let segments = chars
                         .into_iter()
                         .enumerate()
                         .map(|(i, ch)| {
                             let mut seg_style = *style;
-                            let color = color_at(i as f32 / denom);
+                            let color = color_at(i as f64 / denom);
                             if is_bg {
                                 seg_style.bg = Some(color);
                             } else {
@@ -719,7 +743,8 @@ mod gradient_tests {
         let blue = Color::Rgb(0, 0, 255);
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
-            ui.text("ABC").gradient_stops(&[(0.0, red), (1.0, blue)]);
+            ui.text("ABC")
+                .gradient_stops_f64(&[(0.0, red), (1.0, blue)]);
         });
 
         let buf = backend.buffer();
@@ -749,7 +774,8 @@ mod gradient_tests {
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
             // Deliberately out of order — must behave identically to sorted.
-            ui.text("ABC").gradient_stops(&[(1.0, blue), (0.0, red)]);
+            ui.text("ABC")
+                .gradient_stops_f64(&[(1.0, blue), (0.0, red)]);
         });
 
         let buf = backend.buffer();
@@ -766,7 +792,7 @@ mod gradient_tests {
         backend.render(|ui| {
             // len=3, denom=2 → columns map to t = 0.0, 0.5, 1.0.
             ui.text("ABC")
-                .gradient_stops(&[(0.0, red), (0.5, green), (1.0, blue)]);
+                .gradient_stops_f64(&[(0.0, red), (0.5, green), (1.0, blue)]);
         });
 
         let buf = backend.buffer();
@@ -784,7 +810,7 @@ mod gradient_tests {
         let cyan = Color::Rgb(0, 200, 200);
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
-            ui.text("ABCD").gradient_stops(&[(0.0, cyan)]);
+            ui.text("ABCD").gradient_stops_f64(&[(0.0, cyan)]);
         });
 
         let buf = backend.buffer();
@@ -802,7 +828,7 @@ mod gradient_tests {
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
             // Empty slice must not panic and must leave content intact.
-            ui.text("HELLO").gradient_stops(&[]);
+            ui.text("HELLO").gradient_stops_f64(&[]);
         });
 
         backend.assert_contains("HELLO");
@@ -818,7 +844,7 @@ mod gradient_tests {
         });
 
         let buf = backend.buffer();
-        // bg_gradient mirrors gradient(): from.blend(to, t) — at t=0 that is `to`
+        // bg_gradient mirrors gradient(): from.blend_f64(to, t) yields `to` at t=0.
         // (blue), at t=1 that is `from` (red). Foreground stays untouched.
         assert_eq!(buf.get(0, 0).style.bg, Some(blue), "first column bg = to");
         assert_eq!(buf.get(2, 0).style.bg, Some(red), "last column bg = from");
@@ -835,7 +861,8 @@ mod gradient_tests {
         let blue = Color::Rgb(0, 0, 255);
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
-            ui.text("ABC").bg_gradient_stops(&[(0.0, red), (1.0, blue)]);
+            ui.text("ABC")
+                .bg_gradient_stops_f64(&[(0.0, red), (1.0, blue)]);
         });
 
         let buf = backend.buffer();
@@ -852,7 +879,7 @@ mod gradient_tests {
     fn bg_gradient_stops_empty_is_noop() {
         let mut backend = TestBackend::new(20, 4);
         backend.render(|ui| {
-            ui.text("WORLD").bg_gradient_stops(&[]);
+            ui.text("WORLD").bg_gradient_stops_f64(&[]);
         });
 
         backend.assert_contains("WORLD");

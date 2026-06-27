@@ -333,7 +333,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 } else {
                     (String::new(), '│')
                 };
-            let padded = format!("{:>w$}", label, w = y_tick_width);
+            let padded = format!("{label:>y_tick_width$}");
             segments.push((padded, axis_style));
             segments.push((format!("{divider} "), axis_style));
         }

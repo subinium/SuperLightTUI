@@ -440,14 +440,121 @@ fn normalize_rgba(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     buf
 }
 
+fn image_fit_rows(src_width: u32, src_height: u32, cols: u32, cell_w: u32, cell_h: u32) -> u32 {
+    if src_width == 0 || src_height == 0 || cell_w == 0 || cell_h == 0 {
+        return 1;
+    }
+
+    ((cols as f64 * src_height as f64 * cell_w as f64) / (src_width as f64 * cell_h as f64))
+        .ceil()
+        .max(1.0) as u32
+}
+
+fn sample_rgba_color(
+    data: &[u8],
+    src_width: u32,
+    src_height: u32,
+    dst_x: u32,
+    dst_y: u32,
+    dst_width: u32,
+    dst_height: u32,
+) -> Option<Color> {
+    if src_width == 0 || src_height == 0 || dst_width == 0 || dst_height == 0 {
+        return None;
+    }
+
+    let src_x = (u64::from(dst_x) * u64::from(src_width) / u64::from(dst_width))
+        .min(u64::from(src_width.saturating_sub(1)));
+    let src_y = (u64::from(dst_y) * u64::from(src_height) / u64::from(dst_height))
+        .min(u64::from(src_height.saturating_sub(1)));
+    let pixel = src_y
+        .saturating_mul(u64::from(src_width))
+        .saturating_add(src_x);
+    let idx = usize::try_from(pixel).ok().and_then(|p| p.checked_mul(4))?;
+    let px = data.get(idx..idx + 4)?;
+    if px[3] == 0 {
+        None
+    } else {
+        Some(Color::Rgb(px[0], px[1], px[2]))
+    }
+}
+
+fn draw_halfblock_cell(
+    buf: &mut crate::Buffer,
+    x: u32,
+    y: u32,
+    upper: Option<Color>,
+    lower: Option<Color>,
+) {
+    match (upper, lower) {
+        (Some(upper), Some(lower)) => {
+            buf.set_char(x, y, '▀', Style::new().fg(upper).bg(lower));
+        }
+        (Some(upper), None) => {
+            buf.set_char(x, y, '▀', Style::new().fg(upper));
+        }
+        (None, Some(lower)) => {
+            buf.set_char(x, y, '▄', Style::new().fg(lower));
+        }
+        (None, None) => {
+            buf.set_char(x, y, ' ', Style::new());
+        }
+    }
+}
+
 #[cfg(feature = "crossterm")]
-fn terminal_supports_sixel() -> bool {
-    let force = std::env::var("SLT_FORCE_SIXEL")
+fn terminal_force_graphics(var: &str) -> bool {
+    std::env::var(var)
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_graphics_blocked_by_multiplexer() -> bool {
+    let term = std::env::var("TERM")
         .ok()
         .map(|v| v.to_ascii_lowercase())
         .unwrap_or_default();
-    if matches!(force.as_str(), "1" | "true" | "yes" | "on") {
+    let tmux = std::env::var_os("TMUX").is_some();
+    let screen = std::env::var_os("STY").is_some();
+
+    tmux || screen
+        || term == "tmux"
+        || term.starts_with("tmux-")
+        || term == "screen"
+        || term.starts_with("screen-")
+        || term.starts_with("screen.")
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_supports_kitty() -> bool {
+    if terminal_force_graphics("SLT_FORCE_KITTY") {
         return true;
+    }
+    if terminal_graphics_blocked_by_multiplexer() {
+        return false;
+    }
+
+    let term = std::env::var("TERM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    let term_program = std::env::var("TERM_PROGRAM")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_supports_sixel() -> bool {
+    if terminal_force_graphics("SLT_FORCE_SIXEL") {
+        return true;
+    }
+    if terminal_graphics_blocked_by_multiplexer() {
+        return false;
     }
 
     let term = std::env::var("TERM")
@@ -487,12 +594,11 @@ fn terminal_supports_sixel() -> bool {
 /// regression-test parity.
 #[cfg(feature = "crossterm")]
 fn terminal_supports_iterm() -> bool {
-    let force = std::env::var("SLT_FORCE_ITERM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-    if matches!(force.as_str(), "1" | "true" | "yes" | "on") {
+    if terminal_force_graphics("SLT_FORCE_ITERM") {
         return true;
+    }
+    if terminal_graphics_blocked_by_multiplexer() {
+        return false;
     }
 
     let term_program = std::env::var("TERM_PROGRAM")
@@ -509,234 +615,502 @@ fn terminal_supports_iterm() -> bool {
 }
 
 #[cfg(all(test, feature = "crossterm"))]
-mod sixel_detection_tests {
-    use super::terminal_supports_sixel;
-    use std::sync::Mutex;
+#[derive(Default)]
+struct GraphicsEnv<'a> {
+    term: Option<&'a str>,
+    term_program: Option<&'a str>,
+    force_sixel: bool,
+    force_iterm: bool,
+    force_kitty: bool,
+    tmux: bool,
+    sty: bool,
+}
 
-    // Env vars are process-global. A test-local mutex serializes access so
-    // concurrent test threads don't observe each other's set_var() calls.
-    static ENV_GUARD: Mutex<()> = Mutex::new(());
+#[cfg(all(test, feature = "crossterm"))]
+static GRAPHICS_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    // edition 2024: env mutation is `unsafe`; ENV_GUARD makes it sound here.
-    #[allow(unsafe_code)]
-    fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        let prev_term = std::env::var("TERM").ok();
-        let prev_program = std::env::var("TERM_PROGRAM").ok();
-        let prev_force = std::env::var("SLT_FORCE_SIXEL").ok();
+#[cfg(all(test, feature = "crossterm"))]
+#[allow(unsafe_code)]
+fn with_graphics_env<F: FnOnce()>(env: GraphicsEnv<'_>, f: F) {
+    let _g = GRAPHICS_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let prev_term = std::env::var("TERM").ok();
+    let prev_program = std::env::var("TERM_PROGRAM").ok();
+    let prev_sixel = std::env::var("SLT_FORCE_SIXEL").ok();
+    let prev_iterm = std::env::var("SLT_FORCE_ITERM").ok();
+    let prev_kitty = std::env::var("SLT_FORCE_KITTY").ok();
+    let prev_tmux = std::env::var("TMUX").ok();
+    let prev_sty = std::env::var("STY").ok();
 
-        // SAFETY (edition 2024): set_var/remove_var are unsafe because env
-        // mutation races concurrent reads. ENV_GUARD above serializes these
-        // test helpers, so no other thread observes a torn update.
-        unsafe {
-            match term {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-            match term_program {
-                Some(v) => std::env::set_var("TERM_PROGRAM", v),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            if force {
-                std::env::set_var("SLT_FORCE_SIXEL", "1");
-            } else {
-                std::env::remove_var("SLT_FORCE_SIXEL");
-            }
+    // SAFETY (edition 2024): set_var/remove_var are unsafe because env
+    // mutation races concurrent reads. GRAPHICS_ENV_GUARD serializes these
+    // tests so no other detection test observes a torn update.
+    unsafe {
+        match env.term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
         }
-
-        f();
-
-        unsafe {
-            match prev_term {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-            match prev_program {
-                Some(v) => std::env::set_var("TERM_PROGRAM", v),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            match prev_force {
-                Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
-                None => std::env::remove_var("SLT_FORCE_SIXEL"),
-            }
+        match env.term_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        if env.force_sixel {
+            std::env::set_var("SLT_FORCE_SIXEL", "1");
+        } else {
+            std::env::remove_var("SLT_FORCE_SIXEL");
+        }
+        if env.force_iterm {
+            std::env::set_var("SLT_FORCE_ITERM", "1");
+        } else {
+            std::env::remove_var("SLT_FORCE_ITERM");
+        }
+        if env.force_kitty {
+            std::env::set_var("SLT_FORCE_KITTY", "1");
+        } else {
+            std::env::remove_var("SLT_FORCE_KITTY");
+        }
+        if env.tmux {
+            std::env::set_var("TMUX", "/tmp/tmux-1000/default,1,0");
+        } else {
+            std::env::remove_var("TMUX");
+        }
+        if env.sty {
+            std::env::set_var("STY", "1234.pts-0.host");
+        } else {
+            std::env::remove_var("STY");
         }
     }
+
+    f();
+
+    unsafe {
+        match prev_term {
+            Some(v) => std::env::set_var("TERM", v),
+            None => std::env::remove_var("TERM"),
+        }
+        match prev_program {
+            Some(v) => std::env::set_var("TERM_PROGRAM", v),
+            None => std::env::remove_var("TERM_PROGRAM"),
+        }
+        match prev_sixel {
+            Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
+            None => std::env::remove_var("SLT_FORCE_SIXEL"),
+        }
+        match prev_iterm {
+            Some(v) => std::env::set_var("SLT_FORCE_ITERM", v),
+            None => std::env::remove_var("SLT_FORCE_ITERM"),
+        }
+        match prev_kitty {
+            Some(v) => std::env::set_var("SLT_FORCE_KITTY", v),
+            None => std::env::remove_var("SLT_FORCE_KITTY"),
+        }
+        match prev_tmux {
+            Some(v) => std::env::set_var("TMUX", v),
+            None => std::env::remove_var("TMUX"),
+        }
+        match prev_sty {
+            Some(v) => std::env::set_var("STY", v),
+            None => std::env::remove_var("STY"),
+        }
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod kitty_detection_tests {
+    use super::{GraphicsEnv, terminal_supports_kitty, with_graphics_env};
+
+    #[test]
+    fn kitty_xterm_kitty_detected() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-kitty"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_kitty());
+            },
+        );
+    }
+
+    #[test]
+    fn kitty_ghostty_detected_via_term_program() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("ghostty"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_kitty());
+            },
+        );
+    }
+
+    #[test]
+    fn kitty_xterm_256color_no_false_positive() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_kitty());
+            },
+        );
+    }
+
+    #[test]
+    fn kitty_tmux_blocks_env_fallback() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("wezterm"),
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_kitty());
+            },
+        );
+    }
+
+    #[test]
+    fn kitty_screen_term_blocks_env_fallback() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("screen-256color"),
+                term_program: Some("ghostty"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_kitty());
+            },
+        );
+    }
+
+    #[test]
+    fn kitty_force_env_overrides_tmux() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("screen-256color"),
+                term_program: Some("wezterm"),
+                force_kitty: true,
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_kitty());
+            },
+        );
+    }
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod sixel_detection_tests {
+    use super::{GraphicsEnv, terminal_supports_sixel, with_graphics_env};
 
     #[test]
     fn sixel_xterm_256color_no_false_positive() {
         // Regression: `term.contains("xterm")` previously matched
         // `xterm-256color` and printed raw escape sequences to screen on
         // macOS Terminal.app, VS Code, and most SSH clients.
-        with_env(Some("xterm-256color"), None, false, || {
-            assert!(!terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_mlterm_detected() {
-        with_env(Some("mlterm"), None, false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("mlterm"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_foot_detected_via_term() {
-        with_env(Some("foot"), None, false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("foot"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_foot_detected_via_term_program() {
-        with_env(Some("xterm-256color"), Some("foot"), false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("foot"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_force_env_overrides_negative_term() {
-        with_env(Some("xterm-256color"), None, true, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                force_sixel: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_substring_match_catches_custom_builds() {
-        with_env(Some("custom-with-sixel"), None, false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("custom-with-sixel"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_wezterm_detected_via_term_program() {
         // Issue #264: WezTerm reports `TERM=xterm-256color` but is a capable
         // image host; it must no longer fall through to `[sixel unsupported]`.
-        with_env(Some("xterm-256color"), Some("wezterm"), false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("wezterm"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_ghostty_detected_via_term_program() {
-        with_env(Some("xterm-256color"), Some("ghostty"), false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("ghostty"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 
     #[test]
     fn sixel_mlterm_still_detected_via_term_program() {
-        with_env(Some("xterm-256color"), Some("mlterm"), false, || {
-            assert!(terminal_supports_sixel());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("mlterm"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
+    }
+
+    #[test]
+    fn sixel_tmux_blocks_env_fallback() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("ghostty"),
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_sixel());
+            },
+        );
+    }
+
+    #[test]
+    fn sixel_force_env_overrides_tmux() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("screen-256color"),
+                term_program: Some("wezterm"),
+                force_sixel: true,
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_sixel());
+            },
+        );
     }
 }
 
 #[cfg(all(test, feature = "crossterm"))]
 mod iterm_detection_tests {
-    use super::terminal_supports_iterm;
-    use std::sync::Mutex;
-
-    // Env vars are process-global. A test-local mutex serializes access so
-    // concurrent test threads don't observe each other's set_var() calls.
-    static ENV_GUARD: Mutex<()> = Mutex::new(());
-
-    // edition 2024: env mutation is `unsafe`; ENV_GUARD makes it sound here.
-    #[allow(unsafe_code)]
-    fn with_env<F: FnOnce()>(term: Option<&str>, term_program: Option<&str>, force: bool, f: F) {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        let prev_term = std::env::var("TERM").ok();
-        let prev_program = std::env::var("TERM_PROGRAM").ok();
-        let prev_force = std::env::var("SLT_FORCE_ITERM").ok();
-
-        // SAFETY (edition 2024): set_var/remove_var are unsafe because env
-        // mutation races concurrent reads. ENV_GUARD above serializes these
-        // test helpers, so no other thread observes a torn update.
-        unsafe {
-            match term {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-            match term_program {
-                Some(v) => std::env::set_var("TERM_PROGRAM", v),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            if force {
-                std::env::set_var("SLT_FORCE_ITERM", "1");
-            } else {
-                std::env::remove_var("SLT_FORCE_ITERM");
-            }
-        }
-
-        f();
-
-        unsafe {
-            match prev_term {
-                Some(v) => std::env::set_var("TERM", v),
-                None => std::env::remove_var("TERM"),
-            }
-            match prev_program {
-                Some(v) => std::env::set_var("TERM_PROGRAM", v),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            match prev_force {
-                Some(v) => std::env::set_var("SLT_FORCE_ITERM", v),
-                None => std::env::remove_var("SLT_FORCE_ITERM"),
-            }
-        }
-    }
+    use super::{GraphicsEnv, terminal_supports_iterm, with_graphics_env};
 
     #[test]
     fn iterm_xterm_256color_no_false_positive() {
         // Parity with `sixel_xterm_256color_no_false_positive`: a plain xterm
         // must never be mistaken for an OSC 1337 host.
-        with_env(Some("xterm-256color"), None, false, || {
-            assert!(!terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_app_detected() {
-        with_env(Some("xterm-256color"), Some("iTerm.app"), false, || {
-            assert!(terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("iTerm.app"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_wezterm_detected() {
-        with_env(Some("xterm-256color"), Some("WezTerm"), false, || {
-            assert!(terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("WezTerm"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_tabby_detected() {
-        with_env(Some("xterm-256color"), Some("Tabby"), false, || {
-            assert!(terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("Tabby"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_mintty_detected() {
-        with_env(Some("xterm-256color"), Some("mintty"), false, || {
-            assert!(terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("mintty"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_force_env_overrides_negative_term() {
-        with_env(Some("xterm-256color"), None, true, || {
-            assert!(terminal_supports_iterm());
-        });
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                force_iterm: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
+            },
+        );
     }
 
     #[test]
     fn iterm_unknown_term_program_negative() {
-        with_env(
-            Some("xterm-256color"),
-            Some("Apple_Terminal"),
-            false,
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("Apple_Terminal"),
+                ..GraphicsEnv::default()
+            },
             || {
                 assert!(!terminal_supports_iterm());
+            },
+        );
+    }
+
+    #[test]
+    fn iterm_tmux_blocks_env_fallback() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("xterm-256color"),
+                term_program: Some("iTerm.app"),
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_iterm());
+            },
+        );
+    }
+
+    #[test]
+    fn iterm_screen_term_blocks_env_fallback() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("screen.xterm-256color"),
+                term_program: Some("Tabby"),
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(!terminal_supports_iterm());
+            },
+        );
+    }
+
+    #[test]
+    fn iterm_force_env_overrides_tmux() {
+        with_graphics_env(
+            GraphicsEnv {
+                term: Some("screen-256color"),
+                term_program: Some("iTerm.app"),
+                force_iterm: true,
+                tmux: true,
+                ..GraphicsEnv::default()
+            },
+            || {
+                assert!(terminal_supports_iterm());
             },
         );
     }

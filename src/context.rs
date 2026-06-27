@@ -33,14 +33,14 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 #[allow(dead_code)]
 fn slt_assert(condition: bool, msg: &str) {
     if !condition {
-        panic!("[SLT] {}", msg);
+        panic!("[SLT] {msg}");
     }
 }
 
 #[cfg(debug_assertions)]
 #[allow(dead_code, clippy::print_stderr)]
 fn slt_warn(msg: &str) {
-    eprintln!("\x1b[33m[SLT warning]\x1b[0m {}", msg);
+    eprintln!("\x1b[33m[SLT warning]\x1b[0m {msg}");
 }
 
 #[cfg(not(debug_assertions))]
