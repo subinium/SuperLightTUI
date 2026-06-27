@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crates/slt-wasm"]
+default-members = [".", "crates/slt-wasm"]
 
 # Shared lint configuration applied to every workspace member via
 # `[lints] workspace = true`. NOTE: `[lints]` is package-scoped, so these
@@ -23,7 +24,7 @@ private_intra_doc_links = "warn"
 
 [package]
 name = "superlighttui"
-version = "0.22.1"
+version = "0.22.2"
 edition = "2024"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"

@@ -170,14 +170,14 @@ let surface = ui.theme().resolve(ThemeColor::Surface);
 use slt::Color;
 
 // WCAG 2.1 contrast ratio (>= 4.5 for AA normal text)
-let ratio = Color::contrast_ratio(fg, bg);
+let ratio = Color::contrast_ratio_f64(fg, bg);
 let ok = Color::meets_contrast_aa(fg, bg);
 
 // Auto-select readable text color for any background
 let fg = ui.theme().contrast_text_on(bg_color);
 
 // Blend color against theme background
-let overlay = ui.theme().overlay(color, 0.5);
+let overlay = ui.theme().overlay_f64(color, 0.5);
 ```
 
 > **Note (v0.19.1)**: `Color::contrast_fg` and `Theme::contrast_text_on` use the WCAG 2.1 relative luminance threshold of `0.179`, not the previous `0.5`. Mid-tone backgrounds — Dracula purple (`Rgb(189, 147, 249)`, luminance ≈ 0.385), Solarized base1, Catppuccin lavender — now route to white text instead of black, matching WCAG AA contrast guidance. If you depended on the old midpoint behavior for stylistic reasons, override per-callsite with `WidgetColors` instead of relying on the default.
@@ -383,13 +383,13 @@ let blue = Color::Rgb(59, 130, 246);
 
 // Alpha blending: blend(other, alpha)
 // alpha=0.0 returns other, alpha=1.0 returns self
-let gray = white.blend(black, 0.5);  // ~Rgb(128, 128, 128)
+let gray = white.blend_f64(black, 0.5);  // ~Rgb(128, 128, 128)
 
 // Lighten toward white (0.0 = unchanged, 1.0 = white)
-let light_blue = blue.lighten(0.3);
+let light_blue = blue.lighten_f64(0.3);
 
 // Darken toward black (0.0 = unchanged, 1.0 = black)
-let dark_blue = blue.darken(0.3);
+let dark_blue = blue.darken_f64(0.3);
 ```
 
 ### Luminance and contrast
@@ -400,7 +400,7 @@ use slt::Color;
 let bg = Color::Rgb(30, 30, 46);
 
 // Perceived brightness (0.0 = darkest, 1.0 = brightest)
-let lum = bg.luminance(); // ~0.013 (sRGB-linearized, BT.709 weights)
+let lum = bg.luminance_f64(); // ~0.013 (sRGB-linearized, BT.709 weights)
 
 // Automatic readable foreground for a background color
 // Returns white if luminance > 0.179 (WCAG threshold), black otherwise

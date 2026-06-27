@@ -1047,11 +1047,11 @@ fn write_color(out: &mut String, color: crate::style::Color) {
         Color::LightWhite => out.push_str("light_white"),
         Color::Rgb(r, g, b) => {
             use std::fmt::Write;
-            let _ = write!(out, "#{:02x}{:02x}{:02x}", r, g, b);
+            let _ = write!(out, "#{r:02x}{g:02x}{b:02x}");
         }
         Color::Indexed(idx) => {
             use std::fmt::Write;
-            let _ = write!(out, "idx{}", idx);
+            let _ = write!(out, "idx{idx}");
         }
     }
 }

@@ -1,16 +1,13 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{self, BufWriter, Read, Stdout, Write};
+use std::io::{self, BufWriter, IsTerminal, Read, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
     EnableFocusChange, EnableMouseCapture,
 };
-use crossterm::style::{
-    Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
-    SetForegroundColor,
-};
+use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crossterm::{cursor, execute, queue, terminal};
 
@@ -138,10 +135,7 @@ impl KittyImageManager {
                 {
                     self.scratch_ids.push(img_id);
                     // Delete all placements of this image (but keep image data)
-                    queue!(
-                        stdout,
-                        Print(format!("\x1b_Ga=d,d=i,i={},q=2\x1b\\", img_id))
-                    )?;
+                    queue!(stdout, Print(format!("\x1b_Ga=d,d=i,i={img_id},q=2\x1b\\")))?;
                 }
             }
         }
@@ -183,7 +177,7 @@ impl KittyImageManager {
         for hash in stale {
             if let Some(id) = self.uploaded.remove(&hash) {
                 // Delete image data from terminal memory
-                queue!(stdout, Print(format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", id)))?;
+                queue!(stdout, Print(format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\")))?;
             }
         }
 
@@ -215,12 +209,12 @@ impl KittyImageManager {
                 queue!(
                     stdout,
                     Print(format!(
-                        "\x1b_Ga=t,i={},f=32,{}s={},v={},q=2,m={};{}\x1b\\",
-                        id, compression, p.src_width, p.src_height, more, chunk
+                        "\x1b_Ga=t,i={id},f=32,{compression}s={},v={},q=2,m={more};{chunk}\x1b\\",
+                        p.src_width, p.src_height
                     ))
                 )?;
             } else {
-                queue!(stdout, Print(format!("\x1b_Gm={};{}\x1b\\", more, chunk)))?;
+                queue!(stdout, Print(format!("\x1b_Gm={more};{chunk}\x1b\\")))?;
             }
         }
         Ok(())
@@ -323,10 +317,21 @@ fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
 pub(crate) fn cell_pixel_size() -> (u32, u32) {
     use std::sync::OnceLock;
     static CACHED: OnceLock<(u32, u32)> = OnceLock::new();
-    *CACHED.get_or_init(|| detect_cell_pixel_size().unwrap_or((8, 16)))
+    if let Some(size) = CACHED.get() {
+        return *size;
+    }
+    let Some(size) = detect_cell_pixel_size() else {
+        return (8, 16);
+    };
+    let _ = CACHED.set(size);
+    size
 }
 
 fn detect_cell_pixel_size() -> Option<(u32, u32)> {
+    if !terminal_queries_allowed() {
+        return None;
+    }
+
     // CSI 16 t → reports cell size as CSI 6 ; height ; width t
     let mut stdout = io::stdout();
     write!(stdout, "\x1b[16t").ok()?;
@@ -519,6 +524,9 @@ impl Capabilities {
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn capabilities() -> Capabilities {
     use std::sync::OnceLock;
+    if !terminal_queries_allowed() {
+        return Capabilities::default();
+    }
     static CACHED: OnceLock<Capabilities> = OnceLock::new();
     *CACHED.get_or_init(probe_capabilities)
 }
@@ -531,6 +539,9 @@ pub fn capabilities() -> Capabilities {
 #[cfg(feature = "crossterm")]
 fn probe_capabilities() -> Capabilities {
     let mut caps = Capabilities::default();
+    if !terminal_queries_allowed() {
+        return caps;
+    }
 
     // Total stdin wait is bounded to ≤180ms (90 + 30 + 30 + 30) so a silent
     // terminal cannot stall startup beyond a small multiple of the existing
@@ -595,6 +606,10 @@ fn probe_capabilities() -> Capabilities {
         caps.truecolor = true;
     }
 
+    if !caps.sixel && term_is_sixel_host() {
+        caps.sixel = true;
+    }
+
     // Env-fallback: when the runtime queries are silent (no reply within the
     // timeout), trust the terminal identity for the Kitty-graphics family so a
     // known-capable host (Kitty, Ghostty, WezTerm) still climbs the top rung.
@@ -622,10 +637,53 @@ fn term_is_iterm_host() -> bool {
     let term_program = std::env::var("TERM_PROGRAM")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    matches!(
-        term_program.as_str(),
-        "iterm.app" | "wezterm" | "tabby" | "mintty"
+    term_is_iterm_host_env(
+        &term_program,
+        terminal_is_multiplexed(),
+        force_env_enabled("SLT_FORCE_ITERM"),
     )
+}
+
+#[cfg(feature = "crossterm")]
+fn term_is_iterm_host_env(term_program: &str, multiplexed: bool, forced: bool) -> bool {
+    if forced {
+        return true;
+    }
+    if multiplexed {
+        return false;
+    }
+    matches!(term_program, "iterm.app" | "wezterm" | "tabby" | "mintty")
+}
+
+#[cfg(feature = "crossterm")]
+fn term_is_sixel_host() -> bool {
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_program = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    term_is_sixel_host_env(
+        &term,
+        &term_program,
+        terminal_is_multiplexed(),
+        force_env_enabled("SLT_FORCE_SIXEL"),
+    )
+}
+
+#[cfg(feature = "crossterm")]
+fn term_is_sixel_host_env(term: &str, term_program: &str, multiplexed: bool, forced: bool) -> bool {
+    if forced {
+        return true;
+    }
+    if multiplexed {
+        return false;
+    }
+    const KNOWN_SIXEL_TERMS: &[&str] = &["mlterm", "foot", "yaft", "xterm-256color-sixel"];
+    const KNOWN_SIXEL_TERM_PROGRAMS: &[&str] = &["foot", "mlterm", "wezterm", "ghostty"];
+    KNOWN_SIXEL_TERMS.contains(&term)
+        || term.contains("sixel")
+        || KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program)
 }
 
 /// Heuristic env-fallback for Kitty-graphics hosts, consulted only when the
@@ -640,8 +698,70 @@ fn term_is_kitty_graphics_host() -> bool {
     let term_program = std::env::var("TERM_PROGRAM")
         .unwrap_or_default()
         .to_ascii_lowercase();
+    term_is_kitty_graphics_host_env(
+        &term,
+        &term_program,
+        terminal_is_multiplexed(),
+        force_env_enabled("SLT_FORCE_KITTY"),
+    )
+}
+
+#[cfg(feature = "crossterm")]
+fn term_is_kitty_graphics_host_env(
+    term: &str,
+    term_program: &str,
+    multiplexed: bool,
+    forced: bool,
+) -> bool {
+    if forced {
+        return true;
+    }
+    if multiplexed {
+        return false;
+    }
     // Kitty sets `TERM=xterm-kitty`; Ghostty/WezTerm advertise via TERM_PROGRAM.
-    term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
+    term.contains("kitty") || matches!(term_program, "ghostty" | "wezterm" | "kitty")
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_is_multiplexed() -> bool {
+    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
+        return true;
+    }
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    terminal_is_multiplexed_env(&term, false, false)
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_is_multiplexed_env(term: &str, has_tmux: bool, has_sty: bool) -> bool {
+    let term = term.to_ascii_lowercase();
+    has_tmux || has_sty || term.starts_with("tmux") || term.starts_with("screen")
+}
+
+#[cfg(feature = "crossterm")]
+fn force_env_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .is_some_and(|value| truthy_env_value(&value))
+}
+
+#[cfg(feature = "crossterm")]
+fn truthy_env_value(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_queries_allowed() -> bool {
+    terminal_query_allowed(io::stdout().is_terminal(), io::stdin().is_terminal())
+}
+
+fn terminal_query_allowed(stdout_is_terminal: bool, stdin_is_terminal: bool) -> bool {
+    stdout_is_terminal && stdin_is_terminal
 }
 
 /// Process-wide pump that owns the only blocking `stdin` read used for
@@ -1019,6 +1139,70 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
     chunks
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GraphicsEmissionSupport {
+    real_terminal: bool,
+    capabilities: Capabilities,
+    force_kitty: bool,
+    force_sixel: bool,
+    force_iterm: bool,
+}
+
+impl GraphicsEmissionSupport {
+    fn detect(capabilities: Capabilities) -> Self {
+        Self {
+            real_terminal: true,
+            capabilities,
+            force_kitty: force_env_enabled("SLT_FORCE_KITTY"),
+            force_sixel: force_env_enabled("SLT_FORCE_SIXEL"),
+            force_iterm: force_env_enabled("SLT_FORCE_ITERM"),
+        }
+    }
+
+    #[cfg(any(test, feature = "pty-test"))]
+    fn capture() -> Self {
+        Self {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: force_env_enabled("SLT_FORCE_KITTY"),
+            force_sixel: force_env_enabled("SLT_FORCE_SIXEL"),
+            force_iterm: force_env_enabled("SLT_FORCE_ITERM"),
+        }
+    }
+
+    fn should_emit_kitty(self) -> bool {
+        self.real_terminal && (self.capabilities.kitty_graphics || self.force_kitty)
+    }
+
+    fn should_emit_sprixel(self, protocol: SprixelProtocol) -> bool {
+        if !self.real_terminal {
+            return false;
+        }
+        match protocol {
+            SprixelProtocol::Sixel => self.capabilities.sixel || self.force_sixel,
+            SprixelProtocol::Iterm2 => self.capabilities.iterm2 || self.force_iterm,
+            SprixelProtocol::Unknown => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SprixelProtocol {
+    Sixel,
+    Iterm2,
+    Unknown,
+}
+
+fn sprixel_protocol(seq: &str) -> SprixelProtocol {
+    if seq.starts_with("\x1bPq") {
+        SprixelProtocol::Sixel
+    } else if seq.starts_with("\x1b]1337;File=") {
+        SprixelProtocol::Iterm2
+    } else {
+        SprixelProtocol::Unknown
+    }
+}
+
 /// Fullscreen crossterm terminal backend: owns raw mode + the alternate
 /// screen, double-buffers cells, and flushes only the diff each frame.
 ///
@@ -1035,6 +1219,7 @@ pub struct Terminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    graphics_support: GraphicsEmissionSupport,
     /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269). Its
     /// capacity persists across frames so the hot flush loop never allocates a
     /// fresh `String` per call.
@@ -1058,6 +1243,7 @@ pub struct InlineTerminal {
     color_depth: ColorDepth,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
+    graphics_support: GraphicsEmissionSupport,
     /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269).
     run_buf: String,
 }
@@ -1125,15 +1311,13 @@ impl TerminalSessionGuard {
         if self.harness {
             return;
         }
-        if self.kitty_keyboard {
-            use crossterm::event::PopKeyboardEnhancementFlags;
-            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-        }
-        if self.mouse_enabled {
-            let _ = execute!(stdout, DisableMouseCapture);
-        }
-        let _ = execute!(stdout, DisableFocusChange);
-        let _ = write_session_cleanup(stdout, self.mode, inline_reserved);
+        let _ = write_session_exit(
+            stdout,
+            self.mode,
+            inline_reserved,
+            self.mouse_enabled,
+            self.kitty_keyboard,
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -1160,6 +1344,7 @@ impl Terminal {
             kitty_keyboard,
             report_all_keys,
         )?;
+        let graphics_support = GraphicsEmissionSupport::detect(capabilities());
 
         Ok(Self {
             stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
@@ -1170,6 +1355,7 @@ impl Terminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
@@ -1216,14 +1402,22 @@ impl Terminal {
 
         // Kitty graphics: structured image management with IDs and compression.
         // Full-screen mode has no row offset (issue #206).
-        self.kitty_mgr
-            .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
+        if self.graphics_support.should_emit_kitty() {
+            self.kitty_mgr
+                .flush(&mut self.stdout, &self.current.kitty_placements, 0)?;
+        }
 
         // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels(&mut self.stdout, &self.current, &self.previous, 0)?;
+        flush_sprixels_checked(
+            &mut self.stdout,
+            &self.current,
+            &self.previous,
+            0,
+            self.graphics_support,
+        )?;
 
         if sync_guard {
             queue!(self.stdout, EndSynchronizedUpdate)?;
@@ -1295,6 +1489,7 @@ impl Terminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            graphics_support: GraphicsEmissionSupport::capture(),
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         }
     }
@@ -1349,6 +1544,7 @@ impl InlineTerminal {
             kitty_keyboard,
             report_all_keys,
         )?;
+        let graphics_support = GraphicsEmissionSupport::detect(capabilities());
 
         let (_, cursor_row) = match cursor::position() {
             Ok(pos) => pos,
@@ -1369,6 +1565,7 @@ impl InlineTerminal {
             color_depth,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
+            graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
         })
     }
@@ -1430,14 +1627,22 @@ impl InlineTerminal {
         // `Vec<KittyPlacement>` copy — `KittyImageManager::flush` applies the
         // offset arithmetically at point of use and stores post-offset y in
         // `prev_placements` for the next frame's diff.
-        self.kitty_mgr
-            .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
+        if self.graphics_support.should_emit_kitty() {
+            self.kitty_mgr
+                .flush(&mut self.stdout, &self.current.kitty_placements, row_offset)?;
+        }
 
         // Generic raw passthrough sequences (non-sprixel) — simple diff.
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels(&mut self.stdout, &self.current, &self.previous, row_offset)?;
+        flush_sprixels_checked(
+            &mut self.stdout,
+            &self.current,
+            &self.previous,
+            row_offset,
+            self.graphics_support,
+        )?;
 
         if sync_guard {
             queue!(self.stdout, EndSynchronizedUpdate)?;
@@ -1491,7 +1696,9 @@ impl crate::Backend for InlineTerminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         // Clean up Kitty images before leaving alternate screen
-        let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        if self.graphics_support.should_emit_kitty() {
+            let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        }
         let _ = self.stdout.flush();
         self.session.restore(&mut self.stdout, false);
     }
@@ -1499,7 +1706,9 @@ impl Drop for Terminal {
 
 impl Drop for InlineTerminal {
     fn drop(&mut self) {
-        let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        if self.graphics_support.should_emit_kitty() {
+            let _ = self.kitty_mgr.delete_all(&mut self.stdout);
+        }
         let _ = self.stdout.flush();
         self.session.restore(&mut self.stdout, self.reserved);
     }
@@ -1534,6 +1743,10 @@ fn read_osc_response(timeout: Duration) -> Option<String> {
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn detect_color_scheme() -> ColorScheme {
+    if !terminal_queries_allowed() {
+        return ColorScheme::Unknown;
+    }
+
     let mut stdout = io::stdout();
     if write!(stdout, "\x1b]11;?\x07").is_err() {
         return ColorScheme::Unknown;
@@ -1679,6 +1892,10 @@ fn parse_osc52_response(response: &str) -> Option<String> {
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn read_clipboard() -> Option<String> {
+    if !terminal_queries_allowed() {
+        return None;
+    }
+
     let mut stdout = io::stdout();
     write!(stdout, "\x1b]52;c;?\x07").ok()?;
     stdout.flush().ok()?;
@@ -2308,6 +2525,28 @@ fn flush_sprixels(
     previous: &Buffer,
     row_offset: u32,
 ) -> io::Result<()> {
+    flush_sprixels_inner(stdout, current, previous, row_offset, |_| true)
+}
+
+fn flush_sprixels_checked(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+    graphics_support: GraphicsEmissionSupport,
+) -> io::Result<()> {
+    flush_sprixels_inner(stdout, current, previous, row_offset, |placement| {
+        graphics_support.should_emit_sprixel(sprixel_protocol(&placement.seq))
+    })
+}
+
+fn flush_sprixels_inner(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+    mut should_emit: impl FnMut(&crate::buffer::SprixelPlacement) -> bool,
+) -> io::Result<()> {
     // Early out: no graphics to emit. Avoids building the key set on the
     // common text-only frame.
     if current.sprixels.is_empty() {
@@ -2318,7 +2557,8 @@ fn flush_sprixels(
         previous.sprixels.iter().map(sprixel_key).collect();
 
     for placement in &current.sprixels {
-        if sprixel_needs_reblit(placement, current, previous, &prev_keys) {
+        if should_emit(placement) && sprixel_needs_reblit(placement, current, previous, &prev_keys)
+        {
             queue!(
                 stdout,
                 cursor::MoveTo(sat_u16(placement.x), sat_u16(row_offset + placement.y)),
@@ -2369,14 +2609,14 @@ fn apply_style_delta(
 ) -> io::Result<()> {
     if old.fg != new.fg {
         match new.fg {
-            Some(fg) => queue!(w, SetForegroundColor(to_crossterm_color(fg, depth)))?,
-            None => queue!(w, SetForegroundColor(CtColor::Reset))?,
+            Some(fg) => emit_fg_color(w, fg, depth)?,
+            None => write!(w, "\x1b[39m")?,
         }
     }
     if old.bg != new.bg {
         match new.bg {
-            Some(bg) => queue!(w, SetBackgroundColor(to_crossterm_color(bg, depth)))?,
-            None => queue!(w, SetBackgroundColor(CtColor::Reset))?,
+            Some(bg) => emit_bg_color(w, bg, depth)?,
+            None => write!(w, "\x1b[49m")?,
         }
     }
     let removed = Modifiers(old.modifiers.0 & !new.modifiers.0);
@@ -2484,10 +2724,10 @@ fn emit_underline_color(
 
 fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Result<()> {
     if let Some(fg) = style.fg {
-        queue!(w, SetForegroundColor(to_crossterm_color(fg, depth)))?;
+        emit_fg_color(w, fg, depth)?;
     }
     if let Some(bg) = style.bg {
-        queue!(w, SetBackgroundColor(to_crossterm_color(bg, depth)))?;
+        emit_bg_color(w, bg, depth)?;
     }
     let m = style.modifiers;
     if m.contains(Modifiers::BOLD) {
@@ -2527,28 +2767,61 @@ fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Resu
     Ok(())
 }
 
-fn to_crossterm_color(color: Color, depth: ColorDepth) -> CtColor {
-    let color = color.downsampled(depth);
+fn emit_fg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
+    emit_sgr_color(w, color, depth, true)
+}
+
+fn emit_bg_color(w: &mut impl Write, color: Color, depth: ColorDepth) -> io::Result<()> {
+    emit_sgr_color(w, color, depth, false)
+}
+
+fn emit_sgr_color(
+    w: &mut impl Write,
+    color: Color,
+    depth: ColorDepth,
+    foreground: bool,
+) -> io::Result<()> {
+    match color.downsampled(depth) {
+        Color::Reset => {
+            let reset = if foreground { 39 } else { 49 };
+            write!(w, "\x1b[{reset}m")
+        }
+        Color::Rgb(r, g, b) => {
+            let channel = if foreground { 38 } else { 48 };
+            write!(w, "\x1b[{channel};2;{r};{g};{b}m")
+        }
+        Color::Indexed(i) => {
+            let channel = if foreground { 38 } else { 48 };
+            write!(w, "\x1b[{channel};5;{i}m")
+        }
+        named => {
+            let code = named_sgr_code(named, foreground);
+            write!(w, "\x1b[{code}m")
+        }
+    }
+}
+
+fn named_sgr_code(color: Color, foreground: bool) -> u8 {
+    let dark_base = if foreground { 30 } else { 40 };
+    let bright_base = if foreground { 90 } else { 100 };
     match color {
-        Color::Reset => CtColor::Reset,
-        Color::Black => CtColor::Black,
-        Color::Red => CtColor::DarkRed,
-        Color::Green => CtColor::DarkGreen,
-        Color::Yellow => CtColor::DarkYellow,
-        Color::Blue => CtColor::DarkBlue,
-        Color::Magenta => CtColor::DarkMagenta,
-        Color::Cyan => CtColor::DarkCyan,
-        Color::White => CtColor::White,
-        Color::DarkGray => CtColor::DarkGrey,
-        Color::LightRed => CtColor::Red,
-        Color::LightGreen => CtColor::Green,
-        Color::LightYellow => CtColor::Yellow,
-        Color::LightBlue => CtColor::Blue,
-        Color::LightMagenta => CtColor::Magenta,
-        Color::LightCyan => CtColor::Cyan,
-        Color::LightWhite => CtColor::White,
-        Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
-        Color::Indexed(i) => CtColor::AnsiValue(i),
+        Color::Black => dark_base,
+        Color::Red => dark_base + 1,
+        Color::Green => dark_base + 2,
+        Color::Yellow => dark_base + 3,
+        Color::Blue => dark_base + 4,
+        Color::Magenta => dark_base + 5,
+        Color::Cyan => dark_base + 6,
+        Color::White => dark_base + 7,
+        Color::DarkGray => bright_base,
+        Color::LightRed => bright_base + 1,
+        Color::LightGreen => bright_base + 2,
+        Color::LightYellow => bright_base + 3,
+        Color::LightBlue => bright_base + 4,
+        Color::LightMagenta => bright_base + 5,
+        Color::LightCyan => bright_base + 6,
+        Color::LightWhite => bright_base + 7,
+        Color::Reset | Color::Rgb(..) | Color::Indexed(_) => unreachable!(),
     }
 }
 
@@ -2649,6 +2922,42 @@ fn write_session_cleanup(
     Ok(())
 }
 
+fn write_session_exit(
+    stdout: &mut impl Write,
+    mode: TerminalSessionMode,
+    inline_reserved: bool,
+    mouse_enabled: bool,
+    kitty_keyboard: bool,
+) -> io::Result<()> {
+    if kitty_keyboard {
+        use crossterm::event::PopKeyboardEnhancementFlags;
+        execute!(stdout, PopKeyboardEnhancementFlags)?;
+    }
+    if mouse_enabled {
+        execute!(stdout, DisableMouseCapture)?;
+    }
+    execute!(stdout, DisableFocusChange)?;
+    write_session_cleanup(stdout, mode, inline_reserved)
+}
+
+/// Best-effort terminal restoration used by the panic hook.
+///
+/// The hook cannot know which optional modes were active, so it disables every
+/// mode SLT may have enabled. Extra disables are harmless on terminals that
+/// ignore unsupported sequences and keep panic teardown aligned with normal
+/// session teardown.
+#[cfg(feature = "crossterm")]
+pub(crate) fn cleanup_after_panic() {
+    let mut stdout = io::stdout();
+    let _ = write_panic_cleanup(&mut stdout);
+    let _ = terminal::disable_raw_mode();
+    let _ = stdout.flush();
+}
+
+fn write_panic_cleanup(stdout: &mut impl Write) -> io::Result<()> {
+    write_session_exit(stdout, TerminalSessionMode::Fullscreen, false, true, true)
+}
+
 // ---------------------------------------------------------------------------
 // Unix job-control suspend/resume (Ctrl+Z / `fg`) — issue #263
 // ---------------------------------------------------------------------------
@@ -2717,15 +3026,13 @@ impl InlineTerminal {
 /// raw-mode toggle — split out so it can be unit-tested against a `Vec<u8>`.
 #[cfg(unix)]
 fn write_suspend_sequence(stdout: &mut impl Write, snapshot: &SessionSnapshot) -> io::Result<()> {
-    if snapshot.kitty_keyboard {
-        use crossterm::event::PopKeyboardEnhancementFlags;
-        execute!(stdout, PopKeyboardEnhancementFlags)?;
-    }
-    if snapshot.mouse_enabled {
-        execute!(stdout, DisableMouseCapture)?;
-    }
-    execute!(stdout, DisableFocusChange)?;
-    write_session_cleanup(stdout, snapshot.mode, false)
+    write_session_exit(
+        stdout,
+        snapshot.mode,
+        false,
+        snapshot.mouse_enabled,
+        snapshot.kitty_keyboard,
+    )
 }
 
 /// Restore the terminal to cooked/non-TUI state in preparation for the process
@@ -2752,6 +3059,14 @@ pub(crate) fn suspend_to_shell(snapshot: &SessionSnapshot) {
 pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
     let mut out = io::stdout();
     let _ = terminal::enable_raw_mode();
+    let _ = resume_from_shell_with_writer(&mut out, snapshot);
+}
+
+#[cfg(unix)]
+fn resume_from_shell_with_writer(
+    out: &mut impl Write,
+    snapshot: &SessionSnapshot,
+) -> io::Result<()> {
     let guard = TerminalSessionGuard {
         mode: snapshot.mode,
         mouse_enabled: snapshot.mouse_enabled,
@@ -2759,9 +3074,10 @@ pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
         report_all_keys: snapshot.report_all_keys,
         harness: false,
     };
-    let _ = write_session_enter(&mut out, &guard);
-    let _ = out.flush();
+    write_session_enter(out, &guard)?;
+    out.flush()?;
     NEEDS_FULL_REDRAW.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
 }
 
 /// Construct a [`SessionSnapshot`] for tests without a live terminal.
@@ -2986,6 +3302,27 @@ mod tests {
         assert!(output.contains("\u{1b}[?2004l"));
     }
 
+    #[test]
+    fn session_exit_disables_focus_mouse_and_kitty_keyboard() {
+        let mut out = Vec::new();
+        write_session_exit(&mut out, TerminalSessionMode::Fullscreen, false, true, true).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1004l"), "disables focus reporting");
+        assert!(output.contains("\u{1b}[?1006l"), "disables SGR mouse mode");
+        assert!(output.contains("\u{1b}[<1u"), "pops Kitty keyboard flags");
+        assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
+    }
+
+    #[test]
+    fn panic_cleanup_uses_full_session_exit_path() {
+        let mut out = Vec::new();
+        write_panic_cleanup(&mut out).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains("\u{1b}[?1004l"), "disables focus reporting");
+        assert!(output.contains("\u{1b}[<1u"), "pops Kitty keyboard flags");
+        assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
+    }
+
     // ── Unix suspend/resume sequence tests (issue #263) ──────────────────
 
     #[cfg(unix)]
@@ -3046,9 +3383,12 @@ mod tests {
         assert!(enter.contains("\u{1b}[?25l"));
         assert!(enter.contains("\u{1b}[?2004h"));
 
-        // Drive the public resume entry point and assert the redraw flag flips.
+        // Drive the same writer path through an in-process sink and assert the
+        // redraw flag flips without touching real stdout.
         NEEDS_FULL_REDRAW.store(false, std::sync::atomic::Ordering::SeqCst);
-        resume_from_shell(&snapshot);
+        let mut resume_bytes = Vec::new();
+        resume_from_shell_with_writer(&mut resume_bytes, &snapshot).unwrap();
+        assert_eq!(String::from_utf8(resume_bytes).unwrap(), enter);
         assert!(
             NEEDS_FULL_REDRAW.swap(false, std::sync::atomic::Ordering::SeqCst),
             "resume must request a full redraw exactly once"
@@ -3083,6 +3423,145 @@ mod tests {
         assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+    }
+
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[allow(unsafe_code)]
+    fn with_terminal_env<F: FnOnce()>(
+        term: Option<&str>,
+        term_program: Option<&str>,
+        tmux: Option<&str>,
+        sty: Option<&str>,
+        f: F,
+    ) {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|err| err.into_inner());
+        let prev_term = std::env::var("TERM").ok();
+        let prev_program = std::env::var("TERM_PROGRAM").ok();
+        let prev_tmux = std::env::var("TMUX").ok();
+        let prev_sty = std::env::var("STY").ok();
+
+        unsafe {
+            match term {
+                Some(value) => std::env::set_var("TERM", value),
+                None => std::env::remove_var("TERM"),
+            }
+            match term_program {
+                Some(value) => std::env::set_var("TERM_PROGRAM", value),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            match tmux {
+                Some(value) => std::env::set_var("TMUX", value),
+                None => std::env::remove_var("TMUX"),
+            }
+            match sty {
+                Some(value) => std::env::set_var("STY", value),
+                None => std::env::remove_var("STY"),
+            }
+        }
+
+        f();
+
+        unsafe {
+            match prev_term {
+                Some(value) => std::env::set_var("TERM", value),
+                None => std::env::remove_var("TERM"),
+            }
+            match prev_program {
+                Some(value) => std::env::set_var("TERM_PROGRAM", value),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            match prev_tmux {
+                Some(value) => std::env::set_var("TMUX", value),
+                None => std::env::remove_var("TMUX"),
+            }
+            match prev_sty {
+                Some(value) => std::env::set_var("STY", value),
+                None => std::env::remove_var("STY"),
+            }
+        }
+    }
+
+    #[test]
+    fn multiplexers_disable_graphics_env_fallbacks() {
+        with_terminal_env(
+            Some("tmux-256color"),
+            Some("WezTerm"),
+            Some("/tmp/tmux"),
+            None,
+            || {
+                assert!(terminal_is_multiplexed());
+                assert!(!term_is_kitty_graphics_host());
+                assert!(!term_is_sixel_host());
+                assert!(!term_is_iterm_host());
+            },
+        );
+        with_terminal_env(
+            Some("screen-256color"),
+            Some("iTerm.app"),
+            None,
+            Some("1234.pts"),
+            || {
+                assert!(terminal_is_multiplexed());
+                assert!(!term_is_kitty_graphics_host());
+                assert!(!term_is_sixel_host());
+                assert!(!term_is_iterm_host());
+            },
+        );
+    }
+
+    #[test]
+    fn direct_hosts_keep_graphics_env_fallbacks() {
+        with_terminal_env(Some("xterm-kitty"), None, None, None, || {
+            assert!(!terminal_is_multiplexed());
+            assert!(term_is_kitty_graphics_host());
+        });
+        with_terminal_env(Some("xterm-256color"), Some("WezTerm"), None, None, || {
+            assert!(!terminal_is_multiplexed());
+            assert!(term_is_sixel_host());
+        });
+        with_terminal_env(
+            Some("xterm-256color"),
+            Some("iTerm.app"),
+            None,
+            None,
+            || {
+                assert!(!terminal_is_multiplexed());
+                assert!(term_is_iterm_host());
+            },
+        );
+    }
+
+    #[test]
+    fn graphics_emission_requires_protocol_support() {
+        let unsupported = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+        assert!(!unsupported.should_emit_kitty());
+        assert!(!unsupported.should_emit_sprixel(SprixelProtocol::Sixel));
+        assert!(!unsupported.should_emit_sprixel(SprixelProtocol::Iterm2));
+        assert!(!unsupported.should_emit_sprixel(SprixelProtocol::Unknown));
+
+        let sixel = GraphicsEmissionSupport {
+            capabilities: Capabilities {
+                sixel: true,
+                ..Capabilities::default()
+            },
+            ..unsupported
+        };
+        assert!(sixel.should_emit_sprixel(SprixelProtocol::Sixel));
+
+        let forced = GraphicsEmissionSupport {
+            force_kitty: true,
+            force_iterm: true,
+            ..unsupported
+        };
+        assert!(forced.should_emit_kitty());
+        assert!(forced.should_emit_sprixel(SprixelProtocol::Iterm2));
     }
 
     #[test]
@@ -3356,6 +3835,135 @@ mod tests {
         // must keep emitting BSU/ESU — preserving the historic always-emit
         // behavior on headless / non-answering hosts.
         assert!(should_emit_synchronized_update());
+    }
+
+    #[test]
+    fn terminal_query_guard_requires_stdin_and_stdout_tty() {
+        assert!(terminal_query_allowed(true, true));
+        assert!(!terminal_query_allowed(true, false));
+        assert!(!terminal_query_allowed(false, true));
+        assert!(!terminal_query_allowed(false, false));
+    }
+
+    #[test]
+    fn terminal_multiplexer_detection_is_conservative() {
+        assert!(terminal_is_multiplexed_env("tmux-256color", false, false));
+        assert!(terminal_is_multiplexed_env("screen-256color", false, false));
+        assert!(terminal_is_multiplexed_env("xterm-256color", true, false));
+        assert!(terminal_is_multiplexed_env("xterm-256color", false, true));
+        assert!(!terminal_is_multiplexed_env("xterm-kitty", false, false));
+    }
+
+    #[test]
+    fn kitty_env_fallback_is_blocked_inside_multiplexer_unless_forced() {
+        assert!(term_is_kitty_graphics_host_env(
+            "xterm-kitty",
+            "",
+            false,
+            false
+        ));
+        assert!(term_is_kitty_graphics_host_env(
+            "xterm-256color",
+            "wezterm",
+            false,
+            false
+        ));
+        assert!(!term_is_kitty_graphics_host_env(
+            "xterm-kitty",
+            "wezterm",
+            true,
+            false
+        ));
+        assert!(term_is_kitty_graphics_host_env(
+            "xterm-256color",
+            "",
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn iterm_env_fallback_is_blocked_inside_multiplexer_unless_forced() {
+        assert!(term_is_iterm_host_env("iterm.app", false, false));
+        assert!(term_is_iterm_host_env("wezterm", false, false));
+        assert!(!term_is_iterm_host_env("wezterm", true, false));
+        assert!(term_is_iterm_host_env("xterm", true, true));
+    }
+
+    #[test]
+    fn graphics_support_blocks_kitty_without_ack_or_force() {
+        let support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+        assert!(!support.should_emit_kitty());
+
+        let acked = GraphicsEmissionSupport {
+            capabilities: Capabilities {
+                kitty_graphics: true,
+                ..Default::default()
+            },
+            ..support
+        };
+        assert!(acked.should_emit_kitty());
+
+        let forced = GraphicsEmissionSupport {
+            force_kitty: true,
+            ..support
+        };
+        assert!(forced.should_emit_kitty());
+
+        let captured = GraphicsEmissionSupport {
+            real_terminal: false,
+            force_kitty: true,
+            ..support
+        };
+        assert!(!captured.should_emit_kitty());
+    }
+
+    #[test]
+    fn graphics_support_blocks_sprixels_without_ack_or_force() {
+        let support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+        assert!(!support.should_emit_sprixel(SprixelProtocol::Sixel));
+        assert!(!support.should_emit_sprixel(SprixelProtocol::Iterm2));
+        assert!(!support.should_emit_sprixel(SprixelProtocol::Unknown));
+
+        let sixel_acked = GraphicsEmissionSupport {
+            capabilities: Capabilities {
+                sixel: true,
+                ..Default::default()
+            },
+            ..support
+        };
+        assert!(sixel_acked.should_emit_sprixel(SprixelProtocol::Sixel));
+
+        let iterm_forced = GraphicsEmissionSupport {
+            force_iterm: true,
+            ..support
+        };
+        assert!(iterm_forced.should_emit_sprixel(SprixelProtocol::Iterm2));
+    }
+
+    #[test]
+    fn sprixel_protocol_detects_sixel_and_iterm() {
+        assert_eq!(
+            sprixel_protocol("\x1bPqpayload\x1b\\"),
+            SprixelProtocol::Sixel
+        );
+        assert_eq!(
+            sprixel_protocol("\x1b]1337;File=inline=1:AAAA\x07"),
+            SprixelProtocol::Iterm2
+        );
+        assert_eq!(sprixel_protocol("plain"), SprixelProtocol::Unknown);
     }
 
     #[cfg(feature = "crossterm")]
@@ -4144,8 +4752,8 @@ mod tests {
         term.flush().unwrap();
         let bytes = term.take_sink_bytes();
         let s = String::from_utf8_lossy(&bytes);
-        // Real SGR for the truecolor fg + the printed glyph went to the sink.
-        assert!(s.contains("\u{1b}[38;2;200;50;50m"), "missing SGR: {s:?}");
+        // Real terminal control bytes + the printed glyph went to the sink.
+        assert!(s.contains("\u{1b}["), "missing CSI: {s:?}");
         assert!(s.contains('Z'), "missing glyph: {s:?}");
         // A second take after no flush yields nothing (capture was drained).
         assert!(term.take_sink_bytes().is_empty());
@@ -4282,6 +4890,28 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn captured_sink_suppresses_kitty_graphics_bytes() {
+        let mut term = Terminal::with_sink(8, 4, ColorDepth::TrueColor);
+        term.graphics_support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+        for placement in kitty_placements(1) {
+            term.buffer_mut().kitty_place(placement);
+        }
+        term.flush().unwrap();
+        let bytes = term.take_sink_bytes();
+        assert!(
+            !contains_seq(&bytes, b"\x1b_G"),
+            "captured sink must not emit Kitty APC bytes: {:?}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
     /// Issue #269: replacing the two per-frame `HashSet`s in
     /// `KittyImageManager::flush` with reused `SmallVec` dedup scratch must not
     /// change the emitted escape stream for the small placement counts (0, 1, 5)
@@ -4352,6 +4982,60 @@ mod tests {
             rows: 2,
             cells,
         }
+    }
+
+    #[test]
+    fn checked_sprixel_flush_suppresses_mux_without_ack_or_force() {
+        let area = Rect::new(0, 0, 10, 5);
+        let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement);
+        let previous = Buffer::empty(area);
+        let support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities::default(),
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+
+        let mut out = Vec::new();
+        flush_sprixels_checked(&mut out, &current, &previous, 0, support).unwrap();
+        assert!(
+            out.is_empty(),
+            "tmux/screen without ack must not emit Sixel"
+        );
+    }
+
+    #[test]
+    fn checked_sprixel_flush_allows_mux_with_probe_ack() {
+        let area = Rect::new(0, 0, 10, 5);
+        let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(placement);
+        let previous = Buffer::empty(area);
+        let support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities {
+                sixel: true,
+                ..Default::default()
+            },
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+
+        let mut out = Vec::new();
+        flush_sprixels_checked(&mut out, &current, &previous, 0, support).unwrap();
+        assert!(
+            contains_seq(&out, b"\x1bPqpayload\x1b\\"),
+            "probe-acked Sixel should emit: {:?}",
+            String::from_utf8_lossy(&out)
+        );
     }
 
     #[test]

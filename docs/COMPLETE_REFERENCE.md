@@ -106,8 +106,8 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | Type | Notes |
 |---|---|
 | `Style` | `Style::new().fg(c).bg(c).bold().italic().dim().underline().reversed().strikethrough()`. |
-| `Color` | `Color::Rgb(r, g, b)`, `Color::Indexed(u8)`, `Color::Named` (all 17 ANSI: `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, `LightRed`, `LightGreen`, `LightYellow`, `LightBlue`, `LightMagenta`, `LightCyan`, `LightWhite`), `Color::Reset`. Helpers: `.blend(o, a)`, `.lighten(f)`, `.darken(f)`, `.luminance()`, `.contrast_ratio(a, b)`, `.meets_contrast_aa(a, b)`, `.contrast_fg(bg)`, `.downsampled(depth)`. |
-| `ColorDepth` | `TrueColor`, `EightBit`, `Basic`. `ColorDepth::detect()` auto-detects from `$COLORTERM`/`$TERM`. |
+| `Color` | `Color::Rgb(r, g, b)`, `Color::Indexed(u8)`, `Color::Named` (all 17 ANSI: `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, `LightRed`, `LightGreen`, `LightYellow`, `LightBlue`, `LightMagenta`, `LightCyan`, `LightWhite`), `Color::Reset`. Helpers: `.blend_f64(o, a)`, `.lighten_f64(f)`, `.darken_f64(f)`, `.luminance_f64()`, `.contrast_ratio_f64(a, b)`, `.meets_contrast_aa(a, b)`, `.contrast_fg(bg)`, `.downsampled(depth)`. |
+| `ColorDepth` | `TrueColor`, `EightBit`, `Basic`, `NoColor`. `ColorDepth::detect()` auto-detects from `$NO_COLOR`/`$COLORTERM`/`$TERM`. |
 | `Modifiers` | Bitflags: `BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `REVERSED`, `STRIKETHROUGH`. Methods: `.contains(o)`, `.is_empty()`, `.remove(o)` (clears bits in-place). |
 | `Border` | `None`, `Single`, `Rounded`, `Double`, `Heavy`, `Thick`, `Dashed`, `Dotted`, `Ascii`. |
 | `BorderSides` | bitflags: `TOP`, `RIGHT`, `BOTTOM`, `LEFT`, or combos. |

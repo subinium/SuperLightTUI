@@ -173,3 +173,27 @@ fn default_registry_has_no_runtime_and_polls_none() {
     // Polling an id that was never spawned yields None.
     assert_eq!(tasks.poll::<u32>(999), None);
 }
+
+#[tokio::test]
+async fn dropping_registry_aborts_live_tasks() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_in_task = Arc::clone(&completed);
+
+    let mut tasks = AsyncTasks::default();
+    tasks.set_runtime(tokio::runtime::Handle::current());
+    let handle = tasks.spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        completed_in_task.store(true, Ordering::SeqCst);
+    });
+
+    drop(tasks);
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    assert!(
+        !completed.load(Ordering::SeqCst),
+        "dropping AsyncTasks must abort live tasks owned by the session"
+    );
+    drop(handle);
+}

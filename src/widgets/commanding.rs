@@ -454,9 +454,44 @@ impl ScreenState {
         self.stack.len() > 1
     }
 
+    /// Return `true` if `name` is currently present in the navigation stack.
+    pub fn contains(&self, name: &str) -> bool {
+        self.stack.iter().any(|screen| screen == name)
+    }
+
     /// Reset to only the root screen.
     pub fn reset(&mut self) {
         self.stack.truncate(1);
+    }
+
+    /// Remove retained focus state for a screen that is no longer on the stack.
+    ///
+    /// Returns `false` when the screen is still active or stacked, because
+    /// dropping focus for a live screen would make back navigation jumpy.
+    pub fn remove_inactive(&mut self, name: &str) -> bool {
+        if self.contains(name) {
+            return false;
+        }
+        self.focus_state.remove(name).is_some()
+    }
+
+    /// Retain inactive focus-state entries accepted by `keep`.
+    ///
+    /// Screens still present in the stack are always kept. Returns the number
+    /// of focus-state entries removed.
+    pub fn retain_inactive(&mut self, mut keep: impl FnMut(&str) -> bool) -> usize {
+        let before = self.focus_state.len();
+        let stack = &self.stack;
+        self.focus_state
+            .retain(|name, _| stack.iter().any(|screen| screen == name) || keep(name));
+        before - self.focus_state.len()
+    }
+
+    /// Number of retained per-screen focus entries.
+    ///
+    /// Diagnostic helper for apps with runtime-generated screen names.
+    pub fn focus_state_count(&self) -> usize {
+        self.focus_state.len()
     }
 
     /// Apply a deferred navigation request recorded inside a
@@ -542,11 +577,7 @@ impl ModeState {
     /// reports success, use [`Self::try_switch_mode`].
     pub fn switch_mode(&mut self, mode: impl Into<String>) {
         let mode = mode.into();
-        assert!(
-            self.modes.contains_key(&mode),
-            "mode '{}' not found",
-            mode
-        );
+        assert!(self.modes.contains_key(&mode), "mode '{mode}' not found");
         self.active = mode;
     }
 
@@ -584,6 +615,39 @@ impl ModeState {
             .get_mut(&self.active)
             .expect("active mode must exist")
     }
+
+    /// Return `true` when a mode has been registered.
+    pub fn contains_mode(&self, mode: &str) -> bool {
+        self.modes.contains_key(mode)
+    }
+
+    /// Number of registered modes.
+    ///
+    /// Diagnostic helper for dynamic mode sets.
+    pub fn mode_count(&self) -> usize {
+        self.modes.len()
+    }
+
+    /// Remove an inactive mode and its retained screen state.
+    ///
+    /// The active mode is preserved and returns `false`.
+    pub fn remove_mode(&mut self, mode: &str) -> bool {
+        if self.active == mode {
+            return false;
+        }
+        self.modes.remove(mode).is_some()
+    }
+
+    /// Retain inactive modes accepted by `keep`.
+    ///
+    /// The active mode is always retained. Returns the number of modes removed.
+    pub fn retain_modes(&mut self, mut keep: impl FnMut(&str) -> bool) -> usize {
+        let before = self.modes.len();
+        let active = self.active.as_str();
+        self.modes
+            .retain(|mode, _| mode.as_str() == active || keep(mode.as_str()));
+        before - self.modes.len()
+    }
 }
 
 #[cfg(test)]
@@ -599,6 +663,32 @@ mod mode_state_tests {
         assert!(!modes.try_switch_mode("nonexistent"));
         // Active mode must not change when the switch is rejected.
         assert_eq!(modes.active_mode(), "settings");
+    }
+
+    #[test]
+    fn remove_mode_preserves_active_mode() {
+        let mut modes = ModeState::new("app", "home");
+        modes.add_mode("settings", "general");
+        modes.add_mode("admin", "dashboard");
+
+        assert_eq!(modes.mode_count(), 3);
+        assert!(!modes.remove_mode("app"));
+        assert!(modes.remove_mode("admin"));
+        assert!(!modes.contains_mode("admin"));
+        assert_eq!(modes.mode_count(), 2);
+    }
+
+    #[test]
+    fn retain_modes_keeps_active_mode() {
+        let mut modes = ModeState::new("app", "home");
+        modes.add_mode("settings", "general");
+        modes.add_mode("admin", "dashboard");
+
+        let removed = modes.retain_modes(|mode| mode == "admin");
+        assert_eq!(removed, 1);
+        assert!(modes.contains_mode("app"));
+        assert!(modes.contains_mode("admin"));
+        assert!(!modes.contains_mode("settings"));
     }
 }
 

@@ -352,6 +352,82 @@ impl Context {
         self.pending_screen_nav.push(ScreenNav::Reset);
     }
 
+    /// Remove retained hook/focus state for an inactive screen.
+    ///
+    /// Returns `false` when `name` is still present in `screens`' stack. Call
+    /// this after popping runtime-generated detail screens to release their
+    /// isolated hook segment and saved focus entry.
+    pub fn remove_screen_state(&mut self, screens: &mut ScreenState, name: &str) -> bool {
+        if screens.contains(name) {
+            return false;
+        }
+        let focus_removed = screens.remove_inactive(name);
+        let hooks_removed = self.remove_screen_hooks(name);
+        focus_removed || hooks_removed
+    }
+
+    /// Retain inactive screen states accepted by `keep`.
+    ///
+    /// Screens currently present in `screens`' stack are always kept. Returns
+    /// the number of screen names removed from either the hook map or the
+    /// saved-focus map.
+    pub fn retain_screen_state(
+        &mut self,
+        screens: &mut ScreenState,
+        mut keep: impl FnMut(&str) -> bool,
+    ) -> usize {
+        let remove_names: Vec<String> = self
+            .screen_hook_map
+            .keys()
+            .filter(|name| !screens.contains(name) && !keep(name))
+            .cloned()
+            .collect();
+
+        let mut removed = 0;
+        for name in remove_names {
+            if self.remove_screen_state(screens, &name) {
+                removed += 1;
+            }
+        }
+        removed + screens.retain_inactive(keep)
+    }
+
+    /// Number of retained screen hook segments.
+    ///
+    /// Diagnostic helper for apps that generate screen names from runtime ids.
+    pub fn screen_state_count(&self) -> usize {
+        self.screen_hook_map.len()
+    }
+
+    fn remove_screen_hooks(&mut self, name: &str) -> bool {
+        let Some((seg_start, seg_count)) = self.screen_hook_map.remove(name) else {
+            return false;
+        };
+
+        if seg_count == 0 {
+            return true;
+        }
+
+        let end = seg_start
+            .saturating_add(seg_count)
+            .min(self.hook_states.len());
+        if seg_start >= end {
+            return true;
+        }
+
+        let removed = end - seg_start;
+        self.hook_states.drain(seg_start..end);
+        for (other_start, _) in self.screen_hook_map.values_mut() {
+            if *other_start > seg_start {
+                *other_start = other_start.saturating_sub(removed);
+            }
+        }
+        if self.rollback.hook_cursor > seg_start {
+            self.rollback.hook_cursor = self.rollback.hook_cursor.saturating_sub(removed);
+        }
+        true
+    }
+
     /// Create a vertical (column) container.
     ///
     /// Children are stacked top-to-bottom. Returns a [`Response`] with

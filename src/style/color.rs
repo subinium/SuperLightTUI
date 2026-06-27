@@ -47,7 +47,7 @@ pub enum Color {
 }
 
 #[inline]
-fn to_linear(c: f32) -> f32 {
+fn to_linear(c: f64) -> f64 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -96,17 +96,26 @@ impl Color {
     /// use slt::Color;
     ///
     /// let dark = Color::Rgb(30, 30, 46);
-    /// assert!(dark.luminance() < 0.15);
+    /// assert!(dark.luminance_f64() < 0.15);
     ///
     /// let light = Color::Rgb(205, 214, 244);
-    /// assert!(light.luminance() > 0.6);
+    /// assert!(light.luminance_f64() > 0.6);
     /// ```
-    pub fn luminance(self) -> f32 {
+    pub fn luminance_f64(self) -> f64 {
         let (r, g, b) = self.to_rgb();
-        let rf = to_linear(r as f32 / 255.0);
-        let gf = to_linear(g as f32 / 255.0);
-        let bf = to_linear(b as f32 / 255.0);
+        let rf = to_linear(f64::from(r) / 255.0);
+        let gf = to_linear(f64::from(g) / 255.0);
+        let bf = to_linear(f64::from(b) / 255.0);
         0.2126 * rf + 0.7152 * gf + 0.0722 * bf
+    }
+
+    /// Deprecated `f32` alias for [`luminance_f64`](Self::luminance_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::luminance_f64() to keep public float APIs on f64"
+    )]
+    pub fn luminance(self) -> f32 {
+        self.luminance_f64() as f32
     }
 
     /// Return a contrasting foreground color for the given background.
@@ -125,7 +134,7 @@ impl Color {
     /// // Dracula purple → white (WCAG luminance 0.385 < 0.179 threshold)
     /// ```
     pub fn contrast_fg(bg: Color) -> Color {
-        if bg.luminance() > 0.179 {
+        if bg.luminance_f64() > 0.179 {
             Color::Rgb(0, 0, 0)
         } else {
             Color::Rgb(255, 255, 255)
@@ -144,33 +153,60 @@ impl Color {
     ///
     /// let white = Color::Rgb(255, 255, 255);
     /// let black = Color::Rgb(0, 0, 0);
-    /// let gray = white.blend(black, 0.5);
+    /// let gray = white.blend_f64(black, 0.5);
     /// // ≈ Rgb(128, 128, 128)
     /// ```
-    pub fn blend(self, other: Color, alpha: f32) -> Color {
+    pub fn blend_f64(self, other: Color, alpha: f64) -> Color {
         let alpha = alpha.clamp(0.0, 1.0);
         let (r1, g1, b1) = self.to_rgb();
         let (r2, g2, b2) = other.to_rgb();
-        let r = (r1 as f32 * alpha + r2 as f32 * (1.0 - alpha)).round() as u8;
-        let g = (g1 as f32 * alpha + g2 as f32 * (1.0 - alpha)).round() as u8;
-        let b = (b1 as f32 * alpha + b2 as f32 * (1.0 - alpha)).round() as u8;
+        let r = (f64::from(r1) * alpha + f64::from(r2) * (1.0 - alpha)).round() as u8;
+        let g = (f64::from(g1) * alpha + f64::from(g2) * (1.0 - alpha)).round() as u8;
+        let b = (f64::from(b1) * alpha + f64::from(b2) * (1.0 - alpha)).round() as u8;
         Color::Rgb(r, g, b)
+    }
+
+    /// Deprecated `f32` alias for [`blend_f64`](Self::blend_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::blend_f64() to keep public float APIs on f64"
+    )]
+    pub fn blend(self, other: Color, alpha: f32) -> Color {
+        self.blend_f64(other, f64::from(alpha))
     }
 
     /// Lighten this color by the given amount (0.0–1.0).
     ///
     /// Blends toward white. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns white.
+    pub fn lighten_f64(self, amount: f64) -> Color {
+        Color::Rgb(255, 255, 255).blend_f64(self, 1.0 - amount.clamp(0.0, 1.0))
+    }
+
+    /// Deprecated `f32` alias for [`lighten_f64`](Self::lighten_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::lighten_f64() to keep public float APIs on f64"
+    )]
     pub fn lighten(self, amount: f32) -> Color {
-        Color::Rgb(255, 255, 255).blend(self, 1.0 - amount.clamp(0.0, 1.0))
+        self.lighten_f64(f64::from(amount))
     }
 
     /// Darken this color by the given amount (0.0–1.0).
     ///
     /// Blends toward black. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns black.
+    pub fn darken_f64(self, amount: f64) -> Color {
+        Color::Rgb(0, 0, 0).blend_f64(self, 1.0 - amount.clamp(0.0, 1.0))
+    }
+
+    /// Deprecated `f32` alias for [`darken_f64`](Self::darken_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::darken_f64() to keep public float APIs on f64"
+    )]
     pub fn darken(self, amount: f32) -> Color {
-        Color::Rgb(0, 0, 0).blend(self, 1.0 - amount.clamp(0.0, 1.0))
+        self.darken_f64(f64::from(amount))
     }
 
     /// Compute the WCAG 2.1 contrast ratio between two colors.
@@ -183,19 +219,28 @@ impl Color {
     /// ```
     /// use slt::Color;
     ///
-    /// let ratio = Color::contrast_ratio(Color::White, Color::Black);
+    /// let ratio = Color::contrast_ratio_f64(Color::White, Color::Black);
     /// assert!(ratio > 15.0);
     /// ```
-    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
-        let la = a.luminance() + 0.05;
-        let lb = b.luminance() + 0.05;
+    pub fn contrast_ratio_f64(a: Color, b: Color) -> f64 {
+        let la = a.luminance_f64() + 0.05;
+        let lb = b.luminance_f64() + 0.05;
         if la > lb { la / lb } else { lb / la }
+    }
+
+    /// Deprecated `f32` alias for [`contrast_ratio_f64`](Self::contrast_ratio_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::contrast_ratio_f64() to keep public float APIs on f64"
+    )]
+    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
+        Self::contrast_ratio_f64(a, b) as f32
     }
 
     /// Returns `true` if the contrast ratio between two colors meets WCAG AA
     /// for normal text (ratio >= 4.5).
     pub fn meets_contrast_aa(fg: Color, bg: Color) -> bool {
-        Self::contrast_ratio(fg, bg) >= 4.5
+        Self::contrast_ratio_f64(fg, bg) >= 4.5
     }
 
     /// Downsample this color to fit the given color depth.
@@ -291,13 +336,22 @@ impl Color {
     /// ```
     /// use slt::Color;
     ///
-    /// assert_eq!(Color::from_hsl(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
-    /// assert_eq!(Color::from_hsl(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
-    /// assert_eq!(Color::from_hsl(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+    /// assert_eq!(Color::from_hsl_f64(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+    /// assert_eq!(Color::from_hsl_f64(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
+    /// assert_eq!(Color::from_hsl_f64(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
     /// ```
-    pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
+    pub fn from_hsl_f64(h: f64, s: f64, l: f64) -> Color {
         let (r, g, b) = hsl_to_rgb(h, s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
         Color::Rgb(r, g, b)
+    }
+
+    /// Deprecated `f32` alias for [`from_hsl_f64`](Self::from_hsl_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::from_hsl_f64() to keep public float APIs on f64"
+    )]
+    pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
+        Self::from_hsl_f64(f64::from(h), f64::from(s), f64::from(l))
     }
 
     /// Construct an [`Color::Rgb`] from HSV (a.k.a. HSB) components.
@@ -310,13 +364,22 @@ impl Color {
     /// ```
     /// use slt::Color;
     ///
-    /// assert_eq!(Color::from_hsv(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
-    /// assert_eq!(Color::from_hsv(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
-    /// assert_eq!(Color::from_hsv(0.0, 0.0, 1.0), Color::Rgb(255, 255, 255));
+    /// assert_eq!(Color::from_hsv_f64(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
+    /// assert_eq!(Color::from_hsv_f64(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
+    /// assert_eq!(Color::from_hsv_f64(0.0, 0.0, 1.0), Color::Rgb(255, 255, 255));
     /// ```
-    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
+    pub fn from_hsv_f64(h: f64, s: f64, v: f64) -> Color {
         let (r, g, b) = hsv_to_rgb(h, s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
         Color::Rgb(r, g, b)
+    }
+
+    /// Deprecated `f32` alias for [`from_hsv_f64`](Self::from_hsv_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::from_hsv_f64() to keep public float APIs on f64"
+    )]
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
+        Self::from_hsv_f64(f64::from(h), f64::from(s), f64::from(v))
     }
 
     /// Rotate the hue of this color by `degrees` around the HSL color wheel.
@@ -333,13 +396,22 @@ impl Color {
     /// use slt::Color;
     ///
     /// // Rotating pure red by 120° lands on pure green.
-    /// assert_eq!(Color::Rgb(255, 0, 0).rotate_hue(120.0), Color::Rgb(0, 255, 0));
+    /// assert_eq!(Color::Rgb(255, 0, 0).rotate_hue_f64(120.0), Color::Rgb(0, 255, 0));
     /// ```
-    pub fn rotate_hue(self, degrees: f32) -> Color {
+    pub fn rotate_hue_f64(self, degrees: f64) -> Color {
         let (r, g, b) = self.to_rgb();
         let (h, s, l) = rgb_to_hsl(r, g, b);
         let (nr, ng, nb) = hsl_to_rgb(h + degrees, s, l);
         Color::Rgb(nr, ng, nb)
+    }
+
+    /// Deprecated `f32` alias for [`rotate_hue_f64`](Self::rotate_hue_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use Color::rotate_hue_f64() to keep public float APIs on f64"
+    )]
+    pub fn rotate_hue(self, degrees: f32) -> Color {
+        self.rotate_hue_f64(f64::from(degrees))
     }
 }
 
@@ -523,7 +595,7 @@ fn named_color(s: &str) -> Option<Color> {
 ///
 /// The hue is wrapped into `0..360`. Inputs are assumed already clamped by
 /// the caller.
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     let h = wrap_hue(h);
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
@@ -540,7 +612,7 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
 ///
 /// The hue is wrapped into `0..360`. Inputs are assumed already clamped by
 /// the caller.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
     let h = wrap_hue(h);
     let c = v * s;
     let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
@@ -555,16 +627,16 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
 
 /// Convert `(r, g, b)` to HSL with `h` in degrees `[0, 360)` and `s`/`l` in
 /// `[0.0, 1.0]`.
-fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
-    let rf = r as f32 / 255.0;
-    let gf = g as f32 / 255.0;
-    let bf = b as f32 / 255.0;
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let rf = f64::from(r) / 255.0;
+    let gf = f64::from(g) / 255.0;
+    let bf = f64::from(b) / 255.0;
     let max = rf.max(gf).max(bf);
     let min = rf.min(gf).min(bf);
     let delta = max - min;
     let l = (max + min) / 2.0;
 
-    if delta <= f32::EPSILON {
+    if delta <= f64::EPSILON {
         // Achromatic: hue is undefined, conventionally 0.
         return (0.0, 0.0, l);
     }
@@ -590,7 +662,7 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
 /// Map a hue (already wrapped into `0..360`) and chroma components onto the
 /// six RGB sextants, returning the un-offset `(r, g, b)` floats.
 #[inline]
-fn hue_sextant(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+fn hue_sextant(h: f64, c: f64, x: f64) -> (f64, f64, f64) {
     match h {
         h if h < 60.0 => (c, x, 0.0),
         h if h < 120.0 => (x, c, 0.0),
@@ -603,14 +675,14 @@ fn hue_sextant(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
 
 /// Wrap a hue in degrees into the half-open range `[0.0, 360.0)`.
 #[inline]
-fn wrap_hue(h: f32) -> f32 {
+fn wrap_hue(h: f64) -> f64 {
     let h = h % 360.0;
     if h < 0.0 { h + 360.0 } else { h }
 }
 
 /// Scale a `[0.0, 1.0]` channel to a rounded, clamped `u8`.
 #[inline]
-fn round_channel(v: f32) -> u8 {
+fn round_channel(v: f64) -> u8 {
     (v * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
@@ -837,9 +909,9 @@ fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
 }
 
 fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
-    let lum = 0.2126 * to_linear(r as f32 / 255.0)
-        + 0.7152 * to_linear(g as f32 / 255.0)
-        + 0.0722 * to_linear(b as f32 / 255.0);
+    let lum = 0.2126 * to_linear(f64::from(r) / 255.0)
+        + 0.7152 * to_linear(f64::from(g) / 255.0)
+        + 0.0722 * to_linear(f64::from(b) / 255.0);
 
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -962,20 +1034,20 @@ mod tests {
     #[test]
     fn blend_halfway_rounds_to_128() {
         assert_eq!(
-            Color::Rgb(255, 255, 255).blend(Color::Rgb(0, 0, 0), 0.5),
+            Color::Rgb(255, 255, 255).blend_f64(Color::Rgb(0, 0, 0), 0.5),
             Color::Rgb(128, 128, 128)
         );
     }
 
     #[test]
     fn contrast_ratio_white_on_black_is_high() {
-        let ratio = Color::contrast_ratio(Color::White, Color::Black);
+        let ratio = Color::contrast_ratio_f64(Color::White, Color::Black);
         assert!(ratio > 15.0);
     }
 
     #[test]
     fn contrast_ratio_same_color_is_one() {
-        let ratio = Color::contrast_ratio(Color::Rgb(100, 100, 100), Color::Rgb(100, 100, 100));
+        let ratio = Color::contrast_ratio_f64(Color::Rgb(100, 100, 100), Color::Rgb(100, 100, 100));
         assert!((ratio - 1.0).abs() < 0.01);
     }
 
@@ -1018,7 +1090,7 @@ mod tests {
 
     #[test]
     fn luminance_dracula_purple_wcag() {
-        let l = Color::Rgb(189, 147, 249).luminance();
+        let l = Color::Rgb(189, 147, 249).luminance_f64();
         assert!((l - 0.385).abs() < 0.01, "expected ~0.385, got {l}");
     }
 
@@ -1027,13 +1099,13 @@ mod tests {
         let p = Color::Rgb(189, 147, 249);
         let bg = Color::Rgb(40, 42, 54);
         assert!(Color::meets_contrast_aa(p, bg));
-        let r = Color::contrast_ratio(p, bg);
+        let r = Color::contrast_ratio_f64(p, bg);
         assert!((r - 5.90).abs() < 0.1, "expected ~5.90, got {r}");
     }
 
     #[test]
     fn contrast_white_on_black_is_21() {
-        let r = Color::contrast_ratio(Color::Rgb(255, 255, 255), Color::Rgb(0, 0, 0));
+        let r = Color::contrast_ratio_f64(Color::Rgb(255, 255, 255), Color::Rgb(0, 0, 0));
         assert!((r - 21.0).abs() < 0.5, "expected ~21.0, got {r}");
     }
 
@@ -1154,55 +1226,67 @@ mod tests {
 
     #[test]
     fn from_hsl_primaries() {
-        assert_eq!(Color::from_hsl(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
-        assert_eq!(Color::from_hsl(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
-        assert_eq!(Color::from_hsl(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+        assert_eq!(Color::from_hsl_f64(0.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+        assert_eq!(Color::from_hsl_f64(120.0, 1.0, 0.5), Color::Rgb(0, 255, 0));
+        assert_eq!(Color::from_hsl_f64(240.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
         // Lightness extremes.
-        assert_eq!(Color::from_hsl(0.0, 1.0, 0.0), Color::Rgb(0, 0, 0));
-        assert_eq!(Color::from_hsl(0.0, 1.0, 1.0), Color::Rgb(255, 255, 255));
+        assert_eq!(Color::from_hsl_f64(0.0, 1.0, 0.0), Color::Rgb(0, 0, 0));
+        assert_eq!(
+            Color::from_hsl_f64(0.0, 1.0, 1.0),
+            Color::Rgb(255, 255, 255)
+        );
         // Zero saturation → gray regardless of hue.
-        assert_eq!(Color::from_hsl(123.0, 0.0, 0.5), Color::Rgb(128, 128, 128));
+        assert_eq!(
+            Color::from_hsl_f64(123.0, 0.0, 0.5),
+            Color::Rgb(128, 128, 128)
+        );
     }
 
     #[test]
     fn from_hsl_wraps_and_clamps() {
         // Hue 360 wraps to 0 → red.
-        assert_eq!(Color::from_hsl(360.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
+        assert_eq!(Color::from_hsl_f64(360.0, 1.0, 0.5), Color::Rgb(255, 0, 0));
         // Negative hue wraps: -120 == 240 → blue.
-        assert_eq!(Color::from_hsl(-120.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
+        assert_eq!(Color::from_hsl_f64(-120.0, 1.0, 0.5), Color::Rgb(0, 0, 255));
         // Out-of-range s/l are clamped, no panic.
-        assert_eq!(Color::from_hsl(0.0, 5.0, 2.0), Color::Rgb(255, 255, 255));
+        assert_eq!(
+            Color::from_hsl_f64(0.0, 5.0, 2.0),
+            Color::Rgb(255, 255, 255)
+        );
     }
 
     #[test]
     fn from_hsv_primaries() {
-        assert_eq!(Color::from_hsv(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
-        assert_eq!(Color::from_hsv(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
-        assert_eq!(Color::from_hsv(240.0, 1.0, 1.0), Color::Rgb(0, 0, 255));
+        assert_eq!(Color::from_hsv_f64(0.0, 1.0, 1.0), Color::Rgb(255, 0, 0));
+        assert_eq!(Color::from_hsv_f64(120.0, 1.0, 1.0), Color::Rgb(0, 255, 0));
+        assert_eq!(Color::from_hsv_f64(240.0, 1.0, 1.0), Color::Rgb(0, 0, 255));
         // White and black.
-        assert_eq!(Color::from_hsv(0.0, 0.0, 1.0), Color::Rgb(255, 255, 255));
-        assert_eq!(Color::from_hsv(0.0, 0.0, 0.0), Color::Rgb(0, 0, 0));
+        assert_eq!(
+            Color::from_hsv_f64(0.0, 0.0, 1.0),
+            Color::Rgb(255, 255, 255)
+        );
+        assert_eq!(Color::from_hsv_f64(0.0, 0.0, 0.0), Color::Rgb(0, 0, 0));
     }
 
     #[test]
     fn rotate_hue_primary_round_trip() {
         // Red rotated 120° → green, another 120° → blue.
         assert_eq!(
-            Color::Rgb(255, 0, 0).rotate_hue(120.0),
+            Color::Rgb(255, 0, 0).rotate_hue_f64(120.0),
             Color::Rgb(0, 255, 0)
         );
         assert_eq!(
-            Color::Rgb(0, 255, 0).rotate_hue(120.0),
+            Color::Rgb(0, 255, 0).rotate_hue_f64(120.0),
             Color::Rgb(0, 0, 255)
         );
         // 180° on red lands on cyan.
         assert_eq!(
-            Color::Rgb(255, 0, 0).rotate_hue(180.0),
+            Color::Rgb(255, 0, 0).rotate_hue_f64(180.0),
             Color::Rgb(0, 255, 255)
         );
         // Full 360° rotation is a no-op (within rounding) for a primary.
         assert_eq!(
-            Color::Rgb(255, 0, 0).rotate_hue(360.0),
+            Color::Rgb(255, 0, 0).rotate_hue_f64(360.0),
             Color::Rgb(255, 0, 0)
         );
     }
@@ -1210,9 +1294,9 @@ mod tests {
     #[test]
     fn rotate_hue_resolves_named_to_rgb() {
         // Named/indexed colors resolve through the palette and yield Rgb.
-        let rotated = Color::Red.rotate_hue(0.0);
+        let rotated = Color::Red.rotate_hue_f64(0.0);
         assert_eq!(rotated, Color::Rgb(205, 49, 49));
-        let gray = Color::Rgb(120, 120, 120).rotate_hue(90.0);
+        let gray = Color::Rgb(120, 120, 120).rotate_hue_f64(90.0);
         // Achromatic input stays achromatic (gray) after rotation.
         assert_eq!(gray, Color::Rgb(120, 120, 120));
     }

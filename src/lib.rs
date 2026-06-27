@@ -132,8 +132,6 @@ use std::io;
 #[cfg(feature = "crossterm")]
 use std::io::IsTerminal;
 #[cfg(feature = "crossterm")]
-use std::io::Write;
-#[cfg(feature = "crossterm")]
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
@@ -341,6 +339,15 @@ impl AppState {
     }
 
     /// Returns the smoothed FPS estimate (exponential moving average).
+    pub fn fps_f64(&self) -> f64 {
+        f64::from(self.inner.diagnostics.fps_ema)
+    }
+
+    /// Deprecated `f32` alias for [`fps_f64`](Self::fps_f64).
+    #[deprecated(
+        since = "0.22.2",
+        note = "use AppState::fps_f64() to keep public float APIs on f64"
+    )]
     pub fn fps(&self) -> f32 {
         self.inner.diagnostics.fps_ema
     }
@@ -436,17 +443,7 @@ fn install_panic_hook() {
     PANIC_HOOK_ONCE.call_once(|| {
         let original = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
-            let _ = crossterm::terminal::disable_raw_mode();
-            let mut stdout = io::stdout();
-            let _ = crossterm::execute!(
-                stdout,
-                crossterm::terminal::LeaveAlternateScreen,
-                crossterm::cursor::Show,
-                crossterm::event::DisableMouseCapture,
-                crossterm::event::DisableBracketedPaste,
-                crossterm::style::ResetColor,
-                crossterm::style::SetAttribute(crossterm::style::Attribute::Reset)
-            );
+            terminal::cleanup_after_panic();
 
             // Print friendly panic header
             eprintln!("\n\x1b[1;31m━━━ SLT Panic ━━━\x1b[0m\n");
@@ -463,9 +460,9 @@ fn install_panic_hook() {
 
             // Print message
             if let Some(msg) = panic_info.payload().downcast_ref::<&str>() {
-                eprintln!("\x1b[1m{}\x1b[0m", msg);
+                eprintln!("\x1b[1m{msg}\x1b[0m");
             } else if let Some(msg) = panic_info.payload().downcast_ref::<String>() {
-                eprintln!("\x1b[1m{}\x1b[0m", msg);
+                eprintln!("\x1b[1m{msg}\x1b[0m");
             }
 
             eprintln!(
@@ -546,6 +543,15 @@ fn install_suspend_handler(snapshot: terminal::SessionSnapshot) -> io::Result<Su
         handle,
         thread: Some(thread),
     })
+}
+
+#[cfg(all(feature = "crossterm", unix))]
+fn suspend_current_session(snapshot: terminal::SessionSnapshot) -> io::Result<()> {
+    terminal::suspend_to_shell(&snapshot);
+    let result = signal_hook::low_level::emulate_default_handler(signal_hook::consts::SIGTSTP);
+    terminal::resume_from_shell(&snapshot);
+    result?;
+    Ok(())
 }
 
 /// Consume the pending full-redraw request raised by a `SIGCONT` resume and, if
@@ -1094,10 +1100,25 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 fn set_terminal_title(title: &Option<String>) {
     if let Some(title) = title {
         use std::io::Write;
+        let title = sanitize_terminal_text(title);
         let mut stdout = io::stdout();
         let _ = write!(stdout, "\x1b]2;{title}\x07");
         let _ = stdout.flush();
     }
+}
+
+#[cfg(feature = "crossterm")]
+fn sanitize_terminal_text(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || ('\u{80}'..='\u{9f}').contains(&ch) {
+                '?'
+            } else {
+                ch
+            }
+        })
+        .collect()
 }
 
 /// Run the TUI loop with custom configuration.
@@ -1174,12 +1195,21 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         discard_static_log(&mut state, "full-screen run()");
         let render_elapsed = frame_start.elapsed();
 
+        #[cfg(unix)]
+        let suspend_snapshot = term.session_snapshot();
+        #[cfg(unix)]
+        let mut on_suspend = || suspend_current_session(suspend_snapshot);
+        #[cfg(not(unix))]
+        let mut on_suspend = || Ok(());
+
         if !poll_events(
             &mut events,
             &mut state,
             config.tick_rate,
             &mut || term.handle_resize(),
             config.handle_ctrl_c,
+            config.handle_suspend,
+            &mut on_suspend,
         )? {
             break;
         }
@@ -1247,6 +1277,22 @@ pub fn run_async_with<M: Send + 'static>(
 }
 
 #[cfg(all(feature = "crossterm", feature = "async"))]
+fn drain_async_messages<M>(rx: &mut tokio::sync::mpsc::Receiver<M>, messages: &mut Vec<M>) -> bool {
+    let mut disconnected = false;
+    loop {
+        match rx.try_recv() {
+            Ok(message) => messages.push(message),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                disconnected = true;
+                break;
+            }
+        }
+    }
+    disconnected
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
 fn run_async_loop<M: Send + 'static>(
     config: RunConfig,
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
@@ -1290,8 +1336,9 @@ fn run_async_loop<M: Send + 'static>(
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
         messages.clear();
-        while let Ok(message) = rx.try_recv() {
-            messages.push(message);
+        let input_disconnected = drain_async_messages(&mut rx, &mut messages);
+        if input_disconnected && messages.is_empty() {
+            break;
         }
 
         let (w, h) = term.size();
@@ -1315,7 +1362,17 @@ fn run_async_loop<M: Send + 'static>(
         // Issue #233: full-screen async mode has no scrollback channel — warn
         // and drop any pending static_log lines.
         discard_static_log(&mut state, "run_async()");
+        if input_disconnected {
+            break;
+        }
         let render_elapsed = frame_start.elapsed();
+
+        #[cfg(unix)]
+        let suspend_snapshot = term.session_snapshot();
+        #[cfg(unix)]
+        let mut on_suspend = || suspend_current_session(suspend_snapshot);
+        #[cfg(not(unix))]
+        let mut on_suspend = || Ok(());
 
         if !poll_events(
             &mut events,
@@ -1323,6 +1380,8 @@ fn run_async_loop<M: Send + 'static>(
             config.tick_rate,
             &mut || term.handle_resize(),
             config.handle_ctrl_c,
+            config.handle_suspend,
+            &mut on_suspend,
         )? {
             break;
         }
@@ -1420,12 +1479,21 @@ pub fn run_inline_with(
         discard_static_log(&mut state, "run_inline()");
         let render_elapsed = frame_start.elapsed();
 
+        #[cfg(unix)]
+        let suspend_snapshot = term.session_snapshot();
+        #[cfg(unix)]
+        let mut on_suspend = || suspend_current_session(suspend_snapshot);
+        #[cfg(not(unix))]
+        let mut on_suspend = || Ok(());
+
         if !poll_events(
             &mut events,
             &mut state,
             config.tick_rate,
             &mut || term.handle_resize(),
             config.handle_ctrl_c,
+            config.handle_suspend,
+            &mut on_suspend,
         )? {
             break;
         }
@@ -1528,12 +1596,21 @@ pub fn run_static_with(
         }
         let render_elapsed = frame_start.elapsed();
 
+        #[cfg(unix)]
+        let suspend_snapshot = term.session_snapshot();
+        #[cfg(unix)]
+        let mut on_suspend = || suspend_current_session(suspend_snapshot);
+        #[cfg(not(unix))]
+        let mut on_suspend = || Ok(());
+
         if !poll_events(
             &mut events,
             &mut state,
             config.tick_rate,
             &mut || term.handle_resize(),
             config.handle_ctrl_c,
+            config.handle_suspend,
+            &mut on_suspend,
         )? {
             break;
         }
@@ -1551,8 +1628,14 @@ fn write_static_lines(lines: &[String]) -> io::Result<()> {
     }
 
     let mut stdout = io::stdout();
+    write_static_lines_to(&mut stdout, lines)
+}
+
+#[cfg(feature = "crossterm")]
+fn write_static_lines_to(stdout: &mut impl io::Write, lines: &[String]) -> io::Result<()> {
     for line in lines {
-        stdout.write_all(line.as_bytes())?;
+        let safe = sanitize_terminal_text(line);
+        stdout.write_all(safe.as_bytes())?;
         stdout.write_all(b"\r\n")?;
     }
     stdout.flush()
@@ -1723,6 +1806,8 @@ fn poll_events(
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
     handle_ctrl_c: bool,
+    handle_suspend: bool,
+    on_suspend: &mut impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
     let mut has_resize = false;
 
@@ -1736,6 +1821,10 @@ fn poll_events(
             if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
+            if handle_suspend && is_ctrl_z(&ev) {
+                on_suspend()?;
+                return Ok(true);
+            }
             // Resize is recorded (via `has_resize`) but not yet acted on — the
             // single `on_resize` call is deferred to end-of-batch so a burst
             // collapses into one geometry sync.
@@ -1748,6 +1837,10 @@ fn poll_events(
             if let Some(ev) = event::from_crossterm(raw) {
                 if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
+                }
+                if handle_suspend && is_ctrl_z(&ev) {
+                    on_suspend()?;
+                    return Ok(true);
                 }
                 process_ev(&ev, state, &mut has_resize);
                 events.push(ev);
@@ -2250,6 +2343,18 @@ fn is_ctrl_c(ev: &Event) -> bool {
 }
 
 #[cfg(feature = "crossterm")]
+fn is_ctrl_z(ev: &Event) -> bool {
+    matches!(
+        ev,
+        Event::Key(event::KeyEvent {
+            code: KeyCode::Char('z'),
+            modifiers,
+            kind: event::KeyEventKind::Press,
+        }) if modifiers.contains(KeyModifiers::CONTROL)
+    )
+}
+
+#[cfg(feature = "crossterm")]
 fn sleep_for_fps_cap(max_fps: Option<u32>, render_elapsed: Duration) {
     if let Some(fps) = max_fps.filter(|fps| *fps > 0) {
         let target = Duration::from_secs_f64(1.0 / fps as f64);
@@ -2272,6 +2377,38 @@ mod run_loop_tests {
             kind: event::KeyEventKind::Press,
             modifiers,
         })
+    }
+
+    fn char_key(ch: char, modifiers: event::KeyModifiers) -> Event {
+        Event::Key(event::KeyEvent {
+            code: KeyCode::Char(ch),
+            kind: event::KeyEventKind::Press,
+            modifiers,
+        })
+    }
+
+    #[test]
+    fn terminal_text_sanitizer_replaces_control_bytes() {
+        assert_eq!(
+            sanitize_terminal_text("safe\x1b]52;c;AAAA\x07text\u{9b}tail"),
+            "safe?]52;c;AAAA?text?tail"
+        );
+    }
+
+    #[test]
+    fn static_lines_are_sanitized_before_scrollback_write() {
+        let lines = vec!["ok\x1b[31mred\x07".to_string()];
+        let mut out = Vec::new();
+        write_static_lines_to(&mut out, &lines).unwrap();
+        assert_eq!(out, b"ok?[31mred?\r\n");
+    }
+
+    #[test]
+    fn ctrl_z_suspend_key_is_detected_separately_from_ctrl_c() {
+        assert!(is_ctrl_z(&char_key('z', event::KeyModifiers::CONTROL)));
+        assert!(!is_ctrl_z(&char_key('z', event::KeyModifiers::NONE)));
+        assert!(is_ctrl_c(&char_key('c', event::KeyModifiers::CONTROL)));
+        assert!(!is_ctrl_c(&char_key('z', event::KeyModifiers::CONTROL)));
     }
 
     #[test]
@@ -2345,6 +2482,21 @@ mod run_loop_tests {
         let before = state.diagnostics.debug_layer;
         process_run_loop_event(&key(event::KeyModifiers::NONE), &mut state, &mut has_resize);
         assert_eq!(state.diagnostics.debug_layer, before);
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn async_message_drain_reports_disconnect_after_sender_drop() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        tx.try_send(1u8).expect("channel has capacity");
+        tx.try_send(2u8).expect("channel has capacity");
+        drop(tx);
+
+        let mut messages = Vec::new();
+        let disconnected = drain_async_messages(&mut rx, &mut messages);
+
+        assert!(disconnected);
+        assert_eq!(messages, vec![1, 2]);
     }
 
     // ── Issue #268: Ctrl+F12 devtools inspector toggle ───────────────────

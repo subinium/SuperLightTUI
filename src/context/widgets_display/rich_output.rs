@@ -95,8 +95,10 @@ impl Context {
     /// The widget allocates `cols` x `rows` cells and renders the image
     /// at full pixel resolution within that space.
     ///
-    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm).
-    /// On unsupported terminals, the area will be blank.
+    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm). On
+    /// unsupported terminals, falls back to half-block cell rendering. Set
+    /// `SLT_FORCE_KITTY=1` only when the terminal path is known to pass Kitty
+    /// graphics through.
     ///
     /// # Arguments
     /// * `rgba` - Raw RGBA pixel data
@@ -112,6 +114,17 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
+        if !self.kitty_graphics_supported() {
+            return self.rgba_halfblock_fallback(
+                rgba,
+                pixel_width,
+                pixel_height,
+                cols,
+                rows,
+                "[kitty unsupported]",
+            );
+        }
+
         let rgba_data = normalize_rgba(rgba, pixel_width, pixel_height);
         let content_hash = crate::buffer::hash_rgba(&rgba_data);
         let rgba_arc = std::sync::Arc::new(rgba_data);
@@ -146,7 +159,9 @@ impl Context {
     /// using detected cell pixel dimensions (falls back to 8×16 if
     /// detection fails).
     ///
-    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm).
+    /// Requires a Kitty-compatible terminal (Kitty, Ghostty, WezTerm). On
+    /// unsupported terminals, falls back to half-block cell rendering without
+    /// probing cell pixel size.
     pub fn kitty_image_fit(
         &mut self,
         rgba: &[u8],
@@ -154,18 +169,28 @@ impl Context {
         src_height: u32,
         cols: u32,
     ) -> Response {
+        let supported = self.kitty_graphics_supported();
         #[cfg(feature = "crossterm")]
-        let (cell_w, cell_h) = crate::terminal::cell_pixel_size();
+        let (cell_w, cell_h) = if supported {
+            crate::terminal::cell_pixel_size()
+        } else {
+            (8u32, 16u32)
+        };
         #[cfg(not(feature = "crossterm"))]
         let (cell_w, cell_h) = (8u32, 16u32);
 
-        let rows = if src_width == 0 {
-            1
-        } else {
-            ((cols as f64 * src_height as f64 * cell_w as f64) / (src_width as f64 * cell_h as f64))
-                .ceil()
-                .max(1.0) as u32
-        };
+        let rows = image_fit_rows(src_width, src_height, cols, cell_w, cell_h);
+        if !supported {
+            return self.rgba_halfblock_fallback(
+                rgba,
+                src_width,
+                src_height,
+                cols,
+                rows,
+                "[kitty unsupported]",
+            );
+        }
+
         let rgba_data = normalize_rgba(rgba, src_width, src_height);
         let content_hash = crate::buffer::hash_rgba(&rgba_data);
         let rgba_arc = std::sync::Arc::new(rgba_data);
@@ -225,8 +250,7 @@ impl Context {
         // allowlist (now including WezTerm/Ghostty) / `SLT_FORCE_SIXEL` when the
         // probe returned unknown. App code never selects a protocol — the
         // blitter ladder resolves it.
-        let sixel_supported =
-            self.is_real_terminal && (self.capabilities.sixel || terminal_supports_sixel());
+        let sixel_supported = self.sixel_supported();
         if !sixel_supported {
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
@@ -301,8 +325,7 @@ impl Context {
         // Issue #264 ladder integration: consult the negotiated capability
         // snapshot first, then the env allowlist / `SLT_FORCE_ITERM`. App code
         // never selects a protocol directly.
-        let supported =
-            self.is_real_terminal && (self.capabilities.iterm2 || terminal_supports_iterm());
+        let supported = self.iterm_supported();
         if !supported {
             return self.iterm_placeholder(cols, rows);
         }
@@ -352,14 +375,17 @@ impl Context {
     #[cfg(feature = "crossterm")]
     #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn iterm_image_fit(&mut self, data: &[u8], cols: u32) -> Response {
-        let supported =
-            self.is_real_terminal && (self.capabilities.iterm2 || terminal_supports_iterm());
+        let supported = self.iterm_supported();
 
         // Reserve rows from the cell aspect using a 1:1 source assumption — the
         // terminal does the real aspect math from the decoded file; this only
         // sizes the cell box so layout below the image is not clobbered. Use a
         // square-ish default of `cols / 2` rows (cells are ~2:1 tall), min 1.
-        let (cell_w, cell_h) = crate::terminal::cell_pixel_size();
+        let (cell_w, cell_h) = if supported {
+            crate::terminal::cell_pixel_size()
+        } else {
+            (8u32, 16u32)
+        };
         let rows = if cell_h == 0 {
             cols.max(1)
         } else {
@@ -393,6 +419,106 @@ impl Context {
                 rows: rect.height,
                 cells: vec![crate::buffer::SprixelCell::Opaque; cells],
             });
+        });
+        Response::none()
+    }
+
+    #[cfg(feature = "crossterm")]
+    fn kitty_graphics_supported(&self) -> bool {
+        if !self.is_real_terminal {
+            return false;
+        }
+        if terminal_force_graphics("SLT_FORCE_KITTY") {
+            return true;
+        }
+        if terminal_graphics_blocked_by_multiplexer() {
+            return false;
+        }
+        self.capabilities.kitty_graphics || terminal_supports_kitty()
+    }
+
+    #[cfg(not(feature = "crossterm"))]
+    fn kitty_graphics_supported(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "crossterm")]
+    fn sixel_supported(&self) -> bool {
+        if !self.is_real_terminal {
+            return false;
+        }
+        if terminal_force_graphics("SLT_FORCE_SIXEL") {
+            return true;
+        }
+        if terminal_graphics_blocked_by_multiplexer() {
+            return false;
+        }
+        self.capabilities.sixel || terminal_supports_sixel()
+    }
+
+    #[cfg(feature = "crossterm")]
+    fn iterm_supported(&self) -> bool {
+        if !self.is_real_terminal {
+            return false;
+        }
+        if terminal_force_graphics("SLT_FORCE_ITERM") {
+            return true;
+        }
+        if terminal_graphics_blocked_by_multiplexer() {
+            return false;
+        }
+        self.capabilities.iterm2 || terminal_supports_iterm()
+    }
+
+    fn rgba_halfblock_fallback(
+        &mut self,
+        rgba: &[u8],
+        pixel_width: u32,
+        pixel_height: u32,
+        cols: u32,
+        rows: u32,
+        placeholder: &'static str,
+    ) -> Response {
+        let rgba_data = normalize_rgba(rgba, pixel_width, pixel_height);
+        if rgba_data.is_empty() {
+            self.container().w(cols).h(rows).draw(move |buf, rect| {
+                if rect.width == 0 || rect.height == 0 {
+                    return;
+                }
+                buf.set_string(rect.x, rect.y, placeholder, Style::new());
+            });
+            return Response::none();
+        }
+
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
+            if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+
+            let dst_pixel_height = rect.height.saturating_mul(2).max(1);
+            for row in 0..rect.height {
+                for col in 0..rect.width {
+                    let upper = sample_rgba_color(
+                        &rgba_data,
+                        pixel_width,
+                        pixel_height,
+                        col,
+                        row * 2,
+                        rect.width,
+                        dst_pixel_height,
+                    );
+                    let lower = sample_rgba_color(
+                        &rgba_data,
+                        pixel_width,
+                        pixel_height,
+                        col,
+                        row.saturating_mul(2).saturating_add(1),
+                        rect.width,
+                        dst_pixel_height,
+                    );
+                    draw_halfblock_cell(buf, rect.x + col, rect.y + row, upper, lower);
+                }
+            }
         });
         Response::none()
     }

@@ -44,7 +44,7 @@ impl Rect {
     /// This is one column past the last column in the rectangle.
     #[inline]
     pub const fn right(&self) -> u32 {
-        self.x + self.width
+        self.x.saturating_add(self.width)
     }
 
     /// Exclusive bottom edge (`y + height`).
@@ -52,7 +52,7 @@ impl Rect {
     /// This is one row past the last row in the rectangle.
     #[inline]
     pub const fn bottom(&self) -> u32 {
-        self.y + self.height
+        self.y.saturating_add(self.height)
     }
 
     /// Returns `true` if the rectangle has zero area (width or height is zero).
@@ -78,8 +78,8 @@ impl Rect {
     pub fn centered(&self, inner_w: u32, inner_h: u32) -> Rect {
         let w = inner_w.min(self.width);
         let h = inner_h.min(self.height);
-        let x = self.x + (self.width.saturating_sub(w)) / 2;
-        let y = self.y + (self.height.saturating_sub(h)) / 2;
+        let x = self.x.saturating_add((self.width.saturating_sub(w)) / 2);
+        let y = self.y.saturating_add((self.height.saturating_sub(h)) / 2);
         Rect {
             x,
             y,
@@ -110,8 +110,8 @@ impl Rect {
         Rect {
             x,
             y,
-            width: right - x,
-            height: bottom - y,
+            width: right.saturating_sub(x),
+            height: bottom.saturating_sub(y),
         }
     }
 
@@ -139,8 +139,8 @@ impl Rect {
             Some(Rect {
                 x,
                 y,
-                width: right - x,
-                height: bottom - y,
+                width: right.saturating_sub(x),
+                height: bottom.saturating_sub(y),
             })
         } else {
             None
@@ -236,8 +236,8 @@ impl Rect {
         } else {
             parent.height
         };
-        let x = parent.x + parent.width.saturating_sub(w) / 2;
-        let y = parent.y + parent.height.saturating_sub(h) / 2;
+        let x = parent.x.saturating_add(parent.width.saturating_sub(w) / 2);
+        let y = parent.y.saturating_add(parent.height.saturating_sub(h) / 2);
         Rect {
             x,
             y,
@@ -266,7 +266,7 @@ impl Rect {
         } else {
             parent.width
         };
-        let x = parent.x + parent.width.saturating_sub(w) / 2;
+        let x = parent.x.saturating_add(parent.width.saturating_sub(w) / 2);
         Rect {
             x,
             y: self.y,
@@ -295,7 +295,7 @@ impl Rect {
         } else {
             parent.height
         };
-        let y = parent.y + parent.height.saturating_sub(h) / 2;
+        let y = parent.y.saturating_add(parent.height.saturating_sub(h) / 2);
         Rect {
             x: self.x,
             y,
@@ -473,6 +473,31 @@ mod tests {
         // Concrete case from issue #166: 65536 * 65536 wraps to 0 without fix
         let r2 = Rect::new(0, 0, 65536, 65536);
         assert_eq!(r2.area(), u32::MAX);
+    }
+
+    #[test]
+    fn rect_edges_saturate_instead_of_wrapping() {
+        let r = Rect::new(u32::MAX, u32::MAX - 1, 10, 10);
+        assert_eq!(r.right(), u32::MAX);
+        assert_eq!(r.bottom(), u32::MAX);
+        assert!(!r.contains(0, 0), "saturated edge must not wrap to origin");
+    }
+
+    #[test]
+    fn rect_union_and_intersection_do_not_wrap_at_u32_max() {
+        let edge = Rect::new(u32::MAX - 1, u32::MAX - 1, 10, 10);
+        let origin = Rect::new(0, 0, 1, 1);
+
+        assert_eq!(edge.union(origin), Rect::new(0, 0, u32::MAX, u32::MAX));
+        assert_eq!(edge.intersection(origin), None);
+    }
+
+    #[test]
+    fn rect_centering_saturates_large_offsets() {
+        let parent = Rect::new(u32::MAX - 2, u32::MAX - 2, 10, 10);
+        let child = Rect::new(0, 0, 2, 2).center_in(parent);
+        assert_eq!(child.x, u32::MAX);
+        assert_eq!(child.y, u32::MAX);
     }
 
     #[test]
