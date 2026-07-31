@@ -440,21 +440,21 @@ ui.screen("settings", &mut screens, |ui| {
 });
 ```
 
-Use `screen(name, &mut screens, ...)` when you want declarative rendering that only runs for the active screen. Each screen gets isolated hook state and focus.
-Use manual `push()` / `pop()` logic on `ScreenState` when you need explicit navigation transitions.
+Use `screen(name, &mut screens, ...)` when you want declarative rendering that only runs for the active screen. Each screen gets isolated hook state and focus. Navigate from **inside** a `screen(...)` closure with `push_screen(name)`,
+`pop_screen()`, or `reset_screen()` when you need explicit navigation transitions.
 
 ## Modal, overlay, and screen composition
 
 ```rust
 ui.screen("home", &mut screens, |ui| {
     if ui.button("Settings").clicked {
-        screens.push("settings");
+        ui.push_screen("settings");
     }
 });
 
 ui.screen("settings", &mut screens, |ui| {
     if ui.button("Back").clicked {
-        screens.pop();
+        ui.pop_screen();
     }
 });
 
