@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.22.3] - 2026-07-31
+
+Patch release preventing mixed terminal frames during screen navigation,
+correcting the documented navigation API, and resolving two RustSec findings.
+
+### Fixed
+
+- **Single-view screen transitions** (#307) — `push_screen`, `pop_screen`, and
+  `reset_screen` still update `ScreenState` when the active closure returns,
+  but the transition frame now finishes rendering only its source screen. The
+  destination starts on the next frame, so both views cannot be composed into
+  one terminal buffer.
+- **Nested screen navigation isolation** (#307) — deferred navigation is scoped
+  to the exact active `screen(...)` closure, preventing an inner screen from
+  draining or applying an outer screen's request to the wrong `ScreenState`.
+- **Invalid navigation diagnostics** (#307) — calling screen-navigation helpers
+  outside an active `screen(...)` closure now fails immediately with guidance
+  to mutate `ScreenState` directly instead of silently targeting a later screen.
+- **RustSec dependency findings** (#305, #306) — updated `crossbeam-epoch` for
+  RUSTSEC-2026-0204 and `anyhow` for RUSTSEC-2026-0190.
+
+### Docs
+
+- **Screen navigation patterns** (#283, #307) — examples now use
+  `ui.push_screen(...)`, `ui.pop_screen()`, and `ui.reset_screen()`, and document
+  the source-frame/destination-frame transition contract.
+
 ## [0.22.2] - 2026-06-28
 
 Patch release preparation focused on terminal safety, browser backend lifecycle,
