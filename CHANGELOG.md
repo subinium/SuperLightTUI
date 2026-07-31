@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.22.2] - 2026-06-28
+
+Patch release preparation focused on terminal safety, browser backend lifecycle,
+state cleanup, API consistency, release gates, and documentation parity.
+
+### Changed
+
+- **Color API f64 replacements** (#286) — added `*_f64` public replacements for
+  color math, theme overlays, text gradient stops, and `AppState::fps_f64`.
+  Existing `f32` methods remain as deprecated compatibility aliases.
+- **Release workflow hardening** (#292) — tag releases now run the full blocking
+  gate before publishing, including examples, no-default-features, WASM,
+  feature-combination, typos, audit, and deny checks.
+- **Ordered crate publishing** (#292) — `release.yml` publishes
+  `superlighttui` first, waits for the crates.io index to expose the tag
+  version, then publishes `slt-wasm` against that exact dependency version.
+- **Workspace gate coverage** (#293) — `slt-wasm` is now part of the default
+  workspace members, CI runs WASM clippy/tests, and a `wasm-pack` browser smoke
+  verifies DOM mount/flush/dispose behavior.
+- **WASM feature wiring** (#293) — `slt-wasm` now exposes a default `bidi`
+  feature that forwards to `superlighttui/bidi`, keeping browser text behavior
+  aligned with the native default build.
+
+### Fixed
+
+- **Explicit color depth is authoritative** (#284) — terminal foreground and
+  background SGR are emitted by SLT directly, so `NO_COLOR` affects only
+  `ColorDepth::detect()` and no longer overrides explicit `TrueColor` output.
+- **Hermetic terminal tests** (#285) — terminal capability probes are TTY-guarded
+  and suspend/resume tests use in-process writers instead of touching real
+  stdout.
+- **WASM runtime lifecycle** (#287) — browser event listeners and animation
+  frames are owned by `WasmAppHandle`, with `dispose()`/`Drop` cleanup.
+- **Async task cleanup** (#288, #297) — background task registries and async
+  validators now abort superseded or dropped tasks, and async run loops exit
+  when the input channel disconnects.
+- **Terminal graphics gating** (#289, #301) — Kitty, Sixel, and iTerm probing and
+  emission now respect TTY and tmux/screen guards unless explicitly forced.
+- **Terminal teardown safety** (#290, #296) — panic, normal exit, and Unix
+  suspend/resume share the same cleanup path, including focus and Kitty keyboard
+  state.
+- **Escape sanitization** (#291, #300) — terminal titles and static scrollback
+  output sanitize control bytes before emitting OSC/static text.
+- **Overflow hardening** (#295) — rect edges and timer scheduling use saturating
+  or elapsed-time arithmetic instead of overflowing additions.
+- **Dynamic state cleanup APIs** (#302) — keyed state, inactive screen focus
+  state, and inactive modes can now be removed or retained by callers.
+- **Variable-height list cache cleanup** (#303) — `ListState::set_items` truncates
+  stale item heights when the item list shrinks.
+- **WASM parity fixes** (#298) — DOM mouse/wheel modifiers map into SLT
+  modifiers, and underline plus strikethrough CSS is emitted together.
+- **MSRV clippy cleanliness** (#299) — modernized format arguments that were
+  reported by `cargo +1.88 clippy --all-features -- -D warnings`.
+- **Release version coordination** (#292) — bumped both published crates to
+  `0.22.2` and updated the `slt-wasm -> superlighttui` dependency requirement.
+
+### Docs
+
+- **README install snippet** (#294) — updated the copy-paste dependency version
+  from `0.21` to `0.22.2`.
+- **Examples guide parity** (#294) — `docs/EXAMPLES.md` now lists only explicit
+  `[[example]]` targets as `cargo run --example ...` commands and routes
+  source-only demos through their tour binaries.
+
 ## [0.22.1] - 2026-06-22
 
 Patch release closing two community issues (#278, #279). Additive only — no

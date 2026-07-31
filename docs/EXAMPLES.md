@@ -1,69 +1,75 @@
 # Examples Guide
 
-The `examples/` directory is intentionally broad.
-Use this index to find the smallest example that matches what you want to build.
+The `examples/` directory contains both runnable Cargo example targets and
+source-only demo modules that are composed into the tour binaries.
 
-## Basics
+`Cargo.toml` sets `autoexamples = false`, so only the explicit `[[example]]`
+targets below can be run with `cargo run --example ...`.
 
-| Example | Command | Features | Purpose |
-|---------|---------|----------|---------|
-| `hello` | `cargo run --example hello` | — | Smallest possible SLT app |
-| `counter` | `cargo run --example counter` | — | State + keyboard input |
-| `inline` | `cargo run --example inline` | — | Inline rendering below the prompt |
-| `anim` | `cargo run --example anim` | — | Tween, spring, keyframes |
-
-## Widget and layout tours
+## Start Here
 
 | Example | Command | Features | Purpose |
 |---------|---------|----------|---------|
-| `demo` | `cargo run --example demo` | `qrcode`, `syntax` (optional) | Broad widget overview |
-| `demo_cli` | `cargo run --example demo_cli` | — | CLI-style layout |
-| `demo_table` | `cargo run --example demo_table` | — | Table widget focus |
-| `demo_website` | `cargo run --example demo_website` | — | Canonical `provide` / `use_context` example. Root closure calls `ui.provide(AppState { theme, tick }, |ui| ...)`; nested `render_*` fns read shared state via `ui.use_context::<AppState>()` instead of receiving it as parameters (v0.19.0 component DX) |
-| `demo_design_system` | `cargo run --example demo_design_system` | — | Design tokens, ThemeColor, extends, WidgetTheme |
-| `demo_pretext` | `cargo run --example demo_pretext` | — | Pretext-inspired text reflow |
+| `hello` | `cargo run --example hello` | - | Smallest possible SLT app |
+| `counter` | `cargo run --example counter` | - | State + keyboard input |
+| `demo` | `cargo run --example demo` | `qrcode`, `syntax` optional | Broad widget overview |
+| `color_picker` | `cargo run --example color_picker` | - | Color picker interaction |
 
-## Data and visualization
+## Tour Binaries
 
-| Example | Command | Features | Purpose |
-|---------|---------|----------|---------|
-| `demo_dashboard` | `cargo run --example demo_dashboard` | — | Dashboard composition |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | — | Charts and visual summaries |
-| `demo_trading` | `cargo run --example demo_trading` | — | Dense market/trading layout |
-| `demo_spreadsheet` | `cargo run --example demo_spreadsheet` | — | Grid and data entry feel |
-| `demo_raw_draw` | `cargo run --example demo_raw_draw` | — | Direct buffer drawing |
-
-## Rich terminal features
+These are the canonical way to review feature groups. Each tour pulls several
+source-only demos from `examples/` via Rust modules.
 
 | Example | Command | Features | Purpose |
 |---------|---------|----------|---------|
-| `demo_kitty_image` | `cargo run --example demo_kitty_image` | — | Kitty graphics protocol |
-| `demo_fire` | `cargo run --release --example demo_fire` | — | Half-block visual effect |
-| `demo_ime` | `cargo run --example demo_ime` | — | IME and CJK input |
-| `demo_cjk` | `cargo run --example demo_cjk` | — | CJK (Chinese / Japanese / Korean) wide-character demo — title truncation, mixed Korean / Chinese / Japanese body wrap, narrow-clamp title boxes (12-cell width), CJK form fields, mouse support (group hover, click counters, mouse coords). |
-| `demo_key_test` | `cargo run --example demo_key_test` | — | Inspect key events |
-| `debug_selection` | `cargo run --example debug_selection` | — | Selection overlay debugging |
+| `v020_tour` | `cargo run --example v020_tour` | - | v0.20 API and interaction tour |
+| `v0211_tour` | `cargo run --example v0211_tour` | - | v0.21.1 API additions |
+| `v0210_widgets` | `cargo run --example v0210_widgets` | - | v0.21.0 widget coverage |
+| `cookbook_tour` | `cargo run --example cookbook_tour` | - | Cookbook flows: login, table, modal, file picker, dashboard |
+| `showcase_tour` | `cargo run --example showcase_tour` | - | Showcase screens and dense layouts |
+| `canvas_tour` | `cargo run --example canvas_tour` | - | Canvas and raw drawing examples |
+| `text_tour` | `cargo run --example text_tour` | - | Text, CJK, pretext, and typography demos |
+| `system_tour` | `cargo run --example system_tour --features async` | `async` | Async, inline, static, and system-level demos |
 
-## Interaction-heavy apps
-
-| Example | Command | Features | Purpose |
-|---------|---------|----------|---------|
-| `demo_game` | `cargo run --example demo_game` | — | Games in immediate mode |
-| `error_boundary_demo` | `cargo run --example error_boundary_demo` | — | Panic recovery surface |
-| `test_mouse` | `cargo run --example test_mouse` | — | Mouse interaction behavior |
-
-## Async and performance
+## Diagnostics And Development Tools
 
 | Example | Command | Features | Purpose |
 |---------|---------|----------|---------|
-| `async_demo` | `cargo run --example async_demo --features async` | `async` | Background message flow |
-| `perf_interactive` | `cargo run --example perf_interactive` | — | Interactive perf sanity checks |
-| `perf_regression` | `cargo run --example perf_regression` | — | Headless perf regression coverage |
+| `debug_selection` | `cargo run --example debug_selection` | - | Selection overlay debugging |
+| `demo_key_test` | `cargo run --example demo_key_test` | - | Inspect key events |
+| `test_mouse` | `cargo run --example test_mouse` | - | Mouse interaction behavior |
+| `theme_hot_reload` | `cargo run --example theme_hot_reload --features theme-watch` | `theme-watch` | Theme file watcher demo |
 
-## Suggested path
+## Performance And Reports
+
+| Example | Command | Features | Purpose |
+|---------|---------|----------|---------|
+| `perf_interactive` | `cargo run --example perf_interactive` | - | Interactive perf sanity checks |
+| `perf_regression` | `cargo run --example perf_regression` | - | Headless perf regression coverage |
+| `v020_perf_audit` | `cargo run --example v020_perf_audit` | - | Non-interactive v0.20 perf report |
+| `v020_test_utils` | `cargo run --example v020_test_utils` | - | Non-interactive test utility report |
+
+## Source-Only Demos
+
+The remaining files in `examples/` are kept as source modules for the tours.
+They intentionally do not have standalone `[[example]]` targets. Use the tour
+listed below instead of `cargo run --example <source-file-name>`.
+
+| Source demo family | Run this target |
+|--------------------|-----------------|
+| `inline`, `async_demo`, `v020_static_log`, `error_boundary_demo` | `cargo run --example system_tour --features async` |
+| `anim`, `v020_*` API demos | `cargo run --example v020_tour` |
+| `cookbook_*` demos | `cargo run --example cookbook_tour` |
+| `demo_cli`, `demo_table`, `demo_website`, `demo_design_system`, `demo_pretext` | `cargo run --example showcase_tour` |
+| `demo_dashboard`, `demo_infoviz`, `demo_trading`, `demo_spreadsheet`, `demo_raw_draw` | `cargo run --example showcase_tour` |
+| `demo_kitty_image`, `demo_fire`, `demo_ime`, `demo_cjk` | `cargo run --example text_tour` |
+| `demo_game`, `demo_overlay_anchor` | `cargo run --example showcase_tour` |
+
+## Suggested Path
 
 1. Start with `hello`.
 2. Move to `counter`.
 3. Open `demo` for breadth.
-4. Jump to one domain-specific example that matches your app.
-5. Use `docs/PATTERNS.md` when you want composition guidance instead of a single demo.
+4. Run the tour closest to your target app.
+5. Use `docs/PATTERNS.md` when you want composition guidance instead of a
+   single demo.

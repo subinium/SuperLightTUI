@@ -1,6 +1,6 @@
 [package]
 name = "slt-wasm"
-version = "0.22.1"
+version = "0.22.2"
 edition = "2024"
 rust-version = "1.88"
 description = "WASM/browser backend for SuperLightTUI"
@@ -10,7 +10,7 @@ homepage = "https://github.com/subinium/SuperLightTUI"
 documentation = "https://docs.rs/slt-wasm"
 
 [dependencies]
-superlighttui = { version = "0.22.1", path = "../..", default-features = false }
+superlighttui = { version = "0.22.2", path = "../..", default-features = false }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "CssStyleDeclaration",
@@ -28,6 +28,13 @@ web-sys = { version = "0.3", features = [
     "console",
 ] }
 js-sys = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["bidi"]
+bidi = ["superlighttui/bidi"]
 
 [lints]
 workspace = true

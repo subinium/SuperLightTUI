@@ -84,6 +84,66 @@ fn image_empty_does_not_panic() {
     // No assertion needed — must not panic
 }
 
+#[test]
+fn kitty_image_headless_uses_halfblock_fallback_without_placement() {
+    let rgba = [255u8, 0, 0, 255].repeat(4);
+    let mut backend = TestBackend::new(4, 2);
+    backend.render(|ui| {
+        let _ = ui.kitty_image(&rgba, 2, 2, 4, 2);
+    });
+
+    assert!(
+        backend.buffer().kitty_placements.is_empty(),
+        "headless Kitty fallback must not enqueue graphics placements"
+    );
+    backend.assert_contains("▀");
+}
+
+#[test]
+fn kitty_image_fit_headless_uses_halfblock_fallback_without_placement() {
+    let rgba = [0u8, 128, 255, 255].repeat(4);
+    let mut backend = TestBackend::new(4, 2);
+    backend.render(|ui| {
+        let _ = ui.kitty_image_fit(&rgba, 2, 2, 4);
+    });
+
+    assert!(
+        backend.buffer().kitty_placements.is_empty(),
+        "headless Kitty fit fallback must not enqueue graphics placements"
+    );
+    backend.assert_contains("▀");
+}
+
+#[test]
+fn sixel_image_headless_uses_placeholder_without_sprixel() {
+    let rgba = [255u8, 0, 0, 255].repeat(4);
+    let mut backend = TestBackend::new(20, 2);
+    backend.render(|ui| {
+        let _ = ui.sixel_image(&rgba, 2, 2, 20, 2);
+    });
+
+    assert!(
+        backend.buffer().sprixels.is_empty(),
+        "headless Sixel fallback must not enqueue sprixels"
+    );
+    backend.assert_contains("[sixel unsupported]");
+}
+
+#[test]
+fn iterm_image_fit_headless_uses_placeholder_without_sprixel() {
+    let png = [0x89u8, b'P', b'N', b'G'];
+    let mut backend = TestBackend::new(20, 10);
+    backend.render(|ui| {
+        let _ = ui.iterm_image_fit(&png, 20);
+    });
+
+    assert!(
+        backend.buffer().sprixels.is_empty(),
+        "headless iTerm fallback must not enqueue sprixels"
+    );
+    backend.assert_contains("[iterm2 unsupported]");
+}
+
 // confirm() hit-test regression tests (issue #175)
 // Layout: "ok? [Yes] [No]" at x=0
 //   q_width=3, space=1 → yes_start=4, yes_end=9, no_start=10, no_end=14

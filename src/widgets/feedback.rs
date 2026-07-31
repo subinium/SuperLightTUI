@@ -479,9 +479,10 @@ pub enum Trend {
 /// `run_frame_kernel` does not advance `diagnostics.tick`, so a tick-based
 /// deadline would never elapse under `TestBackend`. See issue #248.
 pub(crate) enum SchedKind {
-    /// One-shot timer that fires exactly once at/after `deadline`.
+    /// One-shot timer that fires exactly once after `dur` has elapsed from the
+    /// slot's `started` instant.
     Once {
-        deadline: std::time::Instant,
+        dur: std::time::Duration,
         fired: bool,
     },
     /// Recurring timer that reports whole `interval`s elapsed since `last`.
@@ -489,11 +490,11 @@ pub(crate) enum SchedKind {
         interval: std::time::Duration,
         last: std::time::Instant,
     },
-    /// Debounce timer: rearmed to `now + dur` on every dirty frame, fires
+    /// Debounce timer: rearmed to `quiet_started` on every dirty frame, fires
     /// once when the quiet window `dur` elapses.
     Debounce {
         dur: std::time::Duration,
-        deadline: std::time::Instant,
+        quiet_started: std::time::Instant,
         fired: bool,
     },
 }

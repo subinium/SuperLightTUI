@@ -11,65 +11,211 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci-stable:
-    name: CI Gate (stable)
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-      # See ci.yml — perf-alloc tests use a global counter, so CI's higher
-      # parallelism contaminates measurements. Single-threaded keeps the
-      # budget asserts honest.
-      - run: cargo test --all-features -- --test-threads=1
-      - run: cargo clippy --all-features -- -D warnings
+          components: rustfmt
       - run: cargo fmt -- --check
 
-  ci-msrv:
-    name: CI Gate (MSRV 1.88)
+  check-stable:
+    name: Check (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --examples --all-features
+
+  msrv:
+    name: Check (MSRV 1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.88"
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
-      - run: cargo check --features async,serde
+      - run: cargo check -p superlighttui --features async,serde
+      - run: cargo clippy -p superlighttui --all-features -- -D warnings
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@master
+
+  check-no-default:
+    name: Check (no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p superlighttui --no-default-features
+
+  wasm-backend:
+    name: Check (WASM backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@wasm-pack
+      - uses: browser-actions/setup-chrome@v1
+      - uses: nanasess/setup-chromedriver@v2
+      - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
+      - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo test -p slt-wasm --all-features
+      - run: chrome --version || google-chrome --version
+      - run: chromedriver --version
+      - run: CHROMEDRIVER="$(command -v chromedriver)" wasm-pack test --headless --chrome crates/slt-wasm
+
+  feature-check:
+    name: Feature Combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - name: Check each feature independently
+        run: cargo hack check -p superlighttui --each-feature --no-dev-deps
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/audit@v1
+
+  deny:
+    name: Deny Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
 
   verify-version:
     name: Verify Version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check tag matches Cargo.toml
+      - name: Check tag matches package versions
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/v}"
-          CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ "$TAG" != "$CARGO_VER" ]; then
-            echo "::error::Tag v$TAG does not match Cargo.toml version $CARGO_VER"
+          ROOT_VER=$(awk -F'"' '/^version =/ { print $2; exit }' Cargo.toml)
+          WASM_VER=$(awk -F'"' '/^version =/ { print $2; exit }' crates/slt-wasm/Cargo.toml)
+          WASM_DEP=$(sed -n 's/.*superlighttui = { version = "\([^"]*\)".*/\1/p' crates/slt-wasm/Cargo.toml)
+
+          if [ "$TAG" != "$ROOT_VER" ]; then
+            echo "::error::Tag v$TAG does not match Cargo.toml version $ROOT_VER"
             exit 1
           fi
-          echo "Version verified: $CARGO_VER"
+          if [ "$TAG" != "$WASM_VER" ]; then
+            echo "::error::Tag v$TAG does not match slt-wasm version $WASM_VER"
+            exit 1
+          fi
+          if [ "$TAG" != "$WASM_DEP" ]; then
+            echo "::error::Tag v$TAG does not match slt-wasm dependency $WASM_DEP"
+            exit 1
+          fi
+          echo "Version verified: $TAG"
 
-  publish:
-    name: Publish to crates.io
-    needs: [ci-stable, ci-msrv, verify-version]
+  publish-superlighttui:
+    name: Publish superlighttui
+    needs:
+      - fmt
+      - check-stable
+      - clippy
+      - test
+      - examples
+      - msrv
+      - typos
+      - check-no-default
+      - wasm-backend
+      - feature-check
+      - audit
+      - deny
+      - verify-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --allow-dirty
+      - run: cargo publish -p superlighttui
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-slt-wasm:
+    name: Publish slt-wasm
+    needs: [publish-superlighttui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Wait for superlighttui on crates.io
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          for attempt in {1..30}; do
+            if cargo search superlighttui --limit 1 | grep -q "superlighttui = \"$VERSION\""; then
+              echo "superlighttui $VERSION is visible in the crates.io index"
+              exit 0
+            fi
+            echo "Waiting for superlighttui $VERSION in crates.io index (attempt $attempt/30)"
+            sleep 10
+          done
+          echo "::error::superlighttui $VERSION did not appear in crates.io index"
+          exit 1
+      - run: cargo publish -p slt-wasm
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   github-release:
     name: GitHub Release
-    needs: [ci-stable, ci-msrv, verify-version]
+    needs: [publish-slt-wasm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -74,22 +74,22 @@ pub fn render(ui: &mut Context, state: &mut TourState) {
     let _ = ui
         .text("SuperLightTUI · v0.21.1 tour")
         .bold()
-        .gradient_stops(&[
-            (0.0, Color::from_hsl(200.0, 0.9, 0.6)),
-            (0.5, Color::from_hsl(280.0, 0.9, 0.65)),
-            (1.0, Color::from_hsl(330.0, 0.9, 0.6)),
+        .gradient_stops_f64(&[
+            (0.0, Color::from_hsl_f64(200.0, 0.9, 0.6)),
+            (0.5, Color::from_hsl_f64(280.0, 0.9, 0.65)),
+            (1.0, Color::from_hsl_f64(330.0, 0.9, 0.6)),
         ]);
     let _ = ui.text(" additive APIs, no breaking changes ").bg_gradient(
-        Color::from_hsl(210.0, 0.7, 0.35),
-        Color::from_hsl(330.0, 0.7, 0.35),
+        Color::from_hsl_f64(210.0, 0.7, 0.35),
+        Color::from_hsl_f64(330.0, 0.7, 0.35),
     );
 
     // ── Color ergonomics: HSL swatch row, a parsed hex, and rotate_hue.
     let _ = ui.container().gap(1).row(|ui| {
         ui.text("Color:").dim();
         for i in 0..12 {
-            let hue = i as f32 / 12.0 * 360.0;
-            ui.text("██").fg(Color::from_hsl(hue, 0.85, 0.6));
+            let hue = f64::from(i) / 12.0 * 360.0;
+            ui.text("██").fg(Color::from_hsl_f64(hue, 0.85, 0.6));
         }
     });
     let _ = ui.container().gap(1).row(|ui| {
@@ -97,7 +97,7 @@ pub fn render(ui: &mut Context, state: &mut TourState) {
         ui.text("\"#ff6b6b\".parse()").dim();
         ui.text("██").fg(parsed);
         ui.text("rotate_hue(180)").dim();
-        ui.text("██").fg(parsed.rotate_hue(180.0));
+        ui.text("██").fg(parsed.rotate_hue_f64(180.0));
     });
 
     // ── Spinner presets.

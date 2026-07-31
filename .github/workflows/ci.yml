@@ -27,9 +27,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.88"
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
-      - run: cargo check --features async,serde
+      - run: cargo check -p superlighttui --features async,serde
+      - run: cargo clippy -p superlighttui --all-features -- -D warnings
 
   test:
     name: Test
@@ -109,15 +111,24 @@ jobs:
       - run: cargo check -p superlighttui --no-default-features
 
   check-wasm:
-    name: Check (WASM)
+    name: Check (WASM backend)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p slt-wasm --target wasm32-unknown-unknown
+      - uses: taiki-e/install-action@wasm-pack
+      - uses: browser-actions/setup-chrome@v1
+      - uses: nanasess/setup-chromedriver@v2
+      - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
+      - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo test -p slt-wasm --all-features
+      - run: chrome --version || google-chrome --version
+      - run: chromedriver --version
+      - run: CHROMEDRIVER="$(command -v chromedriver)" wasm-pack test --headless --chrome crates/slt-wasm
 
   feature-check:
     name: Feature Combinations

@@ -14,6 +14,40 @@
 #![cfg(feature = "pty-test")]
 
 use slt::{Color, ColorDepth, PtyBackend};
+use std::sync::Mutex;
+
+static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+#[allow(unsafe_code)]
+fn with_env_vars<F: FnOnce()>(vars: &[(&str, Option<&str>)], f: F) {
+    let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let previous: Vec<(&str, Option<String>)> = vars
+        .iter()
+        .map(|(name, _)| (*name, std::env::var(name).ok()))
+        .collect();
+
+    // SAFETY (edition 2024): env mutation is process-global. ENV_GUARD
+    // serializes these PTY tests while the override is active.
+    unsafe {
+        for (name, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+
+    f();
+
+    unsafe {
+        for (name, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
 
 /// A styled glyph emits an SGR escape carrying both the foreground color and
 /// the bold attribute through the production flush pipeline.
@@ -27,12 +61,9 @@ fn styled_text_emits_sgr_run() {
     pb.assert_emits("\u{1b}[");
     // Bold attribute: SGR 1.
     pb.assert_emits("\u{1b}[1m");
-    // Foreground SGR present. crossterm renders the named `Color::Red`
-    // (→ `DarkRed`) through `SetForegroundColor` as the 256-color form
-    // `38;5;1` rather than the legacy `31` — this end-to-end test pins the
-    // bytes the shipping pipeline actually emits, which the isolated
-    // `to_crossterm_color` unit does not reveal.
-    pb.assert_emits("\u{1b}[38;5;1m");
+    // Foreground SGR present. SLT emits color SGR directly so environment
+    // variables such as NO_COLOR cannot override an explicit ColorDepth.
+    pb.assert_emits("\u{1b}[31m");
     // The glyph itself is printed.
     pb.assert_emits("x");
 }
@@ -42,40 +73,60 @@ fn styled_text_emits_sgr_run() {
 /// it on so the headless harness exercises the real encode + flush path.
 #[test]
 fn sixel_image_emits_envelope() {
-    // SAFETY-equivalent note: `set_var` is process-global. This test owns the
-    // var for its duration and restores it; it asserts on the forced path.
-    let prev = std::env::var("SLT_FORCE_SIXEL").ok();
-    // SAFETY (edition 2024): set_var is unsafe; this single-threaded test owns
-    // the var for its duration and restores it below.
-    unsafe { std::env::set_var("SLT_FORCE_SIXEL", "1") };
-
-    let mut pb = PtyBackend::new(20, 2);
-    // 2x2 red square (RGBA: 4 pixels x 4 bytes).
-    let rgba = [255u8, 0, 0, 255].repeat(4);
-    pb.render(|ui| {
-        let _ = ui.sixel_image(&rgba, 2, 2, 20, 2);
+    with_env_vars(&[("SLT_FORCE_SIXEL", Some("1"))], || {
+        let mut pb = PtyBackend::new(20, 2);
+        // 2x2 red square (RGBA: 4 pixels x 4 bytes).
+        let rgba = [255u8, 0, 0, 255].repeat(4);
+        pb.render(|ui| {
+            let _ = ui.sixel_image(&rgba, 2, 2, 20, 2);
+        });
+        pb.assert_emits("\u{1b}Pq");
+        pb.assert_emits("\u{1b}\\");
     });
-    pb.assert_emits("\u{1b}Pq");
-    pb.assert_emits("\u{1b}\\");
-
-    unsafe {
-        match prev {
-            Some(v) => std::env::set_var("SLT_FORCE_SIXEL", v),
-            None => std::env::remove_var("SLT_FORCE_SIXEL"),
-        }
-    }
 }
 
 /// A `kitty_image` call emits the Kitty graphics APC introducer `\x1b_Ga=`.
 #[test]
 fn kitty_image_emits_apc() {
-    let mut pb = PtyBackend::new(20, 4);
-    // 2x2 RGBA image.
-    let rgba = [0u8, 128, 255, 255].repeat(4);
-    pb.render(|ui| {
-        let _ = ui.kitty_image(&rgba, 2, 2, 4, 2);
+    with_env_vars(&[("SLT_FORCE_KITTY", Some("1"))], || {
+        let mut pb = PtyBackend::new(20, 4);
+        // 2x2 RGBA image.
+        let rgba = [0u8, 128, 255, 255].repeat(4);
+        pb.render(|ui| {
+            let _ = ui.kitty_image(&rgba, 2, 2, 4, 2);
+        });
+        pb.assert_emits("\u{1b}_Ga=");
     });
-    pb.assert_emits("\u{1b}_Ga=");
+}
+
+/// tmux/screen-like environments must not leak image protocol bytes unless
+/// explicitly forced. TERM_PROGRAM may describe the outer capable terminal.
+#[test]
+fn image_protocols_do_not_emit_inside_tmux_without_force() {
+    with_env_vars(
+        &[
+            ("TERM", Some("screen-256color")),
+            ("TERM_PROGRAM", Some("WezTerm")),
+            ("TMUX", Some("/tmp/tmux-1000/default,1,0")),
+            ("SLT_FORCE_KITTY", None),
+            ("SLT_FORCE_SIXEL", None),
+            ("SLT_FORCE_ITERM", None),
+        ],
+        || {
+            let rgba = [0u8, 128, 255, 255].repeat(4);
+            let png = [0x89u8, b'P', b'N', b'G'];
+            let mut pb = PtyBackend::new(24, 8);
+            pb.render(|ui| {
+                let _ = ui.kitty_image(&rgba, 2, 2, 4, 2);
+                let _ = ui.sixel_image(&rgba, 2, 2, 4, 2);
+                let _ = ui.iterm_image(&png, 4, 2);
+            });
+
+            pb.assert_not_emits("\u{1b}_Ga=");
+            pb.assert_not_emits("\u{1b}Pq");
+            pb.assert_not_emits("\u{1b}]1337;File=");
+        },
+    );
 }
 
 /// A hyperlinked text run emits the OSC 8 open sequence `\x1b]8;;<url>`.
@@ -117,6 +168,28 @@ fn color_depth_downgrade_changes_sgr() {
     truecolor.assert_emits("\u{1b}[38;2;200;50;50m");
     // The 256-color frame must NOT carry the 24-bit form.
     eight_bit.assert_not_emits("\u{1b}[38;2;200;50;50m");
+}
+
+/// Explicit color depth is authoritative even when the environment requests no
+/// color. NO_COLOR is honored only by ColorDepth::detect().
+#[test]
+fn explicit_truecolor_ignores_no_color_environment() {
+    with_env_vars(&[("NO_COLOR", Some("1")), ("TERM", Some("dumb"))], || {
+        let rgb = Color::Rgb(200, 50, 50);
+
+        let mut truecolor = PtyBackend::new(10, 1).with_color_depth(ColorDepth::TrueColor);
+        truecolor.render(|ui| {
+            ui.text("x").fg(rgb);
+        });
+        truecolor.assert_emits("\u{1b}[38;2;200;50;50m");
+
+        let mut no_color = PtyBackend::new(10, 1).with_color_depth(ColorDepth::NoColor);
+        no_color.render(|ui| {
+            ui.text("x").fg(rgb);
+        });
+        no_color.assert_not_emits("\u{1b}[38;2;200;50;50m");
+        no_color.assert_not_emits("\u{1b}[38;5;");
+    });
 }
 
 /// Rendering the same frame twice produces byte-identical output — the harness

@@ -499,6 +499,66 @@ fn screen_nav_no_op_without_request() {
     assert_eq!(screens.current(), "home");
 }
 
+#[test]
+fn keyed_state_cleanup_removes_dynamic_entries() {
+    let mut backend = TestBackend::new(24, 3);
+
+    backend.render(|ui| {
+        let a = ui.use_state_keyed("row-a", || 1u32);
+        let b = ui.use_state_keyed("row-b", || 2u32);
+        assert_eq!(*a.get(ui), 1);
+        assert_eq!(*b.get(ui), 2);
+        assert_eq!(ui.keyed_state_count(), 2);
+
+        assert!(ui.remove_state_keyed("row-a"));
+        assert!(!ui.remove_state_keyed("missing"));
+        assert_eq!(ui.keyed_state_count(), 1);
+
+        let removed = ui.retain_state_keyed(|key| key == "row-b");
+        assert_eq!(removed, 0);
+        assert_eq!(ui.keyed_state_count(), 1);
+    });
+}
+
+#[test]
+fn screen_state_cleanup_removes_inactive_hook_and_focus_state() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+    screens.push("detail-1");
+
+    backend.render(|ui| {
+        ui.screen("detail-1", &mut screens, |ui| {
+            let value = ui.use_state(|| 7u32);
+            ui.text(format!("{}", value.get(ui)));
+            ui.register_focusable();
+        });
+    });
+    assert_eq!(screens.focus_state_count(), 1);
+
+    screens.pop();
+    backend.render(|ui| {
+        assert_eq!(ui.screen_state_count(), 1);
+        assert!(ui.remove_screen_state(&mut screens, "detail-1"));
+        assert_eq!(ui.screen_state_count(), 0);
+    });
+    assert_eq!(screens.focus_state_count(), 0);
+}
+
+#[test]
+fn screen_state_cleanup_preserves_stacked_screens() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut screens = ScreenState::new("home");
+
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            let value = ui.use_state(|| 1u32);
+            ui.text(format!("{}", value.get(ui)));
+        });
+        assert!(!ui.remove_screen_state(&mut screens, "home"));
+        assert_eq!(ui.screen_state_count(), 1);
+    });
+}
+
 // === Issue #54: mouse_drag / mouse_up convenience methods ===
 
 #[test]

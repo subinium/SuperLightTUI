@@ -127,6 +127,15 @@ impl Default for AsyncTasks {
     }
 }
 
+impl Drop for AsyncTasks {
+    fn drop(&mut self) {
+        for (_, join) in self.joins.drain() {
+            join.abort();
+        }
+        self.results.clear();
+    }
+}
+
 impl AsyncTasks {
     /// Inject the ambient Tokio runtime handle. Called once by `run_async*`
     /// before the first frame so `spawn` has a runtime to launch onto.

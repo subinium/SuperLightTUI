@@ -146,7 +146,7 @@ cargo bench --bench benchmarks -- --baseline before
 
 ```rust
 // AppState API (src/lib.rs:251, :256)
-let fps = state.fps();             // exponential moving average
+let fps = state.fps_f64();         // exponential moving average
 state.set_debug(true);             // same as pressing F12
 ```
 
@@ -158,7 +158,7 @@ frame. The overlay layer is configurable via
 or `BaseOnly` (issue #201 in `src/lib.rs:571–587`).
 
 There is no `RunConfig::show_fps()` builder method. To put an FPS readout
-on screen, render `state.fps()` yourself in your UI closure, or rely on
+on screen, render `state.fps_f64()` yourself in your UI closure, or rely on
 the F12 overlay during development.
 
 ### Custom instrumentation

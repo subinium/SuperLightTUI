@@ -1099,10 +1099,7 @@ impl Context {
         let state = entry
             .downcast_mut::<crate::anim::AnimState>()
             .unwrap_or_else(|| {
-                panic!(
-                    "animate_value: id {:?} is already used for a different state type",
-                    id
-                )
+                panic!("animate_value: id {id:?} is already used for a different state type")
             });
         state.sample(target, duration_ticks, tick)
     }
@@ -1144,15 +1141,13 @@ impl Context {
             .entry(id)
             .or_insert_with(|| SchedulerSlot {
                 started: now,
-                kind: SchedKind::Once {
-                    deadline: now + dur,
-                    fired: false,
-                },
+                kind: SchedKind::Once { dur, fired: false },
                 touched_this_frame: false,
             });
         slot.touched_this_frame = true;
+        let elapsed = now.saturating_duration_since(slot.started);
         match &mut slot.kind {
-            SchedKind::Once { deadline, fired } if !*fired && now >= *deadline => {
+            SchedKind::Once { dur, fired } if !*fired && elapsed >= *dur => {
                 *fired = true;
                 true
             }
@@ -1207,7 +1202,8 @@ impl Context {
                 if fired > 0 {
                     // Advance by exactly the intervals reported so counts never
                     // drift, even across stalled frames.
-                    *last += *interval * fired;
+                    let advance = interval.saturating_mul(fired);
+                    *last = last.checked_add(advance).unwrap_or(now);
                 }
                 fired
             }
@@ -1251,7 +1247,7 @@ impl Context {
                 started: now,
                 kind: SchedKind::Debounce {
                     dur,
-                    deadline: now + dur,
+                    quiet_started: now,
                     fired: false,
                 },
                 touched_this_frame: false,
@@ -1260,16 +1256,16 @@ impl Context {
         match &mut slot.kind {
             SchedKind::Debounce {
                 dur: slot_dur,
-                deadline,
+                quiet_started,
                 fired,
             } => {
                 *slot_dur = dur;
                 if dirty {
                     // Re-arm the quiet window from this frame.
-                    *deadline = now + dur;
+                    *quiet_started = now;
                     *fired = false;
                     false
-                } else if !*fired && now >= *deadline {
+                } else if !*fired && now.saturating_duration_since(*quiet_started) >= *slot_dur {
                     *fired = true;
                     true
                 } else {
@@ -1379,6 +1375,34 @@ impl Context {
             .or_else(|| self.scheduler.keyed.get(id))
             .map(|slot| slot.started)?;
         Some(self.frame_instant.saturating_duration_since(started))
+    }
+
+    /// Remove dynamic keyed state created by
+    /// [`use_state_keyed`](Self::use_state_keyed).
+    ///
+    /// Returns `true` when a slot existed. Any old [`State`] handle for the
+    /// removed id becomes invalid and will panic if used before the state is
+    /// recreated by `use_state_keyed`.
+    pub fn remove_state_keyed(&mut self, id: &str) -> bool {
+        self.keyed_states.remove(id).is_some()
+    }
+
+    /// Retain only dynamic keyed-state entries accepted by `keep`.
+    ///
+    /// Returns the number of removed entries. This is intended for long-lived
+    /// dynamic lists where ids come from data and removed items should release
+    /// their per-row state.
+    pub fn retain_state_keyed(&mut self, mut keep: impl FnMut(&str) -> bool) -> usize {
+        let before = self.keyed_states.len();
+        self.keyed_states.retain(|key, _| keep(key));
+        before - self.keyed_states.len()
+    }
+
+    /// Number of live dynamic keyed-state entries.
+    ///
+    /// Diagnostic helper for spotting churn when using runtime ids.
+    pub fn keyed_state_count(&self) -> usize {
+        self.keyed_states.len()
     }
 
     /// Push a value onto the context stack for the duration of `body`.
