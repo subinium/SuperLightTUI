@@ -145,7 +145,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@wasm-pack
-      - uses: browser-actions/setup-chrome@v1
+      - uses: browser-actions/setup-chrome@v2
       - uses: nanasess/setup-chromedriver@v2
       - run: cargo check -p slt-wasm --all-features --target wasm32-unknown-unknown
       - run: cargo clippy -p slt-wasm --all-features --target wasm32-unknown-unknown -- -D warnings
@@ -316,7 +316,7 @@ jobs:
             echo "$BODY"
             echo "RELEASE_EOF"
           } >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body: ${{ steps.changelog.outputs.body }}
