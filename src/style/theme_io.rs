@@ -191,6 +191,7 @@ pub struct ThemeWatcher {
     _watcher: notify::RecommendedWatcher,
     rx: std::sync::mpsc::Receiver<()>,
     path: std::path::PathBuf,
+    last_source: String,
     last_good: ThemeFile,
 }
 
@@ -214,14 +215,25 @@ impl ThemeWatcher {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<ThemeWatcher, ThemeLoadError> {
         use notify::{RecursiveMode, Watcher};
 
-        let path = path.as_ref().to_path_buf();
-        // Load the initial theme so `last_good` is always valid.
-        let last_good = ThemeFile::load(&path)?;
+        let path = path.as_ref();
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        // Keep the last observed source as well as the parsed theme. Some
+        // backends emit an initial event when a watch is registered, and
+        // editors can emit several events for one save. Identical contents
+        // must not look like a hot reload to the application.
+        let last_source = std::fs::read_to_string(&path)?;
+        let last_good = ThemeFile::from_toml_str(&last_source)?;
 
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            // Coalesce every event to a single "something changed" ping; the
-            // poll() side re-reads the file, so the event kind is irrelevant.
+            // Some backends report only the watched directory rather than the
+            // changed file. Forward every successful event and let poll()
+            // compare the source, which is both portable and preserves
+            // atomic-save support without surfacing sibling-file changes.
             if res.is_ok() {
                 let _ = tx.send(());
             }
@@ -243,6 +255,7 @@ impl ThemeWatcher {
             _watcher: watcher,
             rx,
             path,
+            last_source,
             last_good,
         })
     }
@@ -285,7 +298,23 @@ impl ThemeWatcher {
             return None;
         }
 
-        match ThemeFile::load(&self.path) {
+        let source = match std::fs::read_to_string(&self.path) {
+            Ok(source) => source,
+            Err(e) => {
+                eprintln!(
+                    "slt: theme hot-reload skipped for {}: {}",
+                    self.path.display(),
+                    ThemeLoadError::Io(e)
+                );
+                return None;
+            }
+        };
+        if source == self.last_source {
+            return None;
+        }
+        self.last_source.clone_from(&source);
+
+        match ThemeFile::from_toml_str(&source) {
             Ok(tf) => {
                 self.last_good = tf.clone();
                 Some(tf)
@@ -541,6 +570,8 @@ mod watch_tests {
                 .as_nanos()
         );
         dir.push(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.push(name);
         dir
     }
 
@@ -552,7 +583,17 @@ mod watch_tests {
         let mut watcher = ThemeWatcher::new(&path).unwrap();
         assert_eq!(watcher.current().theme.primary, Color::Rgb(0, 0, 255));
 
-        // No edits yet: poll() is None.
+        // Registration events and same-content rewrites are not reloads.
+        assert!(watcher.poll().is_none());
+        std::fs::write(&path, "[theme]\nprimary = \"#0000ff\"\n").unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(watcher.poll().is_none());
+
+        // The parent directory is watched for atomic saves, but sibling files
+        // must not trigger a reload of the theme.
+        let sibling = path.with_file_name("unrelated.toml");
+        std::fs::write(&sibling, "unrelated = true\n").unwrap();
+        std::thread::sleep(Duration::from_millis(200));
         assert!(watcher.poll().is_none());
 
         // Rewrite with a new primary; expect a reload.
@@ -569,6 +610,6 @@ mod watch_tests {
         assert!(watcher.poll().is_none());
         assert_eq!(watcher.current().theme.primary, Color::Rgb(255, 0, 0));
 
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
