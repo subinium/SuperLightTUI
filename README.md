@@ -134,7 +134,7 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.22.2", features = ["async", "image"] }
+superlighttui = { version = "0.22.3", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |
