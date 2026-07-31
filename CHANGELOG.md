@@ -7,6 +7,16 @@
 - **Context injection examples** (#281) — shared-context examples now take an
   owned snapshot before subsequent mutable UI calls, avoiding overlapping
   `&Context` / `&mut Context` borrows.
+- **Terminal query safety** — automatic capability probes now skip generic PTY
+  wrappers, `TERM=dumb`, and tmux/screen by default, preventing control-sequence
+  leaks and a race that could consume the first byte of user input. Kitty
+  keyboard setup and cleanup now also emit portable protocol bytes on Windows,
+  and optional mode teardown can no longer abort core terminal restoration.
+
+### Changed
+
+- **Native platform CI** — macOS and Windows now run the full
+  `superlighttui --all-features` test suite for pull requests and releases.
 
 ### Docs
 

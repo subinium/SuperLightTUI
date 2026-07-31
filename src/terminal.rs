@@ -328,7 +328,7 @@ pub(crate) fn cell_pixel_size() -> (u32, u32) {
 }
 
 fn detect_cell_pixel_size() -> Option<(u32, u32)> {
-    if !terminal_queries_allowed() {
+    if !automatic_terminal_queries_allowed() {
         return None;
     }
 
@@ -516,15 +516,20 @@ impl Capabilities {
 /// Return the process-global negotiated [`Capabilities`], probing the terminal
 /// exactly once on first call and caching the result.
 ///
-/// The probe issues DA1 (`CSI c`), DA2 (`CSI > c`), and XTGETTCAP for the
-/// truecolor capname, reading replies through the existing OSC round-trip
-/// infrastructure with a bounded total timeout (≤150ms). On no reply every
-/// field falls back to a conservative default. Repeated calls are free.
+/// On an identified direct terminal, the probe issues DA1 (`CSI c`), DA2
+/// (`CSI > c`), and XTGETTCAP for the truecolor capname, reading replies
+/// through the existing OSC round-trip infrastructure with a bounded total
+/// timeout (≤180ms). Generic PTY wrappers, `TERM=dumb`, and tmux/screen skip
+/// automatic queries to avoid leaking control bytes or racing user input;
+/// environment-based fallbacks remain available. Set
+/// `SLT_FORCE_TERMINAL_QUERIES=1` to opt in or
+/// `SLT_DISABLE_TERMINAL_QUERIES=1` to disable all terminal queries. Repeated
+/// calls are free.
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn capabilities() -> Capabilities {
     use std::sync::OnceLock;
-    if !terminal_queries_allowed() {
+    if !io::stdout().is_terminal() {
         return Capabilities::default();
     }
     static CACHED: OnceLock<Capabilities> = OnceLock::new();
@@ -539,64 +544,54 @@ pub fn capabilities() -> Capabilities {
 #[cfg(feature = "crossterm")]
 fn probe_capabilities() -> Capabilities {
     let mut caps = Capabilities::default();
-    if !terminal_queries_allowed() {
-        return caps;
-    }
+    if automatic_terminal_queries_allowed() {
+        // Total stdin wait is bounded to ≤180ms (90 + 30 + 30 + 30) so a
+        // silent terminal cannot stall startup beyond a small multiple of the
+        // existing OSC-11 budget. A responsive terminal replies in well under
+        // 10ms per query, so the common path adds negligible latency.
+        let mut out = io::stdout();
+        // DA1 then DA2 in one write — both terminate with `c`, so a single
+        // DA-aware read drains both replies (in order) when supported.
+        if write!(out, "\x1b[c\x1b[>c").is_ok()
+            && out.flush().is_ok()
+            && let Some(resp) = read_da_response(Duration::from_millis(90))
+        {
+            parse_da1(&resp, &mut caps);
+            parse_da2(&resp, &mut caps);
+        }
 
-    // Total stdin wait is bounded to ≤180ms (90 + 30 + 30 + 30) so a silent
-    // terminal cannot stall startup beyond a small multiple of the existing
-    // OSC-11 budget. A responsive terminal replies in well under 10ms per
-    // query, so the common path adds negligible latency.
-    let mut out = io::stdout();
-    // DA1 then DA2 in one write — both terminate with `c`, so a single
-    // DA-aware read drains both replies (in order) when supported.
-    if write!(out, "\x1b[c\x1b[>c").is_ok()
-        && out.flush().is_ok()
-        && let Some(resp) = read_da_response(Duration::from_millis(90))
-    {
-        parse_da1(&resp, &mut caps);
-        parse_da2(&resp, &mut caps);
-    }
+        // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct
+        // payload. Base64 of three zero bytes = "AAAA".
+        if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok()
+            && out.flush().is_ok()
+            && let Some(resp) = read_osc_response(Duration::from_millis(30))
+        {
+            parse_kitty_graphics_ack(&resp, &mut caps);
+        }
 
-    // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct payload.
-    // Supporting terminals ack with `APC G i=31;OK ST`; others stay silent so
-    // the bounded read just times out. Base64 of three zero bytes = "AAAA".
-    if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok()
-        && out.flush().is_ok()
-        && let Some(resp) = read_osc_response(Duration::from_millis(30))
-    {
-        parse_kitty_graphics_ack(&resp, &mut caps);
-    }
+        // XTGETTCAP for the `Tc` (truecolor) capname: `Tc` -> hex "5463".
+        if write!(out, "\x1bP+q5463\x1b\\").is_ok()
+            && out.flush().is_ok()
+            && let Some(resp) = read_osc_response(Duration::from_millis(30))
+        {
+            parse_xtgettcap_truecolor(&resp, &mut caps);
+        }
 
-    // XTGETTCAP for the `Tc` (truecolor) capname: DCS + q <hex> ST.
-    // `Tc` -> hex "5463".
-    if write!(out, "\x1bP+q5463\x1b\\").is_ok()
-        && out.flush().is_ok()
-        && let Some(resp) = read_osc_response(Duration::from_millis(30))
-    {
-        parse_xtgettcap_truecolor(&resp, &mut caps);
-    }
-
-    // DECRQM for synchronized output (mode ?2026): CSI ? 2026 $ p. A supporting
-    // terminal replies CSI ? 2026 ; <Ps> $ y, where Ps ∈ {1,2} (set / reset)
-    // both mean *recognized*; Ps = 0 means the mode is not recognized. The
-    // reply terminates with `y` rather than BEL / ST, so it needs the
-    // DECRPM-aware reader. A silent terminal leaves the resolution `Unknown`,
-    // which the flush gate treats as "keep emitting" — preserving the historic
-    // always-emit behavior on headless / non-answering hosts.
-    if write!(out, "\x1b[?2026$p").is_ok()
-        && out.flush().is_ok()
-        && let Some(resp) = read_decrpm_response(Duration::from_millis(30))
-    {
-        match parse_decrpm_sync_output(&resp) {
-            Some(true) => {
-                caps.sync_output = true;
-                let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Supported);
+        // DECRQM for synchronized output (mode ?2026): CSI ? 2026 $ p.
+        if write!(out, "\x1b[?2026$p").is_ok()
+            && out.flush().is_ok()
+            && let Some(resp) = read_decrpm_response(Duration::from_millis(30))
+        {
+            match parse_decrpm_sync_output(&resp) {
+                Some(true) => {
+                    caps.sync_output = true;
+                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Supported);
+                }
+                Some(false) => {
+                    let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Unsupported);
+                }
+                None => {}
             }
-            Some(false) => {
-                let _ = SYNC_OUTPUT_RESOLUTION.set(SyncOutputResolution::Unsupported);
-            }
-            None => {}
         }
     }
 
@@ -757,11 +752,70 @@ fn truthy_env_value(value: &str) -> bool {
 
 #[cfg(feature = "crossterm")]
 fn terminal_queries_allowed() -> bool {
-    terminal_query_allowed(io::stdout().is_terminal(), io::stdin().is_terminal())
+    let term = std::env::var("TERM").unwrap_or_default();
+    terminal_query_allowed(
+        io::stdout().is_terminal(),
+        io::stdin().is_terminal(),
+        &term,
+        terminal_is_multiplexed(),
+        force_env_enabled("SLT_FORCE_TERMINAL_QUERIES"),
+        force_env_enabled("SLT_DISABLE_TERMINAL_QUERIES"),
+    )
 }
 
-fn terminal_query_allowed(stdout_is_terminal: bool, stdin_is_terminal: bool) -> bool {
-    stdout_is_terminal && stdin_is_terminal
+#[cfg(feature = "crossterm")]
+fn automatic_terminal_queries_allowed() -> bool {
+    if !terminal_queries_allowed() {
+        return false;
+    }
+    force_env_enabled("SLT_FORCE_TERMINAL_QUERIES") || terminal_query_host_is_identified()
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_query_host_is_identified() -> bool {
+    const IDENTITY_VARS: &[&str] = &[
+        "TERM_PROGRAM",
+        "WT_SESSION",
+        "VTE_VERSION",
+        "KONSOLE_VERSION",
+        "KITTY_WINDOW_ID",
+    ];
+    if IDENTITY_VARS
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    {
+        return true;
+    }
+
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    terminal_query_host_is_identified_env(&term, false)
+}
+
+fn terminal_query_host_is_identified_env(term: &str, has_identity_var: bool) -> bool {
+    has_identity_var
+        || matches!(
+            term.to_ascii_lowercase().as_str(),
+            "alacritty" | "foot" | "foot-extra" | "mlterm" | "wezterm" | "xterm-kitty"
+        )
+}
+
+fn terminal_query_allowed(
+    stdout_is_terminal: bool,
+    stdin_is_terminal: bool,
+    term: &str,
+    multiplexed: bool,
+    forced: bool,
+    disabled: bool,
+) -> bool {
+    if !stdout_is_terminal || !stdin_is_terminal || disabled {
+        return false;
+    }
+    if forced {
+        return true;
+    }
+    !multiplexed && !term.is_empty() && !term.eq_ignore_ascii_case("dumb")
 }
 
 /// Process-wide pump that owns the only blocking `stdin` read used for
@@ -2858,11 +2912,7 @@ fn write_session_enter(stdout: &mut impl Write, session: &TerminalSessionGuard) 
         execute!(stdout, EnableMouseCapture)?;
     }
     if session.kitty_keyboard {
-        use crossterm::event::PushKeyboardEnhancementFlags;
-        let _ = execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(kitty_flags(session.report_all_keys))
-        );
+        let _ = write_kitty_keyboard_push(stdout, session.report_all_keys);
     }
 
     Ok(())
@@ -2885,6 +2935,17 @@ fn kitty_flags(report_all_keys: bool) -> crossterm::event::KeyboardEnhancementFl
         flags |= KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
     }
     flags
+}
+
+/// Write Kitty keyboard protocol commands directly instead of routing them
+/// through crossterm's legacy Windows API, where these commands are reported
+/// as unsupported even when the terminal host accepts ANSI sequences.
+fn write_kitty_keyboard_push(stdout: &mut impl Write, report_all_keys: bool) -> io::Result<()> {
+    write!(stdout, "\x1b[>{}u", kitty_flags(report_all_keys).bits())
+}
+
+fn write_kitty_keyboard_pop(stdout: &mut impl Write) -> io::Result<()> {
+    stdout.write_all(b"\x1b[<1u")
 }
 
 fn write_session_cleanup(
@@ -2930,13 +2991,16 @@ fn write_session_exit(
     kitty_keyboard: bool,
 ) -> io::Result<()> {
     if kitty_keyboard {
-        use crossterm::event::PopKeyboardEnhancementFlags;
-        execute!(stdout, PopKeyboardEnhancementFlags)?;
+        write_kitty_keyboard_pop(stdout)?;
     }
     if mouse_enabled {
-        execute!(stdout, DisableMouseCapture)?;
+        // On Windows this uses crossterm's process-global console mode state,
+        // which may not have been initialized when panic cleanup runs. Mouse
+        // restoration is best-effort so it cannot prevent the core cursor,
+        // paste, and screen cleanup below.
+        let _ = execute!(stdout, DisableMouseCapture);
     }
-    execute!(stdout, DisableFocusChange)?;
+    let _ = execute!(stdout, DisableFocusChange);
     write_session_cleanup(stdout, mode, inline_reserved)
 }
 
@@ -3282,6 +3346,22 @@ mod tests {
     }
 
     #[test]
+    fn session_enter_writes_kitty_keyboard_flags_portably() {
+        let session = TerminalSessionGuard {
+            mode: TerminalSessionMode::Fullscreen,
+            mouse_enabled: false,
+            kitty_keyboard: true,
+            report_all_keys: true,
+            harness: false,
+        };
+        let mut out = Vec::new();
+        write_session_enter(&mut out, &session).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        let expected = format!("\u{1b}[>{}u", kitty_flags(true).bits());
+        assert!(output.contains(&expected));
+    }
+
+    #[test]
     fn fullscreen_session_cleanup_leaves_alt_screen() {
         let mut out = Vec::new();
         write_session_cleanup(&mut out, TerminalSessionMode::Fullscreen, false).unwrap();
@@ -3307,7 +3387,11 @@ mod tests {
         let mut out = Vec::new();
         write_session_exit(&mut out, TerminalSessionMode::Fullscreen, false, true, true).unwrap();
         let output = String::from_utf8(out).unwrap();
+        // Crossterm manages mouse/focus through the Windows console API rather
+        // than writing those escape sequences to the supplied writer.
+        #[cfg(not(windows))]
         assert!(output.contains("\u{1b}[?1004l"), "disables focus reporting");
+        #[cfg(not(windows))]
         assert!(output.contains("\u{1b}[?1006l"), "disables SGR mouse mode");
         assert!(output.contains("\u{1b}[<1u"), "pops Kitty keyboard flags");
         assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
@@ -3318,6 +3402,7 @@ mod tests {
         let mut out = Vec::new();
         write_panic_cleanup(&mut out).unwrap();
         let output = String::from_utf8(out).unwrap();
+        #[cfg(not(windows))]
         assert!(output.contains("\u{1b}[?1004l"), "disables focus reporting");
         assert!(output.contains("\u{1b}[<1u"), "pops Kitty keyboard flags");
         assert!(output.contains("\u{1b}[?1049l"), "leaves alt screen");
@@ -3838,11 +3923,72 @@ mod tests {
     }
 
     #[test]
-    fn terminal_query_guard_requires_stdin_and_stdout_tty() {
-        assert!(terminal_query_allowed(true, true));
-        assert!(!terminal_query_allowed(true, false));
-        assert!(!terminal_query_allowed(false, true));
-        assert!(!terminal_query_allowed(false, false));
+    fn terminal_query_guard_rejects_unsafe_hosts() {
+        assert!(terminal_query_allowed(
+            true,
+            true,
+            "xterm-256color",
+            false,
+            false,
+            false
+        ));
+        assert!(!terminal_query_allowed(
+            true,
+            false,
+            "xterm-256color",
+            false,
+            false,
+            false
+        ));
+        assert!(!terminal_query_allowed(
+            false,
+            true,
+            "xterm-256color",
+            false,
+            false,
+            false
+        ));
+        assert!(!terminal_query_allowed(
+            true, true, "dumb", false, false, false
+        ));
+        assert!(!terminal_query_allowed(
+            true,
+            true,
+            "screen-256color",
+            true,
+            false,
+            false
+        ));
+        assert!(!terminal_query_allowed(true, true, "", false, false, false));
+    }
+
+    #[test]
+    fn terminal_query_guard_honors_force_and_disable_precedence() {
+        assert!(terminal_query_allowed(
+            true, true, "dumb", true, true, false
+        ));
+        assert!(!terminal_query_allowed(
+            true,
+            true,
+            "xterm-kitty",
+            false,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn automatic_query_hosts_require_a_real_terminal_identity() {
+        assert!(!terminal_query_host_is_identified_env(
+            "xterm-256color",
+            false
+        ));
+        assert!(terminal_query_host_is_identified_env(
+            "xterm-256color",
+            true
+        ));
+        assert!(terminal_query_host_is_identified_env("xterm-kitty", false));
+        assert!(terminal_query_host_is_identified_env("foot", false));
     }
 
     #[test]
