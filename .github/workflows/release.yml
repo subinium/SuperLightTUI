@@ -3,12 +3,24 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to recover (for example, v0.22.3)
+        required: true
+        type: string
+      publish_wasm:
+        description: Also publish the legacy slt-wasm crate
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   fmt:
@@ -16,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -26,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-features
@@ -35,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -46,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
@@ -55,6 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --examples --all-features
@@ -64,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.88"
@@ -78,6 +102,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: crate-ci/typos@master
 
   check-no-default:
@@ -85,6 +111,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p superlighttui --no-default-features
@@ -94,6 +122,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -114,6 +144,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - name: Check each feature independently
@@ -124,6 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions-rust-lang/audit@v1
 
   deny:
@@ -131,6 +165,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -140,10 +176,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Check tag matches package versions
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/v}"
+          TAG="${RELEASE_TAG#v}"
           ROOT_VER=$(awk -F'"' '/^version =/ { print $2; exit }' Cargo.toml)
           WASM_VER=$(awk -F'"' '/^version =/ { print $2; exit }' crates/slt-wasm/Cargo.toml)
           WASM_DEP=$(sed -n 's/.*superlighttui = { version = "\([^"]*\)".*/\1/p' crates/slt-wasm/Cargo.toml)
@@ -181,26 +219,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p superlighttui
+      - name: Publish superlighttui if needed
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          INDEX_URL="https://index.crates.io/su/pe/superlighttui"
+          if curl --fail --silent --show-error --location "$INDEX_URL" \
+            | grep -F "\"vers\":\"$VERSION\"" >/dev/null; then
+            echo "superlighttui $VERSION is already published"
+            exit 0
+          fi
+          cargo publish -p superlighttui
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-slt-wasm:
     name: Publish slt-wasm
     needs: [publish-superlighttui]
+    if: ${{ github.event_name == 'push' || inputs.publish_wasm }}
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Wait for superlighttui on crates.io
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="${RELEASE_TAG#v}"
+          INDEX_URL="https://index.crates.io/su/pe/superlighttui"
           for attempt in {1..30}; do
-            if cargo search superlighttui --limit 1 | grep -q "superlighttui = \"$VERSION\""; then
+            if curl --fail --silent --show-error --location "$INDEX_URL" \
+              | grep -F "\"vers\":\"$VERSION\"" >/dev/null; then
               echo "superlighttui $VERSION is visible in the crates.io index"
               exit 0
             fi
@@ -209,20 +265,32 @@ jobs:
           done
           echo "::error::superlighttui $VERSION did not appear in crates.io index"
           exit 1
-      - run: cargo publish -p slt-wasm
+      - name: Publish slt-wasm if needed
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          INDEX_URL="https://index.crates.io/sl/t-/slt-wasm"
+          if curl --fail --silent --show-error --location "$INDEX_URL" \
+            | grep -F "\"vers\":\"$VERSION\"" >/dev/null; then
+            echo "slt-wasm $VERSION is already published"
+            exit 0
+          fi
+          cargo publish -p slt-wasm
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   github-release:
     name: GitHub Release
-    needs: [publish-slt-wasm]
+    needs: [publish-superlighttui]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Extract changelog
         id: changelog
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="${RELEASE_TAG#v}"
           BODY=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
           if [ -z "$BODY" ]; then
             BODY="Release v${VERSION}"
@@ -234,5 +302,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: false
