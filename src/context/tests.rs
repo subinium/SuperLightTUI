@@ -21,6 +21,8 @@ struct SnapshotShape {
     deferred_draws_len: usize,
     notification_queue_len: usize,
     pending_tooltips_len: usize,
+    pending_screen_nav_len: usize,
+    screen_nav_scope_depth: usize,
     text_color_stack_len: usize,
 }
 
@@ -43,6 +45,8 @@ fn snapshot_shape(ctx: &Context) -> SnapshotShape {
         deferred_draws_len: ctx.deferred_draws.len(),
         notification_queue_len: ctx.rollback.notification_queue.len(),
         pending_tooltips_len: ctx.pending_tooltips.len(),
+        pending_screen_nav_len: ctx.pending_screen_nav.len(),
+        screen_nav_scope_depth: ctx.screen_nav_depth,
         text_color_stack_len: ctx.rollback.text_color_stack.len(),
     }
 }
@@ -288,6 +292,8 @@ fn error_boundary_restores_snapshot_state_after_panic() {
                 anchor_rect: crate::rect::Rect::new(1, 1, 1, 1),
                 lines: vec!["drop".into()],
             });
+            ui.pending_screen_nav.push(ScreenNav::Pop);
+            ui.screen_nav_depth += 1;
             ui.rollback.text_color_stack.push(Some(Color::Red));
             panic!("boom");
         },
@@ -431,7 +437,7 @@ fn screen_helper_renders_only_current_screen() {
 // === Issue #279: navigate from inside a `ui.screen` closure ===
 
 #[test]
-fn push_screen_inside_closure_navigates() {
+fn push_screen_inside_closure_navigates_without_blending_frames() {
     let mut backend = TestBackend::new(24, 3);
     let mut screens = ScreenState::new("home");
 
@@ -439,6 +445,7 @@ fn push_screen_inside_closure_navigates() {
     // closure returns — so it does not double-borrow `screens` (issue #279).
     backend.render(|ui| {
         ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
             ui.push_screen("settings");
         });
         ui.screen("settings", &mut screens, |ui| {
@@ -447,24 +454,83 @@ fn push_screen_inside_closure_navigates() {
     });
 
     assert_eq!(screens.current(), "settings");
-    // The push is applied mid-frame, so the settings screen renders the same
-    // frame the navigation happened.
-    assert!(backend.to_string().contains("Settings Screen"));
+    let transition = backend.to_string();
+    assert!(transition.contains("Home Screen"));
+    assert!(!transition.contains("Settings Screen"));
+
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
+        });
+    });
+    let settled = backend.to_string();
+    assert!(!settled.contains("Home Screen"));
+    assert!(settled.contains("Settings Screen"));
 }
 
 #[test]
-fn pop_screen_inside_closure_navigates() {
+fn pop_screen_inside_closure_navigates_without_blank_frame() {
     let mut backend = TestBackend::new(24, 3);
     let mut screens = ScreenState::new("home");
     screens.push("settings");
 
     backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
+        });
         ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
             ui.pop_screen();
         });
     });
 
     assert_eq!(screens.current(), "home");
+    let transition = backend.to_string();
+    assert!(!transition.contains("Home Screen"));
+    assert!(transition.contains("Settings Screen"));
+
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
+        });
+    });
+    let settled = backend.to_string();
+    assert!(settled.contains("Home Screen"));
+    assert!(!settled.contains("Settings Screen"));
+}
+
+#[test]
+fn nested_screen_navigation_stays_in_its_own_scope() {
+    let mut backend = TestBackend::new(24, 3);
+    let mut outer = ScreenState::new("outer-home");
+    let mut inner = ScreenState::new("inner-home");
+
+    backend.render(|ui| {
+        ui.screen("outer-home", &mut outer, |ui| {
+            ui.push_screen("outer-settings");
+            ui.screen("inner-home", &mut inner, |ui| {
+                ui.push_screen("inner-details");
+            });
+        });
+    });
+
+    assert_eq!(outer.current(), "outer-settings");
+    assert_eq!(outer.depth(), 2);
+    assert_eq!(inner.current(), "inner-details");
+    assert_eq!(inner.depth(), 2);
+}
+
+#[test]
+#[should_panic(expected = "screen navigation helpers can only be called inside")]
+fn screen_navigation_outside_screen_panics_with_guidance() {
+    let mut backend = TestBackend::new(24, 3);
+    backend.render(|ui| ui.push_screen("settings"));
 }
 
 #[test]

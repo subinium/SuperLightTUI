@@ -227,6 +227,8 @@ impl Context {
             },
             pending_tooltips,
             pending_screen_nav: Vec::new(),
+            screen_nav_depth: 0,
+            screen_nav_render_origins: std::collections::HashMap::new(),
             hovered_groups,
             region_versions_prev,
             region_versions_cur,

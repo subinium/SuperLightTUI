@@ -440,8 +440,8 @@ ui.screen("settings", &mut screens, |ui| {
 });
 ```
 
-Use `screen(name, &mut screens, ...)` when you want declarative rendering that only runs for the active screen. Each screen gets isolated hook state and focus. Navigate from **inside** a `screen(...)` closure with `push_screen(name)`,
-`pop_screen()`, or `reset_screen()` when you need explicit navigation transitions.
+Use `screen(name, &mut screens, ...)` when you want declarative rendering that only runs for the active screen. Each screen gets isolated hook state and focus. Navigate from **inside** a `screen(...)` closure with `ui.push_screen(name)`,
+`ui.pop_screen()`, or `ui.reset_screen()` when you need explicit navigation transitions. The state changes when the active closure returns, but the destination renders on the next frame so source and destination content never share one terminal buffer.
 
 ## Modal, overlay, and screen composition
 

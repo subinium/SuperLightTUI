@@ -13,7 +13,7 @@
 //! Gated behind the dev-only `pty-test` feature: `cargo test --features pty-test`.
 #![cfg(feature = "pty-test")]
 
-use slt::{Color, ColorDepth, PtyBackend};
+use slt::{Color, ColorDepth, PtyBackend, ScreenState};
 use std::sync::Mutex;
 
 static ENV_GUARD: Mutex<()> = Mutex::new(());
@@ -218,6 +218,40 @@ fn frames_raw_accumulates_each_render() {
         ui.text("b");
     });
     assert_eq!(pb.frames_raw().count(), 2);
+}
+
+/// Screen navigation changes state immediately without flushing source and
+/// destination views into the same terminal frame.
+#[test]
+fn screen_navigation_emits_one_view_per_frame() {
+    let mut pb = PtyBackend::new(24, 2);
+    let mut screens = ScreenState::new("home");
+
+    pb.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
+            ui.push_screen("settings");
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
+        });
+    });
+
+    assert_eq!(screens.current(), "settings");
+    pb.assert_emits("Home Screen");
+    pb.assert_not_emits("Settings Screen");
+
+    pb.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            ui.text("Home Screen");
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            ui.text("Settings Screen");
+        });
+    });
+
+    pb.assert_emits("Settings Screen");
+    pb.assert_not_emits("Home Screen");
 }
 
 /// `assert_not_emits` passes when the needle is genuinely absent.
