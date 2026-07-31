@@ -230,6 +230,10 @@ impl Context {
     /// even when you switch between screens across frames.
     ///
     /// Focus state is saved and restored per screen automatically.
+    /// Navigation requested inside a screen mutates `ScreenState` when that
+    /// closure returns, while the frame finishes rendering the screen that was
+    /// active at its start. The destination renders on the next frame, so
+    /// source and destination content are never composed together.
     ///
     /// # Example
     ///
@@ -256,7 +260,11 @@ impl Context {
             v
         };
 
-        let is_active = screens.current() == name;
+        let screen_key = screens as *mut ScreenState as usize;
+        let is_active = self
+            .screen_nav_render_origins
+            .get(&screen_key)
+            .map_or_else(|| screens.current() == name, |origin| origin == name);
 
         if is_active {
             // Save outer focus, restore this screen's focus
@@ -268,8 +276,18 @@ impl Context {
             self.rollback.hook_cursor = seg_start;
             let focus_count_before = self.rollback.focus_count;
 
+            // Scope deferred navigation to this exact screen closure. Nested
+            // screens get their own range and cannot drain an outer request.
+            let nav_scope_start = self.pending_screen_nav.len();
+            self.screen_nav_depth += 1;
+
             // Execute the screen's closure
             f(self);
+
+            self.screen_nav_depth = self
+                .screen_nav_depth
+                .checked_sub(1)
+                .expect("active screen must own a navigation scope");
 
             // Record the hook count for this screen.
             //
@@ -297,9 +315,15 @@ impl Context {
             // hold `&mut screens` here, so there is no double mutable borrow —
             // app code can call `ui.push_screen(...)` / `ui.pop_screen()` from
             // within the closure without the borrow conflict from the issue.
-            if !self.pending_screen_nav.is_empty() {
-                let navs = std::mem::take(&mut self.pending_screen_nav);
-                for nav in navs {
+            if self.pending_screen_nav.len() > nav_scope_start {
+                // Preserve the screen that rendered at the start of this
+                // transition. ScreenState changes immediately, but later
+                // declarations wait until the next frame to render the new
+                // destination, avoiding a one-frame source/destination blend.
+                self.screen_nav_render_origins
+                    .entry(screen_key)
+                    .or_insert_with(|| screens.current().to_owned());
+                for nav in self.pending_screen_nav.drain(nav_scope_start..) {
                     screens.apply_nav(nav);
                 }
             }
@@ -316,7 +340,9 @@ impl Context {
     /// Call this from inside a [`Context::screen`] closure to navigate forward.
     /// The push is deferred and applied to your `ScreenState` the moment the
     /// closure returns, so it does not conflict with the `&mut ScreenState`
-    /// already borrowed by `screen(...)` (issue #279).
+    /// already borrowed by `screen(...)` (issue #279). Rendering stays on the
+    /// source screen for that transition frame; the destination appears on the
+    /// next frame.
     ///
     /// # Example
     ///
@@ -330,7 +356,14 @@ impl Context {
     /// });
     /// # });
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when called outside an active [`Context::screen`] closure. Use
+    /// [`ScreenState::push`] directly when navigating outside a screen.
+    #[track_caller]
     pub fn push_screen(&mut self, name: impl Into<String>) {
+        self.assert_screen_nav_scope();
         self.pending_screen_nav.push(ScreenNav::Push(name.into()));
     }
 
@@ -339,7 +372,14 @@ impl Context {
     ///
     /// Like [`Self::push_screen`], the pop is deferred and applied when the
     /// enclosing [`Context::screen`] closure returns (issue #279).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called outside an active [`Context::screen`] closure. Use
+    /// [`ScreenState::pop`] directly when navigating outside a screen.
+    #[track_caller]
     pub fn pop_screen(&mut self) {
+        self.assert_screen_nav_scope();
         self.pending_screen_nav.push(ScreenNav::Pop);
     }
 
@@ -348,8 +388,23 @@ impl Context {
     ///
     /// Deferred and applied when the enclosing [`Context::screen`] closure
     /// returns (issue #279).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called outside an active [`Context::screen`] closure. Use
+    /// [`ScreenState::reset`] directly when navigating outside a screen.
+    #[track_caller]
     pub fn reset_screen(&mut self) {
+        self.assert_screen_nav_scope();
         self.pending_screen_nav.push(ScreenNav::Reset);
+    }
+
+    #[track_caller]
+    fn assert_screen_nav_scope(&self) {
+        assert!(
+            self.screen_nav_depth > 0,
+            "screen navigation helpers can only be called inside an active Context::screen closure; mutate ScreenState directly outside a screen"
+        );
     }
 
     /// Remove retained hook/focus state for an inactive screen.

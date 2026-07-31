@@ -96,6 +96,16 @@ pub struct Context {
     /// closure returns. Deferring the mutation here lets app code navigate from
     /// within the closure without a double mutable borrow of its `ScreenState`.
     pub(crate) pending_screen_nav: Vec<ScreenNav>,
+    /// Number of currently active `screen` closures. Each `screen` keeps its
+    /// own pending-navigation start index on the call stack; this depth lets
+    /// navigation helpers reject calls made outside any screen without a
+    /// per-frame heap allocation.
+    pub(crate) screen_nav_depth: usize,
+    /// Original active screen for each `ScreenState` that navigated this frame.
+    /// Later `screen` declarations keep rendering this origin until the next
+    /// frame, preventing source and destination screens from being composed in
+    /// the same terminal buffer. Keys are per-frame `ScreenState` addresses.
+    pub(crate) screen_nav_render_origins: std::collections::HashMap<usize, String>,
     pub(crate) hovered_groups: std::collections::HashSet<std::sync::Arc<str>>,
     /// Issue #273: version keys recorded by [`Context::cached`] regions on the
     /// PREVIOUS frame, moved in from `FrameState::region_versions`. Indexed by
@@ -219,6 +229,8 @@ pub(super) struct ContextCheckpoint {
     /// panicking subtree inside an `error_boundary`, so a rolled-back screen
     /// closure does not leave a phantom push/pop queued for its `ScreenState`.
     pending_screen_nav_len: usize,
+    /// Drop navigation scopes opened by a panicking nested `screen` call.
+    screen_nav_depth: usize,
     /// Issue #273: `cached` region keys recorded so far, so a panicking
     /// `cached` region inside an `error_boundary` rolls back its key entry
     /// (and any nested ones) — keeping the recorded keys consistent with the
@@ -236,6 +248,7 @@ impl ContextCheckpoint {
             context_stack_len: ctx.context_stack.len(),
             pending_tooltips_len: ctx.pending_tooltips.len(),
             pending_screen_nav_len: ctx.pending_screen_nav.len(),
+            screen_nav_depth: ctx.screen_nav_depth,
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
         }
@@ -253,6 +266,7 @@ impl ContextCheckpoint {
         // Issue #279: drop screen-navigation requests queued by the panicking
         // subtree but keep any recorded before the error boundary was entered.
         ctx.pending_screen_nav.truncate(self.pending_screen_nav_len);
+        ctx.screen_nav_depth = self.screen_nav_depth;
         // Issue #273: drop `cached` keys recorded by the panicking subtree.
         ctx.region_versions_cur
             .truncate(self.region_versions_cur_len);

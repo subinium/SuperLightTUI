@@ -282,7 +282,7 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.tooltip(text)` | `()` | Shown near cursor on hover. |
 | `ui.group(name)` | `ContainerBuilder` | Named group for shared hover/focus styling. |
 | `ui.screen(name, &mut screens, |ui|{...})` | `()` | Render only when `screens.current() == name`. Isolates hook state and focus per screen. |
-| `ui.push_screen(name)` / `ui.pop_screen()` / `ui.reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. Deferred and applied when the closure returns (issue #279). |
+| `ui.push_screen(name)` / `ui.pop_screen()` / `ui.reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. State updates when the closure returns; the destination renders next frame (issue #279). |
 | `ui.form(&mut form_state, |ui|{...})` | `&mut Self` | Form container. |
 | `ui.form_field(&mut field)` | `&mut Self` | One field (label + input + error). |
 | `ui.form_submit(label)` | `Response` | Submit button. |
@@ -523,6 +523,10 @@ that is applied to your `ScreenState` the moment the closure returns — calling
 `screen(...)` already holds a `&mut ScreenState` borrow for the duration of the
 closure (issue #279). Outside any `screen(...)` closure you can still mutate the
 `ScreenState` directly (`screens.push("x")`, `screens.pop()`).
+
+The transition frame finishes rendering only the source screen. The destination
+starts on the next frame, preventing both views from being composed into one
+terminal buffer.
 
 ### 6.6 Multi-mode app
 ```rust
