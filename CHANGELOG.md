@@ -12,6 +12,9 @@
   leaks and a race that could consume the first byte of user input. Kitty
   keyboard setup and cleanup now also emit portable protocol bytes on Windows,
   and optional mode teardown can no longer abort core terminal restoration.
+- **Theme watcher source filtering** — hot reload now ignores registration,
+  same-content, and sibling-file events while retaining atomic-save support,
+  preventing spurious reloads and cross-platform filesystem-watch races.
 
 ### Changed
 
