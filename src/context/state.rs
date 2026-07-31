@@ -79,6 +79,14 @@ impl<T: 'static> State<T> {
     }
 
     /// Read the current value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this handle's slot or id contains a different concrete type,
+    /// which means positional hooks changed order or the same named/keyed id
+    /// was reused with another `T`. Named and keyed handles also panic if their
+    /// backing entry was removed before access. The message identifies the
+    /// hook index or id and the expected type.
     pub fn get<'a>(&self, ui: &'a Context) -> &'a T {
         match &self.key {
             StateKey::Indexed(idx) => downcast_or_panic::<T>(
@@ -107,6 +115,11 @@ impl<T: 'static> State<T> {
     }
 
     /// Mutably access the current value.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same slot, id, and type-mismatch conditions as
+    /// [`get`](Self::get).
     pub fn get_mut<'a>(&self, ui: &'a mut Context) -> &'a mut T {
         match &self.key {
             StateKey::Indexed(idx) => downcast_or_panic_mut::<T>(

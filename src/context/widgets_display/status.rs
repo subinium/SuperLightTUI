@@ -215,6 +215,17 @@ impl Context {
     }
 
     /// Collapsible section that toggles on click, Enter, or Space.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # let mut open = true;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.accordion("Advanced", &mut open, |ui| {
+    ///     ui.text("Expert settings");
+    /// });
+    /// # });
+    /// ```
     pub fn accordion(
         &mut self,
         title: &str,
@@ -609,18 +620,42 @@ impl Context {
     }
 
     /// Render a code block with language-aware syntax highlighting.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.code_block("fn main() {}").lang("rust");
+    /// # });
+    /// ```
     #[deprecated(since = "0.21.0", note = "use `code_block(code).lang(lang)`")]
     pub fn code_block_lang(&mut self, code: &str, lang: &str) -> Response {
         render_code_block(self, code, lang, false)
     }
 
     /// Render a code block with line numbers and keyword highlighting.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.code_block("let first = 1;\nlet second = 2;").numbered();
+    /// # });
+    /// ```
     #[deprecated(since = "0.21.0", note = "use `code_block(code).numbered()`")]
     pub fn code_block_numbered(&mut self, code: &str) -> Response {
         render_code_block(self, code, "", true)
     }
 
     /// Render a code block with line numbers and language-aware highlighting.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.code_block("fn main() {}").lang("rust").numbered();
+    /// # });
+    /// ```
     #[deprecated(
         since = "0.21.0",
         note = "use `code_block(code).lang(lang).numbered()`"
@@ -783,7 +818,11 @@ impl<'a> Breadcrumb<'a> {
 
     /// Render now and return the [`BreadcrumbResponse`].
     pub fn show(mut self) -> BreadcrumbResponse {
-        let ctx = self.ctx.take().expect("Breadcrumb::show called twice");
+        let Some(ctx) = self.ctx.take() else {
+            // `show` consumes the builder, so safe code cannot reach this
+            // branch. Stay defensive if the internal invariant changes.
+            return BreadcrumbResponse::default();
+        };
         render_breadcrumb(ctx, self.segments, self.separator, self.color)
     }
 }

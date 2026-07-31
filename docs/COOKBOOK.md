@@ -641,6 +641,7 @@ use slt::{Border, Color, Context, KeyCode, Theme};
 // `provide` boxes the value as `dyn Any`, requiring `T: 'static`. `Theme` is
 // `Copy`, so deref-copy from `ui.theme()`. `&'static str` works for string
 // literals; switch to `String` for runtime values.
+#[derive(Clone, Copy)]
 struct AppCtx {
     theme: Theme,
     tick: u64,
@@ -674,14 +675,14 @@ fn main() -> std::io::Result<()> {
 }
 
 fn render_header(ui: &mut Context) {
-    let ctx = ui.use_context::<AppCtx>();
+    let ctx = *ui.use_context::<AppCtx>();
     ui.text(format!("hi, {}", ctx.user)).bold().fg(Color::Cyan);
     ui.text(format!("tick {}", ctx.tick)).dim();
 }
 
 fn render_card(ui: &mut Context) {
     // Optional read — never panics if no provider is on the stack.
-    if let Some(ctx) = ui.try_use_context::<AppCtx>() {
+    if let Some(ctx) = ui.try_use_context::<AppCtx>().copied() {
         ui.text(format!("theme bg: {:?}", ctx.theme.bg));
     } else {
         ui.text("no app context").dim();
@@ -694,6 +695,8 @@ fn render_card(ui: &mut Context) {
 - `provide` is scoped to the closure body. Once that body returns, the value pops off the context stack.
 - `use_context::<T>()` finds the nearest provided `T` by type. Two providers of the same type stack — the inner one wins inside its body.
 - Use `try_use_context` in helpers that should also work outside the provider (e.g. unit tests, isolated demos).
+- `use_context` returns a reference tied to `ui`. Copy or clone the required
+  value before calling a widget method that needs `&mut ui`.
 
 ---
 

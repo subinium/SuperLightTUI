@@ -87,6 +87,11 @@ impl Context {
 /// `Drop` is intentional: `ui.gauge(0.5).label("CPU");` is the idiomatic form
 /// when the response isn't needed, mirroring egui's `ui.add(...)`. Use
 /// [`Self::show`] when you need the response.
+///
+/// # Family
+///
+/// Use [`LineGauge`] for a compact single-line bar with a trailing label, or
+/// [`Context::progress_bar`] / [`Context::progress`] for an unlabeled bar.
 pub struct Gauge<'a> {
     ctx: Option<&'a mut Context>,
     ratio: f64,
@@ -135,8 +140,11 @@ impl<'a> Gauge<'a> {
 
     /// Render now and return the [`GaugeResponse`].
     pub fn show(mut self) -> GaugeResponse {
-        // SAFETY: ctx is Some until Drop runs; show consumes self before Drop.
-        let ctx = self.ctx.take().expect("Gauge::show called twice");
+        let Some(ctx) = self.ctx.take() else {
+            // `show` consumes the builder, so safe code cannot reach this
+            // branch. Stay defensive if the internal invariant changes.
+            return GaugeResponse::default();
+        };
         render_gauge(
             ctx,
             self.ratio,
@@ -169,6 +177,11 @@ impl Drop for Gauge<'_> {
 ///
 /// `Drop` is intentional: `ui.line_gauge(0.5).filled('━');` is the idiomatic
 /// form when the response isn't needed.
+///
+/// # Family
+///
+/// Use [`Gauge`] for a block-fill bar with a centered label, or
+/// [`Context::progress_bar`] / [`Context::progress`] for an unlabeled bar.
 pub struct LineGauge<'a> {
     ctx: Option<&'a mut Context>,
     ratio: f64,
@@ -225,7 +238,11 @@ impl<'a> LineGauge<'a> {
 
     /// Render now and return the [`GaugeResponse`].
     pub fn show(mut self) -> GaugeResponse {
-        let ctx = self.ctx.take().expect("LineGauge::show called twice");
+        let Some(ctx) = self.ctx.take() else {
+            // `show` consumes the builder, so safe code cannot reach this
+            // branch. Stay defensive if the internal invariant changes.
+            return GaugeResponse::default();
+        };
         render_line_gauge(
             ctx,
             self.ratio,
