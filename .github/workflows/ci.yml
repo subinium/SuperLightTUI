@@ -48,6 +48,19 @@ jobs:
       # cross-test contamination was fixed at the source.
       - run: cargo test --all-features
 
+  platform-test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p superlighttui --all-features
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

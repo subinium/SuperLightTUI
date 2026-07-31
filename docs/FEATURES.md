@@ -47,6 +47,18 @@ What still remains:
 
 That makes SLT usable as a rendering core for non-terminal environments.
 
+## Terminal query safety
+
+The built-in runtime probes capabilities only when both stdin and stdout are
+TTYs and the environment identifies a direct terminal emulator. It skips
+generic PTY wrappers, `TERM=dumb`, and tmux/screen sessions by default so a
+silent host cannot leak query bytes or race the first user keystroke.
+
+- Set `SLT_DISABLE_TERMINAL_QUERIES=1` to disable all terminal queries.
+- Set `SLT_FORCE_TERMINAL_QUERIES=1` to opt in on an otherwise skipped host.
+- Image-protocol force flags (`SLT_FORCE_KITTY`, `SLT_FORCE_SIXEL`, and
+  `SLT_FORCE_ITERM`) remain independent.
+
 ## Recommended combos
 
 | Goal | Suggested dependency |
