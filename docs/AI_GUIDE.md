@@ -124,6 +124,7 @@ When a value is *read* by many nested render functions (theme, current tick, cur
 // `provide` boxes the value as `dyn Any`, so the type must satisfy `T: 'static`.
 // `Theme` is `Copy`, so deref-copy from `ui.theme()`. Use `&'static str` for
 // string literals; switch to `String` if the value comes from runtime input.
+#[derive(Clone, Copy)]
 struct AppCtx {
     theme: slt::Theme,
     tick: u64,
@@ -139,10 +140,15 @@ slt::run(|ui: &mut slt::Context| {
 });
 
 fn render_card(ui: &mut slt::Context) {
-    let ctx = ui.use_context::<AppCtx>();
+    // End the immutable borrow before the next `&mut ui` widget call.
+    let ctx = *ui.use_context::<AppCtx>();
     ui.text(format!("hi {} (tick {})", ctx.user, ctx.tick));
 }
 ```
+
+`use_context` and `try_use_context` return references tied to `ui`. Never keep
+one across a widget call: copy or clone the whole value (or just the fields the
+component needs) first.
 
 Reserve explicit parameters for **writes** (e.g. `&mut MyDocState`) — those should still be passed in, not read out of the context bag. See [PATTERNS.md](PATTERNS.md) for the full pattern.
 

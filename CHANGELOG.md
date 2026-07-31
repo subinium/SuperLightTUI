@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Context injection examples** (#281) — shared-context examples now take an
+  owned snapshot before subsequent mutable UI calls, avoiding overlapping
+  `&Context` / `&mut Context` borrows.
+
+### Docs
+
+- **Rustdoc audit follow-up** (#244) — completed the remaining status-widget
+  examples, gauge-family links, animation links, state-access panic contracts,
+  and defensive consuming-builder documentation.
+
 ## [0.22.3] - 2026-07-31
 
 Patch release preventing mixed terminal frames during screen navigation,

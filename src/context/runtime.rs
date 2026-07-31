@@ -1046,6 +1046,8 @@ impl Context {
     /// - [`animate_value`](Self::animate_value) — the underlying primitive this
     ///   delegates to; use it for a custom duration or a non-binary target.
     /// - [`Tween`](crate::Tween) — full control over easing and lifecycle.
+    /// - [`Spring`](crate::Spring) — physics-based motion that reacts smoothly
+    ///   when its target changes.
     pub fn animate_bool(&mut self, id: &'static str, value: bool) -> f64 {
         let target = if value { 1.0 } else { 0.0 };
         self.animate_value(id, target, crate::anim::DEFAULT_ANIMATE_TICKS)
@@ -1092,6 +1094,8 @@ impl Context {
     /// - [`animate_bool`](Self::animate_bool) — boolean-driven shorthand that
     ///   tweens between `0.0` and `1.0`.
     /// - [`Tween`](crate::Tween) — explicit easing and lifecycle control.
+    /// - [`Spring`](crate::Spring) — physics-based motion for frequently
+    ///   changing targets.
     pub fn animate_value(&mut self, id: &'static str, target: f64, duration_ticks: u64) -> f64 {
         let tick = self.tick;
         let entry = self
@@ -1548,6 +1552,26 @@ impl Context {
     ///
     /// Panics if no value of type `T` is currently provided. Use
     /// [`try_use_context`](Self::try_use_context) for a non-panicking variant.
+    ///
+    /// # Example
+    ///
+    /// Take an owned snapshot before calling methods that need `&mut Context`:
+    ///
+    /// ```no_run
+    /// #[derive(Clone)]
+    /// struct AppContext {
+    ///     username: String,
+    ///     show_debug: bool,
+    /// }
+    ///
+    /// fn render_home(ui: &mut slt::Context) {
+    ///     let app = ui.use_context::<AppContext>().clone();
+    ///     ui.text(format!("Hello, {}", app.username));
+    ///     if app.show_debug {
+    ///         ui.text("debug mode on").dim();
+    ///     }
+    /// }
+    /// ```
     pub fn use_context<T: 'static>(&self) -> &T {
         self.try_use_context::<T>().unwrap_or_else(|| {
             panic!(

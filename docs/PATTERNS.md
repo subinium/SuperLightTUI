@@ -253,6 +253,7 @@ Some values want to propagate through a deep tree without being passed to every 
 ```rust
 use slt::{Color, Context};
 
+#[derive(Clone)]
 struct AppContext {
     username: String,
     show_debug: bool,
@@ -271,7 +272,9 @@ fn main() -> std::io::Result<()> {
 }
 
 fn render_home(ui: &mut Context) {
-    let app = ui.use_context::<AppContext>();
+    // `use_context` returns `&T`, which borrows `ui`. Take an owned snapshot
+    // before calling methods that need `&mut ui`.
+    let app = ui.use_context::<AppContext>().clone();
     ui.text(format!("Hello, {}", app.username));
     if app.show_debug {
         ui.text("debug mode on").dim();
@@ -284,10 +287,13 @@ How it behaves:
 - **Scoped.** The value is alive only inside the body closure passed to `provide`. Outside that closure, `use_context::<AppContext>()` panics — there is no value.
 - **Shadowing.** Nested `provide` calls of the same type shadow the outer one for the duration of the inner closure. Think of it as a LIFO stack, one stack per `TypeId`.
 - **Optional reads.** `try_use_context::<T>() -> Option<&T>` returns `None` instead of panicking. Use it when a component should work both inside and outside the provider.
+- **Snapshot before rendering.** A context reference borrows `ui`. Copy or clone
+  only the fields a component needs before the next `ui.*` call; do not hold
+  `&T` across calls that mutably borrow `ui`.
 
 ```rust
 fn render_footer(ui: &mut Context) {
-    if let Some(app) = ui.try_use_context::<AppContext>() {
+    if let Some(app) = ui.try_use_context::<AppContext>().cloned() {
         ui.text(format!("logged in as {}", app.username)).dim();
     } else {
         ui.text("anonymous").dim();
