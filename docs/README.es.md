@@ -28,16 +28,16 @@ Eso hace que encaje igual de bien para personas que prototipan una herramienta y
 <table>
   <tr>
     <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example demo_spreadsheet</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — el texto se reorganiza alrededor del cursor del ratón en tiempo real<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — el texto se reorganiza alrededor del cursor del ratón en tiempo real<br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
 </table>
 
@@ -225,13 +225,13 @@ Para la lista categorizada de widgets, consulta la [Guía de Widgets]. Para comp
 | `hello` | `cargo run --example hello` | La app más pequeña posible |
 | `counter` | `cargo run --example counter` | Estado + entrada de teclado |
 | `demo` | `cargo run --example demo` | Recorrido amplio de widgets |
-| `demo_dashboard` | `cargo run --example demo_dashboard` | Layout de dashboard |
-| `demo_cli` | `cargo run --example demo_cli` | Layout de herramienta CLI |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | Gráficos y visualización de datos |
-| `demo_game` | `cargo run --example demo_game` | Interacción immediate-mode |
-| `demo_design_system` | `cargo run --example demo_design_system` | Design tokens, temas, herencia de estilos |
-| `inline` | `cargo run --example inline` | Render inline bajo un prompt normal |
-| `async_demo` | `cargo run --example async_demo --features async` | Mensajes en segundo plano |
+| `demo_dashboard` | `cargo run --example showcase_tour` | Layout de dashboard |
+| `demo_cli` | `cargo run --example showcase_tour` | Layout de herramienta CLI |
+| `demo_infoviz` | `cargo run --example showcase_tour` | Gráficos y visualización de datos |
+| `demo_game` | `cargo run --example showcase_tour` | Interacción immediate-mode |
+| `demo_design_system` | `cargo run --example showcase_tour` | Design tokens, temas, herencia de estilos |
+| `inline` | `cargo run --example system_tour` | Render inline bajo un prompt normal |
+| `async_demo` | `cargo run --example system_tour --features async` | Mensajes en segundo plano |
 
 El índice completo categorizado está en [Ejemplos].
 

@@ -7,7 +7,7 @@
 //! theme change to its own subtree — the outer container keeps its
 //! parent theme, so nothing leaks across panel boundaries.
 //!
-//! Run: `cargo run --example v020_theme_subtree`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   q / Esc / Ctrl-Q — quit

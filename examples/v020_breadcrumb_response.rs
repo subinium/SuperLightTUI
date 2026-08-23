@@ -4,7 +4,7 @@
 //! Demonstrates: #213 (`breadcrumb` builder, `BreadcrumbResponse: Deref<Response>`,
 //! custom separator and link color).
 //!
-//! Run: `cargo run --example v020_breadcrumb_response`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   Tab / Shift-Tab     — focus a segment

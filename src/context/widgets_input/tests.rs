@@ -582,6 +582,36 @@ fn number_input_unfocused_ignores_keys() {
 
 proptest::proptest! {
     #[test]
+    fn numeric_public_boundaries_never_retain_non_finite_values(
+        value in proptest::num::f64::ANY,
+        min in proptest::num::f64::ANY,
+        max in proptest::num::f64::ANY,
+        step in proptest::num::f64::ANY,
+    ) {
+        let mut state = NumberInputState::new(value, min, max).step(step);
+        let mut backend = TestBackend::new(40, 5);
+        backend.render(|ui| {
+            let _ = ui.number_input(&mut state);
+        });
+        proptest::prop_assert!(state.min.is_finite());
+        proptest::prop_assert!(state.max.is_finite());
+        proptest::prop_assert!(state.value.is_finite());
+        proptest::prop_assert!(state.step.is_finite());
+        proptest::prop_assert!(state.min <= state.max);
+        proptest::prop_assert!(state.value >= state.min);
+        proptest::prop_assert!(state.value <= state.max);
+
+        let mut slider_value = value;
+        backend.render(|ui| {
+            let _ = ui.slider_with(
+                &mut slider_value,
+                crate::widgets::SliderOpts::new("value", min..=max).step(step),
+            );
+        });
+        proptest::prop_assert!(slider_value.is_finite());
+    }
+
+    #[test]
     fn number_input_always_in_range_after_step(
         value in -1000.0f64..1000.0,
         min in -1000.0f64..1000.0,

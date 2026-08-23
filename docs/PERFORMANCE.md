@@ -95,12 +95,9 @@ allocation in the PR description; reviewers should push back on
 `String::from`, `format!`, `Vec::new` inside the `frame()` body unless the
 allocation is one-shot or amortized.
 
-> **Working tree note**: `FrameState.commands_buf` and `FrameState.frame_data`
-> exist in the v0.19.2 source tree (`src/lib.rs:600` / `:603`) and are wired
-> into `frame()` at `:1187` and `:1195`. The CHANGELOG records #155 and #157
-> as "Deferred to v0.19.3" because they were reverted during release triage
-> and are scheduled to re-land. Treat the deferred-list items as in-flight
-> until v0.19.3 ships.
+`FrameState` owns the reusable command and collection buffers. Allocation
+regression tests verify that these buffers are returned after normal, quit, and
+panic-recovery frames; changes to that handoff require a measured benchmark.
 
 ## 3. Measuring performance
 

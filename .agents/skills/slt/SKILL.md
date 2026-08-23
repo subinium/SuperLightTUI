@@ -1,9 +1,9 @@
 ---
 name: slt
-description: Build Rust TUI apps with SuperLightTUI v0.20 (immediate-mode terminal UI). Use this skill when the user asks to create, modify, or debug terminal UI code in this repo, or asks "how do I X in SLT / TUI / terminal", or types Korean triggers like "터미널 UI", "TUI 만들어줘", "SLT로", "ratatui 대신". Read REFERENCES.md for feature flags and doc pointers; grep `src/context/` and `src/widgets/` before inventing any API.
+description: Build Rust TUI apps with SuperLightTUI v0.23 (immediate-mode terminal UI). Use this skill when the user asks to create, modify, or debug terminal UI code in this repo, or asks "how do I X in SLT / TUI / terminal", or types Korean triggers like "터미널 UI", "TUI 만들어줘", "SLT로", "ratatui 대신". Read REFERENCES.md for feature flags and doc pointers; grep `src/context/` and `src/widgets/` before inventing any API.
 ---
 
-# SuperLightTUI (SLT) Authoring Skill — v0.20
+# SuperLightTUI (SLT) Authoring Skill — v0.23
 
 ## Mental model
 
@@ -121,8 +121,8 @@ Hooks must be called in the same order every frame **unless** they are id-keyed.
 | Hook | Key | Safe in `if`/`match`? | Use when |
 |---|---|---|---|
 | `ui.use_state(\|\| init)` | call order | **No** | Top-level state, no conditional placement |
-| `ui.use_state_named::<T>("id")` | `&'static str` | **Yes** | Conditional/branching state with compile-time id |
-| `ui.use_state_named_with("id", \|\| init)` | `&'static str` | **Yes** | Same, with explicit init fn |
+| `ui.use_state_named("id", \|\| init)` | `&'static str` | **Yes** | Conditional/branching state with compile-time id and initializer |
+| `ui.use_state_named_default::<T>("id")` | `&'static str` | **Yes** | Same, using `T::default()` |
 | `ui.use_state_keyed("id-{i}", \|\| init)` | runtime `String` | **Yes** | Per-row state in a list (key from data) |
 | `ui.use_state_keyed_default("id-{i}")` | runtime `String` | **Yes** | Same, `T: Default` shortcut |
 | `ui.use_memo(&deps, \|d\| compute(d))` | call order + deps | **No** | Cached compute, deps change → recompute |
@@ -133,7 +133,7 @@ Hooks must be called in the same order every frame **unless** they are id-keyed.
 if expanded { let count = ui.use_state(|| 0); }
 
 // RIGHT — id-keyed variant is safe inside conditionals
-if expanded { let count = ui.use_state_named::<i32>("sidebar.count"); }
+if expanded { let count = ui.use_state_named_default::<i32>("sidebar.count"); }
 
 // Per-list-item runtime keys
 for i in 0..items.len() {
@@ -195,7 +195,8 @@ impl<'a> slt::Widget for Label<'a> {
     }
 }
 
-ui.add(Label { text: "hello" });   // or call .ui(ui) directly
+let mut label = Label { text: "hello" };
+ui.widget(&mut label);              // or call `label.ui(ui)` with `Widget` in scope
 ```
 
 For mouse hit-testing use `ui.interaction(rect)`. For keyboard use `register_focusable()` + `available_key_presses()`.
@@ -222,6 +223,7 @@ cargo check --examples --all-features
 Extended — before PR or release:
 ```
 typos
+bash scripts/api_audit.sh --strict
 cargo check -p superlighttui --no-default-features
 cargo check -p slt-wasm --target wasm32-unknown-unknown
 cargo hack check -p superlighttui --each-feature --no-dev-deps
@@ -251,7 +253,7 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 - **`Response.rect` on frame 1.** Zero `Rect`. Guard with `ui.tick() > 0`.
 - **`use_state()` inside `if`/`match`/`for`.** Use `use_state_named` (`&'static str` id) or `use_state_keyed` (runtime `String`).
 - **Forgetting `.show()` on builders that return a response.** Drop renders and discards the response. Capture with `let r = ui.gauge(...).show();`.
-- **`'static` on `ContainerBuilder::draw()` closure.** Raw draw is deferred; the closure must be `'static`.
+- **`'static` on deferred raw draw.** Use `draw_with` for owned data, or `draw_precomputed` when the closure must borrow local data and fixed source dimensions are acceptable.
 - **Mixing crossterm raw events with `ui.*` helpers.** Prefer `ui.key()`, `ui.key_code()`, `ui.key_mod()`. For modal-aware shortcuts use `ui.raw_key_*`.
 - **Hard-coding `Color::Rgb(...)` instead of `ui.theme()`** — themes can't swap.
 - **`RichLogState::new()` for unbounded.** New caps at 10000; use `RichLogState::new_unbounded()` if you really want unlimited.

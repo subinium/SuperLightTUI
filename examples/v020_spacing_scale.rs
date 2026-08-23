@@ -3,7 +3,7 @@
 //!
 //! Demonstrates: #227.
 //!
-//! Run: `cargo run --example v020_spacing_scale`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   q / Esc / Ctrl-Q — quit

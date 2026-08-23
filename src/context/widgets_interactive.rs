@@ -9,6 +9,12 @@
 
 use super::*;
 
+fn has_global_shortcut_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::CONTROL)
+        || modifiers.contains(KeyModifiers::SUPER)
+        || modifiers.contains(KeyModifiers::META)
+}
+
 mod collections;
 mod events;
 mod rich_markdown;

@@ -2653,3 +2653,155 @@ fn min_width_memo_matches_uncached_after_resolution() {
         "after Pct resolves to Fixed(20), min_width must update, not return the stale cached 4"
     );
 }
+
+#[test]
+fn nested_viewports_clip_all_feedback_and_raw_crop_in_two_dimensions() {
+    use std::sync::Arc;
+
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    root.size = (30, 20);
+
+    let mut outer = LayoutNode::container(Direction::Column, default_container_config());
+    outer.pos = (2, 2);
+    outer.size = (10, 6);
+    outer.is_scrollable = true;
+    outer.scroll_offset_x = 3;
+    outer.scroll_offset = 2;
+
+    let mut nested = LayoutNode::container(Direction::Column, default_container_config());
+    nested.pos = (6, 5);
+    nested.size = (10, 5);
+    nested.is_scrollable = true;
+    nested.scroll_offset_x = 2;
+    nested.scroll_offset = 1;
+
+    let mut raw = LayoutNode::raw_draw(9, Constraints::default(), 0, Margin::default(), None, None);
+    raw.pos = (6, 4);
+    raw.size = (14, 8);
+    nested.children.push(raw);
+
+    let mut visible = LayoutNode::container(Direction::Column, default_container_config());
+    visible.pos = (6, 4);
+    visible.size = (14, 8);
+    visible.interaction_id = Some(4);
+    visible.focus_id = Some(4);
+    visible.group_name = Some(Arc::from("visible"));
+    nested.children.push(visible);
+
+    let mut hidden = LayoutNode::container(Direction::Column, default_container_config());
+    hidden.pos = (0, 0);
+    hidden.size = (2, 2);
+    hidden.interaction_id = Some(5);
+    hidden.focus_id = Some(5);
+    hidden.group_name = Some(Arc::from("hidden"));
+    nested.children.push(hidden);
+
+    outer.children.push(nested);
+    root.children.push(outer);
+
+    let mut data = FrameData::default();
+    collect_all(&root, &mut data);
+
+    let raw = &data.raw_draw_rects[0];
+    assert_eq!(raw.rect, crate::rect::Rect::new(3, 3, 9, 5));
+    assert_eq!(raw.left_clip_cols, 2);
+    assert_eq!(raw.top_clip_rows, 2);
+    assert_eq!((raw.original_width, raw.original_height), (14, 8));
+    assert_eq!(data.hit_areas[4], crate::rect::Rect::new(3, 3, 9, 5));
+    assert!(data.hit_areas[5].is_empty());
+    assert!(data.focus_rects.iter().any(|(id, _)| *id == 4));
+    assert!(!data.focus_rects.iter().any(|(id, _)| *id == 5));
+    assert!(
+        data.group_rects
+            .iter()
+            .any(|(name, _)| name.as_ref() == "visible")
+    );
+    assert!(
+        !data
+            .group_rects
+            .iter()
+            .any(|(name, _)| name.as_ref() == "hidden")
+    );
+    assert!(
+        data.content_areas.iter().any(|(full, content)| *full
+            == crate::rect::Rect::new(3, 3, 9, 5)
+            && *content == *full)
+    );
+}
+
+#[test]
+fn partially_clipped_container_applies_padding_before_viewport_clip() {
+    let mut root = LayoutNode::container(Direction::Row, default_container_config());
+    root.pos = (0, 0);
+    root.size = (5, 1);
+    root.is_scrollable = true;
+    root.scroll_offset_x = 2;
+
+    let mut child = LayoutNode::container(Direction::Row, default_container_config());
+    child.pos = (0, 0);
+    child.size = (8, 1);
+    child.padding.left = 2;
+    let mut text = LayoutNode::text(
+        "A".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+    text.pos = (3, 0);
+    text.size = (1, 1);
+    child.children.push(text);
+    root.children.push(child);
+
+    let mut buffer = crate::buffer::Buffer::empty(crate::rect::Rect::new(0, 0, 5, 1));
+    super::render::render(&root, &mut buffer);
+    assert_eq!(buffer.get(1, 0).symbol, "A");
+}
+
+#[test]
+fn frame_data_swaps_feedback_capacity_back_for_reuse() {
+    let mut data = FrameData::default();
+    let mut feedback = crate::LayoutFeedbackState::default();
+    feedback.prev_hit_map = Vec::with_capacity(64);
+    feedback
+        .prev_hit_map
+        .push(crate::rect::Rect::new(0, 0, 1, 1));
+
+    data.swap_feedback(&mut feedback);
+    assert!(data.hit_areas.capacity() >= 64);
+    data.clear();
+    data.hit_areas.push(crate::rect::Rect::new(1, 1, 2, 2));
+    data.swap_feedback(&mut feedback);
+    assert_eq!(feedback.prev_hit_map, [crate::rect::Rect::new(1, 1, 2, 2)]);
+
+    data.swap_feedback(&mut feedback);
+    assert!(data.hit_areas.capacity() >= 64);
+}
+
+#[test]
+fn intrinsic_and_flex_arithmetic_saturates_extreme_constraints() {
+    let extreme = Constraints::default().w(u32::MAX).h(u32::MAX);
+    let child = LayoutNode::text(
+        "x".to_string(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, false, false),
+        Margin::new(u32::MAX, u32::MAX, u32::MAX, u32::MAX),
+        extreme,
+    );
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    row.padding = Padding::new(u32::MAX, u32::MAX, u32::MAX, u32::MAX);
+    row.children = vec![child.clone(), child];
+
+    assert_eq!(row.min_width(), u32::MAX);
+    assert_eq!(row.min_height(), u32::MAX);
+    compute(&mut row, crate::rect::Rect::new(0, 0, 80, 24));
+    assert!(
+        row.children
+            .iter()
+            .all(|child| child.pos.0 == u32::MAX && child.size.0 == u32::MAX)
+    );
+}

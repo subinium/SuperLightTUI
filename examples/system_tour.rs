@@ -199,7 +199,7 @@ fn render_async(ui: &mut Context) {
                 .col(|ui| {
                     let _ = ui
                         .code_block(
-                            "#[tokio::main(flavor = \"current_thread\")]\nasync fn main() -> std::io::Result<()> {\n    let tx = slt::run_async(move |ui, messages: &mut Vec<String>| {\n        for m in messages.drain(..) { /* ... */ }\n        ui.text(\"...\");\n    })?;\n    tokio::spawn(async move {\n        loop { tx.send(\"tick\".into()).await.ok(); }\n    }).await.ok();\n    Ok(())\n}",
+                            "#[tokio::main(flavor = \"current_thread\")]\nasync fn main() -> std::io::Result<()> {\n    let run = slt::run_async(move |ui, messages: &mut Vec<String>| {\n        for m in messages.drain(..) { /* ... */ }\n        ui.text(\"...\");\n    })?;\n    let tx = run.sender();\n    tokio::spawn(async move {\n        loop { tx.send(\"tick\".into()).await.ok(); }\n    });\n    run.join().await.map_err(std::io::Error::other)\n}",
                         )
                         .lang("rust")
                         .show();
@@ -214,7 +214,7 @@ fn render_async(ui: &mut Context) {
             ui.text("");
             ui.text("To see the actual async flow, run the standalone demo:")
                 .dim();
-            ui.text("    cargo run --example async_demo --features async")
+            ui.text("    cargo run --example system_tour --features async")
                 .fg(Color::Cyan);
         });
 }
@@ -309,6 +309,6 @@ fn render_inline(ui: &mut Context) {
             ui.text("");
             ui.text("To see the inline render mode, run the standalone demo:")
                 .dim();
-            ui.text("    cargo run --example inline").fg(Color::Cyan);
+            ui.text("    cargo run --example system_tour --features async").fg(Color::Cyan);
         });
 }

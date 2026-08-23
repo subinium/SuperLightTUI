@@ -17,7 +17,6 @@ pub(super) fn draw_bar_dataset(
     }
 
     let n = dataset.data.len();
-    let slot_width = cols as f64 / n as f64;
     let zero_row = map_value_to_cell(0.0, y_min, y_max, rows, true);
 
     for (index, (_, value)) in dataset.data.iter().enumerate() {
@@ -25,14 +24,12 @@ pub(super) fn draw_bar_dataset(
             continue;
         }
 
-        let start_f = index as f64 * slot_width;
-        let bar_width_f = slot_width.max(1.0);
-        let full_w = bar_width_f.floor() as usize;
-        let frac_w = ((bar_width_f - full_w as f64) * 8.0).round() as usize;
-
-        let x_start = start_f.floor() as usize;
-        let x_end = (x_start + full_w).min(cols.saturating_sub(1));
-        let frac_col = (x_end + 1).min(cols.saturating_sub(1));
+        let slot = bar_slot(index, n, cols);
+        let x_start = slot.start;
+        let x_end = slot.end;
+        if x_start >= x_end || x_start >= cols {
+            continue;
+        }
 
         let value_row = map_value_to_cell(*value, y_min, y_max, rows, true);
         let (top, bottom) = if value_row <= zero_row {
@@ -42,20 +39,20 @@ pub(super) fn draw_bar_dataset(
         };
 
         for row in top..=bottom.min(rows.saturating_sub(1)) {
-            for col in x_start..=x_end {
-                if col < cols {
-                    let idx = row * cols + col;
-                    plot_chars[idx] = '█';
-                    plot_styles[idx] = Style::new().fg(dataset.color);
-                }
-            }
-            if frac_w > 0 && frac_col < cols {
-                let idx = row * cols + frac_col;
-                plot_chars[idx] = BLOCK_FRACTIONS[frac_w.min(8)];
+            for col in x_start..x_end.min(cols) {
+                let idx = row * cols + col;
+                plot_chars[idx] = '█';
                 plot_styles[idx] = Style::new().fg(dataset.color);
             }
         }
     }
+}
+
+fn bar_slot(index: usize, count: usize, cols: usize) -> std::ops::Range<usize> {
+    if count == 0 {
+        return 0..0;
+    }
+    index.saturating_mul(cols) / count..(index + 1).saturating_mul(cols) / count
 }
 
 /// Build a histogram chart configuration from raw values.
@@ -104,28 +101,17 @@ pub(crate) fn build_histogram_config(
     }
 
     let n = sorted.len();
-    let min = sorted[0];
-    let max = sorted[n.saturating_sub(1)];
+    let (min, max) = normalize_bounds(sorted[0], sorted[n.saturating_sub(1)]);
     let bin_count = options.bins.unwrap_or_else(|| sturges_bin_count(n));
 
-    let span = if (max - min).abs() < f64::EPSILON {
-        1.0
-    } else {
-        max - min
-    };
+    let span = max - min;
     let bin_width = span / bin_count as f64;
 
     let mut counts = vec![0usize; bin_count];
     for value in sorted {
-        let raw = ((value - min) / bin_width).floor();
-        let mut idx = if raw.is_finite() { raw as isize } else { 0 };
-        if idx < 0 {
-            idx = 0;
-        }
-        if idx as usize >= bin_count {
-            idx = (bin_count.saturating_sub(1)) as isize;
-        }
-        counts[idx as usize] = counts[idx as usize].saturating_add(1);
+        let ratio = finite_ratio(value, min, max).unwrap_or(0.0);
+        let idx = ((ratio * bin_count as f64).floor() as usize).min(bin_count.saturating_sub(1));
+        counts[idx] = counts[idx].saturating_add(1);
     }
 
     let mut data_points = Vec::with_capacity(bin_count);
@@ -179,5 +165,25 @@ pub(crate) fn build_histogram_config(
         y_axis_visible: true,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bar_slot;
+
+    #[test]
+    fn adjacent_bar_slots_are_half_open_and_disjoint() {
+        for cols in 1..64 {
+            for count in 1..64 {
+                let slots: Vec<_> = (0..count)
+                    .map(|index| bar_slot(index, count, cols))
+                    .collect();
+                for pair in slots.windows(2) {
+                    assert!(pair[0].end <= pair[1].start, "cols={cols}, count={count}");
+                }
+                assert!(slots.iter().all(|slot| slot.end <= cols));
+            }
+        }
     }
 }

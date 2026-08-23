@@ -96,6 +96,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --examples --all-features
 
+  api-audit:
+    name: API Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - run: bash scripts/api_audit.sh --strict
+
   msrv:
     name: Check (MSRV 1.88)
     runs-on: ubuntu-latest
@@ -224,6 +233,7 @@ jobs:
       - test
       - platform-test
       - examples
+      - api-audit
       - msrv
       - typos
       - check-no-default
@@ -256,7 +266,7 @@ jobs:
   publish-slt-wasm:
     name: Publish slt-wasm
     needs: [publish-superlighttui]
-    if: ${{ github.event_name == 'push' || inputs.publish_wasm }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_wasm }}
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:

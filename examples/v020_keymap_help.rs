@@ -3,7 +3,7 @@
 //!
 //! Demonstrates: #236.
 //!
-//! Run: `cargo run --example v020_keymap_help`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   k / Up         — increment counter

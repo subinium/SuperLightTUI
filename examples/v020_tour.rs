@@ -346,6 +346,6 @@ fn render_log(ui: &mut Context) {
             ui.text("");
             ui.text("To see the actual scrollback effect, run the standalone demo:")
                 .dim();
-            ui.text("    cargo run --example v020_static_log").fg(Color::Cyan);
+            ui.text("    cargo run --example system_tour --features async").fg(Color::Cyan);
         });
 }

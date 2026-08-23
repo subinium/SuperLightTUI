@@ -48,6 +48,22 @@ jobs:
       # cross-test contamination was fixed at the source.
       - run: cargo test --all-features
 
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --examples --all-features
+
+  api-audit:
+    name: API Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/api_audit.sh --strict
+
   platform-test:
     name: Test (${{ matrix.os }})
     strategy:
@@ -165,6 +181,251 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
+
+  terminal-multiplexer-smoke:
+    name: Terminal smoke (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: tmux-3.2-floor
+            kind: tmux
+            version: "3.2"
+          - name: tmux-apt-current
+            kind: tmux
+            version: apt
+          - name: screen-apt
+            kind: screen
+            version: apt
+          - name: zellij-0.43.1-floor
+            kind: zellij
+            version: 0.43.1
+          - name: zellij-0.45.0-current
+            kind: zellij
+            version: 0.45.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install real multiplexer
+        env:
+          MUX_KIND: ${{ matrix.kind }}
+          MUX_VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$MUX_KIND" == "zellij" ]]; then
+            base="https://github.com/zellij-org/zellij/releases/download/v${MUX_VERSION}"
+            asset="zellij-x86_64-unknown-linux-musl.tar.gz"
+            checksum="${asset%.tar.gz}.sha256sum"
+            curl -fsSLO "${base}/${asset}"
+            curl -fsSLO "${base}/${checksum}"
+            tar -xzf "$asset" zellij
+            read -r expected _ < "$checksum"
+            echo "${expected}  zellij" | sha256sum --check
+            sudo install -m 0755 zellij /usr/local/bin/zellij
+          elif [[ "$MUX_KIND" == "tmux" && "$MUX_VERSION" != "apt" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y bison libevent-dev libncurses-dev pkg-config
+            archive="tmux-${MUX_VERSION}.tar.gz"
+            curl -fsSLO "https://github.com/tmux/tmux/releases/download/${MUX_VERSION}/${archive}"
+            echo "664d345338c11cbe429d7ff939b92a5191e231a7c1ef42f381cebacb1e08a399  ${archive}" | sha256sum --check
+            tar -xzf "$archive"
+            cd "tmux-${MUX_VERSION}"
+            ./configure
+            make -j2
+            sudo make install
+          else
+            sudo apt-get update
+            sudo apt-get install -y "$MUX_KIND"
+          fi
+          case "$MUX_KIND" in
+            tmux) tmux -V ;;
+            screen) screen --version ;;
+            zellij) zellij --version ;;
+          esac
+      - name: Build terminal input smoke target
+        run: cargo build --example demo_key_test
+      - name: Exercise isolated real session
+        env:
+          MUX_KIND: ${{ matrix.kind }}
+          MUX_VERSION: ${{ matrix.version }}
+        run: |
+          timeout 90s python3 - <<'PY'
+          import errno
+          import fcntl
+          import os
+          import pathlib
+          import pty
+          import select
+          import signal
+          import struct
+          import subprocess
+          import termios
+          import time
+
+          kind = os.environ["MUX_KIND"]
+          version = os.environ["MUX_VERSION"]
+          binary = str(pathlib.Path("target/debug/examples/demo_key_test").resolve())
+          artifacts = pathlib.Path(os.environ["RUNNER_TEMP"]) / "slt-mux-smoke"
+          artifacts.mkdir(parents=True, exist_ok=True)
+
+          def cleanup(session):
+              commands = {
+                  "tmux": ["tmux", "-L", session, "kill-server"],
+                  "screen": ["screen", "-S", session, "-X", "quit"],
+                  "zellij": ["zellij", "kill-session", session],
+              }
+              subprocess.run(
+                  commands[kind],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+                  timeout=5,
+                  check=False,
+              )
+
+          def drain(fd, duration):
+              deadline = time.monotonic() + duration
+              chunks = []
+              while time.monotonic() < deadline:
+                  remaining = max(0.0, deadline - time.monotonic())
+                  ready, _, _ = select.select([fd], [], [], min(0.05, remaining))
+                  if not ready:
+                      continue
+                  try:
+                      chunk = os.read(fd, 65536)
+                  except OSError as error:
+                      if error.errno in (errno.EAGAIN, errno.EIO):
+                          continue
+                      raise
+                  if not chunk:
+                      break
+                  chunks.append(chunk)
+              return b"".join(chunks)
+
+          def run_case(force_queries):
+              session = f"slt-{kind}-{os.getpid()}-{'force' if force_queries else 'default'}"
+              cleanup(session)
+              env = os.environ.copy()
+              env.update({
+                  "TERM": "xterm-256color",
+                  "TERM_PROGRAM": "WezTerm",
+                  "SHELL": "/bin/bash",
+                  "ZELLIJ_CONFIG_DIR": str(artifacts / f"config-{session}"),
+              })
+              env.pop("TMUX", None)
+              env.pop("STY", None)
+              env.pop("ZELLIJ", None)
+              env.pop("ZELLIJ_SESSION_NAME", None)
+              if force_queries:
+                  env["SLT_FORCE_TERMINAL_QUERIES"] = "1"
+              else:
+                  env.pop("SLT_FORCE_TERMINAL_QUERIES", None)
+
+              shell = ["/bin/bash", "--noprofile", "--norc", "-i"]
+              if kind == "tmux":
+                  command = ["tmux", "-L", session, "new-session", "-s", session, "-x", "100", "-y", "24", *shell]
+              elif kind == "screen":
+                  screenrc = artifacts / f"{session}.screenrc"
+                  screenrc.write_text("startup_message off\nmaptimeout 0\n")
+                  command = ["screen", "-c", str(screenrc), "-S", session, "-T", "screen-256color", *shell]
+              else:
+                  data_dir = artifacts / f"data-{session}"
+                  data_dir.mkdir(parents=True, exist_ok=True)
+                  command = [
+                      "zellij", "--data-dir", str(data_dir), "--session", session,
+                      "options", "--default-shell", "/bin/bash", "--show-startup-tips", "false",
+                      "--show-release-notes", "false", "--pane-frames", "false",
+                      "--support-kitty-keyboard-protocol", "true",
+                  ]
+
+              pid, fd = pty.fork()
+              if pid == 0:
+                  os.execvpe(command[0], command, env)
+              output = bytearray()
+              fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
+              try:
+                  fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+                  output.extend(drain(fd, 0.8))
+                  launch = f"{binary}{' --kitty' if force_queries else ''}\n".encode()
+                  os.write(fd, launch)
+                  output.extend(drain(fd, 1.2))
+
+                  fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 110, 0, 0))
+                  output.extend(drain(fd, 0.4))
+
+                  os.write(fd, b"\x1b[200~MUXPROBE\x1b[201~")
+                  pasted = drain(fd, 0.4)
+                  output.extend(pasted)
+                  assert b"MUXPROBE" in pasted, "first pasted text was not rendered"
+
+                  os.write(fd, b"\t")
+                  tab = drain(fd, 0.4)
+                  output.extend(tab)
+                  assert b"Tab" in tab, "first Tab event was not rendered"
+
+                  escape_probe = b"\x1bOP" if kind == "screen" else b"\x1b"
+                  escape_label = b"F1" if kind == "screen" else b"Esc"
+                  os.write(fd, escape_probe)
+                  # GNU screen and some tmux configurations defer a bare ESC
+                  # while waiting to disambiguate a possible key sequence.
+                  escape = drain(fd, 1.2)
+                  output.extend(escape)
+                  assert escape_label in escape, "first escape-prefixed event was not rendered"
+
+                  # Exercise focus and SGR mouse parsing without relying on a
+                  # multiplexer-specific coordinate mapping for assertions.
+                  os.write(fd, b"\x1b[I\x1b[O\x1b[<0;2;1M\x1b[<0;2;1m")
+                  output.extend(drain(fd, 0.3))
+
+                  # SLT restores the terminal before stopping. The interactive
+                  # pane shell owns `fg`, then F1 proves input works after resume.
+                  os.write(fd, b"\x1a")
+                  output.extend(drain(fd, 0.5))
+                  os.write(fd, b"fg\n")
+                  output.extend(drain(fd, 0.7))
+                  resume_probe = b"\x1bOQ" if kind == "screen" else b"\x1bOP"
+                  resume_label = b"F2" if kind == "screen" else b"F1"
+                  os.write(fd, resume_probe)
+                  resumed = drain(fd, 0.4)
+                  output.extend(resumed)
+                  assert resume_label in resumed, "input did not recover after suspend/resume"
+
+                  os.write(fd, b"\x03")
+                  output.extend(drain(fd, 0.5))
+                  os.write(fd, b"exit\n")
+                  output.extend(drain(fd, 0.5))
+
+                  deadline = time.monotonic() + 4
+                  status = None
+                  while time.monotonic() < deadline:
+                      waited, candidate = os.waitpid(pid, os.WNOHANG)
+                      if waited == pid:
+                          status = candidate
+                          break
+                      output.extend(drain(fd, 0.1))
+                  assert status is not None, "multiplexer did not exit after normal cleanup"
+              finally:
+                  (artifacts / f"{kind}-{version}-{'force' if force_queries else 'default'}.log").write_bytes(output)
+                  cleanup(session)
+                  try:
+                      os.kill(pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  try:
+                      os.close(fd)
+                  except OSError:
+                      pass
+
+          run_case(False)
+          run_case(True)
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: terminal-smoke-${{ matrix.name }}
+          path: ${{ runner.temp }}/slt-mux-smoke/*.log
 
   # VHS gallery gate (issue #274). Renders every `.tape` in the repo through
   # VHS and asserts each produces its declared `Output` asset at a non-trivial

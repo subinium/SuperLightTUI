@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use slt::buffer::Buffer;
 use slt::rect::Rect;
 use slt::style::Style;
@@ -6,8 +6,10 @@ use slt::style::Style;
 use slt::style::{Color, ColorDepth, Modifiers};
 use slt::test_utils::TestBackend;
 use slt::widgets::{
-    CalendarState, ListState, SelectState, TableState, TabsState, TreeNode, TreeState,
+    CalendarState, FileEntry, FilePickerState, ListState, RichLogState, SelectState, TableState,
+    TabsState, TreeNode, TreeState,
 };
+use std::hint::black_box;
 
 fn bench_buffer_set_string(c: &mut Criterion) {
     let area = Rect::new(0, 0, 200, 50);
@@ -447,6 +449,62 @@ fn bench_widget_calendar(c: &mut Criterion) {
     });
 }
 
+fn bench_rich_log_sustained_push(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rich_log_sustained_push");
+    for pushes in [10_000_usize, 100_000, 500_000] {
+        group.throughput(criterion::Throughput::Elements(pushes as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(pushes),
+            &pushes,
+            |b, &pushes| {
+                let mut state = RichLogState::new();
+                for _ in 0..RichLogState::DEFAULT_MAX_ENTRIES {
+                    state.push_plain("prefill");
+                }
+                debug_assert_eq!(state.len(), RichLogState::DEFAULT_MAX_ENTRIES);
+
+                b.iter(|| {
+                    for _ in 0..pushes {
+                        state.push_plain(black_box("steady-state log entry"));
+                    }
+                    black_box(state.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_file_picker_steady_state(c: &mut Criterion) {
+    let mut group = c.benchmark_group("file_picker_steady_state");
+    for entry_count in [1_000_usize, 10_000, 50_000] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(entry_count),
+            &entry_count,
+            |b, &entry_count| {
+                let mut state = FilePickerState::new(".");
+                state.entries = (0..entry_count)
+                    .map(|index| {
+                        let mut entry = FileEntry::default();
+                        entry.name = format!("file-{index:05}.txt");
+                        entry.path = entry.name.clone().into();
+                        entry
+                    })
+                    .collect();
+                state.dirty = false;
+                let mut backend = TestBackend::new(100, 40);
+
+                b.iter(|| {
+                    backend.render(|ui| {
+                        let _ = ui.file_picker(black_box(&mut state));
+                    });
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 // ---------------------------------------------------------------------------
 // Flush-path benches (stdout-emit cost).
 //
@@ -877,6 +935,8 @@ criterion_group!(
     bench_widget_sparkline,
     bench_layout_grid,
     bench_widget_calendar,
+    bench_rich_log_sustained_push,
+    bench_file_picker_steady_state,
     bench_streaming_append_chat,
     bench_flush_group,
 );

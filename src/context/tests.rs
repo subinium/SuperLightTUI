@@ -154,6 +154,77 @@ fn use_memo_recomputes_only_on_dep_change() {
 }
 
 #[test]
+fn use_memo_retries_initial_and_update_panics_atomically() {
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+
+    ctx.error_boundary_with(
+        |ui| {
+            let _ = ui.use_memo(&1u8, |_| -> u16 { panic!("initial memo panic") });
+        },
+        |_ui, _| {},
+    );
+    assert!(
+        ctx.hook_states.is_empty(),
+        "initial panic must not create a slot"
+    );
+
+    let initial = ctx.use_memo(&1u8, |dep| u16::from(*dep) * 10);
+    assert_eq!(initial.copied(&ctx), 10);
+
+    ctx.rollback.hook_cursor = 0;
+    ctx.error_boundary_with(
+        |ui| {
+            let _ = ui.use_memo(&2u8, |_| -> u16 { panic!("update memo panic") });
+        },
+        |_ui, _| {},
+    );
+
+    ctx.rollback.hook_cursor = 0;
+    let retried = ctx.use_memo(&2u8, |dep| u16::from(*dep) * 10);
+    assert_eq!(
+        retried.copied(&ctx),
+        20,
+        "same deps must recompute after panic"
+    );
+}
+
+#[test]
+#[allow(deprecated)]
+fn use_memo_ref_retries_initial_and_update_panics_atomically() {
+    let mut state = FrameState::default();
+    let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+
+    ctx.error_boundary_with(
+        |ui| {
+            let _ = ui.use_memo_ref(&1u8, |_| -> u16 { panic!("initial memo_ref panic") });
+        },
+        |_ui, _| {},
+    );
+    assert!(
+        ctx.hook_states.is_empty(),
+        "initial panic must not create a slot"
+    );
+
+    assert_eq!(*ctx.use_memo_ref(&1u8, |dep| u16::from(*dep) * 10), 10);
+
+    ctx.rollback.hook_cursor = 0;
+    ctx.error_boundary_with(
+        |ui| {
+            let _ = ui.use_memo_ref(&2u8, |_| -> u16 { panic!("update memo_ref panic") });
+        },
+        |_ui, _| {},
+    );
+
+    ctx.rollback.hook_cursor = 0;
+    assert_eq!(
+        *ctx.use_memo_ref(&2u8, |dep| u16::from(*dep) * 10),
+        20,
+        "same deps must recompute after panic"
+    );
+}
+
+#[test]
 fn use_memo_copied_matches_get() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
@@ -921,7 +992,11 @@ fn screen_hook_map_avoids_repeat_allocation_on_cache_hit() {
             let _ = ui.use_state(|| 0i32);
         });
         // First frame inserted a key.
-        assert!(ui.screen_hook_map.contains_key("a"));
+        assert!(
+            ui.screen_hook_map
+                .get(&screens.id())
+                .is_some_and(|hooks| hooks.contains_key("a"))
+        );
     });
 
     backend.render(|ui| {
@@ -929,7 +1004,60 @@ fn screen_hook_map_avoids_repeat_allocation_on_cache_hit() {
             let _ = ui.use_state(|| 0i32);
         });
         // Second frame must reuse the same slot, not double up.
-        assert_eq!(ui.screen_hook_map.len(), 1);
+        assert_eq!(ui.screen_state_count(), 1);
+    });
+}
+
+#[test]
+fn same_named_screen_states_keep_independent_hook_segments() {
+    let mut backend = crate::TestBackend::new(40, 8);
+    let mut first = crate::widgets::ScreenState::new("home");
+    let mut second = crate::widgets::ScreenState::new("home");
+
+    backend.render(|ui| {
+        ui.screen("home", &mut first, |ui| {
+            let value = ui.use_state(|| 1u32);
+            *value.get_mut(ui) = 7;
+        });
+        ui.screen("home", &mut second, |ui| {
+            let value = ui.use_state(|| String::from("two"));
+            value.get_mut(ui).push_str("-saved");
+        });
+    });
+
+    backend.render(|ui| {
+        ui.screen("home", &mut first, |ui| {
+            assert_eq!(*ui.use_state(|| 0u32).get(ui), 7);
+        });
+        ui.screen("home", &mut second, |ui| {
+            assert_eq!(ui.use_state(String::new).get(ui).as_str(), "two-saved");
+        });
+    });
+}
+
+#[test]
+fn inactive_screen_allocates_its_hook_segment_on_first_activation() {
+    let mut backend = crate::TestBackend::new(40, 8);
+    let mut screens = crate::widgets::ScreenState::new("home");
+    screens.push("settings");
+
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            let _ = ui.use_state(String::new);
+        });
+        ui.screen("settings", &mut screens, |ui| {
+            let value = ui.use_state(|| 5u32);
+            *value.get_mut(ui) = 9;
+        });
+    });
+
+    screens.pop();
+    backend.render(|ui| {
+        ui.screen("home", &mut screens, |ui| {
+            let value = ui.use_state(|| String::from("home"));
+            assert_eq!(value.get(ui), "home");
+        });
+        ui.screen("settings", &mut screens, |_| {});
     });
 }
 

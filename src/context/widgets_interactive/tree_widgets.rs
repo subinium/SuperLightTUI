@@ -16,8 +16,14 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            let max_index = entries.len().saturating_sub(1);
             for (i, key) in self.available_key_presses() {
+                let entries = state.flatten();
+                if entries.is_empty() {
+                    state.selected = 0;
+                    break;
+                }
+                state.selected = state.selected.min(entries.len() - 1);
+                let max_index = entries.len() - 1;
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                         let _ =
@@ -27,6 +33,8 @@ impl Context {
                     }
                     KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
                         state.toggle_at(state.selected);
+                        state.selected =
+                            state.selected.min(state.flatten().len().saturating_sub(1));
                         changed = true;
                         consumed_indices.push(i);
                     }
@@ -34,6 +42,8 @@ impl Context {
                         let entry = &entries[state.selected.min(entries.len() - 1)];
                         if entry.expanded {
                             state.toggle_at(state.selected);
+                            state.selected =
+                                state.selected.min(state.flatten().len().saturating_sub(1));
                             changed = true;
                         }
                         consumed_indices.push(i);
@@ -111,11 +121,14 @@ impl Context {
 
         if focused {
             let mut consumed_indices = Vec::new();
-            // Per-keypress arms are mutually exclusive, and Right/Left only
-            // call `toggle_at` AFTER inspecting the entry. Reusing the outer
-            // `entries` snapshot is therefore safe within a single pass.
-            let max_index = entries.len().saturating_sub(1);
             for (i, key) in self.available_key_presses() {
+                let entries = state.tree.flatten();
+                if entries.is_empty() {
+                    state.tree.selected = 0;
+                    break;
+                }
+                state.tree.selected = state.tree.selected.min(entries.len() - 1);
+                let max_index = entries.len() - 1;
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                         let _ = handle_vertical_nav(
@@ -130,12 +143,20 @@ impl Context {
                         let entry = &entries[state.tree.selected.min(entries.len() - 1)];
                         if !entry.is_leaf && !entry.expanded {
                             state.tree.toggle_at(state.tree.selected);
+                            state.tree.selected = state
+                                .tree
+                                .selected
+                                .min(state.tree.flatten().len().saturating_sub(1));
                             changed = true;
                         }
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         state.tree.toggle_at(state.tree.selected);
+                        state.tree.selected = state
+                            .tree
+                            .selected
+                            .min(state.tree.flatten().len().saturating_sub(1));
                         changed = true;
                         consumed_indices.push(i);
                     }
@@ -143,6 +164,10 @@ impl Context {
                         let entry = &entries[state.tree.selected.min(entries.len() - 1)];
                         if entry.expanded {
                             state.tree.toggle_at(state.tree.selected);
+                            state.tree.selected = state
+                                .tree
+                                .selected
+                                .min(state.tree.flatten().len().saturating_sub(1));
                             changed = true;
                         }
                         consumed_indices.push(i);

@@ -15,6 +15,7 @@
 - [ ] `cargo clippy --all-features -- -D warnings` passes
 - [ ] `cargo test --all-features` passes
 - [ ] `cargo check --examples --all-features` passes
+- [ ] `bash scripts/api_audit.sh --strict` passes
 
 ### Public API Changes
 

@@ -24,7 +24,7 @@ private_intra_doc_links = "warn"
 
 [package]
 name = "superlighttui"
-version = "0.22.3"
+version = "0.23.0"
 edition = "2024"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -50,6 +50,8 @@ exclude = [
     ".agents/",
     ".claude/",
     "scripts/",
+    "benches/",
+    "tests/",
     "deny.toml",
     "_typos.toml",
     "*.tape",
@@ -77,8 +79,8 @@ unicode-segmentation = "1"
 smallvec = "1"
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-toml = { version = "0.8", optional = true }
-notify = { version = "6", optional = true }
+toml = { version = "1.1", optional = true }
+notify = { version = "8.2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 compact_str = { version = "0.9.0", default-features = false }
 unicode-bidi = { version = "0.3", optional = true }
@@ -107,15 +109,22 @@ tree-sitter-yaml = { version = "0.7", optional = true }
 # non-unix builds (Windows/WASM) never pull it.
 [target.'cfg(unix)'.dependencies]
 signal-hook = { version = "0.3", optional = true }
+rustix = { version = "1", features = ["fs", "stdio"], optional = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1", features = ["pty", "termios"] }
+
+[target.'cfg(windows)'.dependencies]
+crossterm_winapi = { version = "0.9", optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 insta = "1"
 proptest = "1"
 serde_json = "1"
 
 [features]
-crossterm = ["dep:crossterm", "dep:signal-hook"]
+crossterm = ["dep:crossterm", "dep:signal-hook", "dep:rustix", "dep:crossterm_winapi"]
 bidi = ["dep:unicode-bidi"]
 default = ["crossterm", "bidi"]
 async = ["dep:tokio", "crossterm"]
@@ -132,7 +141,11 @@ syntax-json = ["dep:tree-sitter-highlight", "dep:tree-sitter-json"]
 syntax-toml = ["dep:tree-sitter-highlight", "dep:tree-sitter-toml-ng"]
 syntax-c = ["dep:tree-sitter-highlight", "dep:tree-sitter-c"]
 syntax-cpp = ["dep:tree-sitter-highlight", "dep:tree-sitter-cpp"]
-syntax-typescript = ["dep:tree-sitter-highlight", "dep:tree-sitter-typescript"]
+syntax-typescript = [
+    "dep:tree-sitter-highlight",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-typescript",
+]
 syntax-java = ["dep:tree-sitter-highlight", "dep:tree-sitter-java"]
 syntax-ruby = ["dep:tree-sitter-highlight", "dep:tree-sitter-ruby"]
 syntax-css = ["dep:tree-sitter-highlight", "dep:tree-sitter-css"]

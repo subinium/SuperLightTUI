@@ -5,7 +5,7 @@
 #[derive(Debug, Clone, Default)]
 pub struct SelectState {
     /// Selectable option labels.
-    pub items: Vec<String>,
+    items: Vec<String>,
     /// Selected option index.
     pub selected: usize,
     /// Whether the dropdown list is currently open.
@@ -29,6 +29,33 @@ impl SelectState {
             placeholder: String::new(),
             cursor: 0,
             filter: String::new(),
+        }
+    }
+
+    /// Return all selectable option labels.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+
+    /// Return the number of options.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Return whether there are no options.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Replace all options and clamp selection state immediately.
+    pub fn set_items(&mut self, items: Vec<impl Into<String>>) {
+        self.items = items.into_iter().map(Into::into).collect();
+        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+        if self.items.is_empty() {
+            self.selected = 0;
+            self.cursor = 0;
+            self.open = false;
         }
     }
 
@@ -104,7 +131,7 @@ impl RadioState {
 #[derive(Debug, Clone)]
 pub struct MultiSelectState {
     /// Multi-select option labels.
-    pub items: Vec<String>,
+    items: Vec<String>,
     /// Focused option index used for keyboard navigation.
     pub cursor: usize,
     /// Set of selected option indices.
@@ -121,6 +148,31 @@ impl MultiSelectState {
         }
     }
 
+    /// Return all option labels.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+
+    /// Return the number of options.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Return whether there are no options.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Replace all options and prune stale selected indices.
+    pub fn set_items(&mut self, items: Vec<impl Into<String>>) {
+        self.items = items.into_iter().map(Into::into).collect();
+        self.selected.retain(|index| *index < self.items.len());
+        self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+        if self.items.is_empty() {
+            self.cursor = 0;
+        }
+    }
+
     /// Return selected item labels in ascending index order.
     pub fn selected_items(&self) -> Vec<&str> {
         let mut indices: Vec<usize> = self.selected.iter().copied().collect();
@@ -133,6 +185,9 @@ impl MultiSelectState {
 
     /// Toggle selection state for `index`.
     pub fn toggle(&mut self, index: usize) {
+        if index >= self.items.len() {
+            return;
+        }
         if self.selected.contains(&index) {
             self.selected.remove(&index);
         } else {
@@ -334,9 +389,10 @@ fn selected_label_in_nodes<'a>(
         }
         *cursor += 1;
         if node.expanded
-            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor) {
-                return Some(found);
-            }
+            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor)
+        {
+            return Some(found);
+        }
     }
     None
 }
@@ -534,9 +590,10 @@ impl ColorPickerState {
     /// ```
     pub fn selected(&self) -> crate::Color {
         if self.mode == PickerMode::Hex
-            && let Some(c) = parse_hex_color(&self.hex_input.value) {
-                return c;
-            }
+            && let Some(c) = parse_hex_color(&self.hex_input.value)
+        {
+            return c;
+        }
         self.colors
             .get(self.selected)
             .copied()

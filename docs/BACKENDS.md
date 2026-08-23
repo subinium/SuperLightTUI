@@ -66,6 +66,52 @@ The built-in terminal backends are intentionally boring:
 
 This matters because SLT is trying to be easy at the API layer without becoming sloppy underneath.
 
+### Terminal compatibility policy
+
+Multiplexer identity takes precedence over an inherited outer `TERM_PROGRAM`.
+SLT resolves each protocol independently instead of treating every multiplexer
+as one global capability switch.
+
+| Environment | Automatic replies | Synchronized output | Kitty graphics | Sixel | iTerm2 images | Kitty keyboard |
+|-------------|-------------------|---------------------|----------------|-------|---------------|----------------|
+| Identified direct terminal | Probed once | Probe result; unknown keeps the historical default | Probe or known direct identity | DA1 or known direct identity | Known direct identity | Allowed when requested |
+| tmux 3.2+ | Off | Off | Off | Off | Off | Off |
+| Zellij 0.43.1+ | Off | Off | Off | On | Off | Allowed when requested |
+| GNU screen 4.09+ | Off | Off | Off | Off | Off | Off |
+| SSH | Direct-terminal rules apply, but generic `TERM=xterm-256color` is not enough to start automatic probes | Direct-terminal policy | Do not rely on an inherited outer identity | Do not rely on an inherited outer identity | Off unless explicitly forced | Depends on the remote endpoint |
+| Generic PTY / unknown bridge | Off | Historical direct default; disable when the bridge strips DEC modes | Off | Off | Off | Not negotiated |
+
+Explicit disable flags always win over force flags. Force flags are escape
+hatches for a configured passthrough path; they are not evidence that a
+protocol works through the current multiplexer.
+
+| Protocol | Force | Disable |
+|----------|-------|---------|
+| Reply queries | `SLT_FORCE_TERMINAL_QUERIES` | `SLT_DISABLE_TERMINAL_QUERIES` |
+| Synchronized output | `SLT_FORCE_SYNC_OUTPUT` | `SLT_DISABLE_SYNC_OUTPUT` |
+| Kitty graphics | `SLT_FORCE_KITTY` | `SLT_DISABLE_KITTY` |
+| Sixel | `SLT_FORCE_SIXEL` | `SLT_DISABLE_SIXEL` |
+| iTerm2 images | `SLT_FORCE_ITERM` | `SLT_DISABLE_ITERM` |
+| Kitty keyboard | `SLT_FORCE_KITTY_KEYBOARD` | `SLT_DISABLE_KITTY_KEYBOARD` |
+
+CI starts isolated real sessions for tmux 3.2 and the Ubuntu package, Zellij
+0.43.1 and 0.45.0, and the Ubuntu GNU screen package. Each run is bounded and
+checks default and forced-query startup, resize, first bracketed-paste text,
+Tab, Escape, suspend/resume recovery, and normal Ctrl+C cleanup. Session names,
+config/data directories, and tmux sockets are unique to the job; live sessions
+are killed on both success and failure, while logs are retained as artifacts.
+GNU screen older than 4.09, configured graphics
+passthrough, nested multiplexers, panic cleanup inside a real multiplexer, and
+Windows-hosted multiplexers are not covered by this Linux matrix.
+
+Terminal reply reads are synchronous and deadline-bounded. Unix uses a
+temporarily nonblocking stdin descriptor and restores its original flags before
+returning; Windows polls the console queue before one-record reads. No
+background stdin reader survives a successful, partial, or silent deadline.
+An application must still avoid calling query APIs concurrently with its event
+loop because input typed during the active synchronous query window can belong
+to the query reader.
+
 ### Buffered stdout (v0.19.1)
 
 Both `Terminal` and `InlineTerminal` wrap stdout in `BufWriter::with_capacity(65536, _)`. Every queued ANSI sequence — cursor moves, style deltas, raw sequences, Kitty placements — accumulates in a 64 KiB buffer and is committed with a single `flush()` per frame. This collapses what was previously dozens to thousands of individual `write` syscalls per frame into one, which materially reduces overhead for high-frequency rendering (charts, animations, image-heavy frames).

@@ -145,11 +145,9 @@ documented but not yet enforced.
 | `text` | unbordered shortcut | inside-builder form | both keep |
 | `theme` | getter | per-subtree override | both keep (different semantics) |
 
-**Currently disallowed (planned removal in v0.22)**:
-
-| Name | Context | Builder |
-|------|---------|---------|
-| `bordered` (shortcut) vs `container().border()` (explicit) | shortcut wins | explicit deprecated |
+**Documented ergonomic shortcut**: `ui.bordered(...)` remains a convenience
+entry point for `ui.container().border(...)`. New low-level examples prefer the
+explicit builder form; neither path is deprecated in v0.23.
 
 ### M2 — Composition, not inheritance
 

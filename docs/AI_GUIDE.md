@@ -49,7 +49,7 @@ Pass `WidgetColors::new().fg(color).bg(color)` as the last argument. See `docs/T
 
 `use_state()` and `use_memo()` must be called in the same order every frame. Never put them inside conditionals.
 
-Exception (v0.19.0): `ui.use_state_named(id)` is the id-keyed variant and IS safe inside `if`/`match` branches because it keys by the supplied `&'static str` instead of call order. Reach for it when you genuinely need a hook in a conditional path.
+Exception: `ui.use_state_named(id, init)` and `ui.use_state_named_default::<T>(id)` are id-keyed variants and are safe inside `if`/`match` branches.
 
 ```rust
 // Wrong: order-based hook inside a conditional drifts the call order.
@@ -59,7 +59,7 @@ if expanded {
 
 // Right: id-keyed variant is safe inside conditionals.
 if expanded {
-    let count = ui.use_state_named::<i32>("sidebar.count"); // OK
+    let count = ui.use_state_named_default::<i32>("sidebar.count"); // OK
 }
 ```
 
@@ -71,7 +71,7 @@ Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts
 
 ### "How do I make a custom widget?"
 
-Implement the `Widget` trait with `type Response` and `fn ui(&mut self, ctx: &mut Context) -> Self::Response`. Use `register_focusable()` for keyboard support and `interaction()` for click/hover.
+Implement the `Widget` trait with `type Response` and `fn ui(&mut self, ui: &mut Context) -> Self::Response`. Use `register_focusable()` for keyboard support and `interaction()` for click/hover.
 
 ### "Can I use SLT without crossterm?"
 

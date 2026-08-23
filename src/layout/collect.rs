@@ -1,4 +1,3 @@
-use super::flexbox::inner_area;
 use super::*;
 use std::sync::Arc;
 
@@ -37,17 +36,107 @@ impl FrameData {
         self.focus_groups.clear();
         self.raw_draw_rects.clear();
     }
+
+    /// Swap collected feedback vectors with the runtime's previous-frame set.
+    ///
+    /// Call this once before [`collect_all`] to recover last frame's capacities,
+    /// then again after collection to publish the newly filled vectors. Raw draw
+    /// rectangles stay in `FrameData` because callbacks consume them in-frame.
+    #[allow(dead_code)]
+    pub(crate) fn swap_feedback(&mut self, feedback: &mut crate::LayoutFeedbackState) {
+        std::mem::swap(&mut self.scroll_infos, &mut feedback.prev_scroll_infos);
+        std::mem::swap(&mut self.scroll_rects, &mut feedback.prev_scroll_rects);
+        std::mem::swap(&mut self.hit_areas, &mut feedback.prev_hit_map);
+        std::mem::swap(&mut self.group_rects, &mut feedback.prev_group_rects);
+        std::mem::swap(&mut self.content_areas, &mut feedback.prev_content_map);
+        std::mem::swap(&mut self.focus_rects, &mut feedback.prev_focus_rects);
+        std::mem::swap(&mut self.focus_groups, &mut feedback.prev_focus_groups);
+    }
 }
 
 /// Information about a raw-draw node's visible screen rect.
+#[allow(dead_code)] // Horizontal crop fields are consumed by the pending lib.rs integration.
 pub(crate) struct RawDrawRect {
     pub draw_id: usize,
     /// The visible portion of the node on screen (clipped to viewport).
     pub rect: Rect,
+    /// How many cell columns are clipped from the left (for source crop).
+    pub left_clip_cols: u32,
     /// How many cell rows are clipped from the top (for pixel crop).
     pub top_clip_rows: u32,
+    /// The original unclipped width in cell columns.
+    pub original_width: u32,
     /// The original unclipped height in cell rows.
     pub original_height: u32,
+}
+
+#[derive(Clone, Copy)]
+struct SignedRect {
+    left: i64,
+    top: i64,
+    right: i64,
+    bottom: i64,
+}
+
+impl SignedRect {
+    fn from_node(node: &LayoutNode, x_offset: i64, y_offset: i64) -> Self {
+        let left = i64::from(node.pos.0).saturating_sub(x_offset);
+        let top = i64::from(node.pos.1).saturating_sub(y_offset);
+        Self {
+            left,
+            top,
+            right: left.saturating_add(i64::from(node.size.0)),
+            bottom: top.saturating_add(i64::from(node.size.1)),
+        }
+    }
+
+    fn intersection(self, other: Self) -> Self {
+        Self {
+            left: self.left.max(other.left),
+            top: self.top.max(other.top),
+            right: self.right.min(other.right),
+            bottom: self.bottom.min(other.bottom),
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        self.left >= self.right || self.top >= self.bottom
+    }
+
+    fn inset(self, node: &LayoutNode) -> Self {
+        let left_inset = i64::from(node.border_left_inset()) + i64::from(node.padding.left);
+        let right_inset = i64::from(node.border_right_inset()) + i64::from(node.padding.right);
+        let top_inset = i64::from(node.border_top_inset()) + i64::from(node.padding.top);
+        let bottom_inset = i64::from(node.border_bottom_inset()) + i64::from(node.padding.bottom);
+        let left = self.left.saturating_add(left_inset).min(self.right);
+        let top = self.top.saturating_add(top_inset).min(self.bottom);
+        Self {
+            left,
+            top,
+            right: self.right.saturating_sub(right_inset).max(left),
+            bottom: self.bottom.saturating_sub(bottom_inset).max(top),
+        }
+    }
+
+    fn visible_within(self, viewport: Option<Self>) -> Self {
+        viewport.map_or(self, |viewport| self.intersection(viewport))
+    }
+
+    fn to_rect(self) -> Option<Rect> {
+        let left = self.left.clamp(0, i64::from(u32::MAX));
+        let top = self.top.clamp(0, i64::from(u32::MAX));
+        let right = self.right.clamp(0, i64::from(u32::MAX));
+        let bottom = self.bottom.clamp(0, i64::from(u32::MAX));
+        if left >= right || top >= bottom {
+            return None;
+        }
+        Some(Rect::new(
+            left as u32,
+            top as u32,
+            (right - left) as u32,
+            (bottom - top) as u32,
+        ))
+    }
 }
 
 /// Collect all per-frame data from a laid-out tree in a single DFS pass.
@@ -61,41 +150,48 @@ pub(crate) struct RawDrawRect {
 pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     data.clear();
 
+    let screen_rect = SignedRect::from_node(node, 0, 0);
+    let visible_rect = screen_rect.to_rect().unwrap_or_default();
+
     if node.is_scrollable {
         push_scroll_info(node, data);
-        data.scroll_rects
-            .push(Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1));
+        data.scroll_rects.push(visible_rect);
     }
     if let Some(id) = node.focus_id
-        && node.pos.1 + node.size.1 > 0
+        && !visible_rect.is_empty()
     {
-        data.focus_rects.push((
-            id,
-            Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1),
-        ));
+        data.focus_rects.push((id, visible_rect));
     }
     if let Some(id) = node.interaction_id {
-        let rect = if node.pos.1 + node.size.1 > 0 {
-            Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1)
-        } else {
-            Rect::new(0, 0, 0, 0)
-        };
         if id >= data.hit_areas.len() {
             data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }
-        data.hit_areas[id] = rect;
+        data.hit_areas[id] = visible_rect;
     }
 
     // #247: scrollable nodes shift their children on exactly one axis.
     // `scroll_offset` is non-zero only for a column, `scroll_offset_x` only
     // for a row, so seeding both is correct for either orientation.
     let (child_x_offset, child_y_offset) = if node.is_scrollable {
-        (node.scroll_offset_x, node.scroll_offset)
+        (
+            i64::from(node.scroll_offset_x),
+            i64::from(node.scroll_offset),
+        )
     } else {
         (0, 0)
     };
+    let child_viewport = (matches!(node.kind, NodeKind::Container(_)) && !screen_rect.is_empty())
+        .then(|| screen_rect.inset(node));
     for child in &node.children {
-        collect_all_inner(child, data, child_x_offset, child_y_offset, None, None, 1);
+        collect_all_inner(
+            child,
+            data,
+            child_x_offset,
+            child_y_offset,
+            None,
+            child_viewport,
+            1,
+        );
     }
 
     for overlay in &node.overlays {
@@ -126,10 +222,10 @@ fn push_scroll_info(node: &LayoutNode, data: &mut FrameData) {
 fn collect_all_inner(
     node: &LayoutNode,
     data: &mut FrameData,
-    x_offset: u32,
-    y_offset: u32,
+    x_offset: i64,
+    y_offset: i64,
     active_group: Option<&Arc<str>>,
-    viewport: Option<Rect>,
+    viewport: Option<SignedRect>,
     depth: usize,
 ) {
     // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
@@ -143,67 +239,36 @@ fn collect_all_inner(
             super::tree::MAX_LAYOUT_DEPTH
         );
     }
-    // #247: every collected rect's x is shifted by `x_offset` the same way its
-    // y is shifted by `y_offset`, so a horizontally-scrolled child's
-    // interaction / focus / group / content / scroll rect tracks its on-screen
-    // position. `adj_x` is the screen x for this node.
-    let adj_x = node.pos.0.saturating_sub(x_offset);
-    let adj_y = node.pos.1.saturating_sub(y_offset);
+    let screen_rect = SignedRect::from_node(node, x_offset, y_offset);
+    let visible = screen_rect.visible_within(viewport);
+    let visible_rect = visible.to_rect();
     // Single combined block — keep `scroll_infos` and `scroll_rects` writes
     // adjacent so the `assert_eq!(scroll_infos.len(), scroll_rects.len())`
     // invariant in `lib.rs` cannot drift if one side is edited without the
     // other. Mirrors the root-node path in `collect_all`.
     if node.is_scrollable {
         push_scroll_info(node, data);
-        data.scroll_rects
-            .push(Rect::new(adj_x, adj_y, node.size.0, node.size.1));
+        data.scroll_rects.push(visible_rect.unwrap_or_default());
     }
 
     if let Some(id) = node.interaction_id {
-        let rect = if node.pos.1 + node.size.1 > y_offset && node.pos.0 + node.size.0 > x_offset {
-            Rect::new(adj_x, adj_y, node.size.0, node.size.1)
-        } else {
-            Rect::new(0, 0, 0, 0)
-        };
         if id >= data.hit_areas.len() {
             data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }
-        data.hit_areas[id] = rect;
+        data.hit_areas[id] = visible_rect.unwrap_or_default();
     }
 
-    if let NodeKind::RawDraw(draw_id) = node.kind {
-        let node_x = adj_x;
-        let node_w = node.size.0;
-        let node_h = node.size.1;
-        let screen_y = node.pos.1 as i64 - y_offset as i64;
-
-        if let Some(vp) = viewport {
-            let img_top = screen_y;
-            let img_bottom = screen_y + node_h as i64;
-            let vp_top = vp.y as i64;
-            let vp_bottom = vp.bottom() as i64;
-
-            if img_bottom > vp_top && img_top < vp_bottom {
-                let visible_top = img_top.max(vp_top) as u32;
-                let visible_bottom = img_bottom.min(vp_bottom) as u32;
-                let visible_height = visible_bottom.saturating_sub(visible_top);
-                let top_clip_rows = (vp_top - img_top).max(0) as u32;
-
-                data.raw_draw_rects.push(RawDrawRect {
-                    draw_id,
-                    rect: Rect::new(node_x, visible_top, node_w, visible_height),
-                    top_clip_rows,
-                    original_height: node_h,
-                });
-            }
-        } else {
-            data.raw_draw_rects.push(RawDrawRect {
-                draw_id,
-                rect: Rect::new(node_x, screen_y.max(0) as u32, node_w, node_h),
-                top_clip_rows: 0,
-                original_height: node_h,
-            });
-        }
+    if let NodeKind::RawDraw(draw_id) = node.kind
+        && let Some(rect) = visible_rect
+    {
+        data.raw_draw_rects.push(RawDrawRect {
+            draw_id,
+            rect,
+            left_clip_cols: i64::from(rect.x).saturating_sub(screen_rect.left) as u32,
+            top_clip_rows: i64::from(rect.y).saturating_sub(screen_rect.top) as u32,
+            original_width: node.size.0,
+            original_height: node.size.1,
+        });
     }
 
     // The build-time conversion in `ContainerBuilder::group_name` /
@@ -213,31 +278,22 @@ fn collect_all_inner(
     let node_group_arc: Option<Arc<str>> = node.group_name.clone();
 
     if let Some(name) = &node_group_arc
-        && node.pos.1 + node.size.1 > y_offset
-        && node.pos.0 + node.size.0 > x_offset
+        && let Some(rect) = visible_rect
     {
-        data.group_rects.push((
-            Arc::clone(name),
-            Rect::new(adj_x, adj_y, node.size.0, node.size.1),
-        ));
+        data.group_rects.push((Arc::clone(name), rect));
     }
 
-    if matches!(node.kind, NodeKind::Container(_)) {
-        let full = Rect::new(adj_x, adj_y, node.size.0, node.size.1);
-        let inset_x = node.padding.left + node.border_left_inset();
-        let inset_y = node.padding.top + node.border_top_inset();
-        let inner_w = node.size.0.saturating_sub(node.frame_horizontal());
-        let inner_h = node.size.1.saturating_sub(node.frame_vertical());
-        let content = Rect::new(adj_x + inset_x, adj_y + inset_y, inner_w, inner_h);
+    if matches!(node.kind, NodeKind::Container(_))
+        && let Some(full) = visible_rect
+        && let Some(content) = screen_rect.inset(node).visible_within(viewport).to_rect()
+    {
         data.content_areas.push((full, content));
     }
 
     if let Some(id) = node.focus_id
-        && node.pos.1 + node.size.1 > y_offset
-        && node.pos.0 + node.size.0 > x_offset
+        && let Some(rect) = visible_rect
     {
-        data.focus_rects
-            .push((id, Rect::new(adj_x, adj_y, node.size.0, node.size.1)));
+        data.focus_rects.push((id, rect));
     }
 
     let current_group = node_group_arc.as_ref().or(active_group);
@@ -249,18 +305,21 @@ fn collect_all_inner(
         data.focus_groups[id] = current_group.cloned();
     }
 
-    let (child_x_offset, child_y_offset, child_viewport) = if node.is_scrollable {
-        let area = Rect::new(adj_x, adj_y, node.size.0, node.size.1);
-        let inner = inner_area(node, area);
-        // #247: seed both offsets — only the matching axis is non-zero on a
-        // single-axis scroller.
-        (
-            x_offset.saturating_add(node.scroll_offset_x),
-            y_offset.saturating_add(node.scroll_offset),
-            Some(inner),
-        )
+    let child_x_offset = if node.is_scrollable {
+        x_offset.saturating_add(i64::from(node.scroll_offset_x))
     } else {
-        (x_offset, y_offset, viewport)
+        x_offset
+    };
+    let child_y_offset = if node.is_scrollable {
+        y_offset.saturating_add(i64::from(node.scroll_offset))
+    } else {
+        y_offset
+    };
+    let child_viewport = if matches!(node.kind, NodeKind::Container(_)) {
+        let own_viewport = screen_rect.inset(node);
+        Some(viewport.map_or(own_viewport, |parent| own_viewport.intersection(parent)))
+    } else {
+        viewport
     };
     for child in &node.children {
         collect_all_inner(

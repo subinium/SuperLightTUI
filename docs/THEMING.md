@@ -88,7 +88,7 @@ const MY_THEME: Theme = Theme::builder()
 
 Compile-time themes incur no runtime construction cost and let you embed branded palettes as `static` data alongside other UI constants.
 
-### All 17 theme fields
+### All 18 theme fields
 
 | Field | Purpose |
 |-------|---------|
@@ -109,6 +109,7 @@ Compile-time themes incur no runtime construction cost and let you embed branded
 | `surface_text` | Text color readable on `surface` backgrounds |
 | `is_dark` | Whether this theme is dark mode |
 | `spacing` | `Spacing` struct for consistent padding/margin/gap scale |
+| `syntax` | Semantic code-highlighting palette |
 
 > **Note (v0.17.0)**: `Theme` is now `#[non_exhaustive]`. Use `Theme::builder()` or preset constructors instead of struct literal syntax.
 
@@ -403,7 +404,7 @@ let bg = Color::Rgb(30, 30, 46);
 let lum = bg.luminance_f64(); // ~0.013 (sRGB-linearized, BT.709 weights)
 
 // Automatic readable foreground for a background color
-// Returns white if luminance > 0.179 (WCAG threshold), black otherwise
+// Returns black if luminance > 0.179 (WCAG threshold), white otherwise
 let fg = Color::contrast_fg(bg); // Rgb(255, 255, 255)
 ```
 
@@ -435,6 +436,7 @@ Represents the terminal's color capability.
 | `TrueColor` | 16M | 24-bit RGB |
 | `EightBit` | 256 | xterm-256color palette |
 | `Basic` | 16 | Standard ANSI colors |
+| `NoColor` | 0 | Suppress foreground/background color escapes |
 
 ### Automatic detection
 
@@ -481,6 +483,11 @@ let mods = Modifiers::BOLD | Modifiers::UNDERLINE;
 | Underline | `.underline()` | `Modifiers::UNDERLINE` |
 | Reversed | `.reversed()` | `Modifiers::REVERSED` |
 | Strikethrough | `.strikethrough()` | `Modifiers::STRIKETHROUGH` |
+| Blink | `.blink()` | `Modifiers::BLINK` |
+| Overline | `.overline()` | `Modifiers::OVERLINE` |
+
+Underline color and style are independent `Style` fields configured with
+`.underline_color(...)` and `.underline_style(...)`.
 
 ### Applying to text widgets
 

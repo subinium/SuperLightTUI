@@ -78,7 +78,7 @@ mod async_tasks;
 pub(crate) use async_tasks::AsyncTasks;
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
-pub use async_tasks::TaskHandle;
+pub use async_tasks::{TaskHandle, TaskOutcome};
 
 mod helpers;
 pub(crate) use helpers::*;

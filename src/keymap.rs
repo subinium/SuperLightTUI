@@ -65,7 +65,7 @@ impl Binding {
             return false;
         }
         match self.modifiers {
-            None => key.modifiers == KeyModifiers::NONE,
+            None | Some(KeyModifiers::NONE) => key.modifiers == KeyModifiers::NONE,
             Some(mods) => key.modifiers.contains(mods),
         }
     }
@@ -471,6 +471,27 @@ mod dispatch_tests {
         assert!(binding.matches(&key_event(KeyCode::Char('s'), ctrl_shift)));
         // Missing the required modifier does not match.
         assert!(!binding.matches(&key_event(KeyCode::Char('s'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn explicit_none_modifier_matches_only_unmodified_presses() {
+        let km = KeyMap::new().bind_code_mod(KeyCode::Enter, KeyModifiers::NONE, "Submit");
+        let binding = &km.bindings[0];
+
+        assert!(binding.matches(&key_event(KeyCode::Enter, KeyModifiers::NONE)));
+        for modifier in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+            KeyModifiers::SUPER,
+            KeyModifiers::HYPER,
+            KeyModifiers::META,
+        ] {
+            assert!(
+                !binding.matches(&key_event(KeyCode::Enter, modifier)),
+                "explicit NONE unexpectedly matched {modifier:?}"
+            );
+        }
     }
 
     #[test]

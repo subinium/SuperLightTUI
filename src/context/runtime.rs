@@ -1284,12 +1284,13 @@ impl Context {
 
     /// Exclusive-group claim — cancel stale work on supersede (issue #248).
     ///
-    /// Within a `group`, only the most-recently-claimed `id` returns `true`;
-    /// once a newer `id` claims the group, every prior `id` returns `false`
-    /// from then on. Use it to cancel an in-flight typeahead query when a newer
-    /// query supersedes it: pair with [`debounce`](Self::debounce) to fire the
-    /// settled query, then guard the work with `exclusive` so only the latest
-    /// claim proceeds.
+    /// Within a `group`, only the most-recently-claimed `id` returns `true`.
+    /// Recently superseded ids remain stale when re-polled; the history is
+    /// bounded so a long-lived group cannot retain every completed claim.
+    /// Use it to cancel an in-flight typeahead query when a newer query
+    /// supersedes it: pair with [`debounce`](Self::debounce) to fire the settled
+    /// query, then guard the work with `exclusive` so only the latest claim
+    /// proceeds.
     ///
     /// # Example
     /// ```no_run
@@ -1309,23 +1310,7 @@ impl Context {
             .exclusive
             .entry(group.to_string())
             .or_default();
-        if entry.winner == id {
-            // The reigning claim re-polls itself: still the winner.
-            return true;
-        }
-        if entry.retired.contains(id) {
-            // A previously-superseded id can never win again: stale work stays
-            // cancelled even if re-polled.
-            return false;
-        }
-        // A new id supersedes the group: retire the old winner (if any) and
-        // become the active claim.
-        if !entry.winner.is_empty() {
-            let old = std::mem::take(&mut entry.winner);
-            entry.retired.insert(old);
-        }
-        entry.winner = id.to_string();
-        true
+        entry.claim(id)
     }
 
     /// Drop the scheduler slot for `id`, re-arming it on the next
@@ -1543,6 +1528,17 @@ impl Context {
         self.async_tasks.poll::<T>(handle.id())
     }
 
+    /// Poll a task without collapsing cancellation or panic into `None`.
+    ///
+    #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+    pub fn poll_outcome<T: 'static>(
+        &mut self,
+        handle: &TaskHandle<T>,
+    ) -> Option<super::async_tasks::TaskOutcome<T>> {
+        self.async_tasks.poll_outcome::<T>(handle.id())
+    }
+
     /// Look up the nearest provided value of type `T` on the context stack.
     ///
     /// Searches from the top of the stack (most-recent
@@ -1660,8 +1656,14 @@ impl Context {
                     .map(|prev| *prev != *deps)
                     .unwrap_or(true);
                 if stale {
-                    slot.deps = Box::new(deps.clone());
-                    slot.value = compute(deps);
+                    // Build both halves before mutating the slot. If either
+                    // dependency cloning or value computation panics inside an
+                    // error boundary, the previous dependency/value pair stays
+                    // intact and the same dependency retries next frame.
+                    let next_deps = deps.clone();
+                    let next_value = compute(deps);
+                    slot.deps = Box::new(next_deps);
+                    slot.value = next_value;
                 }
             }
             None => panic!(
@@ -1734,8 +1736,13 @@ impl Context {
         match self.hook_states[idx].downcast_mut::<(D, T)>() {
             Some(stored) => {
                 if stored.0 != *deps {
-                    stored.0 = deps.clone();
-                    stored.1 = compute(deps);
+                    // Keep the cache pair panic-atomic. Committing deps before
+                    // compute would make a caught panic look like a cache hit
+                    // on the retry while retaining the old value.
+                    let next_deps = deps.clone();
+                    let next_value = compute(deps);
+                    stored.0 = next_deps;
+                    stored.1 = next_value;
                 }
                 &stored.1
             }

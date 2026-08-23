@@ -3,7 +3,7 @@
 //! Demonstrates: #224 (gauge / line_gauge builder API, color-tiered fills,
 //! custom characters, `f64` ratios).
 //!
-//! Run: `cargo run --example v020_gauge`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   q / Esc / Ctrl-Q — quit

@@ -4,7 +4,7 @@
 //! Demonstrates: #235 (scrollable_with_gutter via `GutterOpts`, `HighlightRange`,
 //! `ScrollState::highlight_next` / `highlight_previous`).
 //!
-//! Run: `cargo run --example v020_gutter_highlights`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   n                — jump to the next matching line

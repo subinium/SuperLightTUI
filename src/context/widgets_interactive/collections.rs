@@ -236,7 +236,7 @@ impl Context {
     /// Render a navigable list with custom widget colors.
     pub fn list_colored(&mut self, state: &mut ListState, colors: &WidgetColors) -> Response {
         let visible = state.visible_indices().to_vec();
-        if visible.is_empty() && state.items.is_empty() {
+        if visible.is_empty() && state.is_empty() {
             state.selected = 0;
             return Response::none();
         }
@@ -299,7 +299,7 @@ impl Context {
             })));
 
         for (view_idx, &item_idx) in visible.iter().enumerate() {
-            let item = &state.items[item_idx];
+            let item = &state.items()[item_idx];
             if view_idx == state.selected {
                 let mut selected_style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
@@ -373,7 +373,7 @@ impl Context {
         colors: &WidgetColors,
     ) -> crate::widgets::ListResponse {
         let visible = state.visible_indices().to_vec();
-        if visible.is_empty() && state.items.is_empty() {
+        if visible.is_empty() && state.is_empty() {
             state.selected = 0;
             return crate::widgets::ListResponse::default();
         }
@@ -478,7 +478,7 @@ impl Context {
             })));
 
         for (view_idx, &item_idx) in visible.iter().enumerate() {
-            let item = &state.items[item_idx];
+            let item = &state.items()[item_idx];
             if view_idx == state.selected {
                 let mut selected_style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
@@ -831,15 +831,15 @@ impl Context {
 
     /// Render a file system browser with directory navigation.
     pub fn file_picker(&mut self, state: &mut FilePickerState) -> Response {
-        if state.dirty {
-            state.refresh();
+        if state.dirty && state.last_error().is_none() {
+            let _ = state.try_refresh();
         }
         if !state.entries.is_empty() {
             state.selected = state.selected.min(state.entries.len().saturating_sub(1));
         }
 
         let focused = self.register_focusable();
-        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut file_selected = false;
 
         if focused {
@@ -862,7 +862,7 @@ impl Context {
                                 state.current_dir = entry.path;
                                 state.selected = 0;
                                 state.selected_file = None;
-                                state.dirty = true;
+                                state.invalidate_scan();
                             } else {
                                 state.selected_file = Some(entry.path);
                                 file_selected = true;
@@ -875,14 +875,14 @@ impl Context {
                             state.current_dir = parent;
                             state.selected = 0;
                             state.selected_file = None;
-                            state.dirty = true;
+                            state.invalidate_scan();
                         }
                         consumed_indices.push(i);
                     }
                     KeyCode::Char('h') => {
                         state.show_hidden = !state.show_hidden;
                         state.selected = 0;
-                        state.dirty = true;
+                        state.invalidate_scan();
                         consumed_indices.push(i);
                     }
                     KeyCode::Esc => {
@@ -895,8 +895,41 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        if state.dirty {
-            state.refresh();
+        if state.dirty && state.last_error().is_none() {
+            let _ = state.try_refresh();
+        }
+
+        let widget_height = if response.rect.height > 0 {
+            response.rect.height as usize
+        } else {
+            self.area_height as usize
+        };
+        let status_rows =
+            usize::from(state.scan_status() != crate::widgets::FilePickerScanStatus::Ready);
+        let available_rows = widget_height.saturating_sub(1 + status_rows);
+        let show_indicator = state.entries.len() > available_rows;
+        let visible_rows = if show_indicator {
+            available_rows.saturating_sub(1)
+        } else {
+            available_rows
+        };
+        state.keep_selected_visible(visible_rows);
+        let start = state.viewport_offset();
+        let end = start.saturating_add(visible_rows).min(state.entries.len());
+
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            let row_start = rect.y.saturating_add(1 + status_rows as u32);
+            for (i, mouse) in clicks {
+                if mouse.y >= row_start {
+                    let clicked = start.saturating_add((mouse.y - row_start) as usize);
+                    if clicked < end {
+                        state.selected = clicked;
+                        consumed.push(i);
+                    }
+                }
+            }
+            self.consume_indices(consumed);
         }
 
         self.commands
@@ -927,10 +960,39 @@ impl Context {
         };
         self.styled(dir_text, Style::new().fg(self.theme.text_dim).dim());
 
+        match state.scan_status() {
+            crate::widgets::FilePickerScanStatus::Error => {
+                if let Some(error) = state.last_error() {
+                    self.styled(
+                        format!("Error: {error}"),
+                        Style::new().fg(self.theme.error).bold(),
+                    );
+                }
+            }
+            crate::widgets::FilePickerScanStatus::Pending => {
+                self.styled("(loading)", Style::new().fg(self.theme.text_dim).dim());
+            }
+            crate::widgets::FilePickerScanStatus::Stale => {
+                self.styled(
+                    "(stale; refresh pending)",
+                    Style::new().fg(self.theme.warning).dim(),
+                );
+            }
+            crate::widgets::FilePickerScanStatus::Ready => {}
+        }
+
         if state.entries.is_empty() {
-            self.styled("(empty)", Style::new().fg(self.theme.text_dim).dim());
+            if state.scan_status() == crate::widgets::FilePickerScanStatus::Ready {
+                self.styled("(empty)", Style::new().fg(self.theme.text_dim).dim());
+            }
         } else {
-            for (idx, entry) in state.entries.iter().enumerate() {
+            for (idx, entry) in state
+                .entries
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(end.saturating_sub(start))
+            {
                 let icon = if entry.is_dir { "▸ " } else { "  " };
                 let row = if entry.is_dir {
                     let mut row = String::with_capacity(icon.len() + entry.name.len());
@@ -938,7 +1000,10 @@ impl Context {
                     row.push_str(&entry.name);
                     row
                 } else {
-                    let size_text = entry.size.to_string();
+                    let size_text = entry
+                        .size
+                        .map(|size| size.to_string())
+                        .unwrap_or_else(|| "?".to_string());
                     let mut row =
                         String::with_capacity(icon.len() + entry.name.len() + size_text.len() + 4);
                     row.push_str(icon);
@@ -959,6 +1024,13 @@ impl Context {
                     Style::new().fg(self.theme.text)
                 };
                 self.styled(row, style);
+            }
+
+            if show_indicator {
+                self.styled(
+                    format!("{}-{} / {}", start + 1, end, state.entries.len()),
+                    Style::new().fg(self.theme.text_dim).dim(),
+                );
             }
         }
 
@@ -1045,7 +1117,7 @@ mod list_reorder_render_tests {
 
         // "alpha" (data 0) swapped down with "beta" (data 1).
         assert_eq!(reordered, Some((0, 1)));
-        assert_eq!(state.items, vec!["beta", "alpha", "gamma"]);
+        assert_eq!(state.items(), ["beta", "alpha", "gamma"]);
         // Selection follows the moved item to its new position.
         assert_eq!(state.selected, 1);
         assert_eq!(state.selected_item(), Some("alpha"));
@@ -1067,7 +1139,7 @@ mod list_reorder_render_tests {
         });
 
         assert_eq!(reordered, Some((2, 1)));
-        assert_eq!(state.items, vec!["one", "three", "two"]);
+        assert_eq!(state.items(), ["one", "three", "two"]);
         assert_eq!(state.selected, 1);
     }
 
@@ -1088,7 +1160,7 @@ mod list_reorder_render_tests {
 
         // No room to move up from the top: nothing reordered.
         assert_eq!(reordered, None);
-        assert_eq!(state.items, vec!["a", "b", "c"]);
+        assert_eq!(state.items(), ["a", "b", "c"]);
         assert_eq!(state.selected, 0);
     }
 
@@ -1107,7 +1179,7 @@ mod list_reorder_render_tests {
 
         // Without a modifier, Down moves the selection but never reorders.
         assert_eq!(reordered, None);
-        assert_eq!(state.items, vec!["a", "b", "c"]);
+        assert_eq!(state.items(), ["a", "b", "c"]);
         assert_eq!(state.selected, 1);
     }
 }

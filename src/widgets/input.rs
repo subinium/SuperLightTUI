@@ -1,3 +1,5 @@
+use unicode_segmentation::UnicodeSegmentation as _;
+
 /// Accumulated static output lines for [`crate::run_static`].
 ///
 /// Use [`println`](Self::println) to append lines above the dynamic inline TUI.
@@ -55,11 +57,11 @@ impl StaticOutput {
 pub struct TextInputState {
     /// The current input text.
     pub value: String,
-    /// Cursor position as a character index into `value`.
+    /// Cursor position as a grapheme-cluster index into `value`.
     pub cursor: usize,
     /// Placeholder text shown when `value` is empty.
     pub placeholder: String,
-    /// Maximum character count. Input is rejected beyond this limit.
+    /// Maximum grapheme-cluster count. Input is rejected beyond this limit.
     pub max_length: Option<usize>,
     /// The most recent validation error message, if any.
     pub validation_error: Option<String>,
@@ -148,7 +150,7 @@ impl TextInputState {
         }
     }
 
-    /// Set the maximum allowed character count.
+    /// Set the maximum allowed grapheme-cluster count.
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
@@ -558,6 +560,7 @@ pub struct FormState {
     pub fields: Vec<FormField>,
     /// Whether the form has been successfully submitted.
     pub submitted: bool,
+    cross_field_errors: std::collections::HashMap<usize, String>,
 }
 
 impl FormState {
@@ -566,6 +569,7 @@ impl FormState {
         Self {
             fields: Vec::new(),
             submitted: false,
+            cross_field_errors: std::collections::HashMap::new(),
         }
     }
 
@@ -658,14 +662,20 @@ impl FormState {
     /// });
     /// # let _ = ok;
     /// ```
-    pub fn validate_with(
-        &mut self,
-        f: impl Fn(&FormState) -> Vec<(usize, String)>,
-    ) -> bool {
+    pub fn validate_with(&mut self, f: impl Fn(&FormState) -> Vec<(usize, String)>) -> bool {
+        for (index, message) in self.cross_field_errors.drain() {
+            if let Some(field) = self.fields.get_mut(index)
+                && field.error.as_deref() == Some(message.as_str())
+            {
+                field.error = None;
+            }
+        }
+
         let extra = f(self);
         for (i, msg) in &extra {
             if let Some(field) = self.fields.get_mut(*i) {
                 field.error = Some(msg.clone());
+                self.cross_field_errors.insert(*i, msg.clone());
             }
         }
         extra.is_empty()
@@ -935,9 +945,9 @@ pub struct TextareaState {
     pub lines: Vec<String>,
     /// Row index of the cursor (0-based, logical line).
     pub cursor_row: usize,
-    /// Column index of the cursor within the current row (character index).
+    /// Column index of the cursor within the current row (grapheme-cluster index).
     pub cursor_col: usize,
-    /// Maximum total character count across all lines.
+    /// Maximum grapheme-cluster count, including logical newline separators.
     pub max_length: Option<usize>,
     /// When set, lines longer than this display-column width are soft-wrapped.
     pub wrap_width: Option<u32>,
@@ -951,6 +961,9 @@ pub struct TextareaState {
     /// Maximum [`history`](Self::history) length before the oldest snapshot is
     /// evicted. Defaults to [`DEFAULT_TEXTAREA_HISTORY_MAX`].
     pub(crate) history_max: usize,
+    /// Live state captured by the first undo. Kept outside `history` so redo
+    /// does not consume one of the bounded past-snapshot slots.
+    pub(crate) redo_tip: Option<TextareaSnapshot>,
     /// Whether the previous keypress was a `Char` insert. Used to coalesce
     /// rapid typing into a single undoable burst — when true, the next `Char`
     /// keypress does not push a snapshot.
@@ -970,6 +983,7 @@ impl TextareaState {
             history: Vec::new(),
             history_index: 0,
             history_max: DEFAULT_TEXTAREA_HISTORY_MAX,
+            redo_tip: None,
             last_was_char_insert: false,
         }
     }
@@ -977,6 +991,15 @@ impl TextareaState {
     /// Return all lines joined with newline characters.
     pub fn value(&self) -> String {
         self.lines.join("\n")
+    }
+
+    /// Return the grapheme-cluster count, including logical newlines.
+    pub fn grapheme_len(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|line| line.graphemes(true).count())
+            .sum::<usize>()
+            .saturating_add(self.lines.len().saturating_sub(1))
     }
 
     /// Replace the content with the given text, splitting on newlines.
@@ -995,10 +1018,11 @@ impl TextareaState {
         self.scroll_offset = 0;
         self.history.clear();
         self.history_index = 0;
+        self.redo_tip = None;
         self.last_was_char_insert = false;
     }
 
-    /// Set the maximum allowed total character count.
+    /// Set the maximum grapheme-cluster count, including logical newlines.
     pub fn max_length(mut self, len: usize) -> Self {
         self.max_length = Some(len);
         self
@@ -1049,6 +1073,7 @@ impl TextareaState {
         if self.history_index < self.history.len() {
             self.history.truncate(self.history_index);
         }
+        self.redo_tip = None;
         self.history.push(TextareaSnapshot {
             lines: self.lines.clone(),
             cursor_row: self.cursor_row,
@@ -1071,10 +1096,10 @@ impl TextareaState {
         if self.history.is_empty() || self.history_index == 0 {
             return false;
         }
-        // First Ctrl+Z after edits captures the current (unsaved) tip so the
-        // user can redo back to it; subsequent presses walk down the stack.
+        // Keep the live tip outside the bounded past-snapshot vector so the
+        // first undo remains redoable even when `history_max == 1`.
         if self.history_index == self.history.len() {
-            self.history.push(TextareaSnapshot {
+            self.redo_tip = Some(TextareaSnapshot {
                 lines: self.lines.clone(),
                 cursor_row: self.cursor_row,
                 cursor_col: self.cursor_col,
@@ -1093,11 +1118,21 @@ impl TextareaState {
     /// No-op when already at the redo tip. Returns `true` when a snapshot was
     /// applied.
     pub(crate) fn redo(&mut self) -> bool {
-        if self.history_index + 1 >= self.history.len() {
+        if self.history_index < self.history.len().saturating_sub(1) {
+            self.history_index += 1;
+            let snap = &self.history[self.history_index];
+            self.lines = snap.lines.clone();
+            self.cursor_row = snap.cursor_row;
+            self.cursor_col = snap.cursor_col;
+            return true;
+        }
+        if self.history_index + 1 != self.history.len() {
             return false;
         }
-        self.history_index += 1;
-        let snap = &self.history[self.history_index];
+        let Some(snap) = self.redo_tip.as_ref() else {
+            return false;
+        };
+        self.history_index = self.history.len();
         self.lines = snap.lines.clone();
         self.cursor_row = snap.cursor_row;
         self.cursor_col = snap.cursor_col;
@@ -1314,6 +1349,75 @@ impl Default for SpinnerState {
     }
 }
 
+const FINITE_NUMERIC_LIMIT: f64 = f64::MAX / 4.0;
+
+pub(crate) fn normalize_numeric_range(start: f64, end: f64) -> (f64, f64) {
+    let normalize_bound = |value: f64| {
+        if value.is_nan() {
+            0.0
+        } else if value == f64::INFINITY {
+            FINITE_NUMERIC_LIMIT
+        } else if value == f64::NEG_INFINITY {
+            -FINITE_NUMERIC_LIMIT
+        } else {
+            value.clamp(-FINITE_NUMERIC_LIMIT, FINITE_NUMERIC_LIMIT)
+        }
+    };
+    let start = normalize_bound(start);
+    let end = normalize_bound(end);
+    if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    }
+}
+
+pub(crate) fn normalize_numeric_value(value: f64, min: f64, max: f64) -> f64 {
+    let value = if value.is_nan() {
+        0.0
+    } else if value == f64::INFINITY {
+        max
+    } else if value == f64::NEG_INFINITY {
+        min
+    } else {
+        value.clamp(-FINITE_NUMERIC_LIMIT, FINITE_NUMERIC_LIMIT)
+    };
+    value.clamp(min, max)
+}
+
+pub(crate) fn normalize_numeric_step(step: f64) -> f64 {
+    if step.is_finite() && step > 0.0 {
+        step.min(FINITE_NUMERIC_LIMIT)
+    } else {
+        0.0
+    }
+}
+
+/// Optional configuration for [`Context::slider_with`](crate::Context::slider_with).
+#[derive(Debug, Clone)]
+pub struct SliderOpts {
+    pub(crate) label: String,
+    pub(crate) range: std::ops::RangeInclusive<f64>,
+    pub(crate) step: Option<f64>,
+}
+
+impl SliderOpts {
+    /// Create slider options with an automatic step of one twentieth of the span.
+    pub fn new(label: impl Into<String>, range: std::ops::RangeInclusive<f64>) -> Self {
+        Self {
+            label: label.into(),
+            range,
+            step: None,
+        }
+    }
+
+    /// Set an explicit finite positive keyboard step.
+    pub fn step(mut self, step: f64) -> Self {
+        self.step = Some(normalize_numeric_step(step));
+        self
+    }
+}
+
 /// State for a numeric stepper field (clamp + step, integer or float).
 ///
 /// A numeric stepper renders the value as an editable field with `▾`/`▴`
@@ -1373,9 +1477,9 @@ impl NumberInputState {
     /// assert!(!s.integer);
     /// ```
     pub fn new(value: f64, min: f64, max: f64) -> Self {
-        let (min, max) = if min <= max { (min, max) } else { (max, min) };
+        let (min, max) = normalize_numeric_range(min, max);
         Self {
-            value: value.clamp(min, max),
+            value: normalize_numeric_value(value, min, max),
             min,
             max,
             step: 1.0,
@@ -1416,8 +1520,18 @@ impl NumberInputState {
     /// assert!((s.step - 0.1).abs() < f64::EPSILON);
     /// ```
     pub fn step(mut self, step: f64) -> Self {
-        self.step = step.max(0.0);
+        self.step = normalize_numeric_step(step);
         self
+    }
+
+    /// Normalize bounds, value, and step after direct public-field mutation.
+    pub fn normalize(&mut self) {
+        (self.min, self.max) = normalize_numeric_range(self.min, self.max);
+        self.value = normalize_numeric_value(self.value, self.min, self.max);
+        self.step = normalize_numeric_step(self.step);
+        if self.integer {
+            self.value = self.value.round().clamp(self.min, self.max);
+        }
     }
 
     /// Clamp `value` into `[min, max]` (and round if `integer`).
@@ -1437,9 +1551,10 @@ impl NumberInputState {
     /// assert_eq!(s.clamped(), 4.0);
     /// ```
     pub fn clamped(&self) -> f64 {
-        let v = self.value.clamp(self.min, self.max);
+        let (min, max) = normalize_numeric_range(self.min, self.max);
+        let v = normalize_numeric_value(self.value, min, max);
         if self.integer {
-            v.round()
+            v.round().clamp(min, max)
         } else {
             v
         }

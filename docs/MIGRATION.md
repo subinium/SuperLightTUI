@@ -8,87 +8,31 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
-## 1. Quick reference: v0.19 → v0.20
+## 1. v0.22.x → v0.23.0
 
-The next minor release contains breaking changes from issues #98, #102, #134, #149, #161,
-#184, #192, and #193. Most are caught by the compiler — a few are runtime/visual.
+v0.23 is a correctness-focused minor release. It intentionally makes breaking
+changes where public mutable fields could invalidate private caches or where a
+return type could not expose runtime failure safely.
 
-| Change | Severity | Migration |
-|---|---|---|
-| `FilePickerState::selected()` → `selected_file()` (#98) | Rename — Cargo compile-error | `s/\.selected()/\.selected_file()/g` on `FilePickerState` calls |
-| `ContainerBuilder::scroll_offset()` `pub` → `pub(crate)` (#149) | Compile error if used externally | Use `ScrollState` + `scrollable()` widget instead |
-| `scrollbar()` return type `()` → `Response` (#184) | `unused_must_use` warning if ignored | `let _ = ui.scrollbar(&state);` to discard |
-| `virtual_list` cursor stays in viewport (#192) | Visual change, no compile error | If you depended on the old cursor=bottom-row behavior, set `state.viewport_offset = state.selected.saturating_sub(visible_height - 1)` manually |
-| `calendar` `h`/`l` = day ±1 (was month) (#193) | Keybinding behavior change | Document for users; `[`/`]` is the new month nav |
-| `TextareaState` struct-literal init broken (#102) | Compile error if you used struct literal | Use `TextareaState::new()` constructor (private fields added for undo/redo) |
-| `screen_hook_map` keys: `String` → `&'static str` (#134) | Compile error if you wrote dynamic `String` | Use string literals; for runtime keys, `Box::leak(s.into_boxed_str())` |
-| `flex-shrink` global behavior change (#161) | Pixel-exact positions change for overflowing rows/columns | Re-screenshot snapshot tests; only affects layouts that previously overflowed and shrank |
+| Change | Migration |
+|---|---|
+| Cache-coupled collection fields are encapsulated | `ListState::{items, filter}`, `TableState::{headers, rows, filter}`, `SelectState::items`, `MultiSelectState::items`, and `CommandPaletteState::commands` are now accessed through the same-name getter plus `set_items`, `set_filter`, `set_headers`, `set_rows`, or `set_commands`. |
+| Async run ownership is explicit | Keep the returned run handle and use its sender accessor to send messages; await/join the handle to observe terminal errors or panic. |
+| Rich-log retention uses bounded storage | Replace direct `entries` access with `entries()`, `entries_mut()`, `entry()`, `entry_mut()`, and `push_entry()`; storage is now a `VecDeque`. |
+| `slider_with_step` is deprecated in favor of an opts API | Existing calls still compile. Migrate to `ui.slider_with(&mut value, SliderOpts::new(label, range).step(step))`; the three-argument `ui.slider(label, &mut value, range)` remains available. |
+| Public state structs gained private invariant/cache fields | Construct `FileEntry`, `FilePickerState`, and `FormState` through `Default`/`new` and builders instead of external struct literals or functional update syntax. |
+| Cell and buffer writes enforce grapheme/control invariants | Use `Buffer::set_string`, `set_char`, and checked cell APIs instead of assigning raw symbol bytes. |
+| File-picker scanning is observable | Handle the scan status/error exposed by `FilePickerState`; an empty directory and a failed scan are distinct. |
+| Non-TTY and zero-geometry runs are explicit | Handle the returned outcome/error rather than assuming an `Ok(())` means the closure ran. |
 
-### How to upgrade
+The exact method names above are compile-tested in the v0.23 rustdoc and examples.
+Run this upgrade sequence:
 
-1. Bump `superlighttui` in `Cargo.toml` to `0.20.0`
-2. `cargo build` — fix compile errors with the table above
-3. Re-run any TUI snapshot tests; eyeball overflow layouts and `virtual_list` cursor behavior
-4. If your app exposes its own keybindings docs, update them for `calendar`
-
-### Concrete examples
-
-**#98 — `FilePickerState`**
-
-```rust
-// Before (v0.19.x)
-if let Some(path) = state.selected() {
-    open_file(path);
-}
-
-// After (v0.20)
-if let Some(path) = state.selected_file() {
-    open_file(path);
-}
-```
-
-The struct field `state.selected_file: Option<PathBuf>` already exists in v0.19.x
-(`src/widgets/collections.rs` line ~102) — only the accessor method is renamed.
-Direct field access (`&state.selected_file`) was always available and keeps working.
-
-**#184 — `scrollbar()` return type**
-
-```rust
-// Before (v0.19.x): scrollbar returns ()
-ui.scrollbar(&scroll_state);
-
-// After (v0.20): scrollbar returns Response, must be used or discarded
-let _ = ui.scrollbar(&scroll_state);
-// or, if you want to react to interaction:
-if ui.scrollbar(&scroll_state).clicked { /* ... */ }
-```
-
-**#192 — `virtual_list` cursor**
-
-The new behavior: cursor stays inside the visible viewport instead of pinning to the
-bottom row. If your app relied on the old behavior to surface "newest item at the
-cursor" (e.g. a streaming log), opt back in by setting `viewport_offset` manually:
-
-```rust
-let visible_height = list_rect.height as usize;
-state.viewport_offset = state.selected.saturating_sub(visible_height - 1);
-```
-
-**#134 — `screen_hook_map` keys**
-
-```rust
-// Before (v0.19.x): HashMap<String, _>
-ui.screen_hook_map.insert(format!("screen_{i}"), (start, count));
-
-// After (v0.20): HashMap<&'static str, _>
-ui.screen_hook_map.insert("screen_static", (start, count));
-
-// For runtime-generated keys, leak into 'static:
-let key: &'static str = Box::leak(format!("screen_{i}").into_boxed_str());
-ui.screen_hook_map.insert(key, (start, count));
-```
-
-Most callers use static names — the `Box::leak` workaround is for the rare dynamic case.
+1. Set `superlighttui = "0.23.0"`.
+2. Run `cargo check` and replace direct state-field mutation first.
+3. Update async ownership and slider call sites reported by the compiler.
+4. Run interaction tests for tables, selects, text input, and raw drawing.
+5. Re-record visual snapshots containing CJK, emoji, RTL text, images, or clipped scroll regions.
 
 ---
 

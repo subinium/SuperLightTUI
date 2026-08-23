@@ -1,114 +1,132 @@
 //! In-frame async task API (`Context::spawn` / `Context::poll`), feature-gated
-//! behind `async`. See issue #234.
-//!
-//! BubbleTea's `tea.Cmd` is the inspiration. SLT's existing
-//! [`run_async`](crate::run_async) entry point uses an external `mpsc` channel,
-//! which works but requires the caller to hold a `Sender` outside the closure
-//! and wire messages manually. The in-frame API closes this ergonomics gap for
-//! the common case: "click button -> spawn fetch -> show result next frame".
-//!
-//! This module defines [`TaskHandle`] (the opaque, `#[must_use]` handle
-//! returned by `Context::spawn`) and [`AsyncTasks`] (the per-session registry
-//! round-tripped through [`Context`] exactly like the scheduler timer table).
+//! behind `async`. See issues #234, #334, and #343.
 
 use std::any::Any;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
-/// A completed task result delivered from a spawned future back to the
-/// [`AsyncTasks`] registry: `(task id, boxed result)`.
-type ResultMsg = (u64, Box<dyn Any + Send>);
+/// Terminal outcome of an in-frame task.
+///
+/// `Pending` is represented by `None` from the polling API; every value of
+/// this enum is terminal and delivered at most once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskOutcome<T> {
+    /// The future returned normally.
+    Completed(T),
+    /// The task was explicitly cancelled.
+    Cancelled,
+    /// The future panicked. The payload is normalized into a message.
+    Panicked(String),
+}
+
+enum ErasedTaskOutcome {
+    Completed(Box<dyn Any + Send>),
+    Cancelled,
+    Panicked(String),
+}
+
+type ResultMsg = (u64, ErasedTaskOutcome);
+
+#[derive(Clone, Copy)]
+struct CancelMsg {
+    id: u64,
+    retain_outcome: bool,
+}
+
+struct TaskJoin {
+    worker_abort: tokio::task::AbortHandle,
+    supervisor: tokio::task::JoinHandle<()>,
+    discard_outcome: bool,
+}
 
 /// Opaque handle returned by [`Context::spawn`](crate::Context::spawn).
 ///
 /// Store the handle and pass it to [`Context::poll`](crate::Context::poll) on
-/// subsequent frames to retrieve the task's result. **Dropping the handle
-/// cancels the in-flight task** (via [`tokio::task::JoinHandle::abort`]), so
-/// keep it alive for as long as you care about the result.
-///
-/// The type parameter `T` ties the handle to the future's output type so
-/// `poll` can downcast safely. Two handles never collide: each carries a
-/// unique `id`, so even two `TaskHandle<String>` live simultaneously route
-/// their results to the correct caller.
-///
-/// Requires the `async` feature.
+/// subsequent frames. Dropping it cancels the task and discards its outcome.
 #[must_use = "dropping a TaskHandle cancels the spawned task; store it to poll the result"]
 pub struct TaskHandle<T> {
     pub(crate) id: u64,
-    /// Sends this handle's `id` to the registry on drop so the task is
-    /// cancelled. `None` only for handles that were already disarmed (never
-    /// happens in normal use; kept for forward flexibility).
-    cancel: Option<Sender<u64>>,
+    cancel: Option<Sender<CancelMsg>>,
+    wake: Option<Arc<tokio::sync::Notify>>,
+    cancellation_requested: bool,
     _marker: PhantomData<fn() -> T>,
 }
 
 impl<T> TaskHandle<T> {
-    pub(crate) fn new(id: u64, cancel: Sender<u64>) -> Self {
+    fn new(id: u64, cancel: Sender<CancelMsg>, wake: Option<Arc<tokio::sync::Notify>>) -> Self {
         Self {
             id,
             cancel: Some(cancel),
+            wake,
+            cancellation_requested: false,
             _marker: PhantomData,
         }
     }
 
-    /// The stable task id this handle refers to. Crate-internal: callers match
-    /// handles by identity, not by reading the raw id.
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Request cancellation while keeping the terminal outcome observable.
+    ///
+    /// This method is idempotent. Continue polling the handle to observe
+    /// [`TaskOutcome::Cancelled`] once the runtime acknowledges the abort.
+    pub fn cancel(&mut self) {
+        if self.cancellation_requested {
+            return;
+        }
+        self.cancellation_requested = true;
+        if let Some(cancel) = self.cancel.as_ref() {
+            let _ = cancel.send(CancelMsg {
+                id: self.id,
+                retain_outcome: true,
+            });
+            if let Some(wake) = self.wake.as_ref() {
+                wake.notify_one();
+            }
+        }
     }
 }
 
 impl<T> std::fmt::Debug for TaskHandle<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TaskHandle").field("id", &self.id).finish()
+        f.debug_struct("TaskHandle")
+            .field("id", &self.id)
+            .field("cancellation_requested", &self.cancellation_requested)
+            .finish()
     }
 }
 
 impl<T> Drop for TaskHandle<T> {
     fn drop(&mut self) {
         if let Some(cancel) = self.cancel.take() {
-            // Best-effort: if the registry's receiver is already gone (session
-            // ended) the send fails and there is nothing left to cancel.
-            let _ = cancel.send(self.id);
+            let _ = cancel.send(CancelMsg {
+                id: self.id,
+                retain_outcome: false,
+            });
+            if let Some(wake) = self.wake.as_ref() {
+                wake.notify_one();
+            }
         }
     }
 }
 
 /// Per-session async task registry, round-tripped through [`Context`] each
-/// frame (moved out at frame start, moved back at frame end) exactly like the
-/// scheduler timer table.
-///
-/// Holds the ambient Tokio runtime handle (injected by
-/// [`run_async`](crate::run_async) / [`run_async_with`](crate::run_async_with)),
-/// the live `JoinHandle`s for cancellation, and completed results keyed by id.
-///
-/// `Default` produces an inert registry with no runtime — `spawn` on it panics,
-/// matching the documented contract that `spawn` requires an active runtime.
+/// frame. Worker tasks are supervised so all normal, cancelled, and panicked
+/// exits produce a terminal message and release their join entry.
 pub(crate) struct AsyncTasks {
-    /// Ambient Tokio runtime handle. `None` outside `run_async*` (TestBackend,
-    /// the sync `run` loop) — `spawn` panics in that case.
     runtime: Option<tokio::runtime::Handle>,
-    /// Monotonic id allocator. Never reused within a session so a stale handle
-    /// can never collide with a freshly-spawned task.
     next_id: u64,
-    /// Live abort handles, keyed by task id. Removed when the result arrives or
-    /// the task is cancelled.
-    joins: std::collections::HashMap<u64, tokio::task::JoinHandle<()>>,
-    /// Completed results awaiting a `poll`, keyed by task id. A result is
-    /// inserted exactly once and removed by the first matching `poll`.
-    results: std::collections::HashMap<u64, Box<dyn Any + Send>>,
-    /// Sender cloned into every spawned future; the future sends its boxed
-    /// result here on completion. `None` until the first `spawn` lazily wires
-    /// the channel.
+    joins: std::collections::HashMap<u64, TaskJoin>,
+    results: std::collections::HashMap<u64, ErasedTaskOutcome>,
     result_tx: Option<Sender<ResultMsg>>,
-    /// Receiver drained at the top of `spawn`/`poll` to move completed results
-    /// into `results`. Paired with `result_tx`.
     result_rx: Option<Receiver<ResultMsg>>,
-    /// Sender handed to each [`TaskHandle`]; the handle sends its id here on
-    /// drop to request cancellation. Drained alongside the result channel.
-    cancel_tx: Sender<u64>,
-    /// Receiver for handle-drop cancellation requests.
-    cancel_rx: Receiver<u64>,
+    cancel_tx: Sender<CancelMsg>,
+    cancel_rx: Receiver<CancelMsg>,
+    /// Coalescing wake primitive for the owning render dispatcher. `Notify`
+    /// stores at most one permit, so completion bursts cannot grow a queue.
+    wake: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl Default for AsyncTasks {
@@ -123,6 +141,7 @@ impl Default for AsyncTasks {
             result_rx: None,
             cancel_tx,
             cancel_rx,
+            wake: None,
         }
     }
 }
@@ -130,21 +149,24 @@ impl Default for AsyncTasks {
 impl Drop for AsyncTasks {
     fn drop(&mut self) {
         for (_, join) in self.joins.drain() {
-            join.abort();
+            join.worker_abort.abort();
+            join.supervisor.abort();
         }
         self.results.clear();
     }
 }
 
 impl AsyncTasks {
-    /// Inject the ambient Tokio runtime handle. Called once by `run_async*`
-    /// before the first frame so `spawn` has a runtime to launch onto.
     pub(crate) fn set_runtime(&mut self, handle: tokio::runtime::Handle) {
         self.runtime = Some(handle);
     }
 
-    /// Spawn `fut` onto the ambient runtime, returning a [`TaskHandle`] keyed by
-    /// a fresh id. Panics if no runtime was injected.
+    /// Install the coalescing wake primitive used by the owning render loop.
+    /// Task completion and handle cancellation each issue one notification.
+    pub(crate) fn set_waker(&mut self, wake: Arc<tokio::sync::Notify>) {
+        self.wake = Some(wake);
+    }
+
     pub(crate) fn spawn<T: Send + 'static>(
         &mut self,
         fut: impl std::future::Future<Output = T> + Send + 'static,
@@ -156,8 +178,6 @@ impl AsyncTasks {
             )
         });
 
-        // Lazily wire the result channel on first spawn so the inert
-        // `Default` registry carries no allocation.
         if self.result_tx.is_none() {
             let (tx, rx) = std::sync::mpsc::channel();
             self.result_tx = Some(tx);
@@ -166,71 +186,201 @@ impl AsyncTasks {
         let result_tx = self
             .result_tx
             .clone()
-            .expect("result_tx wired immediately above");
+            .expect("result channel initialized immediately above");
 
         let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("in-frame async task id space exhausted");
 
-        let join = runtime.spawn(async move {
-            let out = fut.await;
-            // Best-effort delivery: if the registry (and its receiver) is gone
-            // the result is simply dropped.
-            let _ = result_tx.send((id, Box::new(out) as Box<dyn Any + Send>));
+        let worker = runtime.spawn(fut);
+        let worker_abort = worker.abort_handle();
+        let completion_wake = self.wake.clone();
+        let supervisor = runtime.spawn(async move {
+            let outcome = match worker.await {
+                Ok(value) => ErasedTaskOutcome::Completed(Box::new(value)),
+                Err(error) if error.is_cancelled() => ErasedTaskOutcome::Cancelled,
+                Err(error) => ErasedTaskOutcome::Panicked(join_panic_message(error)),
+            };
+            let _ = result_tx.send((id, outcome));
+            if let Some(wake) = completion_wake {
+                wake.notify_one();
+            }
         });
-        self.joins.insert(id, join);
+        self.joins.insert(
+            id,
+            TaskJoin {
+                worker_abort,
+                supervisor,
+                discard_outcome: false,
+            },
+        );
 
-        TaskHandle::new(id, self.cancel_tx.clone())
+        TaskHandle::new(id, self.cancel_tx.clone(), self.wake.clone())
     }
 
-    /// Drain the result and cancellation channels: move completed results into
-    /// `results`, and abort any tasks whose handle was dropped. Called at the
-    /// top of `spawn` and `poll` so the registry stays current without a
-    /// dedicated per-frame tick.
     fn drain(&mut self) {
         if let Some(rx) = self.result_rx.as_ref() {
-            while let Ok((id, value)) = rx.try_recv() {
-                // The task finished on its own; its JoinHandle no longer needs
-                // tracking for cancellation.
-                self.joins.remove(&id);
-                self.results.insert(id, value);
+            while let Ok((id, outcome)) = rx.try_recv() {
+                let discard = self
+                    .joins
+                    .remove(&id)
+                    .is_some_and(|join| join.discard_outcome);
+                if !discard {
+                    self.results.insert(id, outcome);
+                }
             }
         }
-        while let Ok(id) = self.cancel_rx.try_recv() {
-            self.cancel(id);
+        while let Ok(cancel) = self.cancel_rx.try_recv() {
+            self.cancel(cancel);
         }
     }
 
-    /// Per-frame pump: move in completed results and process handle-drop
-    /// cancellations. Called once per frame from the frame kernel's registry
-    /// round-trip so a frame that calls neither `spawn` nor `poll` still honours
-    /// a [`TaskHandle`] dropped on the previous frame (otherwise the abort would
-    /// only fire on the next frame that happens to spawn or poll).
     pub(crate) fn maintain(&mut self) {
         self.drain();
     }
 
-    /// Take the result for `id` if it has arrived. Returns `Some(T)` exactly
-    /// once, then `None`.
     pub(crate) fn poll<T: 'static>(&mut self, id: u64) -> Option<T> {
-        self.drain();
-        let boxed = self.results.remove(&id)?;
-        match boxed.downcast::<T>() {
-            Ok(value) => Some(*value),
-            Err(boxed) => {
-                // Type mismatch should be impossible: the id-typed handle pins
-                // the result type. Re-insert defensively rather than lose the
-                // result, and report `None` to this (mistyped) caller.
-                self.results.insert(id, boxed);
-                None
-            }
+        match self.poll_outcome(id)? {
+            TaskOutcome::Completed(value) => Some(value),
+            TaskOutcome::Cancelled | TaskOutcome::Panicked(_) => None,
         }
     }
 
-    /// Cancel the task with `id`: abort the future and drop any pending result.
-    fn cancel(&mut self, id: u64) {
-        if let Some(join) = self.joins.remove(&id) {
-            join.abort();
+    pub(crate) fn poll_outcome<T: 'static>(&mut self, id: u64) -> Option<TaskOutcome<T>> {
+        self.drain();
+        let outcome = self.results.remove(&id)?;
+        match outcome {
+            ErasedTaskOutcome::Completed(value) => match value.downcast::<T>() {
+                Ok(value) => Some(TaskOutcome::Completed(*value)),
+                Err(value) => {
+                    self.results.insert(id, ErasedTaskOutcome::Completed(value));
+                    None
+                }
+            },
+            ErasedTaskOutcome::Cancelled => Some(TaskOutcome::Cancelled),
+            ErasedTaskOutcome::Panicked(message) => Some(TaskOutcome::Panicked(message)),
         }
-        self.results.remove(&id);
+    }
+
+    fn cancel(&mut self, cancel: CancelMsg) {
+        if !cancel.retain_outcome {
+            self.results.remove(&cancel.id);
+        }
+        if let Some(join) = self.joins.get_mut(&cancel.id) {
+            join.discard_outcome |= !cancel.retain_outcome;
+            join.worker_abort.abort();
+        }
+    }
+}
+
+fn join_panic_message(error: tokio::task::JoinError) -> String {
+    debug_assert!(error.is_panic());
+    let payload = error.into_panic();
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "task panicked with a non-string payload".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    async fn wait_for_outcome<T: 'static>(
+        tasks: &mut AsyncTasks,
+        handle: &TaskHandle<T>,
+    ) -> TaskOutcome<T> {
+        for _ in 0..200 {
+            if let Some(outcome) = tasks.poll_outcome(handle.id()) {
+                return outcome;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!("task outcome was not delivered within timeout");
+    }
+
+    #[tokio::test]
+    async fn completed_cancelled_and_panicked_tasks_are_reaped() {
+        let mut tasks = AsyncTasks::default();
+        tasks.set_runtime(tokio::runtime::Handle::current());
+
+        let completed = tasks.spawn(async { 7u32 });
+        assert_eq!(
+            wait_for_outcome(&mut tasks, &completed).await,
+            TaskOutcome::Completed(7)
+        );
+        assert!(!tasks.joins.contains_key(&completed.id()));
+
+        let mut cancelled = tasks.spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            9u32
+        });
+        cancelled.cancel();
+        assert_eq!(
+            wait_for_outcome(&mut tasks, &cancelled).await,
+            TaskOutcome::Cancelled
+        );
+        assert!(!tasks.joins.contains_key(&cancelled.id()));
+
+        let panicked = tasks.spawn(async {
+            panic!("task exploded");
+            #[allow(unreachable_code)]
+            11u32
+        });
+        let outcome = wait_for_outcome(&mut tasks, &panicked).await;
+        assert!(matches!(
+            outcome,
+            TaskOutcome::Panicked(message) if message.contains("task exploded")
+        ));
+        assert!(!tasks.joins.contains_key(&panicked.id()));
+    }
+
+    #[tokio::test]
+    async fn completion_and_cancellation_coalesce_wake_notifications() {
+        let mut tasks = AsyncTasks::default();
+        tasks.set_runtime(tokio::runtime::Handle::current());
+        let wake = Arc::new(tokio::sync::Notify::new());
+        tasks.set_waker(Arc::clone(&wake));
+
+        let handle = tasks.spawn(async { 1u8 });
+        tokio::time::timeout(Duration::from_secs(1), wake.notified())
+            .await
+            .expect("task completion should wake the dispatcher");
+        assert_eq!(
+            wait_for_outcome(&mut tasks, &handle).await,
+            TaskOutcome::Completed(1)
+        );
+
+        let mut cancelled = tasks.spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        cancelled.cancel();
+        tokio::time::timeout(Duration::from_secs(1), wake.notified())
+            .await
+            .expect("task cancellation should wake the dispatcher");
+    }
+
+    #[tokio::test]
+    async fn thousands_of_task_ids_leave_no_join_entries() {
+        let mut tasks = AsyncTasks::default();
+        tasks.set_runtime(tokio::runtime::Handle::current());
+        let handles: Vec<_> = (0..2_000u32)
+            .map(|value| tasks.spawn(async move { value }))
+            .collect();
+
+        for handle in &handles {
+            assert!(matches!(
+                wait_for_outcome(&mut tasks, handle).await,
+                TaskOutcome::Completed(_)
+            ));
+        }
+        assert!(tasks.joins.is_empty());
+        assert!(tasks.results.is_empty());
     }
 }

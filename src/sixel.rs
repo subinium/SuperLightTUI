@@ -1,5 +1,7 @@
 const SIXEL_START: &str = "\x1bPq";
 const SIXEL_END: &str = "\x1b\\";
+const MAX_SIXEL_WORK_UNITS: u64 = 268_435_456;
+const MAX_SIXEL_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32) -> String {
     if rgba.is_empty() || width == 0 || height == 0 {
@@ -23,10 +25,20 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
     if pixel_count == 0 {
         return String::new();
     }
+    let Some(required_bytes) = pixel_count.checked_mul(4) else {
+        return String::new();
+    };
+    if rgba.len() < required_bytes {
+        return String::new();
+    }
 
     let color_limit = max_colors.clamp(1, 216) as usize;
 
-    let mut pixels: Vec<Option<u8>> = vec![None; pixel_count];
+    let mut pixels: Vec<Option<u8>> = Vec::new();
+    if pixels.try_reserve_exact(pixel_count).is_err() {
+        return String::new();
+    }
+    pixels.resize(pixel_count, None);
     let mut palette_to_reg: [Option<u8>; 216] = [None; 216];
     let mut reg_to_palette: Vec<u8> = Vec::with_capacity(color_limit);
 
@@ -61,7 +73,14 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
         return String::new();
     }
 
+    let Some(output_budget) = sixel_output_budget(width, height, reg_to_palette.len()) else {
+        return String::new();
+    };
+
     let mut out = String::new();
+    if out.try_reserve(output_budget).is_err() {
+        return String::new();
+    }
     out.push_str(SIXEL_START);
 
     for (reg, &palette_idx) in reg_to_palette.iter().enumerate() {
@@ -87,30 +106,25 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
             reg_to_palette.len(),
         );
 
-        for (idx, reg) in row_regs.iter().enumerate() {
-            out.push('#');
-            out.push_str(&reg.to_string());
-
-            let mut encoded = String::with_capacity(width_usize);
-            for x in 0..width_usize {
-                let mut bits = 0_u8;
-                for bit in 0..6 {
-                    let y = y_base + bit;
-                    if y >= height_usize {
-                        break;
-                    }
-                    let pidx = y * width_usize + x;
-                    if pixels[pidx] == Some(*reg) {
-                        bits |= 1 << bit;
-                    }
-                }
-                encoded.push((b'?' + bits) as char);
+        let mut first_register = true;
+        for (reg, used) in row_regs[..reg_to_palette.len()].iter().enumerate() {
+            if !used {
+                continue;
             }
-
-            push_rle_encoded(&mut out, &encoded);
-            if idx + 1 < row_regs.len() {
+            if !first_register {
                 out.push('$');
             }
+            first_register = false;
+            out.push('#');
+            out.push_str(&reg.to_string());
+            push_register_band(
+                &mut out,
+                &pixels,
+                width_usize,
+                height_usize,
+                y_base,
+                reg as u8,
+            );
         }
 
         out.push('-');
@@ -118,6 +132,29 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
 
     out.push_str(SIXEL_END);
     out
+}
+
+fn sixel_output_budget(width: u32, height: u32, registers: usize) -> Option<usize> {
+    let bands = u64::from(height).div_ceil(6);
+    let register_bands = bands.checked_mul(registers as u64)?;
+    let encoded_columns = register_bands.checked_mul(u64::from(width))?;
+    let work = encoded_columns.checked_mul(6)?;
+    if work > MAX_SIXEL_WORK_UNITS {
+        return None;
+    }
+
+    // Raw columns are the worst case because Sixel RLE never expands a run.
+    // Include conservative selector, palette, separator, and envelope space.
+    let overhead = register_bands
+        .checked_mul(12)?
+        .checked_add((registers as u64).checked_mul(24)?)?
+        .checked_add(bands)?
+        .checked_add(16)?;
+    let output = encoded_columns.checked_add(overhead)?;
+    if output > MAX_SIXEL_OUTPUT_BYTES {
+        return None;
+    }
+    usize::try_from(output).ok()
 }
 
 fn quantize_6cube(r: u8, g: u8, b: u8) -> u8 {
@@ -175,12 +212,11 @@ fn row_registers(
     height: usize,
     y_base: usize,
     reg_count: usize,
-) -> Vec<u8> {
+) -> [bool; 216] {
     // `reg_count` is bounded by the sixel 6-cube quantization (`color_limit`
     // in `encode_sixel` clamps `max_colors` to ≤ 216). Use a fixed-size stack
     // array to eliminate per-row heap allocation.
     let mut used = [false; 216];
-    let used = &mut used[..reg_count];
 
     for bit in 0..6 {
         let y = y_base + bit;
@@ -190,41 +226,57 @@ fn row_registers(
         let start = y * width;
         let end = start + width;
         for &pixel in &pixels[start..end] {
-            if let Some(reg) = pixel {
+            if let Some(reg) = pixel
+                && (reg as usize) < reg_count
+            {
                 used[reg as usize] = true;
             }
         }
     }
 
-    used.iter()
-        .enumerate()
-        .filter_map(|(reg, &is_used)| is_used.then_some(reg as u8))
-        .collect()
+    used
 }
 
-fn push_rle_encoded(out: &mut String, data: &str) {
-    if data.is_empty() {
-        return;
-    }
-
-    let mut chars = data.chars();
-    let Some(mut current) = chars.next() else {
-        return;
-    };
-    let mut run_len = 1_usize;
-
-    for ch in chars {
-        if ch == current {
+fn push_register_band(
+    out: &mut String,
+    pixels: &[Option<u8>],
+    width: usize,
+    height: usize,
+    y_base: usize,
+    register: u8,
+) {
+    let mut current = None;
+    let mut run_len = 0usize;
+    for x in 0..width {
+        let mut bits = 0u8;
+        for bit in 0..6 {
+            let y = y_base + bit;
+            if y >= height {
+                break;
+            }
+            let index = y * width + x;
+            if pixels[index] == Some(register) {
+                bits |= 1 << bit;
+            }
+        }
+        let ch = (b'?' + bits) as char;
+        let Some(previous) = current else {
+            current = Some(ch);
+            run_len = 1;
+            continue;
+        };
+        if ch == previous {
             run_len += 1;
             continue;
         }
 
-        push_run(out, current, run_len);
-        current = ch;
+        push_run(out, previous, run_len);
+        current = Some(ch);
         run_len = 1;
     }
-
-    push_run(out, current, run_len);
+    if let Some(current) = current {
+        push_run(out, current, run_len);
+    }
 }
 
 fn push_run(out: &mut String, ch: char, run_len: usize) {
@@ -241,7 +293,7 @@ fn push_run(out: &mut String, ch: char, run_len: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_sixel;
+    use super::{encode_sixel, sixel_output_budget};
     use crate::TestBackend;
 
     #[test]
@@ -311,5 +363,17 @@ mod tests {
         // allocating.
         let sixel = encode_sixel(&[0u8], 65_535, 65_535, 256);
         assert!(sixel.is_empty());
+    }
+
+    #[test]
+    fn encode_sixel_rejects_truncated_rgba_before_pixel_allocation() {
+        let sixel = encode_sixel(&[255, 0, 0, 255], 4096, 4096, 256);
+        assert!(sixel.is_empty());
+    }
+
+    #[test]
+    fn sixel_work_and_output_estimates_are_bounded() {
+        assert!(sixel_output_budget(1024, 1024, 1).is_some());
+        assert!(sixel_output_budget(4096, 4096, 216).is_none());
     }
 }

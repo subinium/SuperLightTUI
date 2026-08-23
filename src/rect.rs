@@ -39,6 +39,12 @@ impl Rect {
         self.width.saturating_mul(self.height)
     }
 
+    /// Total area in cells without narrowing to `u32`.
+    #[inline]
+    pub const fn area_u64(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
     /// Exclusive right edge (`x + width`).
     ///
     /// This is one column past the last column in the rectangle.
@@ -47,12 +53,30 @@ impl Rect {
         self.x.saturating_add(self.width)
     }
 
+    /// Checked exclusive right edge, or `None` when it is not representable.
+    #[inline]
+    pub const fn checked_right(&self) -> Option<u32> {
+        self.x.checked_add(self.width)
+    }
+
     /// Exclusive bottom edge (`y + height`).
     ///
     /// This is one row past the last row in the rectangle.
     #[inline]
     pub const fn bottom(&self) -> u32 {
         self.y.saturating_add(self.height)
+    }
+
+    /// Checked exclusive bottom edge, or `None` when it is not representable.
+    #[inline]
+    pub const fn checked_bottom(&self) -> Option<u32> {
+        self.y.checked_add(self.height)
+    }
+
+    /// Return whether both exclusive edges are representable as `u32`.
+    #[inline]
+    pub const fn has_valid_edges(&self) -> bool {
+        self.checked_right().is_some() && self.checked_bottom().is_some()
     }
 
     /// Returns `true` if the rectangle has zero area (width or height is zero).
@@ -473,6 +497,20 @@ mod tests {
         // Concrete case from issue #166: 65536 * 65536 wraps to 0 without fix
         let r2 = Rect::new(0, 0, 65536, 65536);
         assert_eq!(r2.area(), u32::MAX);
+        assert_eq!(r2.area_u64(), 4_294_967_296);
+    }
+
+    #[test]
+    fn checked_edges_report_unrepresentable_origins() {
+        let invalid = Rect::new(u32::MAX, u32::MAX, 1, 1);
+        assert_eq!(invalid.checked_right(), None);
+        assert_eq!(invalid.checked_bottom(), None);
+        assert!(!invalid.has_valid_edges());
+
+        let valid = Rect::new(u32::MAX - 1, u32::MAX - 1, 1, 1);
+        assert_eq!(valid.checked_right(), Some(u32::MAX));
+        assert_eq!(valid.checked_bottom(), Some(u32::MAX));
+        assert!(valid.has_valid_edges());
     }
 
     #[test]

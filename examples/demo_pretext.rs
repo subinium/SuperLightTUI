@@ -93,9 +93,9 @@ The canvas widget exposes a braille-resolution pixel buffer with methods \
 for points, lines, circles, rectangles, and text overlay. QR code \
 generation is built in — pass a string and get a scannable code rendered \
 in half-block characters. The animation system interpolates any numeric \
-value over time. Tween supports 30 easing functions including linear, \
+value over time. Tween supports 9 easing functions including linear, \
 ease-in, ease-out, ease-in-out, bounce, elastic, back, and cubic-bezier. \
-Spring simulation uses configurable stiffness, damping, and mass for \
+Spring simulation uses configurable stiffness and per-tick damping for \
 natural motion. Keyframes define multi-stop animations with per-stop \
 easing, pre-sorted at build time for zero per-frame overhead. Stagger \
 orchestrates groups of animations with configurable delay between each \

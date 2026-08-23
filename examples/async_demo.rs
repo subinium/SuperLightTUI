@@ -6,7 +6,7 @@ async fn main() -> std::io::Result<()> {
     let mut updates: Vec<String> = Vec::new();
     let mut total_updates: u64 = 0;
 
-    let tx = slt::run_async(move |ui: &mut Context, messages: &mut Vec<String>| {
+    let run = slt::run_async(move |ui: &mut Context, messages: &mut Vec<String>| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }
@@ -41,9 +41,10 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
 
-                ui.text("q = quit").dim();
+                ui.text("Ctrl-Q / Esc = quit").dim();
             });
     })?;
+    let tx = run.sender();
 
     let producer = tokio::spawn(async move {
         let mut counter: u64 = 1;
@@ -58,5 +59,5 @@ async fn main() -> std::io::Result<()> {
     });
 
     let _ = producer.await;
-    Ok(())
+    run.join().await.map_err(std::io::Error::other)
 }

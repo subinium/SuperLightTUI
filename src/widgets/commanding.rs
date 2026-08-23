@@ -38,7 +38,7 @@ pub struct ChordState {
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
     /// Available commands.
-    pub commands: Vec<PaletteCommand>,
+    commands: Vec<PaletteCommand>,
     /// Current search query.
     pub input: String,
     /// Cursor index within `input`.
@@ -66,6 +66,47 @@ impl CommandPaletteState {
             selected: 0,
             filter_cache: None,
         }
+    }
+
+    /// Return all available commands.
+    pub fn commands(&self) -> &[PaletteCommand] {
+        &self.commands
+    }
+
+    /// Replace all commands and synchronize filter and selection state.
+    pub fn set_commands(&mut self, commands: Vec<PaletteCommand>) {
+        self.commands = commands;
+        self.synchronize_commands();
+    }
+
+    /// Append a command and invalidate the filter cache.
+    pub fn push_command(&mut self, command: PaletteCommand) {
+        self.commands.push(command);
+        self.synchronize_commands();
+    }
+
+    /// Remove and return a command by data index.
+    pub fn remove_command(&mut self, index: usize) -> Option<PaletteCommand> {
+        if index >= self.commands.len() {
+            return None;
+        }
+        let command = self.commands.remove(index);
+        self.synchronize_commands();
+        Some(command)
+    }
+
+    /// Remove all commands and reset cache-coupled selection state.
+    pub fn clear_commands(&mut self) {
+        self.commands.clear();
+        self.synchronize_commands();
+    }
+
+    fn synchronize_commands(&mut self) {
+        self.filter_cache = None;
+        self.selected = 0;
+        self.last_selected = self
+            .last_selected
+            .filter(|&index| index < self.commands.len());
     }
 
     /// Toggle open/closed state and reset input when opening.
@@ -409,19 +450,40 @@ impl Default for StreamingMarkdownState {
 ///     }
 /// });
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ScreenState {
+    id: u64,
     stack: Vec<String>,
     focus_state: std::collections::HashMap<String, (usize, usize)>,
+}
+
+impl Clone for ScreenState {
+    fn clone(&self) -> Self {
+        Self {
+            id: next_screen_state_id(),
+            stack: self.stack.clone(),
+            focus_state: self.focus_state.clone(),
+        }
+    }
+}
+
+fn next_screen_state_id() -> u64 {
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl ScreenState {
     /// Create a screen stack with an initial root screen.
     pub fn new(initial: impl Into<String>) -> Self {
         Self {
+            id: next_screen_state_id(),
             stack: vec![initial.into()],
             focus_state: std::collections::HashMap::new(),
         }
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// Return the current screen name (top of the stack).

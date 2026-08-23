@@ -8,6 +8,7 @@ pub(crate) struct TickSpec {
 }
 
 pub(super) fn build_ticks(min: f64, max: f64, target: usize) -> TickSpec {
+    let (min, max) = normalize_bounds(min, max);
     let span = (max - min).abs().max(f64::EPSILON);
     let range = nice_number(span, false);
     let raw_step = range / (target.max(2) as f64 - 1.0);
@@ -37,6 +38,7 @@ pub(super) fn build_ticks(min: f64, max: f64, target: usize) -> TickSpec {
 /// divides `cell_count - 1` as evenly as possible, with 3-8 intervals
 /// and at least 2 rows per interval for readable spacing.
 pub(super) fn build_tui_ticks(data_min: f64, data_max: f64, cell_count: usize) -> TickSpec {
+    let (data_min, data_max) = normalize_bounds(data_min, data_max);
     // Very small plots: just show min/max boundaries
     if cell_count < 4 {
         let step = (data_max - data_min).abs().max(f64::EPSILON);
@@ -136,7 +138,10 @@ pub(super) fn resolve_bounds<I>(values: I, manual: Option<(f64, f64)>) -> (f64, 
 where
     I: Iterator<Item = f64>,
 {
-    if let Some((min, max)) = manual {
+    if let Some((min, max)) = manual
+        && min.is_finite()
+        && max.is_finite()
+    {
         return normalize_bounds(min, max);
     }
 
@@ -158,16 +163,78 @@ where
 }
 
 pub(super) fn normalize_bounds(min: f64, max: f64) -> (f64, f64) {
+    const MAX_SAFE_BOUND: f64 = f64::MAX / 16.0;
+
+    if !min.is_finite() || !max.is_finite() {
+        return (0.0, 1.0);
+    }
+    let (mut min, mut max) = if min <= max { (min, max) } else { (max, min) };
+    min = min.clamp(-MAX_SAFE_BOUND, MAX_SAFE_BOUND);
+    max = max.clamp(-MAX_SAFE_BOUND, MAX_SAFE_BOUND);
+
     if (max - min).abs() < f64::EPSILON {
         let pad = if min.abs() < 1.0 {
             1.0
         } else {
             min.abs() * 0.1
         };
-        (min - pad, max + pad)
-    } else if min < max {
-        (min, max)
-    } else {
-        (max, min)
+        min = (min - pad).max(-MAX_SAFE_BOUND);
+        max = (max + pad).min(MAX_SAFE_BOUND);
+        if min == max {
+            return (min - 1.0, max);
+        }
+    }
+
+    (min, max)
+}
+
+pub(crate) fn finite_ratio(value: f64, min: f64, max: f64) -> Option<f64> {
+    if !value.is_finite() || !min.is_finite() || !max.is_finite() {
+        return None;
+    }
+    let (min, max) = normalize_bounds(min, max);
+    let scale = value.abs().max(min.abs()).max(max.abs()).max(1.0);
+    let scaled_min = min / scale;
+    let scaled_span = max / scale - scaled_min;
+    if !scaled_span.is_finite() || scaled_span.abs() < f64::EPSILON {
+        return Some(0.5);
+    }
+    Some(((value / scale - scaled_min) / scaled_span).clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reversed_and_extreme_bounds_normalize_to_finite_ordered_span() {
+        assert_eq!(normalize_bounds(10.0, -10.0), (-10.0, 10.0));
+        let (min, max) = normalize_bounds(-f64::MAX, f64::MAX);
+        assert!(min.is_finite() && max.is_finite());
+        assert!(min < max);
+        assert!((max - min).is_finite());
+    }
+
+    #[test]
+    fn invalid_manual_bounds_fall_back_to_finite_data() {
+        let values = [2.0, 4.0, f64::NAN];
+        let bounds = resolve_bounds(values.into_iter(), Some((f64::NAN, f64::INFINITY)));
+        assert_eq!(bounds, (2.0, 4.0));
+    }
+
+    #[test]
+    fn finite_ratio_handles_extreme_spans_without_overflow() {
+        assert_eq!(finite_ratio(-f64::MAX, -f64::MAX, f64::MAX), Some(0.0));
+        assert_eq!(finite_ratio(0.0, -f64::MAX, f64::MAX), Some(0.5));
+        assert_eq!(finite_ratio(f64::MAX, -f64::MAX, f64::MAX), Some(1.0));
+        assert_eq!(finite_ratio(f64::NAN, 0.0, 1.0), None);
+    }
+
+    #[test]
+    fn tick_generation_remains_finite_for_extreme_input() {
+        let ticks = build_tui_ticks(-f64::MAX, f64::MAX, 40);
+        assert!(!ticks.values.is_empty());
+        assert!(ticks.step.is_finite());
+        assert!(ticks.values.iter().all(|value| value.is_finite()));
     }
 }

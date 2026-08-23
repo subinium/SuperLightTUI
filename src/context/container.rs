@@ -1,5 +1,15 @@
 use super::*;
 
+#[inline]
+fn saturating_gap(value: u32) -> i32 {
+    value.min(i32::MAX as u32) as i32
+}
+
+#[inline]
+fn saturating_overlap(overlap: u32) -> i32 {
+    -saturating_gap(overlap)
+}
+
 /// Options for [`Context::modal_with`].
 ///
 /// Controls focus behavior when a modal overlay is active.
@@ -153,29 +163,15 @@ pub struct CanvasContext {
     scratch_pixels: Vec<CanvasPixel>,
     /// Flat scratch buffer for `render()` label overlay.
     /// Capacity = `cols * rows`; flat index = `row * cols + col`.
-    scratch_labels: Vec<Option<(char, Color)>>,
+    scratch_labels: Vec<Option<(String, Color)>>,
 }
 
 /// Integer square root for non-negative `i64` values, returning `isize`.
 ///
-/// Uses an `f64` seed plus a bounded correction step to absorb rounding at
-/// integer boundaries. Avoids the unconditional `f64` round-trip used in
-/// hot canvas paths (e.g. `filled_circle`). Replace with `u64::isqrt()`
-/// once the project MSRV reaches 1.84.
+/// Uses the standard integer square root available below the crate's MSRV.
 #[inline]
 fn isqrt_i64(n: i64) -> isize {
-    if n <= 0 {
-        return 0;
-    }
-    let mut x = (n as f64).sqrt() as i64;
-    // Single correction step handles f64 rounding at integer boundaries.
-    while x > 0 && x.saturating_mul(x) > n {
-        x -= 1;
-    }
-    while (x + 1).saturating_mul(x + 1) <= n {
-        x += 1;
-    }
-    x as isize
+    u64::try_from(n).map_or(0, |value| value.isqrt() as isize)
 }
 
 impl CanvasContext {
@@ -383,7 +379,6 @@ impl CanvasContext {
         for y in (cy - r)..=(cy + r) {
             let dy = y - cy;
             let span_sq = (r * r - dy * dy).max(0);
-            // TODO(msrv): switch to u64::isqrt() when MSRV >= 1.84
             let dx = isqrt_i64(span_sq as i64);
             for x in (cx - dx)..=(cx + dx) {
                 self.dot_isize(x, y);
@@ -552,14 +547,23 @@ impl CanvasContext {
                 if row >= rows {
                     continue;
                 }
-                let start_col = label.x / 2;
+                let mut col = label.x / 2;
                 let row_offset = row * cols;
-                for (offset, ch) in label.text.chars().enumerate() {
-                    let col = start_col + offset;
+                for grapheme in label.text.graphemes(true) {
                     if col >= cols {
                         break;
                     }
-                    self.scratch_labels[row_offset + col] = Some((ch, label.color));
+                    let width = UnicodeWidthStr::width(grapheme).max(1);
+                    if width > cols - col {
+                        break;
+                    }
+                    self.scratch_labels[row_offset + col] =
+                        Some((grapheme.to_string(), label.color));
+                    for continuation in 1..width {
+                        self.scratch_labels[row_offset + col + continuation] =
+                            Some((String::new(), label.color));
+                    }
+                    col += width;
                 }
             }
         }
@@ -573,25 +577,36 @@ impl CanvasContext {
 
             for col in 0..cols {
                 let idx = row_offset + col;
-                let (ch, color) = if let Some((label_ch, label_color)) = self.scratch_labels[idx] {
-                    (label_ch, label_color)
-                } else {
-                    let pixel = self.scratch_pixels[idx];
-                    let ch = char::from_u32(0x2800 + pixel.bits).unwrap_or(' ');
-                    (ch, pixel.color)
+                let (label, pixel_ch, color) =
+                    if let Some((label, label_color)) = &self.scratch_labels[idx] {
+                        if label.is_empty() {
+                            continue;
+                        }
+                        (Some(label.as_str()), None, *label_color)
+                    } else {
+                        let pixel = self.scratch_pixels[idx];
+                        let ch = char::from_u32(0x2800 + pixel.bits).unwrap_or(' ');
+                        (None, Some(ch), pixel.color)
+                    };
+                let append_symbol = |text: &mut String| {
+                    if let Some(label) = label {
+                        text.push_str(label);
+                    } else if let Some(ch) = pixel_ch {
+                        text.push(ch);
+                    }
                 };
 
                 match current_color {
                     Some(c) if c == color => {
-                        current_text.push(ch);
+                        append_symbol(&mut current_text);
                     }
                     Some(c) => {
                         segments.push((std::mem::take(&mut current_text), c));
-                        current_text.push(ch);
+                        append_symbol(&mut current_text);
                         current_color = Some(color);
                     }
                     None => {
-                        current_text.push(ch);
+                        append_symbol(&mut current_text);
                         current_color = Some(color);
                     }
                 }
@@ -717,7 +732,7 @@ impl<'a> ContainerBuilder<'a> {
         if let Some(v) = style.gap {
             // `ContainerStyle::gap` stays `Option<u32>` (positive only); only
             // `gap_overlap` produces a negative builder gap (#222).
-            self.gap = v as i32;
+            self.gap = saturating_gap(v);
         }
         if let Some(v) = style.row_gap {
             self.row_gap = Some(v);
@@ -1155,7 +1170,7 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Set the gap (in cells) between child elements.
     pub fn gap(mut self, gap: u32) -> Self {
-        self.gap = gap as i32;
+        self.gap = saturating_gap(gap);
         self
     }
 
@@ -1207,7 +1222,7 @@ impl<'a> ContainerBuilder<'a> {
     /// # });
     /// ```
     pub fn gap_overlap(mut self, overlap: u32) -> Self {
-        self.gap = -(overlap as i32);
+        self.gap = saturating_overlap(overlap);
         self
     }
 
@@ -1735,6 +1750,83 @@ impl<'a> ContainerBuilder<'a> {
         });
     }
 
+    /// Execute a borrowed-data draw closure immediately, then composite its
+    /// owned cell snapshot after layout.
+    ///
+    /// Unlike [`draw`](Self::draw), `f` does not need to be `'static`: it runs
+    /// before this method returns and may borrow local application state. The
+    /// resulting source buffer is moved into the deferred layout callback.
+    /// This is appropriate for cell-based custom drawing with known source
+    /// dimensions; terminal protocol placements and raw escape sequences are
+    /// intentionally not copied from the snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferError`](crate::buffer::BufferError) when the requested
+    /// source geometry exceeds the configured cell/row budget.
+    pub fn draw_precomputed(
+        self,
+        width: u32,
+        height: u32,
+        f: impl FnOnce(&mut crate::buffer::Buffer, Rect),
+    ) -> Result<(), crate::buffer::BufferError> {
+        let source_rect = Rect::new(0, 0, width, height);
+        let mut source = crate::buffer::Buffer::try_empty(source_rect)?;
+        f(&mut source, source_rect);
+        self.draw(move |destination, rect| {
+            let copy_width = source.area.width.min(rect.width);
+            let copy_height = source.area.height.min(rect.height);
+            for source_y in 0..copy_height {
+                for source_x in 0..copy_width {
+                    let Some(cell) = source.try_get(source_x, source_y) else {
+                        continue;
+                    };
+                    if cell.is_continuation() {
+                        continue;
+                    }
+                    let symbol = cell.normalized_symbol();
+                    let x = rect.x.saturating_add(source_x);
+                    let y = rect.y.saturating_add(source_y);
+                    if let Some(url) = cell.hyperlink.as_deref() {
+                        destination.set_string_linked(x, y, &symbol, cell.style, url);
+                    } else {
+                        destination.set_string(x, y, &symbol, cell.style);
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Finalize a raw-draw region with a render-stage panic fallback.
+    ///
+    /// Deferred draw callbacks execute after the normal Context tree has
+    /// finished layout, so [`Context::error_boundary`] cannot safely rebuild
+    /// its fallback at that stage. This method catches the draw panic inside
+    /// the laid-out region and invokes `fallback` with the panic message while
+    /// the same clip is active.
+    pub fn draw_with_fallback(
+        self,
+        draw: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static,
+        fallback: impl FnOnce(&mut crate::buffer::Buffer, Rect, &str) + 'static,
+    ) {
+        self.draw(move |buffer, rect| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                draw(buffer, rect);
+            }));
+            if let Err(payload) = result {
+                let message = if let Some(message) = payload.downcast_ref::<&str>() {
+                    (*message).to_owned()
+                } else if let Some(message) = payload.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "draw callback panicked with a non-string payload".to_owned()
+                };
+                fallback(buffer, rect, &message);
+            }
+        });
+    }
+
     /// Custom drawing with click and hover detection.
     ///
     /// Like [`draw`](Self::draw), but the returned [`Response`] reports
@@ -1776,13 +1868,13 @@ impl<'a> ContainerBuilder<'a> {
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).
         let resolved_gap: i32 = match direction {
-            Direction::Column => self.row_gap.map(|g| g as i32).unwrap_or(self.gap),
-            Direction::Row => self.col_gap.map(|g| g as i32).unwrap_or(self.gap),
+            Direction::Column => self.row_gap.map(saturating_gap).unwrap_or(self.gap),
+            Direction::Row => self.col_gap.map(saturating_gap).unwrap_or(self.gap),
         };
         // Cross-axis (between-line) gap for a wrapping row (#258): `row_gap`
         // when set, else the builder `gap`. Only consulted by the layout pass
         // when this container is a wrapping `Direction::Row`.
-        let resolved_cross_gap: i32 = self.row_gap.map(|g| g as i32).unwrap_or(self.gap);
+        let resolved_cross_gap: i32 = self.row_gap.map(saturating_gap).unwrap_or(self.gap);
 
         let in_hovered_group = self
             .group_name
@@ -2032,6 +2124,28 @@ mod hotfix_tests {
         assert!(any_filled, "filled_circle produced empty output");
     }
 
+    #[test]
+    fn canvas_labels_respect_grapheme_cell_width() {
+        let mut canvas = CanvasContext::new(4, 1);
+        canvas.print(0, 0, "界A");
+
+        let lines = canvas.render();
+        let rendered: String = lines[0].iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(rendered, "界A\u{2800}");
+        assert_eq!(UnicodeWidthStr::width(rendered.as_str()), 4);
+    }
+
+    #[test]
+    fn canvas_labels_do_not_render_partial_wide_graphemes() {
+        let mut canvas = CanvasContext::new(2, 1);
+        canvas.print(2, 0, "A界");
+
+        let lines = canvas.render();
+        let rendered: String = lines[0].iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(rendered, "\u{2800}A");
+        assert_eq!(UnicodeWidthStr::width(rendered.as_str()), 2);
+    }
+
     // -- #149: scroll_offset visibility (compile-time check) -----------
 
     /// The `scroll_offset` helper must remain callable from inside the crate.
@@ -2041,6 +2155,46 @@ mod hotfix_tests {
     #[test]
     fn scroll_offset_is_crate_internal_api() {
         let _ = ContainerBuilder::scroll_offset;
+    }
+
+    #[test]
+    fn draw_precomputed_accepts_borrowed_local_data() {
+        let label = String::from("borrowed");
+        let mut backend = crate::TestBackend::new(20, 3);
+        backend.render(|ui| {
+            ui.container()
+                .w(8)
+                .h(1)
+                .draw_precomputed(8, 1, |buffer, rect| {
+                    buffer.set_string(rect.x, rect.y, &label, crate::Style::new());
+                })
+                .expect("small snapshot geometry is valid");
+        });
+        backend.assert_contains("borrowed");
+    }
+
+    #[test]
+    fn draw_precomputed_rejects_pathological_source_geometry() {
+        let mut state = crate::FrameState::default();
+        let mut ui = crate::Context::new(Vec::new(), 20, 3, &mut state, crate::Theme::dark());
+        let result = ui
+            .container()
+            .draw_precomputed(u32::MAX, u32::MAX, |_, _| {});
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn draw_with_fallback_recovers_inside_the_raw_region() {
+        let mut backend = crate::TestBackend::new(24, 3);
+        backend.render(|ui| {
+            ui.container().w(20).h(1).draw_with_fallback(
+                |_, _| panic!("raw draw failed"),
+                |buffer, rect, message| {
+                    buffer.set_string(rect.x, rect.y, message, crate::Style::new());
+                },
+            );
+        });
+        backend.assert_contains("raw draw failed");
     }
 }
 
@@ -2322,5 +2476,61 @@ mod cached_region_tests {
         assert_eq!(misses.get(), 1, "region B changed → exactly one miss");
         tb.assert_contains("region A");
         tb.assert_contains("region B2");
+    }
+}
+
+#[cfg(test)]
+mod gap_saturation_tests {
+    use super::*;
+    use crate::test_utils::TestBackend;
+    use proptest::prelude::*;
+
+    #[test]
+    fn every_public_gap_boundary_saturates() {
+        let mut state = FrameState::default();
+        let mut ui = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+
+        assert_eq!(ui.container().gap(u32::MAX).gap, i32::MAX);
+        assert_eq!(ui.container().gap_overlap(u32::MAX).gap, -i32::MAX);
+        assert_eq!(ui.container().xs_gap(u32::MAX).gap, i32::MAX);
+
+        // Row/column overrides are converted when the container is finalized.
+        let _ = ui.container().row_gap(u32::MAX).col(|_| {});
+        let _ = ui.container().col_gap(u32::MAX).row(|_| {});
+        let begin_gaps: Vec<i32> = ui
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::BeginContainer(args) => Some(args.gap),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(begin_gaps, vec![i32::MAX, i32::MAX]);
+    }
+
+    proptest! {
+        #[test]
+        fn public_and_breakpoint_gaps_never_flip_sign(value in any::<u32>()) {
+            let mut state = FrameState::default();
+            let mut ui = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+            let public = ui.container().gap(value).gap;
+            let breakpoint = ui.container().xs_gap(value).gap;
+
+            prop_assert!(public >= 0);
+            prop_assert_eq!(public, breakpoint);
+            prop_assert_eq!(public, value.min(i32::MAX as u32) as i32);
+            prop_assert_eq!(saturating_overlap(value), -public);
+        }
+
+        #[test]
+        fn arbitrary_large_overlaps_render_without_panicking(value in any::<u32>()) {
+            let mut tb = TestBackend::new(8, 2);
+            tb.render(|ui| {
+                let _ = ui.container().gap_overlap(value).row(|ui| {
+                    let _ = ui.container().w(4).col(|ui| { ui.text("left"); });
+                    let _ = ui.container().w(4).col(|ui| { ui.text("right"); });
+                });
+            });
+        }
     }
 }

@@ -89,13 +89,20 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     };
 
     let y_ticks = if let Some(ref manual) = config.y_axis.ticks {
-        TickSpec {
-            values: manual.clone(),
-            step: if manual.len() > 1 {
-                manual[1] - manual[0]
-            } else {
-                1.0
-            },
+        let values: Vec<f64> = manual
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite())
+            .collect();
+        if values.is_empty() {
+            build_tui_ticks(y_min, y_max, plot_height)
+        } else {
+            let step = values
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .find(|step| step.is_finite() && *step > 0.0)
+                .unwrap_or(1.0);
+            TickSpec { values, step }
         }
     } else {
         build_tui_ticks(y_min, y_max, plot_height)
@@ -159,13 +166,20 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     let content_width = y_label_col_width + y_axis_width + plot_width + legend_width;
 
     let x_ticks = if let Some(ref manual) = config.x_axis.ticks {
-        TickSpec {
-            values: manual.clone(),
-            step: if manual.len() > 1 {
-                manual[1] - manual[0]
-            } else {
-                1.0
-            },
+        let values: Vec<f64> = manual
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite())
+            .collect();
+        if values.is_empty() {
+            build_tui_ticks(x_min, x_max, plot_width)
+        } else {
+            let step = values
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .find(|step| step.is_finite() && *step > 0.0)
+                .unwrap_or(1.0);
+            TickSpec { values, step }
         }
     } else {
         build_tui_ticks(x_min, x_max, plot_width)
@@ -194,6 +208,9 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
     );
 
     for &(y_val, ref style) in &config.hlines {
+        if !y_val.is_finite() {
+            continue;
+        }
         let row = map_value_to_cell(y_val, y_min, y_max, plot_height, true);
         if row < plot_height {
             for col in 0..plot_width {
@@ -204,6 +221,9 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         }
     }
     for &(x_val, ref style) in &config.vlines {
+        if !x_val.is_finite() {
+            continue;
+        }
         let col = map_value_to_cell(x_val, x_min, x_max, plot_width, false);
         if col < plot_width {
             for row in 0..plot_height {
@@ -333,7 +353,12 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 } else {
                     (String::new(), '│')
                 };
-            let padded = format!("{label:>y_tick_width$}");
+            let label_width = UnicodeWidthStr::width(label.as_str());
+            let padded = format!(
+                "{}{}",
+                " ".repeat(y_tick_width.saturating_sub(label_width)),
+                label
+            );
             segments.push((padded, axis_style));
             segments.push((format!("{divider} "), axis_style));
         }
@@ -394,12 +419,13 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             String::new()
         };
 
-        let mut x_label_line: Vec<char> = vec![' '; plot_width];
+        let mut x_label_line: Vec<String> = vec![" ".to_string(); plot_width];
         let mut occupied_until: usize = 0;
         for (col, label) in &x_tick_cols {
             if label.is_empty() {
                 continue;
             }
+            let label = clip_text_cells(label, plot_width);
             let label_width = UnicodeWidthStr::width(label.as_str());
             let start = col
                 .saturating_sub(label_width / 2)
@@ -407,12 +433,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             if start < occupied_until {
                 continue;
             }
-            for (offset, ch) in label.chars().enumerate() {
-                let idx = start + offset;
-                if idx < plot_width {
-                    x_label_line[idx] = ch;
-                }
-            }
+            write_text_cells(&mut x_label_line, start, &label);
             occupied_until = start + label_width + 1;
         }
 
@@ -424,7 +445,7 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
             x_label_segments.push((footer_ylabel_pad.clone(), Style::new()));
             x_label_segments.push((" ".repeat(y_axis_width), Style::new()));
         }
-        x_label_segments.push((x_label_line.into_iter().collect(), axis_style));
+        x_label_segments.push((x_label_line.concat(), axis_style));
         x_label_segments.push((footer_legend_pad.clone(), Style::new()));
         if config.frame_visible {
             x_label_segments.push(("│".to_string(), frame_style));
@@ -494,4 +515,47 @@ fn minimal_chart(
         });
     }
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cjk_and_combining_x_tick_labels_preserve_cell_width() {
+        let axis_style = Style::new().fg(Color::White);
+        let mut builder = ChartBuilder::new(24, 8, axis_style, axis_style);
+        builder.line(&[(0.0, 0.0), (1.0, 1.0)]).label("series");
+        builder
+            .xtick_labels(&[0.0, 0.5, 1.0], &["시작", "e\u{301}", "끝"])
+            .legend(LegendPosition::None);
+        let rows = render_chart(&builder.build());
+        let rendered: Vec<String> = rows
+            .iter()
+            .map(|row| row.segments.iter().map(|(text, _)| text.as_str()).collect())
+            .collect();
+
+        let labels = rendered
+            .iter()
+            .find(|line| line.contains("시작") && line.contains("끝"))
+            .expect("x tick label row");
+        assert_eq!(UnicodeWidthStr::width(labels.as_str()), 24);
+        assert!(labels.contains("e\u{301}"));
+    }
+
+    #[test]
+    fn non_finite_manual_ticks_do_not_escape_rendering() {
+        let axis_style = Style::new().fg(Color::White);
+        let mut builder = ChartBuilder::new(20, 7, axis_style, axis_style);
+        builder.line(&[(0.0, 0.0), (1.0, 1.0)]);
+        builder
+            .xticks(&[f64::NAN, 0.0, f64::INFINITY, 1.0])
+            .yticks(&[f64::NEG_INFINITY, 0.0, 1.0]);
+        let text: String = render_chart(&builder.build())
+            .iter()
+            .flat_map(|row| row.segments.iter().map(|(text, _)| text.as_str()))
+            .collect();
+        assert!(!text.contains("NaN"));
+        assert!(!text.contains("inf"));
+    }
 }

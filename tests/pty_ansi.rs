@@ -129,6 +129,35 @@ fn image_protocols_do_not_emit_inside_tmux_without_force() {
     );
 }
 
+#[test]
+fn zellij_ignores_outer_graphics_identity_but_keeps_sixel() {
+    with_env_vars(
+        &[
+            ("TERM", Some("xterm-256color")),
+            ("TERM_PROGRAM", Some("WezTerm")),
+            ("ZELLIJ", Some("0")),
+            ("ZELLIJ_SESSION_NAME", Some("slt-test")),
+            ("SLT_FORCE_KITTY", None),
+            ("SLT_FORCE_SIXEL", None),
+            ("SLT_FORCE_ITERM", None),
+        ],
+        || {
+            let rgba = [0u8, 128, 255, 255].repeat(4);
+            let png = [0x89u8, b'P', b'N', b'G'];
+            let mut pb = PtyBackend::new(24, 8);
+            pb.render(|ui| {
+                let _ = ui.kitty_image(&rgba, 2, 2, 4, 2);
+                let _ = ui.sixel_image(&rgba, 2, 2, 4, 2);
+                let _ = ui.iterm_image(&png, 4, 2);
+            });
+
+            pb.assert_not_emits("\u{1b}_Ga=");
+            pb.assert_emits("\u{1b}Pq");
+            pb.assert_not_emits("\u{1b}]1337;File=");
+        },
+    );
+}
+
 /// A hyperlinked text run emits the OSC 8 open sequence `\x1b]8;;<url>`.
 #[test]
 fn hyperlink_emits_osc8() {

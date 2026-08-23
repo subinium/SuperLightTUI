@@ -130,6 +130,54 @@ fn textarea_history_capped_at_max() {
         state.history_cap()
     );
     assert_eq!(state.history_cap(), 4);
+
+    tb.render_with_events(ctrl_z(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert!(state.history_len() <= state.history_cap());
+    tb.render_with_events(ctrl_y(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert!(state.history_len() <= state.history_cap());
+}
+
+#[test]
+fn textarea_history_cap_zero_disables_undo() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new().history_max(0);
+    tb.render_with_events(EventBuilder::new().key('x').build(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.history_len(), 0);
+
+    tb.render_with_events(ctrl_z(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["x"]);
+    assert_eq!(state.history_len(), 0);
+}
+
+#[test]
+fn textarea_history_cap_one_preserves_live_redo_tip() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new().history_max(1);
+    tb.render_with_events(EventBuilder::new().key('a').key('b').build(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["ab"]);
+    assert_eq!(state.history_len(), 1);
+
+    tb.render_with_events(ctrl_z(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec![""]);
+    assert_eq!(state.history_len(), 1);
+
+    tb.render_with_events(ctrl_y(), 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+    assert_eq!(state.lines, vec!["ab"]);
+    assert_eq!(state.history_len(), 1);
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates: #233.
 //!
-//! Run: `cargo run --example v020_static_log`
+//! Run: `cargo run --example system_tour --features async`
 //!
 //! Keys:
 //!   Space / Enter      — bump the counter

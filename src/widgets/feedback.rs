@@ -1,8 +1,8 @@
 /// State for the rich log viewer widget.
 #[derive(Debug, Clone)]
 pub struct RichLogState {
-    /// Log entries to display.
-    pub entries: Vec<RichLogEntry>,
+    /// Log entries to display, ordered from oldest to newest.
+    entries: std::collections::VecDeque<RichLogEntry>,
     /// Scroll offset (0 = top).
     pub(crate) scroll_offset: usize,
     /// Whether to auto-scroll to bottom when new entries are added.
@@ -41,7 +41,7 @@ impl RichLogState {
     /// only when the host explicitly bounds growth elsewhere.
     pub fn new_unbounded() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: std::collections::VecDeque::new(),
             scroll_offset: 0,
             auto_scroll: true,
             max_entries: None,
@@ -60,13 +60,22 @@ impl RichLogState {
 
     /// Add a multi-segment styled entry to the log.
     pub fn push_segments(&mut self, segments: Vec<(String, Style)>) {
-        self.entries.push(RichLogEntry { segments });
+        self.push_entry(RichLogEntry { segments });
+    }
+
+    /// Add a pre-built entry to the log and enforce the configured cap.
+    ///
+    /// This replaces direct `entries.push(...)` access from earlier releases.
+    pub fn push_entry(&mut self, entry: RichLogEntry) {
+        self.entries.push_back(entry);
 
         if let Some(max_entries) = self.max_entries
             && self.entries.len() > max_entries
         {
             let remove_count = self.entries.len() - max_entries;
-            self.entries.drain(0..remove_count);
+            for _ in 0..remove_count {
+                let _ = self.entries.pop_front();
+            }
             self.scroll_offset = self.scroll_offset.saturating_sub(remove_count);
         }
 
@@ -90,11 +99,149 @@ impl RichLogState {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Iterate over entries from oldest to newest.
+    ///
+    /// This replaces `entries.iter()` from earlier releases. Use [`entry`](Self::entry)
+    /// for indexed access.
+    pub fn entries(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &RichLogEntry> + ExactSizeIterator + '_ {
+        self.entries.iter()
+    }
+
+    /// Mutably iterate over entries from oldest to newest.
+    ///
+    /// Entry contents may be changed, but insertion and removal remain behind
+    /// [`push_entry`](Self::push_entry) and [`clear`](Self::clear) so retention
+    /// invariants cannot be bypassed.
+    pub fn entries_mut(
+        &mut self,
+    ) -> impl DoubleEndedIterator<Item = &mut RichLogEntry> + ExactSizeIterator + '_ {
+        self.entries.iter_mut()
+    }
+
+    /// Return an entry by its zero-based position in oldest-to-newest order.
+    ///
+    /// This replaces `entries[index]` from earlier releases without exposing
+    /// the retention storage type.
+    pub fn entry(&self, index: usize) -> Option<&RichLogEntry> {
+        self.entries.get(index)
+    }
+
+    /// Return a mutable entry by its zero-based position in retention order.
+    pub fn entry_mut(&mut self, index: usize) -> Option<&mut RichLogEntry> {
+        self.entries.get_mut(index)
+    }
 }
 
 impl Default for RichLogState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod rich_log_tests {
+    use super::*;
+
+    fn texts(state: &RichLogState) -> Vec<&str> {
+        state
+            .entries()
+            .map(|entry| entry.segments[0].0.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn cap_zero_discards_every_push() {
+        let mut state = RichLogState::new();
+        state.auto_scroll = false;
+        state.max_entries = Some(0);
+
+        state.push_plain("discarded");
+
+        assert!(state.is_empty());
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn cap_one_retains_only_the_newest_entry() {
+        let mut state = RichLogState::new();
+        state.max_entries = Some(1);
+
+        state.push_plain("first");
+        state.push_plain("second");
+
+        assert_eq!(texts(&state), ["second"]);
+    }
+
+    #[test]
+    fn default_cap_retains_order_without_front_shifts() {
+        let mut state = RichLogState::new();
+        for index in 0..=RichLogState::DEFAULT_MAX_ENTRIES {
+            state.push_plain(index.to_string());
+        }
+
+        assert_eq!(state.len(), RichLogState::DEFAULT_MAX_ENTRIES);
+        assert_eq!(state.entry(0).unwrap().segments[0].0, "1");
+        assert_eq!(
+            state.entry(state.len() - 1).unwrap().segments[0].0,
+            RichLogState::DEFAULT_MAX_ENTRIES.to_string()
+        );
+    }
+
+    #[test]
+    fn unbounded_state_retains_more_than_the_default_cap() {
+        let mut state = RichLogState::new_unbounded();
+        for index in 0..=RichLogState::DEFAULT_MAX_ENTRIES {
+            state.push_plain(index.to_string());
+        }
+
+        assert_eq!(state.len(), RichLogState::DEFAULT_MAX_ENTRIES + 1);
+        assert_eq!(state.entry(0).unwrap().segments[0].0, "0");
+    }
+
+    #[test]
+    fn lowering_cap_evicts_in_bulk_on_the_next_push_and_adjusts_scroll() {
+        let mut state = RichLogState::new_unbounded();
+        state.auto_scroll = false;
+        for index in 0..5 {
+            state.push_plain(index.to_string());
+        }
+        state.scroll_offset = 4;
+        state.max_entries = Some(2);
+
+        state.push_plain("5");
+
+        assert_eq!(texts(&state), ["4", "5"]);
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn raising_and_disabling_cap_preserves_existing_order() {
+        let mut state = RichLogState::new();
+        state.max_entries = Some(1);
+        state.push_plain("first");
+        state.max_entries = Some(3);
+        state.push_plain("second");
+        state.push_plain("third");
+        state.max_entries = None;
+        state.push_plain("fourth");
+
+        assert_eq!(texts(&state), ["first", "second", "third", "fourth"]);
+    }
+
+    #[test]
+    fn entry_mutation_and_clear_preserve_state_contract() {
+        let mut state = RichLogState::new();
+        state.push_plain("before");
+        state.entry_mut(0).unwrap().segments[0].0 = "after".to_owned();
+
+        assert_eq!(texts(&state), ["after"]);
+
+        state.clear();
+        assert!(state.is_empty());
+        assert_eq!(state.scroll_offset, 0);
     }
 }
 
@@ -547,16 +694,52 @@ pub struct SchedulerState {
     pub(crate) exclusive: std::collections::HashMap<String, ExclusiveGroup>,
 }
 
+/// Maximum stale claim ids retained per exclusive group. This bounds scheduler
+/// memory while covering substantially more superseded in-flight work than a
+/// UI should launch concurrently.
+pub(crate) const EXCLUSIVE_RETIRED_LIMIT: usize = 256;
+
 /// Per-group claim state for [`Context::exclusive`](crate::Context::exclusive)
 /// (issue #248). Tracks the current winning id plus ids that were superseded
-/// and must stay stale (`false`) even if re-polled.
+/// recently enough that in-flight stale work may still re-poll them.
 #[derive(Default)]
 pub(crate) struct ExclusiveGroup {
     /// The most-recently-claimed id; the only id that returns `true`.
     pub(crate) winner: String,
-    /// Ids that previously won the group and were superseded. They never win
-    /// again, so stale work cancels permanently.
+    /// Recently superseded ids. The bounded window prevents ordinary stale
+    /// in-flight work from reclaiming the group without retaining every id for
+    /// the lifetime of the application.
     pub(crate) retired: std::collections::HashSet<String>,
+    /// FIFO order for bounded eviction from `retired`.
+    retired_order: std::collections::VecDeque<String>,
+    /// GC flag matching scheduler timer slots.
+    touched_this_frame: bool,
+}
+
+impl ExclusiveGroup {
+    pub(crate) fn claim(&mut self, id: &str) -> bool {
+        self.touched_this_frame = true;
+        if self.winner == id {
+            return true;
+        }
+        if self.retired.contains(id) {
+            return false;
+        }
+
+        if !self.winner.is_empty() {
+            let old = std::mem::take(&mut self.winner);
+            if self.retired.insert(old.clone()) {
+                self.retired_order.push_back(old);
+            }
+            while self.retired_order.len() > EXCLUSIVE_RETIRED_LIMIT {
+                if let Some(expired) = self.retired_order.pop_front() {
+                    self.retired.remove(&expired);
+                }
+            }
+        }
+        self.winner = id.to_owned();
+        true
+    }
 }
 
 /// Pure interval-counting kernel for [`Context::every`](crate::Context::every)
@@ -579,11 +762,15 @@ impl SchedulerState {
     pub(crate) fn gc_untouched(&mut self) {
         self.named.retain(|_, slot| slot.touched_this_frame);
         self.keyed.retain(|_, slot| slot.touched_this_frame);
+        self.exclusive.retain(|_, group| group.touched_this_frame);
         for slot in self.named.values_mut() {
             slot.touched_this_frame = false;
         }
         for slot in self.keyed.values_mut() {
             slot.touched_this_frame = false;
+        }
+        for group in self.exclusive.values_mut() {
+            group.touched_this_frame = false;
         }
     }
 
@@ -592,6 +779,40 @@ impl SchedulerState {
     #[cfg(test)]
     pub(crate) fn slot_count(&self) -> usize {
         self.named.len() + self.keyed.len()
+    }
+}
+
+#[cfg(test)]
+mod exclusive_group_tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_history_stays_bounded_under_thousands_of_claims() {
+        let mut group = ExclusiveGroup::default();
+        for id in 0..10_000 {
+            assert!(group.claim(&format!("claim-{id}")));
+            assert!(group.retired.len() <= EXCLUSIVE_RETIRED_LIMIT);
+            assert!(group.retired_order.len() <= EXCLUSIVE_RETIRED_LIMIT);
+        }
+
+        assert_eq!(group.winner, "claim-9999");
+        assert!(group.claim("claim-9999"));
+        assert!(!group.claim("claim-9998"));
+    }
+
+    #[test]
+    fn untouched_exclusive_groups_are_garbage_collected() {
+        let mut scheduler = SchedulerState::default();
+        scheduler
+            .exclusive
+            .entry("search".to_owned())
+            .or_default()
+            .claim("first");
+
+        scheduler.gc_untouched();
+        assert_eq!(scheduler.exclusive.len(), 1);
+        scheduler.gc_untouched();
+        assert!(scheduler.exclusive.is_empty());
     }
 }
 

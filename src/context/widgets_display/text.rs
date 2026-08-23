@@ -14,13 +14,7 @@ impl Context {
     /// ```
     pub fn text(&mut self, s: impl Into<String>) -> &mut Self {
         let content = s.into();
-        let default_fg = self
-            .rollback
-            .text_color_stack
-            .iter()
-            .rev()
-            .find_map(|c| *c)
-            .unwrap_or(self.theme.text);
+        let default_fg = self.inherited_text_fg();
         self.commands.push(Command::Text {
             content,
             cursor_offset: None,
@@ -72,6 +66,7 @@ impl Context {
             text: text.into(),
             url: url_str,
             style,
+            wrap: false,
             margin: Margin::default(),
             constraints: Constraints::default(),
         });
@@ -134,12 +129,32 @@ impl Context {
     /// explicit foreground has been set.
     pub fn dim(&mut self) -> &mut Self {
         let text_dim = self.theme.text_dim;
-        self.modify_last_style(|s| {
-            s.modifiers |= Modifiers::DIM;
-            if s.fg.is_none() {
-                s.fg = Some(text_dim);
+        let inherited_fg = self.inherited_text_fg();
+        if let Some(idx) = self.rollback.last_text_idx {
+            match &mut self.commands[idx] {
+                Command::Text { style, .. } => {
+                    style.modifiers |= Modifiers::DIM;
+                    if style.fg.is_none() || style.fg == Some(inherited_fg) {
+                        style.fg = Some(text_dim);
+                    }
+                }
+                Command::Link { style, .. } => {
+                    style.modifiers |= Modifiers::DIM;
+                }
+                Command::RichText { segments, .. } => {
+                    let all_inherited = segments
+                        .iter()
+                        .all(|(_, style)| style.fg.is_none() || style.fg == Some(inherited_fg));
+                    for (_, style) in segments {
+                        style.modifiers |= Modifiers::DIM;
+                        if all_inherited {
+                            style.fg = Some(text_dim);
+                        }
+                    }
+                }
+                _ => {}
             }
-        });
+        }
         self
     }
 
@@ -181,46 +196,7 @@ impl Context {
 
     /// Apply a per-character foreground gradient to the last rendered text.
     pub fn gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            let replacement = match &self.commands[idx] {
-                Command::Text {
-                    content,
-                    style,
-                    wrap,
-                    align,
-                    margin,
-                    constraints,
-                    ..
-                } => {
-                    let chars: Vec<char> = content.chars().collect();
-                    let len = chars.len();
-                    let denom = len.saturating_sub(1).max(1) as f64;
-                    let segments = chars
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, ch)| {
-                            let mut seg_style = *style;
-                            seg_style.fg = Some(from.blend_f64(to, i as f64 / denom));
-                            (ch.to_string(), seg_style)
-                        })
-                        .collect();
-
-                    Some(Command::RichText {
-                        segments,
-                        wrap: *wrap,
-                        align: *align,
-                        margin: *margin,
-                        constraints: *constraints,
-                    })
-                }
-                _ => None,
-            };
-
-            if let Some(command) = replacement {
-                self.commands[idx] = command;
-            }
-        }
-
+        self.apply_char_gradient(false, |t| to.blend_f64(from, t));
         self
     }
 
@@ -287,7 +263,7 @@ impl Context {
     /// # });
     /// ```
     pub fn bg_gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        self.apply_char_gradient(true, |t| from.blend_f64(to, t));
+        self.apply_char_gradient(true, |t| to.blend_f64(from, t));
         self
     }
 
@@ -337,16 +313,27 @@ impl Context {
     fn sorted_gradient_stops(stops: &[(f64, Color)]) -> Vec<(f64, Color)> {
         let mut sorted: Vec<(f64, Color)> = stops
             .iter()
-            .map(|(pos, color)| (pos.clamp(0.0, 1.0), *color))
+            .map(|(pos, color)| {
+                let pos = if pos.is_finite() {
+                    pos.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                (pos, *color)
+            })
             .collect();
-        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
         sorted
     }
 
     /// Sample the color at position `t` (in `0.0..=1.0`) from pre-sorted,
     /// non-empty `stops`, linearly interpolating between the bracketing stops.
     fn sample_gradient_stops(stops: &[(f64, Color)], t: f64) -> Color {
-        let t = t.clamp(0.0, 1.0);
+        let t = if t.is_finite() {
+            t.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         // Non-empty is guaranteed by callers; fall back defensively otherwise.
         let first = match stops.first() {
             Some(stop) => *stop,
@@ -375,7 +362,7 @@ impl Context {
     }
 
     /// Replace the last `Text` command with a `RichText` gradient, mapping each
-    /// character's column to a position in `0.0..=1.0` exactly like
+    /// grapheme's starting cell to a position in `0.0..=1.0` exactly like
     /// [`gradient`](Self::gradient). `is_bg` selects background vs foreground.
     fn apply_char_gradient(&mut self, is_bg: bool, color_at: impl Fn(f64) -> Color) {
         if let Some(idx) = self.rollback.last_text_idx {
@@ -389,21 +376,26 @@ impl Context {
                     constraints,
                     ..
                 } => {
-                    let chars: Vec<char> = content.chars().collect();
-                    let len = chars.len();
-                    let denom = len.saturating_sub(1).max(1) as f64;
-                    let segments = chars
+                    let graphemes: Vec<&str> = content.graphemes(true).collect();
+                    let last_start = graphemes
+                        .iter()
+                        .take(graphemes.len().saturating_sub(1))
+                        .map(|grapheme| UnicodeWidthStr::width(*grapheme))
+                        .sum::<usize>();
+                    let denom = last_start.max(1) as f64;
+                    let mut cell = 0usize;
+                    let segments = graphemes
                         .into_iter()
-                        .enumerate()
-                        .map(|(i, ch)| {
+                        .map(|grapheme| {
                             let mut seg_style = *style;
-                            let color = color_at(i as f64 / denom);
+                            let color = color_at(cell as f64 / denom);
                             if is_bg {
                                 seg_style.bg = Some(color);
                             } else {
                                 seg_style.fg = Some(color);
                             }
-                            (ch.to_string(), seg_style)
+                            cell = cell.saturating_add(UnicodeWidthStr::width(grapheme));
+                            (grapheme.to_string(), seg_style)
                         })
                         .collect();
 
@@ -483,10 +475,13 @@ impl Context {
 
     /// Enable word-boundary wrapping on the last rendered text element.
     pub fn wrap(&mut self) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx
-            && let Command::Text { wrap, .. } = &mut self.commands[idx]
-        {
-            *wrap = true;
+        if let Some(idx) = self.rollback.last_text_idx {
+            match &mut self.commands[idx] {
+                Command::Text { wrap, .. }
+                | Command::Link { wrap, .. }
+                | Command::RichText { wrap, .. } => *wrap = true,
+                _ => {}
+            }
         }
         self
     }
@@ -502,10 +497,15 @@ impl Context {
         self
     }
 
-    fn modify_last_style(&mut self, f: impl FnOnce(&mut Style)) {
+    fn modify_last_style(&mut self, mut f: impl FnMut(&mut Style)) {
         if let Some(idx) = self.rollback.last_text_idx {
             match &mut self.commands[idx] {
                 Command::Text { style, .. } | Command::Link { style, .. } => f(style),
+                Command::RichText { segments, .. } => {
+                    for (_, style) in segments {
+                        f(style);
+                    }
+                }
                 _ => {}
             }
         }
@@ -517,6 +517,7 @@ impl Context {
                 Command::Text { constraints, .. } | Command::Link { constraints, .. } => {
                     f(constraints)
                 }
+                Command::RichText { constraints, .. } => f(constraints),
                 _ => {}
             }
         }
@@ -526,6 +527,7 @@ impl Context {
         if let Some(idx) = self.rollback.last_text_idx {
             match &mut self.commands[idx] {
                 Command::Text { margin, .. } | Command::Link { margin, .. } => f(margin),
+                Command::RichText { margin, .. } => f(margin),
                 _ => {}
             }
         }
@@ -548,12 +550,16 @@ impl Context {
 
     /// Set the text alignment of the last rendered text element.
     pub fn align(&mut self, align: Align) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx
-            && let Command::Text {
-                align: text_align, ..
-            } = &mut self.commands[idx]
-        {
-            *text_align = align;
+        if let Some(idx) = self.rollback.last_text_idx {
+            match &mut self.commands[idx] {
+                Command::Text {
+                    align: text_align, ..
+                }
+                | Command::RichText {
+                    align: text_align, ..
+                } => *text_align = align,
+                _ => {}
+            }
         }
         self
     }
@@ -730,6 +736,15 @@ impl Context {
         f(self);
         self
     }
+
+    fn inherited_text_fg(&self) -> Color {
+        self.rollback
+            .text_color_stack
+            .iter()
+            .rev()
+            .find_map(|color| *color)
+            .unwrap_or(self.theme.text)
+    }
 }
 
 #[cfg(test)]
@@ -765,6 +780,21 @@ mod gradient_tests {
             Some(blue),
             "last column should be blue"
         );
+    }
+
+    #[test]
+    fn two_stop_gradient_uses_documented_endpoint_order() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABC").gradient(red, blue);
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.fg, Some(red));
+        assert_eq!(buf.get(1, 0).style.fg, Some(Color::Rgb(128, 0, 128)));
+        assert_eq!(buf.get(2, 0).style.fg, Some(blue));
     }
 
     #[test]
@@ -844,10 +874,8 @@ mod gradient_tests {
         });
 
         let buf = backend.buffer();
-        // bg_gradient mirrors gradient(): from.blend_f64(to, t) yields `to` at t=0.
-        // (blue), at t=1 that is `from` (red). Foreground stays untouched.
-        assert_eq!(buf.get(0, 0).style.bg, Some(blue), "first column bg = to");
-        assert_eq!(buf.get(2, 0).style.bg, Some(red), "last column bg = from");
+        assert_eq!(buf.get(0, 0).style.bg, Some(red), "first column bg = from");
+        assert_eq!(buf.get(2, 0).style.bg, Some(blue), "last column bg = to");
         assert_eq!(
             buf.get(1, 0).style.bg,
             Some(Color::Rgb(128, 0, 128)),
@@ -883,5 +911,58 @@ mod gradient_tests {
         });
 
         backend.assert_contains("WORLD");
+    }
+
+    #[test]
+    fn style_and_constraints_after_gradient_update_rich_text() {
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("ABC")
+                .gradient(Color::Red, Color::Blue)
+                .bold()
+                .fg(Color::Green)
+                .bg(Color::Black)
+                .w(8)
+                .m(1)
+                .align(Align::End);
+        });
+
+        let buf = backend.buffer();
+        let (start_x, y) = backend.find_text("ABC").expect("rendered gradient text");
+        for x in start_x..start_x + 3 {
+            let cell = buf.get(x, y);
+            assert_eq!(cell.style.fg, Some(Color::Green));
+            assert_eq!(cell.style.bg, Some(Color::Black));
+            assert!(cell.style.modifiers.contains(Modifiers::BOLD));
+        }
+    }
+
+    #[test]
+    fn dim_uses_theme_color_only_for_inherited_foreground() {
+        let theme = Theme::dark();
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.set_theme(theme);
+            ui.text("inherited").dim();
+            ui.text("explicit").fg(Color::Red).dim();
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.fg, Some(theme.text_dim));
+        assert_eq!(buf.get(0, 1).style.fg, Some(Color::Red));
+        assert!(buf.get(0, 0).style.modifiers.contains(Modifiers::DIM));
+        assert!(buf.get(0, 1).style.modifiers.contains(Modifiers::DIM));
+    }
+
+    #[test]
+    fn gradient_positions_follow_grapheme_cell_width() {
+        let mut backend = TestBackend::new(20, 4);
+        backend.render(|ui| {
+            ui.text("界A").gradient(Color::Red, Color::Blue);
+        });
+
+        let buf = backend.buffer();
+        assert_eq!(buf.get(0, 0).style.fg, Some(Color::Red));
+        assert_eq!(buf.get(2, 0).style.fg, Some(Color::Blue));
     }
 }

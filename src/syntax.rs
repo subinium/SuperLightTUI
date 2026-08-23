@@ -8,6 +8,27 @@
 
 use crate::style::{Style, Theme};
 
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+use crate::style::SyntaxPalette;
+
+type HighlightedLines = Vec<Vec<(String, Style)>>;
+
 /// Ordered list of tree-sitter highlight capture names.
 ///
 /// The index of each name corresponds to the `Highlight` index
@@ -317,12 +338,17 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
         "typescript" | "ts" => {
             static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
             CFG.get_or_init(|| {
+                let highlights = [
+                    tree_sitter_javascript::HIGHLIGHT_QUERY,
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                ]
+                .join("\n");
                 HighlightConfiguration::new(
                     tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                     "typescript",
-                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
-                    tree_sitter_typescript::LOCALS_QUERY,
+                    &highlights,
                     "",
+                    tree_sitter_typescript::LOCALS_QUERY,
                 )
                 .ok()
                 .map(|mut c| {
@@ -337,12 +363,18 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
         "tsx" => {
             static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
             CFG.get_or_init(|| {
+                let highlights = [
+                    tree_sitter_javascript::HIGHLIGHT_QUERY,
+                    tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                ]
+                .join("\n");
                 HighlightConfiguration::new(
                     tree_sitter_typescript::LANGUAGE_TSX.into(),
                     "tsx",
-                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
-                    tree_sitter_typescript::LOCALS_QUERY,
+                    &highlights,
                     "",
+                    tree_sitter_typescript::LOCALS_QUERY,
                 )
                 .ok()
                 .map(|mut c| {
@@ -381,8 +413,8 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
                     tree_sitter_ruby::LANGUAGE.into(),
                     "ruby",
                     tree_sitter_ruby::HIGHLIGHTS_QUERY,
-                    tree_sitter_ruby::LOCALS_QUERY,
                     "",
+                    tree_sitter_ruby::LOCALS_QUERY,
                 )
                 .ok()
                 .map(|mut c| {
@@ -487,7 +519,8 @@ fn highlight_name_to_style(name: &str, theme: &Theme) -> Style {
         "keyword" => Style::new().fg(syntax.keyword),
         "string" | "string.special" => Style::new().fg(syntax.string),
         "comment" => Style::new().fg(theme.text_dim).italic(),
-        "number" | "constant" | "constant.builtin" => Style::new().fg(syntax.constant),
+        "number" => Style::new().fg(syntax.number),
+        "constant" | "constant.builtin" => Style::new().fg(syntax.constant),
         "function" | "function.builtin" => Style::new().fg(syntax.function),
         "function.macro" => Style::new().fg(syntax.macro_),
         "type" | "type.builtin" | "constructor" => Style::new().fg(syntax.type_),
@@ -530,6 +563,138 @@ thread_local! {
         std::cell::RefCell::new(tree_sitter_highlight::Highlighter::new());
 }
 
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SyntaxThemeKey {
+    text: crate::style::Color,
+    text_dim: crate::style::Color,
+    syntax: SyntaxPalette,
+}
+
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+struct SyntaxCacheEntry {
+    content_hash: u64,
+    code: Box<str>,
+    lang: Box<str>,
+    theme: SyntaxThemeKey,
+    lines: std::sync::Arc<HighlightedLines>,
+}
+
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+#[derive(Default)]
+struct SyntaxCache {
+    entries: std::collections::VecDeque<SyntaxCacheEntry>,
+    source_bytes: usize,
+}
+
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+impl SyntaxCache {
+    const MAX_ENTRIES: usize = 64;
+    const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+
+    fn get(
+        &mut self,
+        content_hash: u64,
+        code: &str,
+        lang: &str,
+        theme: SyntaxThemeKey,
+    ) -> Option<std::sync::Arc<HighlightedLines>> {
+        let index = self.entries.iter().position(|entry| {
+            entry.content_hash == content_hash
+                && entry.code.as_ref() == code
+                && entry.lang.as_ref() == lang
+                && entry.theme == theme
+        })?;
+        let entry = self.entries.remove(index)?;
+        let lines = std::sync::Arc::clone(&entry.lines);
+        self.entries.push_back(entry);
+        Some(lines)
+    }
+
+    fn insert(&mut self, entry: SyntaxCacheEntry) {
+        let source_bytes = entry.code.len().saturating_add(entry.lang.len());
+        if source_bytes > Self::MAX_SOURCE_BYTES {
+            return;
+        }
+        while self.entries.len() >= Self::MAX_ENTRIES
+            || self.source_bytes.saturating_add(source_bytes) > Self::MAX_SOURCE_BYTES
+        {
+            let Some(evicted) = self.entries.pop_front() else {
+                break;
+            };
+            self.source_bytes = self
+                .source_bytes
+                .saturating_sub(evicted.code.len().saturating_add(evicted.lang.len()));
+        }
+        self.source_bytes = self.source_bytes.saturating_add(source_bytes);
+        self.entries.push_back(entry);
+    }
+}
+
 /// Highlight source code using tree-sitter.
 ///
 /// Returns `Some(lines)` where each line is a `Vec<(text, style)>` of
@@ -546,8 +711,24 @@ thread_local! {
 /// ```ignore
 /// let lines = slt::syntax::highlight_code("let x = 1;", "rust", &theme);
 /// ```
-#[allow(unused_variables)]
-pub fn highlight_code(code: &str, lang: &str, theme: &Theme) -> Option<Vec<Vec<(String, Style)>>> {
+#[cfg(any(
+    feature = "syntax-rust",
+    feature = "syntax-python",
+    feature = "syntax-javascript",
+    feature = "syntax-typescript",
+    feature = "syntax-go",
+    feature = "syntax-bash",
+    feature = "syntax-json",
+    feature = "syntax-toml",
+    feature = "syntax-c",
+    feature = "syntax-cpp",
+    feature = "syntax-java",
+    feature = "syntax-ruby",
+    feature = "syntax-css",
+    feature = "syntax-html",
+    feature = "syntax-yaml",
+))]
+fn highlight_code_uncached(code: &str, lang: &str, theme: &Theme) -> Option<HighlightedLines> {
     #[cfg(any(
         feature = "syntax-rust",
         feature = "syntax-python",
@@ -638,6 +819,100 @@ pub fn highlight_code(code: &str, lang: &str, theme: &Theme) -> Option<Vec<Vec<(
     }
 }
 
+/// Highlight source code using the active theme, reusing a bounded preparation
+/// cache for repeated content/language/theme combinations.
+pub fn highlight_code(code: &str, lang: &str, theme: &Theme) -> Option<Vec<Vec<(String, Style)>>> {
+    highlight_code_cached(code, lang, theme).map(|lines| lines.as_ref().clone())
+}
+
+pub(crate) fn highlight_code_cached(
+    code: &str,
+    lang: &str,
+    theme: &Theme,
+) -> Option<std::sync::Arc<HighlightedLines>> {
+    #[cfg(any(
+        feature = "syntax-rust",
+        feature = "syntax-python",
+        feature = "syntax-javascript",
+        feature = "syntax-typescript",
+        feature = "syntax-go",
+        feature = "syntax-bash",
+        feature = "syntax-json",
+        feature = "syntax-toml",
+        feature = "syntax-c",
+        feature = "syntax-cpp",
+        feature = "syntax-java",
+        feature = "syntax-ruby",
+        feature = "syntax-css",
+        feature = "syntax-html",
+        feature = "syntax-yaml",
+    ))]
+    {
+        use std::hash::{Hash, Hasher};
+        use std::sync::{Mutex, OnceLock};
+
+        static CACHE: OnceLock<Mutex<SyntaxCache>> = OnceLock::new();
+        const MAX_CACHEABLE_CODE_BYTES: usize = 256 * 1024;
+
+        let theme_key = SyntaxThemeKey {
+            text: theme.text,
+            text_dim: theme.text_dim,
+            syntax: theme.syntax,
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        code.hash(&mut hasher);
+        let content_hash = hasher.finish();
+
+        if code.len() <= MAX_CACHEABLE_CODE_BYTES {
+            let cache = CACHE.get_or_init(|| Mutex::new(SyntaxCache::default()));
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(lines) = cache.get(content_hash, code, lang, theme_key) {
+                return Some(lines);
+            }
+        }
+
+        let lines = std::sync::Arc::new(highlight_code_uncached(code, lang, theme)?);
+        if code.len() <= MAX_CACHEABLE_CODE_BYTES {
+            let cache = CACHE.get_or_init(|| Mutex::new(SyntaxCache::default()));
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            cache.insert(SyntaxCacheEntry {
+                content_hash,
+                code: code.into(),
+                lang: lang.into(),
+                theme: theme_key,
+                lines: std::sync::Arc::clone(&lines),
+            });
+        }
+        Some(lines)
+    }
+
+    #[cfg(not(any(
+        feature = "syntax-rust",
+        feature = "syntax-python",
+        feature = "syntax-javascript",
+        feature = "syntax-typescript",
+        feature = "syntax-go",
+        feature = "syntax-bash",
+        feature = "syntax-json",
+        feature = "syntax-toml",
+        feature = "syntax-c",
+        feature = "syntax-cpp",
+        feature = "syntax-java",
+        feature = "syntax-ruby",
+        feature = "syntax-css",
+        feature = "syntax-html",
+        feature = "syntax-yaml",
+    )))]
+    {
+        let _ = (code, lang, theme);
+        None
+    }
+}
+
 /// Returns `true` if tree-sitter highlighting is available for `lang`.
 ///
 /// This checks both that the corresponding `syntax-*` feature is enabled
@@ -701,6 +976,39 @@ mod tests {
     #[test]
     fn is_language_supported_unknown() {
         assert!(!is_language_supported("haskell"));
+    }
+
+    #[cfg(any(
+        feature = "syntax-rust",
+        feature = "syntax-python",
+        feature = "syntax-javascript",
+        feature = "syntax-typescript",
+        feature = "syntax-go",
+        feature = "syntax-bash",
+        feature = "syntax-json",
+        feature = "syntax-toml",
+        feature = "syntax-c",
+        feature = "syntax-cpp",
+        feature = "syntax-java",
+        feature = "syntax-ruby",
+        feature = "syntax-css",
+        feature = "syntax-html",
+        feature = "syntax-yaml",
+    ))]
+    #[test]
+    fn number_and_constant_captures_use_distinct_palette_entries() {
+        let mut theme = Theme::dark();
+        theme.syntax.number = crate::style::Color::Rgb(1, 2, 3);
+        theme.syntax.constant = crate::style::Color::Rgb(4, 5, 6);
+
+        assert_eq!(
+            highlight_name_to_style("number", &theme).fg,
+            Some(theme.syntax.number)
+        );
+        assert_eq!(
+            highlight_name_to_style("constant", &theme).fg,
+            Some(theme.syntax.constant)
+        );
     }
 
     #[cfg(feature = "syntax-rust")]
@@ -888,14 +1196,32 @@ mod tests {
     #[test]
     fn highlight_typescript_basic() {
         let theme = Theme::dark();
-        assert!(highlight_code("const x: number = 42;", "ts", &theme).is_some());
+        let lines = highlight_code("const x: number = 42;", "ts", &theme).unwrap();
+        let number = lines
+            .iter()
+            .flatten()
+            .find(|(text, _)| text == "42")
+            .expect("numeric capture");
+        assert_eq!(number.1.fg, Some(theme.syntax.number));
     }
 
     #[cfg(feature = "syntax-typescript")]
     #[test]
     fn highlight_tsx_basic() {
         let theme = Theme::dark();
-        assert!(highlight_code("const App = () => <div>hello</div>;", "tsx", &theme).is_some());
+        let lines = highlight_code(
+            "const App = () => <div data-count={42}>hello</div>;",
+            "tsx",
+            &theme,
+        )
+        .unwrap();
+        let flat: String = lines
+            .iter()
+            .flatten()
+            .map(|(text, _)| text.as_str())
+            .collect();
+        assert!(flat.contains("data-count"));
+        assert!(flat.contains("42"));
     }
 
     #[cfg(feature = "syntax-java")]
@@ -916,7 +1242,19 @@ mod tests {
     #[test]
     fn highlight_ruby_basic() {
         let theme = Theme::dark();
-        assert!(highlight_code("def hello\n  puts 'world'\nend", "ruby", &theme).is_some());
+        let lines = highlight_code(
+            "answer = 42\ndef hello\n  puts 'world'\nend",
+            "ruby",
+            &theme,
+        )
+        .unwrap();
+        let flat: String = lines
+            .iter()
+            .flatten()
+            .map(|(text, _)| text.as_str())
+            .collect();
+        assert!(flat.contains("answer"));
+        assert!(flat.contains("42"));
     }
 
     #[cfg(feature = "syntax-css")]
@@ -951,6 +1289,48 @@ mod tests {
         let second = highlight_code("fn foo() {}", "rust", &theme);
         assert!(first.is_some(), "first call should succeed");
         assert!(second.is_some(), "second call should succeed");
+    }
+
+    #[cfg(feature = "syntax-rust")]
+    #[test]
+    fn highlight_preparation_cache_reuses_arc_and_invalidates_on_theme() {
+        let dark = Theme::dark();
+        let light = Theme::light();
+        let first = highlight_code_cached("let cache_probe = 17;", "rust", &dark).unwrap();
+        let second = highlight_code_cached("let cache_probe = 17;", "rust", &dark).unwrap();
+        let themed = highlight_code_cached("let cache_probe = 17;", "rust", &light).unwrap();
+
+        // Other parallel syntax tests may legitimately evict this bounded
+        // global cache between calls. Verify value reuse semantics here and
+        // pointer reuse deterministically in the cache-unit test below.
+        assert_eq!(first.as_ref(), second.as_ref());
+        assert_ne!(first.as_ref(), themed.as_ref());
+    }
+
+    #[cfg(feature = "syntax-rust")]
+    #[test]
+    fn syntax_cache_returns_the_stored_arc() {
+        let theme = Theme::dark();
+        let theme_key = SyntaxThemeKey {
+            text: theme.text,
+            text_dim: theme.text_dim,
+            syntax: theme.syntax,
+        };
+        let lines = std::sync::Arc::new(vec![vec![(
+            "cached".to_string(),
+            Style::new().fg(theme.text),
+        )]]);
+        let mut cache = SyntaxCache::default();
+        cache.insert(SyntaxCacheEntry {
+            content_hash: 7,
+            code: "probe".into(),
+            lang: "rust".into(),
+            theme: theme_key,
+            lines: std::sync::Arc::clone(&lines),
+        });
+
+        let cached = cache.get(7, "probe", "rust", theme_key).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&lines, &cached));
     }
 
     /// Regression test for issue #113:

@@ -38,9 +38,8 @@ cargo clippy --all-features -- -D warnings
 cargo run --example hello
 cargo run --example counter
 cargo run --example demo
-cargo run --example inline
-cargo run --example anim
-cargo run --example async_demo --features async
+cargo run --example system_tour --features async
+cargo run --example canvas_tour --all-features
 ```
 
 ### Quality Gate (run ALL before submitting)
@@ -78,7 +77,7 @@ Follow this checklist when adding a new widget:
 3. **Rendering method** on `Context` in the matching `src/context/widgets_*/` subfile (`widgets_input/`, `widgets_display/`, `widgets_interactive/`, or `widgets_viz.rs`)
 4. **Re-export** in `lib.rs`
 5. **Doc comment** (`///`) on the public method with usage example
-6. **Response pattern** — interactive widgets return `Response`, display widgets return `&mut Self`
+6. **Response pattern** — interactive and independently framed display widgets return `Response`; style-chain text helpers return `&mut Self`
 7. **Focus** — call `register_focusable()` if the widget accepts keyboard input
 8. **Events** — consume handled key events so they don't bubble
 9. **Theme** — use `self.theme.*` for default colors
@@ -108,31 +107,19 @@ User closure → Context collects Commands → build_tree() → flexbox compute 
 
 ## Releasing
 
-Releases are automated via GitHub Actions. To publish a new version:
+[`AGENTS.md`](AGENTS.md) is the canonical release checklist. Every release,
+including patches, uses a `release/vX.Y.Z` branch, a reviewed PR, green CI,
+squash merge, and an annotated tag on the merged `main` commit. Never push a
+release commit or tag directly from an unreviewed local branch.
 
-```sh
-# 1. Bump version in Cargo.toml
-# 2. Update CHANGELOG.md with new section
-# 3. Commit and push
-git add Cargo.toml Cargo.lock CHANGELOG.md
-git commit -m "chore: release vX.Y.Z"
-git push
-
-# 4. Tag triggers the release pipeline
-git tag vX.Y.Z
-git push --tags
-```
-
-The release workflow (`.github/workflows/release.yml`) will:
-1. Run full CI (check, test, clippy, fmt) on stable + MSRV 1.88
-2. Verify tag matches `Cargo.toml` version
-3. Publish to crates.io
-4. Create GitHub Release with notes extracted from CHANGELOG.md
-
-**Do not** run `cargo publish` manually — let the workflow handle it.
+The tag-triggered workflow runs the full stable/MSRV/platform/feature/security
+gate, publishes the library crate, and creates the GitHub Release. Do not run
+`cargo publish` locally. After publication, run
+`scripts/smoke_release.sh X.Y.Z` to compile and execute an exact-version
+downstream consumer from crates.io.
 
 ## Dependencies
 
-Core: `unicode-width`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, `flate2` (kitty-compress), tree-sitter syntax features.
+Core: `unicode-width`, `unicode-segmentation`, `smallvec`, `compact_str`. Terminal I/O: `crossterm` (default feature). Optional: `tokio` (async), `serde`, `image`, `qrcode`, `flate2` (kitty-compress), tree-sitter syntax features.
 
 Do not add new dependencies without discussion. See [`docs/DESIGN_PRINCIPLES.md` — Dependencies](docs/DESIGN_PRINCIPLES.md#9-dependencies).

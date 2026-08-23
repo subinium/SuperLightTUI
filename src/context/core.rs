@@ -125,7 +125,8 @@ pub struct Context {
     /// [`Context::region_cache_misses`].
     pub(crate) region_cache_misses: u32,
     pub(crate) scroll_lines_per_event: u32,
-    pub(crate) screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
+    pub(crate) screen_hook_map:
+        std::collections::HashMap<u64, std::collections::HashMap<String, (usize, usize)>>,
     pub(crate) widget_theme: WidgetTheme,
     /// Issue #208: which focus index was current at the END of the previous
     /// frame. `None` on the very first frame. Used to compute

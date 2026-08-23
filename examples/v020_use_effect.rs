@@ -11,7 +11,7 @@
 //! visible in the lower panel. The log itself is rendered last so it
 //! reflects the writes from the current frame.
 //!
-//! Run: `cargo run --example v020_use_effect`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   k / Up         — count++

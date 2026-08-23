@@ -3,7 +3,7 @@
 //!
 //! Demonstrates: #238.
 //!
-//! Run: `cargo run --example v020_ctrl_c_passthrough`
+//! Run: `cargo run --example v020_tour`
 //!
 //! ## What this demo shows
 //!

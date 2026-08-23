@@ -487,6 +487,100 @@ fn file_picker_response_changed_on_file_select() {
 }
 
 #[test]
+fn file_picker_reports_missing_directory_and_retries() {
+    let root = make_temp_dir("file_picker_retry");
+    fs::remove_dir_all(&root).expect("failed to remove temp dir before scan");
+    let mut state = FilePickerState::new(root.clone());
+
+    let error = state
+        .try_refresh()
+        .expect_err("missing directory should fail");
+    assert_eq!(error.operation, FilePickerScanOperation::ReadDirectory);
+    assert_eq!(error.kind, std::io::ErrorKind::NotFound);
+    assert_eq!(state.scan_status(), FilePickerScanStatus::Error);
+    assert!(state.dirty);
+    assert_eq!(state.last_error(), Some(&error));
+
+    let mut tb = TestBackend::new(80, 8);
+    tb.render(|ui| {
+        ui.file_picker(&mut state);
+    });
+    tb.assert_contains("Error:");
+    tb.assert_not_contains("(empty)");
+
+    fs::create_dir_all(&root).expect("failed to recreate temp dir");
+    state.retry();
+    state.try_refresh().expect("retry should succeed");
+    assert_eq!(state.scan_status(), FilePickerScanStatus::Ready);
+    assert!(state.last_error().is_none());
+    assert!(!state.dirty);
+
+    tb.render(|ui| {
+        ui.file_picker(&mut state);
+    });
+    tb.assert_contains("(empty)");
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[cfg(unix)]
+#[test]
+fn file_picker_reports_permission_denied_when_enforced_by_platform() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = make_temp_dir("file_picker_permission");
+    let original = fs::metadata(&root)
+        .expect("failed to inspect temp dir")
+        .permissions();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o000))
+        .expect("failed to remove temp dir permissions");
+
+    let mut state = FilePickerState::new(&root);
+    let result = state.try_refresh();
+
+    fs::set_permissions(&root, original).expect("failed to restore temp dir permissions");
+    fs::remove_dir_all(&root).expect("failed to clean temp dir");
+
+    if let Err(error) = result {
+        assert_eq!(error.operation, FilePickerScanOperation::ReadDirectory);
+        assert_eq!(error.kind, std::io::ErrorKind::PermissionDenied);
+        assert_eq!(state.scan_status(), FilePickerScanStatus::Error);
+    }
+}
+
+#[test]
+fn file_picker_virtualizes_large_directories_and_keeps_selection_visible() {
+    let root = make_temp_dir("file_picker_virtual");
+    for idx in 0..100 {
+        fs::write(root.join(format!("file-{idx:03}.txt")), b"x").expect("failed to create file");
+    }
+
+    let mut state = FilePickerState::new(root.clone());
+    let mut tb = TestBackend::new(40, 8);
+    tb.render(|ui| {
+        ui.file_picker(&mut state);
+    });
+    tb.assert_contains("file-000.txt");
+    tb.assert_not_contains("file-050.txt");
+
+    let down_events = (0..50)
+        .flat_map(|_| {
+            slt::EventBuilder::new()
+                .key_code(slt::KeyCode::Down)
+                .build()
+        })
+        .collect();
+    tb.render_with_events(down_events, 0, 1, |ui| {
+        ui.file_picker(&mut state);
+    });
+    assert_eq!(state.selected, 50);
+    tb.assert_contains("file-050.txt");
+    tb.assert_not_contains("file-000.txt");
+    tb.assert_contains("/ 100");
+
+    fs::remove_dir_all(root).expect("failed to clean temp dir");
+}
+
+#[test]
 fn table_renders_headers() {
     let mut tb = TestBackend::new(60, 10);
     let mut table = TableState::new(
@@ -688,6 +782,71 @@ fn table_pagination_last_page() {
 }
 
 #[test]
+fn table_pagination_uses_absolute_view_indices_for_keyboard_and_mouse() {
+    let rows = (0..7)
+        .map(|index| vec![format!("row-{index}")])
+        .collect::<Vec<_>>();
+    let mut table = TableState::new(vec!["Name"], rows);
+    table.page_size = 2;
+    let mut tb = TestBackend::new(40, 10);
+
+    tb.render(|ui| {
+        ui.table(&mut table);
+    });
+
+    let events = slt::EventBuilder::new()
+        .key_code(KeyCode::PageDown)
+        .key_code(KeyCode::PageDown)
+        .key(' ')
+        .build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.page, 2);
+    assert_eq!(table.selected, 4);
+    assert_eq!(
+        table.selected_row().map(|row| row[0].as_str()),
+        Some("row-4")
+    );
+    assert!(table.is_row_selected(4));
+
+    let click = slt::EventBuilder::new().click(1, 3).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.table(&mut table);
+    });
+    assert_eq!(table.selected, 5);
+    assert_eq!(
+        table.selected_row().map(|row| row[0].as_str()),
+        Some("row-5")
+    );
+    assert!(table.is_row_selected(5));
+}
+
+#[test]
+fn table_row_mutations_keep_filter_and_selection_caches_coherent() {
+    let mut table = TableState::new(
+        vec!["Name"],
+        vec![vec!["alpha"], vec!["beta"], vec!["alphabet"]],
+    );
+    table.set_filter("alpha");
+    table.selected = 1;
+    table.set_rows(vec![vec!["gamma"]]);
+    assert!(table.visible_indices().is_empty());
+    assert_eq!(table.selected, 0);
+    assert_eq!(table.selected_row(), None);
+
+    table.push_row(vec!["alpha-new"]);
+    assert_eq!(table.visible_indices(), &[1]);
+    assert_eq!(
+        table.selected_row().map(|row| row[0].as_str()),
+        Some("alpha-new")
+    );
+    table.clear_rows();
+    assert!(table.is_empty());
+    assert!(table.visible_indices().is_empty());
+}
+
+#[test]
 fn table_sort_and_filter_combined() {
     let mut table = TableState::new(
         vec!["Name", "Value"],
@@ -721,7 +880,7 @@ fn table_backward_compat() {
 
     assert_eq!(table.sort_column, None);
     assert!(table.sort_ascending);
-    assert_eq!(table.filter, "");
+    assert_eq!(table.filter(), "");
     assert_eq!(table.page, 0);
     assert_eq!(table.page_size, 0);
     assert_eq!(table.visible_indices(), &[0, 1]);
@@ -1843,6 +2002,19 @@ fn text_input_paste_korean() {
 }
 
 #[test]
+fn text_input_paste_respects_grapheme_max_length_atomically() {
+    let mut tb = TestBackend::new(40, 5);
+    let mut input = TextInputState::new().max_length(2);
+    let events = slt::EventBuilder::new().paste("e\u{301}👨‍👩‍👧‍👦🇰🇷").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.text_input(&mut input);
+    });
+
+    assert_eq!(input.value, "e\u{301}👨‍👩‍👧‍👦");
+    assert_eq!(input.cursor, 2);
+}
+
+#[test]
 fn textarea_paste_with_newlines() {
     let mut tb = TestBackend::new(40, 10);
     let mut state = TextareaState::new();
@@ -1855,6 +2027,72 @@ fn textarea_paste_with_newlines() {
     assert_eq!(state.lines, vec!["line1", "line2", "line3"]);
     assert_eq!(state.cursor_row, 2);
     assert_eq!(state.cursor_col, 5);
+}
+
+#[test]
+fn textarea_paste_normalizes_crlf_and_preserves_graphemes() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TextareaState::new();
+    let events = slt::EventBuilder::new().paste("a\r\n👩‍💻\rb").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.textarea(&mut state, 5);
+    });
+
+    assert_eq!(state.lines, vec!["a", "👩‍💻", "b"]);
+    assert_eq!(state.cursor_row, 2);
+    assert_eq!(state.cursor_col, 1);
+    assert_eq!(state.grapheme_len(), 5);
+}
+
+#[test]
+fn modified_character_shortcuts_pass_through_text_entry_widgets() {
+    let shortcut = || {
+        slt::EventBuilder::new()
+            .key_with(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .build()
+    };
+
+    let mut text_backend = TestBackend::new(40, 6);
+    let mut input = TextInputState::new();
+    let mut text_seen = false;
+    text_backend.render_with_events(shortcut(), 0, 1, |ui| {
+        ui.text_input(&mut input);
+        text_seen = ui.key_mod('q', KeyModifiers::CONTROL);
+    });
+    assert!(text_seen);
+    assert!(input.value.is_empty());
+
+    let mut area_backend = TestBackend::new(40, 6);
+    let mut area = TextareaState::new();
+    let mut area_seen = false;
+    area_backend.render_with_events(shortcut(), 0, 1, |ui| {
+        ui.textarea(&mut area, 4);
+        area_seen = ui.key_mod('q', KeyModifiers::CONTROL);
+    });
+    assert!(area_seen);
+    assert_eq!(area.lines, vec![""]);
+
+    let mut palette_backend = TestBackend::new(40, 10);
+    let mut palette = CommandPaletteState::new(vec![PaletteCommand::new("Quit", "Exit")]);
+    palette.open = true;
+    let mut palette_seen = false;
+    palette_backend.render_with_events(shortcut(), 0, 1, |ui| {
+        ui.command_palette(&mut palette);
+        palette_seen = ui.raw_key_mod('q', KeyModifiers::CONTROL);
+    });
+    assert!(palette_seen);
+    assert!(palette.input.is_empty());
+
+    let mut select_backend = TestBackend::new(40, 10);
+    let mut select = SelectState::new(vec!["Quit", "Save"]);
+    select.open = true;
+    let mut select_seen = false;
+    select_backend.render_with_events(shortcut(), 0, 1, |ui| {
+        ui.select(&mut select);
+        select_seen = ui.key_mod('q', KeyModifiers::CONTROL);
+    });
+    assert!(select_seen);
+    assert!(select.filter.is_empty());
 }
 
 #[test]
@@ -2330,6 +2568,36 @@ fn select_renders_open() {
 }
 
 #[test]
+fn select_empty_renders_placeholder() {
+    let mut tb = TestBackend::new(40, 8);
+    let mut state = SelectState::new(Vec::<String>::new()).placeholder("Choose a value");
+
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    tb.assert_contains("Choose a value");
+}
+
+#[test]
+fn select_open_rows_can_be_selected_with_mouse() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
+    state.open = true;
+    tb.render(|ui| {
+        ui.select(&mut state);
+    });
+
+    let click = slt::EventBuilder::new().click(2, 4).build();
+    tb.render_with_events(click, 0, 1, |ui| {
+        ui.select(&mut state);
+    });
+
+    assert_eq!(state.selected_item(), Some("Banana"));
+    assert!(!state.open);
+}
+
+#[test]
 fn select_open_filter_narrows_visible_items() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = SelectState::new(vec!["Apple", "Banana", "Cherry"]);
@@ -2378,6 +2646,20 @@ fn select_type_to_filter_then_enter_selects_match() {
     assert_eq!(state.selected_item(), Some("Cherry"));
     assert!(!state.open, "Enter closes the dropdown");
     assert!(state.filter.is_empty(), "filter resets after selection");
+}
+
+#[test]
+fn searchable_select_paste_keeps_grapheme_clusters_intact() {
+    let mut tb = TestBackend::new(60, 10);
+    let mut state = SelectState::new(vec!["e\u{301}👨‍👩‍👧‍👦", "other"]);
+    state.open = true;
+    let events = slt::EventBuilder::new().paste("e\u{301}👨‍👩‍👧‍👦").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.select(&mut state);
+    });
+
+    assert_eq!(state.filter, "e\u{301}👨‍👩‍👧‍👦");
+    tb.assert_contains("e\u{301}👨‍👩‍👧‍👦");
 }
 
 #[test]
@@ -2440,6 +2722,20 @@ fn multi_select_checked_items() {
 }
 
 #[test]
+fn multi_select_set_items_prunes_stale_selection() {
+    let mut state = MultiSelectState::new(vec!["One", "Two", "Three", "Four"]);
+    state.selected.extend([1, 3]);
+    state.cursor = 3;
+
+    state.set_items(vec!["One", "Two"]);
+    assert_eq!(state.selected_items(), vec!["Two"]);
+    assert_eq!(state.cursor, 1);
+
+    state.set_items(vec!["One", "Two", "Five", "Six"]);
+    assert_eq!(state.selected_items(), vec!["Two"]);
+}
+
+#[test]
 fn tree_renders_root() {
     let mut tb = TestBackend::new(80, 24);
     let mut state = TreeState::new(vec![TreeNode::new("Root")]);
@@ -2482,6 +2778,29 @@ fn tree_renders_collapsed() {
 
     tb.assert_contains("Root");
     assert!(!tb.to_string().contains("Hidden Child"));
+}
+
+#[test]
+fn tree_collapse_updates_later_events_in_same_frame() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = TreeState::new(vec![
+        TreeNode::new("Root")
+            .expanded()
+            .children(vec![TreeNode::new("Child A"), TreeNode::new("Child B")]),
+        TreeNode::new("Sibling"),
+    ]);
+    let events = slt::EventBuilder::new()
+        .key_code(KeyCode::Left)
+        .key_code(KeyCode::Down)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.tree(&mut state);
+    });
+
+    assert_eq!(state.selected, 1);
+    tb.assert_contains("Sibling");
+    tb.assert_not_contains("Child A");
 }
 
 #[test]
@@ -2542,6 +2861,23 @@ fn directory_tree_from_paths_renders_structure() {
 fn directory_tree_selected_label_from_paths() {
     let state = DirectoryTreeState::from_paths(&["src/main.rs", "src/lib.rs", "Cargo.toml"]);
     assert_eq!(state.selected_label(), Some("src"));
+}
+
+#[test]
+fn directory_tree_collapse_updates_later_events_in_same_frame() {
+    let mut tb = TestBackend::new(40, 10);
+    let mut state = DirectoryTreeState::from_paths(&["src/main.rs", "src/lib.rs", "Cargo.toml"]);
+    let events = slt::EventBuilder::new()
+        .key_code(KeyCode::Left)
+        .key_code(KeyCode::Down)
+        .build();
+
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.directory_tree(&mut state);
+    });
+
+    assert_eq!(state.selected_label(), Some("Cargo.toml"));
+    tb.assert_not_contains("main.rs");
 }
 
 #[test]
@@ -2747,6 +3083,21 @@ fn command_palette_open() {
 
     tb.assert_contains("Open File");
     tb.assert_contains("Save File");
+}
+
+#[test]
+fn command_palette_paste_tracks_grapheme_cursor() {
+    let mut tb = TestBackend::new(80, 24);
+    let mut state =
+        CommandPaletteState::new(vec![PaletteCommand::new("e\u{301}👨‍👩‍👧‍👦 command", "unicode")]);
+    state.open = true;
+    let events = slt::EventBuilder::new().paste("e\u{301}👨‍👩‍👧‍👦").build();
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.command_palette(&mut state);
+    });
+
+    assert_eq!(state.input, "e\u{301}👨‍👩‍👧‍👦");
+    assert_eq!(state.cursor, 2);
 }
 
 #[test]
@@ -4802,15 +5153,14 @@ fn list_state_filter_uses_search_cache() {
 }
 
 #[test]
-fn slider_with_step_uses_explicit_step() {
-    // a10-007 (#97): slider_with_step accepts an explicit step.
+fn slider_with_opts_uses_explicit_step() {
     let mut tb = TestBackend::new(80, 5);
     let mut value = 50.0_f64;
     let events = slt::EventBuilder::new()
         .key_code(slt::KeyCode::Right)
         .build();
     tb.render_with_events(events, 0, 1, |ui| {
-        ui.slider_with_step("Volume", &mut value, 0.0..=100.0, 1.0);
+        ui.slider_with(&mut value, SliderOpts::new("Volume", 0.0..=100.0).step(1.0));
     });
     assert!(
         (value - 51.0).abs() < f64::EPSILON,
@@ -4829,6 +5179,52 @@ fn slider_with_step_uses_explicit_step() {
         (value2 - 55.0).abs() < f64::EPSILON,
         "default step span/20=5.0 unchanged, got {value2}"
     );
+}
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_slider_with_step_delegates_to_opts_api() {
+    let mut tb = TestBackend::new(40, 3);
+    let mut value = 50.0;
+    let events = slt::EventBuilder::new()
+        .key_code(slt::KeyCode::Right)
+        .build();
+    tb.render_with_events(events, 0, 0, |ui| {
+        ui.slider_with_step("Volume", &mut value, 0.0..=100.0, 2.0);
+    });
+
+    assert_eq!(value, 52.0);
+}
+
+#[test]
+fn numeric_inputs_normalize_reversed_and_non_finite_values() {
+    let mut number = NumberInputState::new(f64::NAN, f64::INFINITY, f64::NEG_INFINITY);
+    assert!(number.min.is_finite());
+    assert!(number.max.is_finite());
+    assert!(number.min <= number.max);
+    assert!(number.value.is_finite());
+
+    number.min = 10.0;
+    number.max = -10.0;
+    number.value = f64::INFINITY;
+    number.step = f64::NAN;
+    let mut tb = TestBackend::new(60, 5);
+    tb.render(|ui| {
+        ui.number_input(&mut number);
+    });
+    assert_eq!((number.min, number.max), (-10.0, 10.0));
+    assert_eq!(number.value, 10.0);
+    assert_eq!(number.step, 0.0);
+
+    let mut slider_value = f64::NAN;
+    tb.render(|ui| {
+        ui.slider_with(
+            &mut slider_value,
+            SliderOpts::new("Reversed", 10.0..=-10.0).step(f64::INFINITY),
+        );
+    });
+    assert!(slider_value.is_finite());
+    assert!((-10.0..=10.0).contains(&slider_value));
 }
 
 #[test]
@@ -5678,9 +6074,9 @@ fn rich_log_bounded_default() {
         state.push_plain(format!("line {i}"));
     }
     assert!(
-        state.entries.len() <= RichLogState::DEFAULT_MAX_ENTRIES,
+        state.len() <= RichLogState::DEFAULT_MAX_ENTRIES,
         "entries.len() = {}, should be <= {}",
-        state.entries.len(),
+        state.len(),
         RichLogState::DEFAULT_MAX_ENTRIES
     );
 }

@@ -278,7 +278,7 @@ fn render_gauge(
     color_override: Option<Color>,
 ) -> GaugeResponse {
     let response = ctx.interaction();
-    let clamped = ratio.clamp(0.0, 1.0);
+    let clamped = finite_gauge_ratio(ratio);
     let width = width.max(1);
     let bar = compose_block_bar(clamped, width, label);
     let color = color_override.unwrap_or_else(|| gauge_color_for(ctx, clamped));
@@ -299,7 +299,7 @@ fn render_line_gauge(
     label: Option<&str>,
 ) -> GaugeResponse {
     let response = ctx.interaction();
-    let clamped = ratio.clamp(0.0, 1.0);
+    let clamped = finite_gauge_ratio(ratio);
     let width = width.max(1);
     let bar = compose_line_bar(clamped, width, filled, empty, label);
     let color = gauge_color_for(ctx, clamped);
@@ -307,6 +307,14 @@ fn render_line_gauge(
     GaugeResponse {
         response,
         ratio: clamped,
+    }
+}
+
+fn finite_gauge_ratio(ratio: f64) -> f64 {
+    if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -363,21 +371,17 @@ fn compose_bar(
         let label_w = UnicodeWidthStr::width(label);
         if label_w + 2 <= width_usize {
             // Build the bar then overlay the centered label.
-            let mut cells: Vec<char> = Vec::with_capacity(width_usize);
+            let mut cells: Vec<String> = Vec::with_capacity(width_usize);
             for i in 0..width {
-                cells.push(if i < filled { fill_ch } else { empty_ch });
+                cells.push(if i < filled {
+                    fill_ch.to_string()
+                } else {
+                    empty_ch.to_string()
+                });
             }
             let label_start = (width_usize.saturating_sub(label_w)) / 2;
-            let label_end = label_start + label_w;
-            let mut out = String::with_capacity(width_usize * 4 + label.len());
-            for ch in cells.iter().take(label_start) {
-                out.push(*ch);
-            }
-            out.push_str(label);
-            for ch in cells.iter().take(width_usize).skip(label_end) {
-                out.push(*ch);
-            }
-            return out;
+            crate::chart::write_text_cells(&mut cells, label_start, label);
+            return cells.concat();
         }
     }
 
@@ -441,6 +445,13 @@ mod tests {
     }
 
     #[test]
+    fn block_bar_cjk_label_keeps_exact_cell_width() {
+        let bar = compose_block_bar(0.5, 12, "한글");
+        assert!(bar.contains("한글"));
+        assert_eq!(UnicodeWidthStr::width(bar.as_str()), 12);
+    }
+
+    #[test]
     fn block_bar_omits_label_when_too_narrow() {
         // "12345" is 5 wide; bar of 6 has only 4 free cells (need label_w + 2).
         let bar = compose_block_bar(0.5, 6, "12345");
@@ -468,5 +479,18 @@ mod tests {
         let filled = bar.chars().filter(|&c| c == '█').count();
         // (1/3 * 30).round() == 10
         assert_eq!(filled, 10);
+    }
+
+    #[test]
+    fn non_finite_gauge_ratios_resolve_to_zero_in_response() {
+        let mut backend = crate::TestBackend::new(30, 4);
+        let mut gauge_ratio = 1.0;
+        let mut line_ratio = 1.0;
+        backend.render(|ui| {
+            gauge_ratio = ui.gauge(f64::NAN).show().ratio;
+            line_ratio = ui.line_gauge(f64::INFINITY).show().ratio;
+        });
+        assert_eq!(gauge_ratio, 0.0);
+        assert_eq!(line_ratio, 0.0);
     }
 }

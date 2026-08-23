@@ -228,14 +228,18 @@ impl ThemeWatcher {
         let last_source = std::fs::read_to_string(&path)?;
         let last_good = ThemeFile::from_toml_str(&last_source)?;
 
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        // A filesystem burst only means "re-read the current file once". A
+        // capacity-one channel coalesces duplicate events and prevents a noisy
+        // parent directory from growing an unbounded notification queue while
+        // the UI is busy or polls infrequently.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             // Some backends report only the watched directory rather than the
             // changed file. Forward every successful event and let poll()
             // compare the source, which is both portable and preserves
             // atomic-save support without surfacing sibling-file changes.
             if res.is_ok() {
-                let _ = tx.send(());
+                let _ = tx.try_send(());
             }
         })
         .map_err(|e| ThemeLoadError::Io(std::io::Error::other(e.to_string())))?;
@@ -593,6 +597,9 @@ mod watch_tests {
         // must not trigger a reload of the theme.
         let sibling = path.with_file_name("unrelated.toml");
         std::fs::write(&sibling, "unrelated = true\n").unwrap();
+        for i in 0..1_024 {
+            std::fs::write(&sibling, format!("unrelated = {i}\n")).unwrap();
+        }
         std::thread::sleep(Duration::from_millis(200));
         assert!(watcher.poll().is_none());
 

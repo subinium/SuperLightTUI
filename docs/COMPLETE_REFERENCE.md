@@ -1,6 +1,6 @@
 # SuperLightTUI — Complete Reference (LLM-optimized)
 
-> Version: 0.19.2. This document condenses the full SLT API and common patterns into one file. An LLM agent should be able to load this alone and generate any normal SLT app without further reads.
+> Version: 0.23.0. This document condenses the full SLT API and common patterns into one file. Source signatures and compile-tested examples remain authoritative when this guide and rustdoc disagree.
 
 ---
 
@@ -8,7 +8,7 @@
 
 SLT is **immediate-mode**. `slt::run(|ui| { ... })` calls your closure every frame. The closure describes what the UI looks like right now. The library records commands, builds a layout tree, runs flexbox, diffs against the previous frame, and writes only the changed cells.
 
-State lives in **normal Rust** variables, structs, or — for widget-local persistent state — `ui.use_state(|| ...)` hooks. There is no App trait, no Model/Update/View, no message enum, no retained component tree. Control flow is plain `if` / `for`. Tab cycles focus automatically. Ctrl+C quits by default. Interactive widgets return a `Response { clicked, hovered, changed, focused, rect }`. Hit-testing uses the **previous** frame's layout, so `Response.rect` is only meaningful from frame 2 onward.
+State lives in **normal Rust** variables, structs, or — for widget-local persistent state — `ui.use_state(|| ...)` hooks. There is no App trait, no Model/Update/View, no message enum, no retained component tree. Control flow is plain `if` / `for`. Tab cycles focus automatically. Ctrl+C quits by default. Interactive widgets return a `Response` with click, hover, change, focus, submit, scroll, and rect signals. Hit-testing uses the **previous** frame's layout, so `Response.rect` is only meaningful from frame 2 onward.
 
 ---
 
@@ -56,7 +56,7 @@ Rules you will use every file:
 | `slt::run_inline_with(height, config, f)` | Inline + config. |
 | `slt::run_static(&mut out, height, f)` | Static scrollback lines above a fixed inline UI (log-style). |
 | `slt::run_static_with(&mut out, height, config, f)` | Same plus config. |
-| `slt::run_async(|ui, msgs: &mut Vec<M>| { ... })` | Requires `async` feature. Returns `tokio::sync::mpsc::Sender<M>` for pushing messages to the UI. |
+| `slt::run_async(|ui, msgs: &mut Vec<M>| { ... })` | Requires `async`. Returns `AsyncRunHandle<M>`; clone its wake-aware sender and join/cancel the owned loop. |
 | `slt::run_async_with(config, f)` | Async + config. |
 | `slt::frame(&mut backend, &mut state, &config, &events, &mut f)` | Low-level per-frame driver for custom backends. Returns `Ok(true)` to keep going, `Ok(false)` when quit. |
 | `slt::frame_owned(&mut backend, &mut state, &config, events, &mut f)` | Same as `frame()` but takes `Vec<Event>` by value (zero-copy when callers already own a vector — no slice→Vec clone). |
@@ -93,8 +93,8 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `Context` | Per-frame handle you call widgets on (`ui`). |
 | `Response` | `{ clicked: bool, hovered: bool, changed: bool, focused: bool, rect: Rect }`. `Response::none()` for a zero struct. |
 | `State<T>` | Handle returned from `use_state`; read with `.get(ui)`, mutate with `.get_mut(ui)`. |
-| `Widget` | Trait for custom widgets (`type Response; fn ui(&mut self, ctx: &mut Context) -> Self::Response`). |
-| `ContainerBuilder` | Fluent builder returned by `container()`, `bordered()`, `scrollable()`, `group()`. Finalize with `.col(f)`, `.row(f)`, `.draw(f)`, `.draw_with(d, f)`, `.draw_interactive(f)`. |
+| `Widget` | Trait for custom widgets (`type Response; fn ui(&mut self, ui: &mut Context) -> Self::Response`). |
+| `ContainerBuilder` | Fluent builder returned by `container()`, `bordered()`, `scrollable()`, `group()`. Finalize with `.col(f)`, `.row(f)`, or a raw-draw method. |
 | `CanvasContext` | Braille canvas passed to `ui.canvas(w, h, |cv| { ... })`. |
 | `Backend` | Trait for custom render targets. |
 | `AppState` | Opaque session state passed to `frame()`. |
@@ -256,10 +256,7 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.definition_list(&[(&str, &str)])` | Key/value list. |
 | `ui.accordion(title, &mut open, |ui| {...})` | Collapsible. |
 | `ui.confirm(question, &mut result)` | Yes/No dialog; `result` set on click. |
-| `ui.breadcrumb(&[&str]) -> Option<usize>` | Clickable breadcrumb; returns clicked segment. |
-| `ui.breadcrumb_with(&[&str], separator) -> Option<usize>` | Custom separator. |
-| `ui.breadcrumb_response(&[&str]) -> (Response, Option<usize>)` | Same as `breadcrumb()` but also exposes the row `Response` (hover/focus/rect). |
-| `ui.breadcrumb_response_with(&[&str], separator) -> (Response, Option<usize>)` | Custom separator + `Response`. The plain `breadcrumb()` / `breadcrumb_with()` are wrappers that drop the `Response`. |
+| `ui.breadcrumb(&segments)` | Returns a `Breadcrumb` builder. Chain `.separator(...)` / `.color(...)`; call `.show()` for `BreadcrumbResponse`. Dropping the builder still renders. |
 | `ui.help(&[(&str, &str)])` | Key/description help bar. `ui.help_colored(bindings, key_color, text_color)`. |
 | `ui.help_from_keymap(&keymap)` | From a `KeyMap`. |
 
@@ -276,7 +273,7 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.scrollable(&mut scroll)` | `ContainerBuilder` | Scrollable subtree. |
 | `ui.scroll_col(&mut scroll, |ui|{...})` | `Response` | Vertically scrollable column — shortcut for `scrollable(state).grow(1).col(f)`. |
 | `ui.scroll_row(&mut scroll, |ui|{...})` | `Response` | Horizontally scrollable row — shortcut for `scrollable(state).grow(1).row(f)`. |
-| `ui.scrollbar(&scroll)` | `()` | Draw scrollbar track. |
+| `ui.scrollbar(&mut scroll)` | `Response` | Draw and interact with the scrollbar track. |
 | `ui.modal(|ui| {...})` | `Response` | Dimmed overlay, focus trapped. |
 | `ui.overlay(|ui| {...})` | `Response` | Float without dimming. |
 | `ui.tooltip(text)` | `()` | Shown near cursor on hover. |
@@ -315,6 +312,8 @@ Finalization:
 - `.line(|ui| {...}) -> Response` (inline row, zero-gap)
 - `.draw(|buf, rect| { ... })` — raw buffer access; closure must be `'static`. No interaction.
 - `.draw_with(data, |buf, rect, &data| { ... })` — same but owns per-frame `data` moved into the closure.
+- `.draw_precomputed(w, h, |buf, rect| { ... }) -> Result` — runs the closure immediately, so it may borrow local data; composites the owned cell snapshot after layout.
+- `.draw_with_fallback(draw, fallback)` — catches render-stage panic inside the laid-out raw region.
 - `.draw_interactive(|buf, rect| { ... }) -> Response` — raw draw that also reports click/hover.
 
 ### 5.6 Inputs and actions (return `Response`)
@@ -325,7 +324,7 @@ Finalization:
 | `ui.checkbox(label, &mut bool)` / `checkbox_colored` | — | Checkbox toggle. |
 | `ui.toggle(label, &mut bool)` / `toggle_colored` | — | Toggle switch. |
 | `ui.slider(label, &mut f64, range)` | — | Horizontal slider, `range: RangeInclusive<f64>`. Default step is `span / 20`. |
-| `ui.slider_with_step(label, &mut f64, range, step)` | — | Slider with explicit step size — use when the default step is too coarse/fine (integers need `1.0`, fine controls `0.1`). |
+| `ui.slider_with(&mut f64, SliderOpts::new(label, range).step(step))` | — | Slider with explicit step size using the v0.23 opts API. |
 | `ui.text_input(&mut state)` / `text_input_colored` | `TextInputState` | Single-line input. |
 | `ui.textarea(&mut state, visible_rows)` | `TextareaState` | Multi-line editor. |
 | `ui.select(&mut state)` / `select_colored` | `SelectState` | Dropdown. |
@@ -345,9 +344,9 @@ Finalization:
 
 | Call | Returns | State | Notes |
 |---|---|---|---|
-| `ui.progress(ratio)` | `&mut Self` | — | Progress bar, `f64` 0.0..1.0. |
-| `ui.progress_bar(ratio, width)` | `&mut Self` | — | Fixed-width. `progress_bar_colored(r, w, color)`. |
-| `ui.spinner(&state)` | `&mut Self` | `SpinnerState` | `SpinnerState::dots()` or `::line()`. |
+| `ui.progress(ratio)` | `Response` | — | Progress bar, `f64` 0.0..1.0. |
+| `ui.progress_bar(ratio, width)` | `Response` | — | Fixed-width. `progress_bar_colored(r, w, color)`. |
+| `ui.spinner(&state)` | `Response` | `SpinnerState` | `SpinnerState::dots()` or `::line()`. |
 | `ui.toast(&mut state)` | `&mut Self` | `ToastState` | Render active toasts. |
 | `ui.notify(message, level)` | `()` | — | Fire-and-forget toast. `ToastLevel`: `Info`, `Success`, `Warning`, `Error`. |
 
@@ -413,7 +412,7 @@ Coordinate units are braille pixels: `cv.width() == cols*2`, `cv.height() == row
 
 State:
 - `ui.use_state(|| init) -> State<T>`. Read: `state.get(ui)`. Write: `*state.get_mut(ui) = v`.
-- `ui.use_memo(&deps, |deps| compute) -> &T`. Recomputes only when `deps` changes (must impl `PartialEq + Clone`).
+- `ui.use_memo(&deps, |deps| compute) -> Memo<T>`. Read with `.get(ui)` / `.copied(ui)`; recomputes only when `deps` changes.
 
 Focus:
 - `ui.register_focusable() -> bool` — register current widget as focusable; returns whether it has focus this frame.
@@ -634,10 +633,11 @@ slt::run(move |ui| {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut messages: Vec<String> = Vec::new();
-    let tx = slt::run_async::<String>(move |ui, msgs| {
+    let run = slt::run_async::<String>(move |ui, msgs| {
         messages.extend(msgs.drain(..));
         ui.col(|ui| { for m in &messages { ui.text(m); } });
     })?;
+    let tx = run.sender();
     tokio::spawn(async move {
         for i in 0..10 {
             let _ = tx.send(format!("tick {i}")).await;
@@ -645,7 +645,7 @@ async fn main() -> std::io::Result<()> {
         }
     });
     tokio::signal::ctrl_c().await?;
-    Ok(())
+    run.cancel_and_join().await.map_err(std::io::Error::other)
 }
 ```
 
@@ -667,7 +667,7 @@ ui.row_gap(1, |ui| {
 ```rust
 let mut picker = FilePickerState::new(".").show_hidden(false).extensions(&["rs", "toml"]);
 if ui.file_picker(&mut picker).clicked {
-    if let Some(path) = picker.selected() { println!("picked: {:?}", path); }
+    if let Some(path) = picker.selected_file() { println!("picked: {:?}", path); }
 }
 ```
 
@@ -1022,7 +1022,7 @@ tb.render_with_events(
 
 ## 10. Error modes AI commonly hits
 
-1. **Closure capture lifetime.** `.draw(f)`, `.draw_with(d, f)`, `.draw_interactive(f)` all require `'static` closures because they run after layout. Move owned data in (`draw_with`), or snapshot any borrowed state into an owned `Vec`/`String` first.
+1. **Closure capture lifetime.** Deferred `.draw(f)`, `.draw_with(d, f)`, and `.draw_interactive(f)` require `'static`. Use `.draw_precomputed(w, h, f)` when the draw can target known cell dimensions and should borrow local data without a deep clone.
 2. **Hook ordering.** `use_state` / `use_memo` must be called in the same order every frame. Putting them inside a conditional that flips between frames will panic with a type mismatch message.
 3. **Focus on frame 1.** `ui.focus_count()` returns 0 on the first frame; `Response.rect` is zero-sized until the frame after a widget's first appearance. Avoid relying on these for frame-0 decisions.
 4. **Borrow across `row()` / `col()`.** The closure passed to `.col(...)` borrows `ui` mutably. You cannot hold a reference to `ui` or to the parent `Response` inside that closure. Capture what you need before or read the `Response` after the call.
@@ -1189,13 +1189,14 @@ fn main() -> std::io::Result<()> {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut log: Vec<String> = Vec::new();
-    let tx = slt::run_async::<String>(move |ui, msgs| {
+    let run = slt::run_async::<String>(move |ui, msgs| {
         log.extend(msgs.drain(..));
         ui.col(|ui| { for m in &log { ui.text(m); } });
     })?;
+    let tx = run.sender();
     let _ = tx.send("started".into()).await;
     tokio::signal::ctrl_c().await?;
-    Ok(())
+    run.cancel_and_join().await.map_err(std::io::Error::other)
 }
 ```
 
@@ -1353,7 +1354,7 @@ size: u64
 ```
 Constructor: `FilePickerState::new(".")`.
 Builders: `.show_hidden(bool)`, `.extensions(&["rs", "toml"])`.
-Methods: `.selected() -> Option<&PathBuf>`, `.refresh()`.
+Methods: `.selected_file() -> Option<&PathBuf>`, `.refresh()`, `.retry()`, `.scan_status()`, `.scan_errors()`.
 
 ### CommandPaletteState / PaletteCommand
 ```text
@@ -1441,11 +1442,11 @@ Constructor: `ContextItem::new("agent.rs", 1200)`.
 ### RichLogState / RichLogEntry
 ```text
 // RichLogEntry: single log row with per-segment styles
-// RichLogState
-entries: Vec<RichLogEntry>
+// RichLogState (private VecDeque retention)
 auto_scroll: bool
+max_entries: Option<usize>
 ```
-Methods: `.push(text, style)`, `.push_plain(text)`, `.push_segments(Vec<(String, Style)>)`, `.clear()`.
+Methods: `.push(text, style)`, `.push_plain(text)`, `.push_segments(...)`, `.push_entry(...)`, `.entries()`, `.entry(index)`, `.clear()`.
 
 ### GridColumn
 Per-column spec for `ui.grid_with(&[GridColumn], |ui| { ... })` — fixed or fractional widths.
