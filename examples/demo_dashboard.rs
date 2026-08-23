@@ -216,14 +216,16 @@ pub fn render_frame(
                         let _ = ui.row(|ui| {
                             if ui.button("Kill").clicked {
                                 let row = proc_table.selected;
-                                if let Some(name) = proc_table.rows.get(row).and_then(|r| r.get(1))
+                                if let Some(name) =
+                                    proc_table.rows().get(row).and_then(|r| r.get(1))
                                 {
                                     toasts.warning(format!("Killed: {name}"), tick);
                                 }
                             }
                             if ui.button("Restart").clicked {
                                 let row = proc_table.selected;
-                                if let Some(name) = proc_table.rows.get(row).and_then(|r| r.get(1))
+                                if let Some(name) =
+                                    proc_table.rows().get(row).and_then(|r| r.get(1))
                                 {
                                     toasts.success(format!("Restarted: {name}"), tick);
                                 }

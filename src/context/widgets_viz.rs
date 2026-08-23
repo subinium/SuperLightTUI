@@ -15,7 +15,82 @@ struct VerticalBarLayout {
     bar_units: Vec<usize>,
 }
 
+fn finite_or_zero(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn positive_finite_max(values: impl Iterator<Item = f64>) -> f64 {
+    values
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(1.0, f64::max)
+}
+
+fn bounded_positive_sum(values: impl Iterator<Item = f64>) -> f64 {
+    const MAX_SAFE_SUM: f64 = f64::MAX / 16.0;
+    values
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(0.0, |sum, value| {
+            if sum >= MAX_SAFE_SUM - value.min(MAX_SAFE_SUM) {
+                MAX_SAFE_SUM
+            } else {
+                sum + value
+            }
+        })
+}
+
+fn unit_ratio(value: f64, min: f64, max: f64) -> f64 {
+    crate::chart::finite_ratio(value, min, max).unwrap_or(0.0)
+}
+
+fn finite_lerp(a: f64, b: f64, t: f64) -> f64 {
+    match (a.is_finite(), b.is_finite()) {
+        (true, true) => {
+            let scale = a.abs().max(b.abs()).max(1.0);
+            ((a / scale) * (1.0 - t) + (b / scale) * t) * scale
+        }
+        (true, false) => a,
+        (false, true) => b,
+        (false, false) => f64::NAN,
+    }
+}
+
 impl Context {
+    fn begin_viz_root(&mut self) -> Response {
+        let response = self.interaction();
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new().fg(self.theme.border),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+        response
+    }
+
+    fn begin_sized_viz_root(&mut self, width: u32, height: u32) -> Response {
+        let response = self.begin_viz_root();
+        if let Some(Command::BeginContainer(args)) = self.commands.last_mut() {
+            args.constraints = Constraints::default().w(width).h(height);
+        }
+        response
+    }
+
+    fn end_viz_root(&mut self) {
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+    }
+
     /// Render a horizontal bar chart from `(label, value)` pairs.
     ///
     /// Bars are normalized against the largest value and rendered with `█` up to
@@ -40,17 +115,14 @@ impl Context {
         if data.is_empty() {
             return Response::none();
         }
+        let response = self.begin_viz_root();
 
         let max_label_width = data
             .iter()
             .map(|(label, _)| UnicodeWidthStr::width(*label))
             .max()
             .unwrap_or(0);
-        let max_value = data
-            .iter()
-            .map(|(_, value)| *value)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+        let denom = positive_finite_max(data.iter().map(|(_, value)| *value));
 
         self.skip_interaction_slot();
         self.commands
@@ -75,7 +147,8 @@ impl Context {
         for (label, value) in data {
             let label_width = UnicodeWidthStr::width(*label);
             let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-            let normalized = (*value / denom).clamp(0.0, 1.0);
+            let value = finite_or_zero(*value);
+            let normalized = unit_ratio(value, 0.0, denom);
             let bar = Self::horizontal_bar_text(normalized, max_width);
 
             self.skip_interaction_slot();
@@ -103,7 +176,7 @@ impl Context {
             self.styled(label_text, Style::new().fg(self.theme.text));
             self.styled(bar, Style::new().fg(self.theme.primary));
             self.styled(
-                format_compact_number(*value),
+                format_compact_number(value),
                 Style::new().fg(self.theme.text_dim),
             );
             self.commands.push(Command::EndContainer);
@@ -112,8 +185,9 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Render a bar chart with custom configuration.
@@ -128,9 +202,11 @@ impl Context {
         }
 
         let (config, denom) = self.bar_chart_styled_layout(bars, configure);
+        let response = self.begin_viz_root();
         self.bar_chart_styled_render(bars, max_size, denom, &config);
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     fn bar_chart_styled_layout(
@@ -141,12 +217,11 @@ impl Context {
         let mut config = BarChartConfig::default();
         configure(&mut config);
 
-        let auto_max = bars
-            .iter()
-            .map(|bar| bar.value)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let max_value = config.max_value.unwrap_or(auto_max);
-        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+        let auto_max = positive_finite_max(bars.iter().map(|bar| bar.value));
+        let configured_max = config
+            .max_value
+            .filter(|value| value.is_finite() && *value > 0.0);
+        let denom = configured_max.unwrap_or(auto_max);
 
         (config, denom)
     }
@@ -222,7 +297,7 @@ impl Context {
     ) {
         let label_width = UnicodeWidthStr::width(bar.label.as_str());
         let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-        let normalized = (bar.value / denom).clamp(0.0, 1.0);
+        let normalized = unit_ratio(finite_or_zero(bar.value), 0.0, denom);
         let bar_text = Self::horizontal_bar_text(normalized, max_width);
         let color = bar.color.unwrap_or(self.theme.primary);
 
@@ -328,7 +403,8 @@ impl Context {
         let bar_units: Vec<usize> = bars
             .iter()
             .map(|bar| {
-                ((bar.value / denom).clamp(0.0, 1.0) * chart_height as f64 * 8.0).round() as usize
+                (unit_ratio(finite_or_zero(bar.value), 0.0, denom) * chart_height as f64 * 8.0)
+                    .round() as usize
             })
             .collect();
 
@@ -502,13 +578,13 @@ impl Context {
         let mut config = BarChartConfig::default();
         configure(&mut config);
 
-        let auto_max = all_bars
-            .iter()
-            .map(|bar| bar.value)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let max_value = config.max_value.unwrap_or(auto_max);
-        let denom = if max_value > 0.0 { max_value } else { 1.0 };
+        let auto_max = positive_finite_max(all_bars.iter().map(|bar| bar.value));
+        let denom = config
+            .max_value
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(auto_max);
 
+        let response = self.begin_viz_root();
         match config.direction {
             BarDirection::Horizontal => {
                 self.render_grouped_horizontal_bars(groups, max_size, denom, &config)
@@ -517,8 +593,9 @@ impl Context {
                 self.render_grouped_vertical_bars(groups, max_size, denom, &config)
             }
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     fn render_grouped_horizontal_bars(
@@ -581,7 +658,7 @@ impl Context {
             for bar in &group.bars {
                 let label_width = UnicodeWidthStr::width(bar.label.as_str());
                 let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
-                let normalized = (bar.value / denom).clamp(0.0, 1.0);
+                let normalized = unit_ratio(finite_or_zero(bar.value), 0.0, denom);
                 let bar_text = Self::horizontal_bar_text(normalized, max_width);
 
                 self.skip_interaction_slot();
@@ -675,14 +752,19 @@ impl Context {
     }
 
     fn horizontal_bar_text(normalized: f64, max_width: u32) -> String {
-        let filled = (normalized.clamp(0.0, 1.0) * max_width as f64).round() as usize;
+        let normalized = if normalized.is_finite() {
+            normalized.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let filled = (normalized * max_width as f64).round() as usize;
         "█".repeat(filled)
     }
 
     fn bar_display_value(bar: &Bar) -> String {
         bar.text_value
             .clone()
-            .unwrap_or_else(|| format_compact_number(bar.value))
+            .unwrap_or_else(|| format_compact_number(finite_or_zero(bar.value)))
     }
 
     fn center_and_truncate_text(text: &str, width: usize) -> String {
@@ -690,16 +772,7 @@ impl Context {
             return String::new();
         }
 
-        let mut out = String::new();
-        let mut used = 0usize;
-        for ch in text.chars() {
-            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-            if used + cw > width {
-                break;
-            }
-            out.push(ch);
-            used += cw;
-        }
+        let out = crate::chart::clip_text_cells(text, width);
         center_text(&out, width)
     }
 
@@ -737,7 +810,7 @@ impl Context {
                     let idx = t.floor() as usize;
                     let frac = t - idx as f64;
                     if idx + 1 < data.len() {
-                        data[idx] * (1.0 - frac) + data[idx + 1] * frac
+                        finite_lerp(data[idx], data[idx + 1], frac)
                     } else {
                         data[idx.min(data.len() - 1)]
                     }
@@ -745,25 +818,39 @@ impl Context {
                 .collect()
         };
 
-        let min = points.iter().copied().fold(f64::INFINITY, f64::min);
-        let max = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let range = max - min;
+        let mut finite = points.iter().copied().filter(|value| value.is_finite());
+        let Some(first) = finite.next() else {
+            let response = self.interaction();
+            self.styled(" ".repeat(w), Style::new().fg(self.theme.text_dim))
+                .w(width);
+            return response;
+        };
+        let (mut min, mut max) = (first, first);
+        for value in finite {
+            min = min.min(value);
+            max = max.max(value);
+        }
 
         let line: String = points
             .iter()
             .map(|&value| {
-                let normalized = if range == 0.0 {
+                if !value.is_finite() {
+                    return ' ';
+                }
+                let normalized = if min == max {
                     0.5
                 } else {
-                    (value - min) / range
+                    unit_ratio(value, min, max)
                 };
                 let idx = (normalized * 7.0).round() as usize;
                 BLOCKS[idx.min(7)]
             })
             .collect();
 
-        self.styled(line, Style::new().fg(self.theme.primary));
-        Response::none()
+        let response = self.interaction();
+        self.styled(line, Style::new().fg(self.theme.primary))
+            .w(width);
+        response
     }
 
     /// Render a sparkline with per-point colors.
@@ -811,10 +898,10 @@ impl Context {
                     let color = data[nearest].1;
                     let (v1, _) = data[idx];
                     let (v2, _) = data[(idx + 1).min(data.len() - 1)];
-                    let value = if v1.is_nan() || v2.is_nan() {
+                    let value = if !v1.is_finite() || !v2.is_finite() {
                         if frac < 0.5 { v1 } else { v2 }
                     } else {
-                        v1 * (1.0 - frac) + v2 * frac
+                        finite_lerp(v1, v2, frac)
                     };
                     (value, color)
                 })
@@ -824,13 +911,14 @@ impl Context {
         let mut finite_values = window
             .iter()
             .map(|(value, _)| *value)
-            .filter(|value| !value.is_nan());
+            .filter(|value| value.is_finite());
         let Some(first) = finite_values.next() else {
+            let response = self.interaction();
             self.styled(
                 " ".repeat(window.len()),
                 Style::new().fg(self.theme.text_dim),
             );
-            return Response::none();
+            return response;
         };
 
         let mut min = first;
@@ -839,24 +927,23 @@ impl Context {
             min = f64::min(min, value);
             max = f64::max(max, value);
         }
-        let range = max - min;
-
         let mut cells: Vec<(char, Color)> = Vec::with_capacity(window.len());
         for (value, color) in &window {
-            if value.is_nan() {
+            if !value.is_finite() {
                 cells.push((' ', self.theme.text_dim));
                 continue;
             }
 
-            let normalized = if range == 0.0 {
+            let normalized = if min == max {
                 0.5
             } else {
-                ((*value - min) / range).clamp(0.0, 1.0)
+                unit_ratio(*value, min, max)
             };
             let idx = (normalized * 7.0).round() as usize;
             cells.push((BLOCKS[idx.min(7)], color.unwrap_or(self.theme.primary)));
         }
 
+        let response = self.begin_sized_viz_root(width, 1);
         self.skip_interaction_slot();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -880,7 +967,8 @@ impl Context {
         if cells.is_empty() {
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
-            return Response::none();
+            self.end_viz_root();
+            return response;
         }
 
         let mut seg = String::new();
@@ -899,8 +987,9 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Render a multi-row line chart using braille characters.
@@ -958,6 +1047,14 @@ impl Context {
         if data.is_empty() || width == 0 || height == 0 {
             return Response::none();
         }
+        let data: Vec<f64> = data
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite())
+            .collect();
+        if data.is_empty() {
+            return Response::none();
+        }
 
         let cols = width as usize;
         let rows = height as usize;
@@ -966,11 +1063,6 @@ impl Context {
 
         let min = data.iter().copied().fold(f64::INFINITY, f64::min);
         let max = data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let range = if (max - min).abs() < f64::EPSILON {
-            1.0
-        } else {
-            max - min
-        };
 
         let points: Vec<usize> = (0..px_w)
             .map(|px| {
@@ -982,12 +1074,16 @@ impl Context {
                 let idx = data_idx.floor() as usize;
                 let frac = data_idx - idx as f64;
                 let value = if idx + 1 < data.len() {
-                    data[idx] * (1.0 - frac) + data[idx + 1] * frac
+                    finite_lerp(data[idx], data[idx + 1], frac)
                 } else {
                     data[idx.min(data.len() - 1)]
                 };
 
-                let normalized = (value - min) / range;
+                let normalized = if min == max {
+                    0.5
+                } else {
+                    unit_ratio(value, min, max)
+                };
                 let py = ((1.0 - normalized) * (px_h - 1) as f64).round() as usize;
                 py.min(px_h - 1)
             })
@@ -1050,6 +1146,7 @@ impl Context {
         }
 
         let style = Style::new().fg(color);
+        let response = self.begin_sized_viz_root(width, height);
         for row in grid {
             let line: String = row
                 .iter()
@@ -1057,8 +1154,9 @@ impl Context {
                 .collect();
             self.styled(line, style);
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Render an OHLC candlestick chart.
@@ -1072,7 +1170,20 @@ impl Context {
             return Response::none();
         }
 
-        let candles = candles.to_vec();
+        let candles: Vec<Candle> = candles
+            .iter()
+            .copied()
+            .filter(|candle| {
+                candle.open.is_finite()
+                    && candle.high.is_finite()
+                    && candle.low.is_finite()
+                    && candle.close.is_finite()
+            })
+            .collect();
+        if candles.is_empty() {
+            return Response::none();
+        }
+        let response = self.interaction();
         self.container().grow(1).draw(move |buf, rect| {
             let w = rect.width as usize;
             let h = rect.height as usize;
@@ -1095,21 +1206,12 @@ impl Context {
                 return;
             }
 
-            let range = if (hi - lo).abs() < 0.01 { 1.0 } else { hi - lo };
             let map_y = |v: f64| -> usize {
-                let t = ((v - lo) / range).clamp(0.0, 1.0);
+                let t = if lo == hi { 0.5 } else { unit_ratio(v, lo, hi) };
                 ((1.0 - t) * (h.saturating_sub(1)) as f64).round() as usize
             };
 
             for (i, c) in candles.iter().enumerate() {
-                if !c.open.is_finite()
-                    || !c.high.is_finite()
-                    || !c.low.is_finite()
-                    || !c.close.is_finite()
-                {
-                    continue;
-                }
-
                 let x0 = i * w / candles.len();
                 let x1 = ((i + 1) * w / candles.len()).saturating_sub(1).max(x0);
                 if x0 >= w {
@@ -1148,7 +1250,7 @@ impl Context {
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a heatmap from a 2D data grid.
@@ -1195,11 +1297,11 @@ impl Context {
             return Response::none();
         }
 
-        let range = max_value - min_value;
-        let zero_range = range.abs() < f64::EPSILON;
+        let zero_range = min_value == max_value;
         let cols = width as usize;
         let rows = height as usize;
 
+        let response = self.begin_sized_viz_root(width, height);
         for row_idx in 0..rows {
             let data_row_idx = (row_idx * data_rows / rows).min(data_rows.saturating_sub(1));
             let source_row = &data[data_row_idx];
@@ -1240,7 +1342,7 @@ impl Context {
                     } else if zero_range {
                         0.5
                     } else {
-                        ((value - min_value) / range).clamp(0.0, 1.0)
+                        unit_ratio(value, min_value, max_value)
                     }
                 };
 
@@ -1269,8 +1371,9 @@ impl Context {
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Render a braille drawing canvas.
@@ -1302,6 +1405,7 @@ impl Context {
         let mut canvas = CanvasContext::new(width as usize, height as usize);
         draw(&mut canvas);
 
+        let response = self.begin_sized_viz_root(width, height);
         for segments in canvas.render() {
             self.skip_interaction_slot();
             self.commands
@@ -1333,8 +1437,9 @@ impl Context {
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Render a multi-series chart with axes, legend, and auto-scaling.
@@ -1359,6 +1464,7 @@ impl Context {
         let config = builder.build();
         let rows = render_chart(&config);
 
+        let response = self.begin_sized_viz_root(width, height);
         for row in rows {
             self.skip_interaction_slot();
             self.commands
@@ -1385,8 +1491,9 @@ impl Context {
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     /// Renders a scatter plot.
@@ -1426,6 +1533,7 @@ impl Context {
         let config = build_histogram_config(data, &options, width, height, axis_style);
         let rows = render_chart(&config);
 
+        let response = self.begin_sized_viz_root(width, height);
         for row in rows {
             self.skip_interaction_slot();
             self.commands
@@ -1452,8 +1560,9 @@ impl Context {
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
         }
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 
     #[cfg(feature = "qrcode")]
@@ -1463,8 +1572,9 @@ impl Context {
         let code = match qrcode::QrCode::new(data.as_ref()) {
             Ok(code) => code,
             Err(_) => {
+                let response = self.interaction();
                 self.text("[QR Error]");
-                return Response::none();
+                return response;
             }
         };
 
@@ -1476,6 +1586,7 @@ impl Context {
         let theme_text = self.theme.text;
         let theme_bg = self.theme.bg;
 
+        let response = self.interaction();
         self.container()
             .w(qr_width as u32)
             .h(qr_height as u32)
@@ -1519,7 +1630,7 @@ impl Context {
                 }
             });
 
-        Response::none()
+        response
     }
 
     /// Render a heatmap using half-block characters for 2× vertical resolution.
@@ -1572,8 +1683,7 @@ impl Context {
             return Response::none();
         }
 
-        let range = max_value - min_value;
-        let zero_range = range.abs() < f64::EPSILON;
+        let zero_range = min_value == max_value;
 
         let data = data.to_vec();
         let cols = width as usize;
@@ -1581,6 +1691,7 @@ impl Context {
         // Each terminal row maps to 2 data rows
         let virtual_rows = rows * 2;
 
+        let response = self.interaction();
         self.container().w(width).h(height).draw(move |buf, rect| {
             let w = rect.width as usize;
             let h = rect.height as usize;
@@ -1601,7 +1712,7 @@ impl Context {
                 } else if zero_range {
                     0.5
                 } else {
-                    ((v - min_value) / range).clamp(0.0, 1.0)
+                    unit_ratio(v, min_value, max_value)
                 }
             };
 
@@ -1627,7 +1738,7 @@ impl Context {
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a candlestick chart with heavy box-drawing and half-block precision.
@@ -1662,7 +1773,20 @@ impl Context {
             return Response::none();
         }
 
-        let candles = candles.to_vec();
+        let candles: Vec<Candle> = candles
+            .iter()
+            .copied()
+            .filter(|candle| {
+                candle.open.is_finite()
+                    && candle.high.is_finite()
+                    && candle.low.is_finite()
+                    && candle.close.is_finite()
+            })
+            .collect();
+        if candles.is_empty() {
+            return Response::none();
+        }
+        let response = self.interaction();
         self.container().grow(1).draw(move |buf, rect| {
             let w = rect.width as usize;
             let h = rect.height as usize;
@@ -1684,31 +1808,22 @@ impl Context {
                 return;
             }
 
-            let price_range = if (hi - lo).abs() < 0.01 { 1.0 } else { hi - lo };
             // Cell-resolution price-to-row map (used for wicks).
             let map_y = |v: f64| -> usize {
-                let t = ((v - lo) / price_range).clamp(0.0, 1.0);
+                let t = if lo == hi { 0.5 } else { unit_ratio(v, lo, hi) };
                 ((1.0 - t) * h.saturating_sub(1) as f64).round() as usize
             };
             // Half-cell resolution price-to-row map (used for body edges).
             // Returns half-cell index in [0, 2h-1]; 0 = top of cell 0, 2h-1 = bottom of cell h-1.
             let half_rows = h.saturating_mul(2);
             let map_y_half = |v: f64| -> usize {
-                let t = ((v - lo) / price_range).clamp(0.0, 1.0);
+                let t = if lo == hi { 0.5 } else { unit_ratio(v, lo, hi) };
                 ((1.0 - t) * half_rows.saturating_sub(1) as f64).round() as usize
             };
 
             let n = candles.len();
 
             for (i, c) in candles.iter().enumerate() {
-                if !c.open.is_finite()
-                    || !c.high.is_finite()
-                    || !c.low.is_finite()
-                    || !c.close.is_finite()
-                {
-                    continue;
-                }
-
                 // Distribute candles evenly across full width
                 let x0 = i * w / n;
                 let x1 = ((i + 1) * w / n).saturating_sub(1).max(x0);
@@ -1766,7 +1881,7 @@ impl Context {
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a treemap using the squarified layout algorithm.
@@ -1793,7 +1908,15 @@ impl Context {
             return Response::none();
         }
 
-        let items = items.to_vec();
+        let items: Vec<TreemapItem> = items
+            .iter()
+            .filter(|item| item.value.is_finite() && item.value > 0.0)
+            .cloned()
+            .collect();
+        if items.is_empty() {
+            return Response::none();
+        }
+        let response = self.interaction();
         self.container().grow(1).draw(move |buf, rect| {
             let w = rect.width as usize;
             let h = rect.height as usize;
@@ -1803,13 +1926,14 @@ impl Context {
 
             // Filter out items that would be too small to render (< 1 cell)
             let total_area = w as f64 * h as f64;
-            let total_value: f64 = items.iter().map(|i| i.value.max(0.0)).sum();
+            let max_value = items.iter().map(|item| item.value).fold(0.0, f64::max);
+            let total_value: f64 = items.iter().map(|item| item.value / max_value).sum();
             let min_area_threshold = 1.0; // at least 1 cell
             let visible_items: Vec<&TreemapItem> = if total_value > 0.0 {
                 items
                     .iter()
                     .filter(|item| {
-                        item.value.max(0.0) / total_value * total_area >= min_area_threshold
+                        (item.value / max_value) / total_value * total_area >= min_area_threshold
                     })
                     .collect()
             } else {
@@ -1861,43 +1985,34 @@ impl Context {
                     let label_y = y0 + cell_h / 2;
                     let label_x = x0 + (cell_w.saturating_sub(label_unicode_w)) / 2;
                     if label_y < y1.min(h) {
-                        for (offset, ch) in label.chars().enumerate() {
-                            let cx = label_x + offset;
-                            if cx < x1.min(w) {
-                                buf.set_char(
-                                    rect.x + cx as u32,
-                                    rect.y + label_y as u32,
-                                    ch,
-                                    Style::new().fg(text_color).bg(item.color).bold(),
-                                );
-                            }
-                        }
+                        buf.set_string(
+                            rect.x + label_x as u32,
+                            rect.y + label_y as u32,
+                            label,
+                            Style::new().fg(text_color).bg(item.color).bold(),
+                        );
                     }
 
                     // Value label below if space permits
                     if cell_h >= 3 {
                         let value_str = format_compact_number(item.value);
                         let value_y = label_y + 1;
-                        if value_y < y1.min(h) && value_str.len() < cell_w {
-                            let vx = x0 + (cell_w.saturating_sub(value_str.len())) / 2;
-                            for (offset, ch) in value_str.chars().enumerate() {
-                                let cx = vx + offset;
-                                if cx < x1.min(w) {
-                                    buf.set_char(
-                                        rect.x + cx as u32,
-                                        rect.y + value_y as u32,
-                                        ch,
-                                        Style::new().fg(text_color).bg(item.color).dim(),
-                                    );
-                                }
-                            }
+                        let value_width = UnicodeWidthStr::width(value_str.as_str());
+                        if value_y < y1.min(h) && value_width < cell_w {
+                            let vx = x0 + (cell_w.saturating_sub(value_width)) / 2;
+                            buf.set_string(
+                                rect.x + vx as u32,
+                                rect.y + value_y as u32,
+                                &value_str,
+                                Style::new().fg(text_color).bg(item.color).dim(),
+                            );
                         }
                     }
                 }
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a stacked bar chart with custom configuration.
@@ -1952,10 +2067,12 @@ impl Context {
         // Find max stacked total
         let max_total: f64 = groups
             .iter()
-            .map(|g| g.bars.iter().map(|b| b.value.max(0.0)).sum::<f64>())
-            .fold(f64::NEG_INFINITY, f64::max);
-        let denom = config.max_value.unwrap_or(max_total);
-        let denom = if denom > 0.0 { denom } else { 1.0 };
+            .map(|g| bounded_positive_sum(g.bars.iter().map(|bar| bar.value)))
+            .fold(1.0, f64::max);
+        let denom = config
+            .max_value
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(max_total);
 
         let chart_height = max_height.max(1) as usize;
         let bar_width = config.bar_width.max(1) as usize;
@@ -1963,6 +2080,7 @@ impl Context {
 
         const FRACTION_BLOCKS: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
 
+        let response = self.begin_viz_root();
         self.skip_interaction_slot();
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -1995,7 +2113,7 @@ impl Context {
                     .bars
                     .iter()
                     .map(|b| {
-                        let normalized = (b.value.max(0.0) / denom).clamp(0.0, 1.0);
+                        let normalized = unit_ratio(finite_or_zero(b.value).max(0.0), 0.0, denom);
                         StackedSegment {
                             units: (normalized * chart_height as f64 * 8.0).round() as usize,
                             color: b.color.unwrap_or(self.theme.primary),
@@ -2112,8 +2230,9 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        self.end_viz_root();
 
-        Response::none()
+        response
     }
 }
 
@@ -2150,12 +2269,23 @@ struct LayoutRect {
 
 /// Squarified treemap layout algorithm (Bruls, Huizing, van Wijk 2000).
 fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec<LayoutRect> {
-    if items.is_empty() || w <= 0.0 || h <= 0.0 {
+    if items.is_empty()
+        || !x.is_finite()
+        || !y.is_finite()
+        || !w.is_finite()
+        || !h.is_finite()
+        || w <= 0.0
+        || h <= 0.0
+    {
         return Vec::new();
     }
 
-    let total: f64 = items.iter().map(|i| i.value.max(0.0)).sum();
-    if total <= 0.0 {
+    let max_value = items
+        .iter()
+        .map(|item| item.value)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(0.0, f64::max);
+    if max_value <= 0.0 {
         return items
             .iter()
             .map(|_| LayoutRect {
@@ -2166,6 +2296,16 @@ fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec
             })
             .collect();
     }
+    let total: f64 = items
+        .iter()
+        .map(|item| {
+            if item.value.is_finite() && item.value > 0.0 {
+                item.value / max_value
+            } else {
+                0.0
+            }
+        })
+        .sum();
 
     // Normalize values to fill the available area
     let area = w * h;
@@ -2174,7 +2314,14 @@ fn squarify_layout(items: &[TreemapItem], x: f64, y: f64, w: f64, h: f64) -> Vec
 
     let areas: Vec<f64> = sorted_indices
         .iter()
-        .map(|&i| items[i].value.max(0.0) / total * area)
+        .map(|&i| {
+            let value = if items[i].value.is_finite() && items[i].value > 0.0 {
+                items[i].value / max_value
+            } else {
+                0.0
+            };
+            value / total * area
+        })
         .collect();
 
     let mut result = vec![
@@ -2391,7 +2538,11 @@ fn squarify_recursive(
 /// fall back to a binary threshold at `t = 0.5`. `t` is clamped to `[0.0, 1.0]`.
 #[inline]
 fn blend_color(a: Color, b: Color, t: f64) -> Color {
-    let t = t.clamp(0.0, 1.0);
+    let t = if t.is_finite() {
+        t.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     match (a, b) {
         (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => Color::Rgb(
             (r1 as f64 * (1.0 - t) + r2 as f64 * t).round() as u8,
@@ -2410,18 +2561,7 @@ fn blend_color(a: Color, b: Color, t: f64) -> Color {
 
 /// Choose a contrasting label color for treemap cells.
 fn treemap_label_color(bg: Color) -> Color {
-    match bg {
-        Color::Rgb(r, g, b) => {
-            // Relative luminance (simplified)
-            let lum = 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64;
-            if lum > 128.0 {
-                Color::Rgb(0, 0, 0)
-            } else {
-                Color::Rgb(255, 255, 255)
-            }
-        }
-        _ => Color::White,
-    }
+    Color::contrast_fg(bg)
 }
 
 #[cfg(all(test, feature = "qrcode"))]
@@ -2448,5 +2588,62 @@ fn treemap_cjk_label_no_panic() {
             TreemapItem::new("🎉파티", 30.0, Color::Green),
         ]);
     });
-    // passes if no panic
+    backend.assert_contains("한글파일");
+    backend.assert_contains("English");
+}
+
+#[test]
+fn treemap_named_indexed_and_rgb_colors_choose_contrast() {
+    assert_eq!(treemap_label_color(Color::Black), Color::Rgb(255, 255, 255));
+    assert_eq!(treemap_label_color(Color::White), Color::Rgb(0, 0, 0));
+    assert_eq!(
+        treemap_label_color(Color::Indexed(231)),
+        Color::Rgb(0, 0, 0)
+    );
+    assert_eq!(
+        treemap_label_color(Color::Rgb(10, 20, 30)),
+        Color::Rgb(255, 255, 255)
+    );
+}
+
+#[test]
+fn viz_widgets_return_outer_warm_frame_rects() {
+    let mut sparkline_backend = crate::TestBackend::new(20, 4);
+    let mut sparkline_response = Response::none();
+    sparkline_backend.render(|ui| sparkline_response = ui.sparkline(&[1.0, 2.0, 3.0], 8));
+    sparkline_backend.render(|ui| sparkline_response = ui.sparkline(&[1.0, 2.0, 3.0], 8));
+    assert_eq!(sparkline_response.rect.width, 8);
+    assert_eq!(sparkline_response.rect.height, 1);
+
+    let mut chart_backend = crate::TestBackend::new(30, 10);
+    let mut chart_response = Response::none();
+    chart_backend.render(|ui| {
+        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4);
+    });
+    chart_backend.render(|ui| {
+        chart_response = ui.line_chart(&[1.0, 3.0, 2.0], 12, 4);
+    });
+    assert_eq!(chart_response.rect.width, 12);
+    assert_eq!(chart_response.rect.height, 4);
+}
+
+#[test]
+fn viz_non_finite_inputs_follow_missing_or_zero_policy() {
+    let mut backend = crate::TestBackend::new(40, 12);
+    backend.render(|ui| {
+        let _ = ui.bar_chart(&[("nan", f64::NAN), ("inf", f64::INFINITY), ("ok", 2.0)], 8);
+        let _ = ui.sparkline(&[f64::NEG_INFINITY, 1.0, f64::NAN, 2.0], 8);
+    });
+    let output = backend.to_string();
+    assert!(!output.contains("NaN"));
+    assert!(!output.contains("inf\u{221e}"));
+}
+
+#[test]
+fn extreme_finite_viz_ratios_remain_bounded() {
+    for value in [-f64::MAX, 0.0, f64::MAX] {
+        let ratio = unit_ratio(value, -f64::MAX, f64::MAX);
+        assert!(ratio.is_finite());
+        assert!((0.0..=1.0).contains(&ratio));
+    }
 }

@@ -28,16 +28,16 @@ SuperLightTUI は、公開される文法を意図的に小さく保った Rust 
 <table>
   <tr>
     <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example demo_spreadsheet</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — マウスカーソルの周りでテキストがリアルタイムに再配置されます<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — マウスカーソルの周りでテキストがリアルタイムに再配置されます<br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
 </table>
 
@@ -225,13 +225,13 @@ ui.canvas(40, 10, |cv| {
 | `hello` | `cargo run --example hello` | 最小のアプリ |
 | `counter` | `cargo run --example counter` | 状態 + キーボード入力 |
 | `demo` | `cargo run --example demo` | 幅広いウィジェットツアー |
-| `demo_dashboard` | `cargo run --example demo_dashboard` | ダッシュボードレイアウト |
-| `demo_cli` | `cargo run --example demo_cli` | CLI ツールのレイアウト |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | チャートとデータ可視化 |
-| `demo_game` | `cargo run --example demo_game` | immediate-mode のインタラクション |
-| `demo_design_system` | `cargo run --example demo_design_system` | デザイントークン、テーマ、スタイル継承 |
-| `inline` | `cargo run --example inline` | 通常のプロンプトの下に inline 描画 |
-| `async_demo` | `cargo run --example async_demo --features async` | バックグラウンドメッセージ |
+| `demo_dashboard` | `cargo run --example showcase_tour` | ダッシュボードレイアウト |
+| `demo_cli` | `cargo run --example showcase_tour` | CLI ツールのレイアウト |
+| `demo_infoviz` | `cargo run --example showcase_tour` | チャートとデータ可視化 |
+| `demo_game` | `cargo run --example showcase_tour` | immediate-mode のインタラクション |
+| `demo_design_system` | `cargo run --example showcase_tour` | デザイントークン、テーマ、スタイル継承 |
+| `inline` | `cargo run --example system_tour` | 通常のプロンプトの下に inline 描画 |
+| `async_demo` | `cargo run --example system_tour --features async` | バックグラウンドメッセージ |
 
 分類済みの完全な一覧は [サンプル集] にあります。
 

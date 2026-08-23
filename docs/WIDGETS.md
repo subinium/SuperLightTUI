@@ -32,22 +32,27 @@ Every widget method on `Context` follows one of these return patterns:
 
 | Return type | Meaning | When to use |
 |---|---|---|
-| `&mut Self` | Style-chainable display element | `text`, `separator`, `progress`, `spinner`, `toast`, `spacer` |
+| `&mut Self` | Style-chainable display element | `text`, `separator`, `toast`, `spacer` |
 | `Response` | Interactive widget with click/hover/changed/focused/rect | `button`, `list`, `table`, `tabs`, `col`, `row`, `alert`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
-| `Option<usize>` | Index of selected segment, or `None` | `breadcrumb` |
-| `(Response, Option<usize>)` | Row `Response` plus clicked segment index | `breadcrumb_response`, `breadcrumb_response_with` |
-| `()` | Fire-and-forget side-effect | `tooltip`, `scrollbar`, `notify`, `screen` |
+| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block` |
+| `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
 
 **`Response` fields:**
 
 ```rust
 pub struct Response {
-    pub clicked: bool,   // clicked this frame
-    pub hovered: bool,   // mouse hovering
-    pub changed: bool,   // value changed this frame
-    pub focused: bool,   // has keyboard focus
-    pub rect: Rect,      // layout rectangle (valid after layout pass)
+    pub clicked: bool,
+    pub right_clicked: bool,
+    pub hovered: bool,
+    pub changed: bool,
+    pub focused: bool,
+    pub gained_focus: bool,
+    pub lost_focus: bool,
+    pub double_clicked: bool,
+    pub submitted: bool,
+    pub scroll_delta: i32,
+    pub rect: Rect,
 }
 ```
 
@@ -98,7 +103,7 @@ All return `Response` unless noted.
 | `definition_list(items)` | Key-value list from `&[(&str, &str)]` |
 | `accordion(title, open, f)` | Collapsible section. `open: &mut bool` |
 | `confirm(question, result)` | Yes/No dialog. `result: &mut bool`, `Response.clicked` on answer |
-| `breadcrumb(segments)` | Clickable breadcrumb trail. Returns `Option<usize>`. Variants: `breadcrumb_with(segments, sep)`; `breadcrumb_response(segments)` and `breadcrumb_response_with(segments, sep)` return `(Response, Option<usize>)` so you can read hover/focus/rect alongside the clicked index. |
+| `breadcrumb(segments)` | Clickable breadcrumb builder. Chain `.separator(...)` / `.color(...)`; `.show()` returns `BreadcrumbResponse` with `clicked_segment`. |
 | `help(bindings)` | Keybinding help bar from `&[(&str, &str)]`. Variant: `help_colored(bindings, key_color, text_color)` |
 | `help_from_keymap(keymap)` | Help bar from a `KeyMap` struct |
 
@@ -117,7 +122,7 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 | `grid(cols, f)` | `Response` | Fixed-column grid layout |
 | `container()` | `ContainerBuilder` | Fluent builder for borders, padding, grow, constraints, title |
 | `scrollable(state)` | `ContainerBuilder` | Scrollable container. `ScrollState` |
-| `scrollbar(state)` | `()` | Render scrollbar track for a `ScrollState` |
+| `scrollbar(state)` | `Response` | Render and interact with a mutable `ScrollState` scrollbar track |
 | `bordered(border)` | `ContainerBuilder` | Shorthand for `container().border(border)` |
 | `modal(f)` | `Response` | Modal overlay with dimmed background |
 | `overlay(f)` | `Response` | Floating overlay (no dimming) |
@@ -155,7 +160,7 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `checkbox(label, checked)` | `&mut bool` | Checkbox toggle. Variant: `checkbox_colored(...)` |
 | `toggle(label, on)` | `&mut bool` | Toggle switch. Variant: `toggle_colored(...)` |
 | `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider (default step = `span / 20`) |
-| `slider_with_step(label, value, range, step)` | `&mut f64`, `RangeInclusive<f64>`, `f64` | Slider with explicit step size — use for integer counters (`1.0`) or fine controls (`0.1`) |
+| `slider_with(value, opts)` | `&mut f64`, `SliderOpts` | Slider with explicit options, e.g. `SliderOpts::new(label, range).step(1.0)` |
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
 | `select(state)` | `SelectState` | Dropdown select. Variant: `select_colored(...)` |
@@ -185,9 +190,9 @@ if ui.tabs(&mut tabs).changed {
 
 | Method | Returns | State type | Description |
 |---|---|---|---|
-| `progress(ratio)` | `&mut Self` | — | Progress bar, `f64` 0.0..1.0 |
-| `progress_bar(ratio, width)` | `&mut Self` | — | Fixed-width progress bar. Variant: `progress_bar_colored(ratio, width, color)` |
-| `spinner(state)` | `&mut Self` | `SpinnerState` | Animated spinner (dots, line, etc.) |
+| `progress(ratio)` | `Response` | — | Progress bar, `f64` 0.0..1.0 |
+| `progress_bar(ratio, width)` | `Response` | — | Fixed-width progress bar. Variant: `progress_bar_colored(ratio, width, color)` |
+| `spinner(state)` | `Response` | `SpinnerState` | Animated spinner (dots, line, etc.) |
 | `toast(state)` | `&mut Self` | `ToastState` | Render active toast notifications |
 | `notify(message, level)` | `()` | — | Fire-and-forget toast. `ToastLevel`: `Info`, `Success`, `Warning`, `Error` |
 
@@ -261,7 +266,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | Method | Returns | Description |
 |---|---|---|
 | `use_state(init)` | `State<T>` | Persistent state across frames. Read with `.get(ui)`, mutate with `.get_mut(ui)` |
-| `use_memo(deps, compute)` | `&T` | Memoized computation, recomputes when `deps` changes |
+| `use_memo(deps, compute)` | `Memo<T>` | Memoized computation; read with `.get(ui)` / `.copied(ui)` |
 
 ### Focus & interaction
 
@@ -345,7 +350,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `tree` | `TreeState` | `.nodes`, `.selected`, `.expanded: HashSet` |
 | `directory_tree` | `DirectoryTreeState` | `.root: PathBuf`, `.selected_path()` |
 | `calendar` | `CalendarState` | `.year`, `.month`, `.cursor_day`, `.selected_date()` |
-| `file_picker` | `FilePickerState` | `.current_dir`, `.selected_path()` |
+| `file_picker` | `FilePickerState` | `.current_dir`, `.selected_file()`, `.scan_status()`, `.scan_errors()`, `.retry()` |
 | `command_palette` | `CommandPaletteState` | `.commands: Vec<PaletteCommand>`, `.open`, `.input`, `.last_selected` |
 | `scroll` | `ScrollState` | `.offset`, `.content_height`, `.viewport_height` |
 | `spinner` | `SpinnerState` | `::dots()`, `::line()`, `.frame(tick)` |
@@ -357,7 +362,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
-| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries`, `.auto_scroll`, `.max_entries: Option<usize>`. `::new()` caps at 10,000; `::new_unbounded()` opts out (use only when growth is bounded elsewhere). |
+| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries()`, `.entry(index)`, `.auto_scroll`, `.max_entries`. `::new()` uses O(1)-amortized capped deque retention; `::new_unbounded()` opts out. |
 | `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
 
 ---
@@ -433,6 +438,8 @@ Example: `.w_sm(40)` sets width to 40 only at the `Sm` breakpoint.
 | `.col(f)` | Render as vertical container, returns `Response` |
 | `.row(f)` | Render as horizontal container, returns `Response` |
 | `.draw(f)` | Raw buffer access. Closure: `FnOnce(&mut Buffer, Rect) + 'static` |
+| `.draw_precomputed(w, h, f)` | Immediate borrowed-data cell snapshot, deferred compositing |
+| `.draw_with_fallback(draw, fallback)` | Raw draw with a render-stage panic fallback |
 | `.apply(style)` | Apply a `ContainerStyle` struct |
 
 ---

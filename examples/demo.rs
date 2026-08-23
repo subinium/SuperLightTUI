@@ -891,13 +891,13 @@ fn render_layout(
                 ui.text(format!(
                     "{} / {} rows",
                     table.visible_indices().len(),
-                    table.rows.len(),
+                    table.rows().len(),
                 ))
                 .dim();
                 ui.spacer();
                 if let Some(col) = table.sort_column {
                     let dir = if table.sort_ascending { "ASC" } else { "DESC" };
-                    ui.text(format!("{} {dir}", table.headers[col]))
+                    ui.text(format!("{} {dir}", table.headers()[col]))
                         .fg(theme.text_dim);
                 }
             });
@@ -1228,7 +1228,7 @@ fn render_advanced(
             let _changed = ui.select(select).changed;
             let _ = ui.row(|ui| {
                 ui.text("Current:").fg(theme.surface_text);
-                ui.text(&select.items[select.selected]).fg(theme.primary);
+                ui.text(&select.items()[select.selected]).fg(theme.primary);
             });
         });
 
@@ -1720,7 +1720,7 @@ fn render_v080(
         ui.text("Type to filter (multi-token AND: 'ty script' matches TypeScript)")
             .dim();
         let _ = ui.text_input(list_filter_input);
-        if list_filter_input.value != list_with_filter.filter {
+        if list_filter_input.value != list_with_filter.filter() {
             list_with_filter.set_filter(&list_filter_input.value);
         }
         let _ = ui.list(list_with_filter);
@@ -1933,7 +1933,7 @@ fn render_v013(
             let _ = ui.command_palette(palette);
             if let Some(idx) = palette.last_selected {
                 *palette_last = palette
-                    .commands
+                    .commands()
                     .get(idx)
                     .map(|cmd| cmd.label.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -2018,7 +2018,7 @@ fn render_v0132(
     let _ = ui.row(|ui| {
         card(ui, |ui| {
             ui.text("2) Calendar Widget").bold().fg(theme.secondary);
-            ui.text("Arrow keys to move cursor, Enter to select, h/l for month (needs focus via Tab)")
+            ui.text("Arrows or h/l move by day, [/] change month, Enter selects (Tab to focus)")
                 .fg(theme.surface_text);
             let _ = ui.row(|ui| {
                 if ui.button("◀ Prev Month").clicked {
@@ -2049,7 +2049,7 @@ fn render_v0132(
             let _ = ui.command_palette(fuzzy_palette);
             if let Some(idx) = fuzzy_palette.last_selected {
                 *fuzzy_last = fuzzy_palette
-                    .commands
+                    .commands()
                     .get(idx)
                     .map(|c| c.label.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -2765,9 +2765,9 @@ fn render_v0152(
             .grow(1)
             .col(|ui| {
                 let _ = ui.markdown(
-                    "Visit [SLT on GitHub](https://github.com/user/slt) for the source.\n\n\
+                    "Visit [SLT on GitHub](https://github.com/subinium/SuperLightTUI) for the source.\n\n\
                      - [Docs](https://docs.rs/superlighttui) — API reference\n\
-                     - [Examples](https://github.com/user/slt/examples) — demo code\n\n\
+                     - [Examples](https://github.com/subinium/SuperLightTUI/tree/main/examples) — demo code\n\n\
                      Links are **clickable** in supporting terminals.",
                 );
             });
@@ -2781,7 +2781,7 @@ fn render_v0152(
                 let _ = ui.markdown(
                     "Inline image: ![logo](./assets/logo.png)\n\n\
                      Images render as `[Image: alt]` placeholders.\n\
-                     Use `kitty_image_placed()` for actual pixel rendering.\n\n\
+                     Use `kitty_image()` for actual pixel rendering.\n\n\
                      Mixed: text before ![icon](x.png) and after.",
                 );
             });
@@ -2826,8 +2826,8 @@ fn render_v0152(
     ui.text("");
 
     // ── text_input grow ─────────────────────────────────────────────
-    let _ = ui.divider_text("text_input auto-fill (grow)");
-    ui.text("text_input now uses grow(1) internally — fills available width in rows.")
+    let _ = ui.divider_text("text_input in a growing row");
+    ui.text("Wrap text_input in a growing container when it should fill available row width.")
         .dim();
     ui.text("");
 

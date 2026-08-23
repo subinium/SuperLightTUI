@@ -218,7 +218,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                             ui.link("Docs", "https://docs.rs/superlighttui");
                             ui.link("Discord", "https://discord.gg/slt");
                             ui.spacer();
-                            ui.text("v0.5.0").fg(theme.surface_text);
+                            ui.text("v0.23.0").fg(theme.surface_text);
                         });
                     });
             });
@@ -675,7 +675,7 @@ fn render_docs(ui: &mut Context) {
         md_h2(ui, "Widget Reference");
         md_p(
             ui,
-            "SLT ships 14 widgets. All handle their own keyboard/mouse events. \
+            "SLT ships 50+ widgets. Stateful controls handle their own keyboard/mouse events. \
                    Focus cycling via Tab/Shift+Tab is automatic.",
         );
 
@@ -785,7 +785,7 @@ fn render_docs(ui: &mut Context) {
             "if ui.key('q') { ui.quit(); }\n\
              if ui.key('j') { scroll_down(); }\n\
              if ui.key_code(KeyCode::Enter) { submit(); }\n\
-             if ui.key_with_mod('s', KeyModifiers::CONTROL) { save(); }",
+             if ui.key_mod('s', KeyModifiers::CONTROL) { save(); }",
         );
 
         md_hr(ui);
@@ -801,7 +801,7 @@ fn render_docs(ui: &mut Context) {
             "let mut tween = Tween::new(0.0, 100.0, 60);\n\
              let value = tween.value(ui.tick());\n\
              \n\
-             let mut spring = Spring::new(0.0, 180.0, 12.0);\n\
+             let mut spring = Spring::new(0.0, 0.2, 0.85);\n\
              spring.set_target(50.0);",
         );
 
@@ -823,10 +823,12 @@ fn render_docs(ui: &mut Context) {
         md_code_block(
             ui,
             "rust",
-            "let tx = slt::run_async(|ui, msgs: &mut Vec<String>| {\n\
+            "let run = slt::run_async(|ui, msgs: &mut Vec<String>| {\n\
              \x20   for m in msgs.drain(..) { ui.text(m); }\n\
              })?;\n\
-             tx.send(\"hello\".into()).await?;",
+             let tx = run.sender();\n\
+             tx.send(\"hello\".into()).await?;\n\
+             run.cancel_and_join().await.map_err(std::io::Error::other)?;",
         );
         md_p_dim(ui, "Requires: cargo add superlighttui --features async");
     });
@@ -875,7 +877,7 @@ const BLOG_POSTS: &[BlogPost] = &[
             ("release", TagTone::Success),
             ("announcement", TagTone::Primary),
         ],
-        excerpt: "The first public release of Super Light TUI is here. Two dependencies, zero unsafe, 14 widgets, and an API that gets out of your way.",
+        excerpt: "Super Light TUI combines zero unsafe code, 50+ widgets, and an API that gets out of your way.",
         render: render_post_announcement,
     },
     BlogPost {
@@ -1012,7 +1014,7 @@ fn render_post_announcement(ui: &mut Context) {
             "Minimal API surface: learn 5 methods, build anything.",
             "Zero boilerplate: no App struct, no Model/Update/View, no trait impls.",
             "CSS-like layout: row(), col(), gap(), grow() map directly to Flexbox.",
-            "Batteries included: 14 widgets with built-in keyboard and mouse support.",
+            "Batteries included: 50+ widgets with built-in keyboard and mouse support.",
             "Tiny dependency tree: crossterm + unicode-width. That's it.",
         ],
     );
@@ -1038,7 +1040,7 @@ fn render_post_announcement(ui: &mut Context) {
     md_bullet(
         ui,
         &[
-            "14 widgets: TextInput, Textarea, Button, Checkbox, Toggle, Tabs, List, Table, Spinner, Progress, Scrollable, Toast, Separator, HelpBar",
+            "50+ widgets spanning input, selection, data, feedback, charts, media, and AI-native workflows",
             "Flexbox layout engine with row/col, gap, grow, shrink, alignment",
             "Double-buffer diff rendering (only changed cells hit the terminal)",
             "Mouse support: click, hover, drag-to-scroll",
@@ -1292,7 +1294,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
 
     md_p(
         ui,
-        "And that's it. Run it with `cargo run --example demo_dashboard` to see the \
+        "And that's it. Run it with `cargo run --example showcase_tour` to see the \
               full version with simulated live data and animated values.",
     );
 
@@ -1526,7 +1528,7 @@ fn render_pricing(
                 "forever",
                 &[
                     "Full library access",
-                    "All 14 widgets",
+                    "All 50+ widgets",
                     "MIT License",
                     "Community support",
                     "All examples included",

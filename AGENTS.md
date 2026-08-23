@@ -19,6 +19,7 @@ Run the full Core Gate AND Extended Gate locally BEFORE pushing. The branch must
 - [ ] `cargo test --all-features`
 - [ ] `cargo check --examples --all-features`
 - [ ] `typos`
+- [ ] `bash scripts/api_audit.sh --strict`
 - [ ] `cargo check -p superlighttui --no-default-features`
 - [ ] `cargo check -p slt-wasm --target wasm32-unknown-unknown`
 - [ ] `cargo hack check -p superlighttui --each-feature --no-dev-deps`
@@ -54,10 +55,10 @@ If ANY fails: fix first. Never push a known-red branch hoping CI will catch it.
 - [ ] Workflow must be `completed success` before proceeding
 
 ### 7. Post-release verification
-- [ ] `gh release view vX.Y.Z` shows artifacts
+- [ ] `gh release view vX.Y.Z` shows the published release
 - [ ] crates.io: `cargo search superlighttui` shows new version (may take a few minutes)
-- [ ] docs.rs: `https://docs.rs/superlighttui/X.Y.Z` built successfully
-- [ ] Smoke: `cargo install superlighttui --version X.Y.Z` succeeds; run a trivial example
+- [ ] docs.rs: `https://docs.rs/superlighttui/X.Y.Z/slt/` built successfully
+- [ ] Smoke: `scripts/smoke_release.sh X.Y.Z` resolves the exact crates.io version and runs
 - [ ] Homebrew tap (if applicable): formula `url` + `sha256` updated; `brew install --build-from-source` works
 
 ### 8. Only now announce
@@ -104,19 +105,22 @@ These match CI jobs that block merge. Run after the core gate passes.
 # 6. Typo check
 typos
 
-# 7. No-default-features (catches missing #[cfg] gates)
+# 7. Public API/documentation contract
+bash scripts/api_audit.sh --strict
+
+# 8. No-default-features (catches missing #[cfg] gates)
 cargo check -p superlighttui --no-default-features
 
-# 8. WASM target
+# 9. WASM target
 cargo check -p slt-wasm --target wasm32-unknown-unknown
 
-# 9. Feature combinations (needs cargo-hack: cargo install cargo-hack)
+# 10. Feature combinations (needs cargo-hack: cargo install cargo-hack)
 cargo hack check -p superlighttui --each-feature --no-dev-deps
 
-# 10. Dependency audit
+# 11. Dependency audit
 cargo audit
 
-# 11. Deny check (licenses, bans, sources)
+# 12. Deny check (licenses, bans, sources)
 cargo deny check
 ```
 
@@ -129,6 +133,7 @@ cargo deny check
 | Clippy | `cargo clippy --all-features -- -D warnings` | Yes |
 | Test | `cargo test --all-features` | Yes |
 | Typos | `typos` | Yes |
+| API Audit | `bash scripts/api_audit.sh --strict` | Yes |
 | Check (no-default) | `cargo check -p superlighttui --no-default-features` | Yes |
 | Check (WASM) | `cargo check -p slt-wasm --target wasm32-unknown-unknown` | Yes |
 | Feature Combinations | `cargo hack check --each-feature --no-dev-deps` | Yes |

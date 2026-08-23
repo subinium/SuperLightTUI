@@ -95,6 +95,7 @@ pub(crate) enum Command {
         text: String,
         url: String,
         style: Style,
+        wrap: bool,
         margin: Margin,
         constraints: Constraints,
     },

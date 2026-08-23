@@ -10,7 +10,7 @@
 //! `show_themes` toggle, the typed input value, the list cursor, and
 //! the counter across tab switches.
 //!
-//! Run: cargo run --example demo_design_system --features crossterm
+//! Run: cargo run --example showcase_tour --features crossterm
 
 use slt::{
     Border, Color, ContainerStyle, Context, ListState, RunConfig, Spacing, TextInputState, Theme,

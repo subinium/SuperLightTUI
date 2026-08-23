@@ -177,7 +177,7 @@ Add `insta` to your own project's dev-dependencies:
 
 ```toml
 [dev-dependencies]
-superlighttui = "0.19"
+superlighttui = "0.23.0"
 insta = "1"
 ```
 

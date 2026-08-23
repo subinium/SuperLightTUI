@@ -332,8 +332,8 @@ Breakpoints: Xs (<40), Sm (40–79), Md (80–119), Lg (120–159), Xl (≥160).
 - Never call order-based hooks inside conditionals or loops.
 - Hook type mismatches panic with a descriptive message — this is a
   programmer error.
-- v0.19.0 added id-keyed variants (`use_state_named`,
-  `use_state_named_with`) that key by `&'static str` and are explicitly
+- v0.19.0 added id-keyed state, now exposed as `use_state_named(id, init)`
+  and `use_state_named_default::<T>(id)`, keyed by `&'static str` and explicitly
   safe inside conditional branches — use them when conditional placement
   is genuinely required.
 - v0.20.0 added `use_state_keyed(impl Into<String>, init)` that accepts
@@ -549,21 +549,20 @@ RUSTDOC_GUIDE.md now mandates it for non-trivial methods.
 v0.20 added `//!` to all 6 facade files (`lib.rs`, `context.rs`,
 `widgets_display.rs`, `widgets_input.rs`, `widgets_interactive.rs`,
 `widgets_viz.rs`); ~50 implementation files remain unchanged.
-*Action by v0.21*: enforce with rustdoc lint + sweep remaining files.
+Public item docs are compiler-enforced; module-level implementation docs remain
+a review concern rather than a claimed complete sweep.
 
 ---
 
-## 6. Roadmap: v0.20 → v1.0
+## 6. Roadmap: v0.23 → v1.0
 
 | Version | Phase | Deliverable | Status |
 |---------|-------|-------------|--------|
-| v0.20 | **Define** | This doc + ARCHITECTURE / NAMING / RUSTDOC_GUIDE | ⏳ this PR |
-| v0.20 | **Define** | `scripts/api_audit.sh` (report-only) | ⏳ this PR |
-| v0.21 | **Automate** | clippy custom rules for P3, P6 | planned |
-| v0.21 | **Automate** | CI gate: audit script blocks on V1, V2, V4 | planned |
-| v0.22 | **Refine** | Two-path resolution (P2 × Macro/Meso) | planned |
-| v0.22 | **Refine** | Verb-length normalization (P3 × Micro) | planned |
-| v0.23–0.30 | **Stabilize** | Deprecate-and-remove sweep per principle | planned |
+| v0.20 | **Define** | Design, architecture, naming, and rustdoc guides | complete |
+| v0.21 | **Automate** | Compiler lints, test utilities, and API-shape conventions | complete |
+| v0.22 | **Refine** | Edition 2024, f64 surface, terminal/release hardening | complete |
+| v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | in progress |
+| v0.24–0.30 | **Stabilize** | Deprecate-and-remove sweep per principle | planned |
 | v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | planned |
 
 Each "Refine" step is a single-issue PR that takes one yellow cell to

@@ -98,7 +98,7 @@ impl Context {
                         }
                         consumed_indices.push(i);
                     }
-                    KeyCode::Char(ch) => {
+                    KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
                         if let Some(max) = state.max_length
                             && grapheme_count(&state.value) >= max
                         {
@@ -182,32 +182,31 @@ impl Context {
                 }
             }
             for (i, text) in self.available_pastes() {
-                // Cache char count once and update incrementally — insert is
-                // O(1) amortized per char, so recomputing via `chars().count()`
-                // inside the loop would be O(n²) on large pastes.
-                let mut char_count = grapheme_count(&state.value);
-                for ch in text.chars() {
-                    // text_input is single-line; drop newlines, tabs, control
-                    // chars, and other bytes that would corrupt rendering or
-                    // trip the no-newline invariant upstream.
-                    if (ch as u32) < 0x20 || ch == '\u{7f}' {
-                        continue;
-                    }
-                    if let Some(max) = state.max_length
-                        && char_count >= max
-                    {
-                        break;
-                    }
+                let current_len = grapheme_count(&state.value);
+                let available = state
+                    .max_length
+                    .map(|max| max.saturating_sub(current_len))
+                    .unwrap_or(usize::MAX);
+                let inserted = text
+                    .graphemes(true)
+                    .filter(|cluster| {
+                        cluster
+                            .chars()
+                            .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
+                    })
+                    .take(available)
+                    .collect::<String>();
+                if !inserted.is_empty() {
                     let index = byte_index_for_grapheme(&state.value, state.cursor);
-                    state.value.insert(index, ch);
-                    state.cursor += 1;
-                    char_count += 1;
+                    let inserted_end = index + inserted.len();
+                    state.value.insert_str(index, &inserted);
+                    state.cursor = grapheme_count(&state.value[..inserted_end]);
+                    if !state.suggestions.is_empty() {
+                        state.show_suggestions = true;
+                        state.suggestion_index = 0;
+                    }
+                    suggestions_dirty = true;
                 }
-                if !state.suggestions.is_empty() {
-                    state.show_suggestions = true;
-                    state.suggestion_index = 0;
-                }
-                suggestions_dirty = true;
                 consumed_indices.push(i);
             }
             // Suppress unused-assignment warning when no key after last paste.

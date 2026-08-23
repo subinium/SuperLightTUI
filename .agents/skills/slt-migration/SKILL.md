@@ -1,13 +1,13 @@
 ---
 name: slt-migration
-description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.20. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
+description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to SuperLightTUI v0.23. Use when porting an existing TUI codebase to SLT, or when the user asks "how do I do X from ratatui in SLT". Korean triggers "ratatui 마이그레이션", "SLT로 포팅", "이걸 SLT로".
 ---
 
-# SLT Migration Skill (from ratatui / cursive / textual) — v0.20
+# SLT Migration Skill (from ratatui / cursive / textual) — v0.23
 
 This skill complements `.Codex/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
 
-**Targets SLT v0.20.0** (`Cargo.toml: version = "0.20.0"`). Every API name below has been verified against `src/lib.rs` and `src/context/widgets_*.rs`. The v0.20 API consistency pass removed several v0.19 names — the "v0.20 removed APIs" table below lists every one. Do not migrate to a removed name.
+**Targets SLT v0.23.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets_*.rs`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
 
 ## When to use
 
@@ -151,7 +151,8 @@ impl<'a> slt::Widget for Label<'a> {
         slt::Response::default()
     }
 }
-ui.add(Label { text: "hello" });
+let mut label = Label { text: "hello" };
+ui.widget(&mut label);
 ```
 
 Note: SLT's `Widget` trait is different from ratatui's. ratatui's `Widget::render(self, area, buf)` is a stateless paint into a `Buffer`. SLT's `Widget::ui(&mut self, ui)` is an immediate-mode call that returns a `Response`.
@@ -353,7 +354,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 | `ScrollableContainer` | `ui.scrollable(&mut ScrollState).col(\|ui\| ...)` or `scrollable_with_gutter` |
 | `Container(...)` | `ui.bordered(...).col(...)` or `ui.container().col(...)` |
 | `compose()` yielding child widgets | the closure body — order is layout order |
-| Async event handlers | `slt::run_async` (`async` feature) returns a `tokio::sync::mpsc::Sender` |
+| Async event handlers | `slt::run_async` (`async` feature) returns an owned `AsyncRunHandle`; use `.sender()` and `.join()` / `.cancel_and_join()` |
 | CSS animations | `slt::Tween` / `slt::Spring` / `slt::Keyframes` / `ui.animate_value("id", target, ticks)` |
 
 ## Common migration pitfalls

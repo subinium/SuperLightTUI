@@ -4,10 +4,14 @@ impl Context {
     /// Render 8x8 bitmap text as half-block pixels (4 terminal rows tall).
     pub fn big_text(&mut self, s: impl Into<String>) -> Response {
         let text = s.into();
+        if text.is_empty() {
+            return Response::none();
+        }
         let glyphs: Vec<[u8; 8]> = text.chars().map(glyph_8x8).collect();
         let total_width = (glyphs.len() as u32).saturating_mul(8);
         let on_color = self.theme.primary;
 
+        let response = self.interaction();
         self.container().w(total_width).h(4).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -49,7 +53,7 @@ impl Context {
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a half-block image in the terminal.
@@ -74,8 +78,11 @@ impl Context {
     /// # });
     /// ```
     pub fn image(&mut self, img: &HalfBlockImage) -> Response {
-        let pixels: Vec<(Color, Color)> = img.pixels.clone();
         let (w, h) = (img.width, img.height);
+        let Some(pixels) = prepare_halfblock(&img.pixels, w, h) else {
+            return Response::none();
+        };
+        let response = self.interaction();
         self.container().w(w).h(h).draw(move |buf, rect| {
             for row in 0..h {
                 for col in 0..w {
@@ -86,7 +93,7 @@ impl Context {
             }
         });
 
-        Response::none()
+        response
     }
 
     /// Render a pixel-perfect image using the Kitty graphics protocol.
@@ -114,6 +121,9 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
         if !self.kitty_graphics_supported() {
             return self.rgba_halfblock_fallback(
                 rgba,
@@ -125,12 +135,20 @@ impl Context {
             );
         }
 
-        let rgba_data = normalize_rgba(rgba, pixel_width, pixel_height);
-        let content_hash = crate::buffer::hash_rgba(&rgba_data);
-        let rgba_arc = std::sync::Arc::new(rgba_data);
+        let Some((content_hash, rgba_arc)) = prepare_rgba(rgba, pixel_width, pixel_height) else {
+            return self.rgba_halfblock_fallback(
+                rgba,
+                pixel_width,
+                pixel_height,
+                cols,
+                rows,
+                "[kitty invalid]",
+            );
+        };
         let sw = pixel_width;
         let sh = pixel_height;
 
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -148,7 +166,7 @@ impl Context {
                 crop_h: 0,
             });
         });
-        Response::none()
+        response
     }
 
     /// Render a pixel-perfect image that preserves aspect ratio.
@@ -169,6 +187,9 @@ impl Context {
         src_height: u32,
         cols: u32,
     ) -> Response {
+        if cols == 0 {
+            return Response::none();
+        }
         let supported = self.kitty_graphics_supported();
         #[cfg(feature = "crossterm")]
         let (cell_w, cell_h) = if supported {
@@ -191,12 +212,20 @@ impl Context {
             );
         }
 
-        let rgba_data = normalize_rgba(rgba, src_width, src_height);
-        let content_hash = crate::buffer::hash_rgba(&rgba_data);
-        let rgba_arc = std::sync::Arc::new(rgba_data);
+        let Some((content_hash, rgba_arc)) = prepare_rgba(rgba, src_width, src_height) else {
+            return self.rgba_halfblock_fallback(
+                rgba,
+                src_width,
+                src_height,
+                cols,
+                rows,
+                "[kitty invalid]",
+            );
+        };
         let sw = src_width;
         let sh = src_height;
 
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -214,7 +243,7 @@ impl Context {
                 crop_h: 0,
             });
         });
-        Response::none()
+        response
     }
 
     /// Render an image using the Sixel protocol.
@@ -245,6 +274,9 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
         // Issue #264: consult the negotiated capability snapshot first (the
         // DA1 probe is authoritative when it answered). Fall back to the env
         // allowlist (now including WezTerm/Ghostty) / `SLT_FORCE_SIXEL` when the
@@ -252,33 +284,33 @@ impl Context {
         // blitter ladder resolves it.
         let sixel_supported = self.sixel_supported();
         if !sixel_supported {
+            let response = self.interaction();
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
                     return;
                 }
                 buf.set_string(rect.x, rect.y, "[sixel unsupported]", Style::new());
             });
-            return Response::none();
+            return response;
         }
 
-        let rgba = normalize_rgba(rgba, pixel_width, pixel_height);
-        let content_hash = crate::buffer::hash_rgba(&rgba);
-        let encoded = crate::sixel::encode_sixel(&rgba, pixel_width, pixel_height, 256);
-
-        if encoded.is_empty() {
+        let Some((content_hash, encoded)) = prepare_sixel(rgba, pixel_width, pixel_height, 256)
+        else {
+            let response = self.interaction();
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
                     return;
                 }
-                buf.set_string(rect.x, rect.y, "[sixel empty]", Style::new());
+                buf.set_string(rect.x, rect.y, "[sixel invalid]", Style::new());
             });
-            return Response::none();
-        }
+            return response;
+        };
 
         // Issue #265: route through the sprixel damage matrix instead of a flat
         // `raw_sequence`, so a text edit adjacent to the image no longer forces
         // a full re-blit. The footprint is recorded as fully `Opaque`; the flush
         // layer flips cells to `Annihilated` only where text overwrites ink.
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -294,7 +326,7 @@ impl Context {
                 cells: vec![crate::buffer::SprixelCell::Opaque; cells],
             });
         });
-        Response::none()
+        response
     }
 
     /// Render an image via iTerm2's OSC 1337 inline-image protocol.
@@ -322,20 +354,22 @@ impl Context {
     #[cfg(feature = "crossterm")]
     #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn iterm_image(&mut self, data: &[u8], cols: u32, rows: u32) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
         // Issue #264 ladder integration: consult the negotiated capability
         // snapshot first, then the env allowlist / `SLT_FORCE_ITERM`. App code
         // never selects a protocol directly.
         let supported = self.iterm_supported();
         if !supported {
-            return self.iterm_placeholder(cols, rows);
+            return self.iterm_placeholder(cols, rows, "[iterm2 unsupported]");
         }
 
-        let content_hash = crate::buffer::hash_rgba(data);
-        let encoded = crate::iterm::encode_iterm_osc1337(data, cols, rows, false);
-        if encoded.is_empty() {
-            return self.iterm_placeholder(cols, rows);
-        }
+        let Some((content_hash, encoded)) = prepare_iterm(data, cols, rows, false) else {
+            return self.iterm_placeholder(cols, rows, "[iterm2 invalid]");
+        };
 
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -351,7 +385,7 @@ impl Context {
                 cells: vec![crate::buffer::SprixelCell::Opaque; cells],
             });
         });
-        Response::none()
+        response
     }
 
     /// Render an iTerm2 OSC 1337 inline image preserving aspect ratio.
@@ -375,36 +409,33 @@ impl Context {
     #[cfg(feature = "crossterm")]
     #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
     pub fn iterm_image_fit(&mut self, data: &[u8], cols: u32) -> Response {
+        if cols == 0 {
+            return Response::none();
+        }
         let supported = self.iterm_supported();
 
-        // Reserve rows from the cell aspect using a 1:1 source assumption — the
-        // terminal does the real aspect math from the decoded file; this only
-        // sizes the cell box so layout below the image is not clobbered. Use a
-        // square-ish default of `cols / 2` rows (cells are ~2:1 tall), min 1.
         let (cell_w, cell_h) = if supported {
             crate::terminal::cell_pixel_size()
         } else {
             (8u32, 16u32)
         };
-        let rows = if cell_h == 0 {
-            cols.max(1)
-        } else {
-            ((cols as f64 * cell_w as f64) / cell_h as f64)
-                .ceil()
-                .max(1.0) as u32
-        };
+        let dimensions = encoded_image_dimensions(data);
+        if supported && dimensions.is_none() {
+            return self.iterm_placeholder(cols, 1, "[iterm2 invalid]");
+        }
+        let (src_width, src_height) = dimensions.unwrap_or((1, 1));
+        let rows = image_fit_rows(src_width, src_height, cols, cell_w, cell_h);
 
         if !supported {
-            return self.iterm_placeholder(cols, rows);
-        }
+            return self.iterm_placeholder(cols, rows, "[iterm2 unsupported]");
+        };
 
-        let content_hash = crate::buffer::hash_rgba(data);
         // `rows == 0` signals `height=auto`; the reserved cell box is `rows`.
-        let encoded = crate::iterm::encode_iterm_osc1337(data, cols, 0, true);
-        if encoded.is_empty() {
-            return self.iterm_placeholder(cols, rows);
-        }
+        let Some((content_hash, encoded)) = prepare_iterm(data, cols, 0, true) else {
+            return self.iterm_placeholder(cols, rows, "[iterm2 invalid]");
+        };
 
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -420,7 +451,7 @@ impl Context {
                 cells: vec![crate::buffer::SprixelCell::Opaque; cells],
             });
         });
-        Response::none()
+        response
     }
 
     #[cfg(feature = "crossterm")]
@@ -479,17 +510,21 @@ impl Context {
         rows: u32,
         placeholder: &'static str,
     ) -> Response {
-        let rgba_data = normalize_rgba(rgba, pixel_width, pixel_height);
-        if rgba_data.is_empty() {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
+        let Some((_content_hash, rgba_data)) = prepare_rgba(rgba, pixel_width, pixel_height) else {
+            let response = self.interaction();
             self.container().w(cols).h(rows).draw(move |buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
                     return;
                 }
                 buf.set_string(rect.x, rect.y, placeholder, Style::new());
             });
-            return Response::none();
-        }
+            return response;
+        };
 
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
@@ -499,7 +534,7 @@ impl Context {
             for row in 0..rect.height {
                 for col in 0..rect.width {
                     let upper = sample_rgba_color(
-                        &rgba_data,
+                        rgba_data.as_slice(),
                         pixel_width,
                         pixel_height,
                         col,
@@ -508,7 +543,7 @@ impl Context {
                         dst_pixel_height,
                     );
                     let lower = sample_rgba_color(
-                        &rgba_data,
+                        rgba_data.as_slice(),
                         pixel_width,
                         pixel_height,
                         col,
@@ -520,47 +555,58 @@ impl Context {
                 }
             }
         });
-        Response::none()
+        response
     }
 
     /// Reserve a `cols`×`rows` container and draw the unsupported placeholder,
     /// matching the Sixel fallback pattern.
     #[cfg(feature = "crossterm")]
-    fn iterm_placeholder(&mut self, cols: u32, rows: u32) -> Response {
-        self.container().w(cols).h(rows).draw(|buf, rect| {
+    fn iterm_placeholder(&mut self, cols: u32, rows: u32, placeholder: &'static str) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
+        let response = self.interaction();
+        self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
-            buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
+            buf.set_string(rect.x, rect.y, placeholder, Style::new());
         });
-        Response::none()
+        response
     }
 
     /// Render an image via iTerm2's OSC 1337 inline-image protocol.
     #[cfg(not(feature = "crossterm"))]
     pub fn iterm_image(&mut self, _data: &[u8], cols: u32, rows: u32) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(|buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
             buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
         });
-        Response::none()
+        response
     }
 
     /// Render an iTerm2 OSC 1337 inline image preserving aspect ratio.
     #[cfg(not(feature = "crossterm"))]
-    pub fn iterm_image_fit(&mut self, _data: &[u8], cols: u32) -> Response {
-        // Without `crossterm` there is no cell-pixel probe; reserve a
-        // square-ish box so layout below the image is stable.
-        let rows = (cols / 2).max(1);
+    pub fn iterm_image_fit(&mut self, data: &[u8], cols: u32) -> Response {
+        if cols == 0 {
+            return Response::none();
+        }
+        let (src_width, src_height) = encoded_image_dimensions(data).unwrap_or((1, 1));
+        let rows = image_fit_rows(src_width, src_height, cols, 8, 16);
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(|buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
             buf.set_string(rect.x, rect.y, "[iterm2 unsupported]", Style::new());
         });
-        Response::none()
+        response
     }
 
     /// Render an image using the Sixel protocol.
@@ -573,13 +619,17 @@ impl Context {
         cols: u32,
         rows: u32,
     ) -> Response {
+        if cols == 0 || rows == 0 {
+            return Response::none();
+        }
+        let response = self.interaction();
         self.container().w(cols).h(rows).draw(|buf, rect| {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
             buf.set_string(rect.x, rect.y, "[sixel unsupported]", Style::new());
         });
-        Response::none()
+        response
     }
 
     /// Render streaming text with a typing cursor indicator.
@@ -962,5 +1012,46 @@ impl Context {
         });
 
         Response::none()
+    }
+}
+
+#[cfg(test)]
+mod media_response_tests {
+    use crate::{Response, TestBackend};
+
+    #[test]
+    fn big_text_returns_warm_frame_rect() {
+        let mut backend = TestBackend::new(40, 8);
+        let mut response = Response::none();
+        backend.render(|ui| response = ui.big_text("A"));
+        backend.render(|ui| response = ui.big_text("A"));
+        assert_eq!(response.rect.width, 8);
+        assert_eq!(response.rect.height, 4);
+    }
+
+    #[test]
+    fn unsupported_iterm_placeholder_returns_warm_frame_rect() {
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&100u32.to_be_bytes());
+        png[20..24].copy_from_slice(&50u32.to_be_bytes());
+
+        let mut backend = TestBackend::new(40, 8);
+        let mut response = Response::none();
+        backend.render(|ui| response = ui.iterm_image_fit(&png, 20));
+        backend.render(|ui| response = ui.iterm_image_fit(&png, 20));
+        assert!(response.rect.width > 0);
+        assert!(response.rect.height > 0);
+        backend.assert_contains("[iterm2 unsupported]");
+    }
+
+    #[test]
+    fn empty_media_returns_none() {
+        let mut backend = TestBackend::new(20, 4);
+        let mut response = Response::none();
+        backend.render(|ui| response = ui.big_text(""));
+        assert_eq!(response.rect.width, 0);
+        assert_eq!(response.rect.height, 0);
     }
 }

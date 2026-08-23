@@ -107,7 +107,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text(format!(
                 "{} / {} rows",
                 state.table.visible_indices().len(),
-                state.table.rows.len(),
+                state.table.rows().len(),
             ))
             .dim();
             ui.spacer();
@@ -117,13 +117,13 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 } else {
                     "DESC"
                 };
-                ui.text(format!("{} {}", state.table.headers[col], dir))
+                ui.text(format!("{} {}", state.table.headers()[col], dir))
                     .fg(theme.text_dim);
             }
         });
 
         let _ = ui.help(&[
-            ("q", "quit"),
+            ("Ctrl-Q / Esc", "quit"),
             ("\u{2191}\u{2193}/jk", "select"),
             ("PgUp/Dn", "page"),
             ("Header click", "sort"),

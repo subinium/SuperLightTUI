@@ -115,6 +115,29 @@ fn frame_returns_false_after_quit() {
 }
 
 #[test]
+fn custom_backend_frame_is_headless_for_clipboard_and_error_recovery() {
+    let mut backend = ContractBackend::new(40, 2);
+    let mut state = AppState::new();
+
+    let keep_running = frame(
+        &mut backend,
+        &mut state,
+        &RunConfig::default(),
+        &[],
+        &mut |ui: &mut Context| {
+            ui.copy_to_clipboard("must not reach process stdout");
+            ui.error_boundary(|_| panic!("headless boundary"));
+            ui.text("recovered");
+        },
+    )
+    .unwrap();
+
+    assert!(keep_running);
+    assert_eq!(backend.flush_count, 1);
+    assert!(backend.snapshot().contains("recovered"));
+}
+
+#[test]
 fn frame_quit_still_persists_hook_state_for_callers() {
     let mut backend = ContractBackend::new(20, 2);
     let mut state = AppState::new();

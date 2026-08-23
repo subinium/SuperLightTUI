@@ -2,7 +2,7 @@
 //!
 //! Demonstrates: #223 (split_pane / vsplit_pane builder, mouse drag, focusable handle).
 //!
-//! Run: `cargo run --example v020_split_pane`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   Tab / Shift-Tab     — focus the split handle

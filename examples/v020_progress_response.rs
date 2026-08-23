@@ -4,7 +4,7 @@
 //! Demonstrates: #212 (`Context::progress` and `Context::spinner` upgraded
 //! from `&mut Self` to `Response`, enabling hover / tooltip wiring).
 //!
-//! Run: `cargo run --example v020_progress_response`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   Space            — pause / resume the animation

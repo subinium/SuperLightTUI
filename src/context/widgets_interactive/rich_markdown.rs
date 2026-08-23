@@ -14,17 +14,17 @@ impl Context {
         };
         let viewport_height = widget_height.saturating_sub(2);
         let effective_height = if viewport_height == 0 {
-            state.entries.len().max(1)
+            state.len().max(1)
         } else {
             viewport_height
         };
-        let show_indicator = state.entries.len() > effective_height;
+        let show_indicator = state.len() > effective_height;
         let visible_rows = if show_indicator {
             effective_height.saturating_sub(1).max(1)
         } else {
             effective_height
         };
-        let max_offset = state.entries.len().saturating_sub(visible_rows);
+        let max_offset = state.len().saturating_sub(visible_rows);
         if state.auto_scroll && state.scroll_offset == usize::MAX {
             state.scroll_offset = max_offset;
         } else {
@@ -88,8 +88,8 @@ impl Context {
         state.scroll_offset = state.scroll_offset.min(max_offset);
         let start = state
             .scroll_offset
-            .min(state.entries.len().saturating_sub(visible_rows));
-        let end = (start + visible_rows).min(state.entries.len());
+            .min(state.len().saturating_sub(visible_rows));
+        let end = (start + visible_rows).min(state.len());
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -110,12 +110,7 @@ impl Context {
                 group_name: None,
             })));
 
-        for entry in state
-            .entries
-            .iter()
-            .skip(start)
-            .take(end.saturating_sub(start))
-        {
+        for entry in state.entries().skip(start).take(end.saturating_sub(start)) {
             self.commands.push(Command::RichText {
                 segments: entry.segments.clone(),
                 wrap: false,
@@ -126,13 +121,8 @@ impl Context {
         }
 
         if show_indicator {
-            let end_pos = end.min(state.entries.len());
-            let line = format!(
-                "{}-{} / {}",
-                start.saturating_add(1),
-                end_pos,
-                state.entries.len()
-            );
+            let end_pos = end.min(state.len());
+            let line = format!("{}-{} / {}", start.saturating_add(1), end_pos, state.len());
             self.styled(line, Style::new().dim().fg(self.theme.text_dim));
         }
 
@@ -213,10 +203,10 @@ impl Context {
         variable: bool,
         f: impl Fn(&mut Context, usize),
     ) -> Response {
-        if state.items.is_empty() {
+        if state.is_empty() {
             return Response::none();
         }
-        state.selected = state.selected.min(state.items.len().saturating_sub(1));
+        state.selected = state.selected.min(state.len().saturating_sub(1));
         let use_heights = variable && state.has_item_heights();
         let focused = self.register_focusable();
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -227,11 +217,9 @@ impl Context {
             for (i, key) in self.available_key_presses() {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let _ = handle_vertical_nav(
-                            &mut state.selected,
-                            state.items.len().saturating_sub(1),
-                            key.code.clone(),
-                        );
+                        let max_index = state.len().saturating_sub(1);
+                        let _ =
+                            handle_vertical_nav(&mut state.selected, max_index, key.code.clone());
                         consumed_indices.push(i);
                     }
                     KeyCode::PageUp => {
@@ -247,7 +235,7 @@ impl Context {
                             page_down_target(state, state.selected, visible_height)
                         } else {
                             (state.selected + visible_height as usize)
-                                .min(state.items.len().saturating_sub(1))
+                                .min(state.len().saturating_sub(1))
                         };
                         consumed_indices.push(i);
                     }
@@ -256,7 +244,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.selected = state.items.len().saturating_sub(1);
+                        state.selected = state.len().saturating_sub(1);
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -281,7 +269,7 @@ impl Context {
                 state.viewport_offset = state.selected - vh + 1;
             }
             let start = state.viewport_offset;
-            (start, (start + vh).min(state.items.len()))
+            (start, (start + vh).min(state.len()))
         };
 
         self.commands
@@ -316,7 +304,7 @@ impl Context {
             f(self, idx);
         }
 
-        let remaining = state.items.len().saturating_sub(end);
+        let remaining = state.len().saturating_sub(end);
         if remaining > 0 {
             let hidden = remaining.to_string();
             let mut line = String::with_capacity(hidden.len() + 10);
@@ -361,11 +349,13 @@ impl Context {
                     consumed_indices.push(i);
                 }
                 KeyCode::Down => {
+                    let filtered_len = state.filtered_indices_cached().len();
                     let s = state.selected();
-                    state.set_selected((s + 1).min(filtered.len().saturating_sub(1)));
+                    state.set_selected((s + 1).min(filtered_len.saturating_sub(1)));
                     consumed_indices.push(i);
                 }
                 KeyCode::Enter => {
+                    let filtered = state.filtered_indices_cached().to_vec();
                     if let Some(&cmd_idx) = filtered.get(state.selected()) {
                         state.last_selected = Some(cmd_idx);
                         state.open = false;
@@ -374,23 +364,41 @@ impl Context {
                 }
                 KeyCode::Backspace => {
                     if state.cursor > 0 {
-                        let byte_idx = byte_index_for_char(&state.input, state.cursor - 1);
-                        let end_idx = byte_index_for_char(&state.input, state.cursor);
+                        let byte_idx = byte_index_for_grapheme(&state.input, state.cursor - 1);
+                        let end_idx = byte_index_for_grapheme(&state.input, state.cursor);
                         state.input.replace_range(byte_idx..end_idx, "");
                         state.cursor -= 1;
                         state.set_selected(0);
                     }
                     consumed_indices.push(i);
                 }
-                KeyCode::Char(ch) => {
-                    let byte_idx = byte_index_for_char(&state.input, state.cursor);
+                KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
+                    let byte_idx = byte_index_for_grapheme(&state.input, state.cursor);
                     state.input.insert(byte_idx, ch);
-                    state.cursor += 1;
+                    state.cursor = grapheme_count(&state.input[..byte_idx + ch.len_utf8()]);
                     state.set_selected(0);
                     consumed_indices.push(i);
                 }
                 _ => {}
             }
+        }
+        for (i, text) in self.available_pastes() {
+            let inserted = text
+                .graphemes(true)
+                .filter(|cluster| {
+                    cluster
+                        .chars()
+                        .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
+                })
+                .collect::<String>();
+            if !inserted.is_empty() {
+                let byte_idx = byte_index_for_grapheme(&state.input, state.cursor);
+                let inserted_end = byte_idx + inserted.len();
+                state.input.insert_str(byte_idx, &inserted);
+                state.cursor = grapheme_count(&state.input[..inserted_end]);
+                state.set_selected(0);
+            }
+            consumed_indices.push(i);
         }
         self.consume_indices(consumed_indices);
 
@@ -427,7 +435,7 @@ impl Context {
                         });
 
                     for (list_idx, &cmd_idx) in filtered.iter().enumerate() {
-                        let cmd = &state.commands[cmd_idx];
+                        let cmd = &state.commands()[cmd_idx];
                         let is_selected = list_idx == state.selected();
                         let style = if is_selected {
                             Style::new().bold().fg(ui.theme.primary)
@@ -1337,7 +1345,7 @@ fn item_at_row(row_prefix: &[u32], target_row: u32, n: usize) -> usize {
 /// (no zero-progress loop).
 fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
     state.ensure_row_prefix();
-    let n = state.items.len();
+    let n = state.len();
     if n == 0 || vh == 0 {
         state.viewport_offset = state.viewport_offset.min(n.saturating_sub(1));
         state.viewport_row_offset = 0;
@@ -1395,7 +1403,7 @@ fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
 /// guaranteeing forward progress of at least one item.
 fn page_down_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
     state.ensure_row_prefix();
-    let n = state.items.len();
+    let n = state.len();
     if n == 0 {
         return 0;
     }
@@ -1412,7 +1420,7 @@ fn page_down_target(state: &mut ListState, from: usize, visible_height: u32) -> 
 /// guaranteeing backward progress of at least one item (until index 0).
 fn page_up_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
     state.ensure_row_prefix();
-    let n = state.items.len();
+    let n = state.len();
     if n == 0 {
         return 0;
     }

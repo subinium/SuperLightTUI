@@ -45,13 +45,12 @@
 #        an em-dash (U+2014) in the title, breaking border alignment
 #        on terminals that render it as a 1-cell glyph.
 #
-# Output is human-readable plus an exit code. v0.20 is report-only.
-# v0.21 will gate on V1, V2, V4, V5, V7 (V3 and V6 stay informational
-# until the dylint-based fallback rule lands).
+# Output is human-readable plus an exit code. In v0.23, CI gates on V1, V2,
+# V4, V5, and V7; V3 and V6 remain informational.
 #
 # Run from repo root:
 #   scripts/api_audit.sh
-#   scripts/api_audit.sh --strict   # exit 1 on V1/V2/V4/V5/V7 (preview of v0.21 gate)
+#   scripts/api_audit.sh --strict   # exit 1 on V1/V2/V4/V5/V7
 #
 # This is intentionally heuristic — false positives are expected and
 # allowlisted via the per-check "allowlist" sections below. The point is
@@ -59,7 +58,7 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="${SLT_AUDIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SRC="${REPO_ROOT}/src"
 EXAMPLES="${REPO_ROOT}/examples"
 
@@ -80,16 +79,41 @@ warnings=0
 
 echo "── V1: Two-path methods (Context vs ContainerBuilder) ──"
 
-# Allowlist — methods intentionally on both layers (documented in
-# ARCHITECTURE.md). Keep this list short; every entry is technical debt.
-# Update DESIGN_PRINCIPLES.md matrix when adding/removing.
+# Allowlist — methods intentionally overloaded between Context's immediate
+# text/widget modifiers and ContainerBuilder's deferred container modifiers.
+# Any new overlap must be reviewed and added explicitly.
 V1_ALLOWLIST=(
+    "align"
+    "bg"
+    "col"
+    "col_gap"
+    "color"
+    "group_hover_bg"
+    "grow"
+    "h"
+    "m"
+    "max_h"
+    "max_w"
+    "mb"
+    "min_h"
+    "min_w"
+    "ml"
+    "mr"
+    "mt"
+    "mx"
+    "my"
+    "row"
+    "row_gap"
     "text"           # Context: unbordered shortcut; Builder: inside-builder form
     "theme"          # Context: getter; Builder: per-subtree override
     "width"          # Context: terminal width; Builder: w() (different name already)
     "height"         # same as width
     "push_container" # internal helper used in both layers
     "line"           # Context: row-shorthand; ContainerBuilder: not present (false pos)
+    "w"
+    "with"
+    "with_if"
+    "wrap"
 )
 
 is_allowlisted_v1() {
@@ -118,15 +142,15 @@ done
 ctx_methods=""
 for f in "${ctx_files[@]}"; do
     [[ -f "$f" ]] || continue
-    ctx_methods+=$(grep -hE '^\s*pub\s+fn\s+\w+' "$f" 2>/dev/null \
-        | sed -E 's/.*pub\s+fn\s+(\w+).*/\1/' || true)
+    ctx_methods+=$(grep -hE '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+' "$f" 2>/dev/null \
+        | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' || true)
     ctx_methods+=$'\n'
 done
 ctx_methods=$(printf '%s' "${ctx_methods}" | sort -u)
 
 # ContainerBuilder lives in container.rs.
-cb_methods=$(grep -hE '^\s*pub\s+fn\s+\w+' "${SRC}/context/container.rs" 2>/dev/null \
-    | sed -E 's/.*pub\s+fn\s+(\w+).*/\1/' \
+cb_methods=$(grep -hE '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+' "${SRC}/context/container.rs" 2>/dev/null \
+    | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' \
     | sort -u || true)
 
 shared=$(comm -12 <(echo "${ctx_methods}") <(echo "${cb_methods}") || true)
@@ -164,13 +188,13 @@ for f in "${SRC}/context/widgets_display/"*.rs \
     [[ -f "$f" ]] || continue
 
     # Immediate fns: pub fn returning Response on `&mut self`.
-    immediate_fns=$(grep -E '^\s*pub\s+fn\s+\w+\([^)]*&mut\s+self' "$f" 2>/dev/null \
-        | grep -E '\)\s*->\s*Response' \
-        | sed -E 's/.*pub\s+fn\s+(\w+).*/\1/' || true)
+    immediate_fns=$(grep -E '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+\([^)]*&mut[[:space:]]+self' "$f" 2>/dev/null \
+        | grep -E '\)[[:space:]]*->[[:space:]]*Response' \
+        | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' || true)
 
     # Builder structs in same file.
-    builder_types=$(grep -E '^\s*pub\s+struct\s+[A-Z]\w*<' "$f" 2>/dev/null \
-        | sed -E 's/.*pub\s+struct\s+([A-Z]\w*).*/\1/' || true)
+    builder_types=$(grep -E '^[[:space:]]*pub[[:space:]]+struct[[:space:]]+[A-Z][[:alnum:]_]*<' "$f" 2>/dev/null \
+        | sed -E 's/.*pub[[:space:]]+struct[[:space:]]+([A-Z][[:alnum:]_]*).*/\1/' || true)
 
     [[ -z "${immediate_fns}" || -z "${builder_types}" ]] && continue
 
@@ -204,8 +228,8 @@ for f in "${SRC}/context/container.rs" \
          "${SRC}/context/runtime.rs" \
          "${SRC}/context/core.rs"; do
     [[ -f "$f" ]] || continue
-    methods=$(grep -E '^\s*pub\s+fn\s+\w+' "$f" \
-        | sed -E 's/.*pub\s+fn\s+(\w+).*/\1/' \
+    methods=$(grep -E '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+' "$f" \
+        | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' \
         | sort -u)
     long=$(echo "${methods}" | awk 'length > 20')
     short=$(echo "${methods}" | awk 'length <= 6 && length >= 1')
@@ -240,14 +264,38 @@ while IFS= read -r line; do
     lineno="${rest%%:*}"
     [[ "$lineno" -lt 1 ]] && continue
 
-    # Walk upward past attributes (#[...]) and blank lines, looking for
-    # the nearest preceding non-blank line.
+    # Walk upward past complete attributes (including multiline attributes)
+    # and blank lines, looking for the nearest preceding non-blank line.
     seek=$((lineno - 1))
+    in_multiline_attr=0
     while [[ "$seek" -ge 1 ]]; do
         prev_line=$(sed -n "${seek}p" "$file" 2>/dev/null || echo "")
-        # skip attribute lines and blank lines
-        if [[ "$prev_line" =~ ^[[:space:]]*\#\[ ]] || \
-           [[ -z "${prev_line//[[:space:]]/}" ]]; then
+        if [[ -z "${prev_line//[[:space:]]/}" ]]; then
+            seek=$((seek - 1))
+            continue
+        fi
+        if [[ "$prev_line" =~ ^[[:space:]]*//[^/] ]]; then
+            seek=$((seek - 1))
+            continue
+        fi
+
+        if [[ "$in_multiline_attr" -eq 1 ]]; then
+            if [[ "$prev_line" =~ ^[[:space:]]*\#\[ ]]; then
+                in_multiline_attr=0
+            fi
+            seek=$((seek - 1))
+            continue
+        fi
+
+        # A single-line attribute starts with `#[` and ends with `]`. A
+        # multiline attribute is encountered backwards at its closing `]` /
+        # `)]`; keep walking until its opening `#[` line is consumed.
+        if [[ "$prev_line" =~ ^[[:space:]]*\#\[ ]]; then
+            seek=$((seek - 1))
+            continue
+        fi
+        if [[ "$prev_line" =~ \][[:space:]]*$ ]]; then
+            in_multiline_attr=1
             seek=$((seek - 1))
             continue
         fi
@@ -259,7 +307,7 @@ while IFS= read -r line; do
         echo "  V4: ${file}:${lineno} — missing rustdoc"
         v4_count=$((v4_count + 1))
     fi
-done < <(grep -rnE '^\s*pub\s+(fn|struct|enum)\s+[A-Za-z_]' "${SRC}" 2>/dev/null \
+done < <(grep -rnE '^[[:space:]]*pub[[:space:]]+(fn|struct|enum)[[:space:]]+[A-Za-z_]' "${SRC}" 2>/dev/null \
     | grep -v 'pub(' || true)
 
 if [[ "${v4_count}" -eq 0 ]]; then
@@ -379,7 +427,7 @@ echo "── V6: Fallback path container nesting divergence ──"
 # function is the same in both branches. Plain regex flags hundreds of
 # false positives across src/.
 #
-# v0.21 plan: replace this section with a dylint-based AST rule that
+# Future plan: replace this section with a syntax-aware AST rule that
 # walks each `if let`/`match` expression, identifies its mirror branch,
 # normalizes wrap-call shapes (line/row/col/styled-line), and flags
 # only when wrap depth differs for an otherwise-identical body. Until
@@ -387,7 +435,7 @@ echo "── V6: Fallback path container nesting divergence ──"
 # stays visible in CI logs.
 echo "  V6 (informational): manual review required for fallback parity"
 echo "    (see status.rs::code_block_lang for the canonical pattern fixed in v0.20.x;"
-echo "     the v0.21 dylint rule will mechanize this check)"
+echo "     a future syntax-aware rule should mechanize this check)"
 
 # --- V7: Demo title wide-character drift (v0.20+ demos) ----------------------
 
@@ -469,9 +517,8 @@ fi
 
 echo "⚠️  Reported ${violations} violation(s)."
 if [[ "${STRICT}" -eq 1 ]]; then
-    echo "    --strict mode: exiting 1 (preview of v0.21 CI gate gating V1/V2/V4/V5/V7)."
+    echo "    --strict mode: exiting 1 (CI gates V1/V2/V4/V5/V7)."
     exit 1
 fi
-echo "    v0.20 is report-only — these do NOT block CI."
-echo "    Run 'scripts/api_audit.sh --strict' to preview the v0.21 gate."
+echo "    Run 'scripts/api_audit.sh --strict' to apply the CI gate locally."
 exit 0

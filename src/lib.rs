@@ -131,8 +131,6 @@ pub mod widgets;
 use std::io;
 #[cfg(feature = "crossterm")]
 use std::io::IsTerminal;
-#[cfg(feature = "crossterm")]
-use std::sync::Once;
 use std::time::{Duration, Instant};
 
 /// Re-export of the [`crossterm`] crate (issue #278) so callers can name the
@@ -205,7 +203,7 @@ pub use context::{
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
-pub use context::TaskHandle;
+pub use context::{TaskHandle, TaskOutcome};
 pub use event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton, MouseEvent,
     MouseKind,
@@ -233,11 +231,12 @@ pub use widgets::validators;
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
-    DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerState, FormField,
-    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState,
-    ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand,
-    PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
-    SelectState, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
+    DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerScanError,
+    FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormState,
+    GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState, ModeState,
+    MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode,
+    RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
+    SliderOpts, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
     StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
     Trend, ValidateTrigger, Validator,
@@ -308,6 +307,16 @@ pub trait Backend {
     /// should present the current buffer to the user — by writing ANSI escapes,
     /// drawing to a canvas, updating a texture, etc.
     fn flush(&mut self) -> io::Result<()>;
+
+    /// Returns whether this backend owns a real terminal-style session.
+    ///
+    /// Custom backends should keep the default `false`, which prevents process
+    /// stdout clipboard writes, capability probes, and terminal panic recovery.
+    /// The built-in [`Terminal`] and [`InlineTerminal`] backends opt in.
+    #[doc(hidden)]
+    fn owns_terminal_session(&self) -> bool {
+        false
+    }
 }
 
 /// Opaque per-session state that persists between frames.
@@ -431,47 +440,120 @@ pub fn frame_owned(
     events: Vec<Event>,
     f: &mut impl FnMut(&mut Context),
 ) -> io::Result<bool> {
-    run_frame(backend, &mut state.inner, config, events, f)
+    let terminal_side_effects = backend.owns_terminal_session();
+    run_frame(
+        backend,
+        &mut state.inner,
+        config,
+        events,
+        terminal_side_effects,
+        f,
+    )
 }
 
 #[cfg(feature = "crossterm")]
-static PANIC_HOOK_ONCE: Once = Once::new();
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync + 'static>;
+
+#[cfg(feature = "crossterm")]
+struct PanicHookState {
+    active_sessions: usize,
+    installed: bool,
+    previous: Option<PanicHook>,
+}
+
+#[cfg(feature = "crossterm")]
+static PANIC_HOOK_STATE: std::sync::Mutex<PanicHookState> = std::sync::Mutex::new(PanicHookState {
+    active_sessions: 0,
+    installed: false,
+    previous: None,
+});
+
+#[cfg(feature = "crossterm")]
+struct PanicHookGuard;
+
+#[cfg(feature = "crossterm")]
+impl Drop for PanicHookGuard {
+    fn drop(&mut self) {
+        let mut state = PANIC_HOOK_STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active_sessions = state.active_sessions.saturating_sub(1);
+
+        // `take_hook` panics while the current thread is unwinding. In that
+        // case the dispatcher remains installed but inactive and forwards
+        // directly to the previous hook. A later normal session restores it.
+        if state.active_sessions == 0 && state.installed && !std::thread::panicking() {
+            let dispatcher = std::panic::take_hook();
+            drop(dispatcher);
+            if let Some(previous) = state.previous.take() {
+                std::panic::set_hook(previous);
+            }
+            state.installed = false;
+        }
+    }
+}
 
 #[allow(clippy::print_stderr)]
 #[cfg(feature = "crossterm")]
-fn install_panic_hook() {
-    PANIC_HOOK_ONCE.call_once(|| {
-        let original = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            terminal::cleanup_after_panic();
+fn slt_panic_hook(panic_info: &std::panic::PanicHookInfo<'_>) {
+    let active = PANIC_HOOK_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .active_sessions
+        > 0;
+    let restored = active && terminal::cleanup_after_panic();
 
-            // Print friendly panic header
-            eprintln!("\n\x1b[1;31m━━━ SLT Panic ━━━\x1b[0m\n");
-
-            // Print location if available
-            if let Some(location) = panic_info.location() {
-                eprintln!(
-                    "\x1b[90m{}:{}:{}\x1b[0m",
-                    location.file(),
-                    location.line(),
-                    location.column()
-                );
-            }
-
-            // Print message
-            if let Some(msg) = panic_info.payload().downcast_ref::<&str>() {
-                eprintln!("\x1b[1m{msg}\x1b[0m");
-            } else if let Some(msg) = panic_info.payload().downcast_ref::<String>() {
-                eprintln!("\x1b[1m{msg}\x1b[0m");
-            }
-
+    if restored {
+        eprintln!("\n\x1b[1;31m━━━ SLT Panic ━━━\x1b[0m\n");
+        if let Some(location) = panic_info.location() {
             eprintln!(
-                "\n\x1b[90mTerminal state restored. Report bugs at https://github.com/subinium/SuperLightTUI/issues\x1b[0m\n"
+                "\x1b[90m{}:{}:{}\x1b[0m",
+                location.file(),
+                location.line(),
+                location.column()
             );
+        }
+        if let Some(msg) = panic_info.payload().downcast_ref::<&str>() {
+            eprintln!("\x1b[1m{msg}\x1b[0m");
+        } else if let Some(msg) = panic_info.payload().downcast_ref::<String>() {
+            eprintln!("\x1b[1m{msg}\x1b[0m");
+        }
+        eprintln!(
+            "\n\x1b[90mTerminal state restored. Report bugs at https://github.com/subinium/SuperLightTUI/issues\x1b[0m\n"
+        );
+    }
 
-            original(panic_info);
-        }));
-    });
+    let state = PANIC_HOOK_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(previous) = state.previous.as_ref() {
+        previous(panic_info);
+    }
+}
+
+#[cfg(feature = "crossterm")]
+fn install_panic_hook() -> PanicHookGuard {
+    let mut state = PANIC_HOOK_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !state.installed {
+        state.previous = Some(std::panic::take_hook());
+        std::panic::set_hook(Box::new(slt_panic_hook));
+        state.installed = true;
+    }
+    state.active_sessions = state.active_sessions.saturating_add(1);
+    PanicHookGuard
+}
+
+#[cfg(feature = "crossterm")]
+fn with_session_panic_hook<T>(f: impl FnOnce() -> T) -> T {
+    let guard = install_panic_hook();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    drop(guard);
+    match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// RAII guard owning the unix suspend/resume (`SIGTSTP`/`SIGCONT`) handler
@@ -694,6 +776,11 @@ pub struct RunConfig {
     /// assert!(!cfg.handle_suspend);
     /// ```
     pub handle_suspend: bool,
+    /// Maximum number of external async messages delivered to one frame.
+    ///
+    /// Messages beyond this count remain queued in FIFO order for later
+    /// frames. Defaults to the async channel capacity (100).
+    pub async_message_budget: usize,
 }
 
 impl Default for RunConfig {
@@ -711,6 +798,7 @@ impl Default for RunConfig {
             widget_theme: style::WidgetTheme::new(),
             handle_ctrl_c: true,
             handle_suspend: true,
+            async_message_budget: 100,
         }
     }
 }
@@ -789,6 +877,15 @@ impl RunConfig {
     /// ```
     pub fn no_fps_cap(mut self) -> Self {
         self.max_fps = None;
+        self
+    }
+
+    /// Set the maximum number of external async messages delivered per frame.
+    ///
+    /// Values below one are normalized to one so queued messages always make
+    /// progress.
+    pub fn async_message_budget(mut self, messages: usize) -> Self {
+        self.async_message_budget = messages.max(1);
         self
     }
 
@@ -992,7 +1089,8 @@ pub(crate) struct FrameState {
     /// behind `async`; absent (zero overhead) when the feature is off.
     #[cfg(feature = "async")]
     pub async_tasks: context::AsyncTasks,
-    pub screen_hook_map: std::collections::HashMap<String, (usize, usize)>,
+    pub screen_hook_map:
+        std::collections::HashMap<u64, std::collections::HashMap<String, (usize, usize)>>,
     pub focus: FocusState,
     pub layout_feedback: LayoutFeedbackState,
     pub diagnostics: DiagnosticsState,
@@ -1097,6 +1195,43 @@ pub fn run(f: impl FnMut(&mut Context)) -> io::Result<()> {
 }
 
 #[cfg(feature = "crossterm")]
+fn validate_terminal_endpoints(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> io::Result<()> {
+    if stdin_is_terminal && stdout_is_terminal {
+        return Ok(());
+    }
+
+    let unavailable = match (stdin_is_terminal, stdout_is_terminal) {
+        (false, false) => "stdin and stdout are not terminals",
+        (false, true) => "stdin is not a terminal",
+        (true, false) => "stdout is not a terminal",
+        (true, true) => unreachable!("validated above"),
+    };
+    Err(io::Error::new(
+        io::ErrorKind::NotConnected,
+        format!("interactive SLT runtime unavailable: {unavailable}"),
+    ))
+}
+
+#[cfg(feature = "crossterm")]
+fn ensure_interactive_terminal() -> io::Result<()> {
+    validate_terminal_endpoints(io::stdin().is_terminal(), io::stdout().is_terminal())
+}
+
+#[cfg(feature = "crossterm")]
+fn validate_inline_height(height: u32) -> io::Result<()> {
+    if height == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "inline terminal height must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "crossterm")]
 fn set_terminal_title(title: &Option<String>) {
     if let Some(title) = title {
         use std::io::Write;
@@ -1126,6 +1261,10 @@ fn sanitize_terminal_text(input: &str) -> String {
 /// Like [`run`], but accepts a [`RunConfig`] to control tick rate, mouse
 /// support, and theming.
 ///
+/// Returns [`io::ErrorKind::NotConnected`] when stdin or stdout is not a
+/// terminal. Headless and remote renderers should drive [`frame`] with a custom
+/// [`Backend`] instead.
+///
 /// # Example
 ///
 /// ```no_run
@@ -1142,12 +1281,13 @@ fn sanitize_terminal_text(input: &str) -> String {
 /// ```
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
-pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
-    if !io::stdout().is_terminal() {
-        return Ok(());
-    }
+pub fn run_with(config: RunConfig, f: impl FnMut(&mut Context)) -> io::Result<()> {
+    ensure_interactive_terminal()?;
+    with_session_panic_hook(|| run_with_inner(config, f))
+}
 
-    install_panic_hook();
+#[cfg(feature = "crossterm")]
+fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(
         config.mouse,
@@ -1175,25 +1315,22 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
-        if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
-            continue;
+        if w > 0 && h > 0 {
+            if !run_frame(
+                &mut term,
+                &mut state,
+                &config,
+                std::mem::take(&mut events),
+                true,
+                &mut f,
+            )? {
+                break;
+            }
+            // Issue #233: full-screen mode has no scrollback channel — warn and
+            // drop any `ui.static_log(...)` lines so they do not leak into the
+            // next frame's named_states.
+            discard_static_log(&mut state, "full-screen run()");
         }
-
-        if !run_frame(
-            &mut term,
-            &mut state,
-            &config,
-            std::mem::take(&mut events),
-            &mut f,
-        )? {
-            break;
-        }
-        // Issue #233: full-screen mode has no scrollback channel — warn and
-        // drop any `ui.static_log(...)` lines so they do not leak into the
-        // next frame's named_states.
-        discard_static_log(&mut state, "full-screen run()");
-        let render_elapsed = frame_start.elapsed();
 
         #[cfg(unix)]
         let suspend_snapshot = term.session_snapshot();
@@ -1214,29 +1351,278 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, render_elapsed);
+        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
     }
 
     Ok(())
 }
 
+/// Error returned when an asynchronous run loop is joined.
+#[cfg(all(feature = "crossterm", feature = "async"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
+#[derive(Debug)]
+pub enum AsyncRunError {
+    /// The render loop returned an I/O error.
+    Io(io::Error),
+    /// Tokio reported task cancellation or a panic from the render loop.
+    Join(tokio::task::JoinError),
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl std::fmt::Display for AsyncRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "async render loop failed: {err}"),
+            Self::Join(err) => write!(f, "async render task failed: {err}"),
+        }
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl std::error::Error for AsyncRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::Join(err) => Some(err),
+        }
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+#[derive(Default)]
+struct AsyncWake {
+    generation: std::sync::atomic::AtomicU64,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl AsyncWake {
+    fn notify(&self) {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        self.notify.notify_one();
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// Bounded async message sender that wakes its associated render loop.
+#[cfg(all(feature = "crossterm", feature = "async"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
+pub struct AsyncSender<M> {
+    inner: tokio::sync::mpsc::Sender<M>,
+    wake: std::sync::Arc<AsyncWake>,
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> Clone for AsyncSender<M> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            wake: std::sync::Arc::clone(&self.wake),
+        }
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> Drop for AsyncSender<M> {
+    fn drop(&mut self) {
+        self.wake.notify();
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> AsyncSender<M> {
+    /// Send one message, waiting for bounded-channel capacity.
+    pub async fn send(&self, message: M) -> Result<(), tokio::sync::mpsc::error::SendError<M>> {
+        self.inner.send(message).await?;
+        self.wake.notify();
+        Ok(())
+    }
+
+    /// Try to send one message without waiting for capacity.
+    pub fn try_send(&self, message: M) -> Result<(), tokio::sync::mpsc::error::TrySendError<M>> {
+        self.inner.try_send(message)?;
+        self.wake.notify();
+        Ok(())
+    }
+
+    /// Send one message from synchronous code, blocking for capacity.
+    pub fn blocking_send(&self, message: M) -> Result<(), tokio::sync::mpsc::error::SendError<M>> {
+        self.inner.blocking_send(message)?;
+        self.wake.notify();
+        Ok(())
+    }
+
+    /// Returns `true` when the render-loop receiver has closed.
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    /// Wait until the render-loop receiver closes.
+    pub async fn closed(&self) {
+        self.inner.closed().await;
+    }
+
+    /// Return the channel's remaining capacity.
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+
+    /// Return the channel's configured maximum capacity.
+    pub fn max_capacity(&self) -> usize {
+        self.inner.max_capacity()
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> std::ops::Deref for AsyncSender<M> {
+    type Target = tokio::sync::mpsc::Sender<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+/// Owned lifetime handle for an asynchronous SLT render loop.
+///
+/// The handle dereferences to [`AsyncSender`], preserving the common
+/// `handle.send(message).await` call shape. Dropping it requests cancellation;
+/// call [`join`](Self::join) to observe normal completion, I/O failures, or a
+/// render-task panic.
+#[cfg(all(feature = "crossterm", feature = "async"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
+#[must_use = "dropping the handle cancels the render loop; join it to observe completion"]
+pub struct AsyncRunHandle<M> {
+    sender: Option<AsyncSender<M>>,
+    join: Option<tokio::task::JoinHandle<io::Result<()>>>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    wake: std::sync::Arc<AsyncWake>,
+    cancel_on_drop: bool,
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> AsyncRunHandle<M> {
+    /// Clone the wake-aware sender while retaining ownership of the run loop.
+    pub fn sender(&self) -> AsyncSender<M> {
+        self.sender
+            .as_ref()
+            .expect("sender is available until join starts")
+            .clone()
+    }
+
+    /// Request cooperative cancellation of the render loop.
+    pub fn cancel(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.wake.notify();
+    }
+
+    /// Returns `true` when the Tokio render task has completed.
+    pub fn is_finished(&self) -> bool {
+        self.join
+            .as_ref()
+            .is_none_or(tokio::task::JoinHandle::is_finished)
+    }
+
+    /// Wait for render-loop completion and preserve both I/O and join errors.
+    ///
+    /// Joining drops this handle's sender first. Sender clones must also be
+    /// dropped, or the UI must quit, before a disconnect-driven loop can end.
+    pub async fn join(mut self) -> Result<(), AsyncRunError> {
+        self.sender.take();
+        let join = self
+            .join
+            .take()
+            .expect("join handle is consumed exactly once");
+        join.await
+            .map_err(AsyncRunError::Join)?
+            .map_err(AsyncRunError::Io)
+    }
+
+    /// Request cancellation and wait for deterministic teardown.
+    pub async fn cancel_and_join(mut self) -> Result<(), AsyncRunError> {
+        self.cancel();
+        self.sender.take();
+        let join = self
+            .join
+            .take()
+            .expect("join handle is consumed exactly once");
+        join.await
+            .map_err(AsyncRunError::Join)?
+            .map_err(AsyncRunError::Io)
+    }
+
+    /// Detach the render task and return only a wake-aware sender.
+    ///
+    /// This compatibility path intentionally makes completion errors
+    /// unobservable. Prefer retaining and joining the owned handle.
+    pub fn detach(mut self) -> AsyncSender<M> {
+        self.cancel_on_drop = false;
+        self.join.take();
+        self.sender
+            .take()
+            .expect("sender is available until detach")
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> std::ops::Deref for AsyncRunHandle<M> {
+    type Target = AsyncSender<M>;
+
+    fn deref(&self) -> &Self::Target {
+        self.sender
+            .as_ref()
+            .expect("sender is available until join starts")
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M> Drop for AsyncRunHandle<M> {
+    fn drop(&mut self) {
+        if self.cancel_on_drop {
+            self.cancel
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.wake.notify();
+        }
+    }
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+impl<M: Send + 'static> std::future::IntoFuture for AsyncRunHandle<M> {
+    type Output = Result<(), AsyncRunError>;
+    type IntoFuture =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'static>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.join())
+    }
+}
+
 /// Run the TUI loop asynchronously with default configuration.
 ///
 /// Requires the `async` feature. Spawns the render loop in a blocking thread
-/// and returns a [`tokio::sync::mpsc::Sender`] you can use to push messages
-/// from async tasks into the UI closure.
+/// and returns an owned [`AsyncRunHandle`]. The handle sends messages directly,
+/// can be cloned into an [`AsyncSender`], supports cooperative cancellation,
+/// and exposes render-loop I/O or panic failures when joined.
+///
+/// Returns [`io::ErrorKind::NotConnected`] when stdin or stdout is not a
+/// terminal. Use [`frame`] with a custom backend for headless rendering.
 ///
 /// # Example
 ///
 /// ```no_run
 /// # #[cfg(feature = "async")]
 /// # async fn example() -> std::io::Result<()> {
-/// let tx = slt::run_async::<String>(|ui, messages| {
+/// let run = slt::run_async::<String>(|ui, messages| {
 ///     for msg in messages.drain(..) {
 ///         ui.text(msg);
 ///     }
 /// })?;
-/// tx.send("hello from async".to_string()).await.ok();
+/// run.send("hello from async".to_string()).await.ok();
+/// run.cancel_and_join().await.map_err(std::io::Error::other)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -1244,7 +1630,7 @@ pub fn run_with(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Resul
 #[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub fn run_async<M: Send + 'static>(
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
-) -> io::Result<tokio::sync::mpsc::Sender<M>> {
+) -> io::Result<AsyncRunHandle<M>> {
     run_async_with(RunConfig::default(), f)
 }
 
@@ -1253,33 +1639,50 @@ pub fn run_async<M: Send + 'static>(
 /// Requires the `async` feature. Like [`run_async`], but accepts a
 /// [`RunConfig`] to control tick rate, mouse support, and theming.
 ///
-/// Returns a [`tokio::sync::mpsc::Sender`] for pushing messages into the UI.
+/// Returns an owned [`AsyncRunHandle`] for sending, cancellation, and joining.
 #[cfg(all(feature = "crossterm", feature = "async"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub fn run_async_with<M: Send + 'static>(
     config: RunConfig,
     f: impl FnMut(&mut Context, &mut Vec<M>) + Send + 'static,
-) -> io::Result<tokio::sync::mpsc::Sender<M>> {
+) -> io::Result<AsyncRunHandle<M>> {
+    ensure_interactive_terminal()?;
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     let handle =
         tokio::runtime::Handle::try_current().map_err(|err| io::Error::other(err.to_string()))?;
+    let wake = std::sync::Arc::new(AsyncWake::default());
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Issue #234: clone the runtime handle into the render loop so
     // `Context::spawn` has a runtime to launch tasks onto. The render loop runs
     // on `spawn_blocking` (no ambient runtime), so the handle must be passed
     // explicitly rather than recovered via `Handle::try_current()` inside.
     let loop_handle = handle.clone();
-    handle.spawn_blocking(move || {
-        let _ = run_async_loop(config, f, rx, loop_handle);
-    });
+    let loop_wake = std::sync::Arc::clone(&wake);
+    let loop_cancel = std::sync::Arc::clone(&cancel);
+    let join = handle
+        .spawn_blocking(move || run_async_loop(config, f, rx, loop_handle, loop_wake, loop_cancel));
 
-    Ok(tx)
+    Ok(AsyncRunHandle {
+        sender: Some(AsyncSender {
+            inner: tx,
+            wake: std::sync::Arc::clone(&wake),
+        }),
+        join: Some(join),
+        cancel,
+        wake,
+        cancel_on_drop: true,
+    })
 }
 
 #[cfg(all(feature = "crossterm", feature = "async"))]
-fn drain_async_messages<M>(rx: &mut tokio::sync::mpsc::Receiver<M>, messages: &mut Vec<M>) -> bool {
+fn drain_async_messages<M>(
+    rx: &mut tokio::sync::mpsc::Receiver<M>,
+    messages: &mut Vec<M>,
+    budget: usize,
+) -> bool {
     let mut disconnected = false;
-    loop {
+    for _ in 0..budget.max(1) {
         match rx.try_recv() {
             Ok(message) => messages.push(message),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
@@ -1289,21 +1692,30 @@ fn drain_async_messages<M>(rx: &mut tokio::sync::mpsc::Receiver<M>, messages: &m
             }
         }
     }
-    disconnected
+    disconnected || (rx.is_closed() && rx.is_empty())
 }
 
 #[cfg(all(feature = "crossterm", feature = "async"))]
 fn run_async_loop<M: Send + 'static>(
     config: RunConfig,
+    f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
+    rx: tokio::sync::mpsc::Receiver<M>,
+    runtime: tokio::runtime::Handle,
+    wake: std::sync::Arc<AsyncWake>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> io::Result<()> {
+    with_session_panic_hook(move || run_async_loop_inner(config, f, rx, runtime, wake, cancel))
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+fn run_async_loop_inner<M: Send + 'static>(
+    config: RunConfig,
     mut f: impl FnMut(&mut Context, &mut Vec<M>) + Send,
     mut rx: tokio::sync::mpsc::Receiver<M>,
     runtime: tokio::runtime::Handle,
+    wake: std::sync::Arc<AsyncWake>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> io::Result<()> {
-    if !io::stdout().is_terminal() {
-        return Ok(());
-    }
-
-    install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(
         config.mouse,
@@ -1328,44 +1740,51 @@ fn run_async_loop<M: Send + 'static>(
     // Issue #234: inject the ambient runtime so `Context::spawn` works inside
     // the frame closure. Set once before the loop; round-tripped through
     // `Context` from here on (see `run_frame_kernel`).
-    state.async_tasks.set_runtime(runtime);
+    state.async_tasks.set_runtime(runtime.clone());
+    state
+        .async_tasks
+        .set_waker(std::sync::Arc::clone(&wake.notify));
 
     loop {
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        }
         let frame_start = Instant::now();
         // Issue #263: after a SIGCONT resume, repaint the whole frame.
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
+        let observed_wake = wake.generation();
         messages.clear();
-        let input_disconnected = drain_async_messages(&mut rx, &mut messages);
+        let input_disconnected =
+            drain_async_messages(&mut rx, &mut messages, config.async_message_budget);
         if input_disconnected && messages.is_empty() {
             break;
         }
 
         let (w, h) = term.size();
-        if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
-            continue;
-        }
-
-        let mut render = |ctx: &mut Context| {
-            f(ctx, &mut messages);
-        };
-        if !run_frame(
-            &mut term,
-            &mut state,
-            &config,
-            std::mem::take(&mut events),
-            &mut render,
-        )? {
+        if w > 0 && h > 0 {
+            let mut render = |ctx: &mut Context| {
+                f(ctx, &mut messages);
+            };
+            if !run_frame(
+                &mut term,
+                &mut state,
+                &config,
+                std::mem::take(&mut events),
+                true,
+                &mut render,
+            )? {
+                break;
+            }
+            // Issue #233: full-screen async mode has no scrollback channel — warn
+            // and drop any pending static_log lines.
+            discard_static_log(&mut state, "run_async()");
+            if input_disconnected {
+                break;
+            }
+        } else if input_disconnected {
             break;
         }
-        // Issue #233: full-screen async mode has no scrollback channel — warn
-        // and drop any pending static_log lines.
-        discard_static_log(&mut state, "run_async()");
-        if input_disconnected {
-            break;
-        }
-        let render_elapsed = frame_start.elapsed();
 
         #[cfg(unix)]
         let suspend_snapshot = term.session_snapshot();
@@ -1377,7 +1796,18 @@ fn run_async_loop<M: Send + 'static>(
         if !poll_events(
             &mut events,
             &mut state,
-            config.tick_rate,
+            if wake.generation() != observed_wake
+                || runtime.block_on(async {
+                    tokio::time::timeout(Duration::ZERO, wake.notify.notified())
+                        .await
+                        .is_ok()
+                })
+                || cancel.load(std::sync::atomic::Ordering::Acquire)
+            {
+                Duration::ZERO
+            } else {
+                config.tick_rate.min(Duration::from_millis(4))
+            },
             &mut || term.handle_resize(),
             config.handle_ctrl_c,
             config.handle_suspend,
@@ -1386,7 +1816,7 @@ fn run_async_loop<M: Send + 'static>(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, render_elapsed);
+        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
     }
 
     Ok(())
@@ -1400,6 +1830,8 @@ fn run_async_loop<M: Send + 'static>(
 ///
 /// `height` is the reserved inline render area in terminal rows.
 /// The rest of the terminal stays in normal scrollback mode.
+/// A zero height returns [`io::ErrorKind::InvalidInput`]; non-terminal stdin or
+/// stdout returns [`io::ErrorKind::NotConnected`].
 ///
 /// # Example
 ///
@@ -1425,13 +1857,19 @@ pub fn run_inline(height: u32, f: impl FnMut(&mut Context)) -> io::Result<()> {
 pub fn run_inline_with(
     height: u32,
     config: RunConfig,
+    f: impl FnMut(&mut Context),
+) -> io::Result<()> {
+    validate_inline_height(height)?;
+    ensure_interactive_terminal()?;
+    with_session_panic_hook(|| run_inline_with_inner(height, config, f))
+}
+
+#[cfg(feature = "crossterm")]
+fn run_inline_with_inner(
+    height: u32,
+    config: RunConfig,
     mut f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
-    if !io::stdout().is_terminal() {
-        return Ok(());
-    }
-
-    install_panic_hook();
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         height,
@@ -1460,24 +1898,21 @@ pub fn run_inline_with(
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
-        if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
-            continue;
+        if w > 0 && h > 0 {
+            if !run_frame(
+                &mut term,
+                &mut state,
+                &config,
+                std::mem::take(&mut events),
+                true,
+                &mut f,
+            )? {
+                break;
+            }
+            // Issue #233: inline mode without `StaticOutput` has no scrollback
+            // channel either — warn and drop any pending lines.
+            discard_static_log(&mut state, "run_inline()");
         }
-
-        if !run_frame(
-            &mut term,
-            &mut state,
-            &config,
-            std::mem::take(&mut events),
-            &mut f,
-        )? {
-            break;
-        }
-        // Issue #233: inline mode without `StaticOutput` has no scrollback
-        // channel either — warn and drop any pending lines.
-        discard_static_log(&mut state, "run_inline()");
-        let render_elapsed = frame_start.elapsed();
 
         #[cfg(unix)]
         let suspend_snapshot = term.session_snapshot();
@@ -1498,7 +1933,7 @@ pub fn run_inline_with(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, render_elapsed);
+        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
     }
 
     Ok(())
@@ -1511,6 +1946,8 @@ pub fn run_inline_with(
 /// area at the bottom.
 ///
 /// Use this when you want a log-style output stream above a live inline UI.
+/// A zero dynamic height returns [`io::ErrorKind::InvalidInput`]; non-terminal
+/// stdin or stdout returns [`io::ErrorKind::NotConnected`].
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_static(
@@ -1531,17 +1968,20 @@ pub fn run_static_with(
     output: &mut StaticOutput,
     dynamic_height: u32,
     config: RunConfig,
+    f: impl FnMut(&mut Context),
+) -> io::Result<()> {
+    validate_inline_height(dynamic_height)?;
+    ensure_interactive_terminal()?;
+    with_session_panic_hook(|| run_static_with_inner(output, dynamic_height, config, f))
+}
+
+#[cfg(feature = "crossterm")]
+fn run_static_with_inner(
+    output: &mut StaticOutput,
+    dynamic_height: u32,
+    config: RunConfig,
     mut f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
-    if !io::stdout().is_terminal() {
-        return Ok(());
-    }
-
-    install_panic_hook();
-
-    let initial_lines = output.drain_new();
-    write_static_lines(&initial_lines)?;
-
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         dynamic_height,
@@ -1550,6 +1990,7 @@ pub fn run_static_with(
         config.report_all_keys,
         color_depth,
     )?;
+    term.write_scrollback(&output.drain_new())?;
     set_terminal_title(&config.title);
     if config.theme.bg != Color::Reset {
         term.theme_bg = Some(config.theme.bg);
@@ -1571,30 +2012,26 @@ pub fn run_static_with(
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
-        if w == 0 || h == 0 {
-            sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
-            continue;
+        term.write_scrollback(&output.drain_new())?;
+        if w > 0 && h > 0 {
+            let keep_running = run_frame(
+                &mut term,
+                &mut state,
+                &config,
+                std::mem::take(&mut events),
+                true,
+                &mut f,
+            )?;
+            // Issue #233: drain any `ui.static_log(...)` lines queued during the
+            // frame closure into `output`, then flush them before any exit path.
+            for line in drain_static_log(&mut state) {
+                output.println(line);
+            }
+            term.write_scrollback(&output.drain_new())?;
+            if !keep_running {
+                break;
+            }
         }
-
-        let new_lines = output.drain_new();
-        write_static_lines(&new_lines)?;
-
-        if !run_frame(
-            &mut term,
-            &mut state,
-            &config,
-            std::mem::take(&mut events),
-            &mut f,
-        )? {
-            break;
-        }
-        // Issue #233: drain any `ui.static_log(...)` lines queued during the
-        // frame closure into `output`; the next loop iteration flushes them
-        // above the inline area via `write_static_lines`.
-        for line in drain_static_log(&mut state) {
-            output.println(line);
-        }
-        let render_elapsed = frame_start.elapsed();
 
         #[cfg(unix)]
         let suspend_snapshot = term.session_snapshot();
@@ -1615,23 +2052,13 @@ pub fn run_static_with(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, render_elapsed);
+        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
     }
 
     Ok(())
 }
 
-#[cfg(feature = "crossterm")]
-fn write_static_lines(lines: &[String]) -> io::Result<()> {
-    if lines.is_empty() {
-        return Ok(());
-    }
-
-    let mut stdout = io::stdout();
-    write_static_lines_to(&mut stdout, lines)
-}
-
-#[cfg(feature = "crossterm")]
+#[cfg(all(feature = "crossterm", test))]
 fn write_static_lines_to(stdout: &mut impl io::Write, lines: &[String]) -> io::Result<()> {
     for line in lines {
         let safe = sanitize_terminal_text(line);
@@ -1810,6 +2237,7 @@ fn poll_events(
     on_suspend: &mut impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
     let mut has_resize = false;
+    let batch_start = events.len();
 
     fn process_ev(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
         process_run_loop_event(ev, state, has_resize);
@@ -1853,7 +2281,7 @@ fn poll_events(
     // `has_resize` is the per-batch "saw a resize" flag set by `process_ev`.
     debug_assert_eq!(
         usize::from(has_resize),
-        resize_invocations_for_batch(events),
+        resize_invocations_for_batch(&events[batch_start..]),
         "has_resize must agree with the coalescing helper"
     );
     if has_resize {
@@ -1867,7 +2295,7 @@ fn poll_events(
         // After clearing, re-walk events to restore the latest mouse pos
         // (process_ev already set it during collection, but
         // clear_frame_layout_cache wiped it).
-        for ev in events.iter() {
+        for ev in &events[batch_start..] {
             match ev {
                 Event::Mouse(m) => {
                     state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
@@ -2082,62 +2510,56 @@ pub(crate) fn run_frame_kernel(
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
 
-    // Issue #155: reuse `state.frame_data` across frames. `collect_all` calls
-    // `fd.clear()` first so the Vecs reset to len=0 with capacity preserved
-    // from the prior frame, then refills them.
+    // Recover the previous feedback vectors as this frame's collection
+    // scratch, then publish the newly collected vectors with a second swap.
+    // This keeps both sides' capacities warm instead of `mem::take`-ing every
+    // filled vector and leaving an empty FrameData behind.
     let mut fd = std::mem::take(&mut state.frame_data);
+    fd.swap_feedback(&mut state.layout_feedback);
     layout::collect_all(&tree, &mut fd);
     debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
         "scroll feedback vectors must stay aligned"
     );
-    let raw_rects = std::mem::take(&mut fd.raw_draw_rects);
-    state.layout_feedback.prev_scroll_infos = std::mem::take(&mut fd.scroll_infos);
-    state.layout_feedback.prev_scroll_rects = std::mem::take(&mut fd.scroll_rects);
-    state.layout_feedback.prev_hit_map = std::mem::take(&mut fd.hit_areas);
-    state.layout_feedback.prev_group_rects = std::mem::take(&mut fd.group_rects);
-    state.layout_feedback.prev_content_map = std::mem::take(&mut fd.content_areas);
-    state.layout_feedback.prev_focus_rects = std::mem::take(&mut fd.focus_rects);
-    state.layout_feedback.prev_focus_groups = std::mem::take(&mut fd.focus_groups);
-    state.frame_data = fd;
+    fd.swap_feedback(&mut state.layout_feedback);
+    let mut raw_rects = std::mem::take(&mut fd.raw_draw_rects);
     layout::render(&tree, buffer);
-    // RAII guard ensuring the kitty clip frame is popped even if a raw-draw
-    // callback panics — prevents stale scroll-clip state leaking into the
-    // next region or subsequent frames.
-    struct KittyClipGuard<'a>(&'a mut crate::buffer::Buffer);
-    impl Drop for KittyClipGuard<'_> {
-        fn drop(&mut self) {
-            let _ = self.0.pop_kitty_clip();
-        }
-    }
-    for rdr in raw_rects {
+    let mut deferred_draw_panic = None;
+    for rdr in raw_rects.drain(..) {
         if rdr.rect.width == 0 || rdr.rect.height == 0 {
             continue;
         }
-        if let Some(cb) = ctx
+        let Some(cb) = ctx
             .deferred_draws
             .get_mut(rdr.draw_id)
             .and_then(|c| c.take())
-        {
-            buffer.push_clip(rdr.rect);
-            buffer.push_kitty_clip(crate::buffer::KittyClipInfo {
-                top_clip_rows: rdr.top_clip_rows,
-                original_height: rdr.original_height,
-            });
-            {
-                let guard = KittyClipGuard(buffer);
-                // Explicit reborrow so the guard keeps ownership of the
-                // outer `&mut Buffer` and pops on drop.
-                cb(&mut *guard.0, rdr.rect);
-                // Guard pops on drop at end of this scope.
-            }
-            buffer.pop_clip();
+        else {
+            continue;
+        };
+        if let Err(panic) = context::invoke_deferred_draw(
+            buffer,
+            rdr.rect,
+            rdr.left_clip_cols,
+            rdr.top_clip_rows,
+            rdr.original_width,
+            rdr.original_height,
+            cb,
+        ) {
+            deferred_draw_panic = Some(panic);
+            break;
         }
     }
+    raw_rects.clear();
+    fd.raw_draw_rects = raw_rects;
+    state.frame_data = fd;
     debug_assert!(
         buffer.kitty_clip_info_stack.is_empty(),
         "kitty_clip_info_stack must be empty at end of frame"
+    );
+    debug_assert!(
+        buffer.kitty_horizontal_clip_stack.is_empty(),
+        "kitty_horizontal_clip_stack must be empty at end of frame"
     );
     state.hook_states = ctx.hook_states;
     state.named_states = ctx.named_states;
@@ -2257,6 +2679,13 @@ pub(crate) fn run_frame_kernel(
         layout::render_inspector(&tree, buffer, &focus);
     }
 
+    // The callback executed after layout, so no Context fallback can safely
+    // run here. Restore every persistent frame field first, then preserve the
+    // original panic for the owning runtime or outer catch_unwind boundary.
+    if let Some(panic) = deferred_draw_panic {
+        std::panic::resume_unwind(panic);
+    }
+
     FrameKernelResult {
         should_quit: false,
         #[cfg(feature = "crossterm")]
@@ -2271,10 +2700,19 @@ fn run_frame(
     state: &mut FrameState,
     config: &RunConfig,
     events: Vec<event::Event>,
+    terminal_side_effects: bool,
     f: &mut impl FnMut(&mut context::Context),
 ) -> io::Result<bool> {
     let size = term.size();
-    let kernel = run_frame_kernel(term.buffer_mut(), state, config, size, events, true, f);
+    let kernel = run_frame_kernel(
+        term.buffer_mut(),
+        state,
+        config,
+        size,
+        events,
+        terminal_side_effects,
+        f,
+    );
     if kernel.should_quit {
         return Ok(false);
     }
@@ -2288,7 +2726,7 @@ fn run_frame(
         );
     }
     #[cfg(feature = "crossterm")]
-    if kernel.should_copy_selection {
+    if terminal_side_effects && kernel.should_copy_selection {
         let text = terminal::extract_selection_text(
             term.buffer_mut(),
             &state.selection,
@@ -2302,7 +2740,7 @@ fn run_frame(
 
     term.flush()?;
     #[cfg(feature = "crossterm")]
-    if let Some(text) = kernel.clipboard_text {
+    if terminal_side_effects && let Some(text) = kernel.clipboard_text {
         #[allow(clippy::print_stderr)]
         if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
             eprintln!("[slt] failed to copy to clipboard: {e}");
@@ -2355,13 +2793,17 @@ fn is_ctrl_z(ev: &Event) -> bool {
 }
 
 #[cfg(feature = "crossterm")]
-fn sleep_for_fps_cap(max_fps: Option<u32>, render_elapsed: Duration) {
-    if let Some(fps) = max_fps.filter(|fps| *fps > 0) {
-        let target = Duration::from_secs_f64(1.0 / fps as f64);
-        if render_elapsed < target {
-            std::thread::sleep(target - render_elapsed);
-        }
+fn sleep_for_fps_cap(max_fps: Option<u32>, loop_elapsed: Duration) {
+    if let Some(remaining) = fps_sleep_duration(max_fps, loop_elapsed) {
+        std::thread::sleep(remaining);
     }
+}
+
+#[cfg(feature = "crossterm")]
+fn fps_sleep_duration(max_fps: Option<u32>, loop_elapsed: Duration) -> Option<Duration> {
+    let fps = max_fps.filter(|fps| *fps > 0)?;
+    let target = Duration::from_secs_f64(1.0 / fps as f64);
+    (loop_elapsed < target).then(|| target - loop_elapsed)
 }
 
 #[cfg(all(test, feature = "crossterm"))]
@@ -2370,6 +2812,8 @@ mod run_loop_tests {
     //! keybinding handler. Exercises [`process_run_loop_event`] directly
     //! so we don't need a real crossterm event source.
     use super::*;
+
+    static PANIC_HOOK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn key(modifiers: event::KeyModifiers) -> Event {
         Event::Key(event::KeyEvent {
@@ -2396,11 +2840,97 @@ mod run_loop_tests {
     }
 
     #[test]
+    fn fps_pacing_accounts_for_polling_and_rendering_together() {
+        let remaining = fps_sleep_duration(Some(60), Duration::from_millis(16))
+            .expect("a sub-frame remainder remains");
+        assert!(remaining < Duration::from_millis(1));
+        assert_eq!(
+            fps_sleep_duration(Some(60), Duration::from_millis(20)),
+            None,
+            "a slow whole-loop iteration must not sleep again"
+        );
+        assert_eq!(fps_sleep_duration(None, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn terminal_endpoint_validation_reports_each_non_tty_case() {
+        assert!(validate_terminal_endpoints(true, true).is_ok());
+        for endpoints in [(false, true), (true, false), (false, false)] {
+            let err = validate_terminal_endpoints(endpoints.0, endpoints.1).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+        }
+    }
+
+    #[test]
+    fn panic_hook_tracks_nested_session_ownership() {
+        let _serial = PANIC_HOOK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let outer = install_panic_hook();
+        let inner = install_panic_hook();
+        {
+            let state = PANIC_HOOK_STATE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(state.active_sessions, 2);
+            assert!(state.installed);
+        }
+        drop(inner);
+        assert_eq!(
+            PANIC_HOOK_STATE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .active_sessions,
+            1
+        );
+        drop(outer);
+        let state = PANIC_HOOK_STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.active_sessions, 0);
+        assert!(!state.installed);
+        assert!(state.previous.is_none());
+        drop(state);
+
+        let caught = std::panic::catch_unwind(|| {
+            with_session_panic_hook(|| panic!("session panic"));
+        });
+        assert!(caught.is_err());
+        let state = PANIC_HOOK_STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.active_sessions, 0);
+        assert!(!state.installed);
+        assert!(state.previous.is_none());
+    }
+
+    #[test]
     fn static_lines_are_sanitized_before_scrollback_write() {
         let lines = vec!["ok\x1b[31mred\x07".to_string()];
         let mut out = Vec::new();
         write_static_lines_to(&mut out, &lines).unwrap();
         assert_eq!(out, b"ok?[31mred?\r\n");
+    }
+
+    #[test]
+    fn quit_frame_keeps_final_static_log_available_for_drain() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 2));
+        let mut state = FrameState::default();
+        let result = run_frame_kernel(
+            &mut buffer,
+            &mut state,
+            &RunConfig::default(),
+            (20, 2),
+            Vec::new(),
+            false,
+            &mut |ui| {
+                ui.static_log("final line");
+                ui.quit();
+            },
+        );
+
+        assert!(result.should_quit);
+        assert_eq!(drain_static_log(&mut state), vec!["final line"]);
     }
 
     #[test]
@@ -2493,10 +3023,125 @@ mod run_loop_tests {
         drop(tx);
 
         let mut messages = Vec::new();
-        let disconnected = drain_async_messages(&mut rx, &mut messages);
+        let disconnected = drain_async_messages(&mut rx, &mut messages, 4);
 
         assert!(disconnected);
         assert_eq!(messages, vec![1, 2]);
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn async_message_drain_respects_per_frame_budget_and_fifo_order() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        for message in 0u8..6 {
+            tx.try_send(message).expect("channel has capacity");
+        }
+
+        let mut first = Vec::new();
+        assert!(!drain_async_messages(&mut rx, &mut first, 2));
+        assert_eq!(first, vec![0, 1]);
+
+        let mut second = Vec::new();
+        assert!(!drain_async_messages(&mut rx, &mut second, 3));
+        assert_eq!(second, vec![2, 3, 4]);
+
+        drop(tx);
+        let mut final_batch = Vec::new();
+        assert!(drain_async_messages(&mut rx, &mut final_batch, 3));
+        assert_eq!(final_batch, vec![5]);
+    }
+
+    #[test]
+    fn async_message_budget_normalizes_zero_to_one() {
+        assert_eq!(
+            RunConfig::default()
+                .async_message_budget(0)
+                .async_message_budget,
+            1
+        );
+    }
+
+    #[cfg(feature = "async")]
+    fn test_async_handle(
+        task: impl FnOnce(std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()>
+        + Send
+        + 'static,
+    ) -> AsyncRunHandle<()> {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let wake = std::sync::Arc::new(AsyncWake::default());
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cancel = std::sync::Arc::clone(&cancel);
+        let join = tokio::task::spawn_blocking(move || task(task_cancel));
+        AsyncRunHandle {
+            sender: Some(AsyncSender {
+                inner: tx,
+                wake: std::sync::Arc::clone(&wake),
+            }),
+            join: Some(join),
+            cancel,
+            wake,
+            cancel_on_drop: true,
+        }
+    }
+
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn async_run_handle_observes_normal_and_io_completion() {
+        test_async_handle(|_| Ok(())).await.unwrap();
+
+        let error = test_async_handle(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "deterministic failure",
+            ))
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AsyncRunError::Io(ref err) if err.kind() == io::ErrorKind::BrokenPipe
+        ));
+    }
+
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn async_run_handle_observes_panics_and_cancels_cooperatively() {
+        let panic_error = test_async_handle(|_| panic!("render panic"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            panic_error,
+            AsyncRunError::Join(ref err) if err.is_panic()
+        ));
+
+        let handle = test_async_handle(|cancel| {
+            while !cancel.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(())
+        });
+        handle.cancel_and_join().await.unwrap();
+    }
+
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn async_sender_notifies_on_send_and_last_clone_drop() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let wake = std::sync::Arc::new(AsyncWake::default());
+        let sender = AsyncSender {
+            inner: tx,
+            wake: std::sync::Arc::clone(&wake),
+        };
+
+        let before_send = wake.generation();
+        sender.send(7u8).await.unwrap();
+        assert_ne!(wake.generation(), before_send);
+        assert_eq!(rx.recv().await, Some(7));
+
+        let clone = sender.clone();
+        let before_drop = wake.generation();
+        drop(clone);
+        assert_ne!(wake.generation(), before_drop);
     }
 
     // ── Issue #268: Ctrl+F12 devtools inspector toggle ───────────────────

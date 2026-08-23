@@ -6,11 +6,11 @@ Recipes assume familiarity with the core mental model from [QUICK_START.md](QUIC
 
 ## Index
 
-- [Login Form with Validation](#login-form-with-validation) — `cargo run --example cookbook_login`
-- [Data Table with Search and Sort](#data-table-with-search-and-sort) — `cargo run --example cookbook_table`
-- [Modal Confirmation with Toast](#modal-confirmation-with-toast) — `cargo run --example cookbook_modal_toast`
-- [Real-time Dashboard with Charts](#real-time-dashboard-with-charts) — `cargo run --example cookbook_dashboard`
-- [File Picker with Preview](#file-picker-with-preview) — `cargo run --example cookbook_file_picker`
+- [Login Form with Validation](#login-form-with-validation) — `cargo run --example cookbook_tour`
+- [Data Table with Search and Sort](#data-table-with-search-and-sort) — `cargo run --example cookbook_tour`
+- [Modal Confirmation with Toast](#modal-confirmation-with-toast) — `cargo run --example cookbook_tour`
+- [Real-time Dashboard with Charts](#real-time-dashboard-with-charts) — `cargo run --example cookbook_tour`
+- [File Picker with Preview](#file-picker-with-preview) — `cargo run --example cookbook_tour`
 - [Components with Shared State](#components-with-shared-state) — `provide` / `use_context` (v0.19.0)
 - [Common pitfalls](#common-pitfalls)
 
@@ -21,7 +21,7 @@ Add SLT to a fresh project:
 ```toml
 # Cargo.toml
 [dependencies]
-superlighttui = "0.19"
+superlighttui = "0.23.0"
 ```
 
 Every recipe follows the same outer shape:

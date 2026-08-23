@@ -1,5 +1,6 @@
 use super::*;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) struct GridSpec<'a> {
     pub(super) x_ticks: &'a [f64],
@@ -207,8 +208,7 @@ pub(super) fn map_value_to_cell(
     if size == 0 {
         return 0;
     }
-    let span = (max - min).abs().max(f64::EPSILON);
-    let mut t = ((value - min) / span).clamp(0.0, 1.0);
+    let mut t = finite_ratio(value, min, max).unwrap_or(0.0);
     if invert {
         t = 1.0 - t;
     }
@@ -216,13 +216,53 @@ pub(super) fn map_value_to_cell(
 }
 
 pub(super) fn center_text(text: &str, width: usize) -> String {
-    let text_width = UnicodeWidthStr::width(text);
-    if text_width >= width {
-        return text.chars().take(width).collect();
-    }
+    let text = clip_text_cells(text, width);
+    let text_width = UnicodeWidthStr::width(text.as_str());
     let left = (width - text_width) / 2;
     let right = width - text_width - left;
     format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+}
+
+pub(crate) fn clip_text_cells(text: &str, max_cols: usize) -> String {
+    if max_cols == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut width = 0usize;
+    for grapheme in text.graphemes(true) {
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if width.saturating_add(grapheme_width) > max_cols {
+            break;
+        }
+        result.push_str(grapheme);
+        width = width.saturating_add(grapheme_width);
+    }
+    result
+}
+
+pub(crate) fn write_text_cells(cells: &mut [String], start: usize, text: &str) -> usize {
+    let mut cursor = start;
+    let mut last_origin: Option<usize> = None;
+    for grapheme in text.graphemes(true) {
+        let width = UnicodeWidthStr::width(grapheme);
+        if width == 0 {
+            if let Some(origin) = last_origin {
+                cells[origin].push_str(grapheme);
+            }
+            continue;
+        }
+        if cursor.saturating_add(width) > cells.len() {
+            break;
+        }
+        cells[cursor].clear();
+        cells[cursor].push_str(grapheme);
+        for continuation in 1..width {
+            cells[cursor + continuation].clear();
+        }
+        last_origin = Some(cursor);
+        cursor += width;
+    }
+    cursor
 }
 
 pub(super) fn sturges_bin_count(n: usize) -> usize {
@@ -244,10 +284,7 @@ pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
     if max_cols == 0 {
         return String::new();
     }
-    let total: usize = text
-        .chars()
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
-        .sum();
+    let total = UnicodeWidthStr::width(text);
     if total <= max_cols {
         return text.to_string();
     }
@@ -257,12 +294,12 @@ pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
     let target = max_cols - 1;
     let mut result = String::new();
     let mut width = 0usize;
-    for ch in text.chars() {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+    for grapheme in text.graphemes(true) {
+        let cw = UnicodeWidthStr::width(grapheme);
         if width + cw > target {
             break;
         }
-        result.push(ch);
+        result.push_str(grapheme);
         width += cw;
     }
     result.push('\u{2026}');
@@ -271,7 +308,8 @@ pub(crate) fn truncate_label(text: &str, max_cols: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_label;
+    use super::{clip_text_cells, truncate_label, write_text_cells};
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn keeps_short_label_unchanged() {
@@ -308,5 +346,24 @@ mod tests {
         // ellipsis, since that conveys no information.)
         // Actually max_cols=2 IS >= 3? No, 2 < 3, so dropped.
         assert_eq!(truncate_label("한글파일", 2), "");
+    }
+
+    #[test]
+    fn clipping_preserves_graphemes_and_exact_cell_budget() {
+        assert_eq!(clip_text_cells("A한B", 3), "A한");
+        assert_eq!(clip_text_cells("e\u{301}x", 1), "e\u{301}");
+        assert_eq!(
+            UnicodeWidthStr::width(clip_text_cells("🎉파티", 4).as_str()),
+            4
+        );
+    }
+
+    #[test]
+    fn cell_writer_reserves_wide_continuation_cells() {
+        let mut cells = vec![" ".to_string(); 6];
+        let end = write_text_cells(&mut cells, 1, "한e\u{301}");
+        assert_eq!(end, 4);
+        assert_eq!(cells.concat(), " 한e\u{301}  ");
+        assert_eq!(UnicodeWidthStr::width(cells.concat().as_str()), 6);
     }
 }

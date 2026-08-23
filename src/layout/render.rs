@@ -1,4 +1,3 @@
-use super::flexbox::inner_area;
 use super::*;
 
 pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
@@ -260,7 +259,11 @@ fn render_debug_status_bar(node: &LayoutNode, buf: &mut Buffer, frame_time_us: u
 /// bucket: the goal is "how many widgets did each top-level layer
 /// contribute," matching what the user sees on screen.
 fn count_leaf_widgets_layered(node: &LayoutNode) -> LayerCounts {
-    let base: u32 = node.children.iter().map(count_leaf_widgets).sum();
+    let base = node
+        .children
+        .iter()
+        .map(count_leaf_widgets)
+        .fold(0u32, u32::saturating_add);
     let mut overlay: u32 = 0;
     let mut modal: u32 = 0;
     for layer in &node.overlays {
@@ -285,7 +288,10 @@ fn count_leaf_widgets(node: &LayoutNode) -> u32 {
             _ => 1,
         }
     } else {
-        node.children.iter().map(count_leaf_widgets).sum()
+        node.children
+            .iter()
+            .map(count_leaf_widgets)
+            .fold(0u32, u32::saturating_add)
     };
 
     for overlay in &node.overlays {
@@ -299,19 +305,19 @@ fn render_debug_overlay_inner(
     node: &LayoutNode,
     buf: &mut Buffer,
     depth: u32,
-    x_offset: u32,
-    y_offset: u32,
+    x_offset: i64,
+    y_offset: i64,
     tint: LayerTint,
 ) {
     // #247: thread the x-axis offset alongside y so a horizontal scrollable's
     // children outline in their scrolled screen positions.
     let child_y_offset = if node.is_scrollable {
-        y_offset.saturating_add(node.scroll_offset)
+        y_offset.saturating_add(i64::from(node.scroll_offset))
     } else {
         y_offset
     };
     let child_x_offset = if node.is_scrollable {
-        x_offset.saturating_add(node.scroll_offset_x)
+        x_offset.saturating_add(i64::from(node.scroll_offset_x))
     } else {
         x_offset
     };
@@ -335,8 +341,7 @@ fn render_debug_overlay_inner(
     // inner non-modal overlay still reads as part of the modal stack to the
     // human eye, which is what we want.
     if node.is_scrollable {
-        if let Some(area) = visible_area(node, x_offset, y_offset) {
-            let inner = inner_area(node, area);
+        if let Some(inner) = visible_inner_area(node, x_offset, y_offset, buf.area) {
             buf.push_clip(inner);
             for child in &node.children {
                 render_debug_overlay_inner(
@@ -628,14 +633,14 @@ fn draw_debug_border(x: u32, y: u32, w: u32, h: u32, buf: &mut Buffer, style: St
     }
 }
 
-fn screen_y(layout_y: u32, y_offset: u32) -> i64 {
-    layout_y as i64 - y_offset as i64
+fn screen_y(layout_y: u32, y_offset: i64) -> i64 {
+    i64::from(layout_y).saturating_sub(y_offset)
 }
 
 /// X-axis mirror of [`screen_y`] (#247): translate a layout x by the active
 /// horizontal scroll offset.
-fn screen_x(layout_x: u32, x_offset: u32) -> i64 {
-    layout_x as i64 - x_offset as i64
+fn screen_x(layout_x: u32, x_offset: i64) -> i64 {
+    i64::from(layout_x).saturating_sub(x_offset)
 }
 
 /// Draw `text` at a possibly-negative screen x (#247).
@@ -656,7 +661,8 @@ fn set_string_clipped_x(
     link: Option<&str>,
 ) -> i64 {
     let full_width = UnicodeWidthStr::width(text) as i64;
-    if screen_x >= 0 {
+    let left = i64::from(buf.area.x);
+    if screen_x >= left {
         let sx = screen_x as u32;
         if let Some(url) = link {
             buf.set_string_linked(sx, y, text, style, url);
@@ -665,8 +671,8 @@ fn set_string_clipped_x(
         }
         return screen_x + full_width;
     }
-    // screen_x < 0: skip leading display columns until the cursor reaches 0.
-    let skip = (-screen_x) as u32;
+    // Skip leading display columns until the cursor reaches the buffer origin.
+    let skip = left.saturating_sub(screen_x) as u32;
     let mut consumed: u32 = 0;
     let mut byte_start = text.len();
     for (idx, g) in text.grapheme_indices(true) {
@@ -682,33 +688,168 @@ fn set_string_clipped_x(
     }
     let visible = &text[byte_start..];
     if let Some(url) = link {
-        buf.set_string_linked(0, y, visible, style, url);
+        buf.set_string_linked(buf.area.x, y, visible, style, url);
     } else {
-        buf.set_string(0, y, visible, style);
+        buf.set_string(buf.area.x, y, visible, style);
     }
     screen_x + full_width
 }
 
-fn visible_area(node: &LayoutNode, x_offset: u32, y_offset: u32) -> Option<Rect> {
+fn set_styled_line_clipped_x(
+    buf: &mut Buffer,
+    screen_x: i64,
+    y: u32,
+    segments: &[(String, Style)],
+    parent_bg: Option<Color>,
+) -> i64 {
+    #[cfg(feature = "bidi")]
+    if segments
+        .iter()
+        .any(|(text, _)| crate::buffer::needs_bidi_reorder(text))
+    {
+        return set_styled_bidi_line(buf, screen_x, y, segments, parent_bg);
+    }
+
+    let mut x = screen_x;
+    for (text, style) in segments {
+        let mut style = *style;
+        if style.bg.is_none() {
+            style.bg = parent_bg;
+        }
+        x = set_string_clipped_x(buf, x, y, text, style, None);
+    }
+    x
+}
+
+#[cfg(feature = "bidi")]
+fn set_styled_bidi_line(
+    buf: &mut Buffer,
+    screen_x: i64,
+    y: u32,
+    segments: &[(String, Style)],
+    parent_bg: Option<Color>,
+) -> i64 {
+    use unicode_bidi::BidiInfo;
+
+    let capacity = segments
+        .iter()
+        .fold(0usize, |total, (text, _)| total.saturating_add(text.len()));
+    let mut logical = String::with_capacity(capacity);
+    let mut style_ends = Vec::with_capacity(segments.len());
+    for (text, style) in segments {
+        logical.push_str(text);
+        let mut style = *style;
+        if style.bg.is_none() {
+            style.bg = parent_bg;
+        }
+        style_ends.push((logical.len(), style));
+    }
+    let info = BidiInfo::new(&logical, None);
+    let Some(para) = info.paragraphs.first() else {
+        return screen_x;
+    };
+    let resolved = info.reordered_levels(para, para.range.clone());
+
+    let graphemes: Vec<(usize, &str)> = logical.grapheme_indices(true).collect();
+    let levels: Vec<_> = graphemes.iter().map(|(byte, _)| resolved[*byte]).collect();
+    let visual_to_logical = BidiInfo::reorder_visual(&levels);
+
+    let mut atom_styles = Vec::with_capacity(graphemes.len());
+    let mut style_index = 0usize;
+    for (byte, _) in &graphemes {
+        while style_index + 1 < style_ends.len() && *byte >= style_ends[style_index].0 {
+            style_index += 1;
+        }
+        atom_styles.push(
+            style_ends
+                .get(style_index)
+                .map_or(Style::new(), |(_, style)| *style),
+        );
+    }
+
+    let mut x = screen_x;
+    let left = i64::from(buf.area.x);
+    let right = i64::from(buf.area.right());
+    for logical_index in visual_to_logical {
+        let grapheme = graphemes[logical_index].1;
+        let normalized = crate::cell::normalize_cell_symbol(grapheme);
+        let width = UnicodeWidthStr::width(normalized.as_str()) as i64;
+        let next_x = x.saturating_add(width);
+        if x >= left && x < right {
+            buf.set_grapheme_visual(x as u32, y, grapheme, atom_styles[logical_index], None);
+        }
+        x = next_x;
+    }
+    x
+}
+
+fn visible_area(node: &LayoutNode, x_offset: i64, y_offset: i64, bounds: Rect) -> Option<Rect> {
     let sy = screen_y(node.pos.1, y_offset);
-    let bottom = sy + node.size.1 as i64;
+    let bottom = sy.saturating_add(i64::from(node.size.1));
     let sx = screen_x(node.pos.0, x_offset);
-    let right = sx + node.size.0 as i64;
-    if bottom <= 0 || right <= 0 || node.size.0 == 0 || node.size.1 == 0 {
+    let right = sx.saturating_add(i64::from(node.size.0));
+    let left = sx.max(i64::from(bounds.x));
+    let top = sy.max(i64::from(bounds.y));
+    let clipped_right = right.min(i64::from(bounds.right()));
+    let clipped_bottom = bottom.min(i64::from(bounds.bottom()));
+    if left >= clipped_right || top >= clipped_bottom {
         return None;
     }
-    let clamped_y = sy.max(0) as u32;
-    let clamped_h = (bottom as u32).saturating_sub(clamped_y);
-    let clamped_x = sx.max(0) as u32;
-    let clamped_w = (right as u32).saturating_sub(clamped_x);
-    Some(Rect::new(clamped_x, clamped_y, clamped_w, clamped_h))
+    Some(Rect::new(
+        left as u32,
+        top as u32,
+        (clipped_right - left) as u32,
+        (clipped_bottom - top) as u32,
+    ))
+}
+
+/// Visible content box computed from the original node geometry.
+///
+/// Insets must be applied before clipping. Applying padding to an already
+/// clipped rectangle double-insets partially visible containers.
+fn visible_inner_area(
+    node: &LayoutNode,
+    x_offset: i64,
+    y_offset: i64,
+    bounds: Rect,
+) -> Option<Rect> {
+    let node_left = screen_x(node.pos.0, x_offset);
+    let node_top = screen_y(node.pos.1, y_offset);
+    let left = node_left
+        .saturating_add(i64::from(node.border_left_inset()))
+        .saturating_add(i64::from(node.padding.left));
+    let top = node_top
+        .saturating_add(i64::from(node.border_top_inset()))
+        .saturating_add(i64::from(node.padding.top));
+    let right = node_left
+        .saturating_add(i64::from(node.size.0))
+        .saturating_sub(i64::from(node.border_right_inset()))
+        .saturating_sub(i64::from(node.padding.right));
+    let bottom = node_top
+        .saturating_add(i64::from(node.size.1))
+        .saturating_sub(i64::from(node.border_bottom_inset()))
+        .saturating_sub(i64::from(node.padding.bottom));
+
+    let clipped_left = left.max(i64::from(bounds.x));
+    let clipped_top = top.max(i64::from(bounds.y));
+    let clipped_right = right.min(i64::from(bounds.right()));
+    let clipped_bottom = bottom.min(i64::from(bounds.bottom()));
+    if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
+        return None;
+    }
+    Some(Rect::new(
+        clipped_left as u32,
+        clipped_top as u32,
+        (clipped_right - clipped_left) as u32,
+        (clipped_bottom - clipped_top) as u32,
+    ))
 }
 
 fn render_inner(
     node: &LayoutNode,
     buf: &mut Buffer,
-    x_offset: u32,
-    y_offset: u32,
+    x_offset: i64,
+    y_offset: i64,
     parent_bg: Option<Color>,
     depth: usize,
 ) {
@@ -763,30 +904,13 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        // #247: `sx` carries the horizontal scroll offset; the
-                        // per-segment cursor advances in screen space so a run
-                        // straddling the left clip edge is trimmed correctly.
-                        let mut x = sx;
-                        for (text, style) in line_segs {
-                            let mut s = *style;
-                            if s.bg.is_none() {
-                                s.bg = parent_bg;
-                            }
-                            x = set_string_clipped_x(buf, x, line_y as u32, text, s, None);
-                        }
+                        set_styled_line_clipped_x(buf, sx, line_y as u32, line_segs, parent_bg);
                     }
                 } else {
                     if sy < 0 {
                         return;
                     }
-                    let mut x = sx;
-                    for (text, style) in segs {
-                        let mut s = *style;
-                        if s.bg.is_none() {
-                            s.bg = parent_bg;
-                        }
-                        x = set_string_clipped_x(buf, x, sy as u32, text, s, None);
-                    }
+                    set_styled_line_clipped_x(buf, sx, sy as u32, segs, parent_bg);
                 }
             } else if let Some(ref text) = td.content {
                 let mut style = node.style;
@@ -822,7 +946,7 @@ fn render_inner(
                             line_y as u32,
                             line,
                             style,
-                            None,
+                            node.link_url.as_deref(),
                         );
                     }
                 } else {
@@ -863,10 +987,13 @@ fn render_inner(
                         let draw_x = sx + i64::from(x_align);
                         if let Some(cursor_offset) = td.cursor_offset {
                             let cursor_x = text
-                                .chars()
+                                .graphemes(true)
                                 .take(cursor_offset)
-                                .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0) as u32)
-                                .sum::<u32>();
+                                .map(|grapheme| {
+                                    u32::try_from(UnicodeWidthStr::width(grapheme))
+                                        .unwrap_or(u32::MAX)
+                                })
+                                .fold(0u32, u32::saturating_add);
                             let cursor_screen_x = draw_x + i64::from(cursor_x);
                             if cursor_screen_x >= 0 {
                                 buf.set_cursor_pos(cursor_screen_x as u32, sy as u32);
@@ -887,7 +1014,7 @@ fn render_inner(
         NodeKind::Spacer | NodeKind::RawDraw(_) => {}
         NodeKind::Container(_) => {
             if let Some(color) = node.bg_color
-                && let Some(area) = visible_area(node, x_offset, y_offset)
+                && let Some(area) = visible_area(node, x_offset, y_offset, buf.area)
             {
                 let fill_style = Style::new().bg(color);
                 for y in area.y..area.bottom() {
@@ -899,29 +1026,28 @@ fn render_inner(
             let child_bg = node.bg_color.or(parent_bg);
             render_container_border(node, buf, x_offset, y_offset, child_bg);
             if node.is_scrollable {
-                let Some(area) = visible_area(node, x_offset, y_offset) else {
+                let Some(inner) = visible_inner_area(node, x_offset, y_offset, buf.area) else {
                     return;
                 };
-                let inner = inner_area(node, area);
                 // #247: a scrollable node moves its children on exactly one
                 // axis. `scroll_offset` is non-zero only for a column,
                 // `scroll_offset_x` only for a row, so adding both is correct
                 // for either orientation.
-                let child_y_offset = y_offset.saturating_add(node.scroll_offset);
-                let child_x_offset = x_offset.saturating_add(node.scroll_offset_x);
+                let child_y_offset = y_offset.saturating_add(i64::from(node.scroll_offset));
+                let child_x_offset = x_offset.saturating_add(i64::from(node.scroll_offset_x));
                 let render_y_start = inner.y as i64;
                 let render_y_end = inner.bottom() as i64;
                 let render_x_start = inner.x as i64;
                 let render_x_end = inner.right() as i64;
                 buf.push_clip(inner);
                 for child in &node.children {
-                    let child_top = child.pos.1 as i64 - child_y_offset as i64;
-                    let child_bottom = child_top + child.size.1 as i64;
+                    let child_top = i64::from(child.pos.1).saturating_sub(child_y_offset);
+                    let child_bottom = child_top.saturating_add(i64::from(child.size.1));
                     if child_bottom <= render_y_start || child_top >= render_y_end {
                         continue;
                     }
-                    let child_left = child.pos.0 as i64 - child_x_offset as i64;
-                    let child_right = child_left + child.size.0 as i64;
+                    let child_left = i64::from(child.pos.0).saturating_sub(child_x_offset);
+                    let child_right = child_left.saturating_add(i64::from(child.size.0));
                     if child_right <= render_x_start || child_left >= render_x_end {
                         continue;
                     }
@@ -937,10 +1063,9 @@ fn render_inner(
                 buf.pop_clip();
                 render_scroll_indicators(node, inner, buf, child_bg);
             } else {
-                let Some(area) = visible_area(node, x_offset, y_offset) else {
+                let Some(clip) = visible_inner_area(node, x_offset, y_offset, buf.area) else {
                     return;
                 };
-                let clip = inner_area(node, area);
                 buf.push_clip(clip);
                 for child in &node.children {
                     render_inner(child, buf, x_offset, y_offset, child_bg, depth + 1);
@@ -954,8 +1079,8 @@ fn render_inner(
 fn render_container_border(
     node: &LayoutNode,
     buf: &mut Buffer,
-    x_offset: u32,
-    y_offset: u32,
+    x_offset: i64,
+    y_offset: i64,
     inherit_bg: Option<Color>,
 ) {
     if node.border_inset() == 0 {
@@ -978,8 +1103,8 @@ fn render_container_border(
     }
 
     let top_i = screen_y(node.pos.1, y_offset);
-    let bottom_i = top_i + h as i64 - 1;
-    if bottom_i < 0 {
+    let bottom_i = top_i.saturating_add(i64::from(h)).saturating_sub(1);
+    if bottom_i < i64::from(buf.area.y) {
         return;
     }
     // #247: the left/right edges are translated by the horizontal scroll
@@ -988,47 +1113,55 @@ fn render_container_border(
     // path. `set_char_at` guards the negative-column case so a border that
     // scrolled past the left edge is dropped rather than wrapping the `u32`.
     let left_i = screen_x(node.pos.0, x_offset);
-    let right_i = left_i + w as i64 - 1;
-    if right_i < 0 {
+    let right_i = left_i.saturating_add(i64::from(w)).saturating_sub(1);
+    if right_i < i64::from(buf.area.x) {
         return;
     }
 
     let set_char_at = |buf: &mut Buffer, col: i64, y: u32, ch: char| {
-        if col >= 0 {
+        if col >= i64::from(buf.area.x) && col < i64::from(buf.area.right()) {
             buf.set_char(col as u32, y, ch, style);
         }
     };
 
-    let h_start = left_i.max(0) as u32;
-    let h_end = right_i as u32;
-    if sides.top && top_i >= 0 {
+    let h_start = left_i.max(i64::from(buf.area.x));
+    let h_end = right_i.min(i64::from(buf.area.right()).saturating_sub(1));
+    let horizontal_visible = h_start <= h_end;
+    if sides.top
+        && horizontal_visible
+        && top_i >= i64::from(buf.area.y)
+        && top_i < i64::from(buf.area.bottom())
+    {
         let y = top_i as u32;
-        for xx in h_start..=h_end {
+        for xx in h_start as u32..=h_end as u32 {
             buf.set_char(xx, y, chars.h, style);
         }
     }
-    if sides.bottom {
+    if sides.bottom
+        && horizontal_visible
+        && bottom_i >= i64::from(buf.area.y)
+        && bottom_i < i64::from(buf.area.bottom())
+    {
         let y = bottom_i as u32;
-        for xx in h_start..=h_end {
+        for xx in h_start as u32..=h_end as u32 {
             buf.set_char(xx, y, chars.h, style);
         }
     }
-    if sides.left {
-        let vert_start = top_i.max(0) as u32;
-        let vert_end = bottom_i as u32;
-        for yy in vert_start..=vert_end {
+    let vert_start = top_i.max(i64::from(buf.area.y));
+    let vert_end = bottom_i.min(i64::from(buf.area.bottom()).saturating_sub(1));
+    let vertical_visible = vert_start <= vert_end;
+    if sides.left && vertical_visible {
+        for yy in vert_start as u32..=vert_end as u32 {
             set_char_at(buf, left_i, yy, chars.v);
         }
     }
-    if sides.right {
-        let vert_start = top_i.max(0) as u32;
-        let vert_end = bottom_i as u32;
-        for yy in vert_start..=vert_end {
+    if sides.right && vertical_visible {
+        for yy in vert_start as u32..=vert_end as u32 {
             set_char_at(buf, right_i, yy, chars.v);
         }
     }
 
-    if top_i >= 0 {
+    if top_i >= i64::from(buf.area.y) && top_i < i64::from(buf.area.bottom()) {
         let y = top_i as u32;
         let tl = match (sides.top, sides.left) {
             (true, true) => Some(chars.tl),
@@ -1057,7 +1190,7 @@ fn render_container_border(
     // scrolled container border per frame. `viewport_bottom` is exclusive
     // (matches `render_inner`'s convention).
     let viewport_bottom = i64::from(buf.area.y).saturating_add(i64::from(buf.area.height));
-    if bottom_i < viewport_bottom {
+    if bottom_i >= i64::from(buf.area.y) && bottom_i < viewport_bottom {
         let y = bottom_i as u32;
         let bl = match (sides.bottom, sides.left) {
             (true, true) => Some(chars.bl),
@@ -1081,7 +1214,8 @@ fn render_container_border(
     }
 
     if sides.top
-        && top_i >= 0
+        && top_i >= i64::from(buf.area.y)
+        && top_i < i64::from(buf.area.bottom())
         && let Some((title, title_style)) = &node.title
     {
         let mut ts = *title_style;

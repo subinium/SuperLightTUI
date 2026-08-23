@@ -2,30 +2,106 @@
 
 ## [Unreleased]
 
-### Fixed
+## [0.23.0] - 2026-08-23
 
-- **Context injection examples** (#281) — shared-context examples now take an
-  owned snapshot before subsequent mutable UI calls, avoiding overlapping
-  `&Context` / `&mut Context` borrows.
-- **Terminal query safety** — automatic capability probes now skip generic PTY
-  wrappers, `TERM=dumb`, and tmux/screen by default, preventing control-sequence
-  leaks and a race that could consume the first byte of user input. Kitty
-  keyboard setup and cleanup now also emit portable protocol bytes on Windows,
-  and optional mode teardown can no longer abort core terminal restoration.
-- **Theme watcher source filtering** — hot reload now ignores registration,
-  same-content, and sibling-file events while retaining atomic-save support,
-  preventing spurious reloads and cross-platform filesystem-watch races.
+This release hardens the native terminal runtime, makes long-lived state and
+async work explicitly bounded, closes rendering correctness gaps across Unicode
+and graphics protocols, and aligns the public API, examples, docs, and release
+automation for the next development cycle.
+
+### Added
+
+- **Owned async lifecycle** (#315, #321, #334) — `run_async*` now returns an
+  `AsyncRunHandle` with cancellation and joining, while `AsyncSender` provides
+  wake-aware bounded message delivery and a per-frame processing budget.
+- **Observable async tasks** (#343) — context tasks expose completed, cancelled,
+  and panicked outcomes, promptly reap join handles, and bound exclusive-task
+  history.
+- **Fallible file-picker scans** (#318, #319) — directory scans report operation
+  and error details, can be retried, cache metadata used by sorting, and render
+  only the visible viewport.
+- **Safe raw-draw paths** (#53, #340) — `draw_precomputed` accepts borrowed
+  frame-local data without a deferred `'static` closure, and
+  `draw_with_fallback` contains renderer panics inside the affected region.
+- **Explicit numeric options** (#347) — `SliderOpts` and finite-value policies
+  make numeric input and visualization bounds predictable.
 
 ### Changed
 
-- **Native platform CI** — macOS and Windows now run the full
-  `superlighttui --all-features` test suite for pull requests and releases.
+- **Collection state invariants** (#344-#349) — rich logs use bounded `VecDeque`
+  storage, cache-coupled collections mutate through coherent APIs, selection
+  states clamp after data changes, table pagination uses absolute row indices,
+  and text editing follows grapheme, shortcut, paste, and CRLF boundaries.
+- **Terminal ownership model** (#316, #325, #327, #329-#337) — input probing is
+  non-blocking, raw mode and panic hooks are session-scoped, custom backends do
+  not mutate process terminal state, frame pacing covers the full loop, zero-size
+  terminals still poll events, and tmux, GNU screen, Zellij, SSH, inline, and
+  static-output behavior use explicit protocol policies.
+- **Rust and dependency baseline** (#360) — retained Rust 2024 and MSRV 1.88,
+  adopted stable integer square root, upgraded `notify`, `toml`, and `criterion`,
+  refreshed compatible lockfile dependencies, and completed TypeScript/TSX
+  tree-sitter query composition. Crossterm remains on 0.28 deliberately for the
+  validated backend contract.
+- **Public state encapsulation** (#345, #346) — cache-sensitive fields are
+  private and exposed through mutation/accessor methods documented in the
+  migration guide. `slider_with_step` remains as a deprecated compatibility
+  shim for the new `SliderOpts` API.
+
+### Fixed
+
+- **Terminal queries and graphics lifecycle** (#316, #329, #353) — bounded
+  capability replies no longer consume the first key or leave a reader thread;
+  sprixel erase/repaint state, Sixel payload limits, iTerm sizing, and protocol
+  cleanup are deterministic.
+- **Terminal geometry and output** (#317, #330-#337) — inline vertical resize,
+  scrollback anchoring, final static-log draining, exact no-modifier bindings,
+  disconnected async exit, and whole-loop FPS accounting now match their API
+  contracts.
+- **Hook and panic atomicity** (#338-#343) — screen instances own independent
+  hook namespaces, theme-watch notifications are coalesced, deferred clipping is
+  restored on panic, memo initialization is transactional, and extreme gaps
+  saturate safely.
+- **Buffer and viewport safety** (#350-#355) — nested clips intersect on both
+  axes, raw-draw source coordinates follow the clipped viewport, buffer
+  construction and resize are checked, origin-mismatched diffs force bounded
+  redraws, controls are sanitized, graphemes are atomic, and full-line bidi
+  reordering preserves styles and links.
+- **Syntax and display contracts** (#356, #357) — syntax colors follow the active
+  theme, bounded prepared-output caches invalidate by theme, media preparation is
+  reused, and fixed-size visualization responses report their real outer rect.
+- **Animation, style, and charts** (#347, #359, #361, #362) — completion
+  callbacks fire once per lifecycle, non-finite color math follows a defined
+  zero policy, gradients preserve grapheme cell widths and exact endpoints,
+  linked wrapped text retains URLs, and chart, treemap, canvas, gauge, and label
+  rendering respect terminal cell widths and finite ranges.
+- **Context injection examples** (#281) — shared-context examples take an owned
+  snapshot before later mutable UI calls, avoiding overlapping borrows.
+- **Theme watcher source filtering** (#314, #339) — hot reload ignores sibling
+  and same-content events while a capacity-one channel coalesces bursts without
+  unbounded memory growth.
+
+### Performance
+
+- **Bounded long-lived memory** (#319, #337, #339, #343-#345) — file-picker
+  work is viewport-limited, static output drains incrementally, watch/task
+  queues are bounded, rich-log front eviction is O(1), and exclusive histories
+  and syntax/media caches have explicit caps.
+- **Rendering hot paths** (#351, #354, #356) — layout arithmetic reuses scratch
+  storage, canvas label overlays are grapheme-aware, and prepared syntax output
+  avoids repeated parsing for stable content/theme keys.
 
 ### Docs
 
-- **Rustdoc audit follow-up** (#244) — completed the remaining status-widget
-  examples, gauge-family links, animation links, state-access panic contracts,
-  and defensive consuming-builder documentation.
+- **Install and API parity** (#294, #358) — README install snippets, localized
+  guides, migration notes, state APIs, backend caveats, examples, demos, and the
+  SLT skills now describe the actual 0.23.0 surface.
+- **Rustdoc audit follow-up** (#244) — status widgets, gauge families,
+  animation links, state-access panic contracts, and consuming builders now
+  have complete, checked documentation.
+- **Release evidence** (#358) — CI adds native terminal-multiplexer smoke tests,
+  public API audit contracts, registered-example checks, package/registry smoke
+  scripts, Node 24 actions, and release recovery checks. Tag releases publish
+  `superlighttui`; `slt-wasm` publishing is opt-in for this cycle.
 
 ## [0.22.3] - 2026-07-31
 

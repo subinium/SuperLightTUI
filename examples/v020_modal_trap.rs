@@ -3,7 +3,7 @@
 //!
 //! Demonstrates: #225.
 //!
-//! Run: `cargo run --example v020_modal_trap`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   M               — open the modal

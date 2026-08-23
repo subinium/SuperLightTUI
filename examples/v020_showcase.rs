@@ -30,7 +30,7 @@
 //! └────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Run with: `cargo run --example v020_showcase`
+//! Run with: `cargo run --example showcase_tour`
 //!
 //! Keys:
 //!   Tab / Shift-Tab     — cycle focus across the registered fields/buttons

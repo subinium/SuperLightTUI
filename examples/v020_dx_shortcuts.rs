@@ -3,7 +3,7 @@
 //! Demonstrates: #209 (Response::on_hover), #210 (animate_bool),
 //! #220 (ContainerBuilder::fill), #221 (Rect::center_in).
 //!
-//! Run: `cargo run --example v020_dx_shortcuts`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   Space             — toggle the animated side panel (drives animate_bool)

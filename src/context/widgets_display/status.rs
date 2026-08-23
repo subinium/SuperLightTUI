@@ -726,16 +726,18 @@ impl Drop for CodeBlock<'_> {
 /// line-numbered paths on the `numbered` flag — no behavior change versus the
 /// previous separate `code_block_lang` / `code_block_numbered_lang` bodies.
 fn render_code_block(ctx: &mut Context, code: &str, lang: &str, numbered: bool) -> Response {
+    if code.is_empty() {
+        return Response::none();
+    }
+
     let theme = ctx.theme;
     let pad = theme.spacing.xs();
-    let highlighted: Option<Vec<Vec<(String, Style)>>> =
-        crate::syntax::highlight_code(code, lang, &theme);
+    let highlighted = crate::syntax::highlight_code_cached(code, lang, &theme);
 
     if numbered {
         let lines: Vec<&str> = code.lines().collect();
         let gutter_w = (lines.len().max(1).ilog10() + 1) as usize;
-        let _ = ctx
-            .bordered(Border::Rounded)
+        ctx.bordered(Border::Rounded)
             .bg(theme.surface)
             .p(pad)
             .col(|ui| {
@@ -758,10 +760,9 @@ fn render_code_block(ctx: &mut Context, code: &str, lang: &str, numbered: bool) 
                         });
                     }
                 }
-            });
+            })
     } else {
-        let _ = ctx
-            .bordered(Border::Rounded)
+        ctx.bordered(Border::Rounded)
             .bg(theme.surface)
             .p(pad)
             .col(|ui| {
@@ -772,10 +773,8 @@ fn render_code_block(ctx: &mut Context, code: &str, lang: &str, numbered: bool) 
                         ui.line(|ui| render_highlighted_line(ui, line));
                     }
                 }
-            });
+            })
     }
-
-    Response::none()
 }
 
 /// Breadcrumb navigation bar builder. Auto-renders on `Drop`.
@@ -879,6 +878,7 @@ fn render_breadcrumb(
 mod code_block_tests {
     use crate::test_utils::TestBackend;
     use crate::widgets::AlertLevel;
+    use crate::{Rect, Response};
 
     #[test]
     fn code_block_builder_renders_lang_and_gutter() {
@@ -903,6 +903,33 @@ mod code_block_tests {
             let _ = ui.code_block("a\nb").show();
         });
         assert_eq!(tb_drop.to_string(), tb_show.to_string());
+    }
+
+    #[test]
+    fn code_block_show_returns_outer_warm_frame_response() {
+        let mut backend = TestBackend::new(30, 8);
+        let mut response = Response::none();
+        backend.render(|ui| {
+            response = ui.code_block("let x = 1;").lang("rust").show();
+        });
+        assert_eq!(response.rect, Rect::default());
+
+        backend.render(|ui| {
+            response = ui.code_block("let x = 1;").lang("rust").show();
+        });
+        assert!(response.rect.width > 0);
+        assert!(response.rect.height > 0);
+    }
+
+    #[test]
+    fn empty_code_block_returns_none_without_rendering() {
+        let mut backend = TestBackend::new(30, 8);
+        let mut response = Response::none();
+        backend.render(|ui| {
+            response = ui.code_block("").show();
+        });
+        assert_eq!(response.rect, Rect::default());
+        assert_eq!(backend.to_string().trim(), "");
     }
 
     #[test]

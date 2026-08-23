@@ -313,7 +313,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         if ui.key_code(slt::KeyCode::Right) {
             state.sheet.cursor_col = (state.sheet.cursor_col + 1).min(state.sheet.total_cols() - 1);
         }
-        if ui.key_code(slt::KeyCode::Enter) {
+        if ui.key_code(slt::KeyCode::Enter) || ui.key('e') {
             state.editing = true;
             state.edit_input.value = state
                 .sheet

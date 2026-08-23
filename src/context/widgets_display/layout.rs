@@ -246,27 +246,30 @@ impl Context {
     /// # });
     /// ```
     pub fn screen(&mut self, name: &str, screens: &mut ScreenState, f: impl FnOnce(&mut Context)) {
-        // Look up (or create) this screen's reserved hook segment.
-        //
-        // Cache-hit path is the steady state — every frame after the first.
-        // Avoid the unconditional `name.to_string()` `entry()` allocation by
-        // checking first via `&str` lookup. Only the first frame for a
-        // given screen pays the `to_string()` cost. Closes #134 (Option B).
-        let (seg_start, seg_count) = if let Some(&v) = self.screen_hook_map.get(name) {
-            v
-        } else {
-            let v = (self.hook_states.len(), 0);
-            self.screen_hook_map.insert(name.to_string(), v);
-            v
-        };
-
         let screen_key = screens as *mut ScreenState as usize;
+        let screen_state_id = screens.id();
         let is_active = self
             .screen_nav_render_origins
             .get(&screen_key)
             .map_or_else(|| screens.current() == name, |origin| origin == name);
 
         if is_active {
+            // Allocate a segment only when this exact ScreenState/name pair is
+            // active for the first time. Inactive declarations do not reserve
+            // the same zero-length segment as a later active screen.
+            let existing = self
+                .screen_hook_map
+                .get(&screen_state_id)
+                .and_then(|hooks| hooks.get(name))
+                .copied();
+            let (seg_start, _seg_count) = existing.unwrap_or_else(|| {
+                let value = (self.hook_states.len(), 0);
+                self.screen_hook_map
+                    .entry(screen_state_id)
+                    .or_default()
+                    .insert(name.to_string(), value);
+                value
+            });
             // Save outer focus, restore this screen's focus
             let outer_focus_index = self.focus_index;
             let (saved_focus_idx, _saved_focus_count) = screens.restore_focus(name);
@@ -296,10 +299,16 @@ impl Context {
             // existing slot via `&str` and overwrite the value in place,
             // avoiding a second `to_string()` allocation per active frame.
             let hooks_used = self.rollback.hook_cursor - seg_start;
-            if let Some(slot) = self.screen_hook_map.get_mut(name) {
+            if let Some(slot) = self
+                .screen_hook_map
+                .get_mut(&screen_state_id)
+                .and_then(|hooks| hooks.get_mut(name))
+            {
                 *slot = (seg_start, hooks_used);
             } else {
                 self.screen_hook_map
+                    .entry(screen_state_id)
+                    .or_default()
                     .insert(name.to_string(), (seg_start, hooks_used));
             }
 
@@ -328,9 +337,16 @@ impl Context {
                 }
             }
         } else {
-            // Skip: advance hook cursor past the reserved segment
-            if seg_count > 0 && seg_start >= self.rollback.hook_cursor {
-                self.rollback.hook_cursor = seg_start + seg_count;
+            // Skip an already-initialized segment without allocating one for a
+            // screen that has never been active.
+            if let Some(&(seg_start, seg_count)) = self
+                .screen_hook_map
+                .get(&screen_state_id)
+                .and_then(|hooks| hooks.get(name))
+                && seg_count > 0
+                && seg_start >= self.rollback.hook_cursor
+            {
+                self.rollback.hook_cursor = seg_start.saturating_add(seg_count);
             }
         }
     }
@@ -417,7 +433,7 @@ impl Context {
             return false;
         }
         let focus_removed = screens.remove_inactive(name);
-        let hooks_removed = self.remove_screen_hooks(name);
+        let hooks_removed = self.remove_screen_hooks(screens.id(), name);
         focus_removed || hooks_removed
     }
 
@@ -431,9 +447,12 @@ impl Context {
         screens: &mut ScreenState,
         mut keep: impl FnMut(&str) -> bool,
     ) -> usize {
+        let screen_id = screens.id();
         let remove_names: Vec<String> = self
             .screen_hook_map
-            .keys()
+            .get(&screen_id)
+            .into_iter()
+            .flat_map(|hooks| hooks.keys())
             .filter(|name| !screens.contains(name) && !keep(name))
             .cloned()
             .collect();
@@ -451,13 +470,24 @@ impl Context {
     ///
     /// Diagnostic helper for apps that generate screen names from runtime ids.
     pub fn screen_state_count(&self) -> usize {
-        self.screen_hook_map.len()
+        self.screen_hook_map.values().map(|hooks| hooks.len()).sum()
     }
 
-    fn remove_screen_hooks(&mut self, name: &str) -> bool {
-        let Some((seg_start, seg_count)) = self.screen_hook_map.remove(name) else {
+    fn remove_screen_hooks(&mut self, screen_id: u64, name: &str) -> bool {
+        let Some((seg_start, seg_count)) = self
+            .screen_hook_map
+            .get_mut(&screen_id)
+            .and_then(|hooks| hooks.remove(name))
+        else {
             return false;
         };
+        if self
+            .screen_hook_map
+            .get(&screen_id)
+            .is_some_and(|hooks| hooks.is_empty())
+        {
+            self.screen_hook_map.remove(&screen_id);
+        }
 
         if seg_count == 0 {
             return true;
@@ -472,9 +502,11 @@ impl Context {
 
         let removed = end - seg_start;
         self.hook_states.drain(seg_start..end);
-        for (other_start, _) in self.screen_hook_map.values_mut() {
-            if *other_start > seg_start {
-                *other_start = other_start.saturating_sub(removed);
+        for hooks in self.screen_hook_map.values_mut() {
+            for (other_start, _) in hooks.values_mut() {
+                if *other_start > seg_start {
+                    *other_start = other_start.saturating_sub(removed);
+                }
             }
         }
         if self.rollback.hook_cursor > seg_start {
@@ -605,8 +637,15 @@ impl Context {
             .any(|cmd| matches!(cmd, Command::Link { .. }));
 
         if has_link {
+            for command in &mut self.commands[start..] {
+                match command {
+                    Command::Text { wrap, .. } | Command::Link { wrap, .. } => *wrap = true,
+                    _ => {}
+                }
+            }
+            self.commands.insert(start, Command::WrapMarker(0));
             self.commands.insert(
-                start,
+                start + 1,
                 Command::BeginContainer(Box::new(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,

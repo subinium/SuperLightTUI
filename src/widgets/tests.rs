@@ -59,9 +59,9 @@ fn toast_message_default_values() {
 #[test]
 fn list_state_default_values() {
     let state = ListState::default();
-    assert!(state.items.is_empty());
+    assert!(state.is_empty());
     assert_eq!(state.selected, 0);
-    assert_eq!(state.filter, "");
+    assert_eq!(state.filter(), "");
     assert!(state.visible_indices().is_empty());
     assert_eq!(state.selected_item(), None);
 }
@@ -72,7 +72,36 @@ fn file_entry_default_values() {
     assert_eq!(entry.name, "");
     assert_eq!(entry.path, PathBuf::new());
     assert!(!entry.is_dir);
-    assert_eq!(entry.size, 0);
+    assert_eq!(entry.size, None);
+}
+
+#[test]
+fn file_picker_keeps_entry_when_metadata_disappears_mid_scan() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("slt_partial_scan_{}_{}", std::process::id(), nonce));
+    std::fs::create_dir_all(&root).expect("failed to create temp directory");
+    let path = root.join("transient.txt");
+    std::fs::write(&path, b"data").expect("failed to create transient file");
+    let mut state = FilePickerState::new(&root);
+
+    let error = state
+        .try_refresh_with_metadata_hook(|candidate| {
+            if candidate == path {
+                std::fs::remove_file(candidate).expect("failed to remove transient file");
+            }
+        })
+        .expect_err("metadata lookup should report the removed file");
+
+    assert_eq!(error.operation, FilePickerScanOperation::ReadMetadata);
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.entries[0].name, "transient.txt");
+    assert_eq!(state.entries[0].size, None);
+    assert_eq!(state.scan_status(), FilePickerScanStatus::Error);
+    std::fs::remove_dir_all(root).expect("failed to remove temp directory");
 }
 
 #[test]
@@ -86,12 +115,12 @@ fn tabs_state_default_values() {
 #[test]
 fn table_state_default_values() {
     let state = TableState::default();
-    assert!(state.headers.is_empty());
-    assert!(state.rows.is_empty());
+    assert!(state.headers().is_empty());
+    assert!(state.is_empty());
     assert_eq!(state.selected, 0);
     assert_eq!(state.sort_column, None);
     assert!(state.sort_ascending);
-    assert_eq!(state.filter, "");
+    assert_eq!(state.filter(), "");
     assert_eq!(state.page, 0);
     assert_eq!(state.page_size, 0);
     assert!(!state.zebra);
@@ -134,7 +163,7 @@ fn table_filter_tokens_are_cached_and_reused() {
 #[test]
 fn select_state_default_values() {
     let state = SelectState::default();
-    assert!(state.items.is_empty());
+    assert!(state.items().is_empty());
     assert_eq!(state.selected, 0);
     assert!(!state.open);
     assert_eq!(state.placeholder, "");
@@ -172,16 +201,36 @@ fn tabs_state_new_sets_labels() {
 #[test]
 fn list_state_new_selected_item_points_to_first_item() {
     let state = ListState::new(vec!["alpha", "beta"]);
-    assert_eq!(state.items, vec!["alpha".to_string(), "beta".to_string()]);
+    assert_eq!(state.items(), ["alpha", "beta"]);
     assert_eq!(state.selected, 0);
     assert_eq!(state.visible_indices(), &[0, 1]);
     assert_eq!(state.selected_item(), Some("alpha"));
 }
 
 #[test]
+fn list_mutation_methods_keep_filter_cache_coherent() {
+    let mut state = ListState::new(vec!["alpha", "beta", "alphabet"]);
+    state.set_filter("alpha");
+    state.selected = 1;
+
+    state.set_items(vec!["gamma"]);
+    assert!(state.visible_indices().is_empty());
+    assert_eq!(state.selected, 0);
+
+    state.push_item("alpha-new");
+    assert_eq!(state.visible_indices(), &[1]);
+    assert_eq!(state.selected_item(), Some("alpha-new"));
+    assert_eq!(state.remove_item(0), Some("gamma".to_string()));
+    assert_eq!(state.visible_indices(), &[0]);
+    state.clear_items();
+    assert!(state.is_empty());
+    assert!(state.visible_indices().is_empty());
+}
+
+#[test]
 fn select_state_placeholder_builder_sets_value() {
     let state = SelectState::new(vec!["one", "two"]).placeholder("Pick one");
-    assert_eq!(state.items, vec!["one".to_string(), "two".to_string()]);
+    assert_eq!(state.items(), ["one", "two"]);
     assert_eq!(state.placeholder, "Pick one");
     assert_eq!(state.selected_item(), Some("one"));
 }
@@ -219,8 +268,8 @@ fn radio_state_new_sets_items_and_selection() {
 #[test]
 fn table_state_new_sets_sort_ascending_true() {
     let state = TableState::new(vec!["Name"], vec![vec!["Alice"], vec!["Bob"]]);
-    assert_eq!(state.headers, vec!["Name".to_string()]);
-    assert_eq!(state.rows.len(), 2);
+    assert_eq!(state.headers(), ["Name"]);
+    assert_eq!(state.row_count(), 2);
     assert!(state.sort_ascending);
     assert_eq!(state.sort_column, None);
     assert!(!state.zebra);
@@ -249,6 +298,20 @@ fn command_palette_filtered_indices_uses_fuzzy_and_sorts() {
     state.input = "buffer".to_string();
     let filtered = state.filtered_indices();
     assert_eq!(filtered, vec![0]);
+}
+
+#[test]
+fn command_palette_replacement_invalidates_open_filter_cache() {
+    let mut state = CommandPaletteState::new(vec![PaletteCommand::new("Save", "Write file")]);
+    state.input = "save".to_string();
+    assert_eq!(state.filtered_indices_cached(), &[0]);
+
+    state.set_commands(vec![PaletteCommand::new("Quit", "Exit")]);
+    assert!(state.filtered_indices_cached().is_empty());
+    state.push_command(PaletteCommand::new("Save All", "Write files"));
+    assert_eq!(state.filtered_indices_cached(), &[1]);
+    state.clear_commands();
+    assert!(state.filtered_indices_cached().is_empty());
 }
 
 #[test]
@@ -700,6 +763,8 @@ fn form_state_validate_with_cross_field_rule() {
         }
     });
     assert!(ok);
+    assert_eq!(form.fields[1].error, None);
+    assert!(form.errors().is_empty());
 }
 
 #[test]

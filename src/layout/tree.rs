@@ -305,10 +305,11 @@ impl LayoutNode {
         margin: Margin,
         constraints: Constraints,
     ) -> Self {
-        let width: u32 = segments
-            .iter()
-            .map(|(s, _)| UnicodeWidthStr::width(s.as_str()) as u32)
-            .sum();
+        let width = segments.iter().fold(0u32, |total, (text, _)| {
+            total.saturating_add(
+                u32::try_from(UnicodeWidthStr::width(text.as_str())).unwrap_or(u32::MAX),
+            )
+        });
         Self {
             kind: NodeKind::Text,
             text_data: Some(Box::new(TextNodeData {
@@ -538,11 +539,29 @@ impl LayoutNode {
     }
 
     pub(crate) fn frame_horizontal(&self) -> u32 {
-        self.padding.horizontal() + self.border_left_inset() + self.border_right_inset()
+        self.padding
+            .left
+            .saturating_add(self.padding.right)
+            .saturating_add(self.border_left_inset())
+            .saturating_add(self.border_right_inset())
     }
 
     pub(crate) fn frame_vertical(&self) -> u32 {
-        self.padding.vertical() + self.border_top_inset() + self.border_bottom_inset()
+        self.padding
+            .top
+            .saturating_add(self.padding.bottom)
+            .saturating_add(self.border_top_inset())
+            .saturating_add(self.border_bottom_inset())
+    }
+
+    #[inline]
+    pub(crate) fn margin_horizontal(&self) -> u32 {
+        self.margin.left.saturating_add(self.margin.right)
+    }
+
+    #[inline]
+    pub(crate) fn margin_vertical(&self) -> u32 {
+        self.margin.top.saturating_add(self.margin.bottom)
     }
 
     /// Width-independent intrinsic minimum width, memoized for the frame.
@@ -575,19 +594,24 @@ impl LayoutNode {
                 } else {
                     (self.children.len() as i64 - 1) * self.gap as i64
                 };
-                let children_width: u32 = self.children.iter().map(|c| c.min_width()).sum();
+                let children_width = self.children.iter().fold(0u64, |total, child| {
+                    total.saturating_add(u64::from(child.min_width()))
+                });
                 // `gaps` may be negative for overlap (#222); clamp the total at 0
                 // so a small intrinsic width never wraps the `u32` subtraction.
-                ((children_width as i64 + gaps).max(0) as u32) + self.frame_horizontal()
+                (i128::from(children_width) + i128::from(gaps))
+                    .clamp(0, i128::from(u32::MAX))
+                    .try_into()
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(self.frame_horizontal())
             }
-            NodeKind::Container(Direction::Column) => {
-                self.children
-                    .iter()
-                    .map(|c| c.min_width())
-                    .max()
-                    .unwrap_or(0)
-                    + self.frame_horizontal()
-            }
+            NodeKind::Container(Direction::Column) => self
+                .children
+                .iter()
+                .map(|c| c.min_width())
+                .max()
+                .unwrap_or(0)
+                .saturating_add(self.frame_horizontal()),
         };
 
         let width = width.max(self.constraints.min_width().unwrap_or(0));
@@ -595,7 +619,7 @@ impl LayoutNode {
             Some(max_w) => width.min(max_w),
             None => width,
         };
-        width.saturating_add(self.margin.horizontal())
+        width.saturating_add(self.margin_horizontal())
     }
 
     /// Clear this node's per-frame intrinsic-size memos.
@@ -632,28 +656,33 @@ impl LayoutNode {
         let height = match self.kind {
             NodeKind::Text => 1,
             NodeKind::Spacer | NodeKind::RawDraw(_) => 0,
-            NodeKind::Container(Direction::Row) => {
-                self.children
-                    .iter()
-                    .map(|c| c.min_height())
-                    .max()
-                    .unwrap_or(0)
-                    + self.frame_vertical()
-            }
+            NodeKind::Container(Direction::Row) => self
+                .children
+                .iter()
+                .map(|c| c.min_height())
+                .max()
+                .unwrap_or(0)
+                .saturating_add(self.frame_vertical()),
             NodeKind::Container(Direction::Column) => {
                 let gaps: i64 = if self.children.is_empty() {
                     0
                 } else {
                     (self.children.len() as i64 - 1) * self.gap as i64
                 };
-                let children_height: u32 = self.children.iter().map(|c| c.min_height()).sum();
+                let children_height = self.children.iter().fold(0u64, |total, child| {
+                    total.saturating_add(u64::from(child.min_height()))
+                });
                 // `gaps` may be negative for overlap (#222); clamp at 0.
-                ((children_height as i64 + gaps).max(0) as u32) + self.frame_vertical()
+                (i128::from(children_height) + i128::from(gaps))
+                    .clamp(0, i128::from(u32::MAX))
+                    .try_into()
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(self.frame_vertical())
             }
         };
 
         let height = height.max(self.constraints.min_height().unwrap_or(0));
-        height.saturating_add(self.margin.vertical())
+        height.saturating_add(self.margin_vertical())
     }
 
     pub(crate) fn ensure_wrapped_for_width(&mut self, available_width: u32) -> u32 {
@@ -698,9 +727,9 @@ impl LayoutNode {
                 // `render` depend on, and it already short-circuits repeated
                 // same-width calls. Adding a second memo here would risk
                 // skipping that population, so we defer to the existing cache.
-                let inner_width = available_width.saturating_sub(self.margin.horizontal());
+                let inner_width = available_width.saturating_sub(self.margin_horizontal());
                 let lines = self.ensure_wrapped_for_width(inner_width);
-                lines.saturating_add(self.margin.vertical())
+                lines.saturating_add(self.margin_vertical())
             }
             // A wrapping row's height depends on how many lines its children
             // flow onto at `available_width`, so it cannot be derived from the
@@ -740,7 +769,7 @@ impl LayoutNode {
     /// the unsigned height. Closes #258.
     fn wrapped_min_height(&mut self, available_width: u32) -> u32 {
         let inner_width = available_width
-            .saturating_sub(self.margin.horizontal())
+            .saturating_sub(self.margin_horizontal())
             .saturating_sub(self.frame_horizontal());
 
         // Snapshot per-child base widths / heights (immutable borrow ends
@@ -753,15 +782,19 @@ impl LayoutNode {
         let mut cur_line_height: u32 = 0;
         let mut cur_has_child = false;
 
-        for child in &self.children {
+        for child in &mut self.children {
             let base = child.flex_basis().unwrap_or_else(|| child.min_width());
-            let child_height = child.min_height();
+            let child_height = if child.wrap {
+                child.min_height_for_width(base.min(inner_width))
+            } else {
+                child.min_height()
+            };
             if cur_has_child {
                 // Would adding this child (plus the within-line gap) overflow?
                 let prospective = cur_width + gap as i64 + base as i64;
                 if prospective > inner_width as i64 {
                     // Flush the current line and start a new one with this child.
-                    line_count += 1;
+                    line_count = line_count.saturating_add(1);
                     total_lines_height = total_lines_height.saturating_add(cur_line_height);
                     cur_width = base as i64;
                     cur_line_height = child_height;
@@ -776,7 +809,7 @@ impl LayoutNode {
             }
         }
         if cur_has_child {
-            line_count += 1;
+            line_count = line_count.saturating_add(1);
             total_lines_height = total_lines_height.saturating_add(cur_line_height);
         }
 
@@ -790,7 +823,7 @@ impl LayoutNode {
         let content_height = total_lines_height.saturating_add(gap_total);
         let height = content_height + self.frame_vertical();
         let height = height.max(self.constraints.min_height().unwrap_or(0));
-        height.saturating_add(self.margin.vertical())
+        height.saturating_add(self.margin_vertical())
     }
 }
 
@@ -850,7 +883,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 continue;
             }
 
-            if chunk_width + ch_width > max_width {
+            if chunk_width.saturating_add(ch_width) > max_width {
                 out.push(((chunk_start, chunk_end), chunk_width));
                 if ch_width > max_width {
                     out.push(((abs_i, abs_i + ch_len), ch_width));
@@ -864,7 +897,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 }
             } else {
                 chunk_end = abs_i + ch_len;
-                chunk_width += ch_width;
+                chunk_width = chunk_width.saturating_add(ch_width);
             }
         }
 
@@ -915,9 +948,9 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         if current_line_words.is_empty() {
             current_line_words.push((word_start, word_end));
             *current_width = word_width;
-        } else if *current_width + 1 + word_width <= max_width {
+        } else if current_width.saturating_add(1).saturating_add(word_width) <= max_width {
             current_line_words.push((word_start, word_end));
-            *current_width += 1 + word_width;
+            *current_width = current_width.saturating_add(1).saturating_add(word_width);
         } else {
             flush_line(text, lines, current_line_words);
             current_line_words.push((word_start, word_end));
@@ -1010,7 +1043,8 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 word_width = 0;
                 continue;
             }
-            word_width += UnicodeWidthStr::width(g) as u32;
+            word_width = word_width
+                .saturating_add(u32::try_from(UnicodeWidthStr::width(g)).unwrap_or(u32::MAX));
         }
 
         push_word(
@@ -1237,7 +1271,7 @@ fn wrap_segments_paragraph(
                 nw.push_str(g);
                 line_segs.push((nw, style));
             }
-            line_width += ch_width;
+            line_width = line_width.saturating_add(ch_width);
             cur_off += ch_len;
         }
 
@@ -1394,6 +1428,7 @@ fn build_children(
                 text,
                 url,
                 style,
+                wrap,
                 margin,
                 constraints,
             } => {
@@ -1402,7 +1437,7 @@ fn build_children(
                     style,
                     0,
                     Align::Start,
-                    (None, false, false),
+                    (None, wrap, false),
                     margin,
                     constraints,
                 );

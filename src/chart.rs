@@ -13,10 +13,11 @@ mod grid;
 mod render;
 
 pub(crate) use bar::build_histogram_config;
-pub(crate) use grid::truncate_label;
+pub(crate) use grid::{clip_text_cells, truncate_label, write_text_cells};
 pub(crate) use render::render_chart;
 
-use axis::{TickSpec, build_tui_ticks, format_number, resolve_bounds};
+pub(crate) use axis::finite_ratio;
+use axis::{TickSpec, build_tui_ticks, format_number, normalize_bounds, resolve_bounds};
 use bar::draw_bar_dataset;
 use braille::draw_braille_dataset;
 use grid::{
@@ -37,7 +38,6 @@ const PALETTE: [Color; 8] = [
     Color::White,
     Color::Indexed(208),
 ];
-const BLOCK_FRACTIONS: [char; 9] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 /// Colored character range `(start, end, color)`.
 pub type ColorSpan = (usize, usize, Color);
@@ -342,39 +342,67 @@ impl ChartBuilder {
 
     /// Set manual x-axis bounds.
     pub fn xlim(&mut self, min: f64, max: f64) -> &mut Self {
-        self.config.x_axis.bounds = Some((min, max));
+        self.config.x_axis.bounds =
+            (min.is_finite() && max.is_finite()).then(|| normalize_bounds(min, max));
         self
     }
 
     /// Set manual y-axis bounds.
     pub fn ylim(&mut self, min: f64, max: f64) -> &mut Self {
-        self.config.y_axis.bounds = Some((min, max));
+        self.config.y_axis.bounds =
+            (min.is_finite() && max.is_finite()).then(|| normalize_bounds(min, max));
         self
     }
 
     /// Set manual x-axis tick positions.
     pub fn xticks(&mut self, values: &[f64]) -> &mut Self {
-        self.config.x_axis.ticks = Some(values.to_vec());
+        self.config.x_axis.ticks = Some(
+            values
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .collect(),
+        );
         self
     }
 
     /// Set manual y-axis tick positions.
     pub fn yticks(&mut self, values: &[f64]) -> &mut Self {
-        self.config.y_axis.ticks = Some(values.to_vec());
+        self.config.y_axis.ticks = Some(
+            values
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .collect(),
+        );
         self
     }
 
     /// Set manual x-axis ticks and labels.
     pub fn xtick_labels(&mut self, values: &[f64], labels: &[&str]) -> &mut Self {
-        self.config.x_axis.ticks = Some(values.to_vec());
-        self.config.x_axis.labels = Some(labels.iter().map(|label| (*label).to_string()).collect());
+        let pairs: Vec<(f64, String)> = values
+            .iter()
+            .copied()
+            .zip(labels.iter().copied())
+            .filter(|(value, _)| value.is_finite())
+            .map(|(value, label)| (value, label.to_string()))
+            .collect();
+        self.config.x_axis.ticks = Some(pairs.iter().map(|(value, _)| *value).collect());
+        self.config.x_axis.labels = Some(pairs.into_iter().map(|(_, label)| label).collect());
         self
     }
 
     /// Set manual y-axis ticks and labels.
     pub fn ytick_labels(&mut self, values: &[f64], labels: &[&str]) -> &mut Self {
-        self.config.y_axis.ticks = Some(values.to_vec());
-        self.config.y_axis.labels = Some(labels.iter().map(|label| (*label).to_string()).collect());
+        let pairs: Vec<(f64, String)> = values
+            .iter()
+            .copied()
+            .zip(labels.iter().copied())
+            .filter(|(value, _)| value.is_finite())
+            .map(|(value, label)| (value, label.to_string()))
+            .collect();
+        self.config.y_axis.ticks = Some(pairs.iter().map(|(value, _)| *value).collect());
+        self.config.y_axis.labels = Some(pairs.into_iter().map(|(_, label)| label).collect());
         self
     }
 
@@ -404,13 +432,17 @@ impl ChartBuilder {
 
     /// Add a horizontal reference line.
     pub fn axhline(&mut self, y: f64, style: Style) -> &mut Self {
-        self.config.hlines.push((y, style));
+        if y.is_finite() {
+            self.config.hlines.push((y, style));
+        }
         self
     }
 
     /// Add a vertical reference line.
     pub fn axvline(&mut self, x: f64, style: Style) -> &mut Self {
-        self.config.vlines.push((x, style));
+        if x.is_finite() {
+            self.config.vlines.push((x, style));
+        }
         self
     }
 
@@ -485,7 +517,11 @@ impl ChartBuilder {
         self.entries.push(DatasetEntry {
             dataset: Dataset {
                 name: series_name,
-                data: data.to_vec(),
+                data: data
+                    .iter()
+                    .copied()
+                    .filter(|(x, y)| x.is_finite() && y.is_finite())
+                    .collect(),
                 color: Color::Reset,
                 marker,
                 graph_type,

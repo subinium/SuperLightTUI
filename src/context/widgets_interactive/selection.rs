@@ -4,6 +4,30 @@ use super::*;
 /// to the compact `{page}/{total}` counter to avoid overflowing the line.
 const PAGINATOR_MAX_DOTS: usize = 12;
 
+fn table_page_bounds(state: &TableState) -> (usize, usize) {
+    let total = state.visible_indices().len();
+    if state.page_size == 0 {
+        return (0, total);
+    }
+    let start = state.page.saturating_mul(state.page_size).min(total);
+    (
+        start,
+        start.saturating_add(table_visible_len(state)).min(total),
+    )
+}
+
+fn move_table_selection(selected: &mut usize, start: usize, end: usize, key: &KeyCode) {
+    if start >= end {
+        *selected = 0;
+        return;
+    }
+    match key {
+        KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1).max(start),
+        KeyCode::Down | KeyCode::Char('j') => *selected = selected.saturating_add(1).min(end - 1),
+        _ => {}
+    }
+}
+
 /// Per-column cell renderer for [`Context::table_with`]: maps
 /// `(row_view_index, col_index, raw_cell)` to styled content.
 type TableCellRenderer = Box<dyn Fn(usize, usize, &str) -> (String, Style)>;
@@ -82,7 +106,7 @@ impl Context {
         let old_sort_column = state.sort_column;
         let old_sort_ascending = state.sort_ascending;
         let old_page = state.page;
-        let old_filter = state.filter.clone();
+        let old_filter = state.filter().to_string();
         let old_multi = state.multi_selected.clone();
 
         let focused = self.register_focusable();
@@ -101,7 +125,7 @@ impl Context {
             || state.sort_column != old_sort_column
             || state.sort_ascending != old_sort_ascending
             || state.page != old_page
-            || state.filter != old_filter
+            || state.filter() != old_filter
             || state.multi_selected != old_multi;
         response
     }
@@ -114,7 +138,7 @@ impl Context {
     ) {
         self.handle_table_keys(state, focused);
 
-        if state.visible_indices().is_empty() && state.headers.is_empty() {
+        if state.visible_indices().is_empty() && state.headers().is_empty() {
             return;
         }
 
@@ -143,18 +167,11 @@ impl Context {
                     continue;
                 }
 
-                let visible_len = if state.page_size > 0 {
-                    let start = state
-                        .page
-                        .saturating_mul(state.page_size)
-                        .min(state.visible_indices().len());
-                    let end = (start + state.page_size).min(state.visible_indices().len());
-                    end.saturating_sub(start)
-                } else {
-                    state.visible_indices().len()
-                };
+                let (page_start, page_end) = table_page_bounds(state);
+                let visible_len = page_end.saturating_sub(page_start);
                 let clicked_idx = (mouse.y - rect.y - 2) as usize;
                 if clicked_idx < visible_len {
+                    let clicked_idx = page_start + clicked_idx;
                     state.selected = clicked_idx;
                     if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                         let anchor = state.selection_anchor.unwrap_or(clicked_idx);
@@ -193,7 +210,11 @@ impl Context {
             total_visible
         };
         let visible_len = page_end.saturating_sub(page_start);
-        state.selected = state.selected.min(visible_len.saturating_sub(1));
+        if visible_len == 0 {
+            state.selected = 0;
+        } else {
+            state.selected = state.selected.clamp(page_start, page_end - 1);
+        }
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -246,29 +267,21 @@ impl Context {
         for (i, key) in self.available_key_presses() {
             let shift = key.modifiers.contains(KeyModifiers::SHIFT);
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let (page_start, page_end) = table_page_bounds(state);
+            if page_start < page_end {
+                state.selected = state.selected.clamp(page_start, page_end - 1);
+            }
             match key.code {
                 // Shift+Up/Down: extend a contiguous range from the anchor.
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if shift => {
-                    let visible_len = table_visible_len(state);
-                    state.selected = state.selected.min(visible_len.saturating_sub(1));
                     let anchor = *state.selection_anchor.get_or_insert(state.selected);
-                    handle_vertical_nav(
-                        &mut state.selected,
-                        visible_len.saturating_sub(1),
-                        key.code.clone(),
-                    );
+                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
                     state.select_range(anchor, state.selected);
                     consumed_indices.push(i);
                 }
                 // Plain Up/Down (or k/j): move the cursor only (back-compat).
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                    let visible_len = table_visible_len(state);
-                    state.selected = state.selected.min(visible_len.saturating_sub(1));
-                    let _ = handle_vertical_nav(
-                        &mut state.selected,
-                        visible_len.saturating_sub(1),
-                        key.code.clone(),
-                    );
+                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
                     consumed_indices.push(i);
                 }
                 // Ctrl+Space: toggle the focused row without clearing the set.
@@ -285,7 +298,7 @@ impl Context {
                     let old_page = state.page;
                     state.prev_page();
                     if state.page != old_page {
-                        state.selected = 0;
+                        state.selected = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -293,7 +306,7 @@ impl Context {
                     let old_page = state.page;
                     state.next_page();
                     if state.page != old_page {
-                        state.selected = 0;
+                        state.selected = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -305,7 +318,7 @@ impl Context {
 
     fn render_table_header(&mut self, state: &TableState, colors: &WidgetColors) {
         let header_cells = state
-            .headers
+            .headers()
             .iter()
             .enumerate()
             .map(|(i, header)| {
@@ -353,7 +366,7 @@ impl Context {
         for idx in 0..visible_len {
             let view_idx = page_start + idx;
             let data_idx = state.visible_indices()[view_idx];
-            let Some(row) = state.rows.get(data_idx) else {
+            let Some(row) = state.row(data_idx) else {
                 continue;
             };
 
@@ -361,7 +374,7 @@ impl Context {
             // per-column renderer overrides it. Priority: focused cursor row >
             // multi-selected row > zebra > plain. When `multi_selected` is empty
             // (the default), this collapses to the pre-v0.21 behavior verbatim.
-            let base = if idx == state.selected {
+            let base = if view_idx == state.selected {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
@@ -1059,16 +1072,15 @@ impl Context {
 
     /// Render a dropdown select widget with custom widget colors.
     pub fn select_colored(&mut self, state: &mut SelectState, colors: &WidgetColors) -> Response {
-        if state.items.is_empty() {
-            return Response::none();
+        if !state.is_empty() {
+            state.selected = state.selected.min(state.len().saturating_sub(1));
         }
-        state.selected = state.selected.min(state.items.len().saturating_sub(1));
 
         let focused = self.register_focusable();
-        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
+        let (interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
 
-        self.select_handle_events(state, focused, response.clicked);
+        self.select_handle_events(state, focused, interaction_id);
         // Keep the cursor within the filtered subset before rendering.
         if state.open {
             let flen = state.filtered_indices().len();
@@ -1084,13 +1096,45 @@ impl Context {
         response
     }
 
-    fn select_handle_events(&mut self, state: &mut SelectState, focused: bool, clicked: bool) {
-        if clicked {
-            state.open = !state.open;
-            if state.open {
-                state.filter.clear();
-                state.set_cursor(state.selected);
+    fn select_handle_events(
+        &mut self,
+        state: &mut SelectState,
+        focused: bool,
+        interaction_id: usize,
+    ) {
+        if let Some((rect, clicks)) = self.left_clicks_for_interaction(interaction_id) {
+            let mut consumed = Vec::new();
+            for (event_index, mouse) in clicks {
+                let relative_y = mouse.y.saturating_sub(rect.y) as usize;
+                if relative_y < 3 {
+                    if !state.is_empty() {
+                        state.open = !state.open;
+                        if state.open {
+                            state.filter.clear();
+                            state.set_cursor(state.selected);
+                        }
+                    }
+                    consumed.push(event_index);
+                    continue;
+                }
+
+                if state.open {
+                    let query_rows = usize::from(!state.filter.is_empty());
+                    let row_start = 3 + query_rows;
+                    if relative_y >= row_start {
+                        let filtered = state.filtered_indices();
+                        let row = relative_y - row_start;
+                        if let Some(&data_index) = filtered.get(row) {
+                            state.selected = data_index;
+                            state.set_cursor(row);
+                            state.open = false;
+                            state.filter.clear();
+                            consumed.push(event_index);
+                        }
+                    }
+                }
             }
+            self.consume_indices(consumed);
         }
 
         if !focused {
@@ -1134,11 +1178,15 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
-                        state.filter.pop();
+                        if let Some((byte_index, _)) =
+                            state.filter.grapheme_indices(true).next_back()
+                        {
+                            state.filter.truncate(byte_index);
+                        }
                         state.set_cursor(0);
                         consumed_indices.push(i);
                     }
-                    KeyCode::Char(c) => {
+                    KeyCode::Char(c) if !has_global_shortcut_modifier(key.modifiers) => {
                         // Printable keys (including space, 'j', 'k') type into the
                         // filter — arrows remain the only navigation while open.
                         state.filter.push(c);
@@ -1147,11 +1195,28 @@ impl Context {
                     }
                     _ => {}
                 }
-            } else if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+            } else if !state.is_empty() && matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
                 state.open = true;
                 state.filter.clear();
                 state.set_cursor(state.selected);
                 consumed_indices.push(i);
+            }
+        }
+        if state.open {
+            for (event_index, text) in self.available_pastes() {
+                let inserted = text
+                    .graphemes(true)
+                    .filter(|cluster| {
+                        cluster
+                            .chars()
+                            .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
+                    })
+                    .collect::<String>();
+                if !inserted.is_empty() {
+                    state.filter.push_str(&inserted);
+                    state.set_cursor(0);
+                }
+                consumed_indices.push(event_index);
             }
         }
         self.consume_indices(consumed_indices);
@@ -1164,7 +1229,7 @@ impl Context {
             colors.border.unwrap_or(self.theme.border)
         };
         let display_text = state
-            .items
+            .items()
             .get(state.selected)
             .cloned()
             .unwrap_or_else(|| state.placeholder.clone());
@@ -1264,7 +1329,7 @@ impl Context {
 
         let cursor = state.cursor();
         for (pos, &idx) in filtered.iter().enumerate() {
-            let item = &state.items[idx];
+            let item = &state.items()[idx];
             let is_cursor = pos == cursor;
             let style = if is_cursor {
                 Style::new()
@@ -1390,10 +1455,10 @@ impl Context {
 
     /// Render a multi-select list. Space toggles, Up/Down navigates.
     pub fn multi_select(&mut self, state: &mut MultiSelectState) -> Response {
-        if state.items.is_empty() {
+        if state.is_empty() {
             return Response::none();
         }
-        state.cursor = state.cursor.min(state.items.len().saturating_sub(1));
+        state.cursor = state.cursor.min(state.len().saturating_sub(1));
         let focused = self.register_focusable();
         let old_selected = state.selected.clone();
 
@@ -1402,11 +1467,8 @@ impl Context {
             for (i, key) in self.available_key_presses() {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let _ = handle_vertical_nav(
-                            &mut state.cursor,
-                            state.items.len().saturating_sub(1),
-                            key.code.clone(),
-                        );
+                        let max_index = state.len().saturating_sub(1);
+                        let _ = handle_vertical_nav(&mut state.cursor, max_index, key.code.clone());
                         consumed_indices.push(i);
                     }
                     KeyCode::Char(' ') | KeyCode::Enter => {
@@ -1425,7 +1487,7 @@ impl Context {
             let mut consumed = Vec::new();
             for (i, mouse) in clicks {
                 let clicked_idx = (mouse.y - rect.y) as usize;
-                if clicked_idx < state.items.len() {
+                if clicked_idx < state.len() {
                     state.toggle(clicked_idx);
                     state.cursor = clicked_idx;
                     consumed.push(i);
@@ -1453,7 +1515,7 @@ impl Context {
                 group_name: None,
             })));
 
-        for (idx, item) in state.items.iter().enumerate() {
+        for (idx, item) in state.items().iter().enumerate() {
             let checked = state.selected.contains(&idx);
             let marker = if checked { "[x]" } else { "[ ]" };
             let is_cursor = idx == state.cursor;

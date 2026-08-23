@@ -852,9 +852,8 @@ Multi-style append-only log.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `entries` | `Vec<RichLogEntry>` | Accumulated log rows. |
 | `auto_scroll` | `bool` | Follow the tail when new rows arrive. |
-| `max_entries` | `Option<usize>` | Optional ring-buffer cap (`None` = unbounded). |
+| `max_entries` | `Option<usize>` | Optional deque retention cap (`None` = unbounded). |
 
 ### Constructors
 
@@ -878,9 +877,12 @@ Multi-style append-only log.
 | `push(&mut self, text: impl Into<String>, style: Style)` | Append one styled entry. |
 | `push_plain(&mut self, text: impl Into<String>)` | Append with default style. |
 | `push_segments(&mut self, segments: Vec<(String, Style)>)` | Append a mixed-style entry; honors `max_entries` and `auto_scroll`. |
+| `push_entry(&mut self, entry: RichLogEntry)` | Append a pre-built entry while enforcing retention. |
 | `clear(&mut self)` | Remove everything and reset scroll. |
 | `len(&self) -> usize` | Entry count. |
 | `is_empty(&self) -> bool` | `true` when there are no entries. |
+| `entries(&self)` / `entries_mut(&mut self)` | Iterate oldest-to-newest without exposing storage. |
+| `entry(&self, index)` / `entry_mut(&mut self, index)` | Checked indexed access. |
 
 ### Related type
 
@@ -1022,21 +1024,13 @@ Source: `src/widgets/feedback.rs`.
 
 `#[non_exhaustive]`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Debug`.
 
-## Method coverage self-check
+## Coverage contract
 
-Public-method counts per source file:
-
-| File | `pub fn` count | Covered here |
-|------|----------------|--------------|
-| `src/widgets/input.rs` | 35 | 35 |
-| `src/widgets/collections.rs` | 31 | 31 |
-| `src/widgets/selection.rs` | 18 | 18 |
-| `src/widgets/feedback.rs` | 12 | 12 |
-| `src/widgets/commanding.rs` | 29 | 29 |
-
-Totals match the live source. If you discover a public method missing from
-this document, the source file is the source of truth — open a PR to add
-it here.
+Public method counts are intentionally not copied into this guide: they drift
+as soon as a state type gains a method. Rustdoc is the authoritative inventory,
+and repository contract tests compile maintained snippets and compare advertised
+commands with Cargo metadata. A public method missing from this guide remains a
+documentation bug, but a stale hand-count cannot hide it.
 
 ## See also
 

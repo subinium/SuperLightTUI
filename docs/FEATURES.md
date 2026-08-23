@@ -21,14 +21,17 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
 | Flag | What it enables |
 |------|------------------|
 | `crossterm` | Built-in terminal runtime: `run()`, `run_with()`, `run_inline()`, terminal polling, clipboard query, terminal helpers |
+| `bidi` | UAX #9 bidirectional text reordering; enabled by default and usable without `crossterm` |
 | `async` | `run_async()` and tokio-based message-driven apps |
 | `serde` | Serialize/Deserialize for style, theme, and layout-related public types |
+| `theme-watch` | TOML theme hot reload; enables `serde` and `notify` |
 | `image` | Image loading helpers for terminal image widgets |
 | `qrcode` | `ui.qr_code(...)` |
 | `syntax` | Convenience: enables all per-language `syntax-*` bundles below |
 | `syntax-*` | Per-language syntax bundles such as `syntax-rust`, `syntax-python`, `syntax-typescript` |
 | `kitty-compress` | zlib compression for Kitty image protocol uploads |
-| `full` | Convenience bundle: enables `crossterm`, `async`, `serde`, `image`, `qrcode`, and `kitty-compress` (does **not** include `syntax` — add language bundles separately) |
+| `pty-test` | Development-only in-process PTY backend contract tests; not part of `full` |
+| `full` | Convenience bundle: enables `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, and `bidi` (does **not** include `syntax` — add language bundles separately) |
 
 ## What disappears without `crossterm`
 
@@ -51,13 +54,24 @@ That makes SLT usable as a rendering core for non-terminal environments.
 
 The built-in runtime probes capabilities only when both stdin and stdout are
 TTYs and the environment identifies a direct terminal emulator. It skips
-generic PTY wrappers, `TERM=dumb`, and tmux/screen sessions by default so a
-silent host cannot leak query bytes or race the first user keystroke.
+generic PTY wrappers, `TERM=dumb`, and tmux/Zellij/GNU screen sessions by
+default. Reply collection is synchronous and nonblocking/pollable; after every
+responsive, partial, or silent deadline, no background stdin reader remains to
+consume application input.
 
 - Set `SLT_DISABLE_TERMINAL_QUERIES=1` to disable all terminal queries.
 - Set `SLT_FORCE_TERMINAL_QUERIES=1` to opt in on an otherwise skipped host.
-- Image-protocol force flags (`SLT_FORCE_KITTY`, `SLT_FORCE_SIXEL`, and
-  `SLT_FORCE_ITERM`) remain independent.
+- Protocol-specific force/disable pairs are `SLT_FORCE_SYNC_OUTPUT` /
+  `SLT_DISABLE_SYNC_OUTPUT`, `SLT_FORCE_KITTY` / `SLT_DISABLE_KITTY`,
+  `SLT_FORCE_SIXEL` / `SLT_DISABLE_SIXEL`, `SLT_FORCE_ITERM` /
+  `SLT_DISABLE_ITERM`, and `SLT_FORCE_KITTY_KEYBOARD` /
+  `SLT_DISABLE_KITTY_KEYBOARD`.
+- Disable flags take precedence when both forms are set.
+- Zellij enables Sixel and Kitty keyboard by default; other multiplexer
+  protocols remain conservative unless explicitly forced.
+
+See `docs/BACKENDS.md` for the full direct-terminal, multiplexer, SSH, and PTY
+compatibility table and the bounded real-process CI matrix.
 
 ## Recommended combos
 

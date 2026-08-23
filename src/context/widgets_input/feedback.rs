@@ -69,8 +69,8 @@ impl Context {
 
     /// Horizontal slider for numeric values.
     ///
-    /// Step defaults to `span / 20.0`. Use [`Context::slider_with_step`] for an
-    /// explicit step (e.g. integer volume controls).
+    /// Step defaults to `span / 20.0`. Use [`Context::slider_with`] with
+    /// [`SliderOpts`](crate::widgets::SliderOpts) for an explicit step.
     ///
     /// # Examples
     /// ```
@@ -87,12 +87,10 @@ impl Context {
         value: &mut f64,
         range: std::ops::RangeInclusive<f64>,
     ) -> Response {
-        let span = (*range.end() - *range.start()).max(0.0);
-        let step = if span > 0.0 { span / 20.0 } else { 0.0 };
-        self.slider_inner(label, value, range, step)
+        self.slider_with(value, crate::widgets::SliderOpts::new(label, range))
     }
 
-    /// Horizontal slider with an explicit step size.
+    /// Horizontal slider with options for label, range, and explicit step.
     ///
     /// Each Left/Right (or `h`/`l`) advances `value` by `step`. Use this when
     /// the default step (`span / 20`) is too coarse or too fine — for example
@@ -103,9 +101,27 @@ impl Context {
     /// # use slt::*;
     /// # TestBackend::new(80, 24).render(|ui| {
     /// let mut volume = 50.0_f64;
-    /// ui.slider_with_step("Volume", &mut volume, 0.0..=100.0, 1.0);
+    /// use slt::widgets::SliderOpts;
+    /// ui.slider_with(&mut volume, SliderOpts::new("Volume", 0.0..=100.0).step(1.0));
     /// # });
     /// ```
+    pub fn slider_with(&mut self, value: &mut f64, opts: crate::widgets::SliderOpts) -> Response {
+        let (start, end) =
+            crate::widgets::normalize_numeric_range(*opts.range.start(), *opts.range.end());
+        let span = end - start;
+        let step = opts
+            .step
+            .unwrap_or_else(|| if span > 0.0 { span / 20.0 } else { 0.0 });
+        self.slider_inner(&opts.label, value, start..=end, step)
+    }
+
+    /// Horizontal slider with an explicit step size.
+    ///
+    /// Deprecated compatibility alias for [`Context::slider_with`].
+    #[deprecated(
+        since = "0.23.0",
+        note = "use slider_with(value, SliderOpts::new(label, range).step(step))"
+    )]
     pub fn slider_with_step(
         &mut self,
         label: &str,
@@ -113,7 +129,10 @@ impl Context {
         range: std::ops::RangeInclusive<f64>,
         step: f64,
     ) -> Response {
-        self.slider_inner(label, value, range, step.max(0.0))
+        self.slider_with(
+            value,
+            crate::widgets::SliderOpts::new(label, range).step(step),
+        )
     }
 
     fn slider_inner(
@@ -129,11 +148,11 @@ impl Context {
         let (gained_focus, lost_focus) = self.focus_transitions(focused);
         let mut changed = false;
 
-        let start = *range.start();
-        let end = *range.end();
-        let span = (end - start).max(0.0);
+        let (start, end) = crate::widgets::normalize_numeric_range(*range.start(), *range.end());
+        let span = end - start;
+        let step = crate::widgets::normalize_numeric_step(step);
 
-        *value = (*value).clamp(start, end);
+        *value = crate::widgets::normalize_numeric_value(*value, start, end);
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -141,7 +160,8 @@ impl Context {
                 match key.code {
                     KeyCode::Left | KeyCode::Char('h') => {
                         if step > 0.0 {
-                            let next = (*value - step).max(start);
+                            let next =
+                                crate::widgets::normalize_numeric_value(*value - step, start, end);
                             if (next - *value).abs() > f64::EPSILON {
                                 *value = next;
                                 changed = true;
@@ -151,7 +171,8 @@ impl Context {
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
                         if step > 0.0 {
-                            let next = (*value + step).min(end);
+                            let next =
+                                crate::widgets::normalize_numeric_value(*value + step, start, end);
                             if (next - *value).abs() > f64::EPSILON {
                                 *value = next;
                                 changed = true;
@@ -253,9 +274,9 @@ impl Context {
 
         // Normalize the committed value before processing input so the
         // pre-frame baseline used for `changed` is itself in-range.
-        state.value = state.clamped();
+        state.normalize();
         let old = state.value;
-        let step = state.step.max(0.0);
+        let step = state.step;
 
         let adjust = |state: &mut NumberInputState, delta: f64| {
             if delta == 0.0 {
@@ -265,7 +286,8 @@ impl Context {
             // clears a prior parse error.
             state.editing = None;
             state.parse_error = None;
-            state.value = (state.value + delta).clamp(state.min, state.max);
+            state.value =
+                crate::widgets::normalize_numeric_value(state.value + delta, state.min, state.max);
             if state.integer {
                 state.value = state.value.round();
             }
@@ -301,7 +323,9 @@ impl Context {
                             let trimmed = buf.trim();
                             match trimmed.parse::<f64>() {
                                 Ok(parsed) if parsed.is_finite() => {
-                                    state.value = parsed.clamp(state.min, state.max);
+                                    state.value = crate::widgets::normalize_numeric_value(
+                                        parsed, state.min, state.max,
+                                    );
                                     if state.integer {
                                         state.value = state.value.round();
                                     }

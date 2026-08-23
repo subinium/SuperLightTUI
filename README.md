@@ -134,19 +134,21 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.22.3", features = ["async", "image"] }
+superlighttui = { version = "0.23.0", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |
 |---------|--------------|
 | `async` | `tokio` + `run_async` for background message loops |
+| `bidi` | UAX #9 bidirectional text reordering; enabled by default |
 | `serde` | `Serialize`/`Deserialize` on selected state types |
+| `theme-watch` | TOML theme hot reload (`serde` + filesystem watcher) |
 | `image` | PNG/JPEG decoding for `ui.image` |
 | `qrcode` | QR code rendering |
 | `kitty-compress` | zlib compression for the Kitty image protocol |
 | `syntax` | Tree-sitter highlighting for all bundled languages |
 | `syntax-<lang>` | Highlighting for a single language (`rust`, `python`, `typescript`, ...) |
-| `full` | `async + serde + image + qrcode + kitty-compress` — **does not** include `syntax` (grammars are heavy; opt in explicitly) |
+| `full` | `crossterm + async + serde + theme-watch + image + qrcode + kitty-compress + bidi` — **does not** include `syntax` (grammars are heavy; opt in explicitly) |
 
 ## Why SLT
 

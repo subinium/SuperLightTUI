@@ -25,12 +25,12 @@
 - [Crate root re-exports](../src/lib.rs): authoritative public API
 - [Context runtime methods](../src/context/runtime.rs): use_state, use_memo, focus, interaction, error_boundary
 
-### Component / state APIs (v0.19.0)
+### Component / state APIs
 
 - `ui.provide(value, |ui| { ... })` — context injection, scoped to the closure body
 - `ui.use_context::<T>()` — read provided context (panics if no `T` is in scope)
 - `ui.try_use_context::<T>()` — read provided context, returns `Option<&T>` (safe form)
-- `ui.use_state_named(id)` / `ui.use_state_named_with(id, init)` — id-keyed local state, safe inside conditionals (does not depend on call order)
+- `ui.use_state_named(id, init)` / `ui.use_state_named_default::<T>(id)` — id-keyed local state, safe inside conditionals
 - `.with_if(cond, modifier)` / `.with(modifier)` — fluent conditional styling on text and `ContainerBuilder`
 
 ### v0.18.x highlights
@@ -40,9 +40,9 @@
 - `draw_with(rect, |buf| { ... })` — typed raw-draw entry point
 - `Buffer::try_get(x, y) -> Option<&Cell>` — fallible buffer cell accessor for `draw(|buf, rect| ...)` raw-draw closures
 
-### v0.19.2 widget helpers
+### Builder widgets
 
-- `breadcrumb_response(segments)` / `breadcrumb_response_with(segments, ...)` — returns `(Response, Option<usize>)` so callers can detect which segment was clicked
+- `ui.breadcrumb(segments).separator(...).show()` — returns `BreadcrumbResponse` with the standard interaction signals and `clicked_segment`
 - `mx(n)` / `my(n)` — horizontal / vertical margin shorthands
 
 ## Specialized topics

@@ -3,7 +3,7 @@
 //! Demonstrates: #237 (unified WidthSpec / HeightSpec enum, with helpers
 //! for Fixed / Pct / Ratio / MinMax / Auto).
 //!
-//! Run: `cargo run --example v020_widthspec`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   q / Esc / Ctrl-Q — quit

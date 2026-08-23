@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# ghostty_demos.sh — interactive launcher for SuperLightTUI v0.20 demos.
+# ghostty_demos.sh — interactive launcher for registered SuperLightTUI demos.
 #
 # Each chosen demo is opened in a fresh Ghostty.app window via
 #   open -na Ghostty.app -e "<command>"
@@ -8,10 +8,10 @@
 #
 # Usage examples:
 #   ./scripts/ghostty_demos.sh                    # interactive picker
-#   ./scripts/ghostty_demos.sh all                # every v020_* example
-#   ./scripts/ghostty_demos.sh v020_showcase      # explicit demo names
-#   ./scripts/ghostty_demos.sh --showcase         # the 2 integration demos
-#   ./scripts/ghostty_demos.sh --features         # the 17 feature demos
+#   ./scripts/ghostty_demos.sh all                # every registered example
+#   ./scripts/ghostty_demos.sh showcase_tour      # explicit target names
+#   ./scripts/ghostty_demos.sh --showcase         # integration tours
+#   ./scripts/ghostty_demos.sh --features         # feature tours
 #   ./scripts/ghostty_demos.sh --build-first all  # pre-build, then launch all
 #   ./scripts/ghostty_demos.sh --help             # full help
 #
@@ -26,41 +26,29 @@ GHOSTTY_APP="/Applications/Ghostty.app"
 
 # --- preset playlists ----------------------------------------------------
 
-# Two integration demos that show "everything on one screen".
+# Integration tours that exercise composed application layouts.
 SHOWCASE_PRESET=(
-    "v020_showcase"
-    "v020_regression_panel"
+    "showcase_tour"
+    "cookbook_tour"
+    "demo"
 )
 
-# The 18 individual feature demos, one per v0.20 issue cluster.
-# v020_perf_audit and v020_test_utils are non-interactive stdout reports —
-# included for completeness, they will exit immediately in the launched window.
+# Registered tours that cover feature families without advertising source-only
+# modules as standalone Cargo targets.
 FEATURES_PRESET=(
-    "v020_dx_shortcuts"
-    "v020_use_state_keyed"
-    "v020_use_effect"
-    "v020_named_focus"
-    "v020_theme_subtree"
-    "v020_modal_trap"
-    "v020_spacing_scale"
-    "v020_split_pane"
-    "v020_gauge"
-    "v020_gutter_highlights"
-    "v020_breadcrumb_response"
-    "v020_progress_response"
-    "v020_static_log"
-    "v020_keymap_help"
-    "v020_ctrl_c_passthrough"
-    "v020_widthspec"
-    "v020_perf_audit"
-    "v020_test_utils"
+    "v020_tour"
+    "v0210_widgets"
+    "v0211_tour"
+    "canvas_tour"
+    "text_tour"
+    "system_tour"
 )
 
 # --- helpers -------------------------------------------------------------
 
 print_usage() {
     cat <<'EOF'
-ghostty_demos.sh — launch SuperLightTUI v0.20 demos in fresh Ghostty windows.
+ghostty_demos.sh — launch registered SuperLightTUI examples in fresh Ghostty windows.
 
 USAGE:
     scripts/ghostty_demos.sh [FLAGS] [DEMOS...]
@@ -70,16 +58,13 @@ FLAGS:
     --build-first       Run `cargo build --examples --all-features` before
                         launching, so each Ghostty window skips the long
                         first-compile output.
-    --showcase          Launch only the integration demos:
-                            v020_showcase, v020_regression_panel
-    --features          Launch the 17 individual feature demos, one per
-                        Ghostty window.
-    --list              Print the discovered v020_* demo names and exit.
+    --showcase          Launch the integration tours.
+    --features          Launch the feature tours.
+    --list              Print registered Cargo example targets and exit.
 
 POSITIONAL:
-    all                 Launch every v020_* example.
-    <name> [<name>...]  Launch only the named demos (no `v020_` prefix
-                        needed — both `showcase` and `v020_showcase` work).
+    all                 Launch every registered Cargo example.
+    <name> [<name>...]  Launch only the named Cargo example targets.
 
 INTERACTIVE MODE:
     With no arguments, prints a numbered menu of all v020_* demos and
@@ -93,14 +78,14 @@ EXAMPLES:
     # Pre-build once, then launch everything
     scripts/ghostty_demos.sh --build-first all
 
-    # Just the two integration demos
+    # Integration tours
     scripts/ghostty_demos.sh --showcase
 
-    # All 17 feature demos
+    # Feature tours
     scripts/ghostty_demos.sh --features
 
-    # Specific demos by name (prefix optional)
-    scripts/ghostty_demos.sh v020_showcase gauge use_effect
+    # Specific registered targets
+    scripts/ghostty_demos.sh showcase_tour v020_tour
 
 NOTES:
     - Requires Ghostty.app at /Applications/Ghostty.app. If missing, the
@@ -115,50 +100,41 @@ err() {
     printf 'ghostty_demos: %s\n' "$*" >&2
 }
 
-# Print all v020_* demos found on disk, one per line, sorted.
+# Print every explicit [[example]] target from Cargo.toml, one per line.
 discover_demos() {
-    if [[ ! -d "${EXAMPLES_DIR}" ]]; then
-        err "examples dir not found: ${EXAMPLES_DIR}"
+    if [[ ! -f "${REPO_ROOT}/Cargo.toml" ]]; then
+        err "Cargo.toml not found: ${REPO_ROOT}"
         return 1
     fi
-
-    local found=()
-    local f
-    for f in "${EXAMPLES_DIR}"/v020_*.rs; do
-        [[ -e "${f}" ]] || continue
-        local base
-        base="$(basename "${f}" .rs)"
-        found+=("${base}")
-    done
-
-    if (( ${#found[@]} == 0 )); then
-        return 0
-    fi
-
-    printf '%s\n' "${found[@]}" | LC_ALL=C sort
+    awk '
+        /^\[\[example\]\]$/ { in_example = 1; next }
+        /^\[\[/ { in_example = 0 }
+        in_example && /^name = "/ {
+            name = $0
+            sub(/^name = "/, "", name)
+            sub(/".*$/, "", name)
+            print name
+        }
+    ' "${REPO_ROOT}/Cargo.toml" | LC_ALL=C sort -u
 }
 
-# Normalize a name: strip a leading "v020_" if the user dropped it, then
-# re-add it so we always end up with the canonical form.
-normalize_name() {
-    local raw="$1"
-    if [[ "${raw}" == v020_* ]]; then
-        printf '%s' "${raw}"
-    else
-        printf 'v020_%s' "${raw}"
-    fi
-}
-
-# Verify a normalized name exists on disk.
+# Verify a name is an explicit Cargo example target.
 demo_exists() {
     local name="$1"
-    [[ -f "${EXAMPLES_DIR}/${name}.rs" ]]
+    local candidate
+    for candidate in "${ALL_DEMOS[@]}"; do
+        [[ "${candidate}" == "${name}" ]] && return 0
+    done
+    return 1
 }
 
 # Open one demo in a fresh Ghostty window if available, else fall back.
 launch_demo() {
     local name="$1"
-    local cmd="cd ${REPO_ROOT@Q} && cargo run --example ${name@Q}"
+    local repo_q name_q cmd
+    printf -v repo_q '%q' "${REPO_ROOT}"
+    printf -v name_q '%q' "${name}"
+    cmd="cd ${repo_q} && cargo run --all-features --example ${name_q}"
 
     if [[ -d "${GHOSTTY_APP}" ]]; then
         printf '  -> Ghostty: %s\n' "${name}"
@@ -255,10 +231,13 @@ fi
 
 # --- discover --------------------------------------------------------------
 
-mapfile -t ALL_DEMOS < <(discover_demos || true)
+ALL_DEMOS=()
+while IFS= read -r demo; do
+    [[ -n "${demo}" ]] && ALL_DEMOS+=("${demo}")
+done < <(discover_demos || true)
 
 if (( ${#ALL_DEMOS[@]} == 0 )); then
-    err "no v020_*.rs examples found in ${EXAMPLES_DIR}"
+    err "no registered examples found in Cargo.toml"
     err "v0.20 demos may not have landed yet on this branch."
     exit 1
 fi
@@ -280,7 +259,7 @@ elif (( ${#positional[@]} == 1 )) && [[ "${positional[0]}" == "all" ]]; then
     selected=("${ALL_DEMOS[@]}")
 elif (( ${#positional[@]} > 0 )); then
     for raw in "${positional[@]}"; do
-        selected+=("$(normalize_name "${raw}")")
+        selected+=("${raw}")
     done
 else
     # Interactive picker.
@@ -317,7 +296,7 @@ else
                 selected+=("${ALL_DEMOS[${idx}]}")
             else
                 # Allow names alongside numbers, just in case.
-                selected+=("$(normalize_name "${tok}")")
+                selected+=("${tok}")
             fi
         done
     fi

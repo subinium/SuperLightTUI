@@ -1,5 +1,88 @@
 use super::*;
 
+struct DeferredDrawClipGuard<'a> {
+    buffer: &'a mut crate::buffer::Buffer,
+    clip_depth: usize,
+    kitty_clip_depth: usize,
+    kitty_horizontal_clip_depth: usize,
+}
+
+impl<'a> DeferredDrawClipGuard<'a> {
+    fn new(
+        buffer: &'a mut crate::buffer::Buffer,
+        rect: Rect,
+        left_clip_cols: u32,
+        top_clip_rows: u32,
+        original_width: u32,
+        original_height: u32,
+    ) -> Self {
+        let clip_depth = buffer.clip_stack.len();
+        let kitty_clip_depth = buffer.kitty_clip_info_stack.len();
+        let kitty_horizontal_clip_depth = buffer.kitty_horizontal_clip_stack.len();
+        buffer.push_clip(rect);
+        buffer.push_kitty_clip(crate::buffer::KittyClipInfo {
+            top_clip_rows,
+            original_height,
+        });
+        buffer.push_kitty_horizontal_clip(crate::buffer::KittyHorizontalClipInfo {
+            left_clip_cols,
+            original_width,
+        });
+        Self {
+            buffer,
+            clip_depth,
+            kitty_clip_depth,
+            kitty_horizontal_clip_depth,
+        }
+    }
+
+    fn buffer(&mut self) -> &mut crate::buffer::Buffer {
+        self.buffer
+    }
+}
+
+impl Drop for DeferredDrawClipGuard<'_> {
+    fn drop(&mut self) {
+        self.buffer.clip_stack.truncate(self.clip_depth);
+        self.buffer
+            .kitty_clip_info_stack
+            .truncate(self.kitty_clip_depth);
+        self.buffer
+            .kitty_horizontal_clip_stack
+            .truncate(self.kitty_horizontal_clip_depth);
+    }
+}
+
+/// Invoke one deferred raw-draw callback with balanced cell and Kitty clips.
+///
+/// The callback panic is returned to the frame kernel instead of crossing the
+/// cleanup boundary. The caller decides whether to render an error-boundary
+/// fallback or write persistent frame state back and resume unwinding.
+#[allow(dead_code)] // Called by the #340 frame-kernel integration in src/lib.rs.
+pub(crate) fn invoke_deferred_draw(
+    buffer: &mut crate::buffer::Buffer,
+    rect: Rect,
+    left_clip_cols: u32,
+    top_clip_rows: u32,
+    original_width: u32,
+    original_height: u32,
+    draw: impl FnOnce(&mut crate::buffer::Buffer, Rect),
+) -> Result<(), Box<dyn std::any::Any + Send>> {
+    let mut clips = DeferredDrawClipGuard::new(
+        buffer,
+        rect,
+        left_clip_cols,
+        top_clip_rows,
+        original_width,
+        original_height,
+    );
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        draw(clips.buffer(), rect);
+    }));
+    drop(clips);
+    result
+}
+
 /// Byte offset of the `char_index`-th Unicode scalar boundary (clamped to
 /// `value.len()`).
 ///
@@ -490,5 +573,73 @@ mod measure_tests {
         // The group fits inside the 40x10 backend area.
         assert!(rect.x + rect.width <= 40);
         assert!(rect.y + rect.height <= 10);
+    }
+}
+
+#[cfg(test)]
+mod deferred_draw_tests {
+    use super::invoke_deferred_draw;
+    use crate::buffer::{Buffer, KittyClipInfo};
+    use crate::{Rect, Style};
+
+    #[test]
+    fn nested_draw_panic_restores_both_clip_stacks() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 10));
+        let outer_clip = Rect::new(1, 1, 18, 8);
+        let outer_kitty = KittyClipInfo {
+            top_clip_rows: 1,
+            original_height: 12,
+        };
+        let outer_horizontal = crate::buffer::KittyHorizontalClipInfo {
+            left_clip_cols: 1,
+            original_width: 20,
+        };
+        buffer.push_clip(outer_clip);
+        buffer.push_kitty_clip(outer_kitty);
+        buffer.push_kitty_horizontal_clip(outer_horizontal);
+
+        let result = invoke_deferred_draw(
+            &mut buffer,
+            Rect::new(2, 2, 10, 4),
+            0,
+            2,
+            10,
+            8,
+            |buf, _| {
+                let inner =
+                    invoke_deferred_draw(buf, Rect::new(3, 3, 4, 2), 0, 0, 4, 2, |buf, rect| {
+                        buf.set_string(rect.x, rect.y, "partial", Style::new());
+                        panic!("nested raw draw failed");
+                    });
+                std::panic::resume_unwind(inner.expect_err("inner draw should panic"));
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(buffer.clip_stack, vec![outer_clip]);
+        assert_eq!(buffer.kitty_clip_info_stack, vec![outer_kitty]);
+        assert_eq!(buffer.kitty_horizontal_clip_stack, vec![outer_horizontal]);
+    }
+
+    #[test]
+    fn multiple_regions_leave_no_clip_state_after_success() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 10));
+        for x in [0, 10] {
+            invoke_deferred_draw(
+                &mut buffer,
+                Rect::new(x, 0, 10, 5),
+                0,
+                0,
+                10,
+                5,
+                |buf, rect| {
+                    buf.set_string(rect.x, rect.y, "ok", Style::new());
+                },
+            )
+            .expect("draw should succeed");
+        }
+
+        assert!(buffer.clip_stack.is_empty());
+        assert!(buffer.kitty_clip_info_stack.is_empty());
     }
 }

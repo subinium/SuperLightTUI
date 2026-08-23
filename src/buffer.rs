@@ -4,20 +4,65 @@
 //! is flushed to the terminal, giving immediate-mode ergonomics with
 //! retained-mode efficiency.
 
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::cell::Cell;
+use crate::cell::{Cell, normalize_cell_symbol};
 use crate::rect::Rect;
 use crate::style::Style;
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-/// Maximum bytes allowed in a single cell's `symbol` field.
+/// Maximum cells allocated by one [`Buffer`].
 ///
-/// A grapheme cluster rarely exceeds ~16 bytes in the wild; anything
-/// longer is typically an attempt to weaponize zero-width combining chars.
-/// This cap bounds the worst case flush cost per cell.
-const MAX_CELL_SYMBOL_BYTES: usize = 32;
+/// At the current 64-byte `Cell` budget this limits one grid to 64 MiB and a
+/// terminal's current/previous pair to 128 MiB, before small row metadata.
+pub const MAX_BUFFER_CELLS: usize = 1_048_576;
+/// Maximum row metadata entries allocated by one [`Buffer`].
+pub const MAX_BUFFER_ROWS: usize = MAX_BUFFER_CELLS;
+
+/// Error returned by checked buffer construction and resize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferError {
+    /// The rectangle's exclusive right or bottom edge is not representable.
+    InvalidEdges,
+    /// The rectangle exceeds [`MAX_BUFFER_CELLS`].
+    CellBudgetExceeded {
+        /// Number of cells requested by the rectangle.
+        requested: u64,
+        /// Maximum cells allowed in one buffer.
+        maximum: usize,
+    },
+    /// The height exceeds [`MAX_BUFFER_ROWS`] even when cell area is zero.
+    RowBudgetExceeded {
+        /// Number of rows requested by the rectangle.
+        requested: u32,
+        /// Maximum rows allowed in one buffer.
+        maximum: usize,
+    },
+    /// The allocator rejected a bounded allocation request.
+    AllocationFailed,
+}
+
+impl fmt::Display for BufferError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidEdges => write!(f, "buffer rectangle edges overflow u32 coordinates"),
+            Self::CellBudgetExceeded { requested, maximum } => write!(
+                f,
+                "buffer requires {requested} cells, exceeding the {maximum}-cell budget"
+            ),
+            Self::RowBudgetExceeded { requested, maximum } => write!(
+                f,
+                "buffer requires {requested} rows, exceeding the {maximum}-row budget"
+            ),
+            Self::AllocationFailed => write!(f, "buffer allocation failed within the cell budget"),
+        }
+    }
+}
+
+impl std::error::Error for BufferError {}
 
 /// Hard cap on pixel count processed by image decode/encode paths.
 ///
@@ -25,23 +70,6 @@ const MAX_CELL_SYMBOL_BYTES: usize = 32;
 /// but guards 32-bit targets (WASM) from overflow and prevents a
 /// hostile `width`/`height` pair from triggering multi-GiB allocations.
 pub(crate) const MAX_IMAGE_PIXELS: u64 = 16_777_216;
-
-/// Replace terminal-dangerous control characters with `U+FFFD`.
-///
-/// Unfiltered C0 (0x00–0x1F), DEL (0x7F), or C1 (0x80–0x9F) bytes can
-/// break out of cell rendering and inject arbitrary escape sequences
-/// (cursor moves, OSC 52 clipboard, title spoof, etc.) when flushed.
-/// Replacing with the replacement character keeps byte counts sane and
-/// makes the tampering visible.
-#[inline]
-fn sanitize_cell_char(ch: char) -> char {
-    let c = ch as u32;
-    if c < 0x20 || c == 0x7f || (0x80..=0x9f).contains(&c) {
-        '\u{FFFD}'
-    } else {
-        ch
-    }
-}
 
 /// Returns `true` if `s` contains any codepoint that can trigger
 /// right-to-left or explicit bidirectional reordering under the Unicode
@@ -61,21 +89,14 @@ fn sanitize_cell_char(ch: char) -> char {
 /// so the ranges err toward inclusion.
 #[cfg(feature = "bidi")]
 #[inline]
-fn needs_bidi_reorder(s: &str) -> bool {
-    s.chars().any(|c| {
-        let u = c as u32;
-        matches!(u,
-            0x0590..=0x05FF | // Hebrew
-            0x0600..=0x06FF | // Arabic
-            0x0700..=0x074F | // Syriac
-            0x0750..=0x077F | // Arabic Supplement
-            0x0780..=0x07BF | // Thaana
-            0x08A0..=0x08FF | // Arabic Extended-A
-            0xFB1D..=0xFDFF | // Hebrew/Arabic presentation forms-A
-            0xFE70..=0xFEFF   // Arabic presentation forms-B
+pub(crate) fn needs_bidi_reorder(s: &str) -> bool {
+    use unicode_bidi::BidiClass::{AL, FSI, LRE, LRI, LRO, PDF, PDI, R, RLE, RLI, RLO};
+
+    s.chars().any(|ch| {
+        matches!(
+            unicode_bidi::bidi_class(ch),
+            R | AL | RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDI | PDF
         )
-        // explicit bidi controls: LRM, RLM, RLE/LRE/PDF/LRO/RLO, RLI/LRI/FSI/PDI
-        || matches!(u, 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
     })
 }
 
@@ -94,11 +115,22 @@ fn reorder_line_visual(s: &str) -> String {
     use unicode_bidi::BidiInfo;
     // No paragraph override: let the first strong char set base direction.
     let info = BidiInfo::new(s, None);
-    match info.paragraphs.first() {
-        // A single input line is a single paragraph; reorder its full range.
-        Some(para) => info.reorder_line(para, para.range.clone()).into_owned(),
-        None => s.to_string(), // empty input → no paragraph
+    let Some(para) = info.paragraphs.first() else {
+        return s.to_string();
+    };
+
+    // Reorder display atoms rather than scalar values. `unicode-bidi` exposes
+    // byte-indexed levels; sampling the resolved level at each grapheme start
+    // applies UAX #9 L2 while keeping combining and ZWJ sequences atomic.
+    let resolved = info.reordered_levels(para, para.range.clone());
+    let graphemes: Vec<(usize, &str)> = s.grapheme_indices(true).collect();
+    let levels: Vec<_> = graphemes.iter().map(|(byte, _)| resolved[*byte]).collect();
+    let visual_to_logical = BidiInfo::reorder_visual(&levels);
+    let mut reordered = String::with_capacity(s.len());
+    for logical in visual_to_logical {
+        reordered.push_str(graphemes[logical].1);
     }
+    reordered
 }
 
 /// Structured Kitty graphics protocol image placement.
@@ -253,6 +285,72 @@ pub(crate) fn hash_rgba(data: &[u8]) -> u64 {
     hasher.finish()
 }
 
+fn crop_kitty_horizontal(placement: &mut KittyPlacement, info: KittyHorizontalClipInfo) -> bool {
+    if info.original_width == 0 || placement.src_width == 0 || placement.src_height == 0 {
+        return false;
+    }
+    let visible_start = info.left_clip_cols.min(info.original_width);
+    let visible_end = visible_start
+        .saturating_add(placement.cols)
+        .min(info.original_width);
+    if visible_start >= visible_end {
+        return false;
+    }
+
+    let source_width = u64::from(placement.src_width);
+    let original_width = u64::from(info.original_width);
+    let start_pixel = source_width.saturating_mul(u64::from(visible_start)) / original_width;
+    let scaled_end = source_width.saturating_mul(u64::from(visible_end));
+    let end_pixel = scaled_end
+        .saturating_add(original_width.saturating_sub(1))
+        .checked_div(original_width)
+        .unwrap_or(0)
+        .min(source_width);
+    let crop_width = end_pixel.saturating_sub(start_pixel);
+    if crop_width == 0 {
+        return false;
+    }
+    if start_pixel == 0 && crop_width == source_width {
+        return true;
+    }
+
+    let Some(source_stride) = usize::try_from(source_width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+    else {
+        return false;
+    };
+    let Some(crop_stride) = usize::try_from(crop_width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+    else {
+        return false;
+    };
+    let Some(expected_source) = source_stride.checked_mul(placement.src_height as usize) else {
+        return false;
+    };
+    if placement.rgba.len() < expected_source {
+        return false;
+    }
+    let Some(cropped_len) = crop_stride.checked_mul(placement.src_height as usize) else {
+        return false;
+    };
+    let mut cropped = Vec::new();
+    if cropped.try_reserve_exact(cropped_len).is_err() {
+        return false;
+    }
+    let start_byte = start_pixel as usize * 4;
+    for row in 0..placement.src_height as usize {
+        let row_start = row * source_stride + start_byte;
+        cropped.extend_from_slice(&placement.rgba[row_start..row_start + crop_stride]);
+    }
+
+    placement.src_width = crop_width as u32;
+    placement.content_hash = hash_rgba(&cropped);
+    placement.rgba = Arc::new(cropped);
+    true
+}
+
 impl PartialEq for KittyPlacement {
     fn eq(&self, other: &Self) -> bool {
         self.content_hash == other.content_hash
@@ -276,6 +374,15 @@ pub(crate) struct KittyClipInfo {
     pub top_clip_rows: u32,
     /// Original total row count of the scrollable content.
     pub original_height: u32,
+}
+
+/// Horizontal source crop information for Kitty placements in a raw draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KittyHorizontalClipInfo {
+    /// Columns of the source region already clipped from the left.
+    pub left_clip_cols: u32,
+    /// Original total column count of the raw draw region.
+    pub original_width: u32,
 }
 
 /// A 2D grid of [`Cell`]s backing the terminal display.
@@ -303,6 +410,8 @@ pub struct Buffer {
     /// closures. The top entry is the active clip; nested raw-draw regions
     /// push and pop without losing the outer clip.
     pub(crate) kitty_clip_info_stack: Vec<KittyClipInfo>,
+    /// Horizontal counterpart to `kitty_clip_info_stack`.
+    pub(crate) kitty_horizontal_clip_stack: Vec<KittyHorizontalClipInfo>,
     /// Per-row digest of every cell on row `y`, used by `flush_buffer_diff`
     /// to skip the per-cell scan when both the dirty flag and the hash
     /// match the previous frame (issue #171).
@@ -323,34 +432,100 @@ pub struct Buffer {
     pub(crate) line_dirty: Vec<bool>,
 }
 
+fn checked_buffer_dimensions(area: Rect) -> Result<(usize, usize), BufferError> {
+    if !area.has_valid_edges() {
+        return Err(BufferError::InvalidEdges);
+    }
+    let requested = area.area_u64();
+    if requested > MAX_BUFFER_CELLS as u64 {
+        return Err(BufferError::CellBudgetExceeded {
+            requested,
+            maximum: MAX_BUFFER_CELLS,
+        });
+    }
+    if u64::from(area.height) > MAX_BUFFER_ROWS as u64 {
+        return Err(BufferError::RowBudgetExceeded {
+            requested: area.height,
+            maximum: MAX_BUFFER_ROWS,
+        });
+    }
+    let cells = usize::try_from(requested).map_err(|_| BufferError::CellBudgetExceeded {
+        requested,
+        maximum: MAX_BUFFER_CELLS,
+    })?;
+    let rows = usize::try_from(area.height).map_err(|_| BufferError::CellBudgetExceeded {
+        requested,
+        maximum: MAX_BUFFER_CELLS,
+    })?;
+    Ok((cells, rows))
+}
+
+fn try_repeated<T: Clone>(value: T, len: usize) -> Result<Vec<T>, BufferError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(len)
+        .map_err(|_| BufferError::AllocationFailed)?;
+    values.resize(len, value);
+    Ok(values)
+}
+
+fn trim_excess_capacity<T>(values: &mut Vec<T>) {
+    const RETAIN_FACTOR: usize = 4;
+    const HEADROOM_FACTOR: usize = 2;
+
+    if values.capacity() > values.len().saturating_mul(RETAIN_FACTOR) {
+        values.shrink_to(values.len().saturating_mul(HEADROOM_FACTOR));
+    }
+}
+
 impl Buffer {
+    /// Validate rectangle edges and allocation budgets without allocating.
+    ///
+    /// Terminal backends should call this before constructing a current/previous
+    /// buffer pair so invalid geometry is rejected before either allocation.
+    pub fn validate_area(area: Rect) -> Result<(), BufferError> {
+        checked_buffer_dimensions(area).map(|_| ())
+    }
+
     /// Create a buffer filled with blank cells covering `area`.
+    ///
+    /// # Panics
+    ///
+    /// Panics deterministically when `area` has unrepresentable edges, exceeds
+    /// [`MAX_BUFFER_CELLS`], or the bounded allocation fails. Use
+    /// [`Buffer::try_empty`] for geometry originating outside the process.
     pub fn empty(area: Rect) -> Self {
-        let size = area.area() as usize;
-        let height = area.height as usize;
-        Self {
+        Self::try_empty(area)
+            .unwrap_or_else(|error| panic!("Buffer::empty({area:?}) failed: {error}"))
+    }
+
+    /// Try to create a blank buffer without risking an oversized allocation.
+    pub fn try_empty(area: Rect) -> Result<Self, BufferError> {
+        let (size, height) = checked_buffer_dimensions(area)?;
+        Ok(Self {
             area,
-            content: vec![Cell::default(); size],
+            content: try_repeated(Cell::default(), size)?,
             clip_stack: Vec::new(),
             raw_sequences: Vec::new(),
             sprixels: Vec::new(),
             kitty_placements: Vec::new(),
             cursor_pos: None,
             kitty_clip_info_stack: Vec::new(),
+            kitty_horizontal_clip_stack: Vec::new(),
             // Empty buffers start with default cells on every row; their
             // hashes are equal across two empty buffers, so initialise to
             // 0 with `line_dirty=true` so the first flush still recomputes.
-            line_hashes: vec![0; height],
-            line_dirty: vec![true; height],
-        }
+            line_hashes: try_repeated(0, height)?,
+            line_dirty: try_repeated(true, height)?,
+        })
     }
 
-    /// Push a scroll clip info frame. Paired with [`Buffer::pop_kitty_clip`].
+    /// Push a scroll clip info frame.
     pub(crate) fn push_kitty_clip(&mut self, info: KittyClipInfo) {
         self.kitty_clip_info_stack.push(info);
     }
 
-    /// Pop the most recently pushed scroll clip info frame.
+    #[cfg(test)]
     pub(crate) fn pop_kitty_clip(&mut self) -> Option<KittyClipInfo> {
         self.kitty_clip_info_stack.pop()
     }
@@ -358,6 +533,22 @@ impl Buffer {
     /// Peek the currently active scroll clip info, if any.
     pub(crate) fn current_kitty_clip(&self) -> Option<&KittyClipInfo> {
         self.kitty_clip_info_stack.last()
+    }
+
+    /// Push horizontal crop metadata for a raw draw callback.
+    #[allow(dead_code)] // Called by the pending lib.rs raw-draw integration.
+    pub(crate) fn push_kitty_horizontal_clip(&mut self, info: KittyHorizontalClipInfo) {
+        self.kitty_horizontal_clip_stack.push(info);
+    }
+
+    /// Restore the previous horizontal crop metadata.
+    #[allow(dead_code)] // Called by the pending lib.rs raw-draw integration.
+    pub(crate) fn pop_kitty_horizontal_clip(&mut self) -> Option<KittyHorizontalClipInfo> {
+        self.kitty_horizontal_clip_stack.pop()
+    }
+
+    fn current_kitty_horizontal_clip(&self) -> Option<&KittyHorizontalClipInfo> {
+        self.kitty_horizontal_clip_stack.last()
     }
 
     pub(crate) fn set_cursor_pos(&mut self, x: u32, y: u32) {
@@ -393,8 +584,14 @@ impl Buffer {
         if let Some(clip) = self.effective_clip()
             && (p.x >= clip.right()
                 || p.y >= clip.bottom()
-                || p.x + p.cols <= clip.x
-                || p.y + p.rows <= clip.y)
+                || p.x.saturating_add(p.cols) <= clip.x
+                || p.y.saturating_add(p.rows) <= clip.y)
+        {
+            return;
+        }
+
+        if let Some(info) = self.current_kitty_horizontal_clip().copied()
+            && !crop_kitty_horizontal(&mut p, info)
         {
             return;
         }
@@ -406,9 +603,12 @@ impl Buffer {
             if original_height > 0 && (top_clip_rows > 0 || p.rows < original_height) {
                 let ratio = p.src_height as f64 / original_height as f64;
                 p.crop_y = (top_clip_rows as f64 * ratio) as u32;
-                let bottom_clip = original_height.saturating_sub(top_clip_rows + p.rows);
+                let bottom_clip =
+                    original_height.saturating_sub(top_clip_rows.saturating_add(p.rows));
                 let bottom_pixels = (bottom_clip as f64 * ratio) as u32;
-                p.crop_h = p.src_height.saturating_sub(p.crop_y + bottom_pixels);
+                p.crop_h = p
+                    .src_height
+                    .saturating_sub(p.crop_y.saturating_add(bottom_pixels));
             }
         }
 
@@ -432,8 +632,8 @@ impl Buffer {
         if let Some(clip) = self.effective_clip()
             && (p.x >= clip.right()
                 || p.y >= clip.bottom()
-                || p.x + p.cols <= clip.x
-                || p.y + p.rows <= clip.y)
+                || p.x.saturating_add(p.cols) <= clip.x
+                || p.y.saturating_add(p.rows) <= clip.y)
         {
             return;
         }
@@ -503,6 +703,7 @@ impl Buffer {
             self.area
         );
         let idx = self.index_of(x, y);
+        self.mark_row_dirty(y);
         &mut self.content[idx]
     }
 
@@ -528,6 +729,7 @@ impl Buffer {
     pub fn try_get_mut(&mut self, x: u32, y: u32) -> Option<&mut Cell> {
         if self.in_bounds(x, y) {
             let idx = self.index_of(x, y);
+            self.mark_row_dirty(y);
             Some(&mut self.content[idx])
         } else {
             None
@@ -568,14 +770,9 @@ impl Buffer {
         style: Style,
         link: Option<&compact_str::CompactString>,
     ) {
-        if y >= self.area.bottom() {
+        if y < self.area.y || y >= self.area.bottom() {
             return;
         }
-        // Issue #171: mark this row dirty so the next flush refreshes its
-        // hash. Marking unconditionally here keeps the write paths cheap;
-        // false positives only cost one redundant hash recompute, never a
-        // correctness issue.
-        self.mark_row_dirty(y);
         // Bidi (UAX #9) reorder: convert this logical-order line into visual
         // (display) order before the positional cell-write loop below. The
         // loop is purely left-to-right by column, so RTL runs must be
@@ -594,58 +791,124 @@ impl Buffer {
             s
         };
         let clip = self.effective_clip().copied();
-        for ch in s.chars() {
+        for grapheme in s.graphemes(true) {
             if x >= self.area.right() {
                 break;
             }
-            let ch = sanitize_cell_char(ch);
-            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-            if char_width == 0 {
-                // Append zero-width char (combining mark, ZWJ, variation selector)
-                // to the previous cell so grapheme clusters stay intact.
-                if x > self.area.x {
-                    let prev_in_clip = clip.is_none_or(|clip| {
-                        (x - 1) >= clip.x
-                            && (x - 1) < clip.right()
-                            && y >= clip.y
-                            && y < clip.bottom()
-                    });
-                    if prev_in_clip {
-                        let prev = self.get_mut(x - 1, y);
-                        if prev.symbol.len() + ch.len_utf8() <= MAX_CELL_SYMBOL_BYTES {
-                            prev.symbol.push(ch);
-                        }
-                    }
-                }
-                continue;
-            }
+            let width = self.set_grapheme_visual_inner(x, y, grapheme, style, link, clip);
+            x = x.saturating_add(width);
+        }
+    }
 
-            let in_clip = clip.is_none_or(|clip| {
-                x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom()
-            });
+    /// Write one already visually ordered grapheme and return its cell width.
+    ///
+    /// This is used by the styled bidi renderer after it remaps a whole line.
+    pub(crate) fn set_grapheme_visual(
+        &mut self,
+        x: u32,
+        y: u32,
+        grapheme: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+    ) -> u32 {
+        let clip = self.effective_clip().copied();
+        self.set_grapheme_visual_inner(x, y, grapheme, style, link, clip)
+    }
 
-            if !in_clip {
-                x = x.saturating_add(char_width);
-                continue;
-            }
+    fn set_grapheme_visual_inner(
+        &mut self,
+        x: u32,
+        y: u32,
+        grapheme: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+        clip: Option<Rect>,
+    ) -> u32 {
+        let symbol = normalize_cell_symbol(grapheme);
+        let width = UnicodeWidthStr::width(symbol.as_str()) as u32;
+        if width == 0 {
+            self.append_zero_width(x, y, &symbol, clip);
+            return 0;
+        }
 
-            let cell = self.get_mut(x, y);
-            cell.set_char(ch);
-            cell.set_style(style);
-            cell.hyperlink = link.cloned();
+        let Some(target_right) = x.checked_add(width) else {
+            return width;
+        };
+        if y < self.area.y
+            || y >= self.area.bottom()
+            || x < self.area.x
+            || target_right > self.area.right()
+        {
+            return width;
+        }
 
-            // Wide characters occupy two cells; blank the trailing cell.
-            if char_width > 1 {
-                let next_x = x + 1;
-                if next_x < self.area.right() {
-                    let next = self.get_mut(next_x, y);
-                    next.symbol.clear();
-                    next.style = style;
-                    next.hyperlink = link.cloned();
-                }
-            }
+        let (mut affected_left, mut affected_right) = (x, target_right);
+        for col in x..target_right {
+            let (old_left, old_right) = self.existing_grapheme_range(col, y);
+            affected_left = affected_left.min(old_left);
+            affected_right = affected_right.max(old_right);
+        }
+        if affected_left < self.area.x || affected_right > self.area.right() {
+            return width;
+        }
+        let fully_in_clip = clip.is_none_or(|clip| {
+            y >= clip.y
+                && y < clip.bottom()
+                && affected_left >= clip.x
+                && affected_right <= clip.right()
+        });
+        if !fully_in_clip {
+            return width;
+        }
 
-            x = x.saturating_add(char_width);
+        self.mark_row_dirty(y);
+        for col in affected_left..affected_right {
+            let idx = self.index_of(col, y);
+            self.content[idx].reset();
+        }
+
+        let leading_idx = self.index_of(x, y);
+        let leading = &mut self.content[leading_idx];
+        leading.set_symbol(&symbol);
+        leading.set_style(style);
+        leading.hyperlink = link.cloned();
+        for col in x.saturating_add(1)..target_right {
+            let idx = self.index_of(col, y);
+            self.content[idx].set_continuation(style);
+            self.content[idx].hyperlink = link.cloned();
+        }
+        width
+    }
+
+    fn existing_grapheme_range(&self, x: u32, y: u32) -> (u32, u32) {
+        let mut left = x;
+        if self.content[self.index_of(x, y)].is_continuation() && x > self.area.x {
+            left = x - 1;
+        }
+        let symbol = self.content[self.index_of(left, y)].normalized_symbol();
+        let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
+        (left, left.saturating_add(width).min(self.area.right()))
+    }
+
+    fn append_zero_width(&mut self, x: u32, y: u32, suffix: &str, clip: Option<Rect>) {
+        if suffix.is_empty() || y < self.area.y || y >= self.area.bottom() || x <= self.area.x {
+            return;
+        }
+        let mut leading_x = x.saturating_sub(1).min(self.area.right().saturating_sub(1));
+        if self.content[self.index_of(leading_x, y)].is_continuation() && leading_x > self.area.x {
+            leading_x -= 1;
+        }
+        if clip.is_some_and(|clip| !clip.contains(leading_x, y)) {
+            return;
+        }
+
+        let idx = self.index_of(leading_x, y);
+        let mut combined = self.content[idx].normalized_symbol();
+        combined.push_str(suffix);
+        let normalized = normalize_cell_symbol(&combined);
+        if normalized != self.content[idx].symbol {
+            self.mark_row_dirty(y);
+            self.content[idx].symbol = normalized;
         }
     }
 
@@ -653,18 +916,8 @@ impl Buffer {
     ///
     /// No-ops if `(x, y)` is out of bounds or outside the current clip region.
     pub fn set_char(&mut self, x: u32, y: u32, ch: char, style: Style) {
-        let in_clip = self
-            .effective_clip()
-            .is_none_or(|clip| x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom());
-        if !self.in_bounds(x, y) || !in_clip {
-            return;
-        }
-        // Issue #171: mark this row dirty so the next flush refreshes its
-        // hash before deciding whether to skip the per-cell scan.
-        self.mark_row_dirty(y);
-        let cell = self.get_mut(x, y);
-        cell.set_char(ch);
-        cell.set_style(style);
+        let mut encoded = [0; 4];
+        self.set_grapheme_visual(x, y, ch.encode_utf8(&mut encoded), style, None);
     }
 
     /// Mark row `y` as dirty so the next flush recomputes its line hash.
@@ -774,6 +1027,9 @@ impl Buffer {
     ///
     /// Returns `(x, y, cell)` tuples for every cell that changed. Useful for
     /// custom backends or tests that need to inspect changed cells directly.
+    /// When areas, origins, or backing lengths differ, every representable cell
+    /// in `self` is returned as a bounded full redraw; callers are responsible
+    /// for clearing any previous-only area before applying those updates.
     ///
     /// # Allocation
     ///
@@ -788,15 +1044,28 @@ impl Buffer {
     ///
     /// `benches/benchmarks.rs` exercises this path in `bench_buffer_diff`.
     pub fn diff<'a>(&'a self, other: &'a Buffer) -> Vec<(u32, u32, &'a Cell)> {
+        let Some(expected) = usize::try_from(self.area.area_u64()).ok() else {
+            return Vec::new();
+        };
+        let len = self.content.len().min(expected);
+        if self.area.width == 0 || len == 0 {
+            return Vec::new();
+        }
+
+        let same_geometry = self.area == other.area
+            && self.content.len() == expected
+            && other.content.len() == expected;
         let mut updates = Vec::new();
-        for y in self.area.y..self.area.bottom() {
-            for x in self.area.x..self.area.right() {
-                let cur = self.get(x, y);
-                let prev = other.get(x, y);
-                if cur != prev {
-                    updates.push((x, y, cur));
-                }
+        for (index, cell) in self.content[..len].iter().enumerate() {
+            let changed = !same_geometry || other.content.get(index) != Some(cell);
+            if !changed {
+                continue;
             }
+            let row = index / self.area.width as usize;
+            let col = index % self.area.width as usize;
+            let x = self.area.x.saturating_add(col as u32);
+            let y = self.area.y.saturating_add(row as u32);
+            updates.push((x, y, cell));
         }
         updates
     }
@@ -812,11 +1081,10 @@ impl Buffer {
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
+        self.kitty_horizontal_clip_stack.clear();
         // Issue #171: every row is now blank — flag them all dirty so the
         // next flush refreshes the digest before any skip check.
-        for d in &mut self.line_dirty {
-            *d = true;
-        }
+        self.line_dirty.fill(true);
     }
 
     /// Reset every cell and apply a background color to all cells.
@@ -831,10 +1099,9 @@ impl Buffer {
         self.kitty_placements.clear();
         self.cursor_pos = None;
         self.kitty_clip_info_stack.clear();
+        self.kitty_horizontal_clip_stack.clear();
         // Issue #171: every cell was just rewritten — mark all rows dirty.
-        for d in &mut self.line_dirty {
-            *d = true;
-        }
+        self.line_dirty.fill(true);
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
@@ -842,16 +1109,40 @@ impl Buffer {
     /// If the new area is larger, new cells are initialized to blank. All
     /// existing content is discarded.
     pub fn resize(&mut self, area: Rect) {
+        self.try_resize(area)
+            .unwrap_or_else(|error| panic!("Buffer::resize({area:?}) failed: {error}"));
+    }
+
+    /// Try to resize and reset the buffer after validating geometry and budget.
+    /// Capacity is retained across ordinary resizes, but a downsize below one
+    /// quarter of the high-water capacity requests a shrink to 2x headroom.
+    pub fn try_resize(&mut self, area: Rect) -> Result<(), BufferError> {
+        let (size, height) = checked_buffer_dimensions(area)?;
+        self.content
+            .try_reserve_exact(size.saturating_sub(self.content.len()))
+            .map_err(|_| BufferError::AllocationFailed)?;
+        self.line_hashes
+            .try_reserve_exact(height.saturating_sub(self.line_hashes.len()))
+            .map_err(|_| BufferError::AllocationFailed)?;
+        self.line_dirty
+            .try_reserve_exact(height.saturating_sub(self.line_dirty.len()))
+            .map_err(|_| BufferError::AllocationFailed)?;
+
         self.area = area;
-        let size = area.area() as usize;
         self.content.resize(size, Cell::default());
         // Issue #171: keep the per-row tracking arrays sized to the new
         // height. `reset()` re-marks every row dirty so initial values
         // here don't affect correctness.
-        let height = area.height as usize;
         self.line_hashes.resize(height, 0);
         self.line_dirty.resize(height, true);
         self.reset();
+        // A sustained downsize should not retain a pathological high-water
+        // allocation forever. Keep up to 2x headroom once capacity exceeds 4x
+        // the active length, avoiding churn around ordinary terminal resizes.
+        trim_excess_capacity(&mut self.content);
+        trim_excess_capacity(&mut self.line_hashes);
+        trim_excess_capacity(&mut self.line_dirty);
+        Ok(())
     }
 
     /// Serialize the buffer into a stable, styled-snapshot format suitable for
@@ -1112,6 +1403,7 @@ fn intersect_rects(a: Rect, b: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cell::MAX_CELL_SYMBOL_BYTES;
 
     #[test]
     fn clip_stack_intersects_nested_regions() {
@@ -1337,6 +1629,39 @@ mod tests {
     fn kitty_clip_pop_on_empty_stack_is_none() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
         assert!(buf.pop_kitty_clip().is_none());
+    }
+
+    #[test]
+    fn kitty_horizontal_clip_crops_source_pixels_to_visible_columns() {
+        let rgba = Arc::new(vec![
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 255, // blue
+            255, 255, 255, 255, // white
+        ]);
+        let placement = KittyPlacement {
+            content_hash: hash_rgba(&rgba),
+            rgba,
+            src_width: 4,
+            src_height: 1,
+            x: 0,
+            y: 0,
+            cols: 2,
+            rows: 1,
+            crop_y: 0,
+            crop_h: 0,
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.push_kitty_horizontal_clip(KittyHorizontalClipInfo {
+            left_clip_cols: 1,
+            original_width: 4,
+        });
+        buf.kitty_place(placement);
+
+        let cropped = &buf.kitty_placements[0];
+        assert_eq!(cropped.src_width, 2);
+        assert_eq!(cropped.rgba.as_slice(), &[0, 255, 0, 255, 0, 0, 255, 255]);
+        assert!(buf.pop_kitty_horizontal_clip().is_some());
     }
 
     // ---- snapshot_format tests (#231) -------------------------------------
@@ -1570,6 +1895,101 @@ mod tests {
     }
 
     #[test]
+    fn checked_construction_rejects_budget_and_edge_overflow() {
+        let oversized = Rect::new(0, 0, MAX_BUFFER_CELLS as u32 + 1, 1);
+        assert!(matches!(
+            Buffer::try_empty(oversized),
+            Err(BufferError::CellBudgetExceeded {
+                requested,
+                maximum,
+            }) if requested == MAX_BUFFER_CELLS as u64 + 1 && maximum == MAX_BUFFER_CELLS
+        ));
+        assert!(matches!(
+            Buffer::try_empty(Rect::new(u32::MAX, 0, 1, 1)),
+            Err(BufferError::InvalidEdges)
+        ));
+        assert!(matches!(
+            Buffer::try_empty(Rect::new(0, 0, 0, u32::MAX)),
+            Err(BufferError::RowBudgetExceeded { .. })
+        ));
+        assert!(Buffer::validate_area(Rect::new(12, 34, 80, 24)).is_ok());
+    }
+
+    #[test]
+    fn failed_checked_resize_preserves_existing_geometry_and_content() {
+        let mut buf = Buffer::empty(Rect::new(7, 9, 4, 2));
+        buf.set_string(7, 9, "safe", Style::new());
+
+        let result = buf.try_resize(Rect::new(0, 0, MAX_BUFFER_CELLS as u32 + 1, 1));
+        assert!(matches!(
+            result,
+            Err(BufferError::CellBudgetExceeded { .. })
+        ));
+        assert_eq!(buf.area, Rect::new(7, 9, 4, 2));
+        assert_eq!(buf.get(7, 9).symbol, "s");
+    }
+
+    #[test]
+    fn nonzero_origin_string_writes_clip_on_all_four_edges() {
+        let mut buf = Buffer::empty(Rect::new(10, 20, 4, 2));
+        buf.set_string(8, 20, "abcd", Style::new());
+        buf.set_string(10, 19, "top", Style::new());
+        buf.set_string(10, 22, "bottom", Style::new());
+
+        assert_eq!(buf.get(10, 20).symbol, "c");
+        assert_eq!(buf.get(11, 20).symbol, "d");
+        assert_eq!(buf.get(10, 21).symbol, " ");
+    }
+
+    #[test]
+    fn diff_with_different_origins_and_sizes_is_a_bounded_full_redraw() {
+        let mut current = Buffer::empty(Rect::new(10, 20, 3, 2));
+        current.set_string(10, 20, "abc", Style::new());
+        let previous = Buffer::empty(Rect::new(0, 0, 1, 1));
+
+        let updates = current.diff(&previous);
+        assert_eq!(updates.len(), current.content.len());
+        assert_eq!((updates[0].0, updates[0].1), (10, 20));
+        assert_eq!((updates[5].0, updates[5].1), (12, 21));
+    }
+
+    #[test]
+    fn zwj_grapheme_is_atomic_and_marks_continuation_cells() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string(0, 0, "👩‍💻x", Style::new());
+
+        assert_eq!(buf.get(0, 0).symbol, "👩‍💻");
+        assert!(buf.get(1, 0).is_continuation());
+        assert_eq!(buf.get(2, 0).symbol, "x");
+    }
+
+    #[test]
+    fn wide_replacement_clears_continuation_and_stale_hyperlink() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_string_linked(1, 0, "世", Style::new(), "https://example.com");
+        buf.set_char(1, 0, 'a', Style::new());
+
+        assert_eq!(buf.get(1, 0).symbol, "a");
+        assert_eq!(buf.get(2, 0).symbol, " ");
+        assert!(buf.get(1, 0).hyperlink.is_none());
+        assert!(buf.get(2, 0).hyperlink.is_none());
+    }
+
+    #[test]
+    fn wide_write_never_splits_at_area_or_clip_boundary() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 1));
+        buf.set_char(3, 0, 'x', Style::new());
+        buf.set_string(3, 0, "世", Style::new());
+        assert_eq!(buf.get(3, 0).symbol, "x");
+
+        buf.set_string(1, 0, "世", Style::new());
+        buf.push_clip(Rect::new(1, 0, 1, 1));
+        buf.set_char(1, 0, 'a', Style::new());
+        assert_eq!(buf.get(1, 0).symbol, "世");
+        assert!(buf.get(2, 0).is_continuation());
+    }
+
+    #[test]
     fn fnv1a_distinct_rows_distinct_identical_rows_collide() {
         // After swapping SipHash for FNV-1a, the dirty-row digest must keep its
         // two contract guarantees: distinct content → distinct digest, and
@@ -1751,6 +2171,38 @@ mod tests {
     #[test]
     fn reorder_line_visual_empty_is_noop() {
         assert_eq!(reorder_line_visual(""), "");
+    }
+
+    mod geometry_proptest {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            #[test]
+            fn origin_writes_and_mismatched_diffs_never_panic(
+                x in 0u32..200,
+                y in 0u32..200,
+                width in 0u32..32,
+                height in 0u32..16,
+                other_x in 0u32..200,
+                other_y in 0u32..200,
+                other_width in 0u32..32,
+                other_height in 0u32..16,
+                text in ".{0,48}",
+            ) {
+                let area = Rect::new(x, y, width, height);
+                let other_area = Rect::new(other_x, other_y, other_width, other_height);
+                let mut current = Buffer::try_empty(area).expect("small geometry is valid");
+                let previous = Buffer::try_empty(other_area).expect("small geometry is valid");
+
+                current.set_string(x.saturating_sub(3), y.saturating_sub(3), &text, Style::new());
+                let updates = current.diff(&previous);
+                prop_assert!(updates.len() <= current.content.len());
+                prop_assert!(updates.iter().all(|(cx, cy, _)| current.in_bounds(*cx, *cy)));
+            }
+        }
     }
 
     #[cfg(feature = "bidi")]

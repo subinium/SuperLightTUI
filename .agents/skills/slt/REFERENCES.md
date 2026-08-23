@@ -1,4 +1,4 @@
-# SLT References — v0.20
+# SLT References — v0.23
 
 Load this when the user asks about feature flags, version-specific APIs, or doc locations.
 
@@ -7,14 +7,16 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
 | `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard` |
+| `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
+| `theme-watch` | no | TOML hot reload | `ThemeWatcher`; enables `serde` and `notify` |
 | `image` | no | Image loading helpers | `ui.image(...)` halfblock/kitty/sixel decode paths |
 | `qrcode` | no | QR widget | `ui.qr_code(...)` |
 | `syntax-rust` / `syntax-python` / `syntax-javascript` / `syntax-typescript` / `syntax-go` / `syntax-bash` / `syntax-json` / `syntax-toml` / `syntax-c` / `syntax-cpp` / `syntax-java` / `syntax-ruby` / `syntax-css` / `syntax-html` / `syntax-yaml` | no | Per-language tree-sitter grammars | `ui.code_block(code, "rust")` etc. |
 | `syntax` | no | All `syntax-*` combined | every language above |
 | `kitty-compress` | no | zlib-compressed kitty protocol | larger images, smaller payloads |
-| `full` | no | crossterm+async+serde+image+qrcode+kitty-compress | development / demos only |
+| `full` | no | crossterm+async+serde+theme-watch+image+qrcode+kitty-compress+bidi | development / demos only; excludes syntax grammars |
 
 ## v0.20 API surface (highlights AI agents miss)
 
@@ -36,10 +38,10 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `ui.vsplit_pane(&mut SplitPaneState, top, bottom) -> SplitPaneResponse` — vertical split
 - `SplitPaneState::new(0.5)`, `.with_min_ratio(0.2)`
 
-### Hooks (v0.19+ + v0.20 additions)
+### Hooks
 - `ui.use_state(\|\| init)` — order-based, `src/context/runtime.rs:632`
-- `ui.use_state_named::<T>("id")` — `&'static str`, `T: Default`, `runtime.rs:690`
-- `ui.use_state_named_with("id", \|\| init)` — `&'static str` + init fn, `runtime.rs:671`
+- `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn
+- `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
 - `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`, `runtime.rs:978`
 - `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`, `runtime.rs:1002`
 - `ui.use_memo(&deps, \|d\| compute(d))` — cached compute, `runtime.rs:832`
@@ -53,7 +55,7 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `ui.animate_bool("id", value) -> f64` — eased 0..1 toggle, `runtime.rs:716`
 
 ### Response signal fields (v0.20)
-`Response { clicked, right_clicked, hovered, changed, focused, gained_focus, lost_focus, rect }`. `right_clicked`, `gained_focus`, `lost_focus` are new in v0.20. Older docs may show only the v0.19 set.
+`Response { clicked, right_clicked, hovered, changed, focused, gained_focus, lost_focus, double_clicked, submitted, scroll_delta, rect }`.
 - `Response::on_hover(ui, "tooltip text")` — chained tooltip (`src/context/state.rs:221`)
 - `Response::on_hover_ui(ui, |ui| { ... })` — chained tooltip with custom body
 
@@ -98,15 +100,15 @@ These were either v0.19 preview or pre-1.0 mistakes consolidated by the v0.20 AP
 
 ## Doc pointers (cross-check before relying on)
 
-These docs exist but several lag behind v0.20. When in doubt, grep source.
+These docs are maintained for v0.23, but source and compile-tested examples remain authoritative.
 
-- `docs/COMPLETE_REFERENCE.md` — **partially stale** (header still says v0.19.2; missing gauge/line_gauge/scrollable_with_gutter/split_pane/Response signal fields/v0.19 hooks). Treat as supplementary, not authoritative.
-- `docs/WIDGETS.md` — **partially stale** (breadcrumb 4-variant API, missing v0.20 builders).
-- `docs/STATE_APIS.md` — current for state methods. Note `ScrollState::progress() -> f32` is a documented Rule 2 violation pending fix.
+- `docs/COMPLETE_REFERENCE.md` — broad single-file reference.
+- `docs/WIDGETS.md` — categorized widget and state reference.
+- `docs/STATE_APIS.md` — method-level state reference.
 - `docs/PREVIOUS_FRAME_GUIDE.md` — current. Read for `Response.rect` timing.
 - `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_named`/`with_if` covered.
 - `docs/QUICK_START.md` — current.
-- `docs/COOKBOOK.md` — current. (Cargo dep line still says `superlighttui = "0.19"` — bump to `0.20` mentally.)
+- `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
 - `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
 - `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/v020_test_utils_demo.rs` for v0.20 helpers.
 - `docs/ANIMATION.md` — current.
@@ -114,8 +116,8 @@ These docs exist but several lag behind v0.20. When in doubt, grep source.
 - `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths.
 - `docs/ARCHITECTURE.md` — render pipeline.
 - `docs/DEBUGGING.md` — F12 layout overlay, debug flags.
-- `docs/MIGRATION.md` — **partially stale** for v0.19 → v0.20 (frames v0.20 as "next minor", but it shipped). Use this skill's "v0.20 removed APIs" table.
-- `docs/llms.txt` — **partially stale** (v0.19.2 highlight list).
+- `docs/MIGRATION.md` — version-by-version public API migration guide.
+- `docs/llms.txt` — short coding-agent index.
 - `docs/RUSTDOC_GUIDE.md` — current. Doctest standards.
 - `docs/NAMING.md` — current. The micro-tier rubric this skill encodes.
 - `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
@@ -140,7 +142,7 @@ Local PRE-CI → branch `release/vX.Y.Z` → atomic commit → push → PR → w
 
 ## MSRV
 
-Rust 1.81. Verify with `cargo check --features async,serde` on a 1.81 toolchain (CI's MSRV job runs this exact command).
+Rust 1.88. Verify with `cargo +1.88 check -p superlighttui --features async,serde` and the matching all-features Clippy gate.
 
 ## Supported targets
 

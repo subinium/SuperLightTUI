@@ -247,7 +247,7 @@ ui.modal_at(Anchor::Center, |ui| {
   `anchor_to_align_justify`, `overlay_at`, `modal_at`)
 - **Container margin helpers**: `ml`, `mt`, `mr`, `mb`, `mx`, `my`, `margin` in
   `src/context/container.rs`
-- **Runnable demo**: `cargo run --example demo_overlay_anchor` — renders all 9
+- **Runnable demo**: `cargo run --example system_tour` — renders all 9
   anchors at once
 - **Cookbook**: `docs/COOKBOOK.md` (Modal Confirmation with Toast, Real-time Dashboard)
 - **Reference**: `docs/COMPLETE_REFERENCE.md` — full API surface

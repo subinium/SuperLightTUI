@@ -11,7 +11,7 @@
 //! is echoed at the top — it stays in sync because `focused_name()`
 //! reads the resolved name from the previous frame's name map.
 //!
-//! Run: `cargo run --example v020_named_focus`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   Tab            — focus next input (positional)

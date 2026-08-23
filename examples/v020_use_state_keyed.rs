@@ -8,7 +8,7 @@
 //! entries from removed rows are tolerated — the state map keeps them
 //! but the closure simply stops reading them.
 //!
-//! Run: `cargo run --example v020_use_state_keyed`
+//! Run: `cargo run --example v020_tour`
 //!
 //! Keys:
 //!   j / Down       — move selection down

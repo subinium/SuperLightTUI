@@ -344,16 +344,15 @@ This docstring:
 
 ## Lint Enforcement
 
-In v0.20 (current):
+In v0.23:
 - `#![deny(missing_docs)]` enabled at the crate root for `pub` items.
 - `cargo doc --no-deps` runs in CI; broken intra-doc links fail.
 - `cargo test --doc` runs; broken examples fail.
+- `scripts/api_audit.sh --strict` blocks CI on public rustdoc and API-shape
+  regressions; parser fixtures cover multiline attributes.
 
-Planned in v0.21:
-- Custom clippy rule: detect public methods without `# Example`.
-- Custom rule: detect public methods that can panic but lack `# Failure`.
-- Audit script (`scripts/api_audit.sh`) flag V4 (rustdoc presence) blocks
-  CI.
+Example and panic-section completeness remain review requirements; compiler
+rustdoc and the API audit are the automated source-of-truth checks.
 
 ---
 

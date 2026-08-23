@@ -203,7 +203,7 @@ fn expandable_card(
     title: &str,
     body: impl FnOnce(&mut Context),
 ) {
-    let expanded = ui.use_state_named::<bool>(id);
+    let expanded = ui.use_state_named_default::<bool>(id);
     let _ = ui.bordered(Border::Single).col(|ui| {
         let label = if *expanded.get(ui) { "▼" } else { "▶" };
         if ui.button(label).clicked {
@@ -231,10 +231,10 @@ expandable_card(ui, "card.disks", "Disks", |ui| {
 });
 ```
 
-When you need a default different from `Default::default()`, use `use_state_named_with`:
+When you need a default different from `Default::default()`, pass an initializer to `use_state_named`:
 
 ```rust
-let page = ui.use_state_named_with::<usize>("pager", || 1);
+let page = ui.use_state_named("pager", || 1usize);
 ```
 
 Rules of the road:
@@ -483,6 +483,9 @@ ui.error_boundary(|ui| {
 
 Use `error_boundary` or `error_boundary_with` when you want one subtree to fail without taking down the whole app.
 This is especially useful for experimental widgets, user-generated content, or plugins.
+Deferred raw-draw callbacks run after Context layout, outside this build-stage
+boundary. Use `draw_with_fallback` for a render-stage fallback; an unhandled raw
+draw panic restores frame/clip state before it is rethrown.
 
 ## Custom widgets: focus and interaction
 
@@ -501,13 +504,15 @@ Use `interaction()` when the widget needs click/hover without wrapping everythin
 ## Async background messages
 
 ```rust
-let tx = slt::run_async(|ui, messages: &mut Vec<String>| {
+let run = slt::run_async(|ui, messages: &mut Vec<String>| {
     for message in messages.drain(..) {
         ui.text(message);
     }
 })?;
 
+let tx = run.sender();
 tx.send("Background work done".into()).await?;
+run.cancel_and_join().await.map_err(std::io::Error::other)?;
 ```
 
 Enable with the `async` feature.

@@ -5,11 +5,11 @@
 #[derive(Debug, Clone, Default)]
 pub struct ListState {
     /// The list items as display strings.
-    pub items: Vec<String>,
+    items: Vec<String>,
     /// Index of the currently selected item.
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
-    pub filter: String,
+    filter: String,
     /// Top *item* index of the visible viewport for `virtual_list`. Defaults to
     /// `0` and is clamped each frame so `selected` stays inside the viewport
     /// without forcing the cursor to the bottom row. For the uniform
@@ -45,8 +45,7 @@ impl ListState {
     /// Create a list with the given items. The first item is selected initially.
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
-        let item_search_cache: Vec<String> =
-            items.iter().map(|s| s.to_lowercase()).collect();
+        let item_search_cache: Vec<String> = items.iter().map(|s| s.to_lowercase()).collect();
         let len = items.len();
         Self {
             items,
@@ -68,14 +67,64 @@ impl ListState {
     /// filter/view state stays consistent.
     pub fn set_items(&mut self, items: Vec<impl Into<String>>) {
         self.items = items.into_iter().map(Into::into).collect();
-        self.item_search_cache = self.items.iter().map(|s| s.to_lowercase()).collect();
-        self.selected = self.selected.min(self.items.len().saturating_sub(1));
-        if let Some(heights) = self.item_heights.as_mut() {
-            heights.truncate(self.items.len());
+        self.rebuild_item_caches();
+    }
+
+    /// Return all items in their underlying, unfiltered order.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+
+    /// Return the number of underlying items.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Return whether the underlying list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Return an item by underlying data index.
+    pub fn item(&self, index: usize) -> Option<&str> {
+        self.items.get(index).map(String::as_str)
+    }
+
+    /// Append an item and rebuild cache-coupled view state.
+    pub fn push_item(&mut self, item: impl Into<String>) {
+        self.items.push(item.into());
+        self.rebuild_item_caches();
+    }
+
+    /// Insert an item at a data index. Returns `false` when out of bounds.
+    pub fn insert_item(&mut self, index: usize, item: impl Into<String>) -> bool {
+        if index > self.items.len() {
+            return false;
         }
-        // Item count changed, so any cached prefix sum is stale.
-        self.heights_dirty = true;
-        self.rebuild_view();
+        self.items.insert(index, item.into());
+        self.rebuild_item_caches();
+        true
+    }
+
+    /// Remove and return an item by data index.
+    pub fn remove_item(&mut self, index: usize) -> Option<String> {
+        if index >= self.items.len() {
+            return None;
+        }
+        let item = self.items.remove(index);
+        self.rebuild_item_caches();
+        Some(item)
+    }
+
+    /// Remove all items and reset cache-coupled selection and viewport state.
+    pub fn clear_items(&mut self) {
+        self.items.clear();
+        self.rebuild_item_caches();
+    }
+
+    /// Return the active filter text.
+    pub fn filter(&self) -> &str {
+        &self.filter
     }
 
     /// Provide a per-item row height (each clamped to `>= 1`) and return `self`.
@@ -240,7 +289,8 @@ impl ListState {
         // Keep the lowercase search cache aligned with `items`.
         if from < self.item_search_cache.len() {
             let cached = self.item_search_cache.remove(from);
-            self.item_search_cache.insert(to.min(self.item_search_cache.len()), cached);
+            self.item_search_cache
+                .insert(to.min(self.item_search_cache.len()), cached);
         }
 
         // Keep per-item heights aligned with `items` when present.
@@ -296,7 +346,19 @@ impl ListState {
         };
         if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
             self.selected = self.view_indices.len() - 1;
+        } else if self.view_indices.is_empty() {
+            self.selected = 0;
         }
+    }
+
+    fn rebuild_item_caches(&mut self) {
+        self.item_search_cache = self.items.iter().map(|item| item.to_lowercase()).collect();
+        if let Some(heights) = self.item_heights.as_mut() {
+            heights.truncate(self.items.len());
+        }
+        self.heights_dirty = true;
+        self.viewport_offset = self.viewport_offset.min(self.items.len().saturating_sub(1));
+        self.rebuild_view();
     }
 }
 
@@ -338,6 +400,64 @@ impl std::ops::Deref for ListResponse {
     }
 }
 
+/// Filesystem operation that failed during a file-picker scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerScanOperation {
+    /// Opening the root directory failed. No replacement listing is produced.
+    ReadDirectory,
+    /// Reading one entry from an open directory failed. Other entries are kept.
+    ReadEntry,
+    /// Inspecting an entry's file type failed. That entry is skipped.
+    ReadFileType,
+    /// Reading file metadata failed. The entry is kept with an unknown size.
+    ReadMetadata,
+}
+
+/// A structured failure captured while scanning a file-picker directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePickerScanError {
+    /// Operation that failed.
+    pub operation: FilePickerScanOperation,
+    /// Path associated with the failure.
+    pub path: PathBuf,
+    /// Portable I/O error category.
+    pub kind: std::io::ErrorKind,
+    /// Original operating-system error message.
+    pub message: String,
+}
+
+impl std::fmt::Display for FilePickerScanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {} ({})",
+            self.path.display(),
+            self.message,
+            match self.operation {
+                FilePickerScanOperation::ReadDirectory => "read directory",
+                FilePickerScanOperation::ReadEntry => "read entry",
+                FilePickerScanOperation::ReadFileType => "read file type",
+                FilePickerScanOperation::ReadMetadata => "read metadata",
+            }
+        )
+    }
+}
+
+impl std::error::Error for FilePickerScanError {}
+
+/// Current freshness of a file-picker directory listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerScanStatus {
+    /// The directory has not been scanned yet.
+    Pending,
+    /// The listing is complete and current.
+    Ready,
+    /// Configuration or the directory changed and the retained listing is stale.
+    Stale,
+    /// The latest scan failed fully or partially.
+    Error,
+}
+
 /// State for a file picker widget.
 ///
 /// Tracks the current directory listing, filtering options, and selected file.
@@ -357,6 +477,9 @@ pub struct FilePickerState {
     pub extensions: Vec<String>,
     /// Whether the directory listing needs refresh.
     pub dirty: bool,
+    scan_status: FilePickerScanStatus,
+    scan_errors: Vec<FilePickerScanError>,
+    viewport_offset: usize,
 }
 
 /// A directory entry shown by [`FilePickerState`].
@@ -368,8 +491,9 @@ pub struct FileEntry {
     pub path: PathBuf,
     /// Whether this entry is a directory.
     pub is_dir: bool,
-    /// File size in bytes (0 for directories).
-    pub size: u64,
+    /// File size in bytes, or `None` for directories and unreadable metadata.
+    pub size: Option<u64>,
+    sort_key: String,
 }
 
 impl FilePickerState {
@@ -383,13 +507,16 @@ impl FilePickerState {
             show_hidden: false,
             extensions: Vec::new(),
             dirty: true,
+            scan_status: FilePickerScanStatus::Pending,
+            scan_errors: Vec::new(),
+            viewport_offset: 0,
         }
     }
 
     /// Configure whether hidden files should be shown.
     pub fn show_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
-        self.dirty = true;
+        self.invalidate_scan();
         self
     }
 
@@ -400,8 +527,60 @@ impl FilePickerState {
             .map(|ext| ext.trim().trim_start_matches('.').to_ascii_lowercase())
             .filter(|ext| !ext.is_empty())
             .collect();
-        self.dirty = true;
+        self.invalidate_scan();
         self
+    }
+
+    /// Return the freshness of the current directory listing.
+    pub fn scan_status(&self) -> FilePickerScanStatus {
+        self.scan_status
+    }
+
+    /// Return every failure captured by the most recent scan.
+    ///
+    /// A root `read_dir` failure produces one error and retains the previous
+    /// listing. Per-entry and metadata failures produce a best-effort listing.
+    pub fn scan_errors(&self) -> &[FilePickerScanError] {
+        &self.scan_errors
+    }
+
+    /// Return the most recent failure from the latest scan.
+    pub fn last_error(&self) -> Option<&FilePickerScanError> {
+        self.scan_errors.last()
+    }
+
+    /// Request another scan after a transient failure.
+    pub fn retry(&mut self) {
+        self.scan_errors.clear();
+        self.scan_status = if self.entries.is_empty() {
+            FilePickerScanStatus::Pending
+        } else {
+            FilePickerScanStatus::Stale
+        };
+        self.dirty = true;
+    }
+
+    pub(crate) fn invalidate_scan(&mut self) {
+        self.retry();
+        self.viewport_offset = 0;
+    }
+
+    pub(crate) fn viewport_offset(&self) -> usize {
+        self.viewport_offset
+    }
+
+    pub(crate) fn keep_selected_visible(&mut self, visible_rows: usize) {
+        if self.entries.is_empty() || visible_rows == 0 {
+            self.viewport_offset = 0;
+            return;
+        }
+        let max_offset = self.entries.len().saturating_sub(visible_rows);
+        if self.selected < self.viewport_offset {
+            self.viewport_offset = self.selected;
+        } else if self.selected >= self.viewport_offset.saturating_add(visible_rows) {
+            self.viewport_offset = self.selected + 1 - visible_rows;
+        }
+        self.viewport_offset = self.viewport_offset.min(max_offset);
     }
 
     /// Return the currently selected file path, if any.
@@ -435,67 +614,148 @@ impl FilePickerState {
     /// field — a getter returning a path alongside a public field returning
     /// an index made call sites ambiguous. Migrate to `selected_file()` for
     /// new code; this stub stays callable until v1.0.
-    #[deprecated(since = "0.20.0", note = "use selected_file() — disambiguates from the `selected: usize` field index")]
+    #[deprecated(
+        since = "0.20.0",
+        note = "use selected_file() — disambiguates from the `selected: usize` field index"
+    )]
     pub fn selected(&self) -> Option<&PathBuf> {
         self.selected_file()
     }
 
-    /// Re-scan the current directory and rebuild entries.
+    /// Re-scan the current directory, retaining failures in [`scan_errors`](Self::scan_errors).
+    ///
+    /// This compatibility wrapper ignores the returned error. Use
+    /// [`try_refresh`](Self::try_refresh) when the caller needs immediate
+    /// fallible control flow.
     pub fn refresh(&mut self) {
-        let mut entries = Vec::new();
+        let _ = self.try_refresh();
+    }
 
-        if let Ok(read_dir) = fs::read_dir(&self.current_dir) {
-            for dir_entry in read_dir.flatten() {
-                let name = dir_entry.file_name().to_string_lossy().to_string();
-                if !self.show_hidden && name.starts_with('.') {
+    /// Re-scan the current directory and rebuild entries.
+    ///
+    /// Root directory failures retain the previous listing. Entry-read and
+    /// file-type failures skip only the affected entry. Metadata failures keep
+    /// the file with [`FileEntry::size`] set to `None`. Any partial failure is
+    /// returned and remains inspectable through [`scan_errors`](Self::scan_errors).
+    pub fn try_refresh(&mut self) -> Result<(), FilePickerScanError> {
+        self.try_refresh_impl(|_| {})
+    }
+
+    #[cfg(test)]
+    pub(crate) fn try_refresh_with_metadata_hook(
+        &mut self,
+        hook: impl FnMut(&std::path::Path),
+    ) -> Result<(), FilePickerScanError> {
+        self.try_refresh_impl(hook)
+    }
+
+    fn try_refresh_impl(
+        &mut self,
+        mut before_metadata: impl FnMut(&std::path::Path),
+    ) -> Result<(), FilePickerScanError> {
+        let mut entries = Vec::new();
+        let mut errors = Vec::new();
+
+        let read_dir = match fs::read_dir(&self.current_dir) {
+            Ok(read_dir) => read_dir,
+            Err(error) => {
+                let error = FilePickerScanError {
+                    operation: FilePickerScanOperation::ReadDirectory,
+                    path: self.current_dir.clone(),
+                    kind: error.kind(),
+                    message: error.to_string(),
+                };
+                self.scan_errors = vec![error.clone()];
+                self.scan_status = FilePickerScanStatus::Error;
+                self.dirty = true;
+                return Err(error);
+            }
+        };
+
+        for result in read_dir {
+            let dir_entry = match result {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors.push(FilePickerScanError {
+                        operation: FilePickerScanOperation::ReadEntry,
+                        path: self.current_dir.clone(),
+                        kind: error.kind(),
+                        message: error.to_string(),
+                    });
                     continue;
                 }
+            };
+            let name = dir_entry.file_name().to_string_lossy().to_string();
+            if !self.show_hidden && name.starts_with('.') {
+                continue;
+            }
 
-                let Ok(file_type) = dir_entry.file_type() else {
+            let file_type = match dir_entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    errors.push(FilePickerScanError {
+                        operation: FilePickerScanOperation::ReadFileType,
+                        path: dir_entry.path(),
+                        kind: error.kind(),
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            let path = dir_entry.path();
+            let is_dir = file_type.is_dir();
+
+            if !is_dir && !self.extensions.is_empty() {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase());
+                let Some(ext) = ext else {
                     continue;
                 };
-                if file_type.is_symlink() {
+                if !self.extensions.iter().any(|allowed| allowed == &ext) {
                     continue;
                 }
+            }
 
-                let path = dir_entry.path();
-                let is_dir = file_type.is_dir();
-
-                if !is_dir && !self.extensions.is_empty() {
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_ascii_lowercase());
-                    let Some(ext) = ext else {
-                        continue;
-                    };
-                    if !self.extensions.iter().any(|allowed| allowed == &ext) {
-                        continue;
+            let size = if is_dir {
+                None
+            } else {
+                before_metadata(&path);
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata) => Some(metadata.len()),
+                    Err(error) => {
+                        errors.push(FilePickerScanError {
+                            operation: FilePickerScanOperation::ReadMetadata,
+                            path: path.clone(),
+                            kind: error.kind(),
+                            message: error.to_string(),
+                        });
+                        None
                     }
                 }
+            };
 
-                let size = if is_dir {
-                    0
-                } else {
-                    fs::symlink_metadata(&path).map(|m| m.len()).unwrap_or(0)
-                };
-
-                entries.push(FileEntry {
-                    name,
-                    path,
-                    is_dir,
-                    size,
-                });
-            }
+            let sort_key = name.to_lowercase();
+            entries.push(FileEntry {
+                name,
+                path,
+                is_dir,
+                size,
+                sort_key,
+            });
         }
 
         entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
             _ => a
-                .name
-                .to_ascii_lowercase()
-                .cmp(&b.name.to_ascii_lowercase())
+                .sort_key
+                .cmp(&b.sort_key)
                 .then_with(|| a.name.cmp(&b.name)),
         });
 
@@ -505,7 +765,19 @@ impl FilePickerState {
         } else {
             self.selected = self.selected.min(self.entries.len().saturating_sub(1));
         }
-        self.dirty = false;
+        self.viewport_offset = self
+            .viewport_offset
+            .min(self.entries.len().saturating_sub(1));
+        self.scan_errors = errors;
+        if let Some(error) = self.scan_errors.last().cloned() {
+            self.scan_status = FilePickerScanStatus::Error;
+            self.dirty = true;
+            Err(error)
+        } else {
+            self.scan_status = FilePickerScanStatus::Ready;
+            self.dirty = false;
+            Ok(())
+        }
     }
 }
 
@@ -593,9 +865,9 @@ pub enum TableColumn {
 #[derive(Debug, Clone)]
 pub struct TableState {
     /// Column header labels.
-    pub headers: Vec<String>,
+    headers: Vec<String>,
     /// Table rows, each a `Vec` of cell strings.
-    pub rows: Vec<Vec<String>>,
+    rows: Vec<Vec<String>>,
     /// Focused/cursor row (view index). Unchanged single-select semantics.
     pub selected: usize,
     /// Multi-row selection as view indices. Empty means no multi-selection.
@@ -617,7 +889,7 @@ pub struct TableState {
     /// Sort direction (`true` for ascending).
     pub sort_ascending: bool,
     /// Case-insensitive substring filter applied across all cells.
-    pub filter: String,
+    filter: String,
     /// Current page (0-based) when pagination is enabled.
     pub page: usize,
     /// Rows per page (`0` disables pagination).
@@ -701,6 +973,82 @@ impl TableState {
             .collect();
         self.rebuild_row_search_cache();
         self.rebuild_view();
+    }
+
+    /// Return column headers.
+    pub fn headers(&self) -> &[String] {
+        &self.headers
+    }
+
+    /// Replace column headers and invalidate width caches.
+    pub fn set_headers(&mut self, headers: Vec<impl Into<String>>) {
+        self.headers = headers.into_iter().map(Into::into).collect();
+        if self
+            .sort_column
+            .is_some_and(|column| column >= self.headers.len())
+        {
+            self.sort_column = None;
+            self.rebuild_view();
+        }
+        self.widths_dirty = true;
+    }
+
+    /// Return all rows in underlying data order.
+    pub fn rows(&self) -> &[Vec<String>] {
+        &self.rows
+    }
+
+    /// Return a row by underlying data index.
+    pub fn row(&self, index: usize) -> Option<&[String]> {
+        self.rows.get(index).map(Vec::as_slice)
+    }
+
+    /// Return the number of underlying rows.
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Return whether the table has no rows.
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Append a row and rebuild cache-coupled view state.
+    pub fn push_row(&mut self, row: Vec<impl Into<String>>) {
+        self.rows.push(row.into_iter().map(Into::into).collect());
+        self.rebuild_row_state();
+    }
+
+    /// Insert a row at a data index. Returns `false` when out of bounds.
+    pub fn insert_row(&mut self, index: usize, row: Vec<impl Into<String>>) -> bool {
+        if index > self.rows.len() {
+            return false;
+        }
+        self.rows
+            .insert(index, row.into_iter().map(Into::into).collect());
+        self.rebuild_row_state();
+        true
+    }
+
+    /// Remove and return a row by underlying data index.
+    pub fn remove_row(&mut self, index: usize) -> Option<Vec<String>> {
+        if index >= self.rows.len() {
+            return None;
+        }
+        let row = self.rows.remove(index);
+        self.rebuild_row_state();
+        Some(row)
+    }
+
+    /// Remove all rows and reset cache-coupled selection and pagination state.
+    pub fn clear_rows(&mut self) {
+        self.rows.clear();
+        self.rebuild_row_state();
+    }
+
+    /// Return the active filter text.
+    pub fn filter(&self) -> &str {
+        &self.filter
     }
 
     /// Sort by a specific column index. If already sorted by this column, toggles direction.
@@ -1007,6 +1355,11 @@ impl TableState {
         self.widths_dirty = true;
     }
 
+    fn rebuild_row_state(&mut self) {
+        self.rebuild_row_search_cache();
+        self.rebuild_view();
+    }
+
     fn tokenize_filter(filter: &str) -> Vec<String> {
         filter
             .split_whitespace()
@@ -1062,7 +1415,11 @@ impl TableState {
         let col_count = self.column_widths.len();
         for i in 0..col_count {
             let content = self.content_widths.get(i).copied().unwrap_or(0);
-            let spec = self.column_specs.get(i).copied().unwrap_or(TableColumn::Auto);
+            let spec = self
+                .column_specs
+                .get(i)
+                .copied()
+                .unwrap_or(TableColumn::Auto);
             let resolved = match spec {
                 TableColumn::Auto => content,
                 TableColumn::Fixed(n) => n,
@@ -1948,8 +2305,8 @@ mod list_state_height_tests {
 
     #[test]
     fn set_items_truncates_stale_per_item_heights() {
-        let mut state = ListState::new(vec!["a", "b", "c", "d"])
-            .with_item_heights(vec![2, 3, 4, 5]);
+        let mut state =
+            ListState::new(vec!["a", "b", "c", "d"]).with_item_heights(vec![2, 3, 4, 5]);
         state.set_items(vec!["x", "y"]);
 
         assert_eq!(state.item_height(0), 2);

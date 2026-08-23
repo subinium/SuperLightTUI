@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{self, BufWriter, IsTerminal, Read, Stdout, Write};
+use std::io::{self, BufWriter, IsTerminal, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -21,6 +21,23 @@ use crate::style::{Color, ColorDepth, Modifiers, Style, UnderlineStyle};
 #[inline]
 fn sat_u16(v: u32) -> u16 {
     v.min(u16::MAX as u32) as u16
+}
+
+fn buffer_error(error: crate::buffer::BufferError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, error)
+}
+
+fn try_buffer_pair(area: Rect) -> io::Result<(Buffer, Buffer)> {
+    Buffer::validate_area(area).map_err(buffer_error)?;
+    let current = Buffer::try_empty(area).map_err(buffer_error)?;
+    let previous = Buffer::try_empty(area).map_err(buffer_error)?;
+    Ok((current, previous))
+}
+
+#[cfg(any(test, feature = "pty-test"))]
+fn buffer_pair(area: Rect) -> (Buffer, Buffer) {
+    try_buffer_pair(area)
+        .unwrap_or_else(|error| panic!("terminal buffer pair for {area:?} failed: {error}"))
 }
 
 /// Output sink for a [`Terminal`] / [`InlineTerminal`] flush pipeline.
@@ -620,6 +637,18 @@ fn probe_capabilities() -> Capabilities {
         caps.iterm2 = true;
     }
 
+    // Explicit disable flags have final precedence over probe acknowledgements,
+    // inherited terminal identity, and force flags.
+    if force_env_enabled("SLT_DISABLE_KITTY") {
+        caps.kitty_graphics = false;
+    }
+    if force_env_enabled("SLT_DISABLE_SIXEL") {
+        caps.sixel = false;
+    }
+    if force_env_enabled("SLT_DISABLE_ITERM") {
+        caps.iterm2 = false;
+    }
+
     caps
 }
 
@@ -629,29 +658,38 @@ fn probe_capabilities() -> Capabilities {
 /// only: iTerm2, WezTerm (iTerm2-compat), Tabby, and mintty.
 #[cfg(feature = "crossterm")]
 fn term_is_iterm_host() -> bool {
+    if force_env_enabled("SLT_DISABLE_ITERM") {
+        return false;
+    }
     let term_program = std::env::var("TERM_PROGRAM")
         .unwrap_or_default()
         .to_ascii_lowercase();
     term_is_iterm_host_env(
         &term_program,
-        terminal_is_multiplexed(),
+        terminal_multiplexer(),
+        terminal_is_remote(),
         force_env_enabled("SLT_FORCE_ITERM"),
     )
 }
 
 #[cfg(feature = "crossterm")]
-fn term_is_iterm_host_env(term_program: &str, multiplexed: bool, forced: bool) -> bool {
-    if forced {
-        return true;
-    }
-    if multiplexed {
+fn term_is_iterm_host_env(
+    term_program: &str,
+    multiplexer: Option<MultiplexerKind>,
+    remote: bool,
+    forced: bool,
+) -> bool {
+    if !terminal_protocol_allowed(multiplexer, TerminalProtocol::Iterm2, forced, false) {
         return false;
     }
-    matches!(term_program, "iterm.app" | "wezterm" | "tabby" | "mintty")
+    forced || (!remote && matches!(term_program, "iterm.app" | "wezterm" | "tabby" | "mintty"))
 }
 
 #[cfg(feature = "crossterm")]
 fn term_is_sixel_host() -> bool {
+    if force_env_enabled("SLT_DISABLE_SIXEL") {
+        return false;
+    }
     let term = std::env::var("TERM")
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -661,24 +699,31 @@ fn term_is_sixel_host() -> bool {
     term_is_sixel_host_env(
         &term,
         &term_program,
-        terminal_is_multiplexed(),
+        terminal_multiplexer(),
+        terminal_is_remote(),
         force_env_enabled("SLT_FORCE_SIXEL"),
     )
 }
 
 #[cfg(feature = "crossterm")]
-fn term_is_sixel_host_env(term: &str, term_program: &str, multiplexed: bool, forced: bool) -> bool {
-    if forced {
-        return true;
-    }
-    if multiplexed {
+fn term_is_sixel_host_env(
+    term: &str,
+    term_program: &str,
+    multiplexer: Option<MultiplexerKind>,
+    remote: bool,
+    forced: bool,
+) -> bool {
+    if !terminal_protocol_allowed(multiplexer, TerminalProtocol::Sixel, forced, false) {
         return false;
+    }
+    if forced || matches!(multiplexer, Some(MultiplexerKind::Zellij)) {
+        return true;
     }
     const KNOWN_SIXEL_TERMS: &[&str] = &["mlterm", "foot", "yaft", "xterm-256color-sixel"];
     const KNOWN_SIXEL_TERM_PROGRAMS: &[&str] = &["foot", "mlterm", "wezterm", "ghostty"];
     KNOWN_SIXEL_TERMS.contains(&term)
         || term.contains("sixel")
-        || KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program)
+        || (!remote && KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program))
 }
 
 /// Heuristic env-fallback for Kitty-graphics hosts, consulted only when the
@@ -687,6 +732,9 @@ fn term_is_sixel_host_env(term: &str, term_program: &str, multiplexed: bool, for
 /// graphics protocol.
 #[cfg(feature = "crossterm")]
 fn term_is_kitty_graphics_host() -> bool {
+    if force_env_enabled("SLT_DISABLE_KITTY") {
+        return false;
+    }
     let term = std::env::var("TERM")
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -696,7 +744,8 @@ fn term_is_kitty_graphics_host() -> bool {
     term_is_kitty_graphics_host_env(
         &term,
         &term_program,
-        terminal_is_multiplexed(),
+        terminal_multiplexer(),
+        terminal_is_remote(),
         force_env_enabled("SLT_FORCE_KITTY"),
     )
 }
@@ -705,34 +754,130 @@ fn term_is_kitty_graphics_host() -> bool {
 fn term_is_kitty_graphics_host_env(
     term: &str,
     term_program: &str,
-    multiplexed: bool,
+    multiplexer: Option<MultiplexerKind>,
+    remote: bool,
     forced: bool,
 ) -> bool {
-    if forced {
-        return true;
-    }
-    if multiplexed {
+    if !terminal_protocol_allowed(multiplexer, TerminalProtocol::KittyGraphics, forced, false) {
         return false;
     }
     // Kitty sets `TERM=xterm-kitty`; Ghostty/WezTerm advertise via TERM_PROGRAM.
-    term.contains("kitty") || matches!(term_program, "ghostty" | "wezterm" | "kitty")
+    forced
+        || term.contains("kitty")
+        || (!remote && matches!(term_program, "ghostty" | "wezterm" | "kitty"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MultiplexerKind {
+    Tmux,
+    Screen,
+    Zellij,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalProtocol {
+    Queries,
+    SynchronizedOutput,
+    KittyGraphics,
+    Sixel,
+    Iterm2,
+    KittyKeyboard,
+}
+
+fn terminal_protocol_allowed(
+    multiplexer: Option<MultiplexerKind>,
+    protocol: TerminalProtocol,
+    forced: bool,
+    disabled: bool,
+) -> bool {
+    if disabled {
+        return false;
+    }
+    if forced {
+        return true;
+    }
+    match multiplexer {
+        None => true,
+        Some(MultiplexerKind::Zellij) => {
+            matches!(
+                protocol,
+                TerminalProtocol::Sixel | TerminalProtocol::KittyKeyboard
+            )
+        }
+        Some(MultiplexerKind::Tmux | MultiplexerKind::Screen) => false,
+    }
 }
 
 #[cfg(feature = "crossterm")]
-fn terminal_is_multiplexed() -> bool {
-    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
-        return true;
-    }
+fn terminal_multiplexer() -> Option<MultiplexerKind> {
     let term = std::env::var("TERM")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    terminal_is_multiplexed_env(&term, false, false)
+    terminal_multiplexer_env(
+        &term,
+        std::env::var_os("TMUX").is_some(),
+        std::env::var_os("STY").is_some(),
+        std::env::var_os("ZELLIJ").is_some(),
+        std::env::var_os("ZELLIJ_SESSION_NAME").is_some(),
+    )
+}
+
+fn terminal_multiplexer_env(
+    term: &str,
+    has_tmux: bool,
+    has_sty: bool,
+    has_zellij: bool,
+    has_zellij_session: bool,
+) -> Option<MultiplexerKind> {
+    let term = term.to_ascii_lowercase();
+    if term.starts_with("tmux") {
+        Some(MultiplexerKind::Tmux)
+    } else if term.starts_with("screen") {
+        Some(MultiplexerKind::Screen)
+    } else if has_zellij || has_zellij_session {
+        Some(MultiplexerKind::Zellij)
+    } else if has_tmux {
+        Some(MultiplexerKind::Tmux)
+    } else if has_sty {
+        Some(MultiplexerKind::Screen)
+    } else {
+        None
+    }
 }
 
 #[cfg(feature = "crossterm")]
-fn terminal_is_multiplexed_env(term: &str, has_tmux: bool, has_sty: bool) -> bool {
-    let term = term.to_ascii_lowercase();
-    has_tmux || has_sty || term.starts_with("tmux") || term.starts_with("screen")
+fn terminal_is_remote() -> bool {
+    terminal_is_remote_env(
+        std::env::var_os("SSH_CONNECTION").is_some(),
+        std::env::var_os("SSH_TTY").is_some(),
+        std::env::var_os("MOSH_IP").is_some(),
+    )
+}
+
+fn terminal_is_remote_env(has_ssh_connection: bool, has_ssh_tty: bool, has_mosh_ip: bool) -> bool {
+    has_ssh_connection || has_ssh_tty || has_mosh_ip
+}
+
+#[cfg(feature = "crossterm")]
+fn terminal_kitty_keyboard_allowed() -> bool {
+    kitty_keyboard_allowed_env(
+        terminal_multiplexer(),
+        force_env_enabled("SLT_FORCE_KITTY_KEYBOARD"),
+        force_env_enabled("SLT_DISABLE_KITTY_KEYBOARD"),
+    )
+}
+
+fn kitty_keyboard_allowed_env(
+    multiplexer: Option<MultiplexerKind>,
+    forced: bool,
+    disabled: bool,
+) -> bool {
+    terminal_protocol_allowed(
+        multiplexer,
+        TerminalProtocol::KittyKeyboard,
+        forced,
+        disabled,
+    )
 }
 
 #[cfg(feature = "crossterm")]
@@ -757,7 +902,7 @@ fn terminal_queries_allowed() -> bool {
         io::stdout().is_terminal(),
         io::stdin().is_terminal(),
         &term,
-        terminal_is_multiplexed(),
+        terminal_multiplexer(),
         force_env_enabled("SLT_FORCE_TERMINAL_QUERIES"),
         force_env_enabled("SLT_DISABLE_TERMINAL_QUERIES"),
     )
@@ -780,9 +925,11 @@ fn terminal_query_host_is_identified() -> bool {
         "KONSOLE_VERSION",
         "KITTY_WINDOW_ID",
     ];
-    if IDENTITY_VARS
-        .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    let remote = terminal_is_remote();
+    if !remote
+        && IDENTITY_VARS
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
     {
         return true;
     }
@@ -790,11 +937,11 @@ fn terminal_query_host_is_identified() -> bool {
     let term = std::env::var("TERM")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    terminal_query_host_is_identified_env(&term, false)
+    terminal_query_host_is_identified_env(&term, false, remote)
 }
 
-fn terminal_query_host_is_identified_env(term: &str, has_identity_var: bool) -> bool {
-    has_identity_var
+fn terminal_query_host_is_identified_env(term: &str, has_identity_var: bool, remote: bool) -> bool {
+    (has_identity_var && !remote)
         || matches!(
             term.to_ascii_lowercase().as_str(),
             "alacritty" | "foot" | "foot-extra" | "mlterm" | "wezterm" | "xterm-kitty"
@@ -805,150 +952,75 @@ fn terminal_query_allowed(
     stdout_is_terminal: bool,
     stdin_is_terminal: bool,
     term: &str,
-    multiplexed: bool,
+    multiplexer: Option<MultiplexerKind>,
     forced: bool,
     disabled: bool,
 ) -> bool {
-    if !stdout_is_terminal || !stdin_is_terminal || disabled {
+    if !stdout_is_terminal || !stdin_is_terminal {
         return false;
     }
-    if forced {
-        return true;
+    terminal_protocol_allowed(multiplexer, TerminalProtocol::Queries, forced, disabled)
+        && (forced || (!term.is_empty() && !term.eq_ignore_ascii_case("dumb")))
+}
+
+#[cfg(feature = "crossterm")]
+static REPLY_READ_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(all(feature = "crossterm", unix))]
+struct NonblockingFdGuard<'a, Fd: rustix::fd::AsFd> {
+    fd: &'a Fd,
+    original: rustix::fs::OFlags,
+    changed: bool,
+}
+
+#[cfg(all(feature = "crossterm", unix))]
+impl<'a, Fd: rustix::fd::AsFd> NonblockingFdGuard<'a, Fd> {
+    fn new(fd: &'a Fd) -> rustix::io::Result<Self> {
+        let original = rustix::fs::fcntl_getfl(fd)?;
+        let changed = !original.contains(rustix::fs::OFlags::NONBLOCK);
+        if changed {
+            rustix::fs::fcntl_setfl(fd, original | rustix::fs::OFlags::NONBLOCK)?;
+        }
+        Ok(Self {
+            fd,
+            original,
+            changed,
+        })
     }
-    !multiplexed && !term.is_empty() && !term.eq_ignore_ascii_case("dumb")
 }
 
-/// Process-wide pump that owns the only blocking `stdin` read used for
-/// terminal-reply probing. See [`read_stdin_reply`] for why it exists.
-#[cfg(feature = "crossterm")]
-struct ReplyPump {
-    rx: std::sync::mpsc::Receiver<u8>,
-    /// `true` while a reader session wants bytes. The pump thread re-checks it
-    /// after every successful read and exits once it is cleared.
-    serve: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Set by the pump thread on exit, distinguishing "parked inside a
-    /// blocking `read()`" (reusable) from "gone" (must respawn).
-    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+#[cfg(all(feature = "crossterm", unix))]
+impl<Fd: rustix::fd::AsFd> Drop for NonblockingFdGuard<'_, Fd> {
+    fn drop(&mut self) {
+        if self.changed {
+            let _ = rustix::fs::fcntl_setfl(self.fd, self.original);
+        }
+    }
 }
-
-#[cfg(feature = "crossterm")]
-static REPLY_PUMP: std::sync::Mutex<Option<ReplyPump>> = std::sync::Mutex::new(None);
 
 /// Read one terminal reply from raw stdin, hard-bounded by `timeout`, stopping
 /// early once `is_complete` recognizes a full reply (or at the 4096-byte cap).
 ///
-/// Why a pump thread: the previous readers gated a blocking
-/// `io::stdin().read()` behind `crossterm::event::poll()`. Those two observe
-/// different things — `poll()` answers "does crossterm's *internal event
-/// queue* have something?", while the raw `read()` waits for bytes on the
-/// stdin descriptor — and crossterm's poller consumes bytes from that same
-/// descriptor into its own parser. On a host that never answers probe queries
-/// (a detached tmux pane, `script`-style PTY wrappers, CI runners), `poll()`
-/// could return `true` for a queued non-byte event while raw stdin stayed
-/// empty, so the one-byte `read()` blocked forever *inside* the deadline loop
-/// and the application hung on a blank alternate screen before its first
-/// frame; later keystrokes were swallowed by crossterm's queue instead of
-/// unblocking it. Moving the only blocking `read()` onto a dedicated thread
-/// and waiting on a channel with `recv_timeout` makes every reply read
-/// genuinely bounded by its budget no matter what the host does.
-///
-/// The pump is a process-wide singleton so back-to-back probes share one byte
-/// stream instead of racing two readers for the same reply. After each
-/// session the thread is retired: `serve` is cleared and a DSR status query
-/// (`CSI 5 n`) nudges the terminal — an answering host replies `CSI 0 n`,
-/// which wakes the parked `read()`, the thread observes `serve == false` and
-/// exits, and the nudge bytes stay in the channel where the next session's
-/// drain discards them (they never reach the application's input stream). A
-/// host that answers nothing leaves the thread parked; it is reused by the
-/// next session, and at worst it swallows one byte of typeahead on a host
-/// class where, before this fix, startup deadlocked outright.
+/// The read happens synchronously on the calling thread. Unix temporarily sets
+/// `O_NONBLOCK` on stdin and Windows polls the console input queue before each
+/// one-record read. Both paths return with no reader left behind, so a silent
+/// probe cannot consume the application's first input after its deadline.
 #[cfg(feature = "crossterm")]
 fn read_stdin_reply(
     timeout: Duration,
     mut is_complete: impl FnMut(&[u8]) -> bool,
 ) -> Option<String> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, mpsc};
-
     let deadline = Instant::now() + timeout;
+    let _guard = REPLY_READ_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-    let Ok(mut slot) = REPLY_PUMP.lock() else {
-        // Poisoned: a prior session panicked mid-read. Skip probing entirely
-        // rather than risk a second fault; every caller treats `None` as "the
-        // terminal stayed silent".
-        return None;
-    };
-
-    let pump = match slot.take().filter(|p| !p.exited.load(Ordering::Acquire)) {
-        Some(pump) => {
-            // A parked pump from an earlier session: its thread is still
-            // blocked in `read()` on a silent host. Reusing it (instead of
-            // spawning a second thread) is what prevents two readers from
-            // racing each other for the same reply bytes.
-            pump.serve.store(true, Ordering::Release);
-            pump
-        }
-        None => {
-            let (tx, rx) = mpsc::channel::<u8>();
-            let serve = Arc::new(AtomicBool::new(true));
-            let exited = Arc::new(AtomicBool::new(false));
-            let thread_serve = Arc::clone(&serve);
-            let thread_exited = Arc::clone(&exited);
-            let spawned = std::thread::Builder::new()
-                .name("slt-reply-pump".into())
-                .spawn(move || {
-                    let mut stdin = io::stdin();
-                    // One byte per read on purpose: a parked thread that wakes
-                    // on real key input forwards at most this single byte
-                    // before observing `serve == false` and exiting, so the
-                    // worst-case typeahead loss on a silent host is exactly
-                    // one byte (replies are short; the syscall-per-byte cost
-                    // is irrelevant for one-shot probes).
-                    let mut buf = [0u8; 1];
-                    loop {
-                        match stdin.read(&mut buf) {
-                            Ok(0) | Err(_) => break,
-                            Ok(_) => {
-                                if tx.send(buf[0]).is_err() {
-                                    thread_exited.store(true, Ordering::Release);
-                                    return;
-                                }
-                            }
-                        }
-                        if !thread_serve.load(Ordering::Acquire) {
-                            break;
-                        }
-                    }
-                    thread_exited.store(true, Ordering::Release);
-                });
-            if spawned.is_err() {
-                return None;
-            }
-            ReplyPump { rx, serve, exited }
-        }
-    };
-
-    // Discard bytes left over from a previous session: a reply that arrived
-    // after its deadline, or the retirement nudge's `CSI 0 n` answer.
-    while pump.rx.try_recv().is_ok() {}
-
-    let bytes = collect_reply(&pump.rx, deadline, &mut is_complete);
-
-    // Retire the thread so it does not sit on a pending `read()` competing
-    // with crossterm's event loop for real key input once the session ends.
-    // The nudge fires only under raw mode (the `run()` / session-enter probe
-    // paths): in cooked mode — e.g. a standalone `detect_color_scheme()`
-    // call — the terminal would *echo* its `CSI 0 n` answer into the user's
-    // scrollback as visible garbage, so there the parked thread is simply
-    // left for the next session to reuse.
-    pump.serve.store(false, Ordering::Release);
-    if crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) {
-        let mut out = io::stdout();
-        let _ = write!(out, "\x1b[5n");
-        let _ = out.flush();
-    }
-    *slot = Some(pump);
-    drop(slot);
+    #[cfg(unix)]
+    let bytes = read_reply_from_fd(&io::stdin(), deadline, &mut is_complete);
+    #[cfg(windows)]
+    let bytes = read_reply_from_windows_console(deadline, &mut is_complete);
+    #[cfg(not(any(unix, windows)))]
+    let bytes = Vec::new();
 
     if bytes.is_empty() {
         return None;
@@ -956,12 +1028,84 @@ fn read_stdin_reply(
     String::from_utf8(bytes).ok()
 }
 
-/// Deadline-bounded accumulation loop shared by every reply reader: pull bytes
-/// off the pump channel until `is_complete` fires, the 4096-byte cap is hit,
-/// the deadline passes, or the pump disconnects (stdin EOF). Returns whatever
-/// arrived — callers map an empty buffer to "no reply" and a partial buffer to
-/// a best-effort parse, matching the pre-pump readers exactly.
-#[cfg(feature = "crossterm")]
+#[cfg(all(feature = "crossterm", unix))]
+fn read_reply_from_fd<Fd: rustix::fd::AsFd>(
+    fd: &Fd,
+    deadline: Instant,
+    is_complete: &mut dyn FnMut(&[u8]) -> bool,
+) -> Vec<u8> {
+    let Ok(_nonblocking) = NonblockingFdGuard::new(fd) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    let mut byte = [0u8; 1];
+    while Instant::now() < deadline && bytes.len() < 4096 {
+        match rustix::io::read(fd, &mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                bytes.push(byte[0]);
+                if is_complete(&bytes) {
+                    break;
+                }
+            }
+            Err(rustix::io::Errno::AGAIN) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+            Err(rustix::io::Errno::INTR) => {}
+            Err(_) => break,
+        }
+    }
+    bytes
+}
+
+#[cfg(all(feature = "crossterm", windows))]
+fn read_reply_from_windows_console(
+    deadline: Instant,
+    is_complete: &mut dyn FnMut(&[u8]) -> bool,
+) -> Vec<u8> {
+    use crossterm_winapi::{Console, Handle, HandleType, InputRecord};
+
+    let Ok(handle) = Handle::new(HandleType::InputHandle) else {
+        return Vec::new();
+    };
+    let console = Console::from(handle);
+    let mut bytes = Vec::new();
+    while Instant::now() < deadline && bytes.len() < 4096 {
+        match console.number_of_console_input_events() {
+            Ok(0) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+            Ok(_) => match console.read_single_input_event() {
+                Ok(InputRecord::KeyEvent(record)) if record.key_down && record.u_char != 0 => {
+                    let Some(ch) = char::from_u32(u32::from(record.u_char)) else {
+                        continue;
+                    };
+                    let mut encoded = [0u8; 4];
+                    let encoded = ch.encode_utf8(&mut encoded).as_bytes();
+                    for _ in 0..record.repeat_count.max(1) {
+                        bytes.extend_from_slice(encoded);
+                        if is_complete(&bytes) || bytes.len() >= 4096 {
+                            break;
+                        }
+                    }
+                    if is_complete(&bytes) {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            },
+            Err(_) => break,
+        }
+    }
+    bytes.truncate(4096);
+    bytes
+}
+
+/// Test-only deadline collector for deterministic parser timing coverage.
+#[cfg(all(feature = "crossterm", test))]
 fn collect_reply(
     rx: &std::sync::mpsc::Receiver<u8>,
     deadline: Instant,
@@ -1145,10 +1289,32 @@ static SYNC_OUTPUT_RESOLUTION: std::sync::OnceLock<SyncOutputResolution> =
 /// capability gate: positive support and the unknown default both emit; only a
 /// confirmed-unsupported terminal suppresses.
 fn should_emit_synchronized_update() -> bool {
-    !matches!(
-        SYNC_OUTPUT_RESOLUTION.get(),
-        Some(SyncOutputResolution::Unsupported)
+    synchronized_update_allowed(
+        terminal_multiplexer(),
+        force_env_enabled("SLT_FORCE_SYNC_OUTPUT"),
+        force_env_enabled("SLT_DISABLE_SYNC_OUTPUT"),
+        matches!(
+            SYNC_OUTPUT_RESOLUTION.get(),
+            Some(SyncOutputResolution::Unsupported)
+        ),
     )
+}
+
+fn synchronized_update_allowed(
+    multiplexer: Option<MultiplexerKind>,
+    forced: bool,
+    disabled: bool,
+    probe_unsupported: bool,
+) -> bool {
+    !disabled
+        && (forced
+            || (!probe_unsupported
+                && terminal_protocol_allowed(
+                    multiplexer,
+                    TerminalProtocol::SynchronizedOutput,
+                    false,
+                    false,
+                )))
 }
 
 /// Read a DECRPM reply, which terminates with the byte `y` rather than BEL / ST
@@ -1204,24 +1370,26 @@ struct GraphicsEmissionSupport {
 
 impl GraphicsEmissionSupport {
     fn detect(capabilities: Capabilities) -> Self {
+        let disable_kitty = force_env_enabled("SLT_DISABLE_KITTY");
+        let disable_sixel = force_env_enabled("SLT_DISABLE_SIXEL");
+        let disable_iterm = force_env_enabled("SLT_DISABLE_ITERM");
         Self {
             real_terminal: true,
-            capabilities,
-            force_kitty: force_env_enabled("SLT_FORCE_KITTY"),
-            force_sixel: force_env_enabled("SLT_FORCE_SIXEL"),
-            force_iterm: force_env_enabled("SLT_FORCE_ITERM"),
+            capabilities: Capabilities {
+                kitty_graphics: capabilities.kitty_graphics && !disable_kitty,
+                sixel: capabilities.sixel && !disable_sixel,
+                iterm2: capabilities.iterm2 && !disable_iterm,
+                ..capabilities
+            },
+            force_kitty: force_env_enabled("SLT_FORCE_KITTY") && !disable_kitty,
+            force_sixel: force_env_enabled("SLT_FORCE_SIXEL") && !disable_sixel,
+            force_iterm: force_env_enabled("SLT_FORCE_ITERM") && !disable_iterm,
         }
     }
 
     #[cfg(any(test, feature = "pty-test"))]
     fn capture() -> Self {
-        Self {
-            real_terminal: true,
-            capabilities: Capabilities::default(),
-            force_kitty: force_env_enabled("SLT_FORCE_KITTY"),
-            force_sixel: force_env_enabled("SLT_FORCE_SIXEL"),
-            force_iterm: force_env_enabled("SLT_FORCE_ITERM"),
-        }
+        Self::detect(probe_capabilities())
     }
 
     fn should_emit_kitty(self) -> bool {
@@ -1271,6 +1439,7 @@ pub struct Terminal {
     cursor_visible: bool,
     session: TerminalSessionGuard,
     color_depth: ColorDepth,
+    synchronized_output: bool,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
     graphics_support: GraphicsEmissionSupport,
@@ -1292,9 +1461,12 @@ pub struct InlineTerminal {
     cursor_visible: bool,
     session: TerminalSessionGuard,
     height: u32,
+    anchor_row: u16,
     start_row: u16,
+    viewport_rows: u16,
     reserved: bool,
     color_depth: ColorDepth,
+    synchronized_output: bool,
     pub(crate) theme_bg: Option<Color>,
     kitty_mgr: KittyImageManager,
     graphics_support: GraphicsEmissionSupport,
@@ -1313,12 +1485,61 @@ enum TerminalSessionMode {
     Inline,
 }
 
+/// Immutable terminal-session state used by panic and suspend cleanup.
 #[derive(Debug, Clone, Copy)]
+pub(crate) struct SessionSnapshot {
+    mode: TerminalSessionMode,
+    mouse_enabled: bool,
+    kitty_keyboard: bool,
+    report_all_keys: bool,
+    raw_mode_owned: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveSession {
+    id: u64,
+    snapshot: SessionSnapshot,
+}
+
+static ACTIVE_SESSIONS: std::sync::Mutex<Vec<ActiveSession>> = std::sync::Mutex::new(Vec::new());
+static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn register_active_session(snapshot: SessionSnapshot) -> u64 {
+    use std::sync::atomic::Ordering;
+    let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+    ACTIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(ActiveSession { id, snapshot });
+    id
+}
+
+fn unregister_active_session(id: u64) {
+    let mut sessions = ACTIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(index) = sessions.iter().rposition(|session| session.id == id) {
+        sessions.remove(index);
+    }
+}
+
+fn active_session_snapshot() -> Option<SessionSnapshot> {
+    ACTIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .last()
+        .map(|session| session.snapshot)
+}
+
+#[derive(Debug)]
 struct TerminalSessionGuard {
     mode: TerminalSessionMode,
     mouse_enabled: bool,
     kitty_keyboard: bool,
     report_all_keys: bool,
+    raw_mode_owned: bool,
+    registry_id: Option<u64>,
+    restored: std::sync::atomic::AtomicBool,
     /// When `true`, the guard never touched real raw-mode / terminal state
     /// (PTY test harness path). `restore` then becomes a no-op so dropping a
     /// captured-sink `Terminal` does not call `disable_raw_mode` or emit
@@ -1335,15 +1556,23 @@ impl TerminalSessionGuard {
         kitty_keyboard: bool,
         report_all_keys: bool,
     ) -> io::Result<Self> {
-        let guard = Self {
+        let kitty_keyboard = kitty_keyboard && terminal_kitty_keyboard_allowed();
+        let raw_mode_owned = raw_mode_is_acquired(terminal::is_raw_mode_enabled()?);
+        if raw_mode_owned {
+            terminal::enable_raw_mode()?;
+        }
+
+        let mut guard = Self {
             mode,
             mouse_enabled,
             kitty_keyboard,
             report_all_keys,
+            raw_mode_owned,
+            registry_id: None,
+            restored: std::sync::atomic::AtomicBool::new(false),
             harness: false,
         };
-
-        terminal::enable_raw_mode()?;
+        guard.registry_id = Some(register_active_session(guard.snapshot()));
         if let Err(err) = write_session_enter(stdout, &guard) {
             guard.restore(stdout, false);
             return Err(err);
@@ -1361,6 +1590,12 @@ impl TerminalSessionGuard {
     }
 
     fn restore(&self, stdout: &mut impl Write, inline_reserved: bool) {
+        if self
+            .restored
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
         // PTY harness guard: nothing was ever entered, so nothing to restore.
         if self.harness {
             return;
@@ -1372,8 +1607,34 @@ impl TerminalSessionGuard {
             self.mouse_enabled,
             self.kitty_keyboard,
         );
-        let _ = terminal::disable_raw_mode();
+        if self.raw_mode_owned {
+            let _ = terminal::disable_raw_mode();
+        }
+        if let Some(id) = self.registry_id {
+            unregister_active_session(id);
+        }
     }
+
+    fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            mode: self.mode,
+            mouse_enabled: self.mouse_enabled,
+            kitty_keyboard: self.kitty_keyboard,
+            report_all_keys: self.report_all_keys,
+            raw_mode_owned: self.raw_mode_owned,
+        }
+    }
+}
+
+impl Drop for TerminalSessionGuard {
+    fn drop(&mut self) {
+        let mut stdout = io::stdout();
+        self.restore(&mut stdout, false);
+    }
+}
+
+fn raw_mode_is_acquired(raw_mode_was_enabled: bool) -> bool {
+    !raw_mode_was_enabled
 }
 
 impl Terminal {
@@ -1389,6 +1650,7 @@ impl Terminal {
     ) -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
+        let (current, previous) = try_buffer_pair(area)?;
 
         let mut raw = io::stdout();
         let session = TerminalSessionGuard::enter(
@@ -1399,14 +1661,16 @@ impl Terminal {
             report_all_keys,
         )?;
         let graphics_support = GraphicsEmissionSupport::detect(capabilities());
+        let synchronized_output = should_emit_synchronized_update();
 
         Ok(Self {
             stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
-            current: Buffer::empty(area),
-            previous: Buffer::empty(area),
+            current,
+            previous,
             cursor_visible: false,
             session,
             color_depth,
+            synchronized_output,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
@@ -1435,7 +1699,7 @@ impl Terminal {
         // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
         // (v0.21.1): emit unless the terminal definitively reported the mode
         // unrecognized. A silent / headless probe keeps emitting as before.
-        let sync_guard = should_emit_synchronized_update();
+        let sync_guard = self.synchronized_output;
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;
         }
@@ -1445,13 +1709,19 @@ impl Terminal {
         // it (e.g. after a swap); cheap when nothing's dirty.
         self.current.recompute_line_hashes();
         self.previous.recompute_line_hashes();
-        flush_buffer_diff(
+        let redrawn_sprixel_rows =
+            previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
+                self.graphics_support
+                    .should_emit_sprixel(sprixel_protocol(&placement.seq))
+            });
+        flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
             self.color_depth,
             0,
             &mut self.run_buf,
+            &redrawn_sprixel_rows,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -1465,12 +1735,13 @@ impl Terminal {
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, 0)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels_checked(
+        flush_sprixels_checked_with_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
             0,
             self.graphics_support,
+            &redrawn_sprixel_rows,
         )?;
 
         if sync_guard {
@@ -1500,8 +1771,9 @@ impl Terminal {
     pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
-        self.current.resize(area);
-        self.previous.resize(area);
+        let (current, previous) = try_buffer_pair(area)?;
+        self.current = current;
+        self.previous = previous;
         execute!(
             self.stdout,
             terminal::Clear(terminal::ClearType::All),
@@ -1528,19 +1800,24 @@ impl Terminal {
     /// exercised by the flush, mirroring [`Terminal::new`]'s argument.
     pub(crate) fn with_sink(width: u32, height: u32, color_depth: ColorDepth) -> Self {
         let area = Rect::new(0, 0, width, height);
+        let (current, previous) = buffer_pair(area);
         Self {
             stdout: Sink::Capture(Vec::new()),
-            current: Buffer::empty(area),
-            previous: Buffer::empty(area),
+            current,
+            previous,
             cursor_visible: false,
             session: TerminalSessionGuard {
                 mode: TerminalSessionMode::Fullscreen,
                 mouse_enabled: false,
                 kitty_keyboard: false,
                 report_all_keys: false,
+                raw_mode_owned: false,
+                registry_id: None,
+                restored: std::sync::atomic::AtomicBool::new(false),
                 harness: true,
             },
             color_depth,
+            synchronized_output: true,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
             graphics_support: GraphicsEmissionSupport::capture(),
@@ -1572,6 +1849,10 @@ impl crate::Backend for Terminal {
     fn flush(&mut self) -> io::Result<()> {
         Terminal::flush(self)
     }
+
+    fn owns_terminal_session(&self) -> bool {
+        true
+    }
 }
 
 impl InlineTerminal {
@@ -1587,8 +1868,9 @@ impl InlineTerminal {
         report_all_keys: bool,
         color_depth: ColorDepth,
     ) -> io::Result<Self> {
-        let (cols, _) = terminal::size()?;
+        let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, height);
+        let (current, previous) = try_buffer_pair(area)?;
 
         let mut raw = io::stdout();
         let session = TerminalSessionGuard::enter(
@@ -1599,6 +1881,7 @@ impl InlineTerminal {
             report_all_keys,
         )?;
         let graphics_support = GraphicsEmissionSupport::detect(capabilities());
+        let synchronized_output = should_emit_synchronized_update();
 
         let (_, cursor_row) = match cursor::position() {
             Ok(pos) => pos,
@@ -1609,14 +1892,17 @@ impl InlineTerminal {
         };
         Ok(Self {
             stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
-            current: Buffer::empty(area),
-            previous: Buffer::empty(area),
+            current,
+            previous,
             cursor_visible: false,
             session,
             height,
+            anchor_row: cursor_row,
             start_row: cursor_row,
+            viewport_rows: rows,
             reserved: false,
             color_depth,
+            synchronized_output,
             theme_bg: None,
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
@@ -1644,7 +1930,7 @@ impl InlineTerminal {
 
         // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
         // (v0.21.1); see `Terminal::flush`. Silent / headless keeps emitting.
-        let sync_guard = should_emit_synchronized_update();
+        let sync_guard = self.synchronized_output;
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;
         }
@@ -1657,23 +1943,29 @@ impl InlineTerminal {
             self.reserved = true;
 
             let (_, rows) = terminal::size()?;
-            let bottom = self.start_row.saturating_add(sat_u16(self.height));
-            if bottom > rows {
-                self.start_row = rows.saturating_sub(sat_u16(self.height));
-            }
+            self.viewport_rows = rows;
+            self.start_row = self
+                .anchor_row
+                .min(rows.saturating_sub(sat_u16(self.height)));
         }
         let row_offset = self.start_row as u32;
         // Issue #171: refresh per-row digests before the diff so the
         // unchanged-row skip can fire (same call shape as `Terminal::flush`).
         self.current.recompute_line_hashes();
         self.previous.recompute_line_hashes();
-        flush_buffer_diff(
+        let redrawn_sprixel_rows =
+            previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
+                self.graphics_support
+                    .should_emit_sprixel(sprixel_protocol(&placement.seq))
+            });
+        flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
             self.color_depth,
             row_offset,
             &mut self.run_buf,
+            &redrawn_sprixel_rows,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -1690,12 +1982,13 @@ impl InlineTerminal {
         flush_raw_sequences(&mut self.stdout, &self.current, &self.previous, row_offset)?;
 
         // Sprixels (sixel / iTerm2) — per-cell damage-tracked re-blit (#265).
-        flush_sprixels_checked(
+        flush_sprixels_checked_with_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
             row_offset,
             self.graphics_support,
+            &redrawn_sprixel_rows,
         )?;
 
         if sync_guard {
@@ -1717,19 +2010,111 @@ impl InlineTerminal {
         Ok(())
     }
 
-    /// Re-query the terminal size and resize the inline buffers to match
-    /// the new column count, preserving the inline row height.
+    /// Write permanent lines above the inline region and invalidate its diff.
+    pub(crate) fn write_scrollback(&mut self, lines: &[String]) -> io::Result<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+
+        if self.graphics_support.should_emit_kitty() {
+            self.kitty_mgr.delete_all(&mut self.stdout)?;
+        }
+        queue!(
+            self.stdout,
+            cursor::MoveTo(0, self.start_row),
+            terminal::Clear(terminal::ClearType::FromCursorDown)
+        )?;
+        for line in lines {
+            let safe = crate::sanitize_terminal_text(line);
+            queue!(self.stdout, Print(safe), Print("\r\n"))?;
+        }
+        self.stdout.flush()?;
+
+        let line_count = lines.len().min(u32::MAX as usize) as u32;
+        self.anchor_row = self.anchor_row.saturating_add(sat_u16(line_count));
+        self.start_row = self
+            .anchor_row
+            .min(self.viewport_rows.saturating_sub(sat_u16(self.height)));
+        self.previous = Buffer::try_empty(self.current.area).map_err(buffer_error)?;
+        self.cursor_visible = false;
+        Ok(())
+    }
+
+    /// Re-query both terminal dimensions and preserve the inline anchor.
     pub fn handle_resize(&mut self) -> io::Result<()> {
-        let (cols, _) = terminal::size()?;
+        let (cols, rows) = terminal::size()?;
+        self.handle_resize_to(cols, rows)
+    }
+
+    fn handle_resize_to(&mut self, cols: u16, rows: u16) -> io::Result<()> {
+        let start_row = self
+            .anchor_row
+            .min(rows.saturating_sub(sat_u16(self.height)));
         let area = Rect::new(0, 0, cols as u32, self.height);
-        self.current.resize(area);
-        self.previous.resize(area);
+        let (current, previous) = try_buffer_pair(area)?;
+        self.viewport_rows = rows;
+        self.start_row = start_row;
+        self.current = current;
+        self.previous = previous;
+        if self.graphics_support.should_emit_kitty() {
+            self.kitty_mgr.delete_all(&mut self.stdout)?;
+        }
+        self.cursor_visible = false;
         execute!(
             self.stdout,
             terminal::Clear(terminal::ClearType::All),
             cursor::MoveTo(0, 0)
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl InlineTerminal {
+    fn with_sink(width: u16, viewport_rows: u16, height: u32, anchor_row: u16) -> Self {
+        let area = Rect::new(0, 0, width as u32, height);
+        let (current, previous) = buffer_pair(area);
+        let start_row = anchor_row.min(viewport_rows.saturating_sub(sat_u16(height)));
+        Self {
+            stdout: Sink::Capture(Vec::new()),
+            current,
+            previous,
+            cursor_visible: false,
+            session: TerminalSessionGuard {
+                mode: TerminalSessionMode::Inline,
+                mouse_enabled: false,
+                kitty_keyboard: false,
+                report_all_keys: false,
+                raw_mode_owned: false,
+                registry_id: None,
+                restored: std::sync::atomic::AtomicBool::new(false),
+                harness: true,
+            },
+            height,
+            anchor_row,
+            start_row,
+            viewport_rows,
+            reserved: false,
+            color_depth: ColorDepth::TrueColor,
+            synchronized_output: true,
+            theme_bg: None,
+            kitty_mgr: KittyImageManager::new(),
+            graphics_support: GraphicsEmissionSupport {
+                real_terminal: false,
+                capabilities: Capabilities::default(),
+                force_kitty: false,
+                force_sixel: false,
+                force_iterm: false,
+            },
+            run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+        }
+    }
+
+    fn take_sink_bytes(&mut self) -> Vec<u8> {
+        match &mut self.stdout {
+            Sink::Capture(bytes) => std::mem::take(bytes),
+            Sink::Stdout(_) => unreachable!("test inline terminal always captures"),
+        }
     }
 }
 
@@ -1744,6 +2129,10 @@ impl crate::Backend for InlineTerminal {
 
     fn flush(&mut self) -> io::Result<()> {
         InlineTerminal::flush(self)
+    }
+
+    fn owns_terminal_session(&self) -> bool {
+        true
     }
 }
 
@@ -1984,7 +2373,7 @@ fn base64_decode(input: &str) -> Option<String> {
     }
 
     let mut out = Vec::with_capacity((filtered.len() / 4) * 3);
-    for chunk in filtered.chunks_exact(4) {
+    for chunk in filtered.as_chunks::<4>().0 {
         let p2 = chunk[2] == b'=';
         let p3 = chunk[3] == b'=';
         if p2 && !p3 {
@@ -2018,6 +2407,28 @@ fn flush_buffer_diff(
     color_depth: ColorDepth,
     row_offset: u32,
     run_buf: &mut String,
+) -> io::Result<()> {
+    flush_buffer_diff_rows(
+        stdout,
+        current,
+        previous,
+        color_depth,
+        row_offset,
+        run_buf,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(unused_assignments)]
+fn flush_buffer_diff_rows(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    color_depth: ColorDepth,
+    row_offset: u32,
+    run_buf: &mut String,
+    forced_rows: &[u32],
 ) -> io::Result<()> {
     // Run-coalescing: consecutive changed cells in the same row that share
     // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
@@ -2067,6 +2478,7 @@ fn flush_buffer_diff(
     }
 
     for y in current.area.y..current.area.bottom() {
+        let force_row = forced_rows.binary_search(&y).is_ok();
         // Issue #171: skip the per-cell scan for rows that were not touched
         // since the last hash refresh AND match the previous frame's
         // digest. Both conditions must hold:
@@ -2075,7 +2487,8 @@ fn flush_buffer_diff(
         //   * The hash equality is the actual unchanged-row signal.
         // Falling through to the per-cell loop on either failure preserves
         // legacy behavior; the skip is a pure short-circuit.
-        if current.row_clean(y)
+        if !force_row
+            && current.row_clean(y)
             && current.row_hash(y).is_some()
             && current.row_hash(y) == previous.row_hash(y)
         {
@@ -2084,7 +2497,8 @@ fn flush_buffer_diff(
         for x in current.area.x..current.area.right() {
             let cell = current.get(x, y);
             let prev = previous.get(x, y);
-            if cell == prev || cell.symbol.is_empty() {
+            let symbol = cell.normalized_symbol();
+            if (!force_row && cell == prev) || symbol.is_empty() {
                 // Gap — any open run on this row must be flushed.
                 flush_run!(stdout);
                 continue;
@@ -2155,9 +2569,9 @@ fn flush_buffer_diff(
             // Append the cell's grapheme cluster (possibly multi-char when it
             // carries combining marks). Wide chars advance by their column
             // width so subsequent cells line up.
-            run_buf.push_str(&cell.symbol);
-            let char_width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
-            if char_width > 1 && cell.symbol.chars().any(|c| c == '\u{FE0F}') {
+            run_buf.push_str(&symbol);
+            let char_width = UnicodeWidthStr::width(symbol.as_str()).max(1) as u32;
+            if char_width > 1 && symbol.chars().any(|c| c == '\u{FE0F}') {
                 // Emoji variation selector — terminal renders 2 cols but the
                 // glyph often measures as 1; pad so the cursor ends up where
                 // the next cell is drawn.
@@ -2483,6 +2897,56 @@ fn sprixel_key(p: &crate::buffer::SprixelPlacement) -> SprixelKey {
     (p.content_hash, p.x, p.y, p.cols, p.rows)
 }
 
+fn previous_only_sprixel_rows(
+    current: &Buffer,
+    previous: &Buffer,
+    mut should_emit: impl FnMut(&crate::buffer::SprixelPlacement) -> bool,
+) -> smallvec::SmallVec<[u32; 8]> {
+    use crate::buffer::SprixelCell;
+
+    if previous.sprixels.is_empty() {
+        return smallvec::SmallVec::new();
+    }
+    let current_keys: std::collections::HashSet<SprixelKey> =
+        current.sprixels.iter().map(sprixel_key).collect();
+    let mut rows = smallvec::SmallVec::<[u32; 8]>::new();
+    for placement in &previous.sprixels {
+        if !should_emit(placement) || current_keys.contains(&sprixel_key(placement)) {
+            continue;
+        }
+        let Ok(cols) = usize::try_from(placement.cols) else {
+            continue;
+        };
+        for row in 0..placement.rows {
+            let Ok(row_index) = usize::try_from(row) else {
+                continue;
+            };
+            let Some(start) = row_index.checked_mul(cols) else {
+                continue;
+            };
+            let end = start.saturating_add(cols).min(placement.cells.len());
+            if placement.cells.get(start..end).is_some_and(|cells| {
+                cells
+                    .iter()
+                    .any(|cell| matches!(cell, SprixelCell::Opaque | SprixelCell::Mixed))
+            }) {
+                let y = placement.y.saturating_add(row);
+                if current.area.contains(current.area.x, y) {
+                    rows.push(y);
+                }
+            }
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    rows
+}
+
+fn sprixel_intersects_rows(placement: &crate::buffer::SprixelPlacement, rows: &[u32]) -> bool {
+    let end = placement.y.saturating_add(placement.rows);
+    rows.iter().any(|row| *row >= placement.y && *row < end)
+}
+
 /// Decide whether a sprixel placement must be re-blitted this frame, applying
 /// the per-cell damage matrix (issue #265).
 ///
@@ -2510,6 +2974,7 @@ fn sprixel_needs_reblit(
     current: &Buffer,
     previous: &Buffer,
     prev_keys: &std::collections::HashSet<SprixelKey>,
+    redrawn_rows: &[u32],
 ) -> bool {
     use crate::buffer::SprixelCell;
 
@@ -2518,6 +2983,12 @@ fn sprixel_needs_reblit(
     // cols/rows; damage matrix excluded), so a moved or recolored image
     // re-blits. O(1) lookup vs the former O(n·m) `iter().any(..)` scan.
     if !prev_keys.contains(&sprixel_key(placement)) {
+        return true;
+    }
+
+    // Removing another graphic repaints its old footprint rows with text. Any
+    // surviving graphic on those rows must be restored after that repaint.
+    if sprixel_intersects_rows(placement, redrawn_rows) {
         return true;
     }
 
@@ -2579,9 +3050,10 @@ fn flush_sprixels(
     previous: &Buffer,
     row_offset: u32,
 ) -> io::Result<()> {
-    flush_sprixels_inner(stdout, current, previous, row_offset, |_| true)
+    flush_sprixels_inner(stdout, current, previous, row_offset, |_| true, &[])
 }
 
+#[cfg(test)]
 fn flush_sprixels_checked(
     stdout: &mut impl Write,
     current: &Buffer,
@@ -2589,9 +3061,25 @@ fn flush_sprixels_checked(
     row_offset: u32,
     graphics_support: GraphicsEmissionSupport,
 ) -> io::Result<()> {
-    flush_sprixels_inner(stdout, current, previous, row_offset, |placement| {
-        graphics_support.should_emit_sprixel(sprixel_protocol(&placement.seq))
-    })
+    flush_sprixels_checked_with_rows(stdout, current, previous, row_offset, graphics_support, &[])
+}
+
+fn flush_sprixels_checked_with_rows(
+    stdout: &mut impl Write,
+    current: &Buffer,
+    previous: &Buffer,
+    row_offset: u32,
+    graphics_support: GraphicsEmissionSupport,
+    redrawn_rows: &[u32],
+) -> io::Result<()> {
+    flush_sprixels_inner(
+        stdout,
+        current,
+        previous,
+        row_offset,
+        |placement| graphics_support.should_emit_sprixel(sprixel_protocol(&placement.seq)),
+        redrawn_rows,
+    )
 }
 
 fn flush_sprixels_inner(
@@ -2600,6 +3088,7 @@ fn flush_sprixels_inner(
     previous: &Buffer,
     row_offset: u32,
     mut should_emit: impl FnMut(&crate::buffer::SprixelPlacement) -> bool,
+    redrawn_rows: &[u32],
 ) -> io::Result<()> {
     // Early out: no graphics to emit. Avoids building the key set on the
     // common text-only frame.
@@ -2611,7 +3100,8 @@ fn flush_sprixels_inner(
         previous.sprixels.iter().map(sprixel_key).collect();
 
     for placement in &current.sprixels {
-        if should_emit(placement) && sprixel_needs_reblit(placement, current, previous, &prev_keys)
+        if should_emit(placement)
+            && sprixel_needs_reblit(placement, current, previous, &prev_keys, redrawn_rows)
         {
             queue!(
                 stdout,
@@ -3004,20 +3494,28 @@ fn write_session_exit(
     write_session_cleanup(stdout, mode, inline_reserved)
 }
 
-/// Best-effort terminal restoration used by the panic hook.
-///
-/// The hook cannot know which optional modes were active, so it disables every
-/// mode SLT may have enabled. Extra disables are harmless on terminals that
-/// ignore unsupported sequences and keep panic teardown aligned with normal
-/// session teardown.
+/// Best-effort restoration of the most recently entered active SLT session.
 #[cfg(feature = "crossterm")]
-pub(crate) fn cleanup_after_panic() {
+pub(crate) fn cleanup_after_panic() -> bool {
+    let Some(snapshot) = active_session_snapshot() else {
+        return false;
+    };
     let mut stdout = io::stdout();
-    let _ = write_panic_cleanup(&mut stdout);
-    let _ = terminal::disable_raw_mode();
+    let _ = write_session_exit(
+        &mut stdout,
+        snapshot.mode,
+        false,
+        snapshot.mouse_enabled,
+        snapshot.kitty_keyboard,
+    );
+    if snapshot.raw_mode_owned {
+        let _ = terminal::disable_raw_mode();
+    }
     let _ = stdout.flush();
+    true
 }
 
+#[cfg(test)]
 fn write_panic_cleanup(stdout: &mut impl Write) -> io::Result<()> {
     write_session_exit(stdout, TerminalSessionMode::Fullscreen, false, true, true)
 }
@@ -3035,18 +3533,6 @@ fn write_panic_cleanup(stdout: &mut impl Write) -> io::Result<()> {
 // full redraw. The whole feature is `#[cfg(unix)]` and uses only signal-hook's
 // safe API, preserving `#![forbid(unsafe_code)]`.
 
-/// Immutable snapshot of the active terminal session used by the unix
-/// suspend/resume handler to restore and re-enter the terminal across a
-/// Ctrl+Z / `fg` cycle without owning the `Terminal`/`InlineTerminal`.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SessionSnapshot {
-    mode: TerminalSessionMode,
-    mouse_enabled: bool,
-    kitty_keyboard: bool,
-    report_all_keys: bool,
-}
-
 /// Set by the SIGCONT handler and consumed once at the top of each run-loop
 /// iteration to force a full clear + repaint after resuming from suspend.
 #[cfg(unix)]
@@ -3058,12 +3544,7 @@ impl Terminal {
     /// Capture the session state the suspend/resume handler needs to restore
     /// and re-enter this fullscreen terminal across Ctrl+Z / `fg`.
     pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
-        SessionSnapshot {
-            mode: self.session.mode,
-            mouse_enabled: self.session.mouse_enabled,
-            kitty_keyboard: self.session.kitty_keyboard,
-            report_all_keys: self.session.report_all_keys,
-        }
+        self.session.snapshot()
     }
 }
 
@@ -3072,12 +3553,7 @@ impl InlineTerminal {
     /// Capture the session state the suspend/resume handler needs to restore
     /// and re-enter this inline terminal across Ctrl+Z / `fg`.
     pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
-        SessionSnapshot {
-            mode: self.session.mode,
-            mouse_enabled: self.session.mouse_enabled,
-            kitty_keyboard: self.session.kitty_keyboard,
-            report_all_keys: self.session.report_all_keys,
-        }
+        self.session.snapshot()
     }
 }
 
@@ -3109,7 +3585,9 @@ fn write_suspend_sequence(stdout: &mut impl Write, snapshot: &SessionSnapshot) -
 pub(crate) fn suspend_to_shell(snapshot: &SessionSnapshot) {
     let mut out = io::stdout();
     let _ = write_suspend_sequence(&mut out, snapshot);
-    let _ = terminal::disable_raw_mode();
+    if snapshot.raw_mode_owned {
+        let _ = terminal::disable_raw_mode();
+    }
     let _ = out.flush();
 }
 
@@ -3122,7 +3600,9 @@ pub(crate) fn suspend_to_shell(snapshot: &SessionSnapshot) {
 #[cfg(unix)]
 pub(crate) fn resume_from_shell(snapshot: &SessionSnapshot) {
     let mut out = io::stdout();
-    let _ = terminal::enable_raw_mode();
+    if snapshot.raw_mode_owned {
+        let _ = terminal::enable_raw_mode();
+    }
     let _ = resume_from_shell_with_writer(&mut out, snapshot);
 }
 
@@ -3136,7 +3616,10 @@ fn resume_from_shell_with_writer(
         mouse_enabled: snapshot.mouse_enabled,
         kitty_keyboard: snapshot.kitty_keyboard,
         report_all_keys: snapshot.report_all_keys,
-        harness: false,
+        raw_mode_owned: snapshot.raw_mode_owned,
+        registry_id: None,
+        restored: std::sync::atomic::AtomicBool::new(false),
+        harness: true,
     };
     write_session_enter(out, &guard)?;
     out.flush()?;
@@ -3152,6 +3635,7 @@ fn test_snapshot(mode: TerminalSessionMode, mouse: bool, kitty: bool) -> Session
         mouse_enabled: mouse,
         kitty_keyboard: kitty,
         report_all_keys: false,
+        raw_mode_owned: true,
     }
 }
 
@@ -3164,6 +3648,7 @@ pub(crate) fn test_session_snapshot() -> SessionSnapshot {
         mouse_enabled: false,
         kitty_keyboard: false,
         report_all_keys: false,
+        raw_mode_owned: true,
     }
 }
 
@@ -3197,6 +3682,31 @@ mod tests {
         let start = Instant::now();
         let out = collect_reply(&rx, start + budget, is_complete);
         (out, start.elapsed())
+    }
+
+    #[cfg(unix)]
+    fn open_raw_pty() -> (rustix::fd::OwnedFd, rustix::fd::OwnedFd) {
+        use rustix::fs::{Mode, OFlags};
+        use rustix::pty::OpenptFlags;
+        use rustix::termios::OptionalActions;
+
+        let controller = rustix::pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+        rustix::pty::grantpt(&controller).unwrap();
+        rustix::pty::unlockpt(&controller).unwrap();
+        let path = rustix::pty::ptsname(&controller, Vec::new()).unwrap();
+        let user = rustix::fs::open(&path, OFlags::RDWR | OFlags::NOCTTY, Mode::empty()).unwrap();
+        let mut attrs = rustix::termios::tcgetattr(&user).unwrap();
+        attrs.make_raw();
+        rustix::termios::tcsetattr(&user, OptionalActions::Now, &attrs).unwrap();
+        (controller, user)
+    }
+
+    #[cfg(unix)]
+    fn pty_write_all(fd: &impl rustix::fd::AsFd, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            let written = rustix::io::write(fd, bytes).unwrap();
+            bytes = &bytes[written..];
+        }
     }
 
     #[test]
@@ -3300,6 +3810,54 @@ mod tests {
         assert_eq!(out, reply);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn pty_probe_deadline_preserves_first_tab_printable_and_escape_bytes() {
+        for payload in [b"\t".as_slice(), b"A".as_slice(), b"\x1b[D".as_slice()] {
+            let (controller, user) = open_raw_pty();
+            let silent = read_reply_from_fd(
+                &user,
+                Instant::now() + Duration::from_millis(15),
+                &mut |_| false,
+            );
+            assert!(silent.is_empty());
+
+            pty_write_all(&controller, payload);
+            let received = read_reply_from_fd(
+                &user,
+                Instant::now() + Duration::from_millis(100),
+                &mut |bytes| bytes.len() == payload.len(),
+            );
+            assert_eq!(received, payload, "first post-deadline input changed");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pty_responsive_and_partial_replies_keep_existing_semantics() {
+        let (controller, user) = open_raw_pty();
+        let full = b"\x1b[?62;4c\x1b[>1;10;0c";
+        pty_write_all(&controller, full);
+        let start = Instant::now();
+        let received = read_reply_from_fd(
+            &user,
+            start + Duration::from_secs(1),
+            &mut da_reply_complete(),
+        );
+        assert_eq!(received, full);
+        assert!(start.elapsed() < Duration::from_millis(250));
+
+        let (controller, user) = open_raw_pty();
+        let partial = b"\x1b[?62;4c";
+        pty_write_all(&controller, partial);
+        let received = read_reply_from_fd(
+            &user,
+            Instant::now() + Duration::from_millis(20),
+            &mut da_reply_complete(),
+        );
+        assert_eq!(received, partial);
+    }
+
     #[test]
     fn reset_current_buffer_applies_theme_background() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 2, 1));
@@ -3312,13 +3870,91 @@ mod tests {
     }
 
     #[test]
+    fn inline_vertical_resize_clamps_and_restores_anchor_row() {
+        let mut term = InlineTerminal::with_sink(80, 24, 4, 18);
+        assert_eq!(term.start_row, 18);
+
+        term.handle_resize_to(72, 10).unwrap();
+        assert_eq!(term.size(), (72, 4));
+        assert_eq!(term.start_row, 6);
+
+        term.handle_resize_to(100, 30).unwrap();
+        assert_eq!(term.size(), (100, 4));
+        assert_eq!(term.start_row, 18);
+    }
+
+    #[test]
+    fn raw_mode_ownership_only_tracks_state_acquired_by_slt() {
+        assert!(raw_mode_is_acquired(false));
+        assert!(!raw_mode_is_acquired(true));
+
+        let inherited = SessionSnapshot {
+            mode: TerminalSessionMode::Fullscreen,
+            mouse_enabled: false,
+            kitty_keyboard: false,
+            report_all_keys: false,
+            raw_mode_owned: false,
+        };
+        assert!(!inherited.raw_mode_owned);
+    }
+
+    #[test]
+    fn terminal_buffer_pair_rejects_invalid_geometry_before_allocation() {
+        let oversized = Rect::new(0, 0, crate::buffer::MAX_BUFFER_CELLS as u32 + 1, 1);
+        assert!(try_buffer_pair(oversized).is_err());
+
+        let area = Rect::new(0, 0, 80, 24);
+        let (current, previous) = try_buffer_pair(area).unwrap();
+        assert_eq!(current.area, area);
+        assert_eq!(previous.area, area);
+    }
+
+    #[test]
+    fn failed_inline_resize_preserves_both_buffers_and_viewport_state() {
+        let mut term = InlineTerminal::with_sink(4, 24, 20, 4);
+        term.current.set_string(0, 0, "safe", Style::new());
+        let current_area = term.current.area;
+        let previous_area = term.previous.area;
+        let viewport_rows = term.viewport_rows;
+        let start_row = term.start_row;
+
+        assert!(term.handle_resize_to(u16::MAX, 3).is_err());
+        assert_eq!(term.current.area, current_area);
+        assert_eq!(term.previous.area, previous_area);
+        assert_eq!(term.viewport_rows, viewport_rows);
+        assert_eq!(term.start_row, start_row);
+        assert_eq!(term.current.get(0, 0).symbol, "s");
+    }
+
+    #[test]
+    fn inline_scrollback_moves_region_and_invalidates_previous_frame() {
+        let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
+        term.reserved = true;
+        term.previous
+            .set_string(0, 0, "stale dynamic frame", Style::default());
+
+        term.write_scrollback(&["first".into(), "second\x1b[31m".into()])
+            .unwrap();
+
+        assert_eq!(term.start_row, 12);
+        assert_eq!(term.previous.get(0, 0).symbol, " ");
+        let bytes = String::from_utf8(term.take_sink_bytes()).unwrap();
+        assert!(bytes.contains("first\r\n"));
+        assert!(bytes.contains("second?[31m\r\n"));
+        assert!(bytes.contains("\u{1b}[11;1H"), "moves to the owned row");
+    }
+
+    #[test]
     fn fullscreen_session_enter_writes_alt_screen_sequence() {
         let session = TerminalSessionGuard {
             mode: TerminalSessionMode::Fullscreen,
             mouse_enabled: false,
             kitty_keyboard: false,
             report_all_keys: false,
-            harness: false,
+            raw_mode_owned: false,
+            registry_id: None,
+            restored: std::sync::atomic::AtomicBool::new(false),
+            harness: true,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -3335,7 +3971,10 @@ mod tests {
             mouse_enabled: false,
             kitty_keyboard: false,
             report_all_keys: false,
-            harness: false,
+            raw_mode_owned: false,
+            registry_id: None,
+            restored: std::sync::atomic::AtomicBool::new(false),
+            harness: true,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -3352,7 +3991,10 @@ mod tests {
             mouse_enabled: false,
             kitty_keyboard: true,
             report_all_keys: true,
-            harness: false,
+            raw_mode_owned: false,
+            registry_id: None,
+            restored: std::sync::atomic::AtomicBool::new(false),
+            harness: true,
         };
         let mut out = Vec::new();
         write_session_enter(&mut out, &session).unwrap();
@@ -3459,7 +4101,10 @@ mod tests {
             mouse_enabled: snapshot.mouse_enabled,
             kitty_keyboard: snapshot.kitty_keyboard,
             report_all_keys: snapshot.report_all_keys,
-            harness: false,
+            raw_mode_owned: snapshot.raw_mode_owned,
+            registry_id: None,
+            restored: std::sync::atomic::AtomicBool::new(false),
+            harness: true,
         };
         let mut enter_bytes = Vec::new();
         write_session_enter(&mut enter_bytes, &guard).unwrap();
@@ -3508,113 +4153,6 @@ mod tests {
         assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
-    }
-
-    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[allow(unsafe_code)]
-    fn with_terminal_env<F: FnOnce()>(
-        term: Option<&str>,
-        term_program: Option<&str>,
-        tmux: Option<&str>,
-        sty: Option<&str>,
-        f: F,
-    ) {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|err| err.into_inner());
-        let prev_term = std::env::var("TERM").ok();
-        let prev_program = std::env::var("TERM_PROGRAM").ok();
-        let prev_tmux = std::env::var("TMUX").ok();
-        let prev_sty = std::env::var("STY").ok();
-
-        unsafe {
-            match term {
-                Some(value) => std::env::set_var("TERM", value),
-                None => std::env::remove_var("TERM"),
-            }
-            match term_program {
-                Some(value) => std::env::set_var("TERM_PROGRAM", value),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            match tmux {
-                Some(value) => std::env::set_var("TMUX", value),
-                None => std::env::remove_var("TMUX"),
-            }
-            match sty {
-                Some(value) => std::env::set_var("STY", value),
-                None => std::env::remove_var("STY"),
-            }
-        }
-
-        f();
-
-        unsafe {
-            match prev_term {
-                Some(value) => std::env::set_var("TERM", value),
-                None => std::env::remove_var("TERM"),
-            }
-            match prev_program {
-                Some(value) => std::env::set_var("TERM_PROGRAM", value),
-                None => std::env::remove_var("TERM_PROGRAM"),
-            }
-            match prev_tmux {
-                Some(value) => std::env::set_var("TMUX", value),
-                None => std::env::remove_var("TMUX"),
-            }
-            match prev_sty {
-                Some(value) => std::env::set_var("STY", value),
-                None => std::env::remove_var("STY"),
-            }
-        }
-    }
-
-    #[test]
-    fn multiplexers_disable_graphics_env_fallbacks() {
-        with_terminal_env(
-            Some("tmux-256color"),
-            Some("WezTerm"),
-            Some("/tmp/tmux"),
-            None,
-            || {
-                assert!(terminal_is_multiplexed());
-                assert!(!term_is_kitty_graphics_host());
-                assert!(!term_is_sixel_host());
-                assert!(!term_is_iterm_host());
-            },
-        );
-        with_terminal_env(
-            Some("screen-256color"),
-            Some("iTerm.app"),
-            None,
-            Some("1234.pts"),
-            || {
-                assert!(terminal_is_multiplexed());
-                assert!(!term_is_kitty_graphics_host());
-                assert!(!term_is_sixel_host());
-                assert!(!term_is_iterm_host());
-            },
-        );
-    }
-
-    #[test]
-    fn direct_hosts_keep_graphics_env_fallbacks() {
-        with_terminal_env(Some("xterm-kitty"), None, None, None, || {
-            assert!(!terminal_is_multiplexed());
-            assert!(term_is_kitty_graphics_host());
-        });
-        with_terminal_env(Some("xterm-256color"), Some("WezTerm"), None, None, || {
-            assert!(!terminal_is_multiplexed());
-            assert!(term_is_sixel_host());
-        });
-        with_terminal_env(
-            Some("xterm-256color"),
-            Some("iTerm.app"),
-            None,
-            None,
-            || {
-                assert!(!terminal_is_multiplexed());
-                assert!(term_is_iterm_host());
-            },
-        );
     }
 
     #[test]
@@ -3928,7 +4466,7 @@ mod tests {
             true,
             true,
             "xterm-256color",
-            false,
+            None,
             false,
             false
         ));
@@ -3936,7 +4474,7 @@ mod tests {
             true,
             false,
             "xterm-256color",
-            false,
+            None,
             false,
             false
         ));
@@ -3944,34 +4482,39 @@ mod tests {
             false,
             true,
             "xterm-256color",
-            false,
+            None,
             false,
             false
         ));
         assert!(!terminal_query_allowed(
-            true, true, "dumb", false, false, false
+            true, true, "dumb", None, false, false
         ));
         assert!(!terminal_query_allowed(
             true,
             true,
             "screen-256color",
-            true,
+            Some(MultiplexerKind::Screen),
             false,
             false
         ));
-        assert!(!terminal_query_allowed(true, true, "", false, false, false));
+        assert!(!terminal_query_allowed(true, true, "", None, false, false));
     }
 
     #[test]
     fn terminal_query_guard_honors_force_and_disable_precedence() {
         assert!(terminal_query_allowed(
-            true, true, "dumb", true, true, false
+            true,
+            true,
+            "dumb",
+            Some(MultiplexerKind::Tmux),
+            true,
+            false
         ));
         assert!(!terminal_query_allowed(
             true,
             true,
             "xterm-kitty",
-            false,
+            None,
             true,
             true
         ));
@@ -3981,23 +4524,141 @@ mod tests {
     fn automatic_query_hosts_require_a_real_terminal_identity() {
         assert!(!terminal_query_host_is_identified_env(
             "xterm-256color",
+            false,
             false
         ));
         assert!(terminal_query_host_is_identified_env(
             "xterm-256color",
+            true,
+            false
+        ));
+        assert!(terminal_query_host_is_identified_env(
+            "xterm-kitty",
+            false,
+            false
+        ));
+        assert!(terminal_query_host_is_identified_env("foot", false, false));
+        assert!(!terminal_query_host_is_identified_env(
+            "xterm-256color",
+            true,
             true
         ));
-        assert!(terminal_query_host_is_identified_env("xterm-kitty", false));
-        assert!(terminal_query_host_is_identified_env("foot", false));
+    }
+
+    #[test]
+    fn remote_env_does_not_treat_inherited_outer_identity_as_endpoint_proof() {
+        assert!(terminal_is_remote_env(true, false, false));
+        assert!(terminal_is_remote_env(false, true, false));
+        assert!(terminal_is_remote_env(false, false, true));
+        assert!(!terminal_is_remote_env(false, false, false));
+
+        assert!(!term_is_kitty_graphics_host_env(
+            "xterm-256color",
+            "wezterm",
+            None,
+            true,
+            false
+        ));
+        assert!(term_is_kitty_graphics_host_env(
+            "xterm-kitty",
+            "wezterm",
+            None,
+            true,
+            false
+        ));
+        assert!(!term_is_sixel_host_env(
+            "xterm-256color",
+            "ghostty",
+            None,
+            true,
+            false
+        ));
+        assert!(!term_is_iterm_host_env("iterm.app", None, true, false));
+        assert!(term_is_iterm_host_env("iterm.app", None, true, true));
     }
 
     #[test]
     fn terminal_multiplexer_detection_is_conservative() {
-        assert!(terminal_is_multiplexed_env("tmux-256color", false, false));
-        assert!(terminal_is_multiplexed_env("screen-256color", false, false));
-        assert!(terminal_is_multiplexed_env("xterm-256color", true, false));
-        assert!(terminal_is_multiplexed_env("xterm-256color", false, true));
-        assert!(!terminal_is_multiplexed_env("xterm-kitty", false, false));
+        assert_eq!(
+            terminal_multiplexer_env("tmux-256color", false, false, false, false),
+            Some(MultiplexerKind::Tmux)
+        );
+        assert_eq!(
+            terminal_multiplexer_env("screen-256color", false, false, false, false),
+            Some(MultiplexerKind::Screen)
+        );
+        assert_eq!(
+            terminal_multiplexer_env("xterm-256color", false, false, true, false),
+            Some(MultiplexerKind::Zellij)
+        );
+        assert_eq!(
+            terminal_multiplexer_env("xterm-256color", false, false, false, true),
+            Some(MultiplexerKind::Zellij)
+        );
+        assert_eq!(
+            terminal_multiplexer_env("xterm-kitty", false, false, false, false),
+            None
+        );
+        assert_eq!(
+            terminal_multiplexer_env("tmux-256color", true, false, true, true),
+            Some(MultiplexerKind::Tmux),
+            "the innermost TERM identity wins over inherited variables"
+        );
+    }
+
+    #[test]
+    fn multiplexer_protocol_policy_is_explicit_and_disable_wins_force() {
+        for multiplexer in [MultiplexerKind::Tmux, MultiplexerKind::Screen] {
+            for protocol in [
+                TerminalProtocol::Queries,
+                TerminalProtocol::SynchronizedOutput,
+                TerminalProtocol::KittyGraphics,
+                TerminalProtocol::Sixel,
+                TerminalProtocol::Iterm2,
+                TerminalProtocol::KittyKeyboard,
+            ] {
+                assert!(!terminal_protocol_allowed(
+                    Some(multiplexer),
+                    protocol,
+                    false,
+                    false
+                ));
+                assert!(terminal_protocol_allowed(
+                    Some(multiplexer),
+                    protocol,
+                    true,
+                    false
+                ));
+                assert!(!terminal_protocol_allowed(
+                    Some(multiplexer),
+                    protocol,
+                    true,
+                    true
+                ));
+            }
+        }
+
+        let zellij = Some(MultiplexerKind::Zellij);
+        assert!(terminal_protocol_allowed(
+            zellij,
+            TerminalProtocol::Sixel,
+            false,
+            false
+        ));
+        assert!(terminal_protocol_allowed(
+            zellij,
+            TerminalProtocol::KittyKeyboard,
+            false,
+            false
+        ));
+        for protocol in [
+            TerminalProtocol::Queries,
+            TerminalProtocol::SynchronizedOutput,
+            TerminalProtocol::KittyGraphics,
+            TerminalProtocol::Iterm2,
+        ] {
+            assert!(!terminal_protocol_allowed(zellij, protocol, false, false));
+        }
     }
 
     #[test]
@@ -4005,35 +4666,83 @@ mod tests {
         assert!(term_is_kitty_graphics_host_env(
             "xterm-kitty",
             "",
+            None,
             false,
             false
         ));
         assert!(term_is_kitty_graphics_host_env(
             "xterm-256color",
             "wezterm",
+            None,
             false,
             false
         ));
         assert!(!term_is_kitty_graphics_host_env(
             "xterm-kitty",
             "wezterm",
-            true,
+            Some(MultiplexerKind::Tmux),
+            false,
             false
         ));
         assert!(term_is_kitty_graphics_host_env(
             "xterm-256color",
             "",
-            true,
+            Some(MultiplexerKind::Tmux),
+            false,
             true
         ));
     }
 
     #[test]
     fn iterm_env_fallback_is_blocked_inside_multiplexer_unless_forced() {
-        assert!(term_is_iterm_host_env("iterm.app", false, false));
-        assert!(term_is_iterm_host_env("wezterm", false, false));
-        assert!(!term_is_iterm_host_env("wezterm", true, false));
-        assert!(term_is_iterm_host_env("xterm", true, true));
+        assert!(term_is_iterm_host_env("iterm.app", None, false, false));
+        assert!(term_is_iterm_host_env("wezterm", None, false, false));
+        assert!(!term_is_iterm_host_env(
+            "wezterm",
+            Some(MultiplexerKind::Tmux),
+            false,
+            false
+        ));
+        assert!(term_is_iterm_host_env(
+            "xterm",
+            Some(MultiplexerKind::Tmux),
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn zellij_uses_protocol_specific_graphics_policy() {
+        let zellij = Some(MultiplexerKind::Zellij);
+        assert!(term_is_sixel_host_env(
+            "xterm-256color",
+            "wezterm",
+            zellij,
+            false,
+            false
+        ));
+        assert!(!term_is_kitty_graphics_host_env(
+            "xterm-kitty",
+            "wezterm",
+            zellij,
+            false,
+            false
+        ));
+        assert!(!term_is_iterm_host_env("iterm.app", zellij, false, false));
+        assert!(kitty_keyboard_allowed_env(zellij, false, false));
+        assert!(!synchronized_update_allowed(zellij, false, false, false));
+        assert!(synchronized_update_allowed(zellij, true, false, false));
+
+        for multiplexer in [MultiplexerKind::Tmux, MultiplexerKind::Screen] {
+            assert!(!kitty_keyboard_allowed_env(Some(multiplexer), false, false));
+            assert!(kitty_keyboard_allowed_env(Some(multiplexer), true, false));
+            assert!(!synchronized_update_allowed(
+                Some(multiplexer),
+                false,
+                false,
+                false
+            ));
+        }
     }
 
     #[test]
@@ -4529,6 +5238,29 @@ mod tests {
             "expected contiguous run 'XXXXXXXXXX' in {:?}",
             s
         );
+    }
+
+    #[test]
+    fn flush_normalizes_directly_mutated_cell_symbols() {
+        let area = Rect::new(0, 0, 2, 1);
+        let mut current = Buffer::empty(area);
+        let previous = Buffer::empty(area);
+        current.get_mut(0, 0).symbol = compact_str::CompactString::new("\x1b]52;c;payload");
+
+        let mut out = Vec::new();
+        flush_buffer_diff(
+            &mut out,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+        )
+        .unwrap();
+
+        let output = String::from_utf8(out).unwrap();
+        assert!(output.contains('\u{FFFD}'));
+        assert!(!output.contains("]52;c;payload"));
     }
 
     #[test]
@@ -5128,6 +5860,74 @@ mod tests {
             rows: 2,
             cells,
         }
+    }
+
+    #[test]
+    fn previous_only_sprixel_repaints_footprint_and_restores_overlap() {
+        let area = Rect::new(0, 0, 10, 5);
+        let removed = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        let mut stable = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        stable.x = 5;
+        stable.content_hash = 0xBEEF;
+        stable.seq = "<STABLE>".to_string();
+
+        let mut current = Buffer::empty(area);
+        current.sprixels.push(stable.clone());
+        let mut previous = Buffer::empty(area);
+        previous.sprixels.push(removed);
+        previous.sprixels.push(stable);
+
+        let rows = previous_only_sprixel_rows(&current, &previous, |_| true);
+        assert_eq!(rows.as_slice(), &[1, 2]);
+
+        let mut text = Vec::new();
+        flush_buffer_diff_rows(
+            &mut text,
+            &current,
+            &previous,
+            ColorDepth::TrueColor,
+            0,
+            &mut String::new(),
+            &rows,
+        )
+        .unwrap();
+        assert!(!text.is_empty(), "removed footprint rows must be repainted");
+
+        let mut graphics = Vec::new();
+        flush_sprixels_inner(&mut graphics, &current, &previous, 0, |_| true, &rows).unwrap();
+        assert_eq!(
+            String::from_utf8(graphics)
+                .unwrap()
+                .matches("<STABLE>")
+                .count(),
+            1,
+            "row repaint must restore a surviving overlapping graphic"
+        );
+    }
+
+    #[test]
+    fn terminal_flush_erases_removed_sprixel_with_text_redraw() {
+        let mut term = Terminal::with_sink(10, 5, ColorDepth::TrueColor);
+        term.graphics_support = GraphicsEmissionSupport {
+            real_terminal: true,
+            capabilities: Capabilities {
+                sixel: true,
+                ..Default::default()
+            },
+            force_kitty: false,
+            force_sixel: false,
+            force_iterm: false,
+        };
+        let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
+        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+        term.current.sprixels.push(placement);
+        term.flush().unwrap();
+        assert!(String::from_utf8_lossy(&term.take_sink_bytes()).contains("payload"));
+
+        term.flush().unwrap();
+        let erase = term.take_sink_bytes();
+        assert!(!erase.is_empty());
+        assert!(!String::from_utf8_lossy(&erase).contains("payload"));
     }
 
     #[test]

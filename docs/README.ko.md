@@ -28,16 +28,16 @@ SuperLightTUI는 Rust를 위한 immediate-mode TUI 라이브러리로, public gr
 <table>
   <tr>
     <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example demo_spreadsheet</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 마우스 커서 주변으로 텍스트가 실시간 재배치됩니다<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 마우스 커서 주변으로 텍스트가 실시간 재배치됩니다<br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
 </table>
 
@@ -225,13 +225,13 @@ ui.canvas(40, 10, |cv| {
 | `hello` | `cargo run --example hello` | 가장 작은 앱 |
 | `counter` | `cargo run --example counter` | 상태 + 키보드 입력 |
 | `demo` | `cargo run --example demo` | 폭넓은 위젯 투어 |
-| `demo_dashboard` | `cargo run --example demo_dashboard` | 대시보드 레이아웃 |
-| `demo_cli` | `cargo run --example demo_cli` | CLI 도구 레이아웃 |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | 차트와 데이터 시각화 |
-| `demo_game` | `cargo run --example demo_game` | immediate-mode 상호작용 |
-| `demo_design_system` | `cargo run --example demo_design_system` | 디자인 토큰, 테마, 스타일 상속 |
-| `inline` | `cargo run --example inline` | 일반 프롬프트 아래 inline 렌더링 |
-| `async_demo` | `cargo run --example async_demo --features async` | 백그라운드 메시지 |
+| `demo_dashboard` | `cargo run --example showcase_tour` | 대시보드 레이아웃 |
+| `demo_cli` | `cargo run --example showcase_tour` | CLI 도구 레이아웃 |
+| `demo_infoviz` | `cargo run --example showcase_tour` | 차트와 데이터 시각화 |
+| `demo_game` | `cargo run --example showcase_tour` | immediate-mode 상호작용 |
+| `demo_design_system` | `cargo run --example showcase_tour` | 디자인 토큰, 테마, 스타일 상속 |
+| `inline` | `cargo run --example system_tour` | 일반 프롬프트 아래 inline 렌더링 |
+| `async_demo` | `cargo run --example system_tour --features async` | 백그라운드 메시지 |
 
 전체 분류 인덱스는 [예제 가이드]에 있습니다.
 

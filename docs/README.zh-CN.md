@@ -28,16 +28,16 @@ SuperLightTUI 是一个为 Rust 提供的 immediate-mode TUI 库，并且有意�
 <table>
   <tr>
     <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example demo_dashboard</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example demo_website</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example demo_spreadsheet</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example demo_game</code></sub></td>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
     <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 文本围绕鼠标光标实时重排<br/><sub><code>cargo run --example demo_pretext</code></sub></td>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 文本围绕鼠标光标实时重排<br/><sub><code>cargo run --example text_tour</code></sub></td>
   </tr>
 </table>
 
@@ -225,13 +225,13 @@ ui.canvas(40, 10, |cv| {
 | `hello` | `cargo run --example hello` | 最小应用 |
 | `counter` | `cargo run --example counter` | 状态 + 键盘输入 |
 | `demo` | `cargo run --example demo` | 大范围组件导览 |
-| `demo_dashboard` | `cargo run --example demo_dashboard` | 仪表盘布局 |
-| `demo_cli` | `cargo run --example demo_cli` | CLI 工具布局 |
-| `demo_infoviz` | `cargo run --example demo_infoviz` | 图表和数据可视化 |
-| `demo_game` | `cargo run --example demo_game` | immediate-mode 交互 |
-| `demo_design_system` | `cargo run --example demo_design_system` | 设计令牌、主题、样式继承 |
-| `inline` | `cargo run --example inline` | 在普通提示符下方做 inline 渲染 |
-| `async_demo` | `cargo run --example async_demo --features async` | 后台消息 |
+| `demo_dashboard` | `cargo run --example showcase_tour` | 仪表盘布局 |
+| `demo_cli` | `cargo run --example showcase_tour` | CLI 工具布局 |
+| `demo_infoviz` | `cargo run --example showcase_tour` | 图表和数据可视化 |
+| `demo_game` | `cargo run --example showcase_tour` | immediate-mode 交互 |
+| `demo_design_system` | `cargo run --example showcase_tour` | 设计令牌、主题、样式继承 |
+| `inline` | `cargo run --example system_tour` | 在普通提示符下方做 inline 渲染 |
+| `async_demo` | `cargo run --example system_tour --features async` | 后台消息 |
 
 完整分类索引见[示例指南]。
 

@@ -124,13 +124,11 @@ impl Context {
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
                     }
-                    KeyCode::Char(ch) => {
-                        if let Some(max) = state.max_length {
-                            let total: usize =
-                                state.lines.iter().map(|line| grapheme_count(line)).sum();
-                            if total >= max {
-                                continue;
-                            }
+                    KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
+                        if let Some(max) = state.max_length
+                            && state.grapheme_len() >= max
+                        {
+                            continue;
                         }
                         // Coalesce a typing burst into one undoable batch:
                         // only the first Char of the burst pushes a snapshot.
@@ -147,6 +145,12 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
+                        if state
+                            .max_length
+                            .is_some_and(|max| state.grapheme_len() >= max)
+                        {
+                            continue;
+                        }
                         state.push_history();
                         let split_index = byte_index_for_grapheme(
                             &state.lines[state.cursor_row],
@@ -286,22 +290,20 @@ impl Context {
                 }
             }
             for (i, text) in self.available_pastes() {
+                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                 // A paste is one undoable unit — push a single snapshot
                 // before applying the burst.
-                if !text.is_empty() {
+                if !normalized.is_empty() {
                     state.push_history();
                 }
-                // Hoist total char count once per paste event and update
-                // incrementally — recomputing via `.iter().map(...).sum()`
-                // inside the loop would be O(n²) on large pastes.
-                let mut total_chars: usize = state.lines.iter().map(|l| grapheme_count(l)).sum();
-                for ch in text.chars() {
+                let mut total_chars = state.grapheme_len();
+                for cluster in normalized.graphemes(true) {
                     if let Some(max) = state.max_length
                         && total_chars >= max
                     {
                         break;
                     }
-                    if ch == '\n' || ch == '\r' {
+                    if cluster == "\n" {
                         let split_index = byte_index_for_grapheme(
                             &state.lines[state.cursor_row],
                             state.cursor_col,
@@ -312,13 +314,17 @@ impl Context {
                         state.cursor_col = 0;
                         total_chars += 1;
                     } else {
+                        let before = grapheme_count(&state.lines[state.cursor_row]);
                         let index = byte_index_for_grapheme(
                             &state.lines[state.cursor_row],
                             state.cursor_col,
                         );
-                        state.lines[state.cursor_row].insert(index, ch);
-                        state.cursor_col += 1;
-                        total_chars += 1;
+                        let inserted_end = index + cluster.len();
+                        state.lines[state.cursor_row].insert_str(index, cluster);
+                        state.cursor_col =
+                            grapheme_count(&state.lines[state.cursor_row][..inserted_end]);
+                        let after = grapheme_count(&state.lines[state.cursor_row]);
+                        total_chars = total_chars.saturating_sub(before).saturating_add(after);
                     }
                 }
                 state.last_was_char_insert = false;

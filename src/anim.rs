@@ -304,6 +304,7 @@ pub struct Keyframes {
     segment_easing: Vec<fn(f64) -> f64>,
     loop_mode: LoopMode,
     done: bool,
+    completion_fired: bool,
     on_complete: Option<Box<dyn FnMut()>>,
 }
 
@@ -322,6 +323,7 @@ impl Keyframes {
             segment_easing: Vec::new(),
             loop_mode: LoopMode::Once,
             done: false,
+            completion_fired: false,
             on_complete: None,
         }
     }
@@ -387,17 +389,11 @@ impl Keyframes {
     /// Return the interpolated keyframe value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
         if self.stops.is_empty() {
-            self.done = true;
-            if let Some(cb) = &mut self.on_complete {
-                cb();
-            }
+            self.complete_once();
             return 0.0;
         }
         if self.stops.len() == 1 {
-            self.done = true;
-            if let Some(cb) = &mut self.on_complete {
-                cb();
-            }
+            self.complete_once();
             return self.stops[0].value;
         }
 
@@ -413,9 +409,7 @@ impl Keyframes {
         ) {
             Some(v) => v,
             None => {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+                self.complete_once();
                 return end_value;
             }
         };
@@ -463,6 +457,17 @@ impl Keyframes {
     pub fn reset(&mut self, tick: u64) {
         self.start_tick = tick;
         self.done = false;
+        self.completion_fired = false;
+    }
+
+    fn complete_once(&mut self) {
+        self.done = true;
+        if self.loop_mode == LoopMode::Once && !self.completion_fired {
+            self.completion_fired = true;
+            if let Some(cb) = &mut self.on_complete {
+                cb();
+            }
+        }
     }
 }
 
@@ -497,6 +502,7 @@ pub struct Sequence {
     loop_mode: LoopMode,
     start_tick: u64,
     done: bool,
+    completion_fired: bool,
     on_complete: Option<Box<dyn FnMut()>>,
 }
 
@@ -517,6 +523,7 @@ impl Sequence {
             loop_mode: LoopMode::Once,
             start_tick: 0,
             done: false,
+            completion_fired: false,
             on_complete: None,
         }
     }
@@ -547,10 +554,7 @@ impl Sequence {
     /// Return the sequence value at `tick`.
     pub fn value(&mut self, tick: u64) -> f64 {
         if self.segments.is_empty() {
-            self.done = true;
-            if let Some(cb) = &mut self.on_complete {
-                cb();
-            }
+            self.complete_once();
             return 0.0;
         }
 
@@ -569,9 +573,7 @@ impl Sequence {
         ) {
             Some(v) => v,
             None => {
-                if let Some(cb) = &mut self.on_complete {
-                    cb();
-                }
+                self.complete_once();
                 return end_value;
             }
         };
@@ -601,6 +603,17 @@ impl Sequence {
     pub fn reset(&mut self, tick: u64) {
         self.start_tick = tick;
         self.done = false;
+        self.completion_fired = false;
+    }
+
+    fn complete_once(&mut self) {
+        self.done = true;
+        if self.loop_mode == LoopMode::Once && !self.completion_fired {
+            self.completion_fired = true;
+            if let Some(cb) = &mut self.on_complete {
+                cb();
+            }
+        }
     }
 }
 
@@ -637,6 +650,7 @@ pub struct Stagger {
     loop_mode: LoopMode,
     item_count: usize,
     done: bool,
+    completion_fired: bool,
     on_complete: Option<Box<dyn FnMut()>>,
 }
 
@@ -655,6 +669,7 @@ impl Stagger {
             loop_mode: LoopMode::Once,
             item_count: 0,
             done: false,
+            completion_fired: false,
             on_complete: None,
         }
     }
@@ -742,18 +757,14 @@ impl Stagger {
 
         if self.duration_ticks == 0 {
             self.done = true;
-            if let Some(cb) = &mut self.on_complete {
-                cb();
-            }
+            self.complete_once();
             return self.to;
         }
 
         let elapsed = effective_tick - item_start;
         if elapsed >= self.duration_ticks {
             self.done = true;
-            if let Some(cb) = &mut self.on_complete {
-                cb();
-            }
+            self.complete_once();
             return self.to;
         }
 
@@ -812,6 +823,16 @@ impl Stagger {
     pub fn reset(&mut self, tick: u64) {
         self.start_tick = tick;
         self.done = false;
+        self.completion_fired = false;
+    }
+
+    fn complete_once(&mut self) {
+        if self.loop_mode == LoopMode::Once && !self.completion_fired {
+            self.completion_fired = true;
+            if let Some(cb) = &mut self.on_complete {
+                cb();
+            }
+        }
     }
 }
 
@@ -1043,6 +1064,127 @@ mod tests {
 
         assert_eq!(tween.value(11), 10.0);
         assert_eq!(count.get(), 1);
+    }
+
+    #[test]
+    fn completion_callbacks_fire_once_per_reset() {
+        let keyframe_count = Rc::new(Cell::new(0));
+        let mut keyframes = Keyframes::new(10)
+            .stop(0.0, 0.0)
+            .stop(1.0, 1.0)
+            .on_complete({
+                let count = Rc::clone(&keyframe_count);
+                move || count.set(count.get() + 1)
+            });
+        keyframes.reset(0);
+        assert_eq!(keyframes.value(10), 1.0);
+        assert_eq!(keyframes.value(11), 1.0);
+        assert_eq!(keyframe_count.get(), 1);
+        keyframes.reset(20);
+        assert_eq!(keyframes.value(30), 1.0);
+        assert_eq!(keyframe_count.get(), 2);
+
+        let sequence_count = Rc::new(Cell::new(0));
+        let mut sequence = Sequence::new()
+            .then(0.0, 1.0, 10, ease_linear)
+            .on_complete({
+                let count = Rc::clone(&sequence_count);
+                move || count.set(count.get() + 1)
+            });
+        sequence.reset(0);
+        assert_eq!(sequence.value(10), 1.0);
+        assert_eq!(sequence.value(100), 1.0);
+        assert_eq!(sequence_count.get(), 1);
+        sequence.reset(200);
+        assert_eq!(sequence.value(210), 1.0);
+        assert_eq!(sequence_count.get(), 2);
+
+        let stagger_count = Rc::new(Cell::new(0));
+        let mut stagger = Stagger::new(0.0, 1.0, 10).on_complete({
+            let count = Rc::clone(&stagger_count);
+            move || count.set(count.get() + 1)
+        });
+        stagger.reset(0);
+        assert_eq!(stagger.value(10, 0), 1.0);
+        assert_eq!(stagger.value(11, 0), 1.0);
+        assert_eq!(stagger_count.get(), 1);
+        stagger.reset(20);
+        assert_eq!(stagger.value(30, 0), 1.0);
+        assert_eq!(stagger_count.get(), 2);
+    }
+
+    #[test]
+    fn degenerate_animations_complete_once() {
+        let empty_keyframe_count = Rc::new(Cell::new(0));
+        let mut empty_keyframes = Keyframes::new(10).on_complete({
+            let count = Rc::clone(&empty_keyframe_count);
+            move || count.set(count.get() + 1)
+        });
+        assert_eq!(empty_keyframes.value(0), 0.0);
+        assert_eq!(empty_keyframes.value(1), 0.0);
+        assert_eq!(empty_keyframe_count.get(), 1);
+
+        let single_keyframe_count = Rc::new(Cell::new(0));
+        let mut single_keyframe = Keyframes::new(10).stop(0.5, 7.0).on_complete({
+            let count = Rc::clone(&single_keyframe_count);
+            move || count.set(count.get() + 1)
+        });
+        assert_eq!(single_keyframe.value(0), 7.0);
+        assert_eq!(single_keyframe.value(100), 7.0);
+        assert_eq!(single_keyframe_count.get(), 1);
+
+        let zero_sequence_count = Rc::new(Cell::new(0));
+        let mut zero_sequence = Sequence::new().then(1.0, 2.0, 0, ease_linear).on_complete({
+            let count = Rc::clone(&zero_sequence_count);
+            move || count.set(count.get() + 1)
+        });
+        assert_eq!(zero_sequence.value(0), 2.0);
+        assert_eq!(zero_sequence.value(1), 2.0);
+        assert_eq!(zero_sequence_count.get(), 1);
+    }
+
+    #[test]
+    fn looping_animations_do_not_report_terminal_completion() {
+        let keyframe_count = Rc::new(Cell::new(0));
+        let mut keyframes = Keyframes::new(10)
+            .stop(0.0, 0.0)
+            .stop(1.0, 1.0)
+            .loop_mode(LoopMode::Repeat)
+            .on_complete({
+                let count = Rc::clone(&keyframe_count);
+                move || count.set(count.get() + 1)
+            });
+        for tick in [10, 20, 100] {
+            let _ = keyframes.value(tick);
+        }
+        assert_eq!(keyframe_count.get(), 0);
+        assert!(!keyframes.is_done());
+
+        let sequence_count = Rc::new(Cell::new(0));
+        let mut sequence = Sequence::new()
+            .then(0.0, 1.0, 10, ease_linear)
+            .loop_mode(LoopMode::PingPong)
+            .on_complete({
+                let count = Rc::clone(&sequence_count);
+                move || count.set(count.get() + 1)
+            });
+        for tick in [10, 20, 100] {
+            let _ = sequence.value(tick);
+        }
+        assert_eq!(sequence_count.get(), 0);
+        assert!(!sequence.is_done());
+
+        let stagger_count = Rc::new(Cell::new(0));
+        let mut stagger = Stagger::new(0.0, 1.0, 10)
+            .loop_mode(LoopMode::Repeat)
+            .on_complete({
+                let count = Rc::clone(&stagger_count);
+                move || count.set(count.get() + 1)
+            });
+        for tick in [10, 20, 100] {
+            let _ = stagger.value(tick, 0);
+        }
+        assert_eq!(stagger_count.get(), 0);
     }
 
     #[test]

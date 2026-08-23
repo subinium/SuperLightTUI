@@ -157,7 +157,17 @@ impl Color {
     /// // ≈ Rgb(128, 128, 128)
     /// ```
     pub fn blend_f64(self, other: Color, alpha: f64) -> Color {
-        let alpha = alpha.clamp(0.0, 1.0);
+        let alpha = if alpha.is_finite() {
+            alpha.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if alpha <= 0.0 {
+            return other;
+        }
+        if alpha >= 1.0 {
+            return self;
+        }
         let (r1, g1, b1) = self.to_rgb();
         let (r2, g2, b2) = other.to_rgb();
         let r = (f64::from(r1) * alpha + f64::from(r2) * (1.0 - alpha)).round() as u8;
@@ -180,7 +190,7 @@ impl Color {
     /// Blends toward white. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns white.
     pub fn lighten_f64(self, amount: f64) -> Color {
-        Color::Rgb(255, 255, 255).blend_f64(self, 1.0 - amount.clamp(0.0, 1.0))
+        Color::Rgb(255, 255, 255).blend_f64(self, amount)
     }
 
     /// Deprecated `f32` alias for [`lighten_f64`](Self::lighten_f64).
@@ -197,7 +207,7 @@ impl Color {
     /// Blends toward black. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns black.
     pub fn darken_f64(self, amount: f64) -> Color {
-        Color::Rgb(0, 0, 0).blend_f64(self, 1.0 - amount.clamp(0.0, 1.0))
+        Color::Rgb(0, 0, 0).blend_f64(self, amount)
     }
 
     /// Deprecated `f32` alias for [`darken_f64`](Self::darken_f64).
@@ -1049,6 +1059,34 @@ mod tests {
     fn contrast_ratio_same_color_is_one() {
         let ratio = Color::contrast_ratio_f64(Color::Rgb(100, 100, 100), Color::Rgb(100, 100, 100));
         assert!((ratio - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn lighten_and_darken_amount_endpoints_are_not_reversed() {
+        let color = Color::Rgb(100, 120, 140);
+        assert_eq!(color.lighten_f64(0.0), color);
+        assert_eq!(color.lighten_f64(1.0), Color::Rgb(255, 255, 255));
+        assert_eq!(
+            color.lighten_f64(0.5),
+            Color::Rgb(178, 188, 198),
+            "half lightening blends halfway toward white"
+        );
+
+        assert_eq!(color.darken_f64(0.0), color);
+        assert_eq!(color.darken_f64(1.0), Color::Rgb(0, 0, 0));
+        assert_eq!(
+            color.darken_f64(0.5),
+            Color::Rgb(50, 60, 70),
+            "half darkening blends halfway toward black"
+        );
+    }
+
+    #[test]
+    fn non_finite_color_amounts_use_the_zero_amount_policy() {
+        let color = Color::Rgb(10, 20, 30);
+        assert_eq!(color.blend_f64(Color::White, f64::NAN), Color::White);
+        assert_eq!(color.lighten_f64(f64::NAN), color);
+        assert_eq!(color.darken_f64(f64::INFINITY), color);
     }
 
     #[test]
