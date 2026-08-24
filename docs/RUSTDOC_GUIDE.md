@@ -183,23 +183,23 @@ When a method reads/writes hook state, document **what it touches** and
 **when it triggers re-render**:
 
 ```rust
-/// Reset the focus to the first focusable in the next frame.
+/// Request focus for a named widget in the next frame.
 ///
 /// # State
 ///
-/// Writes [`Context::focus_index`]. The reset takes effect on the next
+/// Writes the pending named-focus request. The change takes effect on the next
 /// frame; the current frame still reflects the previous focus.
 ///
 /// # Example
 ///
 /// ```no_run
 /// # slt::run(|ui: &mut slt::Context| {
-/// if ui.button("Reset").clicked {
-///     ui.focus_first();
+/// if ui.button("Focus search").clicked {
+///     ui.focus_by_name("search");
 /// }
 /// # });
 /// ```
-pub fn focus_first(&mut self) { /* ... */ }
+pub fn focus_by_name(&mut self, name: &str) -> bool { /* ... */ }
 ```
 
 When a method affects layout, document **what container shape it produces**:

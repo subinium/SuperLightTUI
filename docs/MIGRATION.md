@@ -127,7 +127,7 @@ the `Command` box pattern, and a flexbox scratch buffer (perf only).
 | **Vue** | `vue-codemod` AST tool + composition API guide | Major: 3.x → vue-next migration build |
 | **Angular** | `ng update` schematic CLI (auto-migration) | Strict semver, deprecation warnings, automatic migration |
 | **Flutter** | `dart fix --apply` | Annotated deprecations migrate via `dart fix` |
-| **SLT** | sed-based codemods (no AST tool yet) + this guide + deprecation warnings | Strict semver, deprecation warnings ≥1 minor before removal in v0.x |
+| **SLT** | sed-based codemods (no AST tool yet) + this guide + deprecation warnings | Patch releases stay compatible; callable APIs warn ≥1 minor before removal, while invariant-sensitive field encapsulation is documented in minor migrations |
 
 SLT does **not** yet have an AST-aware codemod tool. PRs welcome — `cargo-slt-migrate`
 would be a high-impact contribution. Until then, the sed snippets in section 2 plus
@@ -145,10 +145,12 @@ would be a high-impact contribution. Until then, the sed snippets in section 2 p
   Minor releases are allowed to fail this check; major/minor breakage is documented in
   the release notes and reflected in this file.
 
-Deprecation policy: every API removal in a minor release is preceded by at least one
-minor release that emits `#[deprecated(since = "X.Y.Z", note = "...")]` warnings. So if
-you keep `cargo build` clean of deprecation warnings before each minor bump, you should
-not hit surprise removals.
+Deprecation policy: callable methods and named types are deprecated for at least one
+minor release before removal, with a concrete replacement in the warning. Before 1.0,
+a minor release may also encapsulate public fields whose direct mutation can violate
+cache or selection invariants; those changes must have explicit migration notes and
+replacement accessors in this guide. Patch releases never introduce either form of
+breakage, so always read the migration section before a `0.X.0` upgrade.
 
 ---
 

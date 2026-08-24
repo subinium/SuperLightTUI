@@ -130,3 +130,139 @@ fn release_smoke_uses_an_exact_registry_version() {
     assert!(script.contains("superlighttui@=${VERSION}"));
     assert!(!script.contains("path ="));
 }
+
+#[test]
+fn docs_index_lists_every_maintained_guide() {
+    let root = repo_root();
+    let index = read(root.join("docs/README.md"));
+
+    for entry in fs::read_dir(root.join("docs")).expect("docs directory") {
+        let path = entry.expect("docs entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("UTF-8 documentation filename");
+        if name == "README.md" || name.starts_with("README.") {
+            continue;
+        }
+        assert!(
+            index.contains(&format!("({name})")),
+            "docs/README.md must link maintained guide {name}"
+        );
+    }
+}
+
+#[test]
+fn maintained_recipes_use_encapsulated_state_accessors() {
+    let root = repo_root();
+    let files = [
+        "docs/COOKBOOK.md",
+        "docs/COMPLETE_REFERENCE.md",
+        "docs/STATE_APIS.md",
+        "docs/WIDGETS.md",
+    ];
+    let forbidden = [
+        "table.rows.",
+        "table.rows[",
+        "table.headers[",
+        "list.items[",
+        "palette.commands[",
+    ];
+
+    for relative in files {
+        let text = read(root.join(relative));
+        for pattern in forbidden {
+            assert!(
+                !text.contains(pattern),
+                "{relative} must use a public state accessor instead of `{pattern}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn maintained_recipes_avoid_deprecated_aliases() {
+    let root = repo_root();
+    let files = [
+        "docs/COOKBOOK.md",
+        "docs/PATTERNS.md",
+        ".agents/skills/slt-migration/SKILL.md",
+    ];
+
+    for relative in files {
+        let text = read(root.join(relative));
+        assert!(
+            !text.contains(".pad("),
+            "{relative} must use the canonical .p(...) builder"
+        );
+        assert!(
+            !text.contains("key_seq("),
+            "{relative} must use key_chord(...)"
+        );
+    }
+}
+
+#[test]
+fn agent_reference_tracks_example_inventory() {
+    let root = repo_root();
+    let manifest = read(root.join("Cargo.toml"));
+    let target_count = example_targets(&manifest).len();
+    let mut files = Vec::new();
+    collect_files(&root.join("examples"), "rs", &mut files);
+
+    let reference = read(root.join(".agents/skills/slt/REFERENCES.md"));
+    let inventory = format!(
+        "{} Rust files, {} Cargo-listed targets",
+        files.len(),
+        target_count
+    );
+    assert!(
+        reference.contains(&inventory),
+        "SLT agent reference must track the current example inventory: {inventory}"
+    );
+}
+
+#[test]
+fn project_docs_point_to_agents_instructions() {
+    let root = repo_root();
+    for relative in [
+        "docs/DESIGN_PRINCIPLES.md",
+        ".agents/skills/slt/REFERENCES.md",
+        ".agents/skills/slt-migration/SKILL.md",
+    ] {
+        let text = read(root.join(relative));
+        assert!(
+            !text.contains("CLAUDE.md") && !text.contains(".Codex/skills"),
+            "{relative} must point to AGENTS.md and .agents/skills"
+        );
+    }
+}
+
+#[test]
+fn state_api_guide_lists_every_public_widget_state() {
+    let root = repo_root();
+    let guide = read(root.join("docs/STATE_APIS.md"));
+    let mut sources = Vec::new();
+    collect_files(&root.join("src/widgets"), "rs", &mut sources);
+
+    for path in sources {
+        for line in read(&path).lines() {
+            let Some(rest) = line.trim().strip_prefix("pub struct ") else {
+                continue;
+            };
+            let name = rest
+                .split(|ch: char| ch == '<' || ch == '{' || ch.is_whitespace())
+                .next()
+                .expect("public struct name");
+            if name.ends_with("State") {
+                assert!(
+                    guide.contains(&format!("## {name}")),
+                    "docs/STATE_APIS.md must document public widget state {name}"
+                );
+            }
+        }
+    }
+}

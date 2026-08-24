@@ -28,7 +28,7 @@ ui.quit();
 ui.notify("saved", ToastLevel::Info);
 ui.focus_by_name("search");
 ui.register_focusable();
-ui.consume_indices(vec![0, 2]);
+ui.consume_key('q');
 state.set_ratio(0.5);
 ```
 
@@ -92,7 +92,7 @@ ui.container()
 .apply_padding(2)    // bad — too long, verb-shape
 .with_padding(2)     // ok if `with_` prefix is the family convention
 .p(2)                // good — terse, adjective-shape
-.padding(2)          // also good — full word ok
+.padding(Padding::all(2)) // also good — explicit full-value form
 ```
 
 ### 4. Constructors
@@ -144,7 +144,7 @@ TabsState::new(["Files", "Settings"]);
 | `with_` | builder-style override / conditional | `with_if`, `with_padding` |
 | `use_` | hook (state-bound across frames) | `use_state`, `use_effect`, `use_state_keyed` |
 | `register_` | frame-level registration | `register_focusable`, `register_focusable_named` |
-| `consume_` | mark event/index as handled | `consume_indices` |
+| `consume_` | mark an event as handled | `consume_event` |
 | `is_` | boolean getter | `is_quit_requested` |
 | `has_` | possession boolean getter | `has_focus` (use sparingly — prefer noun like `focused`) |
 | `slt_` | macro/function from SLT internals | `slt_warn!`, `slt_assert!` |
@@ -163,7 +163,7 @@ Length should match category:
   - ✅ `theme`, `spacing`, `width`, `events`
   - ❌ `tm`, `sp`, `ev`
 - **Verbs** (Layer 1 actions): full word + object.
-  - ✅ `register_focusable`, `focus_by_name`, `consume_indices`
+  - ✅ `register_focusable`, `focus_by_name`, `consume_event`
   - ❌ `reg_foc`, `foc_name`
 - **Types**: full word.
   - ✅ `TextInputState`, `SplitPaneState`, `BreadcrumbResponse`

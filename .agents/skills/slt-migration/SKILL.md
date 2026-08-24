@@ -5,7 +5,7 @@ description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to Supe
 
 # SLT Migration Skill (from ratatui / cursive / textual) — v0.23
 
-This skill complements `.Codex/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
+This skill complements `.agents/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
 
 **Targets SLT v0.23.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets_*.rs`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
 
@@ -256,8 +256,8 @@ Reserve explicit `&mut` parameters for **writes** (`&mut MyDocState`).
 | `MouseEventKind::ScrollUp` | `if ui.scroll_up() { ... }` |
 | Manual hit test | `if ui.button("X").clicked { ... }` (`Response.clicked` is a public field) |
 | Focus events | `Response.gained_focus` / `Response.lost_focus` (v0.20) |
-| `paste` event | `for s in ui.pastes() { ... }` |
-| Sequence detection | `if ui.key_seq("gg") { ... }` |
+| `paste` event | `if let Some(s) = ui.paste() { ... }` |
+| Sequence detection | `if ui.key_chord("gg") { ... }` |
 
 **Modal-aware**: `ui.key()`, `ui.key_code()`, `ui.key_mod()` are filtered when a modal is open. For global shortcuts that bypass modals, use `ui.raw_key_code()` / `ui.raw_key_mod()`.
 
@@ -389,9 +389,9 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 
 4. **Replace layout splitters.** Each `Layout::default().constraints(...).split(area)` becomes nested `ui.row` / `ui.col` + `.fill / .h / .w / .h_pct / .w_pct / .align / .justify`. `.gap(n)` instead of `.spacing(n)`, `.p(n)` instead of `.margin(n)`.
 
-5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the v0.20 mapping table or grep `src/context/widgets_*.rs`.
+5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the mapping table or grep `src/context/widgets_*.rs`.
 
-6. **Adopt v0.20 builders.** Where the old code hand-rolled gauges, breadcrumbs, scrollable-with-line-numbers, or split panes, use the v0.20 builders/opts directly. They handle hit-testing and accessibility.
+6. **Adopt current builders.** Where the old code hand-rolled gauges, breadcrumbs, scrollable-with-line-numbers, or split panes, use the v0.23 builders/opts directly. They handle hit-testing and accessibility.
 
 7. **Replace event handling.** Convert raw `crossterm::event::read()` matches to `ui.key()`, `ui.key_code()`, `ui.key_mod()`, `ui.mouse_down()`, `ui.scroll_up()`. Drop manual hit-testing in favor of `Response.clicked` / `right_clicked` / `hovered` / `gained_focus` / `lost_focus`.
 
@@ -402,21 +402,21 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 After everything compiles, run the full quality gate (project `AGENTS.md`):
 `cargo fmt -- --check`, `cargo check --all-features`, `cargo clippy --all-features -- -D warnings`, `cargo test --all-features`, `cargo check --examples --all-features`.
 
-## Things SLT v0.20 doesn't have a direct equivalent for
+## Things SLT v0.23 doesn't have a direct equivalent for
 
 Be honest with the user — these need workarounds:
 
-- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `src/context/widgets_viz.rs:1289`.
+- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `Context::canvas` in `src/context/widgets_viz.rs`.
 - **ratatui `Wrap { trim: true }` exact semantics.** SLT wraps via container width and `.wrap()` on text; trim-leading-whitespace behavior isn't identical. Test wrap-heavy text manually.
 - **cursive's deep view layering / multiple modal stacks.** SLT supports `ui.modal(...)` / `ui.modal_with(...)` / `ui.overlay_at(anchor, \|ui\| ...)` but not arbitrary nested view managers. Most uses fold into `if state.show_modal { ui.modal(\|ui\| ...) }`.
-- **textual's CSS hot reload.** Themes are Rust values (no hot reload). Use `cargo watch -x run` for fast iteration.
+- **textual's CSS/TCSS hot reload.** SLT does not hot-reload layout or arbitrary style code. The `theme-watch` feature can reload TOML themes through `ThemeWatcher`; use `cargo watch -x run` for code and layout iteration.
 
 If a feature genuinely doesn't map, tell the user — don't fake it.
 
 ## References
 
-- `.Codex/skills/slt/SKILL.md` — SLT authoring skill (use after migration is done).
-- `.Codex/skills/slt/REFERENCES.md` — feature flags, v0.20 surface, doc pointers.
+- `.agents/skills/slt/SKILL.md` — SLT authoring skill (use after migration is done).
+- `.agents/skills/slt/REFERENCES.md` — feature flags, current surface, doc pointers.
 - `examples/v020_*.rs` — runnable v0.20 demos (gauge, breadcrumb, scrollable_with_gutter, split_pane, etc.).
 - `tests/v020_*.rs` — regression tests showing canonical TestBackend + sequence patterns.
 - `src/lib.rs` — authoritative public re-exports.

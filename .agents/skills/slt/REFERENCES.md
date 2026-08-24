@@ -23,9 +23,9 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 These shipped in v0.20 and are NOT in older docs. Every entry verified against `src/`.
 
 ### Builders (Rule 1)
-- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. `src/context/widgets_display/gauge.rs:37`
-- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. `gauge.rs:55`
-- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. `widgets_display/status.rs:200`
+- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets_display/gauge.rs`.
+- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets_display/gauge.rs`.
+- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets_display/status.rs`.
 
 ### Opts struct (Rule 3)
 - `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `widgets_display/gutter.rs:115`
@@ -39,24 +39,24 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `SplitPaneState::new(0.5)`, `.with_min_ratio(0.2)`
 
 ### Hooks
-- `ui.use_state(\|\| init)` — order-based, `src/context/runtime.rs:632`
+- `ui.use_state(\|\| init)` — order-based, see `src/context/runtime.rs`
 - `ui.use_state_named("id", \|\| init)` — `&'static str` + init fn
 - `ui.use_state_named_default::<T>("id")` — `&'static str`, `T: Default`
-- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`, `runtime.rs:978`
-- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`, `runtime.rs:1002`
-- `ui.use_memo(&deps, \|d\| compute(d))` — cached compute, `runtime.rs:832`
-- `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change, `runtime.rs:1039`
-- `ui.provide(value, \|ui\| ...)` — typed scoped injection, `runtime.rs:780`
-- `ui.use_context::<T>()` — panics if missing, `runtime.rs:807`
-- `ui.try_use_context::<T>()` — `Option<&T>`, `runtime.rs:818`
+- `ui.use_state_keyed("id-{i}", \|\| init)` — runtime `String`
+- `ui.use_state_keyed_default::<T>("id-{i}")` — runtime `String` + `T: Default`
+- `ui.use_memo(&deps, \|d\| compute(d))` — cached compute
+- `ui.use_effect(\|d\| { ... }, &deps)` — side effect on deps change
+- `ui.provide(value, \|ui\| ...)` — typed scoped injection
+- `ui.use_context::<T>()` — panics if missing
+- `ui.try_use_context::<T>()` — `Option<&T>`
 
 ### Animation shorthand (v0.20)
-- `ui.animate_value("id", target, duration_ticks) -> f64` — `runtime.rs:743`
-- `ui.animate_bool("id", value) -> f64` — eased 0..1 toggle, `runtime.rs:716`
+- `ui.animate_value("id", target, duration_ticks) -> f64` — see `src/context/runtime.rs`
+- `ui.animate_bool("id", value) -> f64` — eased 0..1 toggle
 
 ### Response signal fields (v0.20)
 `Response { clicked, right_clicked, hovered, changed, focused, gained_focus, lost_focus, double_clicked, submitted, scroll_delta, rect }`.
-- `Response::on_hover(ui, "tooltip text")` — chained tooltip (`src/context/state.rs:221`)
+- `Response::on_hover(ui, "tooltip text")` — chained tooltip; see `src/context/state.rs`
 - `Response::on_hover_ui(ui, |ui| { ... })` — chained tooltip with custom body
 
 ### Theme additions (v0.20)
@@ -125,7 +125,7 @@ These docs are maintained for v0.23, but source and compile-tested examples rema
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), `examples/v020_*.rs` runnable demos, `tests/v020_*.rs` regression tests.
 
-## Examples (`examples/` — 59 files, 16 Cargo-listed)
+## Examples (`examples/` — 63 Rust files, 20 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
 - **v0.20 surface**: `v020_showcase.rs` (kitchen sink), `v020_tour.rs` (tabbed), `v020_dx_shortcuts.rs` (on_hover/animate_bool/fill)
@@ -136,7 +136,7 @@ The skill's `SKILL.md` lists the canonical reference example for each domain. Hi
 
 ## Release / deployment
 
-`CLAUDE.md` at project root has the full 8-step checklist. Short:
+`AGENTS.md` at project root has the full 8-step checklist. Short:
 
 Local PRE-CI → branch `release/vX.Y.Z` → atomic commit → push → PR → wait CI → merge (squash) → pull main → tag → push tag → wait `release.yml` → verify `gh release view` + crates.io + docs.rs → announce.
 

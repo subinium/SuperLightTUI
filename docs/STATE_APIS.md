@@ -1,9 +1,9 @@
 # State APIs
 
-Method-level reference for every public `*State` struct and its companions.
-`docs/WIDGETS.md` lists **fields**; this document lists **methods** you can
-call on those fields — validators, filters, selection helpers, page
-navigation, toggle logic, and so on.
+Maintained reference for the public `*State` structs and their most useful
+companions. `docs/WIDGETS.md` gives the quick catalog; this document separates
+public fields from accessor and mutation methods. docs.rs and `src/widgets/`
+remain authoritative for the complete generated API surface.
 
 Every item below is declared `pub` in `src/widgets/*.rs`. Private helpers
 and `pub(crate)` methods are intentionally omitted because they are not
@@ -223,9 +223,10 @@ Selectable list.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `items` | `Vec<String>` | Display strings. |
 | `selected` | `usize` | Current selection. |
-| `filter` | `String` | Substring filter (AND-of-tokens, case-insensitive). |
+
+Items and filter state are private because they are coupled to search and
+viewport caches. Read or mutate them through the methods below.
 
 ### Constructors
 
@@ -237,9 +238,16 @@ Selectable list.
 | Signature | Description |
 |-----------|-------------|
 | `set_items(&mut self, items: Vec<impl Into<String>>)` | Replace items and rebuild filtered view. |
+| `items(&self) -> &[String]` | Read all underlying items. |
+| `len(&self) -> usize` / `is_empty(&self) -> bool` | Inspect the underlying collection size. |
+| `item(&self, index: usize) -> Option<&str>` | Checked access by data index. |
+| `push_item(...)`, `insert_item(...)`, `remove_item(...)`, `clear_items()` | Mutate items while rebuilding cache-coupled state. |
+| `filter(&self) -> &str` | Read the active filter. |
 | `set_filter(&mut self, filter: impl Into<String>)` | Update filter and recompute visible indices. |
 | `visible_indices(&self) -> &[usize]` | Indices into `items` that survive the filter. |
 | `selected_item(&self) -> Option<&str>` | Text of the currently selected item. |
+| `with_item_heights(...)`, `set_item_heights(...)`, `clear_item_heights()` | Configure variable-height virtualization. |
+| `move_item(&mut self, from: usize, to: usize) -> bool` | Reorder an item while preserving cache invariants. |
 
 ### Minimal example
 
@@ -279,8 +287,13 @@ Directory browser with extension and hidden-file filters.
 |-----------|-------------|
 | `show_hidden(self, show: bool) -> Self` | Builder: include dotfiles. |
 | `extensions(self, exts: &[&str]) -> Self` | Builder: restrict to given extensions. |
-| `selected(&self) -> Option<&PathBuf>` | The chosen file, if any. |
-| `refresh(&mut self)` | Re-read the directory listing. |
+| `selected_file(&self) -> Option<&PathBuf>` | The chosen file, if any. |
+| `refresh(&mut self)` | Re-read the directory listing and retain errors in state. |
+| `try_refresh(&mut self) -> Result<(), FilePickerScanError>` | Fallible refresh for immediate control flow. |
+| `retry(&mut self)` | Mark the listing for another scan after a transient failure. |
+| `scan_status(&self) -> FilePickerScanStatus` | Read listing freshness. |
+| `scan_errors(&self) -> &[FilePickerScanError]` | Read all failures from the latest scan. |
+| `last_error(&self) -> Option<&FilePickerScanError>` | Read the most recent scan failure. |
 
 ### Minimal example
 
@@ -301,7 +314,7 @@ Source: `src/widgets/collections.rs`.
 | `name` | `String` | Base name. |
 | `path` | `PathBuf` | Full path. |
 | `is_dir` | `bool` | Directory flag. |
-| `size` | `u64` | Size in bytes (0 for directories). |
+| `size` | `Option<u64>` | Size in bytes, or `None` for directories and unreadable metadata. |
 
 ### Constructors
 
@@ -355,15 +368,16 @@ Sortable, filterable, paginated table.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `headers` | `Vec<String>` | Column headers. |
-| `rows` | `Vec<Vec<String>>` | Table data. |
 | `selected` | `usize` | Selected row index (within the visible view). |
+| `multi_selected` | `HashSet<usize>` | Multi-selected visible row indices. |
 | `sort_column` | `Option<usize>` | Active sort column. |
 | `sort_ascending` | `bool` | Sort direction. |
-| `filter` | `String` | Filter text (AND of space-separated tokens). |
 | `page` | `usize` | Current page (0-based). |
 | `page_size` | `usize` | Rows per page; `0` disables pagination. |
 | `zebra` | `bool` | Alternating row backgrounds. |
+
+Headers, rows, filter text, and width caches are private. Use the methods below
+so filtering, sorting, selection, and width caches stay synchronized.
 
 ### Constructors
 
@@ -375,6 +389,11 @@ Sortable, filterable, paginated table.
 | Signature | Description |
 |-----------|-------------|
 | `set_rows(&mut self, rows: Vec<Vec<impl Into<String>>>)` | Replace rows; clamps selection and rebuilds the filter cache. |
+| `headers(&self) -> &[String]` / `set_headers(...)` | Read or replace column headers. |
+| `rows(&self) -> &[Vec<String>]` / `row(index)` | Read all rows or one checked row. |
+| `row_count(&self) -> usize` / `is_empty(&self) -> bool` | Inspect the underlying row collection. |
+| `push_row(...)`, `insert_row(...)`, `remove_row(...)`, `clear_rows()` | Mutate rows while rebuilding cache-coupled state. |
+| `filter(&self) -> &str` | Read the active filter. |
 | `toggle_sort(&mut self, column: usize)` | Sort by column; toggles direction if already sorted. |
 | `sort_by(&mut self, column: usize)` | Sort ascending by column. |
 | `set_filter(&mut self, filter: impl Into<String>)` | Update filter; resets the page. |
@@ -384,6 +403,10 @@ Sortable, filterable, paginated table.
 | `total_pages(&self) -> usize` | Pages given current filter and `page_size`. |
 | `visible_indices(&self) -> &[usize]` | Row indices after filter + sort. |
 | `selected_row(&self) -> Option<&[String]>` | The currently selected row. |
+| `column_widths_spec(&mut self, specs: &[TableColumn])` | Configure per-column width policies. |
+| `selected_rows(&self) -> Vec<&[String]>` | Resolve multi-selected rows in visible order. |
+| `is_row_selected(&self, view_idx: usize) -> bool` | Check focused or multi-selected state. |
+| `clear_selection(&mut self)` | Clear multi-selection. |
 
 ### Minimal example
 
@@ -407,6 +430,8 @@ Vertical scroll bookkeeping for `Context::scrollable`.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `offset` | `usize` | First visible row. |
+| `offset_x` | `usize` | First visible horizontal column. |
+| `dragging` | `bool` | Whether the scrollbar thumb is being dragged. |
 
 ### Constructors
 
@@ -421,9 +446,12 @@ Vertical scroll bookkeeping for `Context::scrollable`.
 | `can_scroll_down(&self) -> bool` | Content extends past the viewport. |
 | `content_height(&self) -> u32` | Total content rows. |
 | `viewport_height(&self) -> u32` | Visible rows. |
-| `progress(&self) -> f32` | Scroll progress in `[0.0, 1.0]`. |
+| `progress_ratio(&self) -> f64` | Scroll progress in `[0.0, 1.0]`. |
 | `scroll_up(&mut self, amount: usize)` | Clamp to 0. |
 | `scroll_down(&mut self, amount: usize)` | Clamp to max offset. |
+| `set_offset(&mut self, offset: usize)` | Set and clamp the vertical offset. |
+| `can_scroll_left/right`, `content_width`, `viewport_width`, `progress_x` | Inspect horizontal scrolling. |
+| `scroll_left/right`, `set_highlights`, `highlights`, `highlight_next/previous` | Horizontal and highlighted-range navigation. |
 
 ## SelectState
 
@@ -435,10 +463,13 @@ Dropdown.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `items` | `Vec<String>` | Options. |
 | `selected` | `usize` | Current option index. |
 | `open` | `bool` | Whether the dropdown is expanded. |
 | `placeholder` | `String` | Fallback label when `items` is empty. |
+| `filter` | `String` | Live type-to-filter query while open. |
+
+Option storage and the internal cursor are private. Use `items()` and
+`set_items()` to preserve cursor and selection bounds.
 
 ### Constructors
 
@@ -449,6 +480,9 @@ Dropdown.
 
 | Signature | Description |
 |-----------|-------------|
+| `items(&self) -> &[String]` | Read all option labels. |
+| `len(&self) -> usize` / `is_empty(&self) -> bool` | Inspect the option count. |
+| `set_items(&mut self, items: Vec<impl Into<String>>)` | Replace options and clamp selection state. |
 | `placeholder(self, p: impl Into<String>) -> Self` | Builder: set placeholder. |
 | `selected_item(&self) -> Option<&str>` | Currently selected label. |
 
@@ -490,9 +524,11 @@ Source: `src/widgets/selection.rs`.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `items` | `Vec<String>` | Option labels. |
 | `cursor` | `usize` | Keyboard focus cursor. |
 | `selected` | `HashSet<usize>` | Checked indices. |
+
+Option storage is private. Use `items()` and `set_items()` so stale selected
+indices are pruned.
 
 ### Constructors
 
@@ -502,6 +538,9 @@ Source: `src/widgets/selection.rs`.
 
 | Signature | Description |
 |-----------|-------------|
+| `items(&self) -> &[String]` | Read all option labels. |
+| `len(&self) -> usize` / `is_empty(&self) -> bool` | Inspect the option count. |
+| `set_items(&mut self, items: Vec<impl Into<String>>)` | Replace options and synchronize selection. |
 | `selected_items(&self) -> Vec<&str>` | Selected labels in ascending-index order. |
 | `toggle(&mut self, index: usize)` | Add or remove `index` from `selected`. |
 
@@ -639,11 +678,13 @@ Modal palette with fuzzy search.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `commands` | `Vec<PaletteCommand>` | Available commands. |
 | `input` | `String` | Current search query. |
 | `cursor` | `usize` | Cursor into `input`. |
 | `open` | `bool` | Whether the modal is visible. |
 | `last_selected` | `Option<usize>` | Last confirmed command index. Consume after `response.changed`. |
+
+Command storage and its filtered-selection cache are private. Mutate commands
+through the synchronization methods below.
 
 ### Constructors
 
@@ -653,6 +694,9 @@ Modal palette with fuzzy search.
 
 | Signature | Description |
 |-----------|-------------|
+| `commands(&self) -> &[PaletteCommand]` | Read all commands. |
+| `set_commands(&mut self, commands: Vec<PaletteCommand>)` | Replace commands and synchronize cached state. |
+| `push_command(...)`, `remove_command(...)`, `clear_commands()` | Mutate commands while invalidating filter state. |
 | `toggle(&mut self)` | Open or close; resets input when opening. |
 
 ### Minimal example
@@ -912,7 +956,12 @@ Date picker.
 
 | Signature | Description |
 |-----------|-------------|
+| `with_range(&mut self) -> &mut Self` | Switch to date-range selection. |
+| `with_time(&mut self) -> &mut Self` | Enable time selection. |
+| `mode(&self) -> CalendarSelect` | Read the active selection mode. |
 | `selected_date(&self) -> Option<(i32, u32, u32)>` | Returns `(year, month, day)` when a day is selected. |
+| `selected_range(&self) -> Option<(CalDate, CalDate)>` | Read the normalized selected range. |
+| `selected_time(&self) -> Option<(u8, u8)>` | Read the selected hour and minute. |
 | `prev_month(&mut self)` | Move view back one month. |
 | `next_month(&mut self)` | Move view forward one month. |
 
@@ -1023,6 +1072,113 @@ Source: `src/widgets/feedback.rs`.
 - `Down` — negative movement.
 
 `#[non_exhaustive]`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Debug`.
+
+## NumberInputState
+
+Source: `src/widgets/input.rs`.
+
+Editable numeric stepper with normalized bounds.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `value` | `f64` | Committed value. |
+| `min` / `max` | `f64` | Inclusive normalized range. |
+| `step` | `f64` | Per-action increment. |
+| `integer` | `bool` | Round and render as a whole number. |
+| `editing` | `Option<String>` | In-progress typed buffer. |
+| `parse_error` | `Option<String>` | Latest typed-value parse error. |
+
+### Constructors and methods
+
+- `NumberInputState::new(value: f64, min: f64, max: f64) -> Self`
+- `NumberInputState::integer(value: i64, min: i64, max: i64) -> Self`
+- `step(self, step: f64) -> Self`
+- `normalize(&mut self)` after direct public-field mutation
+- `clamped(&self) -> f64`
+
+## PaginatorState
+
+Source: `src/widgets/collections.rs`.
+
+Standalone page navigation for arbitrary data.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `total_items` | `usize` | Total item count. |
+| `per_page` | `usize` | Items per page, normalized to at least 1 by methods. |
+| `page` | `usize` | Current zero-based page. |
+| `style` | `PaginatorStyle` | `Dots` or compact `Arabic` rendering. |
+
+### Constructors and methods
+
+- `PaginatorState::new(total_items: usize, per_page: usize) -> Self`
+- `total_pages(&self) -> usize` and `page_bounds(&self) -> (usize, usize)`
+- `next_page(&mut self)`, `prev_page(&mut self)`, `set_page(&mut self, page: usize)`
+- `set_total_items(&mut self, total: usize)` and `set_per_page(&mut self, per_page: usize)`
+
+## SplitPaneState
+
+Source: `src/widgets/collections.rs`.
+
+Shared state for `Context::split_pane` and `Context::vsplit_pane`.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `ratio` | `f64` | Fraction assigned to the first pane. |
+| `dragging` | `bool` | Whether the divider is being dragged. |
+| `min_ratio` | `f64` | Minimum fraction assigned to either pane. |
+
+### Constructors and methods
+
+- `SplitPaneState::new(ratio: f64) -> Self`
+- `SplitPaneState::default() -> Self` (ratio 0.5)
+- `with_min_ratio(self, min: f64) -> Self`
+- `set_ratio(&mut self, ratio: f64)`
+
+## ColorPickerState
+
+Source: `src/widgets/selection.rs`.
+
+Palette-grid and hex-entry color selection.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `colors` | `Vec<Color>` | Row-major palette swatches. |
+| `columns` | `usize` | Swatches per row. |
+| `selected` | `usize` | Selected palette index. |
+| `mode` | `PickerMode` | `Palette` or `Hex`. |
+| `hex_input` | `TextInputState` | Backing field for hex mode. |
+
+### Constructors and methods
+
+- `ColorPickerState::new(colors: Vec<Color>) -> Self`
+- `ColorPickerState::tailwind() -> Self`
+- `columns(self, n: usize) -> Self`
+- `selected(&self) -> Color`
+
+## ChordState
+
+Source: `src/widgets/commanding.rs`.
+
+All fields are private and there are no user-facing methods. `Context` owns the
+default-constructed state across frames; callers use `Context::key_chord` and
+`Context::key_chord_timeout` rather than constructing or mutating it directly.
+
+## SchedulerState
+
+Source: `src/widgets/feedback.rs`.
+
+All fields and methods are crate-internal. `Context` owns the default-constructed
+timer and exclusive-claim state across frames; callers use `Context::schedule`,
+`Context::every`, their keyed variants, and `Context::exclusive`.
 
 ## Coverage contract
 

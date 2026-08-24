@@ -123,6 +123,8 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 | `container()` | `ContainerBuilder` | Fluent builder for borders, padding, grow, constraints, title |
 | `scrollable(state)` | `ContainerBuilder` | Scrollable container. `ScrollState` |
 | `scrollbar(state)` | `Response` | Render and interact with a mutable `ScrollState` scrollbar track |
+| `split_pane(state, left, right)` | `SplitPaneResponse` | Draggable horizontal split. `SplitPaneState` |
+| `vsplit_pane(state, top, bottom)` | `SplitPaneResponse` | Draggable vertical split. `SplitPaneState` |
 | `bordered(border)` | `ContainerBuilder` | Shorthand for `container().border(border)` |
 | `modal(f)` | `Response` | Modal overlay with dimmed background |
 | `overlay(f)` | `Response` | Floating overlay (no dimming) |
@@ -138,7 +140,7 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 ui.row(|ui| {
     ui.container()
         .border(Border::Rounded)
-        .pad(1)
+        .p(1)
         .grow(1)
         .col(|ui| {
             ui.text("Panel content");
@@ -161,6 +163,7 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `toggle(label, on)` | `&mut bool` | Toggle switch. Variant: `toggle_colored(...)` |
 | `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider (default step = `span / 20`) |
 | `slider_with(value, opts)` | `&mut f64`, `SliderOpts` | Slider with explicit options, e.g. `SliderOpts::new(label, range).step(1.0)` |
+| `number_input(state)` | `NumberInputState` | Editable integer or floating-point stepper |
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
 | `select(state)` | `SelectState` | Dropdown select. Variant: `select_colored(...)` |
@@ -172,7 +175,9 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `tree(state)` | `TreeState` | Expandable tree view |
 | `directory_tree(state)` | `DirectoryTreeState` | Filesystem tree |
 | `calendar(state)` | `CalendarState` | Month calendar with date selection |
+| `paginator(state)` | `PaginatorState` | Standalone page navigation for arbitrary data |
 | `file_picker(state)` | `FilePickerState` | File browser dialog |
+| `color_picker(state)` | `ColorPickerState` | Palette grid with optional hex-entry mode |
 | `command_palette(state)` | `CommandPaletteState` | Modal fuzzy-search command palette |
 | `virtual_list(state, visible_height, f)` | `ListState` | Virtualized list — only renders visible rows |
 
@@ -341,24 +346,30 @@ These are not widgets but essential `Context` methods for state, input, and envi
 |---|---|---|
 | `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
 | `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length` |
-| `select` | `SelectState` | `.items: Vec<String>`, `.selected: usize`, `.open: bool` |
+| `select` | `SelectState` | `.items()`, `.set_items(...)`, `.selected`, `.open`, `.filter` |
 | `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
-| `multi_select` | `MultiSelectState` | `.items: Vec<String>`, `.selected: HashSet<usize>` |
+| `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |
 | `tabs` | `TabsState` | `.labels: Vec<String>`, `.selected: usize`, `::new(labels)` |
-| `list` | `ListState` | `.items: Vec<String>`, `.selected: usize`, `.filter` |
-| `table` | `TableState` | `.headers`, `.rows`, `.selected`, `.sort_column`, `.sort_ascending`, `.page`, `.page_size`, `.filter`, `::new(headers, rows)` |
-| `tree` | `TreeState` | `.nodes`, `.selected`, `.expanded: HashSet` |
-| `directory_tree` | `DirectoryTreeState` | `.root: PathBuf`, `.selected_path()` |
-| `calendar` | `CalendarState` | `.year`, `.month`, `.cursor_day`, `.selected_date()` |
+| `list` | `ListState` | `.items()`, `.item(index)`, `.set_items(...)`, `.filter()`, `.set_filter(...)`, `.selected` |
+| `table` | `TableState` | `.headers()`, `.rows()`, `.set_headers(...)`, `.set_rows(...)`, `.filter()`, `.selected`, `.sort_column`, `.page`, `.page_size` |
+| `tree` | `TreeState` | `.nodes`, `.selected`; each `TreeNode` owns `.expanded` |
+| `directory_tree` | `DirectoryTreeState` | `.tree`, `.show_icons`, `.selected_label()` |
+| `calendar` | `CalendarState` | `.year`, `.month`, `.selected_date()`, `.selected_range()`, `.selected_time()` |
+| `number_input` | `NumberInputState` | `.value`, `.min`, `.max`, `.step`, `.integer`, `.normalize()`, `.clamped()` |
+| `paginator` | `PaginatorState` | `.total_items`, `.per_page`, `.page`, `.style`, `.page_bounds()` |
 | `file_picker` | `FilePickerState` | `.current_dir`, `.selected_file()`, `.scan_status()`, `.scan_errors()`, `.retry()` |
-| `command_palette` | `CommandPaletteState` | `.commands: Vec<PaletteCommand>`, `.open`, `.input`, `.last_selected` |
-| `scroll` | `ScrollState` | `.offset`, `.content_height`, `.viewport_height` |
+| `color_picker` | `ColorPickerState` | `.colors`, `.columns`, `.selected`, `.mode`, `.selected()` |
+| `command_palette` | `CommandPaletteState` | `.commands()`, `.set_commands(...)`, `.open`, `.input`, `.last_selected` |
+| `scroll` | `ScrollState` | `.offset`, `.offset_x`, `.dragging`, `.content_height()`, `.viewport_height()`, `.progress_ratio()` |
 | `spinner` | `SpinnerState` | `::dots()`, `::line()`, `.frame(tick)` |
-| `toast` | `ToastState` | `.push(msg, level)`, `.messages`, `.cleanup(tick)` |
+| `toast` | `ToastState` | `.info(msg, tick)`, `.push(msg, level, tick, duration)`, `.messages`, `.cleanup(tick)` |
 | `form` | `FormState` | `.fields: Vec<FormField>`, `.submitted: bool` |
 | `form_field` | `FormField` | `.label`, `.input: TextInputState`, `.error` |
 | `screen` | `ScreenState` | `.current()`, `.push(name)`, `.pop()`, `::new(initial)` |
 | (modes) | `ModeState` | `.active_mode()`, `.switch_mode(name)`, `.screens_mut()`, `::new(mode, screen)` |
+| (key chords) | `ChordState` | Context-owned partial chord state; use `ui.key_chord(...)` |
+| (timers) | `SchedulerState` | Context-owned timer state; use `ui.schedule(...)`, `ui.every(...)`, and `ui.exclusive(...)` |
+| `split_pane` / `vsplit_pane` | `SplitPaneState` | `.ratio`, `.dragging`, `.min_ratio`, `.set_ratio(...)` |
 | `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
@@ -392,7 +403,7 @@ Finalize with `.col(f)`, `.row(f)`, or `.draw(f)`.
 
 | Method | Description |
 |---|---|
-| `.p(n)` / `.pad(n)` | Uniform padding |
+| `.p(n)` | Uniform padding (`.pad(n)` is a deprecated compatibility alias) |
 | `.px(n)` / `.py(n)` | Horizontal / vertical padding |
 | `.pt(n)` / `.pr(n)` / `.pb(n)` / `.pl(n)` | Individual side padding |
 | `.padding(Padding)` | Full `Padding` struct |

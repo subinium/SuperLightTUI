@@ -134,16 +134,22 @@ whether `r` is `Response` or `BreadcrumbResponse`. The compound fields
 
 ### M1 — One method, one layer
 
-A method must not exist on more than one layer with the same name and
-similar semantics. Where SLT currently has duplicates, the rule is
-documented but not yet enforced.
+A method must not exist on more than one layer with the same name and similar
+semantics unless the overlap is an explicitly reviewed ergonomic exception.
+`scripts/api_audit.sh --strict` rejects every unapproved overlap in CI; the V1
+allowlist in that script is the machine-readable source of approved exceptions.
 
-**Currently allowed (documented exceptions)**:
+**Representative approved exceptions**:
 
 | Name | Context | Builder | Resolution |
 |------|---------|---------|------------|
 | `text` | unbordered shortcut | inside-builder form | both keep |
 | `theme` | getter | per-subtree override | both keep (different semantics) |
+
+Fluent layout modifiers and container finalizers may also appear at both layers
+when their return type and composition semantics differ. Every new overlap still
+requires review and an explicit V1 allowlist entry; the table above is illustrative,
+not the complete allowlist.
 
 **Documented ergonomic shortcut**: `ui.bordered(...)` remains a convenience
 entry point for `ui.container().border(...)`. New low-level examples prefer the
