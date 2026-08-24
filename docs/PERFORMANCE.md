@@ -22,7 +22,7 @@ broken down by phase:
 | **Total framework overhead** | **< 5 ms** | |
 
 The remaining ~11 ms is yours: terminal I/O, async work, and slack for the
-OS scheduler. The pipeline runs in `slt::frame()` (`src/lib.rs:359`)
+OS scheduler. The pipeline runs in `slt::frame()` (see `src/lib.rs`)
 which is called once per tick by `run_with` / `run_inline_with` /
 `run_static_with`.
 
@@ -142,17 +142,17 @@ cargo bench --bench benchmarks -- --baseline before
 `AppState` exposes the smoothed FPS estimate and a debug toggle:
 
 ```rust
-// AppState API (src/lib.rs:251, :256)
+// AppState API (see src/lib.rs)
 let fps = state.fps_f64();         // exponential moving average
 state.set_debug(true);             // same as pressing F12
 ```
 
 When the debug overlay is active (toggled by F12 at runtime, or via
 `AppState::set_debug(true)` programmatically), the `render_debug_overlay`
-pass (`src/layout/render.rs:24`) draws layout outlines on top of the
+pass in `src/layout/render.rs` draws layout outlines on top of the
 frame. The overlay layer is configurable via
 `DiagnosticsState.debug_layer: DebugLayer` — `All` (default), `TopMost`,
-or `BaseOnly` (issue #201 in `src/lib.rs:571–587`).
+or `BaseOnly` (issue #201; see `DiagnosticsState` in `src/lib.rs`).
 
 There is no `RunConfig::show_fps()` builder method. To put an FPS readout
 on screen, render `state.fps_f64()` yourself in your UI closure, or rely on
@@ -169,8 +169,8 @@ let _keep_going = slt::frame(&mut backend, &mut state, &config, &events, &mut f)
 println!("frame took {:?}", start.elapsed());
 ```
 
-For phase-level breakdown, splice timestamps inside `frame()` itself
-(`src/lib.rs:359`) and capture them under a feature flag. Don't
+For phase-level breakdown, splice timestamps inside `frame()` itself in
+`src/lib.rs` and capture them under a feature flag. Don't
 ship phase timers in release binaries — they show up in the steady-state
 budget.
 
@@ -207,10 +207,10 @@ frames don't reallocate.
 For collections that are almost always ≤ N items, use
 `SmallVec<[T; N]>` or fixed-size arrays. SLT examples:
 
-- `consume_activation_keys` (`src/context/runtime.rs:440`) typically
+- `consume_activation_keys` in `src/context/runtime.rs` typically
   pushes 0–2 indices per frame → `SmallVec<[usize; 8]>` keeps the common
   case allocation-free (#135).
-- `flexbox::U32Stack` (`src/layout/flexbox.rs:23`) is a `[u32; 16]`
+- `flexbox::U32Stack` in `src/layout/flexbox.rs` is a `[u32; 16]`
   inline buffer with a heap-`Vec` overflow path (#67). Child-counts ≤ 16
   pay zero allocations per `layout_row` / `layout_column` call.
 
@@ -250,11 +250,11 @@ let s2 = s;                                   // free (memcpy of 16 bytes)
 `Buffer::set_string` is the most-called write API on the render path.
 Variants:
 
-- `set_string_inner` (`src/buffer.rs:335`) — private, single insertion
+- `set_string_inner` in `src/buffer.rs` — private, single insertion
   point, dedup'd from `set_string` and `set_string_with_url` (#169).
-- `set_string` (`src/buffer.rs:316`) — no hyperlink, calls `_inner` with
+- `set_string` in `src/buffer.rs` — no hyperlink, calls `_inner` with
   `link: None`.
-- `set_string_with_url` (`src/buffer.rs:325`) — OSC 8 hyperlink path,
+- `set_string_with_url` in `src/buffer.rs` — OSC 8 hyperlink path,
   calls `_inner` with `link: Some(&url)`. URL validation goes through
   `is_valid_osc8_url` (#168), which doesn't allocate when validation
   fails.
@@ -277,8 +277,8 @@ type and invalidate on mutation rather than recomputing per frame:
 - `ListState` lowercase-cache (#96) — set by `set_filter`; avoids
   per-keystroke `to_lowercase()` over the whole item set.
 
-For your own derived values, use `ui.use_memo(deps, |d| compute(d))`
-(`src/context/runtime.rs:651`) — the hook stores `(deps, value)` and
+For your own derived values, use `ui.use_memo(deps, |d| compute(d))` from
+`src/context/runtime.rs` — the hook stores `(deps, value)` and
 recomputes only on `PartialEq` deps change.
 
 ### Pattern 7: Token streaming — cache the chrome, not the stream (#273)
@@ -422,12 +422,12 @@ The `dhat-heap.json` output opens in
 ## 7. Anti-patterns to avoid
 
 - **Calling widgets inside a `for` loop with thousands of items** — use
-  `ui.virtual_list(&mut state, visible_height, |ui, idx| {...})`
-  (`src/context/widgets_interactive/rich_markdown.rs:151`) instead of
+  `ui.virtual_list(&mut state, visible_height, |ui, idx| {...})` from
+  `src/context/widgets_interactive/rich_markdown.rs` instead of
   `ui.list(&mut state)`. `virtual_list` only renders rows in the visible
   window; a 100k-item list pays for the visible 50 rows, not all 100k.
 - **Heavy derivation on every frame** — cache results in
-  `ui.use_memo(deps, |d| ...)` (`src/context/runtime.rs:651`). The
+  `ui.use_memo(deps, |d| ...)` from `src/context/runtime.rs`. The
   closure runs only when `deps` changes by `PartialEq`.
 - **`.clone()` on `Style`** — `Style` is `Copy`. Drop the `.clone()`.
   Same for `Color`, `Rect`, `Border`, `Padding`, `Margin`, `Theme`.

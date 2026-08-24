@@ -99,7 +99,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Sign In")
-            .pad(2)
+            .p(2)
             .gap(1)
             .col(|ui| {
                 ui.text("Welcome back").bold().fg(Color::Cyan);
@@ -202,7 +202,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Projects")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("Press 1/2/3 to sort, Left/Right to page").dim();
@@ -216,14 +216,16 @@ fn main() -> std::io::Result<()> {
                     ui.text(format!(
                         "Showing {}/{} rows",
                         table.visible_indices().len(),
-                        table.rows.len(),
+                        table.row_count(),
                     ))
                     .dim();
                     ui.spacer();
                     if let Some(col) = table.sort_column {
                         let arrow = if table.sort_ascending { "asc" } else { "desc" };
-                        ui.text(format!("Sort: {} {arrow}", table.headers[col]))
-                            .fg(Color::Cyan);
+                        if let Some(header) = table.headers().get(col) {
+                            ui.text(format!("Sort: {header} {arrow}"))
+                                .fg(Color::Cyan);
+                        }
                     }
                     ui.spacer();
                     ui.text(format!(
@@ -288,7 +290,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Files")
-            .pad(1)
+            .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("Select a file, then press Delete.").dim();
@@ -322,7 +324,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Double)
                     .title("Confirm delete")
-                    .pad(2)
+                    .p(2)
                     .gap(1)
                     .col(|ui| {
                         let target = items
@@ -413,7 +415,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("Live Dashboard")
-            .pad(1)
+            .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {
@@ -425,14 +427,14 @@ fn main() -> std::io::Result<()> {
                 });
 
                 let _ = ui.row(|ui| {
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_trend("Requests / min", &format!("{reqs:.0}"), Trend::Up);
                     });
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let color = if cpu > 80.0 { Color::Red } else { Color::Cyan };
                         let _ = ui.stat_colored("CPU", &format!("{cpu:.1}%"), color);
                     });
-                    let _ = ui.bordered(Border::Single).pad(1).grow(1).col(|ui| {
+                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let _ = ui.stat_colored("P99", "42ms", Color::Yellow);
                     });
                 });
@@ -440,7 +442,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("CPU (last 60 ticks)")
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         let _ = ui.sparkline(&cpu_hist, 60);
                     });
@@ -448,7 +450,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Requests / min")
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         let _ = ui.chart(
                             |c| {
@@ -470,7 +472,7 @@ fn main() -> std::io::Result<()> {
                 let _ = ui
                     .bordered(Border::Single)
                     .title("Top Routes")
-                    .pad(1)
+                    .p(1)
                     .col(|ui| {
                         let _ = ui.bar_chart(&top_routes, 30);
                     });
@@ -527,7 +529,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui
             .bordered(Border::Rounded)
             .title("File Picker")
-            .pad(1)
+            .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {
@@ -543,7 +545,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Single)
                         .title("Browse")
-                        .pad(1)
+                        .p(1)
                         .grow(1)
                         .col(|ui| {
                             if ui.file_picker(&mut picker).changed {
@@ -570,7 +572,7 @@ fn main() -> std::io::Result<()> {
                     let _ = ui
                         .bordered(Border::Single)
                         .title("Preview")
-                        .pad(1)
+                        .p(1)
                         .grow(2)
                         .col(|ui| match &preview {
                             None => {
@@ -664,7 +666,7 @@ fn main() -> std::io::Result<()> {
             let _ = ui
                 .bordered(Border::Rounded)
                 .title("Shared context demo")
-                .pad(1)
+                .p(1)
                 .gap(1)
                 .col(|ui| {
                     render_header(ui);

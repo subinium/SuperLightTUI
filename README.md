@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**Superfast** to write. **Superlight** dependency tree (4 direct required deps, 25 resolved with default features vs 68 for ratatui + crossterm).
+**Superfast** to write. **Superlight** dependency tree (4 direct required deps, 26 resolved with default features vs 69 for ratatui + crossterm).
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -125,7 +125,7 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 | Full-screen | `slt::run` / `slt::run_with` | Standard TUI app — alternate screen, mouse, theme. |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | Fixed-height widget below the prompt — no alternate screen. |
 | Static + inline | `slt::run_static` | Log lines stream into scrollback while an inline UI stays live below. |
-| Async messages | `slt::run_async` *(feature: `async`)* | Background tasks push messages into the closure via `tokio::mpsc`. |
+| Async messages | `slt::run_async` *(feature: `async`)* | Background tasks use the wake-aware `AsyncSender`; retain the returned `AsyncRunHandle` to join or cancel the loop. |
 | Custom backend | `slt::frame` + `Backend` + `AppState` | Drive rendering yourself — tests, GUI embeds, WASM, snapshot harnesses. |
 
 `RunConfig` tunes mouse, kitty keyboard, color depth, max FPS, scroll speed, theme, and title across every mode.
@@ -249,6 +249,8 @@ For composition advice, see [Patterns Guide].
 |----------|----------------|
 | [Quick Start] | Install, first app, closure mental model, layout, widget state |
 | [Widget Guide] | Complete API catalog of widgets, runtime methods, and state types |
+| [State API Guide] | Public fields, accessors, and mutation methods for widget state |
+| [Migration Guide] | Version-by-version breaking changes and upgrade paths |
 | [Patterns Guide] | State placement, screen composition, helper extraction, large-app structure |
 | [Examples Guide] | Runnable examples grouped by product shape and feature area |
 | [Backends Guide] | `Backend`, `AppState`, `frame()`, inline mode, static output |
@@ -327,6 +329,8 @@ The release process expects format, check, clippy, tests, examples, and backend 
 [AI Guide]: docs/AI_GUIDE.md
 [Quick Start]: docs/QUICK_START.md
 [Widget Guide]: docs/WIDGETS.md
+[State API Guide]: docs/STATE_APIS.md
+[Migration Guide]: docs/MIGRATION.md
 [Examples Guide]: docs/EXAMPLES.md
 [Patterns Guide]: docs/PATTERNS.md
 [Architecture Guide]: docs/ARCHITECTURE.md

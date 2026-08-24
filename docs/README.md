@@ -43,8 +43,12 @@ The idea is simple:
 - [ANIMATION.md](ANIMATION.md) - tween, spring, keyframes, sequence, stagger
 - [BACKENDS.md](BACKENDS.md) - custom backends, inline mode, static output, `frame()`
 - [COOKBOOK.md](COOKBOOK.md) - copy-paste recipes for five common TUI apps
+- [COMPLETE_REFERENCE.md](COMPLETE_REFERENCE.md) - broad single-file API reference
 - [DEBUGGING.md](DEBUGGING.md) - F12 overlay, clipping, focus, previous-frame behavior
 - [FEATURES.md](FEATURES.md) - feature flags and runtime capability matrix
+- [MIGRATION.md](MIGRATION.md) - version-by-version upgrade notes and replacements
+- [PREVIOUS_FRAME_GUIDE.md](PREVIOUS_FRAME_GUIDE.md) - response geometry and previous-frame timing
+- [STATE_APIS.md](STATE_APIS.md) - public state fields, accessors, and mutation APIs
 - [TESTING.md](TESTING.md) - `TestBackend`, `EventBuilder`, input simulation, snapshots
 - [THEMING.md](THEMING.md) - theme struct, presets, ThemeBuilder, custom themes
 - [CHANGELOG.md](../CHANGELOG.md) - release history and migration notes
@@ -52,7 +56,17 @@ The idea is simple:
 ## Contributor docs
 
 - [Design Principles](DESIGN_PRINCIPLES.md) - API rules and design constraints
+- [API_DESIGN.md](API_DESIGN.md) - widget/API review rules
 - [ARCHITECTURE.md](ARCHITECTURE.md) - module map and frame lifecycle
+- [DEMO_GUIDE.md](DEMO_GUIDE.md) - demo authoring and gallery workflow
+- [NAMING.md](NAMING.md) - public API naming conventions
+- [PERFORMANCE.md](PERFORMANCE.md) - frame budgets, benchmarks, and regression checks
+- [POSITIONING.md](POSITIONING.md) - product scope and audience
+- [RUSTDOC_GUIDE.md](RUSTDOC_GUIDE.md) - public documentation standards
+
+## Historical snapshots
+
+- [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) - v0.19.2 competitive and roadmap snapshot; refreshed dependency counts are labeled in place
 
 ## Translations
 

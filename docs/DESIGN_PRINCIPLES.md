@@ -9,7 +9,7 @@ public API must:
 
 1. Identify which principles the change touches.
 2. Identify which tiers are affected (Macro / Meso / Micro / Detail).
-3. Update the [Audit Matrix](#audit-matrix-v020) if a cell's status changes.
+3. Update the [Audit Matrix](#5-audit-matrix-v020) if a cell's status changes.
 4. Run `scripts/api_audit.sh` and address any V1 / V2 / V4 flags.
 
 Related docs:
@@ -33,8 +33,8 @@ specific sections on later visits.
 2. Meta-Principles (P1–P7)                 ← how to evaluate a design choice
 3. Concrete Rules (R1–R10)                 ← what the choices have settled into
 4. The 4-Tier Convention Stack             ← where rules live
-5. Audit Matrix (v0.20)                    ← where SLT is/isn't compliant today
-6. Roadmap (v0.20 → v1.0)                  ← when each cell becomes green
+5. Audit Matrix (v0.20)                    ← historical design baseline
+6. Roadmap (v0.20 → v1.0)                  ← planned stabilization sequence
 7. Failure Mode Catalog                    ← real bugs, classified
 8. How to Use This Document                ← reviewer / contributor workflow
 ```
@@ -108,10 +108,10 @@ predicting. Two-path APIs are the single biggest source of
 **Apply when**: a method shows up in `Context::method` and
 `ContainerBuilder::method`. Resolve to one.
 
-**Anti-pattern (currently documented, scheduled for v0.22)**:
-`ui.bordered(B)` (shortcut) and `ui.container().border(B)` (explicit)
-both work. Documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md) but the
-rule isn't yet enforced.
+**Approved ergonomic exception**: `ui.bordered(B)` (shortcut) and
+`ui.container().border(B)` (explicit) both work. The strict V1 API audit rejects
+unapproved overlaps; reviewed fluent modifiers and finalizers live in its explicit
+allowlist. See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ### P3 — Naming as Contract
 
@@ -137,7 +137,7 @@ See [`NAMING.md`](./NAMING.md) for category-by-category specifics.
 `&mut <Widget>State`. No hidden global state, no implicit
 `Rc<RefCell<...>>` inside the library.
 
-**Why**: SLT advertises immediate-mode (see [R4 — State Ownership](#r4--state-ownership)).
+**Why**: SLT advertises immediate-mode (see [R5 — State Ownership](#r5--state-ownership)).
 Hidden state breaks the mental model and makes testing harder.
 
 **Apply when**: implementing a stateful widget. The state struct must be
@@ -412,17 +412,21 @@ SLT follows [Semantic Versioning](https://semver.org/).
 
 #### Deprecation
 
-- Deprecate before removing: at least one minor version with `#[deprecated]`.
+- Deprecate callable methods and named types before removing them: at least one minor version with `#[deprecated]`.
 - Deprecated items include a migration path in the deprecation message.
 - Removal happens in the next minor version at earliest.
-- **Same-release deprecation is forbidden** — see
+- Before 1.0, invariant-sensitive public fields may be encapsulated in a minor
+  release when replacement accessors and explicit migration notes ship together.
+  Patch releases never contain breaking changes.
+- **Same-release deprecation and removal of callable APIs is forbidden** — see
   [F1 in Failure Mode Catalog](#f1--same-release-deprecation-p1--meso).
 
 ### R9 — Dependencies
 
-**Minimal by design.** Four direct required deps; 25 crates resolved with
-default features, 10 with `default-features = false` (cargo tree, deduped) —
-versus 68 for a ratatui + crossterm app. "Light" here means the dependency
+**Minimal by design.** Four direct required deps; 26 crates resolved with
+default features, 10 with `default-features = false` (unique package/version
+pairs from normal `cargo tree`, excluding the root package) —
+versus 69 for a ratatui + crossterm app. "Light" here means the dependency
 tree and public API surface, not stripped binary size or build speed.
 
 | Dependency | Purpose | Required? |
@@ -488,6 +492,10 @@ that grid explicit.
 
 ## 5. Audit Matrix (v0.20)
 
+This matrix is preserved as the v0.20 design baseline. Current enforcement and
+exceptions live in `scripts/api_audit.sh --strict`; current delivery status lives
+in the roadmap below. Historical action notes are not claims about v0.23 coverage.
+
 Status legend: ✅ enforced & green, ⚠️ documented & ad-hoc, ❌ known gap.
 
 ```
@@ -516,7 +524,8 @@ sweep target.
 
 **P2 × Macro (⚠️ two-paths)**: `ui.bordered` vs `ui.container().border()`,
 `text` vs `styled` for plain text. Documented in
-[`ARCHITECTURE.md`](./ARCHITECTURE.md). Decision deferred to v0.22 sweep.
+[`ARCHITECTURE.md`](./ARCHITECTURE.md). The v0.23 strict V1 audit now rejects
+unapproved overlaps and records reviewed exceptions in an explicit allowlist.
 
 **P2 × Meso (⚠️)**: `Context::text` and `ContainerBuilder::text` both
 exist. The latter is the inner-of-builder form, the former is the
@@ -561,13 +570,14 @@ a review concern rather than a claimed complete sweep.
 | v0.20 | **Define** | Design, architecture, naming, and rustdoc guides | complete |
 | v0.21 | **Automate** | Compiler lints, test utilities, and API-shape conventions | complete |
 | v0.22 | **Refine** | Edition 2024, f64 surface, terminal/release hardening | complete |
-| v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | in progress |
+| v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | complete |
 | v0.24–0.30 | **Stabilize** | Deprecate-and-remove sweep per principle | planned |
 | v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | planned |
 
-Each "Refine" step is a single-issue PR that takes one yellow cell to
-green. Each "Stabilize" step removes deprecated API per the schedule
-in [R8 — API Stability](#r8--api-stability).
+Each stabilization increment should have a reviewable issue scope and explicit
+verification. Deprecated API removals follow the schedule in
+[R8 — API Stability](#r8--api-stability); invariant-sensitive field changes
+follow the pre-1.0 migration exception documented there.
 
 ---
 
@@ -691,8 +701,8 @@ forces `isolation: "worktree"` for parallelizable work.
 This document does **not** define:
 
 - **File-level coding conventions** (mod patterns, derive order, attribute
-  placement) — those live in `CLAUDE.md` because they're project-specific.
-- **Release process** — that lives in `CLAUDE.md` "Release Workflow Checklist."
+  placement) — those live in `AGENTS.md` because they're project-specific.
+- **Release process** — that lives in `AGENTS.md` "Release Workflow Checklist."
 - **Test coverage requirements** — that lives in CI config.
 - **Performance budgets** — that lives in `tests/v020_perf_alloc.rs` and
   benchmark suites.

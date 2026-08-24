@@ -61,7 +61,7 @@ Method names encode their category. When picking a name, match the category shap
 
 | Category | Shape | Examples |
 |---|---|---|
-| **Verbs** (actions, side effects) | `<verb>` or `<verb>_<object>` | `quit`, `notify`, `register_focusable`, `focus_by_name`, `consume_indices`, `set_ratio` |
+| **Verbs** (actions, side effects) | `<verb>` or `<verb>_<object>` | `quit`, `notify`, `register_focusable`, `focus_by_name`, `consume_event`, `set_ratio` |
 | **Nouns** (getters, no side effects) | `<noun>` or `<noun>_<modifier>` | `theme`, `width`, `events`, `focused_name`, `state.cursor`. **Never `get_X`.** |
 | **Adjectives** (Layer 2 builder modifiers) | short, ≤2 syllables | `bordered`, `bg`, `fg`, `p`, `m`, `w`, `h`, `gap`, `grow`, `fill`, `bold`, `dim` |
 | **Constructors** | `Type::default()` / `Type::new(args)` / `Type::with_X(arg)` | `TextInputState::default()`, `SplitPaneState::new(0.5)`, `TextInputState::with_placeholder("…")` |

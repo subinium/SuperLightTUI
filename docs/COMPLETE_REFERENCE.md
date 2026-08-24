@@ -292,7 +292,7 @@ Border & decoration:
 `.border(Border)`, `.border_sides(BorderSides)`, `.border_top(bool)`, `.border_right(bool)`, `.border_bottom(bool)`, `.border_left(bool)`, `.border_x()`, `.border_y()`, `.rounded()`, `.border_style(Style)`, `.border_fg(Color)`, `.dark_border_style(Style)`, `.bg(Color)`, `.dark_bg(Color)`, `.text_color(Color)`, `.group_hover_bg(Color)`, `.group_hover_border_style(Style)`, `.title(impl Into<String>)`, `.title_styled(s, Style)`.
 
 Spacing:
-`.p(n)` / `.pad(n)`, `.px(n)`, `.py(n)`, `.pt(n)`, `.pr(n)`, `.pb(n)`, `.pl(n)`, `.padding(Padding)`, `.m(n)`, `.mx(n)`, `.my(n)`, `.mt(n)`, `.mr(n)`, `.mb(n)`, `.ml(n)`, `.margin(Margin)`, `.gap(n)`, `.row_gap(n)`, `.col_gap(n)`.
+`.p(n)`, `.px(n)`, `.py(n)`, `.pt(n)`, `.pr(n)`, `.pb(n)`, `.pl(n)`, `.padding(Padding)`, `.m(n)`, `.mx(n)`, `.my(n)`, `.mt(n)`, `.mr(n)`, `.mb(n)`, `.ml(n)`, `.margin(Margin)`, `.gap(n)`, `.row_gap(n)`, `.col_gap(n)`. Deprecated compatibility alias: `.pad(n)`.
 
 Size:
 `.w(n)`, `.h(n)`, `.min_w(n)`, `.max_w(n)`, `.min_h(n)`, `.max_h(n)`, `.min_width(n)`, `.max_width(n)`, `.min_height(n)`, `.max_height(n)`, `.w_pct(u8)`, `.h_pct(u8)`, `.constraints(Constraints)`.
@@ -812,7 +812,9 @@ if r.changed {
 ```rust
 let mut list = ListState::new((0..100_000).map(|i| format!("row {i}")).collect::<Vec<_>>());
 ui.virtual_list(&mut list, 20, |ui, idx| {
-    ui.text(&list.items[idx]).dim();
+    if let Some(item) = list.item(idx) {
+        ui.text(item).dim();
+    }
 });
 ```
 
@@ -1043,13 +1045,15 @@ tb.render_with_events(
 
 ---
 
-## 11. Full public re-export list (from `src/lib.rs`)
+## 11. Selected crate-root re-export map
 
-These are everything usable as `slt::X`.
+These are the high-value names commonly used as `slt::X`. The generated
+docs.rs index and `src/lib.rs` are authoritative for the complete, feature-gated
+surface.
 
 ```text
 // From test_utils
-EventBuilder, TestBackend
+EventBuilder, FrameRecord, TestBackend, TestSequence
 
 // From anim
 Keyframes, LoopMode, Sequence, Spring, Stagger, Tween
@@ -1066,17 +1070,19 @@ Cell
 Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker
 
 // From context (crate root)
-Bar, BarChartConfig, BarDirection, BarGroup, CanvasContext, ContainerBuilder,
-Context, Response, State, TreemapItem, Widget
+Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext,
+CodeBlock, ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo,
+Response, State, TreemapItem, Widget
 
 // From event
-Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseKind
+Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKey, MouseButton,
+MouseEvent, MouseKind
 
 // From halfblock
 HalfBlockImage
 
 // From keymap
-Binding, KeyMap
+Binding, KeyMap, PublishedKeymap, WidgetKeyHelp
 
 // From layout
 Direction
@@ -1091,16 +1097,22 @@ Palette
 Rect
 
 // From style
-Align, Border, BorderSides, Breakpoint, Color, ColorDepth, Constraints,
-ContainerStyle, Justify, Margin, Modifiers, Padding, Spacing, Style,
-Theme, ThemeBuilder, ThemeColor, WidgetColors, WidgetTheme
+Align, Border, BorderSides, Breakpoint, Color, ColorDepth, ColorParseError,
+Constraints, ContainerStyle, HeightSpec, Justify, Margin, Modifiers, Padding,
+Spacing, Style, SyntaxPalette, Theme, ThemeBuilder, ThemeColor, UnderlineStyle,
+WidgetColors, WidgetTheme, WidthSpec
+// Feature-gated: ThemeWatcher (`theme-watch`), ThemeFile and ThemeLoadError (`serde`)
 
 // From widgets
-AlertLevel, ApprovalAction, ButtonVariant, CalendarState, CommandPaletteState,
-ContextItem, DirectoryTreeState, FileEntry, FilePickerState, FormField, FormState,
-GridColumn, ListState, ModeState, MultiSelectState, PaletteCommand, RadioState,
-RichLogEntry, RichLogState, ScreenState, ScrollState, SelectState, SpinnerState,
-StaticOutput, StreamingMarkdownState, StreamingTextState, TableState, TabsState,
+AlertLevel, ApprovalAction, ButtonVariant, CalendarState, ChordState,
+ColorPickerState, CommandPaletteState, ContextItem, DirectoryTreeState,
+FileEntry, FilePickerScanError,
+FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField,
+FormState, GridColumn, ListState, ModeState, MultiSelectState, PaletteCommand,
+NumberInputState, PaginatorState, PaginatorStyle, PickerMode, RadioState,
+RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
+SelectState, SliderOpts, SpinnerState, SplitPaneState, StaticOutput,
+StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState,
 TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
 ToolApprovalState, TreeNode, TreeState, Trend
 
@@ -1108,9 +1120,11 @@ ToolApprovalState, TreeNode, TreeState, Trend
 Backend, AppState, RunConfig,
 run, run_with, run_inline, run_inline_with,
 run_static, run_static_with,
-run_async, run_async_with,
-frame,
-detect_color_scheme, read_clipboard, ColorScheme
+frame, frame_owned,
+detect_color_scheme, read_clipboard, Blitter, Capabilities, ColorScheme,
+InlineTerminal, Terminal
+// `async`: run_async, run_async_with, AsyncRunError, AsyncRunHandle, AsyncSender,
+// TaskHandle, TaskOutcome
 ```
 
 ---
@@ -1122,12 +1136,14 @@ detect_color_scheme, read_clipboard, ColorScheme
 | `crossterm` | `run()`, `run_inline()`, `run_static()`, clipboard, sixel_image, color-scheme detection | Yes |
 | `async` | `run_async()`, `run_async_with()` — needs tokio | No |
 | `serde` | `Serialize` / `Deserialize` for style, theme, layout types | No |
+| `theme-watch` | TOML theme hot reload through `ThemeWatcher` | No |
+| `bidi` | UAX #9 bidirectional text reordering | Yes |
 | `image` | Image-loading helpers | No |
 | `qrcode` | `ui.qr_code(...)` | No |
 | `syntax` | All tree-sitter `syntax-*` bundles | No |
 | `syntax-rust`, `syntax-python`, `syntax-typescript`, ... | Per-language tree-sitter grammar | No |
 | `kitty-compress` | zlib-compressed Kitty image uploads | No |
-| `full` | `crossterm` + `async` + `serde` + `image` + `qrcode` + `kitty-compress` (not `syntax`) | No |
+| `full` | `crossterm` + `async` + `serde` + `theme-watch` + `image` + `qrcode` + `kitty-compress` + `bidi` (not `syntax`) | No |
 
 Without `crossterm`, you keep `Backend`, `AppState`, `frame()`, `Context`, all widgets, events, styles, layout, charts — enough for a custom backend (WASM canvas, GUI embed, test harness).
 
@@ -1260,27 +1276,25 @@ Methods: `.value() -> String`, `.set_value(s)`, `.lines() -> &[String]`, `.clear
 
 ### ListState
 ```text
-items: Vec<String>
-selected: usize
-filter: String
+selected: usize                 // public
+// items and filter are private; use accessors to preserve caches
 ```
 Constructors: `ListState::new(vec![...])`.
-Methods: `.set_items(vec![...])`, `.set_filter("foo bar")` (space-separated AND tokens), `.visible_indices() -> &[usize]`, `.selected_item() -> Option<&str>`.
+Methods: `.items()`, `.len()`, `.is_empty()`, `.item(index)`, `.set_items(...)`, `.push_item(...)`, `.insert_item(...)`, `.remove_item(...)`, `.clear_items()`, `.filter()`, `.set_filter("foo bar")` (space-separated AND tokens), `.visible_indices()`, `.selected_item()`.
 
 ### TableState
 ```text
-headers: Vec<String>
-rows: Vec<Vec<String>>
-selected: usize
-sort_column: Option<usize>
-sort_ascending: bool
-filter: String
-page: usize
-page_size: usize        // 0 disables pagination
-zebra: bool
+selected: usize                 // public
+multi_selected: HashSet<usize> // public
+sort_column: Option<usize>      // public
+sort_ascending: bool            // public
+page: usize                     // public
+page_size: usize                // public; 0 disables pagination
+zebra: bool                     // public
+// headers, rows, and filter are private; use accessors to preserve caches
 ```
 Constructors: `TableState::new(headers, rows)`.
-Methods: `.set_rows(rows)`, `.toggle_sort(col)`, `.sort_by(col)`, `.clear_sort()`, `.set_filter(s)`, `.next_page()`, `.prev_page()`, `.total_pages() -> usize`, `.selected_row() -> Option<&[String]>`.
+Methods: `.headers()`, `.set_headers(...)`, `.rows()`, `.row(index)`, `.row_count()`, `.is_empty()`, `.set_rows(...)`, `.push_row(...)`, `.insert_row(...)`, `.remove_row(...)`, `.clear_rows()`, `.filter()`, `.set_filter(...)`, `.toggle_sort(col)`, `.sort_by(col)`, `.clear_sort()`, `.next_page()`, `.prev_page()`, `.total_pages()`, `.selected_row()`.
 
 ### TabsState
 ```text
@@ -1292,21 +1306,22 @@ Constructors: `TabsState::new(vec!["A", "B"])`. `.selected_label() -> Option<&st
 ### SelectState / RadioState / MultiSelectState
 ```text
 // SelectState
-items: Vec<String>
-selected: usize
-open: bool
-placeholder: String
+selected: usize             // public
+open: bool                  // public
+placeholder: String         // public
+filter: String              // public
+// items are private; use items() / set_items(...)
 
 // RadioState
 items: Vec<String>
 selected: usize
 
 // MultiSelectState
-items: Vec<String>
-cursor: usize               // keyboard focus index
-selected: HashSet<usize>    // checked items
+cursor: usize               // public keyboard focus index
+selected: HashSet<usize>    // public checked items
+// items are private; use items() / set_items(...)
 ```
-Methods: `.selected_item() -> Option<&str>` (Select, Radio), `.selected_items() -> Vec<&str>` (Multi), `.toggle(i)` (Multi).
+Methods: `.items()`, `.len()`, `.is_empty()`, `.set_items(...)` (Select and Multi), `.selected_item()` (Select and Radio), `.selected_items()` and `.toggle(i)` (Multi).
 
 ### TreeState / TreeNode / DirectoryTreeState
 ```text
@@ -1334,7 +1349,7 @@ selected_day: Option<u32>
 // cursor_day is private
 ```
 Constructors: `CalendarState::new()` (current month), `CalendarState::from_ym(year, month)`.
-Methods: `.selected_date() -> Option<(i32, u32, u32)>` (year, month, day), `.prev_month()`, `.next_month()`.
+Methods: `.with_range()`, `.with_time()`, `.mode()`, `.selected_date()`, `.selected_range()`, `.selected_time()`, `.prev_month()`, `.next_month()`.
 
 ### FilePickerState / FileEntry
 ```text
@@ -1350,32 +1365,85 @@ dirty: bool                 // set after config changes
 name: String
 path: PathBuf
 is_dir: bool
-size: u64
+size: Option<u64>           // None for directories or unreadable metadata
 ```
 Constructor: `FilePickerState::new(".")`.
 Builders: `.show_hidden(bool)`, `.extensions(&["rs", "toml"])`.
-Methods: `.selected_file() -> Option<&PathBuf>`, `.refresh()`, `.retry()`, `.scan_status()`, `.scan_errors()`.
+Methods: `.selected_file()`, `.refresh()`, `.try_refresh()`, `.retry()`, `.scan_status()`, `.scan_errors()`, `.last_error()`.
 
 ### CommandPaletteState / PaletteCommand
 ```text
-commands: Vec<PaletteCommand>
-input: String
-cursor: usize
-open: bool
-last_selected: Option<usize>
+input: String                    // public
+cursor: usize                    // public
+open: bool                       // public
+last_selected: Option<usize>     // public
+// commands are private; use commands() and mutation methods
 
 // PaletteCommand
 label: String
 description: String
 ```
-`.toggle()` opens/closes, clearing the input on open. `PaletteCommand::new(label, desc)`. Fuzzy-matched against `input`.
+`.commands()`, `.set_commands(...)`, `.push_command(...)`, `.remove_command(...)`, `.clear_commands()`, and `.toggle()` keep the fuzzy-search cache synchronized. `PaletteCommand::new(label, desc)` constructs an entry.
 
 ### ScrollState
 ```text
 offset: usize              // current vertical offset
-// content_height and viewport_height are private — read via getters
+offset_x: usize            // current horizontal offset
+dragging: bool             // scrollbar drag state
+// dimensions and highlights are private — read via getters
 ```
-`.can_scroll_up()`, `.can_scroll_down()`, `.content_height()`, `.viewport_height()`.
+`.can_scroll_up()`, `.can_scroll_down()`, `.content_height()`, `.viewport_height()`, `.progress_ratio()`.
+
+### NumberInputState
+```text
+value: f64
+min: f64
+max: f64
+step: f64
+integer: bool
+editing: Option<String>
+parse_error: Option<String>
+```
+Construct with `NumberInputState::new(value, min, max)` or `::integer(...)`.
+Use `.step(...)`, `.normalize()`, and `.clamped()` when configuring or mutating it.
+
+### PaginatorState
+```text
+total_items: usize
+per_page: usize
+page: usize
+style: PaginatorStyle       // Dots or Arabic
+```
+Methods: `.total_pages()`, `.page_bounds()`, `.next_page()`, `.prev_page()`,
+`.set_page(...)`, `.set_total_items(...)`, `.set_per_page(...)`.
+
+### SplitPaneState
+```text
+ratio: f64
+dragging: bool
+min_ratio: f64
+```
+Construct with `SplitPaneState::new(ratio)`; configure with
+`.with_min_ratio(...)` and `.set_ratio(...)`. Use with `ui.split_pane(...)` or
+`ui.vsplit_pane(...)`.
+
+### ColorPickerState
+```text
+colors: Vec<Color>
+columns: usize
+selected: usize
+mode: PickerMode            // Palette or Hex
+hex_input: TextInputState
+```
+Construct with `ColorPickerState::new(colors)` or `::tailwind()`. The
+`.columns(...)` builder sets grid width; `.selected()` resolves the active
+palette or parsed hex color.
+
+### ChordState / SchedulerState
+Both are public opaque state types owned by `Context`; their fields and methods
+are crate-internal. Use `ui.key_chord(...)` / `ui.key_chord_timeout(...)` for
+chords and `ui.schedule(...)` / `ui.every(...)` / `ui.exclusive(...)` for timer
+and latest-wins scheduling behavior.
 
 ### SpinnerState
 `SpinnerState::dots()` → braille dots. `SpinnerState::line()` → `| / - \`. `.frame(tick) -> char`.
@@ -1540,8 +1608,13 @@ Diagnostics: F12 toggles an overlay showing container bounds and FPS. `ui.debug_
 
 - MSRV is tracked in `Cargo.toml` under `rust-version`; MSRV bumps only on minor releases.
 - `0.x.y` patches are backward compatible. `0.x → 0.y` minor versions may include breaking changes until 1.0.
-- The public API surface is strictly everything re-exported from `src/lib.rs`; deep imports are not semver stable.
-- Deprecation: a minimum of one minor release with `#[deprecated]` before removal.
+- Crate-root re-exports are the preferred stable import path; public module paths
+  shown by docs.rs are also part of the published Rust API unless explicitly
+  documented otherwise.
+- Callable methods and named types receive at least one minor release of
+  `#[deprecated]` warnings before removal. Before 1.0, invariant-sensitive public
+  fields may be encapsulated only in a minor release with explicit migration notes
+  and replacement accessors.
 
 ---
 

@@ -140,7 +140,7 @@ The simplest reusable component is a free function that takes `&mut Context` and
 use slt::{Border, Context, Trend};
 
 fn metric_card(ui: &mut Context, label: &str, value: f64, trend: Trend) {
-    let _ = ui.bordered(Border::Single).pad(1).col(|ui| {
+    let _ = ui.bordered(Border::Single).p(1).col(|ui| {
         ui.text(label).dim();
         ui.text(format!("{:.1}", value)).bold();
         let arrow = match trend {
@@ -352,7 +352,7 @@ Both `.with` and `.with_if` are available on text and on container builders, so 
 ```rust
 ui.bordered(Border::Single)
     .with_if(panel_focused, |c| {
-        c.title("(focused)").pad(2);
+        c.title("(focused)").p(2);
     })
     .col(|ui| {
         // ...

@@ -10,8 +10,9 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
 - `unicode-width`, `unicode-segmentation`, `smallvec`, and `compact_str` are
   always part of the small core (4 direct required deps).
 - `crossterm` is a **default feature**, not a hard requirement.
-- Resolved tree (cargo tree, deduped): 10 crates with `default-features = false`,
-  25 with default features, 67 with `--features full` — versus 68 for a
+- Resolved tree (unique package/version pairs from `cargo tree -e normal`,
+  excluding the root package): 10 crates with `default-features = false`,
+  26 with default features, 63 with `--features full` — versus 69 for a
   ratatui + crossterm app. "Light" refers to this dependency footprint and the
   small public API, not stripped binary size or build speed.
 - The low-level core (`Backend`, `AppState`, `frame()`, widgets, events, style/layout types) works without terminal I/O.

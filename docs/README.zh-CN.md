@@ -2,7 +2,7 @@
 
 # SuperLightTUI
 
-**写得快。依赖树轻量**（4 个直接必需依赖，默认特性下解析为 25 个 crate；ratatui + crossterm 为 68 个）。
+**写得快。依赖树轻量**（4 个直接必需依赖，默认特性下解析为 26 个 crate；ratatui + crossterm 为 69 个）。
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
