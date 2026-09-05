@@ -44,6 +44,7 @@ impl Context {
         let children_start = self.commands.len();
         f(self);
         let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
+        self.invalidate_geometry_cache_from(children_start);
 
         let elements = collect_grid_elements(child_commands);
 
@@ -159,6 +160,7 @@ impl Context {
         let children_start = self.commands.len();
         f(self);
         let child_commands: Vec<Command> = self.commands.drain(children_start..).collect();
+        self.invalidate_geometry_cache_from(children_start);
 
         let elements = collect_grid_elements(child_commands);
 
@@ -235,14 +237,14 @@ impl Context {
 
     /// Render a navigable list with custom widget colors.
     pub fn list_colored(&mut self, state: &mut ListState, colors: &WidgetColors) -> Response {
-        let visible = state.visible_indices().to_vec();
-        if visible.is_empty() && state.is_empty() {
+        let visible_len = state.visible_indices().len();
+        if visible_len == 0 && state.is_empty() {
             state.selected = 0;
             return Response::none();
         }
 
-        if !visible.is_empty() {
-            state.selected = state.selected.min(visible.len().saturating_sub(1));
+        if visible_len > 0 {
+            state.selected = state.selected.min(visible_len.saturating_sub(1));
         }
 
         let old_selected = state.selected;
@@ -256,7 +258,7 @@ impl Context {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                         let _ = handle_vertical_nav(
                             &mut state.selected,
-                            visible.len().saturating_sub(1),
+                            visible_len.saturating_sub(1),
                             key.code.clone(),
                         );
                         consumed_indices.push(i);
@@ -271,7 +273,7 @@ impl Context {
             let mut consumed = Vec::new();
             for (i, mouse) in clicks {
                 let clicked_idx = (mouse.y - rect.y) as usize;
-                if clicked_idx < visible.len() {
+                if clicked_idx < visible_len {
                     state.selected = clicked_idx;
                     consumed.push(i);
                 }
@@ -298,7 +300,7 @@ impl Context {
                 group_name: None,
             })));
 
-        for (view_idx, &item_idx) in visible.iter().enumerate() {
+        for (view_idx, &item_idx) in state.visible_indices().iter().enumerate() {
             let item = &state.items()[item_idx];
             if view_idx == state.selected {
                 let mut selected_style = Style::new()
@@ -899,11 +901,7 @@ impl Context {
             let _ = state.try_refresh();
         }
 
-        let widget_height = if response.rect.height > 0 {
-            response.rect.height as usize
-        } else {
-            self.area_height as usize
-        };
+        let widget_height = self.available_content_size().1 as usize;
         let status_rows =
             usize::from(state.scan_status() != crate::widgets::FilePickerScanStatus::Ready);
         let available_rows = widget_height.saturating_sub(1 + status_rows);
@@ -1028,7 +1026,12 @@ impl Context {
 
             if show_indicator {
                 self.styled(
-                    format!("{}-{} / {}", start + 1, end, state.entries.len()),
+                    format!(
+                        "{}-{} / {}",
+                        if start < end { start + 1 } else { 0 },
+                        end,
+                        state.entries.len()
+                    ),
                     Style::new().fg(self.theme.text_dim).dim(),
                 );
             }

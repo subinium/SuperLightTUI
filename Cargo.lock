@@ -1115,11 +1115,12 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slt-wasm"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "js-sys",
  "superlighttui",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]
@@ -1144,15 +1145,15 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "superlighttui"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "compact_str",
  "criterion",
  "crossterm",
- "crossterm_winapi",
  "flate2",
  "image",
  "insta",
+ "mio",
  "notify",
  "proptest",
  "qrcode",
@@ -1182,6 +1183,7 @@ dependencies = [
  "unicode-bidi",
  "unicode-segmentation",
  "unicode-width",
+ "web-time",
 ]
 
 [[package]]
@@ -1654,6 +1656,16 @@ name = "web-sys"
 version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c435338968042f4f59a557f690a253676d47ce13ceb55d70100e7facf6620a30"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

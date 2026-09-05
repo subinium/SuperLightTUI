@@ -8,6 +8,62 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.23.x to v0.24.0
+
+Existing native run and widget signatures remain available. Review these
+intentional behavior changes:
+
+- Headless `TestBackend` frames now advance `ui.tick()`, matching the real frame
+  entry point. Use `advance_time(Duration::ZERO)` to freeze scheduler time and
+  `advance_time(duration)` to drive deterministic deadlines without sleeping.
+- FPS now measures actual frame cadence rather than the inverse of kernel-only
+  processing time. Separate render/flush durations are available on `AppState`.
+- Virtual lists use the `ListState` filtered view while callbacks retain raw
+  item indices. Do not use the selected view index as a raw data index.
+- `State<T>` and `Memo<T>` handle traits no longer require the stored value to
+  implement those traits. `State` is still not `Copy`.
+- C++ highlighting works with `syntax-cpp` alone without enabling public C
+  highlighting. Applications do not need the unrelated grammar bundles.
+- Browser integration has a real owned runtime and configuration surface. See
+  [WASM.md](WASM.md) for the three-argument options entry point, the incremental
+  direct-flush versus fresh-runtime-frame contract, and supported capabilities.
+- Recoverable UI/task panics are reported through their boundary/outcome instead
+  of using the terminal cleanup panic hook. Uncaught terminal-owner failures
+  still restore owned terminal modes. With `panic = "abort"`, recovery is not
+  possible; the hook restores all active terminal sessions before termination.
+- After native event polling/reading begins, raw terminal queries are disabled
+  for the process to preserve queued and partially parsed input.
+  Startup probing remains available. A later `read_clipboard` returns `None`;
+  size and capability refreshes use ioctl, cached data, or conservative fallbacks.
+- Canvas requests have explicit budgets. Use the fallible APIs to handle
+  rejected dimensions, layers or labels; `canvas_with` reuses caller-owned
+  storage. This is not an unlimited offscreen bitmap API.
+
+The root and companion package versions are synchronized at `0.24.0`; a version
+number in a source checkout is not evidence that the registry release is live.
+
+### Native input ownership
+
+The Linux burst stall tracked in [issue #432](https://github.com/subinium/SuperLightTUI/issues/432)
+is handled by SLT's owned Unix input source. It opens an independent nonblocking
+terminal descriptor, retains readiness across full reads, and keeps partial
+parsing in the same owner. No workspace-only dependency patch or renamed
+Crossterm types are required. Applications using the built-in `run*` functions
+receive the fix; applications supplying events to `frame()` still own their
+external event source. Do not mix another reader with an active SLT loop.
+
+Fatal input errors end the native input stream for the process. In particular,
+a cursor-query timeout cannot safely correlate a later reply with a retry, so
+subsequent native input returns an error rather than silently accepting stale
+data. Restart the process after this failure. Normal quit/disposal can be
+followed by another session. See [BACKENDS.md](BACKENDS.md) for limits and
+resource ownership.
+
+Browser IME preedit is presentation-only until composition commits. Backends
+can inspect `Buffer::cursor_is_masked()` to suppress plaintext preview for a
+masked input. The flag follows the actual rendered caret and resets with the
+buffer; it is not inferred from bullet glyphs or styling.
+
 ## 1. v0.22.x → v0.23.0
 
 v0.23 is a correctness-focused minor release. It intentionally makes breaking

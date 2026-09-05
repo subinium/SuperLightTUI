@@ -1,4 +1,5 @@
 use super::*;
+use crate::widgets::{grapheme_cursor_after, prepare_text_insert};
 
 impl Context {
     /// Render a single-line text input. Auto-handles cursor, typing, and backspace.
@@ -60,7 +61,42 @@ impl Context {
             };
             let mut matched_suggestions = compute_matched(state);
             let mut suggestions_dirty = false;
-            for (i, key) in self.available_key_presses() {
+            for (i, event) in self
+                .events
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !self.consumed[*i])
+            {
+                if let Event::Paste(text) = event {
+                    let inserted: String = text
+                        .graphemes(true)
+                        .filter(|cluster| {
+                            cluster
+                                .chars()
+                                .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
+                        })
+                        .collect();
+                    let index = byte_index_for_grapheme(&state.value, state.cursor);
+                    if let Some((value, end)) =
+                        prepare_text_insert(&state.value, index, &inserted, state.max_length)
+                    {
+                        state.cursor = grapheme_cursor_after(&value, end);
+                        state.value = value;
+                        if !state.suggestions.is_empty() {
+                            state.show_suggestions = true;
+                            state.suggestion_index = 0;
+                        }
+                        suggestions_dirty = true;
+                    }
+                    consumed_indices.push(i);
+                    continue;
+                }
+                let Event::Key(key) = event else {
+                    continue;
+                };
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 if suggestions_dirty {
                     matched_suggestions = compute_matched(state);
                     suggestions_dirty = false;
@@ -84,6 +120,7 @@ impl Context {
                     KeyCode::Esc if state.show_suggestions => {
                         state.show_suggestions = false;
                         state.suggestion_index = 0;
+                        suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Tab if suggestions_visible => {
@@ -95,18 +132,24 @@ impl Context {
                             state.cursor = grapheme_count(&state.value);
                             state.show_suggestions = false;
                             state.suggestion_index = 0;
+                            suggestions_dirty = true;
                         }
                         consumed_indices.push(i);
                     }
                     KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
-                        if let Some(max) = state.max_length
-                            && grapheme_count(&state.value) >= max
-                        {
-                            continue;
-                        }
                         let index = byte_index_for_grapheme(&state.value, state.cursor);
-                        state.value.insert(index, ch);
-                        state.cursor += 1;
+                        let mut encoded = [0; 4];
+                        let Some((value, end)) = prepare_text_insert(
+                            &state.value,
+                            index,
+                            ch.encode_utf8(&mut encoded),
+                            state.max_length,
+                        ) else {
+                            consumed_indices.push(i);
+                            continue;
+                        };
+                        state.cursor = grapheme_cursor_after(&value, end);
+                        state.value = value;
                         if !state.suggestions.is_empty() {
                             state.show_suggestions = true;
                             state.suggestion_index = 0;
@@ -119,7 +162,7 @@ impl Context {
                             let start = byte_index_for_grapheme(&state.value, state.cursor - 1);
                             let end = byte_index_for_grapheme(&state.value, state.cursor);
                             state.value.replace_range(start..end, "");
-                            state.cursor -= 1;
+                            state.cursor = grapheme_cursor_after(&state.value, start);
                         }
                         if !state.suggestions.is_empty() {
                             state.show_suggestions = true;
@@ -146,6 +189,7 @@ impl Context {
                             let start = byte_index_for_grapheme(&state.value, state.cursor);
                             let end = byte_index_for_grapheme(&state.value, state.cursor + 1);
                             state.value.replace_range(start..end, "");
+                            state.cursor = grapheme_cursor_after(&state.value, start);
                         }
                         if !state.suggestions.is_empty() {
                             state.show_suggestions = true;
@@ -172,6 +216,7 @@ impl Context {
                                 state.cursor = grapheme_count(&state.value);
                                 state.show_suggestions = false;
                                 state.suggestion_index = 0;
+                                suggestions_dirty = true;
                             }
                         } else {
                             submitted = true;
@@ -181,37 +226,6 @@ impl Context {
                     _ => {}
                 }
             }
-            for (i, text) in self.available_pastes() {
-                let current_len = grapheme_count(&state.value);
-                let available = state
-                    .max_length
-                    .map(|max| max.saturating_sub(current_len))
-                    .unwrap_or(usize::MAX);
-                let inserted = text
-                    .graphemes(true)
-                    .filter(|cluster| {
-                        cluster
-                            .chars()
-                            .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
-                    })
-                    .take(available)
-                    .collect::<String>();
-                if !inserted.is_empty() {
-                    let index = byte_index_for_grapheme(&state.value, state.cursor);
-                    let inserted_end = index + inserted.len();
-                    state.value.insert_str(index, &inserted);
-                    state.cursor = grapheme_count(&state.value[..inserted_end]);
-                    if !state.suggestions.is_empty() {
-                        state.show_suggestions = true;
-                        state.suggestion_index = 0;
-                    }
-                    suggestions_dirty = true;
-                }
-                consumed_indices.push(i);
-            }
-            // Suppress unused-assignment warning when no key after last paste.
-            let _ = suggestions_dirty;
-
             self.consume_indices(consumed_indices);
         }
 
@@ -280,18 +294,32 @@ impl Context {
                     current_width += cw;
                     continue;
                 }
-                if current_width - scroll_offset >= visible_width {
+                if current_width.saturating_sub(scroll_offset) >= visible_width {
                     break;
                 }
+                // Preserve the cells occupied by a cluster crossing the left
+                // edge, without emitting a partial wide grapheme.
+                if current_width < scroll_offset {
+                    rendered.extend(std::iter::repeat_n(
+                        ' ',
+                        (current_width + cw - scroll_offset).min(visible_width),
+                    ));
+                    current_width += cw;
+                    continue;
+                }
                 if focused && idx == state.cursor {
-                    cursor_offset = Some(rendered.chars().count());
+                    cursor_offset = Some(grapheme_count(&rendered));
                     rendered.push('▎');
+                }
+                let cursor_cells = usize::from(cursor_offset.is_some());
+                if current_width - scroll_offset + cw + cursor_cells > visible_width {
+                    break;
                 }
                 rendered.push_str(g);
                 current_width += cw;
             }
-            if focused && state.cursor >= display_units.len() {
-                cursor_offset = Some(rendered.chars().count());
+            if focused && visible_width > 0 && state.cursor >= display_units.len() {
+                cursor_offset = Some(grapheme_count(&rendered));
                 rendered.push('▎');
             }
             (rendered, cursor_offset)
@@ -318,7 +346,7 @@ impl Context {
             .border_style(Style::new().fg(border_color))
             .px(input_padx)
             .col(|ui| {
-                ui.styled_with_cursor(input_text, input_style, cursor_offset);
+                ui.styled_with_cursor_privacy(input_text, input_style, cursor_offset, state.masked);
             });
         response.focused = focused;
         response.changed = state.value != old_value;

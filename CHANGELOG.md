@@ -2,6 +2,104 @@
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-05
+
+### Added
+
+- **Browser runtime and example** (#403-#409): portable clocks, fresh-frame DOM
+  rendering, stable cell geometry, pointer capture, composed text and paste,
+  owned teardown, failure reporting, and `WasmOptions` with explicit RAF pacing.
+  The standalone Rust browser example is checked by compiled WASM tests and
+  trusted Playwright interactions. See `docs/WASM.md` for tested capabilities
+  and the remaining physical IME/browser validation boundary.
+- **Visible, privacy-aware IME preedit** (#407): browser composition preview
+  follows the actual rendered caret without editing application state until
+  commit. Explicit masked-caret metadata suppresses plaintext preedit, including
+  mask changes queued before the next frame. Combining and ZWJ caret anchors
+  use grapheme offsets rather than scalar counts.
+- **Bounded custom drawing** (#417): `CanvasError`, fallible Canvas construction,
+  layer and label limits, `try_canvas`, and reusable `canvas_with` storage.
+- **Useful frame diagnostics and test time** (#377, #378): wall-clock FPS,
+  frame/render/flush durations, advancing headless frame ticks, deterministic
+  `TestBackend::advance_time`, and the public buffer cursor-position getter.
+- **Executable documentation and release checks** (#401, #410, #414): maintained
+  Markdown recipes compile with declared features; browser tests and workspace
+  packaging run in CI. Companion publication is mandatory for a combined
+  release, followed by an exact registry-only browser consumer and docs checks.
+
+### Fixed
+
+- **Unix input burst liveness** (#432): built-in loops use an owned nonblocking
+  terminal descriptor and retained readiness instead of the affected upstream
+  event-source path. Full read boundaries, partial sequences, resize ordering,
+  cancellation, inherited stdio flags and session teardown are regression-tested.
+  Published native consumers run the original unsplit fixture without rescue
+  input; a separate caller-owned Crossterm loop is not patched by SLT.
+- **Runtime lifetime and geometry** (#368, #376, #383-#386): zero-size async
+  messages survive recovery, custom frame events preserve hover and invalidate
+  resized hit areas, recoverable/background panics do not dismantle the UI,
+  inline mouse coordinates are local, and bottom-anchored scrollback stays
+  permanent across dynamic redraws and quit.
+- **Unicode and ordered editing** (#370-#374, #421-#423): malformed hex input is
+  rejected without UTF-8 slicing panics; narrow CJK fields, mixed key/paste
+  batches, current wrap maps, grapheme insertion limits, visual caret affinity,
+  autocomplete dismissal, and rejected-paste undo follow their contracts.
+- **Layout and custom drawing** (#392-#396, #427, #428): alignment moves complete
+  subtrees, wrapped height propagates through nested containers, clipping keeps
+  cell positions and whole graphemes, precomputed drawing applies source offsets,
+  out-of-bounds suffix writes are harmless, and wrapped gradients remain visible.
+- **Collections and interaction** (#375, #424-#426, #429-#431): modal background
+  selection is blocked, filtered virtual views and row heights remain coherent,
+  percentages use the actual parent budget, splitters use their own divider and
+  unclipped geometry, wheel routing follows the requested axis, and growing
+  logs/directories use available viewport space.
+- **Terminal media and queries** (#387-#391, #411-#413): one capability policy
+  controls preparation and emission, Kitty deletion and source identity are
+  coherent, clipped media uses a valid crop/fallback, query input is replayed,
+  CSI replies terminate correctly, DA2 identity is not a graphics acknowledgment,
+  and leaving extended underline does not underline plain text. Windows uses
+  conservative query-free capability fallbacks rather than consuming console
+  records during raw probes.
+- **Charts, animation and API** (#381, #382, #397-#400): relaxed handle trait
+  bounds, self-contained C++ highlighting, invisible zero bars, correctly placed
+  histogram endpoints, cell-width-aware legends, and idempotent Spring completion.
+
+### Performance
+
+- Async idle pacing respects configured deadlines; unused task registries no
+  longer allocate cancellation channels per frame (#369, #379).
+- Feedback/event scratch is reclaimed, idle scroll discovery is linear, and
+  collection append and prefix navigation avoid unnecessary whole-view work
+  (#380, #402, #416, #420).
+- Textarea bulk insertion and viewport work reduce transient copies and scans;
+  bounded full-document undo snapshots remain intentionally unchanged (#415).
+- Canvas storage and encoded media reuse reduce allocation volume. Equal-size
+  redraw reuses capacity without skipping resume invalidation (#417-#419).
+- Histograms use finite-value linear passes and sequences cache duration sums.
+  `cached` remains diagnostics-only; no callback skipping or reactive tree was
+  introduced. `docs/PERFORMANCE.md` records workload-specific measurements,
+  regressions, and no-change decisions rather than a blanket speedup claim.
+
+### Compatibility
+
+- Rust 2024 and MSRV 1.88 are unchanged. Native default features are unchanged;
+  browser clock dependencies are target-specific.
+- General bar datasets retain ordinal placement; numeric histogram ticks are
+  separate. Existing browser entry points remain default wrappers.
+- Headless ticks now advance as documented. Tests needing a fixed clock should
+  use `advance_time(Duration::ZERO)` and advance it explicitly.
+- Native input ownership is one-way: after event polling/reading begins,
+  raw terminal queries are refused to preserve queued and partial input.
+  Startup probes still work; late clipboard reads return `None`, and metrics
+  use ioctl, cached values, or conservative fallbacks.
+- Fatal Unix input errors, including an ambiguous cursor-query timeout, prevent
+  further native input in the process. Restart rather than retrying on a stream
+  whose delayed replies can no longer be matched safely. Normal session stops
+  release resources and can be followed by another session.
+- Browser synthetic composition tests do not establish physical OS IME,
+  mobile keyboard or native context-menu compatibility. The supported boundary
+  and remaining manual checks are documented in `docs/WASM.md`.
+
 ## [0.23.0] - 2026-08-23
 
 This release hardens the native terminal runtime, makes long-lived state and

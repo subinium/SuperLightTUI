@@ -25,7 +25,7 @@ fn clamp_i128_to_u32(value: i128) -> u32 {
 /// within that same body (before any recursive `compute` call for child nodes
 /// happens on a *child*, not a peer), recursion does not reuse scratch
 /// storage — each recursion frame has its own independent `U32Stack` values.
-struct U32Stack {
+pub(super) struct U32Stack {
     inline: [u32; INLINE_CAP],
     len: usize,
     overflow: Option<Vec<u32>>,
@@ -73,7 +73,7 @@ impl U32Stack {
     }
 
     #[inline]
-    fn iter(&self) -> U32StackIter<'_> {
+    pub(super) fn iter(&self) -> U32StackIter<'_> {
         U32StackIter {
             stack: self,
             idx: 0,
@@ -85,7 +85,7 @@ impl U32Stack {
     }
 }
 
-struct U32StackIter<'a> {
+pub(super) struct U32StackIter<'a> {
     stack: &'a U32Stack,
     idx: usize,
     len: usize,
@@ -149,6 +149,17 @@ pub(crate) fn compute(node: &mut LayoutNode, area: Rect) {
     compute_inner(node, area, 0);
 }
 
+fn translate_subtree(node: &mut LayoutNode, dx: u32, dy: u32) {
+    node.pos.0 = node.pos.0.saturating_add(dx);
+    node.pos.1 = node.pos.1.saturating_add(dy);
+    for child in &mut node.children {
+        translate_subtree(child, dx, dy);
+    }
+    for overlay in &mut node.overlays {
+        translate_subtree(&mut overlay.node, dx, dy);
+    }
+}
+
 fn compute_inner(node: &mut LayoutNode, area: Rect, depth: usize) {
     // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
     // already enforces this at construction; this guard catches synthetic
@@ -181,8 +192,8 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
     );
 
     if matches!(node.kind, NodeKind::Text) && node.wrap {
-        let lines = node.ensure_wrapped_for_width(area.width);
-        node.size = (area.width, lines);
+        let lines = node.ensure_wrapped_for_width(node.size.0);
+        node.size.1 = lines.clamp(min_h, max_h);
     } else if let Some(td) = node.text_data.as_deref_mut() {
         // Only text nodes carry the wrap cache. Non-text variants have
         // `text_data = None` and have nothing to invalidate here.
@@ -298,7 +309,8 @@ fn layout_scrollable_column(node: &mut LayoutNode, viewport_area: Rect, depth: u
         (node.children.len() as i64 - 1) * node.gap as i64
     };
     let children_height = node.children.iter_mut().fold(0u64, |total, child| {
-        total.saturating_add(u64::from(child.min_height_for_width(viewport_area.width)))
+        let width = child.column_outer_width(viewport_area.width, node.align);
+        total.saturating_add(u64::from(child.min_height_for_width(width)))
     });
     // `total_gaps` may be negative for overlap (#222); clamp at 0.
     let natural_height = clamp_i128_to_u32(i128::from(children_height) + i128::from(total_gaps));
@@ -541,27 +553,75 @@ fn layout_row_line(
     }
 
     for child in children.iter_mut() {
+        let previous = child.constraints;
         resolve_axis_specs(&mut child.constraints, area);
         // Resolving `Pct`/`Ratio` -> `Fixed` is the only mid-frame mutation
         // that can change a child's intrinsic min sizes, so drop any value
         // memoized during an ancestor's measurement pass (which saw the
-        // pre-resolution constraint). For `Auto`/`Fixed`/`MinMax` this is a
-        // no-op resolution and a cheap cache clear.
-        child.invalidate_size_cache();
+        // pre-resolution constraint). Keep unchanged memos so recursive
+        // width-aware measurement stays linear for a settled subtree width.
+        if child.constraints != previous {
+            child.invalidate_size_cache();
+        }
     }
 
+    let n = u32::try_from(children.len()).unwrap_or(u32::MAX);
+    let child_widths = row_widths(children, area.width, gap);
+    let total_children_width = child_widths.iter().fold(0u32, u32::saturating_add);
+    let remaining = area.width.saturating_sub(total_children_width);
+    let (start_offset, inter_gap) = justify_offsets(justify, remaining, n, gap);
+
+    let mut x = area.x.saturating_add(start_offset);
+    for (i, child) in children.iter_mut().enumerate() {
+        let w = child_widths.get(i);
+        let child_cross_align = child.align_self.unwrap_or(align);
+        let child_outer_h = match child_cross_align {
+            Align::Start => area.height,
+            _ => child.min_height_for_width(w).min(area.height),
+        };
+        let child_x = x.saturating_add(child.margin.left);
+        let child_y = area.y.saturating_add(child.margin.top);
+        let child_w = w.saturating_sub(child.margin_horizontal());
+        let child_h = child_outer_h.saturating_sub(child.margin_vertical());
+        compute_inner(
+            child,
+            Rect::new(child_x, child_y, child_w, child_h),
+            depth + 1,
+        );
+        let child_total_h = child.size.1.saturating_add(child.margin_vertical());
+        let y_offset = match child_cross_align {
+            Align::Start => 0,
+            Align::Center => area.height.saturating_sub(child_total_h) / 2,
+            Align::End => area.height.saturating_sub(child_total_h),
+        };
+        if y_offset > 0 {
+            translate_subtree(child, 0, y_offset);
+        }
+        let effective_w = child.size.0.saturating_add(child.margin_horizontal());
+        x = x
+            .saturating_add(effective_w)
+            .saturating_add_signed(inter_gap);
+    }
+}
+
+/// Share main-axis allocation between intrinsic measurement and final layout.
+pub(super) fn row_widths(children: &[LayoutNode], width: u32, gap: i32) -> U32Stack {
     let n = u32::try_from(children.len()).unwrap_or(u32::MAX);
     // Signed gap (#222): `total_gaps` may be negative when children overlap,
     // which gives them *more* available space. `i64` intermediate avoids any
     // overflow before clamping the result back into the `u32` width budget.
-    let total_gaps = ((n - 1) as i64) * gap as i64;
-    let available = clamp_i128_to_u32(i128::from(area.width) - i128::from(total_gaps));
+    let total_gaps = i64::from(n.saturating_sub(1)) * i64::from(gap);
+    let available = clamp_i128_to_u32(i128::from(width) - i128::from(total_gaps));
     let child_count = children.len();
     // Base main-axis size feeding the resolution: `flex_basis` when set
     // (#258), else the child's intrinsic `min_width` (historic behavior).
     let mut base_widths = U32Stack::with_capacity(child_count);
     for child in children.iter() {
-        base_widths.push(child.flex_basis().unwrap_or_else(|| child.min_width()));
+        base_widths.push(
+            child
+                .flex_basis()
+                .unwrap_or_else(|| child.min_width_for_parent(width)),
+        );
     }
 
     let mut total_grow: u32 = 0;
@@ -636,41 +696,43 @@ fn layout_row_line(
         child_widths.push(w);
     }
 
-    let total_children_width = child_widths.iter().fold(0u32, u32::saturating_add);
-    let remaining = area.width.saturating_sub(total_children_width);
-    let (start_offset, inter_gap) = justify_offsets(justify, remaining, n, gap);
+    child_widths
+}
 
-    let mut x = area.x.saturating_add(start_offset);
-    for (i, child) in children.iter_mut().enumerate() {
-        let w = child_widths.get(i);
-        let child_cross_align = child.align_self.unwrap_or(align);
-        let child_outer_h = match child_cross_align {
-            Align::Start => area.height,
-            _ => child.min_height_for_width(w).min(area.height),
-        };
-        let child_x = x.saturating_add(child.margin.left);
-        let child_y = area.y.saturating_add(child.margin.top);
-        let child_w = w.saturating_sub(child.margin_horizontal());
-        let child_h = child_outer_h.saturating_sub(child.margin_vertical());
-        compute_inner(
-            child,
-            Rect::new(child_x, child_y, child_w, child_h),
-            depth + 1,
+pub(super) fn row_line_height(children: &mut [LayoutNode], width: u32, gap: i32) -> u32 {
+    let widths = row_widths(children, width, gap);
+    children
+        .iter_mut()
+        .zip(widths.iter())
+        .map(|(child, width)| child.min_height_for_width(width))
+        .max()
+        .unwrap_or(0)
+}
+
+pub(super) fn row_ranges(children: &[LayoutNode], width: u32, gap: i32) -> Vec<(usize, usize)> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut used = 0i64;
+    for (i, child) in children.iter().enumerate() {
+        let base = i64::from(
+            child
+                .flex_basis()
+                .unwrap_or_else(|| child.min_width_for_parent(width)),
         );
-        let child_total_h = child.size.1.saturating_add(child.margin_vertical());
-        let y_offset = match child_cross_align {
-            Align::Start => 0,
-            Align::Center => area.height.saturating_sub(child_total_h) / 2,
-            Align::End => area.height.saturating_sub(child_total_h),
-        };
-        child.pos.1 = child.pos.1.saturating_add(y_offset);
-        let effective_w = child.size.0.saturating_add(child.margin_horizontal());
-        // `inter_gap` is signed (#222); advance with a saturating signed add so
-        // an overlap (negative gap) larger than the cursor never wraps `u32`.
-        x = x
-            .saturating_add(effective_w)
-            .saturating_add_signed(inter_gap);
+        if i > start && used + i64::from(gap) + base > i64::from(width) {
+            lines.push((start, i));
+            start = i;
+            used = base;
+        } else if i > start {
+            used += i64::from(gap) + base;
+        } else {
+            used = base;
+        }
     }
+    if start < children.len() {
+        lines.push((start, children.len()));
+    }
+    lines
 }
 
 /// Lay out a wrapping row (#258): partition children into lines that each
@@ -690,47 +752,16 @@ fn layout_row_wrapped(node: &mut LayoutNode, area: Rect, depth: usize) {
     let justify = node.justify;
     let align = node.align;
 
-    // Greedy line partition by base width. Each entry is the half-open child
-    // index range `[start, end)` plus the line's tallest child height.
-    let mut lines: Vec<(usize, usize, u32)> = Vec::new();
-    let mut line_start = 0usize;
-    let mut cur_width: i64 = 0;
-    let mut cur_height: u32 = 0;
-    let mut has_child = false;
-    for (i, child) in node.children.iter_mut().enumerate() {
-        let base = child.flex_basis().unwrap_or_else(|| child.min_width());
-        let child_h = if child.wrap {
-            child.min_height_for_width(base.min(area.width))
-        } else {
-            child.min_height()
-        };
-        if has_child {
-            let prospective = cur_width + gap as i64 + base as i64;
-            if prospective > area.width as i64 {
-                lines.push((line_start, i, cur_height));
-                line_start = i;
-                cur_width = base as i64;
-                cur_height = child_h;
-            } else {
-                cur_width = prospective;
-                cur_height = cur_height.max(child_h);
-            }
-        } else {
-            cur_width = base as i64;
-            cur_height = child_h;
-            has_child = true;
-        }
-    }
-    if has_child {
-        lines.push((line_start, node.children.len(), cur_height));
-    }
+    // Partition by base width, then measure each line at its allocated widths.
+    let lines = row_ranges(&node.children, area.width, gap);
 
     // Lay out each line in its own one-line-tall band, advancing `y` by the
     // line's height plus the cross-axis gap. The cross-axis gap is signed
     // (#222 overlap semantics carry over); a saturating signed advance keeps
     // an overlap from wrapping `u32`.
     let mut y = area.y;
-    for (start, end, line_height) in lines {
+    for (start, end) in lines {
+        let line_height = row_line_height(&mut node.children[start..end], area.width, gap);
         let line_area = Rect::new(area.x, y, area.width, line_height);
         layout_row_line(
             &mut node.children[start..end],
@@ -752,10 +783,13 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     }
 
     for child in &mut node.children {
+        let previous = child.constraints;
         resolve_axis_specs(&mut child.constraints, area);
         // See `layout_row_line`: discard any intrinsic-size memo cached before
         // this child's `Pct`/`Ratio` constraints were resolved.
-        child.invalidate_size_cache();
+        if child.constraints != previous {
+            child.invalidate_size_cache();
+        }
     }
 
     let n = u32::try_from(node.children.len()).unwrap_or(u32::MAX);
@@ -765,7 +799,8 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     let child_count = node.children.len();
     let mut min_heights = U32Stack::with_capacity(child_count);
     for child in &mut node.children {
-        min_heights.push(child.min_height_for_width(area.width));
+        let width = child.column_outer_width(area.width, node.align);
+        min_heights.push(child.min_height_for_width(width));
     }
 
     let mut total_grow: u32 = 0;
@@ -829,10 +864,7 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
     for (i, child) in node.children.iter_mut().enumerate() {
         let h = child_heights.get(i);
         let child_cross_align = child.align_self.unwrap_or(node.align);
-        let child_outer_w = match child_cross_align {
-            Align::Start => area.width,
-            _ => child.min_width().min(area.width),
-        };
+        let child_outer_w = child.column_outer_width(area.width, node.align);
         let child_x = area.x.saturating_add(child.margin.left);
         let child_y = y.saturating_add(child.margin.top);
         let child_w = child_outer_w.saturating_sub(child.margin_horizontal());
@@ -848,7 +880,9 @@ fn layout_column(node: &mut LayoutNode, area: Rect, depth: usize) {
             Align::Center => area.width.saturating_sub(child_total_w) / 2,
             Align::End => area.width.saturating_sub(child_total_w),
         };
-        child.pos.0 = child.pos.0.saturating_add(x_offset);
+        if x_offset > 0 {
+            translate_subtree(child, x_offset, 0);
+        }
         let effective_h = child.size.1.saturating_add(child.margin_vertical());
         // Signed `inter_gap` (#222) — saturating signed advance, see `layout_row`.
         y = y

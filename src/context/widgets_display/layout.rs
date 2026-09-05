@@ -182,6 +182,7 @@ impl Context {
         self.commands.push(Command::Text {
             content: sep_line().to_owned(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new().fg(self.theme.border).dim(),
             grow: 0,
             align: Align::Start,
@@ -211,6 +212,7 @@ impl Context {
         self.commands.push(Command::Text {
             content: sep_line().to_owned(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new().fg(color),
             grow: 0,
             align: Align::Start,
@@ -639,7 +641,9 @@ impl Context {
         if has_link {
             for command in &mut self.commands[start..] {
                 match command {
-                    Command::Text { wrap, .. } | Command::Link { wrap, .. } => *wrap = true,
+                    Command::Text { wrap, .. }
+                    | Command::Link { wrap, .. }
+                    | Command::RichText { wrap, .. } => *wrap = true,
                     _ => {}
                 }
             }
@@ -666,6 +670,7 @@ impl Context {
             );
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
+            self.invalidate_geometry_cache_from(start);
             return self;
         }
 
@@ -675,6 +680,7 @@ impl Context {
                 Command::Text { content, style, .. } => {
                     segments.push((content, style));
                 }
+                Command::RichText { segments: rich, .. } => segments.extend(rich),
                 Command::Link { text, style, .. } => {
                     // Preserve link text with underline styling (URL lost in RichText,
                     // but text is visible and wraps correctly)
@@ -691,6 +697,7 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = None;
+        self.invalidate_geometry_cache_from(start);
         self
     }
 
@@ -1070,10 +1077,167 @@ impl Context {
         }
     }
 
+    pub(crate) fn invalidate_geometry_cache(&mut self) {
+        self.geometry_cursor = 0;
+        self.geometry_stack.clear();
+        self.geometry_pending_interaction = None;
+    }
+
+    pub(crate) fn invalidate_geometry_cache_from(&mut self, changed_start: usize) {
+        // An unscanned suffix can be rewritten without discarding the prefix.
+        if self.geometry_cursor > changed_start {
+            self.invalidate_geometry_cache();
+        }
+    }
+
+    fn sync_geometry_cache(&mut self) -> usize {
+        if self.geometry_cursor > self.commands.len() {
+            self.invalidate_geometry_cache();
+        }
+        let scanned = self.commands.len() - self.geometry_cursor;
+        for index in self.geometry_cursor..self.commands.len() {
+            match &self.commands[index] {
+                Command::InteractionMarker(id) => self.geometry_pending_interaction = Some(*id),
+                Command::BeginContainer(_)
+                | Command::BeginScrollable(_)
+                | Command::BeginOverlay { .. } => self
+                    .geometry_stack
+                    .push((index, self.geometry_pending_interaction.take())),
+                Command::EndContainer | Command::EndOverlay => {
+                    self.geometry_stack.pop();
+                }
+                Command::Text { .. }
+                | Command::RichText { .. }
+                | Command::Link { .. }
+                | Command::RawDraw { .. }
+                | Command::Spacer { .. } => self.geometry_pending_interaction = None,
+                _ => {}
+            }
+        }
+        self.geometry_cursor = self.commands.len();
+        scanned
+    }
+
+    /// Available parent content capacity, not the last widget's intrinsic size.
+    /// Flex allocations use previous-frame logical geometry; explicit
+    /// constraints are resolved immediately, including the first frame.
+    /// Appended commands are scanned once; each lookup visits only active parents.
+    pub(crate) fn available_content_size(&mut self) -> (u32, u32) {
+        use crate::style::{HeightSpec, WidthSpec};
+
+        self.sync_geometry_cache();
+        let mut width = self.area_width;
+        let mut height = self.area_height;
+        let mut parent_direction = Direction::Column;
+        let mut content_origin = (0, 0);
+        for &(index, id) in &self.geometry_stack {
+            let (direction, constraints, padding, margin, border, sides, grow) =
+                match &self.commands[index] {
+                    Command::BeginContainer(args) => (
+                        args.direction,
+                        args.constraints,
+                        args.padding,
+                        args.margin,
+                        args.border,
+                        args.border_sides,
+                        args.grow,
+                    ),
+                    Command::BeginScrollable(args) => (
+                        args.direction,
+                        args.constraints,
+                        args.padding,
+                        args.margin,
+                        args.border,
+                        args.border_sides,
+                        args.grow,
+                    ),
+                    Command::BeginOverlay { .. } => (
+                        Direction::Column,
+                        Constraints::default(),
+                        Padding::default(),
+                        Margin::default(),
+                        None,
+                        BorderSides::all(),
+                        0,
+                    ),
+                    _ => unreachable!("geometry stack contains only open containers"),
+                };
+            let previous = id.and_then(|id| self.prev_allocated_areas.get(id)).copied();
+            let allocated_width = if parent_direction == Direction::Row && grow > 0 {
+                previous
+                    .filter(|rect| rect.width > 0)
+                    .map_or(width.saturating_sub(margin.horizontal()), |rect| rect.width)
+            } else {
+                width.saturating_sub(margin.horizontal())
+            };
+            let allocated_height = if parent_direction == Direction::Column && grow > 0 {
+                previous
+                    .filter(|rect| rect.height > 0)
+                    .map_or(height.saturating_sub(margin.vertical()), |rect| rect.height)
+            } else {
+                height.saturating_sub(margin.vertical())
+            };
+            width = match constraints.width {
+                WidthSpec::Fixed(value) => value,
+                WidthSpec::Pct(pct) => (u64::from(width) * u64::from(pct.min(100)) / 100) as u32,
+                WidthSpec::Ratio(num, den) if den > 0 => {
+                    (u64::from(width) * u64::from(num) / u64::from(den)).min(u64::from(u32::MAX))
+                        as u32
+                }
+                WidthSpec::MinMax { min, max } => allocated_width.max(min).min(max),
+                _ => allocated_width,
+            };
+            height = match constraints.height {
+                HeightSpec::Fixed(value) => value,
+                HeightSpec::Pct(pct) => (u64::from(height) * u64::from(pct.min(100)) / 100) as u32,
+                HeightSpec::Ratio(num, den) if den > 0 => {
+                    (u64::from(height) * u64::from(num) / u64::from(den)).min(u64::from(u32::MAX))
+                        as u32
+                }
+                HeightSpec::MinMax { min, max } => allocated_height.max(min).min(max),
+                _ => allocated_height,
+            };
+            let left = padding
+                .left
+                .saturating_add(u32::from(border.is_some() && sides.left));
+            let top = padding
+                .top
+                .saturating_add(u32::from(border.is_some() && sides.top));
+            width = width.saturating_sub(
+                left.saturating_add(padding.right)
+                    .saturating_add(u32::from(border.is_some() && sides.right)),
+            );
+            height = height.saturating_sub(
+                top.saturating_add(padding.bottom)
+                    .saturating_add(u32::from(border.is_some() && sides.bottom)),
+            );
+            content_origin = previous.map_or(content_origin, |rect| {
+                (rect.x.saturating_add(left), rect.y.saturating_add(top))
+            });
+            parent_direction = direction;
+        }
+        // Previous positions account for preceding siblings, but their old
+        // content-dependent width/height never becomes the next capacity.
+        if let Some(rect) = self
+            .geometry_pending_interaction
+            .and_then(|id| self.prev_allocated_areas.get(id))
+        {
+            if parent_direction == Direction::Column {
+                height = height.saturating_sub(rect.y.saturating_sub(content_origin.1));
+            } else {
+                width = width.saturating_sub(rect.x.saturating_sub(content_origin.0));
+            }
+        }
+        (width, height)
+    }
+
     /// Create a scrollable container. Handles wheel scroll and drag-to-scroll automatically.
     ///
     /// Pass a [`ScrollState`] to persist scroll position across frames. The state
     /// is updated in-place with the current scroll offset and bounds.
+    /// Wheel events target the last-painted containing region with overflow
+    /// on the requested axis. That region owns the event even at its offset
+    /// limit; events do not bubble to an ancestor at a scroll boundary.
     ///
     /// # Example
     ///
@@ -1108,25 +1272,7 @@ impl Context {
             }
         }
 
-        let next_id = self.rollback.interaction_count;
-        if let Some(rect) = self.prev_hit_map.get(next_id).copied() {
-            let inner_rects: Vec<Rect> = self
-                .prev_scroll_rects
-                .iter()
-                .enumerate()
-                .filter(|&(j, sr)| {
-                    j != index
-                        && sr.width > 0
-                        && sr.height > 0
-                        && sr.x >= rect.x
-                        && sr.right() <= rect.right()
-                        && sr.y >= rect.y
-                        && sr.bottom() <= rect.bottom()
-                })
-                .map(|(_, sr)| *sr)
-                .collect();
-            self.auto_scroll_nested(&rect, state, &inner_rects, is_horizontal);
-        }
+        self.auto_scroll_nested(index, state, is_horizontal);
 
         // Carry both axis offsets; the tree builder applies the one matching
         // the finalizing `.row()` / `.col()` direction (#247).
@@ -1354,9 +1500,8 @@ impl Context {
     ) -> bool {
         // Modal suppression: while a modal is active and the bar is not inside
         // an overlay, the bar is inert — consistent with `mouse_down`'s guard.
-        if (self.rollback.modal_active || self.prev_modal_active)
-            && self.rollback.overlay_depth == 0
-        {
+        if !self.interaction_allowed() {
+            state.dragging = false;
             return false;
         }
         if rect.width == 0 || rect.height == 0 {
@@ -1428,65 +1573,66 @@ impl Context {
         changed
     }
 
-    fn auto_scroll_nested(
-        &mut self,
-        rect: &Rect,
-        state: &mut ScrollState,
-        inner_scroll_rects: &[Rect],
-        is_horizontal: bool,
-    ) {
-        let mut to_consume = Vec::new();
-        let shift = crate::event::KeyModifiers::SHIFT;
-        for (i, mouse) in self.mouse_events_in_rect(*rect) {
-            let in_inner = inner_scroll_rects.iter().any(|sr| {
-                mouse.x >= sr.x && mouse.x < sr.right() && mouse.y >= sr.y && mouse.y < sr.bottom()
-            });
-            if in_inner {
+    fn auto_scroll_nested(&mut self, index: usize, state: &mut ScrollState, is_horizontal: bool) {
+        if !self.interaction_allowed() || self.events.is_empty() {
+            return;
+        }
+        if self.scroll_wheel_targets.is_none() {
+            // One O(events * regions) pass, never a region discovery on idle frames.
+            self.scroll_wheel_targets = Some(
+                self.events
+                    .iter()
+                    .enumerate()
+                    .map(|(i, event)| {
+                        let Event::Mouse(mouse) = event else {
+                            return None;
+                        };
+                        if self.consumed[i] {
+                            return None;
+                        }
+                        let horizontal = match mouse.kind {
+                            MouseKind::ScrollLeft | MouseKind::ScrollRight => true,
+                            MouseKind::ScrollUp | MouseKind::ScrollDown => {
+                                mouse.modifiers.contains(KeyModifiers::SHIFT)
+                            }
+                            _ => return None,
+                        };
+                        self.prev_scroll_rects
+                            .iter()
+                            .zip(&self.prev_scroll_infos)
+                            .enumerate()
+                            .rev()
+                            .find_map(|(candidate, (rect, &(content, viewport, axis)))| {
+                                (axis == horizontal
+                                    && content > viewport
+                                    && rect.contains(mouse.x, mouse.y))
+                                .then_some(candidate)
+                            })
+                    })
+                    .collect(),
+            );
+        }
+        let targets = self
+            .scroll_wheel_targets
+            .as_ref()
+            .expect("wheel targets resolved");
+        let delta = self.scroll_lines_per_event as usize;
+        for (i, target) in targets.iter().enumerate() {
+            if *target != Some(index) || self.consumed[i] {
                 continue;
             }
-
-            let delta = self.scroll_lines_per_event as usize;
-            if is_horizontal {
-                // #247: a horizontal scrollable consumes native horizontal wheel
-                // events (`ScrollLeft` / `ScrollRight`) and shift+vertical-wheel
-                // (the common terminal convention for sideways scroll on a
-                // mouse with only a vertical wheel).
-                let shifted = mouse.modifiers.contains(shift);
-                match mouse.kind {
-                    MouseKind::ScrollLeft => {
-                        state.scroll_left(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::ScrollRight => {
-                        state.scroll_right(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::ScrollUp if shifted => {
-                        state.scroll_left(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::ScrollDown if shifted => {
-                        state.scroll_right(delta);
-                        to_consume.push(i);
-                    }
-                    _ => {}
-                }
-            } else {
-                match mouse.kind {
-                    MouseKind::ScrollUp => {
-                        state.scroll_up(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::ScrollDown => {
-                        state.scroll_down(delta);
-                        to_consume.push(i);
-                    }
-                    MouseKind::Drag(MouseButton::Left) => {}
-                    _ => {}
-                }
+            let Event::Mouse(mouse) = &self.events[i] else {
+                continue;
+            };
+            let backwards = matches!(mouse.kind, MouseKind::ScrollUp | MouseKind::ScrollLeft);
+            match (is_horizontal, backwards) {
+                (true, true) => state.scroll_left(delta),
+                (true, false) => state.scroll_right(delta),
+                (false, true) => state.scroll_up(delta),
+                (false, false) => state.scroll_down(delta),
             }
+            self.consumed[i] = true;
         }
-        self.consume_indices(to_consume);
     }
 
     /// Shortcut for `container().border(border)`.
@@ -1720,6 +1866,167 @@ impl Context {
     /// submission on all fields being valid.
     pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
         self.button_with(label, ButtonVariant::Primary)
+    }
+}
+
+#[cfg(test)]
+mod v024_geometry_cache_tests {
+    use super::*;
+
+    fn assert_fresh_matches(ui: &mut Context) {
+        let cached = ui.available_content_size();
+        ui.invalidate_geometry_cache();
+        assert_eq!(cached, ui.available_content_size());
+    }
+
+    #[test]
+    fn geometry_cache_scans_only_appended_commands_and_pops_parents() {
+        let mut backend = crate::TestBackend::new(80, 24);
+        backend.render(|ui| {
+            let _ = ui.container().w(40).h(12).p(1).col(|ui| {
+                assert_eq!(ui.available_content_size(), (38, 10));
+                let cursor = ui.geometry_cursor;
+                assert_eq!(ui.sync_geometry_cache(), 0);
+                let _ = ui.container().w(10).h(4).col(|ui| {
+                    assert_eq!(ui.sync_geometry_cache(), ui.commands.len() - cursor);
+                    assert_eq!(ui.available_content_size(), (10, 4));
+                    assert_eq!(ui.sync_geometry_cache(), 0);
+                });
+                assert_eq!(ui.sync_geometry_cache(), 1);
+                assert_eq!(ui.available_content_size(), (38, 10));
+                assert_eq!(ui.geometry_stack.len(), 1);
+            });
+            assert_eq!(ui.available_content_size(), (80, 24));
+            assert!(ui.geometry_stack.is_empty());
+        });
+    }
+
+    #[test]
+    fn geometry_cache_resets_per_frame_and_reuses_stack_capacity() {
+        let mut backend = crate::TestBackend::new(80, 24);
+        let mut capacity = 0;
+        backend.render(|ui| {
+            let _ = ui.container().w(40).col(|ui| {
+                let _ = ui.available_content_size();
+                capacity = ui.geometry_stack.capacity();
+            });
+        });
+        backend.render(|ui| {
+            assert_eq!(ui.geometry_cursor, 0);
+            assert!(ui.geometry_stack.is_empty());
+            assert!(ui.geometry_pending_interaction.is_none());
+            assert!(ui.geometry_stack.capacity() >= capacity);
+            assert_eq!(ui.available_content_size(), (80, 24));
+        });
+    }
+
+    #[test]
+    fn geometry_cache_keeps_prefix_when_wrap_only_rewrites_unscanned_suffix() {
+        let mut backend = crate::TestBackend::new(80, 24);
+        backend.render(|ui| {
+            let _ = ui.container().w(40).h(12).col(|ui| {
+                assert_eq!(ui.available_content_size(), (40, 12));
+                let cursor = ui.geometry_cursor;
+                for _ in 0..10 {
+                    ui.line_wrap(|ui| {
+                        ui.text("plain");
+                    });
+                }
+                assert_eq!(ui.geometry_cursor, cursor);
+                assert_eq!(ui.geometry_stack.len(), 1);
+                assert_eq!(ui.available_content_size(), (40, 12));
+            });
+        });
+    }
+
+    #[test]
+    fn geometry_cache_defensively_rebuilds_after_command_length_shrinks() {
+        let mut backend = crate::TestBackend::new(80, 24);
+        backend.render(|ui| {
+            let _ = ui.container().w(40).col(|ui| {
+                assert_eq!(ui.available_content_size().0, 40);
+            });
+            ui.commands.clear();
+            assert_eq!(ui.available_content_size(), (80, 24));
+            assert_eq!(ui.geometry_cursor, 0);
+            assert!(ui.geometry_stack.is_empty());
+        });
+    }
+
+    #[test]
+    fn geometry_cache_invalidates_after_wrap_drain_and_insert() {
+        for linked in [false, true] {
+            let mut backend = crate::TestBackend::new(80, 24);
+            backend.render(|ui| {
+                let _ = ui.container().w(40).h(12).col(|ui| {
+                    ui.line_wrap(|ui| {
+                        if linked {
+                            ui.link("link", "https://example.com");
+                        }
+                        let _ = ui.container().w(7).h(3).col(|ui| {
+                            ui.text("inside");
+                            assert_eq!(ui.available_content_size(), (7, 3));
+                        });
+                    });
+                    for _ in 0..20 {
+                        ui.text("after");
+                    }
+                    assert_eq!(ui.available_content_size(), (40, 12));
+                    assert_fresh_matches(ui);
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn geometry_cache_invalidates_after_grid_rebuilds() {
+        for specified in [false, true] {
+            let mut backend = crate::TestBackend::new(80, 24);
+            backend.render(|ui| {
+                let _ = ui.container().w(40).h(12).col(|ui| {
+                    let cells = |ui: &mut Context| {
+                        let _ = ui.container().w(7).h(3).col(|ui| {
+                            assert_eq!(ui.available_content_size(), (7, 3));
+                        });
+                    };
+                    if specified {
+                        let _ = ui.grid_with(&[GridColumn::Auto, GridColumn::Auto], cells);
+                    } else {
+                        let _ = ui.grid(2, cells);
+                    }
+                    for _ in 0..20 {
+                        ui.text("after");
+                    }
+                    assert_eq!(ui.available_content_size(), (40, 12));
+                    assert_fresh_matches(ui);
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn geometry_cache_invalidates_after_checkpoint_restore() {
+        let mut backend = crate::TestBackend::new(80, 24);
+        backend.render(|ui| {
+            let _ = ui.container().w(40).h(12).col(|ui| {
+                ui.error_boundary_with(
+                    |ui| {
+                        let _ = ui.container().w(7).h(3).col(|ui| {
+                            assert_eq!(ui.available_content_size(), (7, 3));
+                            panic!("geometry rollback probe");
+                        });
+                    },
+                    |ui, _| {
+                        ui.text("fallback");
+                    },
+                );
+                for _ in 0..20 {
+                    ui.text("after");
+                }
+                assert_eq!(ui.available_content_size(), (40, 12));
+                assert_fresh_matches(ui);
+            });
+        });
     }
 }
 

@@ -115,6 +115,7 @@ impl<T> Drop for TaskHandle<T> {
 /// Per-session async task registry, round-tripped through [`Context`] each
 /// frame. Worker tasks are supervised so all normal, cancelled, and panicked
 /// exits produce a terminal message and release their join entry.
+#[derive(Default)]
 pub(crate) struct AsyncTasks {
     runtime: Option<tokio::runtime::Handle>,
     next_id: u64,
@@ -122,28 +123,11 @@ pub(crate) struct AsyncTasks {
     results: std::collections::HashMap<u64, ErasedTaskOutcome>,
     result_tx: Option<Sender<ResultMsg>>,
     result_rx: Option<Receiver<ResultMsg>>,
-    cancel_tx: Sender<CancelMsg>,
-    cancel_rx: Receiver<CancelMsg>,
+    cancel_tx: Option<Sender<CancelMsg>>,
+    cancel_rx: Option<Receiver<CancelMsg>>,
     /// Coalescing wake primitive for the owning render dispatcher. `Notify`
     /// stores at most one permit, so completion bursts cannot grow a queue.
     wake: Option<Arc<tokio::sync::Notify>>,
-}
-
-impl Default for AsyncTasks {
-    fn default() -> Self {
-        let (cancel_tx, cancel_rx) = std::sync::mpsc::channel();
-        Self {
-            runtime: None,
-            next_id: 0,
-            joins: std::collections::HashMap::new(),
-            results: std::collections::HashMap::new(),
-            result_tx: None,
-            result_rx: None,
-            cancel_tx,
-            cancel_rx,
-            wake: None,
-        }
-    }
 }
 
 impl Drop for AsyncTasks {
@@ -194,7 +178,18 @@ impl AsyncTasks {
             .checked_add(1)
             .expect("in-frame async task id space exhausted");
 
-        let worker = runtime.spawn(fut);
+        if self.cancel_tx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.cancel_tx = Some(tx);
+            self.cancel_rx = Some(rx);
+        }
+        // A task may migrate threads between polls. Scope panic handling to
+        // each poll rather than keeping thread-local state across an await.
+        let worker = runtime.spawn(async move {
+            let mut future = std::pin::pin!(fut);
+            std::future::poll_fn(|cx| crate::with_recoverable_panics(|| future.as_mut().poll(cx)))
+                .await
+        });
         let worker_abort = worker.abort_handle();
         let completion_wake = self.wake.clone();
         let supervisor = runtime.spawn(async move {
@@ -217,7 +212,14 @@ impl AsyncTasks {
             },
         );
 
-        TaskHandle::new(id, self.cancel_tx.clone(), self.wake.clone())
+        TaskHandle::new(
+            id,
+            self.cancel_tx
+                .as_ref()
+                .expect("cancel channel initialized")
+                .clone(),
+            self.wake.clone(),
+        )
     }
 
     fn drain(&mut self) {
@@ -232,7 +234,7 @@ impl AsyncTasks {
                 }
             }
         }
-        while let Ok(cancel) = self.cancel_rx.try_recv() {
+        while let Some(cancel) = self.cancel_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.cancel(cancel);
         }
     }

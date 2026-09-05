@@ -7,20 +7,12 @@ impl Context {
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        let widget_height = if response.rect.height > 0 {
-            response.rect.height as usize
-        } else {
-            self.area_height as usize
-        };
+        let widget_height = self.available_content_size().1 as usize;
         let viewport_height = widget_height.saturating_sub(2);
-        let effective_height = if viewport_height == 0 {
-            state.len().max(1)
-        } else {
-            viewport_height
-        };
+        let effective_height = viewport_height;
         let show_indicator = state.len() > effective_height;
         let visible_rows = if show_indicator {
-            effective_height.saturating_sub(1).max(1)
+            effective_height.saturating_sub(1)
         } else {
             effective_height
         };
@@ -45,11 +37,15 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::PageUp => {
-                        state.scroll_offset = state.scroll_offset.saturating_sub(10);
+                        state.scroll_offset =
+                            state.scroll_offset.saturating_sub(visible_rows.max(1));
                         consumed_indices.push(i);
                     }
                     KeyCode::PageDown => {
-                        state.scroll_offset = (state.scroll_offset + 10).min(max_offset);
+                        state.scroll_offset = state
+                            .scroll_offset
+                            .saturating_add(visible_rows.max(1))
+                            .min(max_offset);
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
@@ -122,7 +118,12 @@ impl Context {
 
         if show_indicator {
             let end_pos = end.min(state.len());
-            let line = format!("{}-{} / {}", start.saturating_add(1), end_pos, state.len());
+            let line = format!(
+                "{}-{} / {}",
+                if start < end { start + 1 } else { 0 },
+                end_pos,
+                state.len()
+            );
             self.styled(line, Style::new().dim().fg(self.theme.text_dim));
         }
 
@@ -136,8 +137,9 @@ impl Context {
 
     /// Render a virtual list that only renders visible items.
     ///
-    /// `total` is the number of items. `visible_height` limits how many rows
-    /// are rendered. The closure `f` is called only for visible indices.
+    /// `visible_height` limits how many rows are rendered. The closure `f`
+    /// receives underlying item indices from [`ListState::visible_indices`],
+    /// while selection and viewport offsets address the filtered view.
     ///
     /// This is the uniform fixed-height fast path: every item is treated as
     /// exactly one row. For chat/feed bubbles of differing heights see
@@ -203,10 +205,11 @@ impl Context {
         variable: bool,
         f: impl Fn(&mut Context, usize),
     ) -> Response {
-        if state.is_empty() {
+        let total = state.visible_indices().len();
+        if total == 0 {
             return Response::none();
         }
-        state.selected = state.selected.min(state.len().saturating_sub(1));
+        state.selected = state.selected.min(total.saturating_sub(1));
         let use_heights = variable && state.has_item_heights();
         let focused = self.register_focusable();
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -217,7 +220,7 @@ impl Context {
             for (i, key) in self.available_key_presses() {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                        let max_index = state.len().saturating_sub(1);
+                        let max_index = total.saturating_sub(1);
                         let _ =
                             handle_vertical_nav(&mut state.selected, max_index, key.code.clone());
                         consumed_indices.push(i);
@@ -234,8 +237,7 @@ impl Context {
                         state.selected = if use_heights {
                             page_down_target(state, state.selected, visible_height)
                         } else {
-                            (state.selected + visible_height as usize)
-                                .min(state.len().saturating_sub(1))
+                            (state.selected + visible_height as usize).min(total.saturating_sub(1))
                         };
                         consumed_indices.push(i);
                     }
@@ -244,7 +246,7 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.selected = state.len().saturating_sub(1);
+                        state.selected = total.saturating_sub(1);
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -269,7 +271,8 @@ impl Context {
                 state.viewport_offset = state.selected - vh + 1;
             }
             let start = state.viewport_offset;
-            (start, (start + vh).min(state.len()))
+            state.viewport_row_offset = start;
+            (start, start.saturating_add(vh).min(total))
         };
 
         self.commands
@@ -301,10 +304,16 @@ impl Context {
         }
 
         for idx in start..end {
-            f(self, idx);
+            let raw = state.visible_indices()[idx];
+            if use_heights {
+                let height = state.item_height(raw).min(visible_height);
+                let _ = self.container().h(height).col(|ui| f(ui, raw));
+            } else {
+                f(self, raw);
+            }
         }
 
-        let remaining = state.len().saturating_sub(end);
+        let remaining = total.saturating_sub(end);
         if remaining > 0 {
             let hidden = remaining.to_string();
             let mut line = String::with_capacity(hidden.len() + 10);
@@ -1345,7 +1354,7 @@ fn item_at_row(row_prefix: &[u32], target_row: u32, n: usize) -> usize {
 /// (no zero-progress loop).
 fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
     state.ensure_row_prefix();
-    let n = state.len();
+    let n = state.visible_indices().len();
     if n == 0 || vh == 0 {
         state.viewport_offset = state.viewport_offset.min(n.saturating_sub(1));
         state.viewport_row_offset = 0;
@@ -1367,12 +1376,11 @@ fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
         top = sel;
     }
 
-    // Scroll down: while the selection's bottom row falls past the viewport
-    // window, advance the top item. Each step makes progress (top increases),
-    // so this terminates. Stop once `selected` fits or the selected item is
-    // itself the top (a single item taller than the viewport).
-    while top < sel && sel_bottom.saturating_sub(row_prefix[top]) > vh_rows {
-        top += 1;
+    // Jump directly to the first item whose top allows the selection to fit.
+    // A selected item taller than the viewport starts at the viewport top.
+    if top < sel && sel_bottom.saturating_sub(row_prefix[top]) > vh_rows {
+        let earliest = sel_bottom.saturating_sub(vh_rows);
+        top = row_prefix.partition_point(|&row| row < earliest).min(sel);
     }
 
     // Accumulate items from `top` until adding the next item would overflow
@@ -1403,7 +1411,7 @@ fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
 /// guaranteeing forward progress of at least one item.
 fn page_down_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
     state.ensure_row_prefix();
-    let n = state.len();
+    let n = state.visible_indices().len();
     if n == 0 {
         return 0;
     }
@@ -1420,7 +1428,7 @@ fn page_down_target(state: &mut ListState, from: usize, visible_height: u32) -> 
 /// guaranteeing backward progress of at least one item (until index 0).
 fn page_up_target(state: &mut ListState, from: usize, visible_height: u32) -> usize {
     state.ensure_row_prefix();
-    let n = state.len();
+    let n = state.visible_indices().len();
     if n == 0 {
         return 0;
     }
@@ -1430,4 +1438,49 @@ fn page_up_target(state: &mut ListState, from: usize, visible_height: u32) -> us
     let target = from_bottom.saturating_sub(visible_height.max(1));
     let prev = item_at_row(row_prefix, target, n);
     prev.min(from.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod v024_collection_command_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "collection command-preparation workload measurements"]
+    fn collection_command_workload() {
+        for count in [1_000, 10_000, 100_000] {
+            let mut list = ListState::new((0..count).map(|i| format!("item-{i:06}")).collect());
+            list.set_item_heights(vec![2; count]);
+            let mut table = TableState::new(
+                vec!["Header"],
+                list.items().iter().map(|s| vec![s.clone()]).collect(),
+            );
+            let mut backend = crate::TestBackend::new(80, 24);
+            let mut counts = [0; 4];
+            backend.render(|ui| {
+                let _ = ui.list(&mut list);
+                counts[0] = ui.commands.len();
+            });
+            backend.render(|ui| {
+                let _ = ui.virtual_list_variable(&mut list, 20, |ui, raw| {
+                    ui.text(format!("row-{raw}"));
+                });
+                counts[1] = ui.commands.len();
+            });
+            backend.render(|ui| {
+                let _ = ui.table(&mut table);
+                counts[2] = ui.commands.len();
+            });
+            table.page_size = 20;
+            backend.render(|ui| {
+                let _ = ui.table(&mut table);
+                counts[3] = ui.commands.len();
+            });
+            eprintln!(
+                "COLLECTION_COMMANDS n={count} list={} virtual={} table={} table_page={}",
+                counts[0], counts[1], counts[2], counts[3]
+            );
+            assert!(counts[1] <= 60);
+            assert!(counts[3] <= 35);
+        }
+    }
 }

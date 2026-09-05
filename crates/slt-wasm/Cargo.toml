@@ -1,6 +1,6 @@
 [package]
 name = "slt-wasm"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 rust-version = "1.88"
 description = "WASM/browser backend for SuperLightTUI"
@@ -10,7 +10,7 @@ homepage = "https://github.com/subinium/SuperLightTUI"
 documentation = "https://docs.rs/slt-wasm"
 
 [dependencies]
-superlighttui = { version = "0.23.0", path = "../..", default-features = false }
+superlighttui = { version = "0.24.0", path = "../..", default-features = false }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "CssStyleDeclaration",
@@ -20,6 +20,12 @@ web-sys = { version = "0.3", features = [
     "EventTarget",
     "HtmlElement",
     "HtmlPreElement",
+    "HtmlTextAreaElement",
+    "InputEvent",
+    "CompositionEvent",
+    "FocusEvent",
+    "PointerEvent",
+    "ResizeObserver",
     "KeyboardEvent",
     "MouseEvent",
     "Node",
@@ -31,6 +37,7 @@ js-sys = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
 
 [features]
 default = ["bidi"]

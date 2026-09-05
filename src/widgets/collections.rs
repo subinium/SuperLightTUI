@@ -6,7 +6,7 @@
 pub struct ListState {
     /// The list items as display strings.
     items: Vec<String>,
-    /// Index of the currently selected item.
+    /// Index of the currently selected item in the filtered view.
     pub selected: usize,
     /// Case-insensitive substring filter applied to list items.
     filter: String,
@@ -30,7 +30,7 @@ pub struct ListState {
     item_heights: Option<Vec<u32>>,
     /// Cached prefix sum of `item_heights`, rebuilt lazily when `heights_dirty`.
     /// `row_prefix[i]` is the total number of rows occupied by items `0..i`, so
-    /// `row_prefix.len() == items.len() + 1` after `ensure_row_prefix`.
+    /// `row_prefix.len() == view_indices.len() + 1` after `ensure_row_prefix`.
     row_prefix: Vec<u32>,
     /// Dirty flag gating `row_prefix` rebuilds; set whenever items or heights
     /// change so a stale prefix sum is never consumed.
@@ -39,6 +39,7 @@ pub struct ListState {
     /// Lowercase cache parallel to `items`, rebuilt only on `set_items` / `new`.
     /// Mirrors the `row_search_cache` pattern in `TableState`.
     item_search_cache: Vec<String>,
+    filter_tokens: Vec<String>,
 }
 
 impl ListState {
@@ -58,6 +59,7 @@ impl ListState {
             heights_dirty: true,
             view_indices: (0..len).collect(),
             item_search_cache,
+            filter_tokens: Vec::new(),
         }
     }
 
@@ -90,10 +92,34 @@ impl ListState {
         self.items.get(index).map(String::as_str)
     }
 
-    /// Append an item and rebuild cache-coupled view state.
+    /// Append an item, updating only its search cache and filtered-view entry.
+    /// New items have a height of one row when per-item heights are enabled.
     pub fn push_item(&mut self, item: impl Into<String>) {
-        self.items.push(item.into());
-        self.rebuild_item_caches();
+        let item = item.into();
+        let cached = item.to_lowercase();
+        let visible = self
+            .filter_tokens
+            .iter()
+            .all(|token| cached.contains(token));
+        let index = self.items.len();
+        self.items.push(item);
+        self.item_search_cache.push(cached);
+        if let Some(heights) = &mut self.item_heights {
+            heights.push(1);
+        }
+        if visible {
+            self.view_indices.push(index);
+            if !self.heights_dirty && !self.row_prefix.is_empty() {
+                let bottom = self.row_prefix.last().copied().unwrap_or(0);
+                self.row_prefix.push(bottom.saturating_add(1));
+            } else {
+                self.heights_dirty = true;
+            }
+        }
+        self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+        self.viewport_offset = self
+            .viewport_offset
+            .min(self.view_indices.len().saturating_sub(1));
     }
 
     /// Insert an item at a data index. Returns `false` when out of bounds.
@@ -101,8 +127,15 @@ impl ListState {
         if index > self.items.len() {
             return false;
         }
-        self.items.insert(index, item.into());
-        self.rebuild_item_caches();
+        let selected = self.view_indices.get(self.selected).copied();
+        let item = item.into();
+        self.item_search_cache.insert(index, item.to_lowercase());
+        self.items.insert(index, item);
+        if let Some(heights) = &mut self.item_heights {
+            heights.insert(index, 1);
+        }
+        self.rebuild_view();
+        self.restore_selection(selected.map(|raw| raw + usize::from(raw >= index)));
         true
     }
 
@@ -111,8 +144,18 @@ impl ListState {
         if index >= self.items.len() {
             return None;
         }
+        let selected = self.view_indices.get(self.selected).copied();
         let item = self.items.remove(index);
-        self.rebuild_item_caches();
+        self.item_search_cache.remove(index);
+        if let Some(heights) = &mut self.item_heights {
+            heights.remove(index);
+        }
+        self.rebuild_view();
+        self.restore_selection(
+            selected
+                .filter(|&raw| raw != index)
+                .map(|raw| raw - usize::from(raw > index)),
+        );
         Some(item)
     }
 
@@ -169,7 +212,9 @@ impl ListState {
     ///
     /// Available since `0.21.0`.
     pub fn set_item_heights(&mut self, heights: Vec<u32>) {
-        self.item_heights = Some(heights.into_iter().map(|h| h.max(1)).collect());
+        let mut heights: Vec<u32> = heights.into_iter().map(|h| h.max(1)).collect();
+        heights.resize(self.items.len(), 1);
+        self.item_heights = Some(heights);
         self.heights_dirty = true;
     }
 
@@ -209,19 +254,19 @@ impl ListState {
     }
 
     /// Rebuild `row_prefix` if dirty. After this call `row_prefix[i]` is the
-    /// total number of rows occupied by items `0..i`, and
-    /// `row_prefix.len() == items.len() + 1`. Rebuild is `O(n)` and skipped
+    /// total number of rows occupied by filtered items `0..i`, and
+    /// `row_prefix.len() == view_indices.len() + 1`. Rebuild is `O(n)` and skipped
     /// entirely when `heights_dirty` is `false`.
     pub(crate) fn ensure_row_prefix(&mut self) {
-        if !self.heights_dirty && self.row_prefix.len() == self.items.len() + 1 {
+        if !self.heights_dirty && self.row_prefix.len() == self.view_indices.len() + 1 {
             return;
         }
-        let n = self.items.len();
+        let n = self.view_indices.len();
         self.row_prefix.clear();
         self.row_prefix.reserve(n + 1);
         let mut acc = 0u32;
         self.row_prefix.push(0);
-        for i in 0..n {
+        for &i in &self.view_indices {
             acc = acc.saturating_add(self.item_height(i));
             self.row_prefix.push(acc);
         }
@@ -237,7 +282,16 @@ impl ListState {
     /// together — all tokens must match across any cell in the same row.
     /// Empty string disables filtering.
     pub fn set_filter(&mut self, filter: impl Into<String>) {
-        self.filter = filter.into();
+        let filter = filter.into();
+        if self.filter == filter {
+            return;
+        }
+        self.filter = filter;
+        self.filter_tokens = self
+            .filter
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
         self.rebuild_view();
     }
 
@@ -294,11 +348,9 @@ impl ListState {
         }
 
         // Keep per-item heights aligned with `items` when present.
-        if let Some(heights) = self.item_heights.as_mut()
-            && from < heights.len()
-        {
+        if let Some(heights) = self.item_heights.as_mut() {
             let h = heights.remove(from);
-            heights.insert(to.min(heights.len()), h);
+            heights.insert(to, h);
         }
         self.heights_dirty = true;
 
@@ -326,24 +378,24 @@ impl ListState {
     }
 
     fn rebuild_view(&mut self) {
-        let tokens: Vec<String> = self
-            .filter
-            .split_whitespace()
-            .map(|t| t.to_lowercase())
-            .collect();
-        self.view_indices = if tokens.is_empty() {
-            (0..self.items.len()).collect()
-        } else {
-            (0..self.items.len())
-                .filter(|&i| {
-                    let cached = match self.item_search_cache.get(i) {
-                        Some(s) => s.as_str(),
-                        None => return false,
-                    };
-                    tokens.iter().all(|token| cached.contains(token.as_str()))
-                })
-                .collect()
-        };
+        self.view_indices.clear();
+        self.view_indices
+            .extend(
+                self.item_search_cache
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, cached)| {
+                        self.filter_tokens
+                            .iter()
+                            .all(|token| cached.contains(token))
+                            .then_some(i)
+                    }),
+            );
+        self.heights_dirty = true;
+        self.viewport_offset = self
+            .viewport_offset
+            .min(self.view_indices.len().saturating_sub(1));
+        self.viewport_row_offset = 0;
         if !self.view_indices.is_empty() && self.selected >= self.view_indices.len() {
             self.selected = self.view_indices.len() - 1;
         } else if self.view_indices.is_empty() {
@@ -351,10 +403,16 @@ impl ListState {
         }
     }
 
+    fn restore_selection(&mut self, raw: Option<usize>) {
+        if let Some(view) = raw.and_then(|raw| self.view_indices.iter().position(|&i| i == raw)) {
+            self.selected = view;
+        }
+    }
+
     fn rebuild_item_caches(&mut self) {
         self.item_search_cache = self.items.iter().map(|item| item.to_lowercase()).collect();
         if let Some(heights) = self.item_heights.as_mut() {
-            heights.truncate(self.items.len());
+            heights.resize(self.items.len(), 1);
         }
         self.heights_dirty = true;
         self.viewport_offset = self.viewport_offset.min(self.items.len().saturating_sub(1));
@@ -1013,10 +1071,39 @@ impl TableState {
         self.rows.is_empty()
     }
 
-    /// Append a row and rebuild cache-coupled view state.
+    /// Append a row with an incremental search cache update.
+    /// Unsorted views append matching rows directly; sorted views rebuild
+    /// their order. Use [`set_rows`](Self::set_rows) for bulk sorted loads.
     pub fn push_row(&mut self, row: Vec<impl Into<String>>) {
-        self.rows.push(row.into_iter().map(Into::into).collect());
-        self.rebuild_row_state();
+        let row: Vec<String> = row.into_iter().map(Into::into).collect();
+        let cached = Self::searchable_row(&row);
+        let visible = self
+            .filter_tokens
+            .iter()
+            .all(|token| cached.contains(token));
+        let index = self.rows.len();
+        if !self.widths_dirty {
+            for (width, cell) in self.content_widths.iter_mut().zip(&row) {
+                *width = (*width).max(UnicodeWidthStr::width(cell.as_str()) as u32);
+            }
+            self.column_widths.clone_from(&self.content_widths);
+        }
+        self.rows.push(row);
+        self.row_search_cache.push(cached);
+        if self.sort_column.is_some() {
+            self.rebuild_view();
+        } else {
+            if visible {
+                self.view_indices.push(index);
+            }
+            self.page = if self.page_size > 0 {
+                self.page.min(self.total_pages().saturating_sub(1))
+            } else {
+                0
+            };
+            self.selected = self.selected.min(self.view_indices.len().saturating_sub(1));
+            self.prune_selection();
+        }
     }
 
     /// Insert a row at a data index. Returns `false` when out of bounds.
@@ -1340,19 +1427,21 @@ impl TableState {
         self.row_search_cache = self
             .rows
             .iter()
-            .map(|row| {
-                let mut searchable = String::new();
-                for (idx, cell) in row.iter().enumerate() {
-                    if idx > 0 {
-                        searchable.push('\n');
-                    }
-                    searchable.extend(cell.chars().flat_map(char::to_lowercase));
-                }
-                searchable
-            })
+            .map(|row| Self::searchable_row(row))
             .collect();
         self.filter_tokens = Self::tokenize_filter(&self.filter);
         self.widths_dirty = true;
+    }
+
+    fn searchable_row(row: &[String]) -> String {
+        let mut searchable = String::new();
+        for (idx, cell) in row.iter().enumerate() {
+            if idx > 0 {
+                searchable.push('\n');
+            }
+            searchable.extend(cell.chars().flat_map(char::to_lowercase));
+        }
+        searchable
     }
 
     fn rebuild_row_state(&mut self) {
@@ -2455,5 +2544,97 @@ mod list_state_reorder_tests {
         assert_eq!(state.items, vec!["b", "a", "c", "d"]);
         assert_eq!(state.selected_item(), Some("d"));
         assert_eq!(state.selected, 3);
+    }
+}
+
+#[cfg(test)]
+mod v024_collection_state_tests {
+    use super::*;
+
+    fn heights(state: &ListState) -> Vec<u32> {
+        (0..state.len()).map(|raw| state.item_height(raw)).collect()
+    }
+
+    #[test]
+    fn mutation_metadata_tracks_full_and_partial_heights() {
+        for initial in [vec![1, 10, 2], vec![1, 10]] {
+            let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(initial);
+            let last = state.item_height(2);
+            state.selected = 1;
+            state.remove_item(0);
+            assert_eq!(heights(&state), [10, last]);
+            assert_eq!(state.selected_item(), Some("b"));
+            state.insert_item(1, "new");
+            assert_eq!(heights(&state), [10, 1, last]);
+            state.move_item(2, 0);
+            assert_eq!(heights(&state), [last, 10, 1]);
+            assert_eq!(state.selected_item(), Some("b"));
+            state.push_item("tail");
+            assert_eq!(heights(&state), [last, 10, 1, 1]);
+            state.set_filter("b");
+            state.ensure_row_prefix();
+            assert_eq!(state.row_prefix(), [0, 10]);
+            state.clear_items();
+            state.set_filter("");
+            state.push_item("fresh");
+            state.ensure_row_prefix();
+            assert_eq!(state.row_prefix(), [0, 1]);
+        }
+    }
+
+    #[test]
+    fn partial_height_move_from_unspecified_item_preserves_explicit_height() {
+        let mut state = ListState::new(vec!["a", "b", "c"]).with_item_heights(vec![10]);
+        state.move_item(2, 0);
+        assert_eq!(heights(&state), [1, 10, 1]);
+    }
+
+    #[test]
+    fn append_extends_warm_filtered_prefix_without_rebuild() {
+        let mut state = ListState::new(vec!["match-a"]).with_item_heights(vec![7]);
+        state.set_filter("match");
+        state.ensure_row_prefix();
+        state.push_item("hidden");
+        state.push_item("match-b");
+        assert!(!state.heights_dirty);
+        assert_eq!(state.visible_indices(), [0, 2]);
+        assert_eq!(state.row_prefix(), [0, 7, 8]);
+        state.ensure_row_prefix();
+        assert_eq!(state.row_prefix(), [0, 7, 8]);
+    }
+
+    #[test]
+    fn table_unsorted_append_preserves_selection_and_width_cache() {
+        let mut state = TableState::new(vec!["H"], vec![vec!["one"], vec!["two"]]);
+        state.select_single(1);
+        state.selected = 1;
+        state.push_row(vec!["longer"]);
+        assert!(!state.is_dirty());
+        assert_eq!(state.column_widths(), [6]);
+        assert_eq!(state.selected_row().unwrap(), ["two"]);
+        assert!(state.is_row_selected(1));
+    }
+
+    #[test]
+    #[ignore = "collection retained-capacity measurements"]
+    fn retained_capacity_workload() {
+        for count in [1_000, 10_000, 100_000] {
+            let mut state = ListState::new((0..count).map(|i| format!("item-{i:06}")).collect());
+            state.set_item_heights(vec![2; count]);
+            state.ensure_row_prefix();
+            let bytes = std::mem::size_of::<ListState>()
+                + (state.items.capacity() + state.item_search_cache.capacity())
+                    * std::mem::size_of::<String>()
+                + state
+                    .items
+                    .iter()
+                    .chain(&state.item_search_cache)
+                    .map(String::capacity)
+                    .sum::<usize>()
+                + state.view_indices.capacity() * std::mem::size_of::<usize>()
+                + state.row_prefix.capacity() * std::mem::size_of::<u32>()
+                + state.item_heights.as_ref().unwrap().capacity() * std::mem::size_of::<u32>();
+            eprintln!("COLLECTION_RETAINED n={count} owned_capacity_bytes={bytes}");
+        }
     }
 }

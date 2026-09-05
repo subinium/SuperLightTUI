@@ -5,6 +5,54 @@ use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
 #[test]
+fn v024_allocations_remain_full_when_scrolled_outside_viewport() {
+    let mut root = LayoutNode::container(Direction::Column, default_container_config());
+    root.size = (8, 3);
+    root.is_scrollable = true;
+    root.scroll_offset = 4;
+    let mut child = LayoutNode::container(Direction::Column, default_container_config());
+    child.pos = (1, 1);
+    child.size = (6, 5);
+    child.interaction_id = Some(2);
+    root.children.push(child);
+    let mut data = FrameData::default();
+    collect_all(&root, &mut data);
+    assert_eq!(data.allocated_areas[2], Rect::new(1, 1, 6, 5));
+    assert_eq!(data.hit_areas[2], Rect::new(1, 0, 6, 2));
+    root.scroll_offset = 20;
+    collect_all(&root, &mut data);
+    assert_eq!(data.allocated_areas[2], Rect::new(1, 1, 6, 5));
+    assert_eq!(data.hit_areas[2], Rect::default());
+    root.children.clear();
+    collect_all(&root, &mut data);
+    assert!(data.allocated_areas.is_empty());
+}
+
+#[test]
+fn v024_recursive_height_cache_follows_width_and_fixed_constraints() {
+    let mut column = LayoutNode::container(Direction::Column, default_container_config());
+    let mut row = LayoutNode::container(Direction::Row, default_container_config());
+    let text = LayoutNode::text(
+        "aaaa bbbb".into(),
+        Style::new(),
+        0,
+        Align::Start,
+        (None, true, false),
+        Margin::default(),
+        Constraints::default(),
+    );
+    row.children.push(text);
+    column.children.push(row);
+    for (width, expected) in [(4, 2), (9, 1), (4, 2), (2, 4), (9, 1)] {
+        assert_eq!(column.min_height_for_width(width), expected);
+        assert_eq!(column.min_height_for_width(width), expected);
+    }
+    column.constraints = Constraints::default().h(1);
+    column.invalidate_size_cache();
+    assert_eq!(column.min_height_for_width(4), 1);
+}
+
+#[test]
 fn wrap_empty() {
     assert_eq!(wrap_lines("", 10), vec![""]);
 }
@@ -455,6 +503,7 @@ fn collect_focus_rects_from_markers() {
         Command::Text {
             content: "input1".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 0,
             align: Align::Start,
@@ -467,6 +516,7 @@ fn collect_focus_rects_from_markers() {
         Command::Text {
             content: "input2".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 0,
             align: Align::Start,
@@ -517,6 +567,7 @@ fn focus_marker_tags_container() {
         Command::Text {
             content: "inside".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 0,
             align: Align::Start,
@@ -653,6 +704,7 @@ fn group_names_share_arc_across_focus_descendants() {
             commands.push(Command::Text {
                 content: format!("row {focus_id}"),
                 cursor_offset: None,
+                cursor_masked: false,
                 style: Style::new(),
                 grow: 0,
                 align: Align::Start,
@@ -735,6 +787,7 @@ fn flexbox_row_many_children_overflow_scratch() {
         commands.push(Command::Text {
             content: format!("c{i}"),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 1,
             align: Align::Start,
@@ -787,6 +840,7 @@ fn flexbox_column_many_children_overflow_scratch() {
         commands.push(Command::Text {
             content: format!("row{i}"),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 0,
             align: Align::Start,
@@ -842,6 +896,7 @@ fn flexbox_grow_with_max_width_no_gap() {
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: crate::style::Style::new(),
             grow: 1,
             align: Align::Start,
@@ -853,6 +908,7 @@ fn flexbox_grow_with_max_width_no_gap() {
         Command::Text {
             content: "B".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: crate::style::Style::new(),
             grow: 1,
             align: Align::Start,
@@ -918,6 +974,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: crate::style::Style::new(),
             grow: 1,
             align: Align::Start,
@@ -929,6 +986,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
         Command::Text {
             content: "B".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: crate::style::Style::new(),
             grow: 1,
             align: Align::Start,
@@ -1395,6 +1453,7 @@ fn build_tree_drains_in_place_preserving_capacity() {
     commands.push(Command::Text {
         content: "hello".into(),
         cursor_offset: None,
+        cursor_masked: false,
         style: Style::new(),
         grow: 0,
         align: Align::Start,
@@ -1471,6 +1530,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
     commands.push(Command::Text {
         content: "x".repeat(20),
         cursor_offset: None,
+        cursor_masked: false,
         style: Style::new(),
         grow: 0,
         align: Align::Start,
@@ -1600,6 +1660,7 @@ fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: 
     commands.push(Command::Text {
         content: "x".repeat(width),
         cursor_offset: None,
+        cursor_masked: false,
         style: Style::new(),
         grow: 0,
         align: Align::Start,
@@ -1785,6 +1846,7 @@ fn flex_basis_feeds_grow() {
         commands.push(Command::Text {
             content: "x".to_string(),
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new(),
             grow: 0,
             align: Align::Start,
@@ -2050,6 +2112,7 @@ fn gap_overlap_tree(
         commands.push(Command::Text {
             content: "x".into(),
             cursor_offset: None,
+            cursor_masked: false,
             style: crate::style::Style::new(),
             grow: 0,
             align: Align::Start,

@@ -15,7 +15,7 @@
 #![warn(clippy::print_stderr)]
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use std::rc::{Rc, Weak};
 
@@ -26,10 +26,60 @@ use slt::{
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    Document, EventTarget, HtmlElement, HtmlPreElement, KeyboardEvent, MouseEvent, Window,
+    Document, EventTarget, HtmlElement, HtmlPreElement, HtmlTextAreaElement, KeyboardEvent, Window,
 };
 
 type RafCallback = Closure<dyn FnMut(f64)>;
+
+#[wasm_bindgen(
+    inline_js = "export function guardedFrame(frame, failed) { return ts => { try { frame(ts); } catch (error) { failed(String(error)); } }; } export function deferCleanup(callback) { queueMicrotask(callback); }"
+)]
+extern "C" {
+    #[wasm_bindgen(js_name = guardedFrame)]
+    fn guarded_frame(frame: &js_sys::Function, failed: &js_sys::Function) -> js_sys::Function;
+    #[wasm_bindgen(js_name = deferCleanup)]
+    fn defer_cleanup(callback: &js_sys::Function);
+}
+
+/// Mount-time options specific to the browser runtime, not the terminal.
+#[derive(Clone)]
+pub struct WasmOptions {
+    /// Initial grid width in cells. Default: 80. Must be positive.
+    pub width: u32,
+    /// Initial grid height in cells. Default: 24. Must be positive.
+    pub height: u32,
+    /// Initial colors. Can be overridden by `Context::set_theme`.
+    pub theme: slt::Theme,
+    /// Initial widget color overrides.
+    pub widget_theme: slt::WidgetTheme,
+    /// Lines scrolled for each browser wheel event.
+    pub scroll_speed: u32,
+    /// Maximum rendered frames per second; `None` renders every RAF.
+    /// `Some(0)` is rejected. Input remains queued while throttled.
+    pub max_fps: Option<u32>,
+    /// Fit the host content box on mount and element resize. The host must
+    /// have an independently sized width and height. Default: fixed grid.
+    pub auto_fit: bool,
+    /// Install focused keyboard, editable text, pointer and wheel listeners.
+    /// Disable for a display-only mount. Never captures global keyboard input.
+    pub input: bool,
+}
+
+impl Default for WasmOptions {
+    fn default() -> Self {
+        let config = RunConfig::default();
+        Self {
+            width: 80,
+            height: 24,
+            theme: config.theme,
+            widget_theme: config.widget_theme,
+            scroll_speed: config.scroll_speed,
+            max_fps: Some(60),
+            auto_fit: false,
+            input: true,
+        }
+    }
+}
 
 thread_local! {
     static ACTIVE_APPS: RefCell<Vec<WasmAppHandle>> = const { RefCell::new(Vec::new()) };
@@ -38,14 +88,14 @@ thread_local! {
 struct EventListener {
     target: EventTarget,
     event_type: &'static str,
-    callback: Closure<dyn FnMut(web_sys::Event)>,
+    callback: Closure<dyn Fn(web_sys::Event)>,
 }
 
 impl EventListener {
     fn install(
         target: EventTarget,
         event_type: &'static str,
-        callback: Closure<dyn FnMut(web_sys::Event)>,
+        callback: Closure<dyn Fn(web_sys::Event)>,
     ) -> Result<Self, JsValue> {
         target.add_event_listener_with_callback(event_type, callback.as_ref().unchecked_ref())?;
         Ok(Self {
@@ -70,19 +120,39 @@ struct WasmAppInner {
     listeners: Vec<EventListener>,
     events: Rc<RefCell<Vec<Event>>>,
     raf: Option<RafCallback>,
+    guarded_raf: Option<js_sys::Function>,
+    failure_callback: Option<Closure<dyn FnMut(String)>>,
     raf_id: Option<i32>,
     running: bool,
+    input_active: Rc<Cell<bool>>,
+    error: Option<String>,
+    input: Option<InputSurface>,
+    observer: Option<web_sys::ResizeObserver>,
+    observer_callback: Option<Closure<dyn FnMut()>>,
+    pointer: Rc<Cell<Option<(i32, MouseButton)>>>,
+    container: HtmlElement,
+    added_tab_stop: bool,
 }
 
 impl WasmAppInner {
-    fn new(window: Window, listeners: Vec<EventListener>, events: Rc<RefCell<Vec<Event>>>) -> Self {
+    fn new(window: Window, container: HtmlElement, events: Rc<RefCell<Vec<Event>>>) -> Self {
         Self {
             window,
-            listeners,
+            listeners: Vec::new(),
             events,
             raf: None,
+            guarded_raf: None,
+            failure_callback: None,
             raf_id: None,
             running: true,
+            input_active: Rc::new(Cell::new(true)),
+            error: None,
+            input: None,
+            observer: None,
+            observer_callback: None,
+            pointer: Rc::new(Cell::new(None)),
+            container,
+            added_tab_stop: false,
         }
     }
 }
@@ -110,6 +180,13 @@ impl WasmAppHandle {
     pub fn is_running(&self) -> bool {
         self.inner.borrow().running
     }
+
+    /// The last fatal frame/scheduling error, or `None` after a normal stop.
+    /// A trapped WASM instance must be discarded, not restarted.
+    #[must_use]
+    pub fn error(&self) -> Option<String> {
+        self.inner.borrow().error.clone()
+    }
 }
 
 impl WasmAppHandle {
@@ -133,6 +210,7 @@ pub struct DomBackend {
     /// actually changed — mirroring the native ANSI diff in `src/buffer.rs`.
     prev: Buffer,
     container: HtmlElement,
+    grid: Option<HtmlPreElement>,
     cells: Vec<HtmlElement>,
     initialized: bool,
     width: u32,
@@ -147,6 +225,7 @@ impl DomBackend {
             buffer: Buffer::empty(Rect::new(0, 0, width, height)),
             prev: Buffer::empty(Rect::new(0, 0, width, height)),
             container,
+            grid: None,
             cells: Vec::new(),
             initialized: false,
             width,
@@ -154,7 +233,7 @@ impl DomBackend {
         }
     }
 
-    /// Resize the backend to a new cell grid, discarding the existing DOM grid.
+    /// Resize the backend to a new cell grid, rebuilding its painted cells.
     ///
     /// The next [`flush`](DomBackend::flush) rebuilds the `<span>` grid and
     /// repaints every cell. Both the live and previous buffers are resized so
@@ -169,7 +248,7 @@ impl DomBackend {
         let area = Rect::new(0, 0, width, height);
         self.buffer.resize(area);
         self.prev.resize(area);
-        // Force a full DOM rebuild + repaint on the next flush.
+        // Keep the grid and editable sink mounted while rebuilding cells.
         self.initialized = false;
     }
 
@@ -180,22 +259,37 @@ impl DomBackend {
     }
 
     fn initialize_grid(&mut self) -> io::Result<()> {
-        self.container.set_inner_html("");
-
         let document = self.document()?;
-        let pre = document
-            .create_element("pre")
-            .map_err(|e| io::Error::other(format!("create pre failed: {e:?}")))?
-            .dyn_into::<HtmlPreElement>()
-            .map_err(|_| io::Error::other("failed to cast pre element"))?;
+        let pre = if let Some(grid) = &self.grid {
+            grid.clone()
+        } else {
+            document
+                .create_element("pre")
+                .map_err(|e| io::Error::other(format!("create pre failed: {e:?}")))?
+                .dyn_into::<HtmlPreElement>()
+                .map_err(|_| io::Error::other("failed to cast pre element"))?
+        };
+
+        for cell in self.cells.drain(..) {
+            cell.remove();
+        }
+        let mut child = pre.first_child();
+        while let Some(node) = child {
+            child = node.next_sibling();
+            if node.node_type() == web_sys::Node::TEXT_NODE {
+                pre.remove_child(&node)
+                    .map_err(|e| io::Error::other(format!("remove row break failed: {e:?}")))?;
+            }
+        }
 
         pre.set_attribute(
             "style",
-            "margin:0;padding:0;line-height:1;font-family:monospace;font-size:14px;white-space:pre;",
+            &format!("position:relative;margin:0;padding:0;border:0;line-height:16px;font-family:monospace;font-size:14px;white-space:pre;direction:ltr;box-sizing:content-box;width:{}ch;height:{}px;", self.width, self.height * 16),
         )
         .map_err(|e| io::Error::other(format!("set pre style failed: {e:?}")))?;
+        pre.set_attribute("data-slt-grid", "")
+            .map_err(|e| io::Error::other(format!("mark grid failed: {e:?}")))?;
 
-        self.cells.clear();
         for y in 0..self.height {
             for _x in 0..self.width {
                 let span = document
@@ -216,27 +310,14 @@ impl DomBackend {
             }
         }
 
-        self.container
-            .append_child(&pre)
-            .map_err(|e| io::Error::other(format!("append pre failed: {e:?}")))?;
-        self.initialized = true;
-        Ok(())
-    }
-
-    /// Measure the rendered pixel size of a single cell `<span>`.
-    ///
-    /// Returns `None` when the grid has not been built yet or the first span
-    /// reports a zero-area box (e.g. the container is `display:none`). Used to
-    /// translate a container pixel resize into a new cell grid.
-    fn cell_pixel_size(&self) -> Option<(f64, f64)> {
-        let span = self.cells.first()?;
-        let rect = web_sys::Element::from(span.clone()).get_bounding_client_rect();
-        let (w, h) = (rect.width(), rect.height());
-        if w > 0.0 && h > 0.0 {
-            Some((w, h))
-        } else {
-            None
+        if self.grid.is_none() {
+            self.container
+                .append_child(&pre)
+                .map_err(|e| io::Error::other(format!("append pre failed: {e:?}")))?;
         }
+        self.initialized = true;
+        self.grid = Some(pre);
+        Ok(())
     }
 
     /// Compute the cell grid `(cols, rows)` that fits the container's current
@@ -246,9 +327,28 @@ impl DomBackend {
     /// the caller can keep the existing dimensions instead of collapsing to a
     /// degenerate grid.
     fn fit_grid_to_container(&self) -> Option<(u32, u32)> {
-        let (cell_w, cell_h) = self.cell_pixel_size()?;
-        let rect = web_sys::Element::from(self.container.clone()).get_bounding_client_rect();
-        let (cont_w, cont_h) = (rect.width(), rect.height());
+        let grid = self.grid.as_ref()?;
+        let style = web_sys::window()?
+            .get_computed_style(&self.container)
+            .ok()??;
+        let padding = |name| {
+            style
+                .get_property_value(name)
+                .ok()
+                .and_then(|v| v.trim_end_matches("px").parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let cont_w = self.container.client_width() as f64
+            - padding("padding-left")
+            - padding("padding-right");
+        let cont_h = self.container.client_height() as f64
+            - padding("padding-top")
+            - padding("padding-bottom");
+        let cell_w = grid.get_bounding_client_rect().width() / self.width.max(1) as f64;
+        let host_scale = self.container.get_bounding_client_rect().width()
+            / self.container.offset_width().max(1) as f64;
+        let cell_w = cell_w / host_scale;
+        let cell_h = 16.0;
         if cont_w <= 0.0 || cont_h <= 0.0 {
             return None;
         }
@@ -298,13 +398,17 @@ impl Backend for DomBackend {
                     .get(idx)
                     .ok_or_else(|| io::Error::other("dom cell index out of bounds"))?;
 
-                span.set_attribute("style", &style_to_css(cell.style))
-                    .map_err(|e| io::Error::other(format!("set span style failed: {e:?}")))?;
-                let symbol = if cell.symbol.is_empty() {
-                    " "
+                let continuation = cell.is_continuation();
+                let occupied = if x + 1 < self.width
+                    && self.buffer.get(ox + x + 1, oy + y).is_continuation()
+                {
+                    2
                 } else {
-                    cell.symbol.as_str()
+                    1
                 };
+                span.set_attribute("style", &format!("position:absolute;display:{};left:{}%;top:{}px;width:{}%;height:16px;line-height:16px;overflow:hidden;unicode-bidi:isolate;{}", if continuation { "none" } else { "block" }, x as f64 * 100.0 / self.width.max(1) as f64, y * 16, occupied as f64 * 100.0 / self.width.max(1) as f64, style_to_css(cell.style)))
+                    .map_err(|e| io::Error::other(format!("set span style failed: {e:?}")))?;
+                let symbol = cell.symbol.as_str();
                 span.set_text_content(Some(symbol));
             }
         }
@@ -448,15 +552,6 @@ fn keyboard_event_modifiers(event: &KeyboardEvent) -> KeyModifiers {
     )
 }
 
-fn mouse_event_modifiers(event: &MouseEvent) -> KeyModifiers {
-    modifiers_from_bools(
-        event.shift_key(),
-        event.ctrl_key(),
-        event.alt_key(),
-        event.meta_key(),
-    )
-}
-
 fn reflect_bool(target: &JsValue, key: &str) -> bool {
     js_sys::Reflect::get(target, &JsValue::from_str(key))
         .ok()
@@ -515,41 +610,30 @@ fn mouse_button(button: i16) -> MouseButton {
     }
 }
 
-fn mouse_pixel_position(event: &MouseEvent) -> (Option<u16>, Option<u16>) {
-    let px = u16::try_from(event.offset_x()).ok();
-    let py = u16::try_from(event.offset_y()).ok();
-    (px, py)
-}
-
-fn mouse_cell_position(
-    event: &MouseEvent,
-    container: &HtmlElement,
+#[derive(Clone)]
+struct GridGeometry {
+    grid: HtmlPreElement,
     width: u32,
     height: u32,
-) -> Option<(u32, u32)> {
-    let rect = web_sys::Element::from(container.clone()).get_bounding_client_rect();
-    if rect.width() <= 0.0 || rect.height() <= 0.0 {
-        return None;
-    }
+}
 
-    let rel_x = event.client_x() as f64 - rect.left();
-    let rel_y = event.client_y() as f64 - rect.top();
-    if rel_x < 0.0 || rel_y < 0.0 {
-        return None;
+impl GridGeometry {
+    fn position(&self, event: &JsValue, outside: bool) -> Option<(u32, u32)> {
+        let rect = self.grid.get_bounding_client_rect();
+        let x = reflect_f64(event, "clientX")? - rect.left();
+        let y = reflect_f64(event, "clientY")? - rect.top();
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            return None;
+        }
+        if x < 0.0 || y < 0.0 || x >= rect.width() || y >= rect.height() {
+            // An outside release must never become a click on an edge widget.
+            return outside.then_some((u32::MAX, u32::MAX));
+        }
+        Some((
+            (x * self.width as f64 / rect.width()).floor() as u32,
+            (y * self.height as f64 / rect.height()).floor() as u32,
+        ))
     }
-
-    let cell_w = rect.width() / width.max(1) as f64;
-    let cell_h = rect.height() / height.max(1) as f64;
-    if cell_w <= 0.0 || cell_h <= 0.0 {
-        return None;
-    }
-
-    let x = (rel_x / cell_w).floor() as u32;
-    let y = (rel_y / cell_h).floor() as u32;
-    Some((
-        x.min(width.saturating_sub(1)),
-        y.min(height.saturating_sub(1)),
-    ))
 }
 
 /// Read a numeric property off a JS value via reflection.
@@ -586,38 +670,6 @@ fn wheel_delta_to_kind(delta_x: f64, delta_y: f64) -> Option<MouseKind> {
     }
 }
 
-/// Compute the cell `(x, y)` under a pointer event from its `clientX`/`clientY`,
-/// read reflectively so this works for the generic `wheel` event too.
-fn reflect_cell_position(
-    target: &JsValue,
-    container: &HtmlElement,
-    width: u32,
-    height: u32,
-) -> Option<(u32, u32)> {
-    let client_x = reflect_f64(target, "clientX")?;
-    let client_y = reflect_f64(target, "clientY")?;
-    let rect = web_sys::Element::from(container.clone()).get_bounding_client_rect();
-    if rect.width() <= 0.0 || rect.height() <= 0.0 {
-        return None;
-    }
-    let rel_x = client_x - rect.left();
-    let rel_y = client_y - rect.top();
-    if rel_x < 0.0 || rel_y < 0.0 {
-        return None;
-    }
-    let cell_w = rect.width() / width.max(1) as f64;
-    let cell_h = rect.height() / height.max(1) as f64;
-    if cell_w <= 0.0 || cell_h <= 0.0 {
-        return None;
-    }
-    let x = (rel_x / cell_w).floor() as u32;
-    let y = (rel_y / cell_h).floor() as u32;
-    Some((
-        x.min(width.saturating_sub(1)),
-        y.min(height.saturating_sub(1)),
-    ))
-}
-
 /// Extract pasted text from a `paste` event's `clipboardData`.
 ///
 /// `clipboardData.getData("text")` returns the plain-text flavor of the
@@ -643,14 +695,63 @@ fn event_target<T: JsCast>(target: &T) -> EventTarget {
 }
 
 fn dispose_inner_now(inner: &Rc<RefCell<WasmAppInner>>) {
-    let mut app = inner.borrow_mut();
-    app.running = false;
-    if let Some(raf_id) = app.raf_id.take() {
-        let _ = app.window.cancel_animation_frame(raf_id);
+    let (container, added_tab_stop, pointer, input) = {
+        let mut app = inner.borrow_mut();
+        app.running = false;
+        app.input_active.set(false);
+        if let Some(raf_id) = app.raf_id.take() {
+            let _ = app.window.cancel_animation_frame(raf_id);
+        }
+        (
+            app.container.clone(),
+            std::mem::take(&mut app.added_tab_stop),
+            app.pointer.take(),
+            app.input.clone(),
+        )
+    };
+    // Release shared host ownership before a synchronous remount can claim it.
+    // Deferred cleanup below only destroys this runtime's private resources.
+    if added_tab_stop && container.get_attribute("tabindex").as_deref() == Some("0") {
+        let _ = container.remove_attribute("tabindex");
     }
-    app.listeners.clear();
-    app.events.borrow_mut().clear();
-    app.raf = None;
+    if let Some((id, _)) = pointer {
+        let _ = container.release_pointer_capture(id);
+    }
+    if let Some(input) = input {
+        input.preedit.clear();
+    }
+    // Also safe when called synchronously from a user frame or DOM callback:
+    // the currently executing wasm-bindgen closure is not destroyed on its stack.
+    let inner = Rc::clone(inner);
+    let cleanup = Closure::once_into_js(move || {
+        let mut app = inner.borrow_mut();
+        let listeners = std::mem::take(&mut app.listeners);
+        let observer = app.observer.take();
+        let observer_callback = app.observer_callback.take();
+        let input = app.input.take();
+        app.events.borrow_mut().clear();
+        let raf = app.raf.take();
+        let guarded = app.guarded_raf.take();
+        let failure_callback = app.failure_callback.take();
+        drop(app);
+        drop(listeners);
+        if let Some(observer) = observer {
+            observer.disconnect();
+        }
+        if let Some(input) = input {
+            input.sink.remove();
+            input.preedit.element.remove();
+        }
+        drop((observer_callback, raf, guarded, failure_callback));
+        ACTIVE_APPS.with(|apps| apps.borrow_mut().retain(WasmAppHandle::is_running));
+    });
+    defer_cleanup(cleanup.unchecked_ref());
+}
+
+fn fail_runtime(inner: &Rc<RefCell<WasmAppInner>>, error: String) {
+    web_sys::console::error_1(&JsValue::from_str(&error));
+    inner.borrow_mut().error = Some(error);
+    dispose_inner_now(inner);
 }
 
 fn schedule_raf(inner: &Rc<RefCell<WasmAppInner>>) -> Result<(), JsValue> {
@@ -659,269 +760,610 @@ fn schedule_raf(inner: &Rc<RefCell<WasmAppInner>>) -> Result<(), JsValue> {
         if !app.running {
             return Ok(());
         }
-        let Some(raf) = app.raf.as_ref() else {
-            return Err(JsValue::from_str(
-                "failed to initialize requestAnimationFrame loop",
-            ));
-        };
-        app.window
-            .request_animation_frame(raf.as_ref().unchecked_ref())?
+        let callback = app
+            .guarded_raf
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("RAF callback unavailable"))?;
+        app.window.request_animation_frame(callback)?
     };
     inner.borrow_mut().raf_id = Some(raf_id);
     Ok(())
 }
 
-fn schedule_deferred_dispose(window: &Window, inner: Rc<RefCell<WasmAppInner>>) {
-    let cleanup = Closure::once_into_js(move || {
-        dispose_inner_now(&inner);
-        ACTIVE_APPS.with(|apps| {
-            apps.borrow_mut().retain(WasmAppHandle::is_running);
-        });
-    });
-    let _ =
-        window.set_timeout_with_callback_and_timeout_and_arguments_0(cleanup.unchecked_ref(), 0);
+#[derive(Default)]
+struct TextBridge {
+    composing: bool,
+    committed: Option<String>,
+    printable_modifiers: Option<KeyModifiers>,
+    focused: bool,
 }
 
-fn stop_after_current_frame(inner: Rc<RefCell<WasmAppInner>>) {
-    let window = {
-        let mut app = inner.borrow_mut();
-        if !app.running && app.raf.is_none() {
+#[derive(Clone)]
+struct InputSurface {
+    sink: HtmlTextAreaElement,
+    preedit: Rc<Preedit>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PreeditAnchor {
+    x: u32,
+    y: u32,
+    width: u32,
+    style: slt::Style,
+}
+
+struct Preedit {
+    element: HtmlElement,
+    grid: HtmlPreElement,
+    anchor: Cell<Option<PreeditAnchor>>,
+    suppressed: Cell<bool>,
+    dirty: Cell<bool>,
+    text: RefCell<String>,
+    foreground: Color,
+    background: Color,
+    runtime: Weak<RefCell<WasmAppInner>>,
+}
+
+impl Preedit {
+    fn new(
+        grid: HtmlPreElement,
+        foreground: Color,
+        background: Color,
+        runtime: Weak<RefCell<WasmAppInner>>,
+    ) -> Result<Self, JsValue> {
+        let document = grid
+            .owner_document()
+            .ok_or_else(|| JsValue::from_str("preedit document unavailable"))?;
+        let element = document.create_element("div")?.dyn_into::<HtmlElement>()?;
+        element.set_attribute("data-slt-preedit", "")?;
+        element.set_attribute("aria-hidden", "true")?;
+        element.set_attribute("style", "display:none;pointer-events:none;")?;
+        Ok(Self {
+            element,
+            grid,
+            anchor: Cell::new(None),
+            suppressed: Cell::new(true),
+            dirty: Cell::new(false),
+            text: RefCell::new(String::new()),
+            foreground,
+            background,
+            runtime,
+        })
+    }
+
+    fn clear(&self) {
+        self.dirty.set(false);
+        let had_text = !self.text.borrow().is_empty();
+        self.text.borrow_mut().clear();
+        if had_text {
+            self.element.set_text_content(None);
+            let _ = self.element.style().set_property("display", "none");
+        }
+    }
+
+    fn begin(&self) {
+        self.clear();
+        self.suppressed.set(self.anchor.get().is_none());
+    }
+
+    fn update(&self, text: &str) {
+        if self.suppressed.get() || self.anchor.get().is_none() {
             return;
         }
-        app.running = false;
-        if let Some(raf_id) = app.raf_id.take() {
-            let _ = app.window.cancel_animation_frame(raf_id);
+        if text.is_empty() {
+            self.clear();
+            return;
         }
-        app.listeners.clear();
-        app.events.borrow_mut().clear();
-        app.window.clone()
-    };
-    schedule_deferred_dispose(&window, inner);
+        if *self.text.borrow() == text {
+            return;
+        }
+        {
+            let mut current = self.text.borrow_mut();
+            current.clear();
+            current.push_str(text);
+        }
+        // The next runtime frame checks the current caret privacy before
+        // painting; queued focus/masking changes must not use a stale policy.
+        self.dirty.set(true);
+    }
+
+    fn sync(&self, buffer: &Buffer) {
+        let anchor = buffer
+            .cursor_position()
+            .filter(|&(x, y)| !buffer.cursor_is_masked() && buffer.area.contains(x, y))
+            .map(|(x, y)| PreeditAnchor {
+                x,
+                y,
+                width: buffer.area.width,
+                style: buffer.get(x, y).style,
+            });
+        if anchor.is_none() {
+            self.anchor.set(None);
+            // Once a composition touches a private/unknown caret, do not
+            // reveal its text even if focus or masking changes before it ends.
+            self.suppressed.set(true);
+            self.clear();
+            return;
+        }
+        let moved = self.anchor.replace(anchor) != anchor;
+        let changed = self.dirty.replace(false);
+        if !self.suppressed.get() && (moved || changed) && !self.text.borrow().is_empty() {
+            self.redraw();
+        }
+    }
+
+    fn redraw(&self) {
+        if let Err(error) = self.paint()
+            && let Some(runtime) = self.runtime.upgrade()
+        {
+            fail_runtime(&runtime, format!("slt preedit error: {error:?}"));
+        }
+    }
+
+    fn paint(&self) -> Result<(), JsValue> {
+        let text = self.text.borrow().clone();
+        let Some(anchor) = self.anchor.get() else {
+            self.element.style().set_property("display", "none")?;
+            return Ok(());
+        };
+        let available = anchor.width - anchor.x;
+        // Reuse the core's grapheme, width, bidi and clipping rules without
+        // writing any preedit text into the application's presented buffer.
+        let mut buffer = Buffer::empty(Rect::new(0, 0, available, 1));
+        buffer.set_string(0, 0, &text, slt::Style::new().underline());
+        let end = buffer
+            .content
+            .iter()
+            .rposition(|cell| cell.style.modifiers.contains(Modifiers::UNDERLINE))
+            .map_or(0, |i| i + 1);
+        let document = self
+            .grid
+            .owner_document()
+            .ok_or_else(|| JsValue::from_str("preedit document unavailable"))?;
+        let mut style = anchor.style.underline();
+        if color_to_css(style.fg).is_none() {
+            style.fg = Some(self.foreground);
+        }
+        let mut css = style_to_css(style);
+        if color_to_css(style.bg).is_none() {
+            css.push_str(&format!("background-color:{};", self.background_css()));
+        }
+        self.element.set_text_content(None);
+        self.element.set_attribute("style", &format!("position:absolute;display:block;left:{}%;top:{}px;width:{}%;height:16px;line-height:16px;z-index:2;overflow:hidden;pointer-events:none;", anchor.x as f64 * 100.0 / anchor.width as f64, anchor.y * 16, available as f64 * 100.0 / anchor.width as f64))?;
+        for x in 0..end {
+            let cell = &buffer.content[x];
+            if cell.is_continuation() {
+                continue;
+            }
+            let occupied = if buffer
+                .content
+                .get(x + 1)
+                .is_some_and(slt::Cell::is_continuation)
+            {
+                2
+            } else {
+                1
+            };
+            let glyph = document.create_element("span")?;
+            glyph.set_attribute("style", &format!("position:absolute;left:{}%;top:0;width:{}%;height:16px;line-height:16px;white-space:pre;overflow:hidden;text-underline-offset:2px;{}", x as f64 * 100.0 / available as f64, occupied as f64 * 100.0 / available as f64, css))?;
+            glyph.set_text_content(Some(cell.symbol.as_str()));
+            self.element.append_child(&glyph)?;
+        }
+        Ok(())
+    }
+
+    fn background_css(&self) -> String {
+        let mut element = Some(web_sys::Element::from(self.grid.clone()));
+        if let Some(window) = web_sys::window() {
+            while let Some(current) = element {
+                if let Ok(Some(style)) = window.get_computed_style(&current)
+                    && let Ok(color) = style.get_property_value("background-color")
+                    && !color.is_empty()
+                    && color != "transparent"
+                    && color != "rgba(0, 0, 0, 0)"
+                {
+                    return color;
+                }
+                element = current.parent_element();
+            }
+        }
+        color_to_css(Some(self.background)).unwrap_or_else(|| "#000000".into())
+    }
+}
+
+fn owns_focus(container: &HtmlElement, input: &HtmlTextAreaElement) -> bool {
+    container
+        .owner_document()
+        .and_then(|document| document.active_element())
+        .is_some_and(|active| {
+            &active == container.unchecked_ref::<web_sys::Element>()
+                || &active == input.unchecked_ref::<web_sys::Element>()
+        })
+}
+
+fn enqueue_mouse(
+    events: &RefCell<Vec<Event>>,
+    geometry: &RefCell<GridGeometry>,
+    event: &web_sys::Event,
+    kind: MouseKind,
+    outside: bool,
+) {
+    if let Some((x, y)) = geometry.borrow().position(event.as_ref(), outside) {
+        events.borrow_mut().push(Event::Mouse(SltMouseEvent::new(
+            kind,
+            x,
+            y,
+            reflect_event_modifiers(event.as_ref()),
+            None,
+            None,
+        )));
+    }
+}
+
+fn cancel_pointer(
+    pointer: &Cell<Option<(i32, MouseButton)>>,
+    events: &RefCell<Vec<Event>>,
+    host: &HtmlElement,
+) {
+    if let Some((id, button)) = pointer.take() {
+        events.borrow_mut().push(Event::Mouse(SltMouseEvent::new(
+            MouseKind::Up(button),
+            u32::MAX,
+            u32::MAX,
+            KeyModifiers::NONE,
+            None,
+            None,
+        )));
+        let _ = host.release_pointer_capture(id);
+    }
 }
 
 fn install_event_listeners(
     container: &HtmlElement,
+    surface: &InputSurface,
     window: &Window,
-    backend: Rc<RefCell<DomBackend>>,
+    geometry: Rc<RefCell<GridGeometry>>,
     events: Rc<RefCell<Vec<Event>>>,
+    pointer: Rc<Cell<Option<(i32, MouseButton)>>>,
+    running: Rc<Cell<bool>>,
 ) -> Result<Vec<EventListener>, JsValue> {
-    container.set_tab_index(0);
+    let input = &surface.sink;
     let mut listeners = Vec::new();
+    let bridge = Rc::new(RefCell::new(TextBridge::default()));
 
-    // The grid can be re-sized by the `resize` listener, so every
-    // position-dependent listener reads the live `(width, height)` from the
-    // backend at dispatch time rather than capturing the initial dimensions.
-    // JS callbacks are non-reentrant, so a short-lived `borrow()` here can never
-    // overlap the `borrow_mut()` in the RAF loop or the `resize` listener.
-
-    let key_events = Rc::clone(&events);
-    let keydown = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        let Some(event) = event.dyn_ref::<KeyboardEvent>() else {
-            return;
-        };
-        if let Some(slt_event) = keyboard_event_to_slt(event) {
-            key_events.borrow_mut().push(slt_event);
-            event.prevent_default();
-        }
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
+    for event_type in [
         "keydown",
-        keydown,
-    )?);
-
-    let move_events = Rc::clone(&events);
-    let container_move = container.clone();
-    let move_backend = Rc::clone(&backend);
-    let mousemove = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        let Some(event) = event.dyn_ref::<MouseEvent>() else {
-            return;
-        };
-        let (width, height) = move_backend.borrow().size();
-        if let Some((x, y)) = mouse_cell_position(event, &container_move, width, height) {
-            let (pixel_x, pixel_y) = mouse_pixel_position(event);
-            move_events
-                .borrow_mut()
-                .push(Event::Mouse(SltMouseEvent::new(
-                    MouseKind::Moved,
-                    x,
-                    y,
-                    mouse_event_modifiers(event),
-                    pixel_x,
-                    pixel_y,
-                )));
-        }
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "mousemove",
-        mousemove,
-    )?);
-
-    let down_events = Rc::clone(&events);
-    let container_down = container.clone();
-    let down_backend = Rc::clone(&backend);
-    let mousedown = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        let Some(event) = event.dyn_ref::<MouseEvent>() else {
-            return;
-        };
-        let (width, height) = down_backend.borrow().size();
-        if let Some((x, y)) = mouse_cell_position(event, &container_down, width, height) {
-            let (pixel_x, pixel_y) = mouse_pixel_position(event);
-            down_events
-                .borrow_mut()
-                .push(Event::Mouse(SltMouseEvent::new(
-                    MouseKind::Down(mouse_button(event.button())),
-                    x,
-                    y,
-                    mouse_event_modifiers(event),
-                    pixel_x,
-                    pixel_y,
-                )));
-        }
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "mousedown",
-        mousedown,
-    )?);
-
-    let up_events = Rc::clone(&events);
-    let container_up = container.clone();
-    let up_backend = Rc::clone(&backend);
-    let mouseup = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        let Some(event) = event.dyn_ref::<MouseEvent>() else {
-            return;
-        };
-        let (width, height) = up_backend.borrow().size();
-        if let Some((x, y)) = mouse_cell_position(event, &container_up, width, height) {
-            let (pixel_x, pixel_y) = mouse_pixel_position(event);
-            up_events.borrow_mut().push(Event::Mouse(SltMouseEvent::new(
-                MouseKind::Up(mouse_button(event.button())),
-                x,
-                y,
-                mouse_event_modifiers(event),
-                pixel_x,
-                pixel_y,
-            )));
-        }
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "mouseup",
-        mouseup,
-    )?);
-
-    // Mouse wheel -> ScrollUp/Down/Left/Right at the cell under the cursor.
-    // The `WheelEvent` web-sys wrapper is not enabled, so the deltas and the
-    // pointer position are read reflectively off the generic event.
-    let wheel_events = Rc::clone(&events);
-    let container_wheel = container.clone();
-    let wheel_backend = Rc::clone(&backend);
-    let wheel = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        let value: &JsValue = event.as_ref();
-        let delta_x = reflect_f64(value, "deltaX").unwrap_or(0.0);
-        let delta_y = reflect_f64(value, "deltaY").unwrap_or(0.0);
-        let Some(kind) = wheel_delta_to_kind(delta_x, delta_y) else {
-            return;
-        };
-        let (width, height) = wheel_backend.borrow().size();
-        let (x, y) =
-            reflect_cell_position(value, &container_wheel, width, height).unwrap_or((0, 0));
-        wheel_events
-            .borrow_mut()
-            .push(Event::Mouse(SltMouseEvent::new(
-                kind,
-                x,
-                y,
-                reflect_event_modifiers(value),
-                None,
-                None,
-            )));
-        event.prevent_default();
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "wheel",
-        wheel,
-    )?);
-
-    // Window resize -> recompute the cell grid from the container's pixel size
-    // and emit a `Resize` event. The backend re-sizes its buffer (and rebuilds
-    // the DOM grid on the next flush) so the core run loop lays out against the
-    // new dimensions, mirroring crossterm's `Resize`.
-    let resize_events = Rc::clone(&events);
-    let resize_backend = Rc::clone(&backend);
-    let resize = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-        let mut backend = resize_backend.borrow_mut();
-        let Some((cols, rows)) = backend.fit_grid_to_container() else {
-            return;
-        };
-        if (cols, rows) == backend.size() {
-            return;
-        }
-        backend.resize(cols, rows);
-        resize_events.borrow_mut().push(Event::Resize(cols, rows));
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(window),
-        "resize",
-        resize,
-    )?);
-
-    // Focus blur -> FocusLost / FocusGained so widgets can clear hover state,
-    // matching crossterm's focus events.
-    let blur_events = Rc::clone(&events);
-    let blur = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-        blur_events.borrow_mut().push(Event::FocusLost);
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "blur",
-        blur,
-    )?);
-
-    let focus_events = Rc::clone(&events);
-    let focus = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-        focus_events.borrow_mut().push(Event::FocusGained);
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
-        "focus",
-        focus,
-    )?);
-
-    // Clipboard paste -> Paste(text). `ClipboardEvent`/`DataTransfer` wrappers
-    // are not enabled, so the text flavor is pulled reflectively from
-    // `clipboardData.getData("text")`.
-    let paste_events = Rc::clone(&events);
-    let paste = Closure::wrap(Box::new(move |event: web_sys::Event| {
-        if let Some(text) = paste_event_text(event.as_ref()) {
-            paste_events.borrow_mut().push(Event::Paste(text));
-            event.prevent_default();
-        }
-    }) as Box<dyn FnMut(_)>);
-    listeners.push(EventListener::install(
-        event_target(container),
+        "beforeinput",
+        "input",
+        "compositionstart",
+        "compositionupdate",
+        "compositionend",
         "paste",
-        paste,
-    )?);
+        "focusin",
+        "focusout",
+    ] {
+        let host = container.clone();
+        let sink = input.clone();
+        let events = Rc::clone(&events);
+        let bridge = Rc::clone(&bridge);
+        let pointer = Rc::clone(&pointer);
+        let running = Rc::clone(&running);
+        let preedit = Rc::clone(&surface.preedit);
+        let callback = Closure::wrap(Box::new(move |event: web_sys::Event| {
+            if !running.get() {
+                return;
+            }
+            if event_type == "focusin" {
+                if !owns_focus(&host, &sink) {
+                    return;
+                }
+                let was_focused = bridge.borrow().focused;
+                bridge.borrow_mut().focused = true;
+                if !was_focused {
+                    events.borrow_mut().push(Event::FocusGained);
+                }
+                if event
+                    .target()
+                    .is_some_and(|target| target == event_target(&host))
+                {
+                    let _ = sink.focus();
+                }
+                return;
+            }
+            if event_type == "focusout" {
+                if !bridge.borrow().focused {
+                    return;
+                }
+                let related = event
+                    .dyn_ref::<web_sys::FocusEvent>()
+                    .and_then(|e| e.related_target());
+                if related.is_some_and(|target| {
+                    target == event_target(&sink) || target == event_target(&host)
+                }) {
+                    return;
+                }
+                *bridge.borrow_mut() = TextBridge::default();
+                sink.set_value("");
+                preedit.clear();
+                cancel_pointer(&pointer, &events, &host);
+                events.borrow_mut().push(Event::FocusLost);
+                return;
+            }
+            if !owns_focus(&host, &sink) {
+                return;
+            }
+            match event_type {
+                "keydown" => {
+                    let Some(key) = event.dyn_ref::<KeyboardEvent>() else {
+                        return;
+                    };
+                    if key.is_composing() || key.key_code() == 229 || bridge.borrow().composing {
+                        return;
+                    }
+                    bridge.borrow_mut().committed = None;
+                    bridge.borrow_mut().printable_modifiers = None;
+                    let name = key.key();
+                    if (key.ctrl_key() || key.meta_key())
+                        && matches!(name.to_ascii_lowercase().as_str(), "v" | "c" | "x")
+                    {
+                        return;
+                    }
+                    // Printable/dead-key/AltGraph text is committed by the editable sink.
+                    if ((!key.ctrl_key() && !key.meta_key()) || key.get_modifier_state("AltGraph"))
+                        && (name.chars().count() == 1 || name == "Dead")
+                    {
+                        if !key.alt_key() && name.chars().count() == 1 {
+                            bridge.borrow_mut().printable_modifiers =
+                                Some(keyboard_event_modifiers(key));
+                        }
+                        return;
+                    }
+                    if let Some(mapped) = keyboard_event_to_slt(key) {
+                        events.borrow_mut().push(mapped);
+                        key.prevent_default();
+                    }
+                }
+                "compositionstart" => {
+                    let mut state = bridge.borrow_mut();
+                    state.composing = true;
+                    state.committed = None;
+                    state.printable_modifiers = None;
+                    drop(state);
+                    preedit.begin();
+                }
+                "compositionupdate" => {
+                    if bridge.borrow().composing {
+                        let text = event
+                            .dyn_ref::<web_sys::CompositionEvent>()
+                            .and_then(|e| e.data())
+                            .unwrap_or_default();
+                        preedit.update(&text);
+                    }
+                }
+                "compositionend" => {
+                    if !bridge.borrow().composing {
+                        return;
+                    }
+                    let text = event
+                        .dyn_ref::<web_sys::CompositionEvent>()
+                        .and_then(|e| e.data())
+                        .unwrap_or_default();
+                    let mut state = bridge.borrow_mut();
+                    state.composing = false;
+                    state.committed = (!text.is_empty()).then(|| text.clone());
+                    if !text.is_empty() {
+                        events.borrow_mut().push(Event::Paste(text));
+                    }
+                    drop(state);
+                    preedit.clear();
+                    sink.set_value("");
+                }
+                "beforeinput" => {
+                    let Some(input_event) = event.dyn_ref::<web_sys::InputEvent>() else {
+                        return;
+                    };
+                    if input_event.is_composing() || bridge.borrow().composing {
+                        return;
+                    }
+                    let code = match input_event.input_type().as_str() {
+                        "deleteContentBackward" => Some(KeyCode::Backspace),
+                        "deleteContentForward" => Some(KeyCode::Delete),
+                        "insertLineBreak" | "insertParagraph" => Some(KeyCode::Enter),
+                        _ => None,
+                    };
+                    if let Some(code) = code {
+                        events.borrow_mut().push(Event::key(code));
+                        if event.cancelable() {
+                            event.prevent_default();
+                        }
+                        sink.set_value("");
+                    }
+                }
+                "input" => {
+                    let Some(input_event) = event.dyn_ref::<web_sys::InputEvent>() else {
+                        return;
+                    };
+                    if input_event.is_composing() || bridge.borrow().composing {
+                        if !bridge.borrow().composing {
+                            preedit.begin();
+                        }
+                        bridge.borrow_mut().composing = true;
+                        preedit.update(&input_event.data().unwrap_or_else(|| sink.value()));
+                        return;
+                    }
+                    let kind = input_event.input_type();
+                    let text = input_event
+                        .data()
+                        .filter(|text| !text.is_empty())
+                        .unwrap_or_else(|| sink.value());
+                    let duplicate = bridge.borrow_mut().committed.take().as_ref() == Some(&text);
+                    let modifiers = bridge.borrow_mut().printable_modifiers.take();
+                    if !duplicate
+                        && kind.starts_with("insert")
+                        && !text.is_empty()
+                        && kind != "insertLineBreak"
+                        && kind != "insertParagraph"
+                    {
+                        let mapped = if text.chars().count() == 1 {
+                            modifiers.and_then(|modifiers| {
+                                text.chars()
+                                    .next()
+                                    .map(|ch| Event::key_mod(KeyCode::Char(ch), modifiers))
+                            })
+                        } else {
+                            None
+                        };
+                        events
+                            .borrow_mut()
+                            .push(mapped.unwrap_or(Event::Paste(text)));
+                    }
+                    sink.set_value("");
+                }
+                "paste" => {
+                    if let Some(text) = paste_event_text(event.as_ref()) {
+                        events.borrow_mut().push(Event::Paste(text));
+                        event.prevent_default();
+                        sink.set_value("");
+                    }
+                }
+                _ => {}
+            }
+        }) as Box<dyn Fn(_)>);
+        listeners.push(EventListener::install(
+            event_target(container),
+            event_type,
+            callback,
+        )?);
+    }
 
+    for event_type in [
+        "pointerdown",
+        "pointermove",
+        "pointerup",
+        "pointercancel",
+        "lostpointercapture",
+        "wheel",
+    ] {
+        let host = container.clone();
+        let sink = input.clone();
+        let events = Rc::clone(&events);
+        let geometry = Rc::clone(&geometry);
+        let pointer = Rc::clone(&pointer);
+        let running = Rc::clone(&running);
+        let callback = Closure::wrap(Box::new(move |event: web_sys::Event| {
+            if !running.get() {
+                return;
+            }
+            if event_type == "wheel" {
+                let value = event.as_ref();
+                if let Some(kind) = wheel_delta_to_kind(
+                    reflect_f64(value, "deltaX").unwrap_or(0.0),
+                    reflect_f64(value, "deltaY").unwrap_or(0.0),
+                ) && geometry.borrow().position(value, false).is_some()
+                {
+                    enqueue_mouse(&events, &geometry, &event, kind, false);
+                    event.prevent_default();
+                }
+                return;
+            }
+            let Some(pe) = event.dyn_ref::<web_sys::PointerEvent>() else {
+                return;
+            };
+            match event_type {
+                "pointerdown" => {
+                    if pointer.get().is_some()
+                        || geometry.borrow().position(event.as_ref(), false).is_none()
+                    {
+                        return;
+                    }
+                    let _ = sink.focus();
+                    let button = mouse_button(pe.button());
+                    pointer.set(Some((pe.pointer_id(), button)));
+                    let _ = host.set_pointer_capture(pe.pointer_id());
+                    enqueue_mouse(&events, &geometry, &event, MouseKind::Down(button), false);
+                    // Keep right-button defaults so browser context-menu paste remains available.
+                    if button == MouseButton::Left {
+                        event.prevent_default();
+                    }
+                }
+                "pointermove" => {
+                    let kind = match pointer.get() {
+                        Some((id, button)) if id == pe.pointer_id() => MouseKind::Drag(button),
+                        Some(_) => return,
+                        None => {
+                            if !event
+                                .target()
+                                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                                .is_some_and(|target| host.contains(Some(&target)))
+                            {
+                                return;
+                            }
+                            MouseKind::Moved
+                        }
+                    };
+                    enqueue_mouse(&events, &geometry, &event, kind, false);
+                }
+                "pointerup" => {
+                    if let Some((id, button)) = pointer.get() {
+                        if id != pe.pointer_id() || mouse_button(pe.button()) != button {
+                            return;
+                        }
+                        pointer.set(None);
+                        enqueue_mouse(&events, &geometry, &event, MouseKind::Up(button), true);
+                        let _ = host.release_pointer_capture(id);
+                    }
+                }
+                _ => {
+                    if pointer.get().is_some_and(|(id, _)| id == pe.pointer_id()) {
+                        cancel_pointer(&pointer, &events, &host);
+                    }
+                }
+            }
+        }) as Box<dyn Fn(_)>);
+        let target = if matches!(event_type, "pointermove" | "pointerup") {
+            event_target(window)
+        } else {
+            event_target(container)
+        };
+        listeners.push(EventListener::install(target, event_type, callback)?);
+    }
+    for event_type in ["blur", "focus"] {
+        let events = Rc::clone(&events);
+        let bridge = Rc::clone(&bridge);
+        let pointer = Rc::clone(&pointer);
+        let running = Rc::clone(&running);
+        let host = container.clone();
+        let sink = input.clone();
+        let preedit = Rc::clone(&surface.preedit);
+        let callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
+            if !running.get() {
+                return;
+            }
+            if event_type == "blur" && bridge.borrow().focused {
+                *bridge.borrow_mut() = TextBridge::default();
+                sink.set_value("");
+                preedit.clear();
+                cancel_pointer(&pointer, &events, &host);
+                events.borrow_mut().push(Event::FocusLost);
+            } else if event_type == "focus" && owns_focus(&host, &sink) && !bridge.borrow().focused
+            {
+                bridge.borrow_mut().focused = true;
+                events.borrow_mut().push(Event::FocusGained);
+            }
+        }) as Box<dyn Fn(_)>);
+        listeners.push(EventListener::install(
+            event_target(window),
+            event_type,
+            callback,
+        )?);
+    }
     Ok(listeners)
 }
 
-/// Mount `app` into `container` as a `width`×`height` cell grid and return an
-/// owned handle for the browser runtime.
-///
-/// Installs the DOM event listeners (keyboard, mouse, wheel, resize, focus,
-/// paste) that feed SLT [`Event`]s into the run loop. The returned
-/// [`WasmAppHandle`] owns those listeners and the `requestAnimationFrame`
-/// callback; drop it or call [`WasmAppHandle::dispose`] to stop the app.
+/// Mount a fixed grid with default browser options and retain its runtime owner.
 ///
 /// # Errors
-///
-/// Returns a [`JsValue`] error when the `window` is unavailable, a listener
-/// fails to install, or the initial frame cannot be scheduled.
+/// Returns an error for invalid dimensions or unavailable browser resources.
 pub fn run_wasm_with_handle<F>(
     container: HtmlElement,
     width: u32,
@@ -931,87 +1373,246 @@ pub fn run_wasm_with_handle<F>(
 where
     F: FnMut(&mut Context) + 'static,
 {
-    let window: Window =
-        web_sys::window().ok_or_else(|| JsValue::from_str("window unavailable"))?;
-    let backend = Rc::new(RefCell::new(DomBackend::new(
-        container.clone(),
-        width,
-        height,
-    )));
-    let state = Rc::new(RefCell::new(AppState::new()));
-    let config = RunConfig::default();
-    let events = Rc::new(RefCell::new(Vec::<Event>::new()));
-    let app = Rc::new(RefCell::new(app));
+    run_wasm_with_options(
+        container,
+        WasmOptions {
+            width,
+            height,
+            ..WasmOptions::default()
+        },
+        app,
+    )
+}
 
-    let listeners =
-        install_event_listeners(&container, &window, Rc::clone(&backend), Rc::clone(&events))?;
+/// Mount a browser application with explicit mount-time configuration.
+///
+/// Every rendered frame starts with a fresh live buffer. Direct
+/// `DomBackend::buffer_mut`/`flush` users keep incremental drawing semantics.
+/// The host is not owned: disposal retains its content and last rendered grid.
+/// A detached host keeps running until disposal, drop, quit, or failure.
+///
+/// # Errors
+/// Returns an error for zero dimensions/FPS or unavailable browser resources.
+pub fn run_wasm_with_options<F>(
+    container: HtmlElement,
+    options: WasmOptions,
+    mut app: F,
+) -> Result<WasmAppHandle, JsValue>
+where
+    F: FnMut(&mut Context) + 'static,
+{
+    let (width, height) = (options.width, options.height);
+    if width == 0 || height == 0 || options.max_fps == Some(0) {
+        return Err(JsValue::from_str(
+            "grid dimensions and max_fps must be positive",
+        ));
+    }
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("window unavailable"))?;
+    // A disposed runtime deliberately leaves its last frame in place. A new
+    // mount replaces that grid only, without deleting caller-owned children.
+    if let Some(previous_grid) = container.query_selector("pre[data-slt-grid]")? {
+        previous_grid.remove();
+    }
+    let mut backend = DomBackend::new(container.clone(), width, height);
+    backend
+        .initialize_grid()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    if options.auto_fit
+        && let Some((cols, rows)) = backend.fit_grid_to_container()
+    {
+        backend.resize(cols, rows);
+        if !backend.initialized {
+            backend
+                .initialize_grid()
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        }
+    }
+    let geometry = Rc::new(RefCell::new(GridGeometry {
+        grid: backend
+            .grid
+            .clone()
+            .ok_or_else(|| JsValue::from_str("grid unavailable"))?,
+        width: backend.width,
+        height: backend.height,
+    }));
+    let events = Rc::new(RefCell::new(Vec::new()));
     let inner = Rc::new(RefCell::new(WasmAppInner::new(
         window.clone(),
-        listeners,
+        container.clone(),
         Rc::clone(&events),
     )));
-
-    let inner_weak: Weak<RefCell<WasmAppInner>> = Rc::downgrade(&inner);
-    let backend_ref = Rc::clone(&backend);
-    let state_ref = Rc::clone(&state);
-    let events_ref = Rc::clone(&events);
-    let app_ref = Rc::clone(&app);
-
-    let raf = Closure::wrap(Box::new(move |_ts: f64| {
-        let Some(inner) = inner_weak.upgrade() else {
+    let handle = WasmAppHandle::new(Rc::clone(&inner));
+    let running = Rc::clone(&inner.borrow().input_active);
+    if options.input {
+        if !container.has_attribute("tabindex") {
+            container.set_tab_index(0);
+            inner.borrow_mut().added_tab_stop = true;
+        }
+        let document = container
+            .owner_document()
+            .ok_or_else(|| JsValue::from_str("document unavailable"))?;
+        let input = document
+            .create_element("textarea")?
+            .dyn_into::<HtmlTextAreaElement>()?;
+        input.set_attribute("data-slt-input", "")?;
+        input.set_attribute("aria-label", "Terminal input")?;
+        input.set_attribute("autocapitalize", "off")?;
+        input.set_attribute("autocomplete", "off")?;
+        input.set_attribute("spellcheck", "false")?;
+        input.set_attribute("style", "position:absolute;left:0;top:0;width:100%;height:100%;z-index:1;opacity:0.01;background:transparent;color:transparent;caret-color:transparent;outline:none;padding:0;margin:0;border:0;box-sizing:border-box;resize:none;overflow:hidden;pointer-events:auto;font:14px/16px monospace;white-space:pre;")?;
+        input.set_tab_index(-1);
+        let grid = geometry.borrow().grid.clone();
+        let preedit = Rc::new(Preedit::new(
+            grid.clone(),
+            options.theme.text,
+            options.theme.bg,
+            Rc::downgrade(&inner),
+        )?);
+        let surface = InputSurface {
+            sink: input.clone(),
+            preedit,
+        };
+        inner.borrow_mut().input = Some(surface.clone());
+        grid.append_child(&input)?;
+        grid.append_child(&surface.preedit.element)?;
+        let listeners = install_event_listeners(
+            &container,
+            &surface,
+            &window,
+            Rc::clone(&geometry),
+            Rc::clone(&events),
+            Rc::clone(&inner.borrow().pointer),
+            Rc::clone(&running),
+        )?;
+        inner.borrow_mut().listeners = listeners;
+    }
+    let resize_pending = Rc::new(Cell::new(false));
+    if options.auto_fit {
+        let pending = Rc::clone(&resize_pending);
+        let callback = Closure::wrap(Box::new(move || pending.set(true)) as Box<dyn FnMut()>);
+        let observer = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref())?;
+        observer.observe(&container);
+        inner.borrow_mut().observer = Some(observer);
+        inner.borrow_mut().observer_callback = Some(callback);
+    }
+    let mut config = RunConfig::default();
+    config.theme = options.theme;
+    config.widget_theme = options.widget_theme;
+    config.scroll_speed = options.scroll_speed;
+    config.handle_ctrl_c = false;
+    let mut state = AppState::new();
+    let mut last_frame = None;
+    let mut last_input_cursor = None;
+    let interval = options.max_fps.map(|fps| 1000.0 / fps as f64);
+    let weak: Weak<RefCell<WasmAppInner>> = Rc::downgrade(&inner);
+    let raf = Closure::wrap(Box::new(move |timestamp: f64| {
+        let Some(inner) = weak.upgrade() else {
             return;
         };
         {
-            let mut app = inner.borrow_mut();
-            app.raf_id = None;
-            if !app.running {
+            let mut runtime = inner.borrow_mut();
+            runtime.raf_id = None;
+            if !runtime.running {
+                running.set(false);
                 return;
             }
         }
-
-        let frame_events = {
-            let mut queue = events_ref.borrow_mut();
-            std::mem::take(&mut *queue)
-        };
-
-        let keep_going = {
-            let mut backend = backend_ref.borrow_mut();
-            let mut state = state_ref.borrow_mut();
-            let mut app = app_ref.borrow_mut();
-            // `RefMut<T>` derefs to `T`, but the generic `&mut impl Backend`
-            // bound has no coercion site, so the explicit reborrow is required
-            // to hand `frame` a `&mut DomBackend` rather than `&mut RefMut<_>`.
-            #[allow(clippy::explicit_auto_deref)]
-            slt::frame(
-                &mut *backend,
-                &mut *state,
-                &config,
-                &frame_events,
-                &mut *app,
-            )
-        };
-
-        match keep_going {
-            Ok(true) => {
-                if let Err(err) = schedule_raf(&inner) {
-                    web_sys::console::error_1(&JsValue::from_str(&format!(
-                        "slt requestAnimationFrame error: {err:?}"
-                    )));
-                    stop_after_current_frame(inner);
+        if !frame_due(&mut last_frame, timestamp, interval) {
+            if let Err(error) = schedule_raf(&inner) {
+                fail_runtime(&inner, format!("{error:?}"));
+            }
+            return;
+        }
+        if resize_pending.replace(false)
+            && let Some((cols, rows)) = backend.fit_grid_to_container()
+            && backend.size() != (cols, rows)
+        {
+            backend.resize(cols, rows);
+            events.borrow_mut().push(Event::Resize(cols, rows));
+        }
+        let frame_events = std::mem::take(&mut *events.borrow_mut());
+        backend.buffer_mut().reset();
+        let result = slt::frame_owned(&mut backend, &mut state, &config, frame_events, &mut app);
+        if let Some(grid) = backend.grid.clone() {
+            *geometry.borrow_mut() = GridGeometry {
+                grid,
+                width: backend.width,
+                height: backend.height,
+            };
+        }
+        let input = inner.borrow().input.clone();
+        if let Some(surface) = input {
+            surface.preedit.sync(&backend.buffer);
+            let input = &surface.sink;
+            let (x, y) = backend.buffer.cursor_position().unwrap_or((0, 0));
+            // Paint and editing share local grid coordinates, so ancestor
+            // transforms apply exactly once to both the overlay and IME caret.
+            let cursor = (x, y, backend.width);
+            if last_input_cursor != Some(cursor) {
+                let _ = input.style().set_property(
+                    "padding-left",
+                    &format!("{}%", x as f64 * 100.0 / backend.width as f64),
+                );
+                let _ = input
+                    .style()
+                    .set_property("padding-top", &format!("{}px", y * 16));
+                last_input_cursor = Some(cursor);
+            }
+        }
+        match result {
+            Ok(true) if inner.borrow().running => {
+                if let Err(error) = schedule_raf(&inner) {
+                    fail_runtime(&inner, format!("{error:?}"));
                 }
             }
-            Ok(false) => stop_after_current_frame(inner),
-            Err(err) => {
-                web_sys::console::error_1(&JsValue::from_str(&format!("slt frame error: {err}")));
-                stop_after_current_frame(inner);
+            Ok(_) => {
+                running.set(false);
+                dispose_inner_now(&inner);
+            }
+            Err(error) => {
+                running.set(false);
+                fail_runtime(&inner, error.to_string());
             }
         }
     }) as Box<dyn FnMut(f64)>);
-
-    inner.borrow_mut().raf = Some(raf);
+    let weak = Rc::downgrade(&inner);
+    let failed = Closure::wrap(Box::new(move |message: String| {
+        if let Some(inner) = weak.upgrade() {
+            fail_runtime(
+                &inner,
+                format!("fatal browser frame: {message}; discard this WASM instance"),
+            );
+        }
+    }) as Box<dyn FnMut(String)>);
+    let guarded = guarded_frame(
+        raf.as_ref().unchecked_ref(),
+        failed.as_ref().unchecked_ref(),
+    );
+    {
+        let mut runtime = inner.borrow_mut();
+        runtime.raf = Some(raf);
+        runtime.guarded_raf = Some(guarded);
+        runtime.failure_callback = Some(failed);
+    }
     schedule_raf(&inner)?;
+    Ok(handle)
+}
 
-    Ok(WasmAppHandle::new(inner))
+fn frame_due(last: &mut Option<f64>, timestamp: f64, interval: Option<f64>) -> bool {
+    if let (Some(previous), Some(interval)) = (*last, interval) {
+        if timestamp >= previous && timestamp - previous + 0.01 < interval {
+            return false;
+        }
+        // Retain fractional RAF remainder; do not catch up a suspended tab.
+        *last = Some(if timestamp - previous < interval * 2.0 {
+            previous + interval
+        } else {
+            timestamp
+        });
+    } else {
+        *last = Some(timestamp);
+    }
+    true
 }
 
 /// Mount `app` into `container` and run it until it requests exit.
@@ -1172,6 +1773,37 @@ mod tests {
     fn default_style_emits_no_css() {
         // Edge case: a plain default style produces no inline CSS at all.
         assert_eq!(style_to_css(slt::Style::new()), "");
+    }
+
+    #[test]
+    fn pacing_caps_high_refresh_without_losing_fractional_remainder() {
+        for refresh in [60, 120, 144] {
+            let mut last = None;
+            let frames = (0..refresh)
+                .filter(|n| {
+                    frame_due(
+                        &mut last,
+                        *n as f64 * 1000.0 / refresh as f64,
+                        Some(1000.0 / 60.0),
+                    )
+                })
+                .count();
+            assert_eq!(frames, 60, "refresh rate {refresh}");
+        }
+    }
+
+    #[test]
+    fn pacing_handles_uncapped_suspension_and_timestamp_reset() {
+        let mut last = None;
+        assert!(frame_due(&mut last, 0.0, Some(50.0)));
+        assert!(!frame_due(&mut last, 49.0, Some(50.0)));
+        assert!(frame_due(&mut last, 50.0, Some(50.0)));
+        assert!(frame_due(&mut last, 10_000.0, Some(50.0)));
+        assert!(!frame_due(&mut last, 10_001.0, Some(50.0)));
+        assert!(frame_due(&mut last, 0.0, Some(50.0)));
+        assert!(frame_due(&mut last, 1.0, None));
+        assert!(frame_due(&mut last, 2.0, None));
+        assert_eq!(WasmOptions::default().max_fps, Some(60));
     }
 }
 

@@ -122,11 +122,6 @@ pub struct ContainerBuilder<'a> {
     pub(crate) theme_override: Option<Theme>,
 }
 
-/// Drawing context for the [`Context::canvas`] widget.
-///
-/// Provides pixel-level drawing on a braille character grid. Each terminal
-/// cell maps to a 2x4 dot matrix, so a canvas of `width` columns x `height`
-/// rows gives `width*2` x `height*4` pixel resolution.
 /// A colored pixel in the canvas grid.
 #[derive(Debug, Clone, Copy)]
 struct CanvasPixel {
@@ -146,13 +141,45 @@ struct CanvasLabel {
 /// A layer in the canvas, supporting z-ordering.
 #[derive(Debug, Clone)]
 struct CanvasLayer {
-    grid: Vec<Vec<CanvasPixel>>,
+    grid: Vec<CanvasPixel>,
     labels: Vec<CanvasLabel>,
 }
 
-/// Drawing context for the canvas widget.
+/// A rejected Canvas backing-storage request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasError {
+    /// The requested cell dimensions exceed the canvas geometry budget.
+    GeometryBudgetExceeded,
+    /// The requested layer exceeds the layer count or aggregate cell budget.
+    LayerBudgetExceeded,
+    /// The requested label exceeds the text byte or label count budget.
+    LabelBudgetExceeded,
+    /// The allocator rejected a bounded backing-storage request.
+    AllocationFailed,
+}
+
+impl std::fmt::Display for CanvasError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::GeometryBudgetExceeded => "canvas geometry exceeds the cell budget",
+            Self::LayerBudgetExceeded => "canvas layers exceed the layer budget",
+            Self::LabelBudgetExceeded => "canvas labels exceed the text budget",
+            Self::AllocationFailed => "canvas backing-storage allocation failed",
+        })
+    }
+}
+
+impl std::error::Error for CanvasError {}
+
+/// Drawing context for the canvas widget, with bounded backing storage.
+///
+/// Dimensions describe the requested coordinate space, not the visible parent
+/// area. Reuse an instance with [`Context::canvas_with`] to retain its grids
+/// and composition scratch between frames. Drop it to release that storage.
 pub struct CanvasContext {
     layers: Vec<CanvasLayer>,
+    active_layers: usize,
+    label_bytes: usize,
     cols: usize,
     rows: usize,
     px_w: usize,
@@ -175,44 +202,83 @@ fn isqrt_i64(n: i64) -> isize {
 }
 
 impl CanvasContext {
-    pub(crate) fn new(cols: usize, rows: usize) -> Self {
-        let cell_count = cols.saturating_mul(rows);
-        Self {
-            layers: vec![Self::new_layer(cols, rows)],
+    /// Maximum cells in a single layer, or in either dimension (262,144).
+    /// Each cell represents eight pixels, for at most 2,097,152 pixels.
+    pub const MAX_CELLS: usize = 262_144;
+    /// Maximum active or retained layers in one canvas.
+    pub const MAX_LAYERS: usize = 32;
+    /// Maximum aggregate cells across all retained layer grids.
+    pub const MAX_LAYER_CELLS: usize = crate::buffer::MAX_BUFFER_CELLS;
+    /// Maximum UTF-8 bytes owned by labels in one frame.
+    pub const MAX_LABEL_BYTES: usize = 1_048_576;
+    /// Maximum total label slots retained across all layers.
+    pub const MAX_LABELS: usize = 16_384;
+
+    #[cfg(test)]
+    fn new(cols: u32, rows: u32) -> Self {
+        Self::try_new(cols, rows).expect("valid test canvas")
+    }
+
+    /// Allocate a canvas in terminal-cell dimensions.
+    ///
+    /// # Errors
+    /// Returns [`CanvasError`] before allocating when dimensions exceed
+    /// [`Self::MAX_CELLS`], or when a backing allocation fails. Zero dimensions
+    /// are allowed and produce an empty canvas. Pixel dimensions are always
+    /// representable on both native and 32-bit WASM targets.
+    pub fn try_new(cols: u32, rows: u32) -> Result<Self, CanvasError> {
+        let count = u64::from(cols) * u64::from(rows);
+        if count > Self::MAX_CELLS as u64
+            || u64::from(cols) > Self::MAX_CELLS as u64
+            || u64::from(rows) > Self::MAX_CELLS as u64
+        {
+            return Err(CanvasError::GeometryBudgetExceeded);
+        }
+        let (cols, rows, cell_count) = (cols as usize, rows as usize, count as usize);
+        let mut layers = Vec::new();
+        layers
+            .try_reserve_exact(1)
+            .map_err(|_| CanvasError::AllocationFailed)?;
+        layers.push(Self::new_layer(cell_count)?);
+        Ok(Self {
+            layers,
+            active_layers: 1,
+            label_bytes: 0,
             cols,
             rows,
             px_w: cols * 2,
             px_h: rows * 4,
             current_color: Color::Reset,
-            scratch_pixels: vec![
-                CanvasPixel {
-                    bits: 0,
-                    color: Color::Reset,
-                };
-                cell_count
-            ],
-            scratch_labels: vec![None; cell_count],
+            scratch_pixels: Self::filled_storage(cell_count, Self::empty_pixel())?,
+            scratch_labels: Self::filled_storage(cell_count, None)?,
+        })
+    }
+
+    fn empty_pixel() -> CanvasPixel {
+        CanvasPixel {
+            bits: 0,
+            color: Color::Reset,
         }
     }
 
-    fn new_layer(cols: usize, rows: usize) -> CanvasLayer {
-        CanvasLayer {
-            grid: vec![
-                vec![
-                    CanvasPixel {
-                        bits: 0,
-                        color: Color::Reset,
-                    };
-                    cols
-                ];
-                rows
-            ],
+    fn filled_storage<T: Clone>(count: usize, value: T) -> Result<Vec<T>, CanvasError> {
+        let mut storage = Vec::new();
+        storage
+            .try_reserve_exact(count)
+            .map_err(|_| CanvasError::AllocationFailed)?;
+        storage.resize(count, value);
+        Ok(storage)
+    }
+
+    fn new_layer(cell_count: usize) -> Result<CanvasLayer, CanvasError> {
+        Ok(CanvasLayer {
+            grid: Self::filled_storage(cell_count, Self::empty_pixel())?,
             labels: Vec::new(),
-        }
+        })
     }
 
     fn current_layer_mut(&mut self) -> Option<&mut CanvasLayer> {
-        self.layers.last_mut()
+        self.layers.get_mut(self.active_layers - 1)
     }
 
     fn dot_with_color(&mut self, x: usize, y: usize, color: Color) {
@@ -233,8 +299,9 @@ impl CanvasContext {
             RIGHT_BITS[sub_row]
         };
 
+        let index = char_row * self.cols + char_col;
         if let Some(layer) = self.current_layer_mut() {
-            let cell = &mut layer.grid[char_row][char_col];
+            let cell = &mut layer.grid[index];
             let new_bits = cell.bits | bit;
             if new_bits != cell.bits {
                 cell.bits = new_bits;
@@ -475,70 +542,126 @@ impl CanvasContext {
 
     /// Place a text label at pixel position `(x, y)`.
     /// Text is rendered in regular characters overlaying the braille grid.
+    ///
+    /// # Panics
+    /// Panics on a rejected label allocation. Use [`Self::try_print`] to
+    /// handle the error. Empty and off-canvas labels are ignored.
     pub fn print(&mut self, x: usize, y: usize, text: &str) {
-        if text.is_empty() {
-            return;
-        }
+        self.try_print(x, y, text)
+            .expect("canvas label allocation failed");
+    }
 
+    /// Place a label, reporting bounded-storage failures without changing it.
+    ///
+    /// # Errors
+    /// Returns [`CanvasError::LabelBudgetExceeded`] for excessive label bytes
+    /// or retained slots, or [`CanvasError::AllocationFailed`].
+    pub fn try_print(&mut self, x: usize, y: usize, text: &str) -> Result<(), CanvasError> {
+        if text.is_empty() || x >= self.px_w || y >= self.px_h {
+            return Ok(());
+        }
+        if text.len() > Self::MAX_LABEL_BYTES.saturating_sub(self.label_bytes) {
+            return Err(CanvasError::LabelBudgetExceeded);
+        }
+        let reserved: usize = self
+            .layers
+            .iter()
+            .map(|layer| layer.labels.capacity())
+            .sum();
+        let layer = &self.layers[self.active_layers - 1];
+        let extra = if layer.labels.len() == layer.labels.capacity() {
+            (Self::MAX_LABELS.saturating_sub(reserved)).min(layer.labels.capacity().max(4))
+        } else {
+            0
+        };
+        if layer.labels.len() == layer.labels.capacity() && extra == 0 {
+            return Err(CanvasError::LabelBudgetExceeded);
+        }
         let color = self.current_color;
+        let mut owned = String::new();
+        owned
+            .try_reserve_exact(text.len())
+            .map_err(|_| CanvasError::AllocationFailed)?;
+        owned.push_str(text);
         if let Some(layer) = self.current_layer_mut() {
+            if extra > 0 {
+                layer
+                    .labels
+                    .try_reserve_exact(extra)
+                    .map_err(|_| CanvasError::AllocationFailed)?;
+            }
             layer.labels.push(CanvasLabel {
                 x,
                 y,
-                text: text.to_string(),
+                text: owned,
                 color,
             });
         }
+        self.label_bytes += text.len();
+        Ok(())
     }
 
     /// Start a new drawing layer. Shapes on later layers overlay earlier ones.
+    ///
+    /// # Panics
+    /// Panics when the layer budget or allocation fails. Use [`Self::try_layer`]
+    /// to handle the failure without changing the current layer.
     pub fn layer(&mut self) {
-        self.layers.push(Self::new_layer(self.cols, self.rows));
+        self.try_layer().expect("canvas layer allocation failed");
+    }
+
+    /// Start a new layer, reusing a retained grid when possible.
+    ///
+    /// # Errors
+    /// Returns [`CanvasError::LayerBudgetExceeded`] if the next layer exceeds
+    /// [`Self::MAX_LAYERS`] or [`Self::MAX_LAYER_CELLS`], or
+    /// [`CanvasError::AllocationFailed`] on allocation failure.
+    pub fn try_layer(&mut self) -> Result<(), CanvasError> {
+        let next = self.active_layers + 1;
+        let cell_count = self.cols * self.rows;
+        if next > Self::MAX_LAYERS || next * cell_count > Self::MAX_LAYER_CELLS {
+            return Err(CanvasError::LayerBudgetExceeded);
+        }
+        if self.active_layers == self.layers.len() {
+            let layer = Self::new_layer(cell_count)?;
+            self.layers
+                .try_reserve_exact(1)
+                .map_err(|_| CanvasError::AllocationFailed)?;
+            self.layers.push(layer);
+        }
+        self.active_layers = next;
+        Ok(())
+    }
+
+    /// Clear drawing content and color while retaining grids and scratch.
+    /// The next draw begins on the first layer; extra layers stay inactive.
+    pub fn clear(&mut self) {
+        for layer in &mut self.layers {
+            layer.grid.fill(Self::empty_pixel());
+            layer.labels.clear();
+        }
+        self.active_layers = 1;
+        self.label_bytes = 0;
+        self.current_color = Color::Reset;
+        self.scratch_labels.fill(None);
     }
 
     pub(crate) fn render(&mut self) -> Vec<Vec<(String, Color)>> {
-        let cell_count = self.cols.saturating_mul(self.rows);
-
-        // Reset reusable scratch buffers, growing them only if `cols`/`rows`
-        // changed since construction. `fill` keeps the existing allocation.
-        if self.scratch_pixels.len() < cell_count {
-            self.scratch_pixels.resize(
-                cell_count,
-                CanvasPixel {
-                    bits: 0,
-                    color: Color::Reset,
-                },
-            );
-        }
-        if self.scratch_labels.len() < cell_count {
-            self.scratch_labels.resize(cell_count, None);
-        }
-        for px in &mut self.scratch_pixels[..cell_count] {
-            *px = CanvasPixel {
-                bits: 0,
-                color: Color::Reset,
-            };
-        }
-        for slot in &mut self.scratch_labels[..cell_count] {
-            *slot = None;
-        }
+        self.scratch_pixels.fill(Self::empty_pixel());
+        self.scratch_labels.fill(None);
 
         let cols = self.cols;
         let rows = self.rows;
 
-        for layer in &self.layers {
-            for (row, src_row) in layer.grid.iter().enumerate().take(rows) {
-                let row_offset = row * cols;
-                for (col, src) in src_row.iter().enumerate().take(cols) {
-                    if src.bits == 0 {
-                        continue;
-                    }
-                    let dst = &mut self.scratch_pixels[row_offset + col];
-                    let merged = dst.bits | src.bits;
-                    if merged != dst.bits {
-                        dst.bits = merged;
-                        dst.color = src.color;
-                    }
+        for layer in &self.layers[..self.active_layers] {
+            for (dst, src) in self.scratch_pixels.iter_mut().zip(&layer.grid) {
+                if src.bits == 0 {
+                    continue;
+                }
+                let merged = dst.bits | src.bits;
+                if merged != dst.bits {
+                    dst.bits = merged;
+                    dst.color = src.color;
                 }
             }
 
@@ -619,6 +742,57 @@ impl CanvasContext {
         }
 
         lines
+    }
+}
+
+#[cfg(test)]
+mod v024_canvas_tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_layer_budget_rejects_before_allocating_another_grid() {
+        let mut canvas = CanvasContext::try_new(512, 512).unwrap();
+        for _ in 1..4 {
+            canvas.try_layer().unwrap();
+        }
+        let count = canvas.layers.len();
+        assert_eq!(canvas.try_layer(), Err(CanvasError::LayerBudgetExceeded));
+        assert_eq!(canvas.layers.len(), count);
+        assert_eq!(canvas.active_layers, count);
+    }
+
+    #[test]
+    fn clear_retains_grids_and_scratch_and_reuses_extra_layers() {
+        let mut canvas = CanvasContext::try_new(8, 4).unwrap();
+        canvas.try_layer().unwrap();
+        canvas.print(0, 0, "LABEL");
+        let grid = canvas.layers[1].grid.as_ptr();
+        let scratch = canvas.scratch_pixels.as_ptr();
+        canvas.clear();
+        canvas.try_layer().unwrap();
+        assert_eq!(canvas.layers[1].grid.as_ptr(), grid);
+        assert_eq!(canvas.scratch_pixels.as_ptr(), scratch);
+        assert!(canvas.layers[1].labels.is_empty());
+        assert_eq!(canvas.label_bytes, 0);
+    }
+
+    #[test]
+    fn label_slot_and_byte_budgets_are_bounded_across_retained_layers() {
+        let mut canvas = CanvasContext::try_new(2, 1).unwrap();
+        for _ in 0..CanvasContext::MAX_LABELS {
+            canvas.try_print(0, 0, "a").unwrap();
+        }
+        assert_eq!(
+            canvas.try_print(0, 0, "b"),
+            Err(CanvasError::LabelBudgetExceeded)
+        );
+        canvas.clear();
+        let text = "x".repeat(CanvasContext::MAX_LABEL_BYTES);
+        canvas.try_print(0, 0, &text).unwrap();
+        assert_eq!(
+            canvas.try_print(0, 0, "x"),
+            Err(CanvasError::LabelBudgetExceeded)
+        );
     }
 }
 
@@ -1774,10 +1948,13 @@ impl<'a> ContainerBuilder<'a> {
         let mut source = crate::buffer::Buffer::try_empty(source_rect)?;
         f(&mut source, source_rect);
         self.draw(move |destination, rect| {
-            let copy_width = source.area.width.min(rect.width);
-            let copy_height = source.area.height.min(rect.height);
-            for source_y in 0..copy_height {
-                for source_x in 0..copy_width {
+            let (left, top) = destination.draw_source_offset();
+            let copy_width = source.area.width.saturating_sub(left).min(rect.width);
+            let copy_height = source.area.height.saturating_sub(top).min(rect.height);
+            for dy in 0..copy_height {
+                for dx in 0..copy_width {
+                    let source_x = left + dx;
+                    let source_y = top + dy;
                     let Some(cell) = source.try_get(source_x, source_y) else {
                         continue;
                     };
@@ -1785,13 +1962,20 @@ impl<'a> ContainerBuilder<'a> {
                         continue;
                     }
                     let symbol = cell.normalized_symbol();
-                    let x = rect.x.saturating_add(source_x);
-                    let y = rect.y.saturating_add(source_y);
-                    if let Some(url) = cell.hyperlink.as_deref() {
-                        destination.set_string_linked(x, y, &symbol, cell.style, url);
-                    } else {
-                        destination.set_string(x, y, &symbol, cell.style);
+                    if UnicodeWidthStr::width(symbol.as_str()) as u32 > copy_width - dx {
+                        continue;
                     }
+                    let x = rect.x.saturating_add(dx);
+                    let y = rect.y.saturating_add(dy);
+                    destination.set_grapheme_visual(
+                        x,
+                        y,
+                        &symbol,
+                        cell.style,
+                        cell.hyperlink
+                            .as_ref()
+                            .filter(|url| crate::buffer::is_valid_osc8_url(url)),
+                    );
                 }
             }
         });
@@ -1805,15 +1989,17 @@ impl<'a> ContainerBuilder<'a> {
     /// its fallback at that stage. This method catches the draw panic inside
     /// the laid-out region and invokes `fallback` with the panic message while
     /// the same clip is active.
+    /// Like all Rust unwind boundaries, this cannot recover in `panic = "abort"`
+    /// builds, including the browser target's default panic strategy.
     pub fn draw_with_fallback(
         self,
         draw: impl FnOnce(&mut crate::buffer::Buffer, Rect) + 'static,
         fallback: impl FnOnce(&mut crate::buffer::Buffer, Rect, &str) + 'static,
     ) {
         self.draw(move |buffer, rect| {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let result = crate::catch_recoverable_unwind(|| {
                 draw(buffer, rect);
-            }));
+            });
             if let Err(payload) = result {
                 let message = if let Some(message) = payload.downcast_ref::<&str>() {
                     (*message).to_owned()

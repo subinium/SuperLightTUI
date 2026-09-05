@@ -55,7 +55,7 @@ pub(crate) enum NodeKind {
 
 /// Text-only data for [`NodeKind::Text`] nodes (issue #153).
 ///
-/// All six fields are unused by `Spacer`, `Container`, and `RawDraw`
+/// These fields are unused by `Spacer`, `Container`, and `RawDraw`
 /// nodes, so we hide them behind a `Box` on `LayoutNode` to keep the
 /// hot non-text paths small. Boxing is cheap because text nodes already
 /// own at least one heap allocation (`content` or `segments`), so the
@@ -66,6 +66,7 @@ pub(crate) enum NodeKind {
 pub(crate) struct TextNodeData {
     pub(crate) content: Option<String>,
     pub(crate) cursor_offset: Option<usize>,
+    pub(crate) cursor_masked: bool,
     pub(crate) cached_wrap_width: Option<u32>,
     pub(crate) cached_wrapped: Option<Vec<String>>,
     pub(crate) segments: Option<Vec<(String, Style)>>,
@@ -584,6 +585,26 @@ impl LayoutNode {
         width
     }
 
+    pub(crate) fn min_width_for_parent(&self, parent_width: u32) -> u32 {
+        let width = match self.constraints.width {
+            WidthSpec::Pct(percent) => u64::from(parent_width) * u64::from(percent.min(100)) / 100,
+            WidthSpec::Ratio(_, 0) => u64::from(parent_width),
+            WidthSpec::Ratio(num, den) => u64::from(parent_width) * u64::from(num) / u64::from(den),
+            _ => return self.min_width(),
+        };
+        u32::try_from(width)
+            .unwrap_or(u32::MAX)
+            .saturating_add(self.margin_horizontal())
+    }
+
+    pub(crate) fn column_outer_width(&self, parent_width: u32, align: Align) -> u32 {
+        match self.constraints.width {
+            WidthSpec::Pct(_) | WidthSpec::Ratio(_, _) => self.min_width_for_parent(parent_width),
+            _ if self.align_self.unwrap_or(align) == Align::Start => parent_width,
+            _ => self.min_width().min(parent_width),
+        }
+    }
+
     fn min_width_uncached(&self) -> u32 {
         let width = match self.kind {
             NodeKind::Text => self.size.0,
@@ -681,8 +702,16 @@ impl LayoutNode {
             }
         };
 
-        let height = height.max(self.constraints.min_height().unwrap_or(0));
-        height.saturating_add(self.margin_vertical())
+        self.constrain_outer_height(height)
+    }
+
+    fn constrain_outer_height(&self, height: u32) -> u32 {
+        height
+            .clamp(
+                self.constraints.min_height().unwrap_or(0),
+                self.constraints.max_height().unwrap_or(u32::MAX),
+            )
+            .saturating_add(self.margin_vertical())
     }
 
     pub(crate) fn ensure_wrapped_for_width(&mut self, available_width: u32) -> u32 {
@@ -719,111 +748,63 @@ impl LayoutNode {
     }
 
     pub(crate) fn min_height_for_width(&mut self, available_width: u32) -> u32 {
-        match self.kind {
-            NodeKind::Text if self.wrap => {
-                // Not memoized via `cached_min_height_for_width`: the wrap
-                // cache populated by `ensure_wrapped_for_width` (keyed by its
-                // own `cached_wrap_width`) is the side effect `compute_body` /
-                // `render` depend on, and it already short-circuits repeated
-                // same-width calls. Adding a second memo here would risk
-                // skipping that population, so we defer to the existing cache.
-                let inner_width = available_width.saturating_sub(self.margin_horizontal());
-                let lines = self.ensure_wrapped_for_width(inner_width);
-                lines.saturating_add(self.margin_vertical())
-            }
-            // A wrapping row's height depends on how many lines its children
-            // flow onto at `available_width`, so it cannot be derived from the
-            // width-independent `min_height`. Partition the children greedily
-            // (mirroring `flexbox::layout_row`'s wrap pass) and sum each line's
-            // tallest child plus the between-line cross-axis gap. Closes #258.
-            //
-            // Memoized keyed by `available_width`: the partition re-walks the
-            // children, so caching the (width, result) pair avoids recomputing
-            // it when the flex pipeline re-queries the same row at the same
-            // settled width. A query at a different width recomputes and
-            // overwrites the single slot.
-            NodeKind::Container(Direction::Row) if self.wrap_children => {
-                if let Some((w, h)) = self.cached_min_height_for_width.get()
-                    && w == available_width
-                {
-                    return h;
-                }
-                let h = self.wrapped_min_height(available_width);
-                self.cached_min_height_for_width
-                    .set(Some((available_width, h)));
-                h
-            }
-            // Width-independent: delegates to the (cached) `min_height`.
-            _ => self.min_height(),
-        }
-    }
-
-    /// Intrinsic height of a wrapping row at a given available width.
-    ///
-    /// Greedily partitions the children into lines by accumulated main-axis
-    /// width (`flex_basis` else `min_width`, plus the within-line gap), then
-    /// sums each line's tallest child plus the cross-axis (between-line) gap.
-    /// A child wider than the inner width occupies its own line. The result
-    /// is clamped against the container's own `constraints` / `margin`, and
-    /// the cross-axis gap total is clamped at 0 so an overlap gap never wraps
-    /// the unsigned height. Closes #258.
-    fn wrapped_min_height(&mut self, available_width: u32) -> u32 {
-        let inner_width = available_width
+        let width = available_width
             .saturating_sub(self.margin_horizontal())
-            .saturating_sub(self.frame_horizontal());
-
-        // Snapshot per-child base widths / heights (immutable borrow ends
-        // before we touch `self.constraints` below).
-        let gap = self.gap;
-        let cross_gap = self.cross_gap;
-        let mut line_count: u32 = 0;
-        let mut total_lines_height: u32 = 0;
-        let mut cur_width: i64 = 0;
-        let mut cur_line_height: u32 = 0;
-        let mut cur_has_child = false;
-
-        for child in &mut self.children {
-            let base = child.flex_basis().unwrap_or_else(|| child.min_width());
-            let child_height = if child.wrap {
-                child.min_height_for_width(base.min(inner_width))
-            } else {
-                child.min_height()
-            };
-            if cur_has_child {
-                // Would adding this child (plus the within-line gap) overflow?
-                let prospective = cur_width + gap as i64 + base as i64;
-                if prospective > inner_width as i64 {
-                    // Flush the current line and start a new one with this child.
-                    line_count = line_count.saturating_add(1);
-                    total_lines_height = total_lines_height.saturating_add(cur_line_height);
-                    cur_width = base as i64;
-                    cur_line_height = child_height;
-                } else {
-                    cur_width = prospective;
-                    cur_line_height = cur_line_height.max(child_height);
+            .clamp(
+                self.constraints.min_width().unwrap_or(0),
+                self.constraints.max_width().unwrap_or(u32::MAX),
+            );
+        if matches!(self.kind, NodeKind::Text) && self.wrap {
+            let lines = self.ensure_wrapped_for_width(width);
+            return self.constrain_outer_height(lines);
+        }
+        if let Some((w, height)) = self.cached_min_height_for_width.get()
+            && w == available_width
+        {
+            return height;
+        }
+        let inner_width = width.saturating_sub(self.frame_horizontal());
+        let content_height = match self.kind {
+            NodeKind::Container(Direction::Column) => {
+                let mut total = 0u64;
+                for child in &mut self.children {
+                    let width = child.column_outer_width(inner_width, self.align);
+                    total = total.saturating_add(u64::from(child.min_height_for_width(width)));
                 }
-            } else {
-                cur_width = base as i64;
-                cur_line_height = child_height;
-                cur_has_child = true;
+                let gaps = self.children.len().saturating_sub(1) as i128 * i128::from(self.gap);
+                (i128::from(total) + gaps).clamp(0, i128::from(u32::MAX)) as u32
             }
-        }
-        if cur_has_child {
-            line_count = line_count.saturating_add(1);
-            total_lines_height = total_lines_height.saturating_add(cur_line_height);
-        }
-
-        // Between-line cross-axis gaps: `(line_count - 1) * cross_gap`,
-        // clamped at 0 for overlap gaps.
-        let gap_total = if line_count > 1 {
-            ((line_count as i64 - 1) * cross_gap as i64).max(0) as u32
-        } else {
-            0
+            NodeKind::Container(Direction::Row) if self.wrap_children => {
+                let ranges = super::flexbox::row_ranges(&self.children, inner_width, self.gap);
+                let mut total = 0u64;
+                for &(start, end) in &ranges {
+                    total = total.saturating_add(u64::from(super::flexbox::row_line_height(
+                        &mut self.children[start..end],
+                        inner_width,
+                        self.gap,
+                    )));
+                }
+                let gaps = ranges.len().saturating_sub(1) as i128 * i128::from(self.cross_gap);
+                (i128::from(total) + gaps).clamp(0, i128::from(u32::MAX)) as u32
+            }
+            NodeKind::Container(Direction::Row) => {
+                let width = if self.is_scrollable {
+                    self.min_width()
+                        .saturating_sub(self.margin_horizontal())
+                        .saturating_sub(self.frame_horizontal())
+                        .max(inner_width)
+                } else {
+                    inner_width
+                };
+                super::flexbox::row_line_height(&mut self.children, width, self.gap)
+            }
+            _ => return self.min_height(),
         };
-        let content_height = total_lines_height.saturating_add(gap_total);
-        let height = content_height + self.frame_vertical();
-        let height = height.max(self.constraints.min_height().unwrap_or(0));
-        height.saturating_add(self.margin_vertical())
+        let height =
+            self.constrain_outer_height(content_height.saturating_add(self.frame_vertical()));
+        self.cached_min_height_for_width
+            .set(Some((available_width, height)));
+        height
     }
 }
 
@@ -1391,6 +1372,7 @@ fn build_children(
             Command::Text {
                 content,
                 cursor_offset,
+                cursor_masked,
                 style,
                 grow,
                 align,
@@ -1408,6 +1390,7 @@ fn build_children(
                     margin,
                     constraints,
                 );
+                node.text_data_mut().cursor_masked = cursor_masked;
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);

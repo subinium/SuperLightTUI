@@ -635,13 +635,13 @@ pub(crate) enum SchedKind {
     /// Recurring timer that reports whole `interval`s elapsed since `last`.
     Every {
         interval: std::time::Duration,
-        last: std::time::Instant,
+        last: crate::clock::Instant,
     },
     /// Debounce timer: rearmed to `quiet_started` on every dirty frame, fires
     /// once when the quiet window `dur` elapses.
     Debounce {
         dur: std::time::Duration,
-        quiet_started: std::time::Instant,
+        quiet_started: crate::clock::Instant,
         fired: bool,
     },
 }
@@ -649,7 +649,7 @@ pub(crate) enum SchedKind {
 /// A single live timer in the [`SchedulerState`] table.
 pub(crate) struct SchedulerSlot {
     /// Wall-clock instant the slot was first created. Backs [`Context::elapsed`].
-    pub(crate) started: std::time::Instant,
+    pub(crate) started: crate::clock::Instant,
     /// The timer behavior for this slot.
     pub(crate) kind: SchedKind,
     /// GC flag: set true every frame the slot is sampled; slots left `false`

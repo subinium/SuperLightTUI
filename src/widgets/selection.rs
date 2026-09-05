@@ -606,25 +606,7 @@ impl ColorPickerState {
 /// Returns `None` for malformed input (wrong length, non-hex digits, missing
 /// `#`). The leading `#` is required; surrounding whitespace is trimmed.
 pub(crate) fn parse_hex_color(input: &str) -> Option<crate::Color> {
-    let s = input.trim();
-    let hex = s.strip_prefix('#')?;
-    let (r, g, b) = match hex.len() {
-        6 => {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            (r, g, b)
-        }
-        3 => {
-            // #RGB expands each nibble to a byte (e.g. `f` -> `0xff`).
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 0x11;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 0x11;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 0x11;
-            (r, g, b)
-        }
-        _ => return None,
-    };
-    Some(crate::Color::Rgb(r, g, b))
+    crate::Color::from_hex(input.trim())
 }
 
 /// Render `color` as a `#RRGGBB` label, or `None` for non-RGB colors.

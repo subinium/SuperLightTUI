@@ -1,5 +1,106 @@
 use unicode_segmentation::UnicodeSegmentation as _;
 
+/// Locate the first complete grapheme boundary at or after an insertion edge.
+pub(crate) fn grapheme_cursor_after(text: &str, byte: usize) -> usize {
+    text.grapheme_indices(true)
+        .take_while(|(start, _)| *start < byte)
+        .count()
+}
+
+/// Prepare an insertion without mutating text or undo state. The caret has
+/// downstream affinity when inserted text joins the following grapheme.
+pub(crate) fn prepare_text_insert(
+    value: &str,
+    byte: usize,
+    text: &str,
+    max_length: Option<usize>,
+) -> Option<(String, usize)> {
+    if text.is_empty() {
+        return None;
+    }
+    let build = |inserted: &str| {
+        let mut result = String::with_capacity(value.len() + inserted.len());
+        result.push_str(&value[..byte]);
+        result.push_str(inserted);
+        result.push_str(&value[byte..]);
+        result
+    };
+    let result = build(text);
+    if max_length.is_none_or(|max| result.graphemes(true).count() <= max) {
+        return Some((result, byte + text.len()));
+    }
+    let max = max_length?;
+    // Concatenation can merge one cluster at either insertion edge (RI runs
+    // can also change pairing). Examine the two extra candidates against the
+    // complete resulting string, not an additive pre-insertion length check.
+    let budget = max.saturating_sub(value.graphemes(true).count());
+    let mut ends = [0; 3];
+    for (start, cluster) in text.grapheme_indices(true).take(budget.saturating_add(2)) {
+        ends.rotate_left(1);
+        ends[2] = start + cluster.len();
+    }
+    for end in ends.into_iter().rev() {
+        if end == 0 || end == text.len() {
+            continue;
+        }
+        let candidate = build(&text[..end]);
+        if candidate.graphemes(true).count() <= max {
+            return Some((candidate, byte + end));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod insertion_regressions {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                'a',
+                'b',
+                '\r',
+                '\n',
+                '\u{301}',
+                '\u{200d}',
+                '\u{600}',
+                '\u{903}',
+                '\u{915}',
+                '\u{94d}',
+                '\u{1100}',
+                '\u{1161}',
+                '\u{11a8}',
+                '\u{1f1f0}',
+                '\u{1f1f7}',
+                '\u{1f1fa}',
+                '\u{1f469}',
+                '\u{1f4bb}',
+                '\u{1f3fd}',
+            ]),
+            0..24,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+        #[test]
+        fn limited_insert_matches_exhaustive_resulting_grapheme_reference(
+            value in text(), inserted in text(), cursor in 0usize..24, max in 0usize..30,
+        ) {
+            let byte = value.grapheme_indices(true).nth(cursor).map_or(value.len(), |(byte, _)| byte);
+            let expected = inserted.grapheme_indices(true).map(|(start, cluster)| start + cluster.len())
+                .filter_map(|end| {
+                    let candidate = format!("{}{}{}", &value[..byte], &inserted[..end], &value[byte..]);
+                    (candidate.graphemes(true).count() <= max).then_some((candidate, byte + end))
+                }).next_back();
+            prop_assert_eq!(prepare_text_insert(&value, byte, &inserted, Some(max)), expected);
+        }
+    }
+}
+
 /// Accumulated static output lines for [`crate::run_static`].
 ///
 /// Use [`println`](Self::println) to append lines above the dynamic inline TUI.
@@ -913,6 +1014,16 @@ pub(crate) struct TextareaSnapshot {
     pub(crate) cursor_row: usize,
     /// Cursor column at the time of the snapshot.
     pub(crate) cursor_col: usize,
+    pub(crate) navigation: Option<TextareaNavigation>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TextareaNavigation {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) wrap_width: Option<u32>,
+    pub(crate) upstream: bool,
+    pub(crate) desired_cells: usize,
 }
 
 /// State for a multi-line text area widget.
@@ -928,6 +1039,9 @@ pub(crate) struct TextareaSnapshot {
 /// undoable batch — only the first char of a typing burst pushes a snapshot.
 /// History is capped at [`history_max`](Self::history_max) entries (default
 /// `100`); the oldest snapshot is dropped when the cap is exceeded.
+/// Rejected or empty pastes do not record history or discard redo. An event
+/// batch is not an undo transaction: accepted edits retain their normal undo
+/// grouping even when their net content change is zero.
 ///
 /// # Example
 ///
@@ -968,6 +1082,7 @@ pub struct TextareaState {
     /// rapid typing into a single undoable burst — when true, the next `Char`
     /// keypress does not push a snapshot.
     pub(crate) last_was_char_insert: bool,
+    pub(crate) navigation: Option<TextareaNavigation>,
 }
 
 impl TextareaState {
@@ -985,6 +1100,7 @@ impl TextareaState {
             history_max: DEFAULT_TEXTAREA_HISTORY_MAX,
             redo_tip: None,
             last_was_char_insert: false,
+            navigation: None,
         }
     }
 
@@ -1020,6 +1136,52 @@ impl TextareaState {
         self.history_index = 0;
         self.redo_tip = None;
         self.last_was_char_insert = false;
+        self.navigation = None;
+    }
+
+    pub(crate) fn insert_text(&mut self, text: &str, typing: bool) -> bool {
+        let line = &self.lines[self.cursor_row];
+        let byte = line
+            .grapheme_indices(true)
+            .nth(self.cursor_col)
+            .map_or(line.len(), |(byte, _)| byte);
+        let max = self.max_length.map(|max| {
+            max.saturating_sub(
+                self.grapheme_len()
+                    .saturating_sub(line.graphemes(true).count()),
+            )
+        });
+        // Logical newline separators count independently even if an existing
+        // trailing CR would combine with an inserted LF in Unicode text.
+        let max = if line[..byte].ends_with('\r') && text.starts_with('\n') {
+            max.map(|max| max.saturating_sub(1))
+        } else {
+            max
+        };
+        let Some((result, end)) = prepare_text_insert(line, byte, text, max) else {
+            return false;
+        };
+        let prefix = &result[..end];
+        let added_rows = prefix.bytes().filter(|byte| *byte == b'\n').count();
+        let line_start = prefix.rfind('\n').map_or(0, |byte| byte + 1);
+        let last_line = result[line_start..].split('\n').next().unwrap_or("");
+        let col = grapheme_cursor_after(last_line, end - line_start);
+        if !typing || !self.last_was_char_insert {
+            self.push_history();
+        }
+        if result.contains('\n') {
+            self.lines.splice(
+                self.cursor_row..=self.cursor_row,
+                result.split('\n').map(str::to_owned),
+            );
+        } else {
+            self.lines[self.cursor_row] = result;
+        }
+        self.cursor_row += added_rows;
+        self.cursor_col = col;
+        self.last_was_char_insert = typing;
+        self.navigation = None;
+        true
     }
 
     /// Set the maximum grapheme-cluster count, including logical newlines.
@@ -1078,6 +1240,7 @@ impl TextareaState {
             lines: self.lines.clone(),
             cursor_row: self.cursor_row,
             cursor_col: self.cursor_col,
+            navigation: self.navigation,
         });
         // Evict oldest when over the cap. `Vec::remove(0)` is O(n) but the
         // history cap is small (default 100) and this only runs at the cap
@@ -1103,6 +1266,7 @@ impl TextareaState {
                 lines: self.lines.clone(),
                 cursor_row: self.cursor_row,
                 cursor_col: self.cursor_col,
+                navigation: self.navigation,
             });
         }
         self.history_index -= 1;
@@ -1110,6 +1274,7 @@ impl TextareaState {
         self.lines = snap.lines.clone();
         self.cursor_row = snap.cursor_row;
         self.cursor_col = snap.cursor_col;
+        self.navigation = snap.navigation;
         true
     }
 
@@ -1124,6 +1289,7 @@ impl TextareaState {
             self.lines = snap.lines.clone();
             self.cursor_row = snap.cursor_row;
             self.cursor_col = snap.cursor_col;
+            self.navigation = snap.navigation;
             return true;
         }
         if self.history_index + 1 != self.history.len() {
@@ -1136,6 +1302,7 @@ impl TextareaState {
         self.lines = snap.lines.clone();
         self.cursor_row = snap.cursor_row;
         self.cursor_col = snap.cursor_col;
+        self.navigation = snap.navigation;
         true
     }
 }

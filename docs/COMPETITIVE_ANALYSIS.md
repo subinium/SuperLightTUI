@@ -106,7 +106,7 @@ Widget counts are not perfectly apples-to-apples across frameworks, so this docu
 | Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
 |---|---|---|---|---|---|
 | Terminal backends | crossterm (optional) | crossterm, termion, termwiz | Built-in | Built-in | Built-in |
-| WASM/Browser | ✅ slt-wasm | ✅ ratzilla | ✅ textual serve | ❌ | ❌ |
+| WASM/Browser | Source-verified browser backend; see [current scope and release gates](WASM.md) | ✅ ratzilla | ✅ textual serve | ❌ | ❌ |
 | Embedded (no_std) | ❌ | ✅ v0.30 | ❌ | ❌ | ❌ |
 | SSH server | ❌ | ❌ | ✅ | ❌ | ✅ Wish |
 | Game engine | ❌ | ✅ Bevy, egui | ❌ | ❌ | ❌ |

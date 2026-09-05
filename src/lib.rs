@@ -131,7 +131,10 @@ pub mod widgets;
 use std::io;
 #[cfg(feature = "crossterm")]
 use std::io::IsTerminal;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+mod clock;
+use clock::Instant;
 
 /// Re-export of the [`crossterm`] crate (issue #278) so callers can name the
 /// input type accepted by [`event::from_crossterm`] without depending on — and
@@ -196,9 +199,9 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CodeBlock,
-    ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State, TreemapItem,
-    Widget,
+    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CanvasError,
+    CodeBlock, ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State,
+    TreemapItem, Widget,
 };
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
@@ -352,6 +355,21 @@ impl AppState {
         f64::from(self.inner.diagnostics.fps_ema)
     }
 
+    /// Wall-clock interval between the starts of the two latest frames.
+    pub fn frame_interval(&self) -> Duration {
+        self.inner.diagnostics.frame_interval
+    }
+
+    /// Time spent building, laying out and rendering the latest frame.
+    pub fn render_duration(&self) -> Duration {
+        self.inner.diagnostics.render_duration
+    }
+
+    /// Time spent presenting the latest frame through the backend.
+    pub fn flush_duration(&self) -> Duration {
+        self.inner.diagnostics.flush_duration
+    }
+
     /// Deprecated `f32` alias for [`fps_f64`](Self::fps_f64).
     #[deprecated(
         since = "0.22.2",
@@ -454,6 +472,36 @@ pub fn frame_owned(
 #[cfg(feature = "crossterm")]
 type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync + 'static>;
 
+std::thread_local! {
+    static RECOVERABLE_PANICS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TERMINAL_PANIC_OWNER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct PanicScopeGuard(&'static std::thread::LocalKey<std::cell::Cell<usize>>);
+
+impl PanicScopeGuard {
+    fn enter(slot: &'static std::thread::LocalKey<std::cell::Cell<usize>>) -> Self {
+        slot.with(|depth| depth.set(depth.get().saturating_add(1)));
+        Self(slot)
+    }
+}
+
+impl Drop for PanicScopeGuard {
+    fn drop(&mut self) {
+        self.0
+            .with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+pub(crate) fn with_recoverable_panics<T>(f: impl FnOnce() -> T) -> T {
+    let _scope = PanicScopeGuard::enter(&RECOVERABLE_PANICS);
+    f()
+}
+
+pub(crate) fn catch_recoverable_unwind<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
+    with_recoverable_panics(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)))
+}
+
 #[cfg(feature = "crossterm")]
 struct PanicHookState {
     active_sessions: usize,
@@ -496,12 +544,17 @@ impl Drop for PanicHookGuard {
 #[allow(clippy::print_stderr)]
 #[cfg(feature = "crossterm")]
 fn slt_panic_hook(panic_info: &std::panic::PanicHookInfo<'_>) {
+    if cfg!(panic = "unwind") && RECOVERABLE_PANICS.with(|depth| depth.get() > 0) {
+        return;
+    }
     let active = PANIC_HOOK_STATE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .active_sessions
         > 0;
-    let restored = active && terminal::cleanup_after_panic();
+    let restored = active
+        && (cfg!(panic = "abort") || TERMINAL_PANIC_OWNER.with(|depth| depth.get() > 0))
+        && terminal::cleanup_after_panic();
 
     if restored {
         eprintln!("\n\x1b[1;31m━━━ SLT Panic ━━━\x1b[0m\n");
@@ -548,7 +601,9 @@ fn install_panic_hook() -> PanicHookGuard {
 #[cfg(feature = "crossterm")]
 fn with_session_panic_hook<T>(f: impl FnOnce() -> T) -> T {
     let guard = install_panic_hook();
+    let owner = PanicScopeGuard::enter(&TERMINAL_PANIC_OWNER);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    drop(owner);
     drop(guard);
     match result {
         Ok(value) => value,
@@ -960,6 +1015,7 @@ pub(crate) struct FocusState {
     /// completed frame. Used at frame start to resolve a pending
     /// `focus_by_name(...)` against the previous render's registrations.
     pub focus_name_map_prev: std::collections::HashMap<String, usize>,
+    pub focus_name_map_buf: std::collections::HashMap<String, usize>,
     /// Issue #217: a name passed to `focus_by_name(...)` that has not yet
     /// been resolved. Consumed once the matching registration is found in
     /// `focus_name_map_prev`.
@@ -972,12 +1028,16 @@ pub(crate) const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration:
 
 #[derive(Default)]
 pub(crate) struct LayoutFeedbackState {
+    pub size: Option<(u32, u32)>,
+    #[cfg(feature = "crossterm")]
+    pub origin_row: Option<u32>,
     /// `(content_extent, viewport_extent, is_horizontal)` per scrollable last
     /// frame (#247). `is_horizontal` selects which `ScrollState` axis the
     /// `scrollable` binding updates.
     pub prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
+    pub prev_allocated_areas: Vec<rect::Rect>,
     pub prev_group_rects: Vec<(std::sync::Arc<str>, rect::Rect)>,
     pub prev_content_map: Vec<(rect::Rect, rect::Rect)>,
     pub prev_focus_rects: Vec<(usize, rect::Rect)>,
@@ -987,7 +1047,7 @@ pub(crate) struct LayoutFeedbackState {
     /// detect a double-click (a second click on the same cell within
     /// `DOUBLE_CLICK_WINDOW`, ~400ms). `None` after a double-click fires (so a
     /// triple click is not double-counted) or when no click has occurred.
-    pub last_click_at: Option<std::time::Instant>,
+    pub last_click_at: Option<Instant>,
     /// v0.21.1: cell position of the previous left-click `Down`, paired with
     /// `last_click_at` for same-cell double-click detection.
     pub last_click_pos: Option<(u32, u32)>,
@@ -1004,6 +1064,11 @@ pub(crate) struct DiagnosticsState {
     /// `Context::inspector_mode` like `debug_layer` so `set_inspector` persists.
     pub inspector_mode: bool,
     pub fps_ema: f32,
+    pub frame_started: Option<Instant>,
+    pub clock_override: Option<Instant>,
+    pub frame_interval: Duration,
+    pub render_duration: Duration,
+    pub flush_duration: Duration,
 }
 
 /// Which layers the F12 debug overlay should outline (issue #201).
@@ -1068,6 +1133,9 @@ pub(crate) type FrameDeferredDrawSlot =
 
 #[derive(Default)]
 pub(crate) struct FrameState {
+    pub consumed_buf: Vec<bool>,
+    pub events_buf: Vec<Event>,
+    pub geometry_stack_buf: Vec<(usize, Option<usize>)>,
     pub hook_states: Vec<Box<dyn std::any::Any>>,
     pub named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
     /// Issue #215: runtime-string-keyed parallel of `named_states`. Persisted
@@ -1330,6 +1398,7 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
             // drop any `ui.static_log(...)` lines so they do not leak into the
             // next frame's named_states.
             discard_static_log(&mut state, "full-screen run()");
+            events = std::mem::take(&mut state.events_buf);
         }
 
         #[cfg(unix)]
@@ -1745,7 +1814,7 @@ fn run_async_loop_inner<M: Send + 'static>(
         .async_tasks
         .set_waker(std::sync::Arc::clone(&wake.notify));
 
-    loop {
+    'app: loop {
         if cancel.load(std::sync::atomic::Ordering::Acquire) {
             break;
         }
@@ -1754,15 +1823,14 @@ fn run_async_loop_inner<M: Send + 'static>(
         #[cfg(unix)]
         drain_resume_redraw(&mut || term.handle_resize())?;
         let observed_wake = wake.generation();
-        messages.clear();
-        let input_disconnected =
-            drain_async_messages(&mut rx, &mut messages, config.async_message_budget);
-        if input_disconnected && messages.is_empty() {
-            break;
-        }
-
         let (w, h) = term.size();
         if w > 0 && h > 0 {
+            messages.clear();
+            let input_disconnected =
+                drain_async_messages(&mut rx, &mut messages, config.async_message_budget);
+            if input_disconnected && messages.is_empty() {
+                break;
+            }
             let mut render = |ctx: &mut Context| {
                 f(ctx, &mut messages);
             };
@@ -1779,10 +1847,11 @@ fn run_async_loop_inner<M: Send + 'static>(
             // Issue #233: full-screen async mode has no scrollback channel — warn
             // and drop any pending static_log lines.
             discard_static_log(&mut state, "run_async()");
+            events = std::mem::take(&mut state.events_buf);
             if input_disconnected {
                 break;
             }
-        } else if input_disconnected {
+        } else if rx.is_closed() && rx.is_empty() {
             break;
         }
 
@@ -1793,33 +1862,125 @@ fn run_async_loop_inner<M: Send + 'static>(
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
-        if !poll_events(
-            &mut events,
-            &mut state,
-            if wake.generation() != observed_wake
+        let wait_start = Instant::now();
+        let mut notified = false;
+        loop {
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                break 'app;
+            }
+            notified |= wake.generation() != observed_wake
                 || runtime.block_on(async {
                     tokio::time::timeout(Duration::ZERO, wake.notify.notified())
                         .await
                         .is_ok()
-                })
-                || cancel.load(std::sync::atomic::Ordering::Acquire)
-            {
-                Duration::ZERO
+                });
+            let pending = async_work_pending(
+                term.size(),
+                !events.is_empty(),
+                notified || !rx.is_empty() || rx.is_closed(),
+            );
+            let remaining = async_wait_remaining(
+                config.tick_rate,
+                wait_start.elapsed(),
+                config.max_fps,
+                frame_start.elapsed(),
+                pending,
+            );
+            let wait = remaining.min(Duration::from_millis(4));
+            let wait = if term.size().0 == 0 || term.size().1 == 0 {
+                wait.max(Duration::from_millis(4))
             } else {
-                config.tick_rate.min(Duration::from_millis(4))
-            },
-            &mut || term.handle_resize(),
-            config.handle_ctrl_c,
-            config.handle_suspend,
-            &mut on_suspend,
-        )? {
-            break;
+                wait
+            };
+            if !poll_events(
+                &mut events,
+                &mut state,
+                wait,
+                &mut || term.handle_resize(),
+                config.handle_ctrl_c,
+                config.handle_suspend,
+                &mut on_suspend,
+            )? {
+                break 'app;
+            }
+            let pending = async_work_pending(
+                term.size(),
+                !events.is_empty(),
+                notified || !rx.is_empty() || rx.is_closed(),
+            );
+            if async_wait_remaining(
+                config.tick_rate,
+                wait_start.elapsed(),
+                config.max_fps,
+                frame_start.elapsed(),
+                pending,
+            )
+            .is_zero()
+            {
+                break;
+            }
         }
-
-        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
     }
 
     Ok(())
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+fn async_work_pending(size: (u32, u32), events: bool, messages: bool) -> bool {
+    size.0 > 0 && size.1 > 0 && (events || messages)
+}
+
+#[cfg(all(feature = "crossterm", feature = "async"))]
+fn async_wait_remaining(
+    tick_rate: Duration,
+    idle_elapsed: Duration,
+    max_fps: Option<u32>,
+    loop_elapsed: Duration,
+    pending: bool,
+) -> Duration {
+    let cap = fps_sleep_duration(max_fps, loop_elapsed).unwrap_or(Duration::ZERO);
+    if pending {
+        cap
+    } else {
+        cap.max(tick_rate.saturating_sub(idle_elapsed))
+    }
+}
+
+#[cfg(feature = "crossterm")]
+fn localize_inline_events(term: &InlineTerminal, state: &mut FrameState, events: &mut Vec<Event>) {
+    let origin = term.origin_row();
+    if let Some(previous) = state.layout_feedback.origin_row
+        && previous != origin
+    {
+        state.layout_feedback.last_mouse_pos =
+            state.layout_feedback.last_mouse_pos.and_then(|(x, y)| {
+                y.checked_add(previous).and_then(|y| {
+                    term.localize_mouse(event::MouseEvent::new(
+                        event::MouseKind::Moved,
+                        x,
+                        y,
+                        KeyModifiers::NONE,
+                        None,
+                        None,
+                    ))
+                    .map(|mouse| (mouse.x, mouse.y))
+                })
+            });
+        state.layout_feedback.last_click_at = None;
+        state.layout_feedback.last_click_pos = None;
+        state.selection.clear();
+    }
+    state.layout_feedback.origin_row = Some(origin);
+    events.retain_mut(|event| match event {
+        Event::Mouse(mouse) => match term.localize_mouse(mouse.clone()) {
+            Some(local) => {
+                *mouse = local;
+                true
+            }
+            None => false,
+        },
+        _ => true,
+    });
 }
 
 /// Run the TUI in inline mode with default configuration.
@@ -1899,6 +2060,7 @@ fn run_inline_with_inner(
         drain_resume_redraw(&mut || term.handle_resize())?;
         let (w, h) = term.size();
         if w > 0 && h > 0 {
+            localize_inline_events(&term, &mut state, &mut events);
             if !run_frame(
                 &mut term,
                 &mut state,
@@ -1912,6 +2074,7 @@ fn run_inline_with_inner(
             // Issue #233: inline mode without `StaticOutput` has no scrollback
             // channel either — warn and drop any pending lines.
             discard_static_log(&mut state, "run_inline()");
+            events = std::mem::take(&mut state.events_buf);
         }
 
         #[cfg(unix)]
@@ -2014,6 +2177,7 @@ fn run_static_with_inner(
         let (w, h) = term.size();
         term.write_scrollback(&output.drain_new())?;
         if w > 0 && h > 0 {
+            localize_inline_events(&term, &mut state, &mut events);
             let keep_running = run_frame(
                 &mut term,
                 &mut state,
@@ -2031,6 +2195,7 @@ fn run_static_with_inner(
             if !keep_running {
                 break;
             }
+            events = std::mem::take(&mut state.events_buf);
         }
 
         #[cfg(unix)]
@@ -2143,7 +2308,6 @@ fn discard_static_log(state: &mut FrameState, mode: &str) {
 /// Extracted from `poll_events` so the keybinding behavior can be
 /// exercised by unit tests without standing up a real crossterm event
 /// stream.
-#[cfg(feature = "crossterm")]
 pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
     match ev {
         Event::Mouse(m) => {
@@ -2151,6 +2315,8 @@ pub(crate) fn process_run_loop_event(ev: &Event, state: &mut FrameState, has_res
         }
         Event::FocusLost => {
             state.layout_feedback.last_mouse_pos = None;
+            state.layout_feedback.last_click_at = None;
+            state.layout_feedback.last_click_pos = None;
         }
         // Issue #268: Ctrl+F12 toggles the devtools inspector panel
         // independently of the F12 outline overlay and the Shift+F12 layer
@@ -2239,12 +2405,13 @@ fn poll_events(
     let mut has_resize = false;
     let batch_start = events.len();
 
-    fn process_ev(ev: &Event, state: &mut FrameState, has_resize: &mut bool) {
-        process_run_loop_event(ev, state, has_resize);
+    fn process_ev(ev: &Event, has_resize: &mut bool) {
+        *has_resize |= matches!(ev, Event::Resize(_, _));
     }
 
-    if crossterm::event::poll(tick_rate)? {
-        let raw = crossterm::event::read()?;
+    if event::poll(tick_rate)? {
+        let raw = event::read()?;
+        let mut raw_events = 1;
         if let Some(ev) = event::from_crossterm(raw) {
             if handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
@@ -2256,12 +2423,15 @@ fn poll_events(
             // Resize is recorded (via `has_resize`) but not yet acted on — the
             // single `on_resize` call is deferred to end-of-batch so a burst
             // collapses into one geometry sync.
-            process_ev(&ev, state, &mut has_resize);
+            process_ev(&ev, &mut has_resize);
             events.push(ev);
         }
 
-        while crossterm::event::poll(Duration::ZERO)? {
-            let raw = crossterm::event::read()?;
+        // Unmapped native events (for example media keys) also consume the
+        // budget, otherwise a filtered-event flood can starve UI frames.
+        while raw_events < 256 && events.len() < 256 && event::poll(Duration::ZERO)? {
+            let raw = event::read()?;
+            raw_events += 1;
             if let Some(ev) = event::from_crossterm(raw) {
                 if handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
@@ -2270,7 +2440,7 @@ fn poll_events(
                     on_suspend()?;
                     return Ok(true);
                 }
-                process_ev(&ev, state, &mut has_resize);
+                process_ev(&ev, &mut has_resize);
                 events.push(ev);
             }
         }
@@ -2288,24 +2458,8 @@ fn poll_events(
         on_resize()?;
     }
 
-    // #90: clear cache first (which also resets last_mouse_pos to None),
-    // then re-apply latest mouse pos so Resize+Mouse frames keep coords.
     if has_resize {
         clear_frame_layout_cache(state);
-        // After clearing, re-walk events to restore the latest mouse pos
-        // (process_ev already set it during collection, but
-        // clear_frame_layout_cache wiped it).
-        for ev in &events[batch_start..] {
-            match ev {
-                Event::Mouse(m) => {
-                    state.layout_feedback.last_mouse_pos = Some((m.x, m.y));
-                }
-                Event::FocusLost => {
-                    state.layout_feedback.last_mouse_pos = None;
-                }
-                _ => {}
-            }
-        }
     }
 
     Ok(true)
@@ -2329,7 +2483,33 @@ pub(crate) fn run_frame_kernel(
     f: &mut impl FnMut(&mut context::Context),
 ) -> FrameKernelResult {
     let frame_start = Instant::now();
+    let now = state.diagnostics.clock_override.unwrap_or(frame_start);
+    if let Some(previous) = state.diagnostics.frame_started {
+        let interval = now.saturating_duration_since(previous);
+        state.diagnostics.frame_interval = interval;
+        if !interval.is_zero() {
+            let fps = 1.0 / interval.as_secs_f32();
+            state.diagnostics.fps_ema = if state.diagnostics.fps_ema == 0.0 {
+                fps
+            } else {
+                state.diagnostics.fps_ema * 0.9 + fps * 0.1
+            };
+        }
+    }
+    state.diagnostics.frame_started = Some(now);
     let (w, h) = size;
+    if state.layout_feedback.size != Some(size)
+        || events
+            .iter()
+            .any(|event| matches!(event, Event::Resize(_, _)))
+    {
+        clear_frame_layout_cache(state);
+    }
+    state.layout_feedback.size = Some(size);
+    let mut resized = false;
+    for event in &events {
+        process_run_loop_event(event, state, &mut resized);
+    }
     // Issue #236: reset the per-frame keymap registry before constructing
     // `Context`. Widgets that call `publish_keymap` accumulate fresh
     // entries; entries from the previous frame must not leak through
@@ -2387,6 +2567,8 @@ pub(crate) fn run_frame_kernel(
     );
 
     if ctx.should_quit {
+        reclaim_feedback(&mut ctx, state);
+        reclaim_event_scratch(&mut ctx, state);
         state.hook_states = ctx.hook_states;
         state.named_states = ctx.named_states;
         state.keyed_states = ctx.keyed_states;
@@ -2514,6 +2696,7 @@ pub(crate) fn run_frame_kernel(
     // scratch, then publish the newly collected vectors with a second swap.
     // This keeps both sides' capacities warm instead of `mem::take`-ing every
     // filled vector and leaving an empty FrameData behind.
+    reclaim_feedback(&mut ctx, state);
     let mut fd = std::mem::take(&mut state.frame_data);
     fd.swap_feedback(&mut state.layout_feedback);
     layout::collect_all(&tree, &mut fd);
@@ -2561,6 +2744,7 @@ pub(crate) fn run_frame_kernel(
         buffer.kitty_horizontal_clip_stack.is_empty(),
         "kitty_horizontal_clip_stack must be empty at end of frame"
     );
+    reclaim_event_scratch(&mut ctx, state);
     state.hook_states = ctx.hook_states;
     state.named_states = ctx.named_states;
     // Issue #215: hand the keyed-state map back to FrameState so the next
@@ -2643,18 +2827,8 @@ pub(crate) fn run_frame_kernel(
     state.commands_buf = std::mem::take(&mut ctx.commands);
 
     let frame_time = frame_start.elapsed();
+    state.diagnostics.render_duration = frame_time;
     let frame_time_us = frame_time.as_micros().min(u128::from(u64::MAX)) as u64;
-    let frame_secs = frame_time.as_secs_f32();
-    let inst_fps = if frame_secs > 0.0 {
-        1.0 / frame_secs
-    } else {
-        0.0
-    };
-    state.diagnostics.fps_ema = if state.diagnostics.fps_ema == 0.0 {
-        inst_fps
-    } else {
-        (state.diagnostics.fps_ema * 0.9) + (inst_fps * 0.1)
-    };
     if state.diagnostics.debug_mode {
         layout::render_debug_overlay(
             &tree,
@@ -2693,6 +2867,25 @@ pub(crate) fn run_frame_kernel(
         #[cfg(feature = "crossterm")]
         should_copy_selection,
     }
+}
+
+fn reclaim_feedback(ctx: &mut Context, state: &mut FrameState) {
+    state.layout_feedback.prev_scroll_infos = std::mem::take(&mut ctx.prev_scroll_infos);
+    state.layout_feedback.prev_scroll_rects = std::mem::take(&mut ctx.prev_scroll_rects);
+    state.layout_feedback.prev_hit_map = std::mem::take(&mut ctx.prev_hit_map);
+    state.layout_feedback.prev_allocated_areas = std::mem::take(&mut ctx.prev_allocated_areas);
+    state.layout_feedback.prev_group_rects = std::mem::take(&mut ctx.prev_group_rects);
+    state.layout_feedback.prev_focus_groups = std::mem::take(&mut ctx.prev_focus_groups);
+}
+
+fn reclaim_event_scratch(ctx: &mut Context, state: &mut FrameState) {
+    ctx.events.clear();
+    ctx.consumed.clear();
+    state.events_buf = std::mem::take(&mut ctx.events);
+    state.consumed_buf = std::mem::take(&mut ctx.consumed);
+    state.focus.focus_name_map_buf = std::mem::take(&mut ctx.focus_name_map_prev);
+    ctx.geometry_stack.clear();
+    state.geometry_stack_buf = std::mem::take(&mut ctx.geometry_stack);
 }
 
 fn run_frame(
@@ -2738,7 +2931,9 @@ fn run_frame(
         state.selection.clear();
     }
 
+    let flush_start = Instant::now();
     term.flush()?;
+    state.diagnostics.flush_duration = flush_start.elapsed();
     #[cfg(feature = "crossterm")]
     if terminal_side_effects && let Some(text) = kernel.clipboard_text {
         #[allow(clippy::print_stderr)]
@@ -2751,9 +2946,9 @@ fn run_frame(
     Ok(true)
 }
 
-#[cfg(feature = "crossterm")]
 fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.prev_hit_map.clear();
+    state.layout_feedback.prev_allocated_areas.clear();
     state.layout_feedback.prev_group_rects.clear();
     state.layout_feedback.prev_content_map.clear();
     state.layout_feedback.prev_focus_rects.clear();
@@ -2761,6 +2956,10 @@ fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.prev_scroll_infos.clear();
     state.layout_feedback.prev_scroll_rects.clear();
     state.layout_feedback.last_mouse_pos = None;
+    state.layout_feedback.last_click_at = None;
+    state.layout_feedback.last_click_pos = None;
+    #[cfg(feature = "crossterm")]
+    state.selection.clear();
     // Issue #273: a resize may change the geometry of every cached region, so
     // the previous frame's version keys are no longer a safe stability signal.
     // Dropping them forces a cache miss for all `cached` regions on the next
@@ -2814,6 +3013,36 @@ mod run_loop_tests {
     use super::*;
 
     static PANIC_HOOK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn zero_geometry_retained_events_do_not_schedule_immediate_frames() {
+        assert!(!async_work_pending((0, 24), true, true));
+        assert!(!async_work_pending((80, 0), true, true));
+        assert!(async_work_pending((80, 24), true, false));
+        assert!(async_work_pending((80, 24), false, true));
+        assert!(!async_work_pending((80, 24), false, false));
+        assert_eq!(
+            async_wait_remaining(
+                Duration::from_secs(1),
+                Duration::ZERO,
+                None,
+                Duration::ZERO,
+                false
+            ),
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            async_wait_remaining(
+                Duration::from_secs(1),
+                Duration::ZERO,
+                None,
+                Duration::ZERO,
+                true
+            ),
+            Duration::ZERO,
+        );
+    }
 
     fn key(modifiers: event::KeyModifiers) -> Event {
         Event::Key(event::KeyEvent {

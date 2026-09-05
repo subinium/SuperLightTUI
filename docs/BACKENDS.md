@@ -104,13 +104,40 @@ GNU screen older than 4.09, configured graphics
 passthrough, nested multiplexers, panic cleanup inside a real multiplexer, and
 Windows-hosted multiplexers are not covered by this Linux matrix.
 
-Terminal reply reads are synchronous and deadline-bounded. Unix uses a
-temporarily nonblocking stdin descriptor and restores its original flags before
-returning; Windows polls the console queue before one-record reads. No
-background stdin reader survives a successful, partial, or silent deadline.
-An application must still avoid calling query APIs concurrently with its event
-loop because input typed during the active synchronous query window can belong
-to the query reader.
+Terminal capability probes are synchronous, bounded and startup-only. Once
+native input ownership begins, raw probes are refused; late `read_clipboard`
+returns `None`. Windows does not perform raw console probes. Cached values,
+environment policy and ioctl metrics remain available. No background stdin
+reader survives a successful, partial or silent query deadline.
+
+### Unix input ownership (v0.24)
+
+Built-in Unix loops own a separately opened, nonblocking terminal descriptor;
+they do not change inherited stdin/stdout file-status flags. A bounded read
+retains readiness until `WouldBlock`, so a full 1,024-byte read cannot strand
+the rest of an input burst behind a missing edge. Partial sequences remain in
+the same parser across polls, including zero-timeout polls. SIGWINCH uses a
+scoped wake pipe, and normal final-session cleanup releases input resources.
+Pending calls invalidated by session teardown return `Interrupted` rather than
+reporting an event that a subsequent read cannot retrieve.
+
+Cursor-position replies use this same reader and preserve queued keyboard
+events. Key decoding reuses Crossterm 0.28.1's MIT-licensed parser and tests,
+with checked coordinate conversion; attribution is in `LICENSE.crossterm`.
+Public Crossterm event types and SLT's conversion API retain their identity.
+This fixes the built-in SLT loops, not a caller's separate upstream Crossterm
+event loop. Do not mix another stdin reader or simultaneous TUI loop with an
+active SLT loop. For `frame()`, the external event source remains caller-owned.
+
+Input safety limits are 4 KiB per non-paste sequence, 4 MiB per encoded paste,
+4,096 queued events and 8 MiB of queued paste text. Exceeding a limit reports
+`InvalidData`; built-in loops return the error and restore their terminal
+session instead of silently truncating accepted input. Final session teardown
+abandons its remaining private input queue and partial sequence. Fatal input
+errors, including a cursor-query timeout, make later native input fail closed
+until process restart: a late cursor reply has no request identifier and must
+not be promoted to the response of a retry. Normal session cleanup is not a
+fatal error and permits a subsequent session.
 
 ### Buffered stdout (v0.19.1)
 

@@ -80,7 +80,9 @@ pub(crate) struct BeginScrollableArgs {
 pub(crate) enum Command {
     Text {
         content: String,
+        /// Grapheme index of the visible caret marker in `content`.
         cursor_offset: Option<usize>,
+        cursor_masked: bool,
         style: Style,
         grow: u16,
         align: Align,

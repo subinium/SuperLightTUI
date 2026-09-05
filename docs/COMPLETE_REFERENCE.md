@@ -1,6 +1,22 @@
 # SuperLightTUI — Complete Reference (LLM-optimized)
 
-> Version: 0.23.0. This document condenses the full SLT API and common patterns into one file. Source signatures and compile-tested examples remain authoritative when this guide and rustdoc disagree.
+> Version: 0.24.0. This document condenses the full SLT API and common patterns into one file. Source signatures and compile-tested examples remain authoritative when this guide and rustdoc disagree.
+
+### Example classification
+
+Named `slt-check` fences below are maintained compile contracts. Run
+`python3 scripts/check_doc_examples.py --toolchain 1.98.1` to compile their
+actual Markdown source with the declared features and imports. The checker
+does not execute terminal runtimes. `context: ui` supplies `&mut Context`;
+`context: module` checks a complete program as a module.
+
+Other Rust fences are **illustrative fragments**, not independently compiled
+programs: they may omit application state, imports, helper implementations,
+or surrounding control flow. API tables and text diagrams are not executable.
+The checker reports this classification instead of treating every Markdown
+fence as a standalone crate. New maintained recipes must have a unique marker.
+
+<!-- slt-check-default: illustrative fragments require application context -->
 
 ---
 
@@ -14,6 +30,7 @@ State lives in **normal Rust** variables, structs, or — for widget-local persi
 
 ## 2. 60-second grammar
 
+<!-- slt-check: {"name":"counter", "features":["crossterm"], "context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode};
 
@@ -152,21 +169,21 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 |---|---|
 | `Tween` | `Tween::new(from, to, duration_ticks).easing(ease_out_quad).on_complete(|| {})`. `.reset(tick)`, `.value(tick) -> f64`, `.is_done() -> bool`. |
 | `Spring` | `Spring::new(initial, stiffness, damping)`. `.set_target(v)`, `.tick()`, `.value() -> f64`. |
-| `Keyframes` | Timeline with stops. `Keyframes::new(duration).at(0.0, 0.0).at(0.5, 100.0).at(1.0, 0.0).loop_mode(LoopMode::Loop)`. |
+| `Keyframes` | Timeline with stops. `Keyframes::new(duration).stop(0.0, 0.0).stop(0.5, 100.0).stop(1.0, 0.0).loop_mode(LoopMode::Repeat)`. |
 | `Sequence` | Chained tween segments in order. |
 | `Stagger` | `Stagger::new(from, to, duration).delay(ticks).items(count)`. `.value(tick, item_index)`. `.is_done()` reports completion of the last sampled item; `.is_all_done(tick, item_count) -> bool` reports completion of every item in the batch. |
-| `LoopMode` | `Once`, `Loop`, `PingPong`. |
+| `LoopMode` | `Once`, `Repeat`, `PingPong`. |
 | Easings (under `slt::anim::*`) | `ease_linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_quad`, `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`, `ease_out_elastic`, `ease_out_bounce`. |
 
 ### Charts and visualization
 | Type | Notes |
 |---|---|
-| `ChartBuilder` | Passed to `ui.chart(|c| {...}, w, h)`. `.line(&[f64])`, `.area(...)`, `.scatter(...)`, `.bar(...)`, `.grid(bool)`, `.x_range(min, max)`, `.y_range(min, max)`, `.marker(..)`, `.legend(pos)`, ... |
+| `ChartBuilder` | Passed to `ui.chart(|c| {...}, w, h)`. `.line(&[(f64, f64)])`, `.area(...)`, `.scatter(...)`, `.bar(...)`, `.grid(bool)`, `.xlim(min, max)`, `.ylim(min, max)`, `.legend(pos)`. Series methods return `DatasetEntry` with `.color(..)`, `.label(..)`, `.marker(..)`. |
 | `ChartConfig` | Config struct for chart builder internals. |
 | `Dataset` | Single series description. |
-| `Marker` | Marker shapes: `Dot`, `Block`, `Bar`, `HalfBlock`, `Braille`. |
+| `Marker` | Marker shapes: `Dot`, `Block`, `HalfBlock`, `Braille`, `Cross`, `Circle`. |
 | `Candle` | `{ open, high, low, close: f64 }`. |
-| `LegendPosition` | `Top`, `Bottom`, `Left`, `Right`, `None`. |
+| `LegendPosition` | `TopLeft`, `TopRight`, `BottomLeft`, `BottomRight`, `None`. |
 | `Bar` | `Bar::new(label, value).color(c).text_value(s)`. |
 | `BarGroup` | `BarGroup::new(label, bars).group_gap(n)`. |
 | `BarDirection` | `Horizontal`, `Vertical`. |
@@ -479,6 +496,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 ### 6.2 Hook-based local state
+<!-- slt-check: {"name":"hook_state", "features":[], "context":"ui"} -->
 ```rust
 let count = ui.use_state(|| 0i32);
 ui.text(format!("{}", count.get(ui)));
@@ -629,6 +647,7 @@ slt::run(move |ui| {
 ```
 
 ### 6.12 Async messages
+<!-- slt-check: {"name":"async_messages", "features":["async","crossterm"], "context":"module", "tokio":true} -->
 ```rust
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -650,15 +669,16 @@ async fn main() -> std::io::Result<()> {
 ```
 
 ### 6.13 Dashboard composition
+<!-- slt-check: {"name":"dashboard", "features":[], "context":"ui"} -->
 ```rust
-ui.row_gap(1, |ui| {
+ui.container().gap(1).row(|ui| {
     ui.bordered(Border::Rounded).title("Stats").p(1).w(30).col(|ui| {
         ui.stat("Users", "1,293");
         ui.stat_trend("Revenue", "$48k", Trend::Up);
     });
     ui.bordered(Border::Rounded).title("Traffic").grow(1).p(1).col(|ui| {
         ui.sparkline(&[3.0, 4.0, 2.0, 5.0, 6.0, 4.0], 20);
-        ui.chart(|c| { c.line(&[1.0, 4.0, 9.0, 16.0, 25.0]); c.grid(true); }, 40, 10);
+        ui.chart(|c| { c.line(&[(1.0, 1.0), (2.0, 4.0), (3.0, 9.0), (4.0, 16.0), (5.0, 25.0)]); c.grid(true); }, 40, 10);
     });
 });
 ```
@@ -708,26 +728,32 @@ ui.container().w(20).md_w(40).lg_w(60).col(|ui| { /* ... */ });
 ```
 
 ### 6.17 Animation
+<!-- slt-check: {"name":"animation", "features":["crossterm"], "context":"module"} -->
 ```rust
-// At construction:
-let mut fade = Tween::new(0.0, 1.0, 30).easing(slt::anim::ease_out_quad);
-// First frame:
-// fade.reset(ui.tick());
-// Every frame:
-let alpha = fade.value(ui.tick());
-ui.text("Hello").fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
-
-// Spring with mutable target
-let mut s = Spring::new(0.0, 0.2, 0.85);
-s.set_target(if hovered { 1.0 } else { 0.0 });
-s.tick();
-let scale = s.value();
-
-// Stagger across list
-let mut st = Stagger::new(0.0, 1.0, 20).delay(3).items(items.len());
-for (i, item) in items.iter().enumerate() {
-    let a = st.value(ui.tick(), i);
-    ui.text(item).fg(Color::Rgb(255, 255, (a * 255.0) as u8));
+fn main() -> std::io::Result<()> {
+    let items = ["First", "Second", "Third"];
+    let mut fade = Tween::new(0.0, 1.0, 30).easing(slt::anim::ease_out_quad);
+    let mut spring = Spring::new(0.0, 0.2, 0.85);
+    let mut stagger = Stagger::new(0.0, 1.0, 20).delay(3).items(items.len());
+    let mut pulse = Keyframes::new(60)
+        .stop(0.0, 0.0).stop(0.5, 1.0).stop(1.0, 0.0)
+        .loop_mode(LoopMode::Repeat);
+    let mut sequence = Sequence::new()
+        .then(0.0, 1.0, 30, slt::anim::ease_linear)
+        .then(1.0, 0.0, 30, slt::anim::ease_out_quad);
+    slt::run(move |ui| {
+        if ui.key('q') { ui.quit(); }
+        let hovered = ui.button("Target").hovered;
+        spring.set_target(if hovered { 1.0 } else { 0.0 });
+        spring.tick();
+        let alpha = fade.value(ui.tick());
+        ui.text("Hello").fg(Color::Rgb(255, 255, (alpha * 255.0) as u8));
+        ui.text(format!("{:.2} {:.2} {:.2}", spring.value(), pulse.value(ui.tick()), sequence.value(ui.tick())));
+        for (i, item) in items.iter().enumerate() {
+            let a = stagger.value(ui.tick(), i);
+            ui.text(*item).fg(Color::Rgb(255, 255, (a * 255.0) as u8));
+        }
+    })
 }
 ```
 
@@ -995,6 +1021,7 @@ s.modifiers = Modifiers::BOLD | Modifiers::UNDERLINE;
 
 ## 9. Testing
 
+<!-- slt-check: {"name":"headless_testing", "features":[], "context":"ui"} -->
 ```rust
 use slt::{TestBackend, EventBuilder, KeyCode};
 
@@ -1152,6 +1179,7 @@ Without `crossterm`, you keep `Backend`, `AppState`, `frame()`, `Context`, all w
 ## 13. Minimal skeletons to copy
 
 ### Full-screen app (most common)
+<!-- slt-check: {"name":"fullscreen", "features":["crossterm"], "context":"module"} -->
 ```rust
 use slt::{Border, Color, Context, KeyCode};
 
@@ -1166,6 +1194,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 ### Inline app below prompt
+<!-- slt-check: {"name":"inline", "features":["crossterm"], "context":"module"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     slt::run_inline(3, |ui| {
@@ -1178,6 +1207,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 ### Custom backend (no crossterm)
+<!-- slt-check: {"name":"custom_backend", "features":[], "context":"module"} -->
 ```rust
 use slt::{AppState, Backend, Buffer, Event, Rect, RunConfig};
 
@@ -1201,6 +1231,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 ### Async with tokio messages
+<!-- slt-check: {"name":"async_skeleton", "features":["async","crossterm"], "context":"module", "tokio":true} -->
 ```rust
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -1544,19 +1575,39 @@ BarGroup::new(label, Vec<Bar>).group_gap(n)
 
 ## 16. ChartBuilder — the full multi-series flow
 
+<!-- slt-check: {"name":"chart_series", "features":[], "context":"ui"} -->
 ```rust
+let prices = [(0.0, 3.0), (1.0, 4.0), (100.0, 2.0)];
+let points = [(10.0, 8.0), (80.0, 12.0)];
 ui.chart(|c| {
     c.line(&prices);                          // series 1
-    c.area(&prices).fg(Color::Cyan);          // filled area
-    c.scatter(&points);                       // (f64, f64) pairs
-    c.bar(&[3.0, 4.0, 2.0]);
+    c.area(&prices).color(Color::Cyan);        // filled area
+    c.scatter(&points).marker(Marker::Dot);    // per-series marker
+    c.bar(&[(0.0, 3.0), (1.0, 4.0), (2.0, 2.0)]);
     c.grid(true);
-    c.x_range(0.0, 100.0);
-    c.y_range(0.0, 50.0);
-    c.legend(LegendPosition::Top);
-    c.marker(Marker::Dot);
+    c.xlim(0.0, 100.0);
+    c.ylim(0.0, 50.0);
+    c.legend(LegendPosition::TopRight);
 }, 60, 20);
 ```
+
+### Bar coordinate contract
+
+General `ChartBuilder::bar` is **ordinal**, not a numeric-x bar plot. Finite
+`(x, y)` pairs get equal-width slots in input order. X values contribute to
+automatic axis bounds but do not control bar position or spacing. Thus
+`[(0.0, 2.0), (1.0, 3.0), (100.0, 4.0)]` produces three equally spaced bars;
+reversing those pairs reverses the heights to `4, 3, 2`. Changing only x values
+does not move bars. Multiple bar datasets overlay, rather than group, slots.
+Line and scatter series do use numeric x positions; overlaying them with
+ordinal bars does not imply coordinate alignment. Use `bar_chart` for named
+categories. Numeric-x bars would require a separate, explicit API contract.
+
+Exact zero, including `-0.0`, draws no bar. Nonzero values include the baseline
+cell; tiny nonzero values rounded to that row and one-row plots retain one
+cell. Histograms use ordered equal-width numeric bins, count only finite
+inputs, and position ticks at actual bin edges including the final endpoint.
+Overlapping tick labels are omitted, never redistributed to different values.
 
 Use `ui.sparkline(data, width)` for a single inline trend. `ui.histogram(data, w, h)` for a frequency chart. `ui.candlestick(&[Candle], up, down)` for OHLC; `_hd` variant renders heavy `┃` wicks.
 

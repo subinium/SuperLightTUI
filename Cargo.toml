@@ -24,7 +24,7 @@ private_intra_doc_links = "warn"
 
 [package]
 name = "superlighttui"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"
@@ -109,13 +109,14 @@ tree-sitter-yaml = { version = "0.7", optional = true }
 # non-unix builds (Windows/WASM) never pull it.
 [target.'cfg(unix)'.dependencies]
 signal-hook = { version = "0.3", optional = true }
-rustix = { version = "1", features = ["fs", "stdio"], optional = true }
+rustix = { version = "1", features = ["fs", "stdio", "termios"], optional = true }
+mio = { version = "1", features = ["os-poll", "os-ext"], optional = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { version = "1", features = ["pty", "termios"] }
 
-[target.'cfg(windows)'.dependencies]
-crossterm_winapi = { version = "0.9", optional = true }
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = "1.1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -124,7 +125,7 @@ proptest = "1"
 serde_json = "1"
 
 [features]
-crossterm = ["dep:crossterm", "dep:signal-hook", "dep:rustix", "dep:crossterm_winapi"]
+crossterm = ["dep:crossterm", "dep:signal-hook", "dep:rustix", "dep:mio"]
 bidi = ["dep:unicode-bidi"]
 default = ["crossterm", "bidi"]
 async = ["dep:tokio", "crossterm"]
@@ -140,7 +141,7 @@ syntax-bash = ["dep:tree-sitter-highlight", "dep:tree-sitter-bash"]
 syntax-json = ["dep:tree-sitter-highlight", "dep:tree-sitter-json"]
 syntax-toml = ["dep:tree-sitter-highlight", "dep:tree-sitter-toml-ng"]
 syntax-c = ["dep:tree-sitter-highlight", "dep:tree-sitter-c"]
-syntax-cpp = ["dep:tree-sitter-highlight", "dep:tree-sitter-cpp"]
+syntax-cpp = ["dep:tree-sitter-highlight", "dep:tree-sitter-cpp", "dep:tree-sitter-c"]
 syntax-typescript = [
     "dep:tree-sitter-highlight",
     "dep:tree-sitter-javascript",
@@ -283,4 +284,8 @@ path = "examples/v0211_tour.rs"
 
 [[bench]]
 name = "benchmarks"
+harness = false
+
+[[bench]]
+name = "v024_audit"
 harness = false

@@ -22,7 +22,7 @@ use bar::draw_bar_dataset;
 use braille::draw_braille_dataset;
 use grid::{
     GridSpec, apply_grid, build_legend_items, build_x_tick_col_map, build_y_tick_row_map,
-    center_text, map_value_to_cell, marker_char, overlay_legend_on_plot, sturges_bin_count,
+    center_text, map_value_to_cell, marker_char, overlay_legend_row, sturges_bin_count,
 };
 
 const BRAILLE_BASE: u32 = 0x2800;
@@ -73,7 +73,8 @@ pub enum GraphType {
     Area,
     /// Unconnected points.
     Scatter,
-    /// Vertical bars from the x-axis baseline.
+    /// Vertical bars in equal-width ordinal slots, from the zero baseline.
+    /// X values do not position bars; see [`ChartBuilder::bar`].
     Bar,
 }
 
@@ -491,7 +492,17 @@ impl ChartBuilder {
         self.push_dataset(data, GraphType::Scatter, Marker::Braille)
     }
 
-    /// Add a bar dataset.
+    /// Add a bar dataset in input order, using equal-width ordinal slots.
+    ///
+    /// Each finite `(x, y)` pair contributes one slot. The x value participates
+    /// in automatic axis bounds but does not determine placement or spacing:
+    /// `[(0.0, 2.0), (1.0, 3.0), (100.0, 4.0)]` has three equal slots.
+    /// Reordering these pairs reorders the bars; changing only their x values
+    /// does not. Multiple bar datasets overlay their slots, not group them.
+    ///
+    /// Exact zero (including negative zero) draws no bar. Nonzero values draw
+    /// through the zero baseline inclusively, retaining one cell when rounded
+    /// onto that baseline or rendered in a one-row plot.
     pub fn bar(&mut self, data: &[(f64, f64)]) -> &mut DatasetEntry {
         self.push_dataset(data, GraphType::Bar, Marker::Block)
     }

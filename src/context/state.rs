@@ -24,11 +24,35 @@ pub(crate) enum StateKey {
 /// ui.use_state(...); s.get(ui);`) are unaffected — the handle is moved into
 /// closures or borrowed by reference. If you previously relied on implicit
 /// copy semantics, call `.clone()` explicitly.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State<T> {
     key: StateKey,
     _marker: std::marker::PhantomData<T>,
 }
+
+impl<T> Clone for State<T> {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for State<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for State<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl<T> Eq for State<T> {}
 
 /// Downcast a stored boxed `Any` to `&T`, panicking with a uniform context
 /// message on mismatch. Internal helper to keep [`State::get`] / [`State::get_mut`]
@@ -187,11 +211,35 @@ pub(crate) struct MemoSlot<T> {
 /// ui.text(format!("{}", doubled.copied(ui)));
 /// # });
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Memo<T> {
     idx: usize,
     _marker: std::marker::PhantomData<T>,
 }
+
+impl<T> Clone for Memo<T> {
+    fn clone(&self) -> Self {
+        Self {
+            idx: self.idx,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Memo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Memo")
+            .field("idx", &self.idx)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for Memo<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx == other.idx
+    }
+}
+
+impl<T> Eq for Memo<T> {}
 
 impl<T: 'static> Memo<T> {
     pub(crate) fn from_idx(idx: usize) -> Self {

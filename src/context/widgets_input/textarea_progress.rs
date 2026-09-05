@@ -1,4 +1,76 @@
 use super::*;
+use crate::widgets::{TextareaNavigation, grapheme_cursor_after};
+
+fn current_navigation(state: &TextareaState) -> Option<TextareaNavigation> {
+    state.navigation.filter(|nav| {
+        nav.row == state.cursor_row
+            && nav.col == state.cursor_col
+            && nav.wrap_width == state.wrap_width
+    })
+}
+
+fn visual_cursor(state: &TextareaState, vlines: &[TextareaVLine]) -> (usize, usize) {
+    if current_navigation(state).is_some_and(|nav| nav.upstream)
+        && let Some((index, line)) = vlines.iter().enumerate().find(|(index, line)| {
+            line.logical_row == state.cursor_row
+                && line.char_start + line.char_count == state.cursor_col
+                && vlines
+                    .get(index + 1)
+                    .is_some_and(|next| next.logical_row == line.logical_row)
+        })
+    {
+        return (index, line.char_count);
+    }
+    textarea_logical_to_visual(vlines, state.cursor_row, state.cursor_col)
+}
+
+fn navigate_visual(state: &mut TextareaState, vlines: &[TextareaVLine], down: bool) {
+    let (row, col) = visual_cursor(state, vlines);
+    let source = &vlines[row];
+    let desired_cells = current_navigation(state).map_or_else(
+        || {
+            state.lines[source.logical_row]
+                .graphemes(true)
+                .skip(source.char_start)
+                .take(col)
+                .map(|cluster| cluster_width(cluster) as usize)
+                .sum()
+        },
+        |nav| nav.desired_cells,
+    );
+    let target_row = if down {
+        (row + 1).min(vlines.len() - 1)
+    } else {
+        row.saturating_sub(1)
+    };
+    if target_row == row {
+        return;
+    }
+    let target = &vlines[target_row];
+    let mut cells = 0;
+    let mut target_col = 0;
+    for cluster in state.lines[target.logical_row]
+        .graphemes(true)
+        .skip(target.char_start)
+        .take(target.char_count)
+    {
+        let width = cluster_width(cluster) as usize;
+        if cells + width > desired_cells {
+            break;
+        }
+        cells += width;
+        target_col += 1;
+    }
+    (state.cursor_row, state.cursor_col) =
+        textarea_visual_to_logical(vlines, target_row, target_col);
+    state.navigation = Some(TextareaNavigation {
+        row: state.cursor_row,
+        col: state.cursor_col,
+        wrap_width: state.wrap_width,
+        upstream: target_col == target.char_count,
+        desired_cells,
+    });
+}
 
 /// Test whether a grapheme cluster is "alphanumeric" for word-boundary
 /// navigation: its first scalar is alphanumeric (a cluster's base scalar
@@ -65,12 +137,61 @@ impl Context {
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
 
-        let pre_lines = state.lines.clone();
-        let pre_vlines = textarea_build_visual_lines(&state.lines, wrap_w);
+        if state.navigation.is_some_and(|nav| {
+            nav.row != state.cursor_row
+                || nav.col != state.cursor_col
+                || nav.wrap_width != state.wrap_width
+        }) {
+            state.navigation = None;
+        }
+        // Only editing batches need a baseline for exact net-result changed
+        // semantics. Idle and navigation frames never clone the document.
+        let pre_lines = (focused
+            && self.events.iter().enumerate().any(|(i, event)| {
+                !self.consumed[i]
+                    && match event {
+                        Event::Paste(text) => !text.is_empty(),
+                        Event::Key(key) if key.kind == KeyEventKind::Press => matches!(
+                            key.code,
+                            KeyCode::Char(_)
+                                | KeyCode::Enter
+                                | KeyCode::Backspace
+                                | KeyCode::Delete
+                        ),
+                        _ => false,
+                    }
+            }))
+        .then(|| state.lines.clone());
+        let mut vlines = None;
 
         if focused {
             let mut consumed_indices = Vec::new();
-            for (i, key) in self.available_key_presses() {
+            for (i, event) in self
+                .events
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !self.consumed[*i])
+            {
+                if let Event::Paste(text) = event {
+                    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                    if state.insert_text(&normalized, false) {
+                        vlines = None;
+                    }
+                    consumed_indices.push(i);
+                    continue;
+                }
+                let Event::Key(key) = event else {
+                    continue;
+                };
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if matches!(
+                    key.code,
+                    KeyCode::Char(_) | KeyCode::Enter | KeyCode::Backspace | KeyCode::Delete
+                ) {
+                    vlines = None;
+                }
                 match key.code {
                     KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         state.undo();
@@ -125,42 +246,12 @@ impl Context {
                         consumed_indices.push(i);
                     }
                     KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
-                        if let Some(max) = state.max_length
-                            && state.grapheme_len() >= max
-                        {
-                            continue;
-                        }
-                        // Coalesce a typing burst into one undoable batch:
-                        // only the first Char of the burst pushes a snapshot.
-                        if !state.last_was_char_insert {
-                            state.push_history();
-                        }
-                        let index = byte_index_for_grapheme(
-                            &state.lines[state.cursor_row],
-                            state.cursor_col,
-                        );
-                        state.lines[state.cursor_row].insert(index, ch);
-                        state.cursor_col += 1;
-                        state.last_was_char_insert = true;
+                        let mut encoded = [0; 4];
+                        state.insert_text(ch.encode_utf8(&mut encoded), true);
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
-                        if state
-                            .max_length
-                            .is_some_and(|max| state.grapheme_len() >= max)
-                        {
-                            continue;
-                        }
-                        state.push_history();
-                        let split_index = byte_index_for_grapheme(
-                            &state.lines[state.cursor_row],
-                            state.cursor_col,
-                        );
-                        let remainder = state.lines[state.cursor_row].split_off(split_index);
-                        state.cursor_row += 1;
-                        state.lines.insert(state.cursor_row, remainder);
-                        state.cursor_col = 0;
-                        state.last_was_char_insert = false;
+                        state.insert_text("\n", false);
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
@@ -177,12 +268,15 @@ impl Context {
                                 state.cursor_col,
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
-                            state.cursor_col -= 1;
+                            state.cursor_col =
+                                grapheme_cursor_after(&state.lines[state.cursor_row], start);
                         } else if state.cursor_row > 0 {
                             let current = state.lines.remove(state.cursor_row);
                             state.cursor_row -= 1;
-                            state.cursor_col = grapheme_count(&state.lines[state.cursor_row]);
+                            let edge = state.lines[state.cursor_row].len();
                             state.lines[state.cursor_row].push_str(&current);
+                            state.cursor_col =
+                                grapheme_cursor_after(&state.lines[state.cursor_row], edge);
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
@@ -210,17 +304,10 @@ impl Context {
                     }
                     KeyCode::Up => {
                         if wrapping {
-                            let (vrow, vcol) = textarea_logical_to_visual(
-                                &pre_vlines,
-                                state.cursor_row,
-                                state.cursor_col,
-                            );
-                            if vrow > 0 {
-                                let (lr, lc) =
-                                    textarea_visual_to_logical(&pre_vlines, vrow - 1, vcol);
-                                state.cursor_row = lr;
-                                state.cursor_col = lc;
-                            }
+                            let map = vlines.get_or_insert_with(|| {
+                                textarea_build_visual_lines(&state.lines, wrap_w)
+                            });
+                            navigate_visual(state, map, false);
                         } else if state.cursor_row > 0 {
                             state.cursor_row -= 1;
                             state.cursor_col = state
@@ -232,17 +319,10 @@ impl Context {
                     }
                     KeyCode::Down => {
                         if wrapping {
-                            let (vrow, vcol) = textarea_logical_to_visual(
-                                &pre_vlines,
-                                state.cursor_row,
-                                state.cursor_col,
-                            );
-                            if vrow + 1 < pre_vlines.len() {
-                                let (lr, lc) =
-                                    textarea_visual_to_logical(&pre_vlines, vrow + 1, vcol);
-                                state.cursor_row = lr;
-                                state.cursor_col = lc;
-                            }
+                            let map = vlines.get_or_insert_with(|| {
+                                textarea_build_visual_lines(&state.lines, wrap_w)
+                            });
+                            navigate_visual(state, map, true);
                         } else if state.cursor_row + 1 < state.lines.len() {
                             state.cursor_row += 1;
                             state.cursor_col = state
@@ -274,9 +354,14 @@ impl Context {
                                 state.cursor_col + 1,
                             );
                             state.lines[state.cursor_row].replace_range(start..end, "");
+                            state.cursor_col =
+                                grapheme_cursor_after(&state.lines[state.cursor_row], start);
                         } else if state.cursor_row + 1 < state.lines.len() {
                             let next = state.lines.remove(state.cursor_row + 1);
+                            let edge = state.lines[state.cursor_row].len();
                             state.lines[state.cursor_row].push_str(&next);
+                            state.cursor_col =
+                                grapheme_cursor_after(&state.lines[state.cursor_row], edge);
                         }
                         state.last_was_char_insert = false;
                         consumed_indices.push(i);
@@ -288,65 +373,32 @@ impl Context {
                     }
                     _ => {}
                 }
-            }
-            for (i, text) in self.available_pastes() {
-                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                // A paste is one undoable unit — push a single snapshot
-                // before applying the burst.
-                if !normalized.is_empty() {
-                    state.push_history();
+                let history_navigation = matches!(key.code, KeyCode::Char('z' | 'y'))
+                    && key.modifiers.contains(KeyModifiers::CONTROL);
+                if !matches!(key.code, KeyCode::Up | KeyCode::Down) && !history_navigation {
+                    state.navigation = None;
                 }
-                let mut total_chars = state.grapheme_len();
-                for cluster in normalized.graphemes(true) {
-                    if let Some(max) = state.max_length
-                        && total_chars >= max
-                    {
-                        break;
-                    }
-                    if cluster == "\n" {
-                        let split_index = byte_index_for_grapheme(
-                            &state.lines[state.cursor_row],
-                            state.cursor_col,
-                        );
-                        let remainder = state.lines[state.cursor_row].split_off(split_index);
-                        state.cursor_row += 1;
-                        state.lines.insert(state.cursor_row, remainder);
-                        state.cursor_col = 0;
-                        total_chars += 1;
-                    } else {
-                        let before = grapheme_count(&state.lines[state.cursor_row]);
-                        let index = byte_index_for_grapheme(
-                            &state.lines[state.cursor_row],
-                            state.cursor_col,
-                        );
-                        let inserted_end = index + cluster.len();
-                        state.lines[state.cursor_row].insert_str(index, cluster);
-                        state.cursor_col =
-                            grapheme_count(&state.lines[state.cursor_row][..inserted_end]);
-                        let after = grapheme_count(&state.lines[state.cursor_row]);
-                        total_chars = total_chars.saturating_sub(before).saturating_add(after);
-                    }
-                }
-                state.last_was_char_insert = false;
-                consumed_indices.push(i);
             }
-
             self.consume_indices(consumed_indices);
         }
 
-        let vlines = if state.lines == pre_lines {
-            pre_vlines
-        } else {
-            textarea_build_visual_lines(&state.lines, wrap_w)
-        };
-        let (cursor_vrow, cursor_vcol) =
-            textarea_logical_to_visual(&vlines, state.cursor_row, state.cursor_col);
+        let vlines = wrapping
+            .then(|| vlines.unwrap_or_else(|| textarea_build_visual_lines(&state.lines, wrap_w)));
+        let (cursor_vrow, cursor_vcol) = vlines
+            .as_ref()
+            .map_or((state.cursor_row, state.cursor_col), |map| {
+                visual_cursor(state, map)
+            });
 
         if cursor_vrow < state.scroll_offset {
             state.scroll_offset = cursor_vrow;
         }
-        if cursor_vrow >= state.scroll_offset + visible_rows as usize {
-            state.scroll_offset = cursor_vrow + 1 - visible_rows as usize;
+        if cursor_vrow
+            >= state
+                .scroll_offset
+                .saturating_add(visible_rows.max(1) as usize)
+        {
+            state.scroll_offset = cursor_vrow + 1 - visible_rows.max(1) as usize;
         }
 
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -371,21 +423,20 @@ impl Context {
 
         for vi in 0..visible_rows as usize {
             let actual_vi = state.scroll_offset + vi;
-            let (seg_text, is_cursor_line) = if let Some(vl) = vlines.get(actual_vi) {
-                let line = &state.lines[vl.logical_row];
-                // `char_start` / `char_count` are grapheme-cluster indices, so
-                // slice by cluster to keep each cluster whole on its segment.
-                let text: String = line
-                    .graphemes(true)
-                    .skip(vl.char_start)
-                    .take(vl.char_count)
-                    .collect();
-                (text, actual_vi == cursor_vrow)
+            let seg_text = if let Some(map) = &vlines {
+                if let Some(vl) = map.get(actual_vi) {
+                    let line = &state.lines[vl.logical_row];
+                    let start = byte_index_for_grapheme(line, vl.char_start);
+                    let end = start + byte_index_for_grapheme(&line[start..], vl.char_count);
+                    &line[start..end]
+                } else {
+                    ""
+                }
             } else {
-                (String::new(), false)
+                state.lines.get(actual_vi).map_or("", String::as_str)
             };
 
-            let mut rendered = seg_text.clone();
+            let mut rendered = String::with_capacity(seg_text.len() + 3);
             let mut cursor_offset = None;
             let mut style = if seg_text.is_empty() {
                 Style::new().fg(self.theme.text_dim)
@@ -393,24 +444,15 @@ impl Context {
                 Style::new().fg(self.theme.text)
             };
 
-            if is_cursor_line && focused {
-                rendered.clear();
-                // Iterate by cluster: `cursor_vcol` is a cluster index. The
-                // emitted `cursor_offset` is the *scalar* length of `rendered`
-                // before the cursor glyph, which is what the renderer consumes
-                // (`text.chars().take(cursor_offset)` in render.rs).
-                for (idx, g) in seg_text.graphemes(true).enumerate() {
-                    if idx == cursor_vcol {
-                        cursor_offset = Some(rendered.chars().count());
-                        rendered.push('▎');
-                    }
-                    rendered.push_str(g);
-                }
-                if cursor_vcol >= grapheme_count(&seg_text) {
-                    cursor_offset = Some(rendered.chars().count());
-                    rendered.push('▎');
-                }
+            if actual_vi == cursor_vrow && focused {
+                let edge = byte_index_for_grapheme(seg_text, cursor_vcol);
+                cursor_offset = Some(grapheme_count(&seg_text[..edge]));
+                rendered.push_str(&seg_text[..edge]);
+                rendered.push('▎');
+                rendered.push_str(&seg_text[edge..]);
                 style = Style::new().fg(self.theme.text);
+            } else {
+                rendered.push_str(seg_text);
             }
 
             self.styled_with_cursor(rendered, style, cursor_offset);
@@ -418,7 +460,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = state.lines != pre_lines;
+        response.changed = pre_lines.is_some_and(|before| state.lines != before);
         response
     }
 

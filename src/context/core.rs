@@ -17,6 +17,9 @@ use super::*;
 /// ```
 pub struct Context {
     pub(crate) commands: Vec<Command>,
+    pub(crate) geometry_cursor: usize,
+    pub(crate) geometry_stack: Vec<(usize, Option<usize>)>,
+    pub(crate) geometry_pending_interaction: Option<usize>,
     pub(crate) events: Vec<Event>,
     pub(crate) consumed: Vec<bool>,
     pub(crate) should_quit: bool,
@@ -43,7 +46,9 @@ pub struct Context {
     /// the previous frame (#247).
     pub(crate) prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub(crate) prev_scroll_rects: Vec<Rect>,
+    pub(crate) scroll_wheel_targets: Option<Vec<Option<usize>>>,
     pub(crate) prev_hit_map: Vec<Rect>,
+    pub(crate) prev_allocated_areas: Vec<Rect>,
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
     pub(crate) prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
@@ -149,7 +154,7 @@ pub struct Context {
     /// against this single instant so every timer sampled in the same frame
     /// sees a consistent "now". Deliberately wall-clock, not the frame tick
     /// (`run_frame_kernel` never advances `diagnostics.tick`).
-    pub(crate) frame_instant: std::time::Instant,
+    pub(crate) frame_instant: crate::clock::Instant,
     /// Issue #248: persistent timer table. Moved in from `FrameState` at
     /// frame start and moved back at frame end (where untouched slots are
     /// GC'd), identical to the `named_states` lifetime.
@@ -257,6 +262,7 @@ impl ContextCheckpoint {
 
     pub(super) fn restore(&self, ctx: &mut Context) {
         ctx.commands.truncate(self.commands_len);
+        ctx.invalidate_geometry_cache();
         ctx.hook_states.truncate(self.hook_states_len);
         ctx.deferred_draws.truncate(self.deferred_draws_len);
         ctx.context_stack.truncate(self.context_stack_len);

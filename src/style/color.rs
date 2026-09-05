@@ -300,6 +300,9 @@ impl Color {
     #[doc(alias = "parse")]
     pub fn from_hex(s: &str) -> Option<Color> {
         let hex = s.strip_prefix('#')?;
+        if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
         match hex.len() {
             3 => {
                 let mut it = hex.chars().map(|c| c.to_digit(16));
@@ -537,6 +540,10 @@ impl std::str::FromStr for Color {
 
         let had_hash = trimmed.starts_with('#');
         let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+
+        if matches!(hex.len(), 3 | 6) && !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ColorParseError::InvalidHexDigit);
+        }
 
         match hex.len() {
             3 => {
