@@ -34,6 +34,26 @@ fn try_buffer_pair(area: Rect) -> io::Result<(Buffer, Buffer)> {
     Ok((current, previous))
 }
 
+fn reset_buffer_pair(current: &mut Buffer, previous: &mut Buffer, area: Rect) -> io::Result<()> {
+    if current.area == area && previous.area == area {
+        for buffer in [current, previous] {
+            // Session redraw discards cell payloads, unlike ordinary frame
+            // reset which preserves their allocations. Reinitialize in the
+            // existing vector so cells take the same fast path as a new pair.
+            let len = buffer.content.len();
+            buffer.content.clear();
+            buffer.reset();
+            buffer.content.resize(len, crate::Cell::default());
+        }
+    } else {
+        // Allocate both before replacing either: a failed resize is atomic.
+        let pair = try_buffer_pair(area)?;
+        *current = pair.0;
+        *previous = pair.1;
+    }
+    Ok(())
+}
+
 #[cfg(any(test, feature = "pty-test"))]
 fn buffer_pair(area: Rect) -> (Buffer, Buffer) {
     try_buffer_pair(area)
@@ -90,7 +110,7 @@ impl Write for Sink {
 pub(crate) struct KittyImageManager {
     next_id: u32,
     /// content_hash → kitty image ID for uploaded images.
-    uploaded: HashMap<u64, u32>,
+    uploaded: HashMap<(u64, u32, u32), u32>,
     /// Previous frame's placements (for diff).
     prev_placements: Vec<KittyPlacement>,
     /// Reused dedup scratch for already-deleted image IDs in `flush`. Typical
@@ -100,7 +120,7 @@ pub(crate) struct KittyImageManager {
     scratch_ids: smallvec::SmallVec<[u32; 8]>,
     /// Reused scratch for content hashes still referenced this frame, used to
     /// prune stale uploads. Sorted in place for `binary_search` membership.
-    scratch_hashes: smallvec::SmallVec<[u64; 8]>,
+    scratch_hashes: smallvec::SmallVec<[(u64, u32, u32); 8]>,
 }
 
 impl KittyImageManager {
@@ -127,6 +147,21 @@ impl KittyImageManager {
         current: &[KittyPlacement],
         row_offset: u32,
     ) -> io::Result<()> {
+        let result = self.flush_inner(stdout, current, row_offset);
+        if result.is_err() {
+            // A partial transmit/place/delete leaves terminal state unknown.
+            // Force a fresh upload on the next successful frame.
+            let _ = self.delete_all(stdout);
+        }
+        result
+    }
+
+    fn flush_inner(
+        &mut self,
+        stdout: &mut impl Write,
+        current: &[KittyPlacement],
+        row_offset: u32,
+    ) -> io::Result<()> {
         // Fast path: nothing changed (compare against post-offset y values
         // stored in `prev_placements`). This avoids materializing a translated
         // `Vec<KittyPlacement>` in the caller (issue #206).
@@ -147,7 +182,7 @@ impl KittyImageManager {
         if !self.prev_placements.is_empty() {
             self.scratch_ids.clear();
             for p in &self.prev_placements {
-                if let Some(&img_id) = self.uploaded.get(&p.content_hash)
+                if let Some(&img_id) = self.uploaded.get(&kitty_raster_key(p))
                     && !self.scratch_ids.contains(&img_id)
                 {
                     self.scratch_ids.push(img_id);
@@ -159,14 +194,14 @@ impl KittyImageManager {
 
         // Upload new images and create placements
         for (idx, p) in current.iter().enumerate() {
-            let img_id = if let Some(&existing_id) = self.uploaded.get(&p.content_hash) {
+            let img_id = if let Some(&existing_id) = self.uploaded.get(&kitty_raster_key(p)) {
                 existing_id
             } else {
                 // Upload new image with zlib compression if available
                 let id = self.next_id;
                 self.next_id += 1;
                 self.upload_image(stdout, id, p)?;
-                self.uploaded.insert(p.content_hash, id);
+                self.uploaded.insert(kitty_raster_key(p), id);
                 id
             };
 
@@ -182,10 +217,10 @@ impl KittyImageManager {
         // delete emission was already unordered via `HashMap` key iteration.)
         self.scratch_hashes.clear();
         self.scratch_hashes
-            .extend(current.iter().map(|p| p.content_hash));
+            .extend(current.iter().map(kitty_raster_key));
         self.scratch_hashes.sort_unstable();
         let scratch_hashes = &self.scratch_hashes;
-        let stale: smallvec::SmallVec<[u64; 8]> = self
+        let stale: smallvec::SmallVec<[(u64, u32, u32); 8]> = self
             .uploaded
             .keys()
             .filter(|h| scratch_hashes.binary_search(h).is_err())
@@ -272,9 +307,16 @@ impl KittyImageManager {
     }
 
     /// Delete all images from the terminal (used on drop/cleanup).
-    pub(crate) fn delete_all(&self, stdout: &mut impl Write) -> io::Result<()> {
+    pub(crate) fn delete_all(&mut self, stdout: &mut impl Write) -> io::Result<()> {
+        // Even partial output can delete terminal data. Never reuse its IDs.
+        self.uploaded.clear();
+        self.prev_placements.clear();
         queue!(stdout, Print("\x1b_Ga=d,d=A,q=2\x1b\\"))
     }
+}
+
+fn kitty_raster_key(p: &KittyPlacement) -> (u64, u32, u32) {
+    (p.content_hash, p.src_width, p.src_height)
 }
 
 /// Compare a fresh placement (`current`, in pre-offset coordinates) against a
@@ -290,7 +332,7 @@ fn placement_eq_with_offset(
     row_offset: u32,
     prev: &KittyPlacement,
 ) -> bool {
-    current.content_hash == prev.content_hash
+    kitty_raster_key(current) == kitty_raster_key(prev)
         && current.x == prev.x
         && current.y.saturating_add(row_offset) == prev.y
         && current.cols == prev.cols
@@ -330,37 +372,83 @@ fn compress_rgba(data: &[u8]) -> (Cow<'_, [u8]>, &'static str) {
 /// Returns `(cell_width, cell_height)` in pixels. Falls back to `(8, 16)` if
 /// detection fails. Used by `kitty_image_fit` for accurate aspect ratio.
 ///
-/// Cached after first successful detection.
+/// Success is cached until resize; failures retry at most once per second.
 pub(crate) fn cell_pixel_size() -> (u32, u32) {
-    use std::sync::OnceLock;
-    static CACHED: OnceLock<(u32, u32)> = OnceLock::new();
-    if let Some(size) = CACHED.get() {
-        return *size;
+    let mut cache = CELL_PIXEL_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.resolve(Instant::now(), detect_cell_pixel_size)
+}
+
+#[derive(Default)]
+struct CellPixelCache {
+    size: Option<(u32, u32)>,
+    retry_after: Option<Instant>,
+    refresh: bool,
+}
+
+impl CellPixelCache {
+    fn resolve(&mut self, now: Instant, query: impl FnOnce() -> Option<(u32, u32)>) -> (u32, u32) {
+        if (self.size.is_none() || self.refresh)
+            && self.retry_after.is_none_or(|deadline| now >= deadline)
+        {
+            if let Some(size) = query() {
+                self.size = Some(size);
+                self.refresh = false;
+            }
+            self.retry_after = Some(now + Duration::from_secs(1));
+        }
+        self.size.unwrap_or((8, 16))
     }
-    let Some(size) = detect_cell_pixel_size() else {
-        return (8, 16);
-    };
-    let _ = CACHED.set(size);
-    size
+}
+
+static CELL_PIXEL_CACHE: std::sync::Mutex<CellPixelCache> = std::sync::Mutex::new(CellPixelCache {
+    size: None,
+    retry_after: None,
+    refresh: false,
+});
+
+pub(crate) fn invalidate_cell_pixel_size() {
+    let mut cache = CELL_PIXEL_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.refresh = true;
+    cache.retry_after = None;
 }
 
 fn detect_cell_pixel_size() -> Option<(u32, u32)> {
+    if let Ok(size) = terminal::window_size()
+        && size.columns > 0
+        && size.rows > 0
+    {
+        let width = u32::from(size.width) / u32::from(size.columns);
+        let height = u32::from(size.height) / u32::from(size.rows);
+        if width > 0 && height > 0 {
+            return Some((width, height));
+        }
+    }
     if !automatic_terminal_queries_allowed() {
         return None;
     }
 
     // CSI 16 t → reports cell size as CSI 6 ; height ; width t
-    let mut stdout = io::stdout();
-    write!(stdout, "\x1b[16t").ok()?;
-    stdout.flush().ok()?;
+    let response = read_stdin_reply(
+        "\x1b[16t",
+        Duration::from_millis(100),
+        cell_size_reply_complete,
+    )?;
+    parse_cell_pixel_size(response.as_bytes())
+}
 
-    let response = read_osc_response(Duration::from_millis(100))?;
+fn cell_size_reply_complete(bytes: &[u8]) -> bool {
+    parse_cell_pixel_size(bytes).is_some()
+}
 
+fn parse_cell_pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
     // Parse: ESC [ 6 ; <height> ; <width> t
     // Locate the reply anywhere in the buffer rather than anchoring to its
     // start/end: interleaved control bytes — e.g. a pump-retirement nudge
     // answer (`CSI 0 n`) from a previous reply session — may surround it.
-    let bytes = response.as_bytes();
     let start = bytes
         .windows(4)
         .position(|w| w == b"\x1b[6;")
@@ -372,12 +460,12 @@ fn detect_cell_pixel_size() -> Option<(u32, u32)> {
                 .position(|w| w == [0x9b, b'6', b';'])
                 .map(|pos| pos + 3)
         })?;
-    let tail = response.get(start..)?;
+    let tail = std::str::from_utf8(bytes.get(start..)?).ok()?;
     let body = &tail[..tail.find('t')?];
     let mut parts = body.split(';');
     let ch: u32 = parts.next()?.parse().ok()?;
     let cw: u32 = parts.next()?.parse().ok()?;
-    if cw > 0 && ch > 0 {
+    if cw > 0 && ch > 0 && parts.next().is_none() {
         Some((cw, ch))
     } else {
         None
@@ -566,39 +654,34 @@ fn probe_capabilities() -> Capabilities {
         // silent terminal cannot stall startup beyond a small multiple of the
         // existing OSC-11 budget. A responsive terminal replies in well under
         // 10ms per query, so the common path adds negligible latency.
-        let mut out = io::stdout();
         // DA1 then DA2 in one write — both terminate with `c`, so a single
         // DA-aware read drains both replies (in order) when supported.
-        if write!(out, "\x1b[c\x1b[>c").is_ok()
-            && out.flush().is_ok()
-            && let Some(resp) = read_da_response(Duration::from_millis(90))
-        {
+        if let Some(resp) = read_da_response(Duration::from_millis(90)) {
             parse_da1(&resp, &mut caps);
             parse_da2(&resp, &mut caps);
         }
 
         // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct
         // payload. Base64 of three zero bytes = "AAAA".
-        if write!(out, "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").is_ok()
-            && out.flush().is_ok()
-            && let Some(resp) = read_osc_response(Duration::from_millis(30))
-        {
+        if let Some(resp) = read_osc_response(
+            "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\",
+            Duration::from_millis(30),
+            &[b"\x1b_G"],
+        ) {
             parse_kitty_graphics_ack(&resp, &mut caps);
         }
 
         // XTGETTCAP for the `Tc` (truecolor) capname: `Tc` -> hex "5463".
-        if write!(out, "\x1bP+q5463\x1b\\").is_ok()
-            && out.flush().is_ok()
-            && let Some(resp) = read_osc_response(Duration::from_millis(30))
-        {
+        if let Some(resp) = read_osc_response(
+            "\x1bP+q5463\x1b\\",
+            Duration::from_millis(30),
+            &[b"\x1bP1+r", b"\x1bP0+r"],
+        ) {
             parse_xtgettcap_truecolor(&resp, &mut caps);
         }
 
         // DECRQM for synchronized output (mode ?2026): CSI ? 2026 $ p.
-        if write!(out, "\x1b[?2026$p").is_ok()
-            && out.flush().is_ok()
-            && let Some(resp) = read_decrpm_response(Duration::from_millis(30))
-        {
+        if let Some(resp) = read_decrpm_response(Duration::from_millis(30)) {
             match parse_decrpm_sync_output(&resp) {
                 Some(true) => {
                     caps.sync_output = true;
@@ -897,6 +980,11 @@ fn truthy_env_value(value: &str) -> bool {
 
 #[cfg(feature = "crossterm")]
 fn terminal_queries_allowed() -> bool {
+    // Console input records are not a VT byte stream on Windows. Until a
+    // record-preserving query API is available, retain native input intact.
+    if cfg!(windows) {
+        return false;
+    }
     let term = std::env::var("TERM").unwrap_or_default();
     terminal_query_allowed(
         io::stdout().is_terminal(),
@@ -963,7 +1051,7 @@ fn terminal_query_allowed(
         && (forced || (!term.is_empty() && !term.eq_ignore_ascii_case("dumb")))
 }
 
-#[cfg(feature = "crossterm")]
+#[cfg(all(feature = "crossterm", unix))]
 static REPLY_READ_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(all(feature = "crossterm", unix))]
@@ -1002,30 +1090,26 @@ impl<Fd: rustix::fd::AsFd> Drop for NonblockingFdGuard<'_, Fd> {
 /// early once `is_complete` recognizes a full reply (or at the 4096-byte cap).
 ///
 /// The read happens synchronously on the calling thread. Unix temporarily sets
-/// `O_NONBLOCK` on stdin and Windows polls the console input queue before each
-/// one-record read. Both paths return with no reader left behind, so a silent
-/// probe cannot consume the application's first input after its deadline.
+/// `O_NONBLOCK` on stdin. Other platforms conservatively skip byte queries
+/// instead of consuming native console records. No reader survives a deadline.
 #[cfg(feature = "crossterm")]
 fn read_stdin_reply(
+    request: &str,
     timeout: Duration,
-    mut is_complete: impl FnMut(&[u8]) -> bool,
+    is_complete: impl FnMut(&[u8]) -> bool,
 ) -> Option<String> {
-    let deadline = Instant::now() + timeout;
+    crate::event::reply::query(request, timeout, is_complete)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_pending_input(
+    timeout: Duration,
+    mut complete: impl FnMut(&[u8]) -> bool,
+) -> Vec<u8> {
     let _guard = REPLY_READ_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    #[cfg(unix)]
-    let bytes = read_reply_from_fd(&io::stdin(), deadline, &mut is_complete);
-    #[cfg(windows)]
-    let bytes = read_reply_from_windows_console(deadline, &mut is_complete);
-    #[cfg(not(any(unix, windows)))]
-    let bytes = Vec::new();
-
-    if bytes.is_empty() {
-        return None;
-    }
-    String::from_utf8(bytes).ok()
+    read_reply_from_fd(&io::stdin(), Instant::now() + timeout, &mut complete)
 }
 
 #[cfg(all(feature = "crossterm", unix))]
@@ -1056,51 +1140,6 @@ fn read_reply_from_fd<Fd: rustix::fd::AsFd>(
             Err(_) => break,
         }
     }
-    bytes
-}
-
-#[cfg(all(feature = "crossterm", windows))]
-fn read_reply_from_windows_console(
-    deadline: Instant,
-    is_complete: &mut dyn FnMut(&[u8]) -> bool,
-) -> Vec<u8> {
-    use crossterm_winapi::{Console, Handle, HandleType, InputRecord};
-
-    let Ok(handle) = Handle::new(HandleType::InputHandle) else {
-        return Vec::new();
-    };
-    let console = Console::from(handle);
-    let mut bytes = Vec::new();
-    while Instant::now() < deadline && bytes.len() < 4096 {
-        match console.number_of_console_input_events() {
-            Ok(0) => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                std::thread::sleep(remaining.min(Duration::from_millis(1)));
-            }
-            Ok(_) => match console.read_single_input_event() {
-                Ok(InputRecord::KeyEvent(record)) if record.key_down && record.u_char != 0 => {
-                    let Some(ch) = char::from_u32(u32::from(record.u_char)) else {
-                        continue;
-                    };
-                    let mut encoded = [0u8; 4];
-                    let encoded = ch.encode_utf8(&mut encoded).as_bytes();
-                    for _ in 0..record.repeat_count.max(1) {
-                        bytes.extend_from_slice(encoded);
-                        if is_complete(&bytes) || bytes.len() >= 4096 {
-                            break;
-                        }
-                    }
-                    if is_complete(&bytes) {
-                        break;
-                    }
-                }
-                Ok(_) => {}
-                Err(_) => break,
-            },
-            Err(_) => break,
-        }
-    }
-    bytes.truncate(4096);
     bytes
 }
 
@@ -1136,7 +1175,8 @@ fn collect_reply(
 #[cfg(feature = "crossterm")]
 fn osc_reply_complete(bytes: &[u8]) -> bool {
     let len = bytes.len();
-    bytes[len - 1] == b'\x07' || (len >= 2 && bytes[len - 2] == 0x1B && bytes[len - 1] == b'\\')
+    bytes.last() == Some(&b'\x07')
+        || (len >= 2 && bytes[len - 2] == 0x1B && bytes[len - 1] == b'\\')
 }
 
 /// Completion predicate builder for Device-Attributes replies: `c` is the
@@ -1144,19 +1184,19 @@ fn osc_reply_complete(bytes: &[u8]) -> bool {
 /// two of them, so completion fires on the second `c`.
 #[cfg(feature = "crossterm")]
 fn da_reply_complete() -> impl FnMut(&[u8]) -> bool {
-    let mut terminators = 0usize;
     move |bytes: &[u8]| {
-        if bytes[bytes.len() - 1] == b'c' {
-            terminators += 1;
-        }
-        terminators >= 2
+        let (replies, _) = crate::event::reply::split(bytes);
+        replies.iter().filter(|&&byte| byte == b'c').count() >= 2
     }
 }
 
 /// Completion predicate for DECRPM replies (`CSI ? <mode> ; <Ps> $ y`).
 #[cfg(feature = "crossterm")]
 fn decrpm_reply_complete(bytes: &[u8]) -> bool {
-    bytes[bytes.len() - 1] == b'y'
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(parse_decrpm_sync_output)
+        .is_some()
 }
 
 /// Read a Device-Attributes reply, which (unlike OSC) terminates with the byte
@@ -1165,7 +1205,7 @@ fn decrpm_reply_complete(bytes: &[u8]) -> bool {
 /// both answers in one string.
 #[cfg(feature = "crossterm")]
 fn read_da_response(timeout: Duration) -> Option<String> {
-    read_stdin_reply(timeout, da_reply_complete())
+    read_stdin_reply("\x1b[c\x1b[>c", timeout, da_reply_complete())
 }
 
 /// Parse a DA1 reply (`CSI ? <attrs> c`). Attribute `4` indicates Sixel
@@ -1196,18 +1236,10 @@ fn parse_da1(response: &str, caps: &mut Capabilities) {
 /// want the raw identity (e.g. future per-terminal quirks) are not forced
 /// through capability inference.
 #[cfg(feature = "crossterm")]
-fn parse_da2(response: &str, caps: &mut Capabilities) {
-    let Some((id, _ver)) = parse_da2_identity(response) else {
-        return;
-    };
-    // DA2 primary id `41` is the documented Kitty graphics terminal id (Kitty
-    // reports `\x1b[>41;<ver>;<sub>c`). This is the one unambiguous DA2 graphics
-    // signal; every other host is resolved by the Kitty graphics query above or
-    // the env-fallback, so we deliberately do not maintain a wider id registry.
-    const KITTY_GRAPHICS_DA2_ID: u32 = 41;
-    if id == KITTY_GRAPHICS_DA2_ID {
-        caps.kitty_graphics = true;
-    }
+fn parse_da2(response: &str, _caps: &mut Capabilities) {
+    // DA2 identifies terminal compatibility, not graphics support. In
+    // particular, xterm and Kitty can both report primary identifier 41.
+    let _identity = parse_da2_identity(response);
 }
 
 /// Extract `(primary_id, version)` from a DA2 reply, or `None` if absent.
@@ -1231,9 +1263,13 @@ fn parse_kitty_graphics_ack(response: &str, caps: &mut Capabilities) {
     // paired with an OK status.
     if let Some(pos) = response.find("\x1b_G") {
         let body = &response[pos + 3..];
-        let end = body.find("\x1b\\").unwrap_or(body.len());
+        let Some(end) = body.find("\x1b\\") else {
+            return;
+        };
         let payload = &body[..end];
-        if payload.contains("i=31") && payload.contains("OK") {
+        if let Some((parameters, "OK")) = payload.split_once(';')
+            && parameters.split(',').any(|parameter| parameter == "i=31")
+        {
             caps.kitty_graphics = true;
         }
     }
@@ -1322,7 +1358,7 @@ fn synchronized_update_allowed(
 /// so a terminal that ignores the query cannot stall startup.
 #[cfg(feature = "crossterm")]
 fn read_decrpm_response(timeout: Duration) -> Option<String> {
-    read_stdin_reply(timeout, decrpm_reply_complete)
+    read_stdin_reply("\x1b[?2026$p", timeout, decrpm_reply_complete)
 }
 
 /// Parse a DECRPM reply for synchronized output (mode `2026`):
@@ -1360,7 +1396,7 @@ fn split_base64(encoded: &str, chunk_size: usize) -> Vec<&str> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct GraphicsEmissionSupport {
+pub(crate) struct GraphicsEmissionSupport {
     real_terminal: bool,
     capabilities: Capabilities,
     force_kitty: bool,
@@ -1369,6 +1405,13 @@ struct GraphicsEmissionSupport {
 }
 
 impl GraphicsEmissionSupport {
+    pub(crate) fn for_context(capabilities: Capabilities, real_terminal: bool) -> Self {
+        Self {
+            real_terminal,
+            ..Self::detect(capabilities)
+        }
+    }
+
     fn detect(capabilities: Capabilities) -> Self {
         let disable_kitty = force_env_enabled("SLT_DISABLE_KITTY");
         let disable_sixel = force_env_enabled("SLT_DISABLE_SIXEL");
@@ -1376,9 +1419,10 @@ impl GraphicsEmissionSupport {
         Self {
             real_terminal: true,
             capabilities: Capabilities {
-                kitty_graphics: capabilities.kitty_graphics && !disable_kitty,
-                sixel: capabilities.sixel && !disable_sixel,
-                iterm2: capabilities.iterm2 && !disable_iterm,
+                kitty_graphics: (capabilities.kitty_graphics || term_is_kitty_graphics_host())
+                    && !disable_kitty,
+                sixel: (capabilities.sixel || term_is_sixel_host()) && !disable_sixel,
+                iterm2: (capabilities.iterm2 || term_is_iterm_host()) && !disable_iterm,
                 ..capabilities
             },
             force_kitty: force_env_enabled("SLT_FORCE_KITTY") && !disable_kitty,
@@ -1392,11 +1436,11 @@ impl GraphicsEmissionSupport {
         Self::detect(probe_capabilities())
     }
 
-    fn should_emit_kitty(self) -> bool {
+    pub(crate) fn should_emit_kitty(self) -> bool {
         self.real_terminal && (self.capabilities.kitty_graphics || self.force_kitty)
     }
 
-    fn should_emit_sprixel(self, protocol: SprixelProtocol) -> bool {
+    pub(crate) fn should_emit_sprixel(self, protocol: SprixelProtocol) -> bool {
         if !self.real_terminal {
             return false;
         }
@@ -1409,7 +1453,7 @@ impl GraphicsEmissionSupport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SprixelProtocol {
+pub(crate) enum SprixelProtocol {
     Sixel,
     Iterm2,
     Unknown,
@@ -1498,6 +1542,7 @@ pub(crate) struct SessionSnapshot {
 #[derive(Debug, Clone, Copy)]
 struct ActiveSession {
     id: u64,
+    owner: std::thread::ThreadId,
     snapshot: SessionSnapshot,
 }
 
@@ -1510,7 +1555,11 @@ fn register_active_session(snapshot: SessionSnapshot) -> u64 {
     ACTIVE_SESSIONS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(ActiveSession { id, snapshot });
+        .push(ActiveSession {
+            id,
+            owner: std::thread::current().id(),
+            snapshot,
+        });
     id
 }
 
@@ -1521,13 +1570,18 @@ fn unregister_active_session(id: u64) {
     if let Some(index) = sessions.iter().rposition(|session| session.id == id) {
         sessions.remove(index);
     }
+    if sessions.is_empty() {
+        crate::event::reply::release_input();
+    }
 }
 
 fn active_session_snapshot() -> Option<SessionSnapshot> {
     ACTIVE_SESSIONS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .last()
+        .iter()
+        .rev()
+        .find(|session| session.owner == std::thread::current().id())
         .map(|session| session.snapshot)
 }
 
@@ -1557,6 +1611,9 @@ impl TerminalSessionGuard {
         report_all_keys: bool,
     ) -> io::Result<Self> {
         let kitty_keyboard = kitty_keyboard && terminal_kitty_keyboard_allowed();
+        *CELL_PIXEL_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = CellPixelCache::default();
         let raw_mode_owned = raw_mode_is_acquired(terminal::is_raw_mode_enabled()?);
         if raw_mode_owned {
             terminal::enable_raw_mode()?;
@@ -1585,6 +1642,8 @@ impl TerminalSessionGuard {
         // always `false` here, but resume/harness re-entries go through
         // `write_session_enter` directly, not `enter`).
         let _ = capabilities();
+
+        crate::event::reply::prepare_input()?;
 
         Ok(guard)
     }
@@ -1662,6 +1721,16 @@ impl Terminal {
         )?;
         let graphics_support = GraphicsEmissionSupport::detect(capabilities());
         let synchronized_output = should_emit_synchronized_update();
+
+        // The input wake source is now installed. Remeasure after startup
+        // probes so a resize before listener registration cannot be missed.
+        let (cols, rows) = terminal::size()?;
+        let actual = Rect::new(0, 0, u32::from(cols), u32::from(rows));
+        let (current, previous) = if actual == area {
+            (current, previous)
+        } else {
+            try_buffer_pair(actual)?
+        };
 
         Ok(Self {
             stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
@@ -1771,9 +1840,11 @@ impl Terminal {
     pub fn handle_resize(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, rows as u32);
-        let (current, previous) = try_buffer_pair(area)?;
-        self.current = current;
-        self.previous = previous;
+        reset_buffer_pair(&mut self.current, &mut self.previous, area)?;
+        invalidate_cell_pixel_size();
+        if self.graphics_support.should_emit_kitty() {
+            self.kitty_mgr.delete_all(&mut self.stdout)?;
+        }
         execute!(
             self.stdout,
             terminal::Clear(terminal::ClearType::All),
@@ -1856,6 +1927,23 @@ impl crate::Backend for Terminal {
 }
 
 impl InlineTerminal {
+    /// Physical zero-based row at which the inline viewport starts.
+    pub(crate) fn origin_row(&self) -> u32 {
+        u32::from(self.start_row)
+    }
+
+    /// Translate physical coordinates; pixel metadata remains physical.
+    pub(crate) fn localize_mouse(
+        &self,
+        mut event: crate::event::MouseEvent,
+    ) -> Option<crate::event::MouseEvent> {
+        let visible_rows = self
+            .height
+            .min(u32::from(self.viewport_rows).saturating_sub(self.origin_row()));
+        event.y = event.y.checked_sub(self.origin_row())?;
+        (event.x < self.current.area.width && event.y < visible_rows).then_some(event)
+    }
+
     /// Construct an inline terminal backend that renders `height` rows
     /// below the current cursor without entering the alternate screen.
     /// Optionally enables mouse capture and the kitty keyboard protocol.
@@ -1868,7 +1956,7 @@ impl InlineTerminal {
         report_all_keys: bool,
         color_depth: ColorDepth,
     ) -> io::Result<Self> {
-        let (cols, rows) = terminal::size()?;
+        let (cols, _rows) = terminal::size()?;
         let area = Rect::new(0, 0, cols as u32, height);
         let (current, previous) = try_buffer_pair(area)?;
 
@@ -1883,12 +1971,25 @@ impl InlineTerminal {
         let graphics_support = GraphicsEmissionSupport::detect(capabilities());
         let synchronized_output = should_emit_synchronized_update();
 
-        let (_, cursor_row) = match cursor::position() {
+        if graphics_support.should_emit_kitty()
+            || graphics_support.should_emit_sprixel(SprixelProtocol::Sixel)
+            || graphics_support.should_emit_sprixel(SprixelProtocol::Iterm2)
+        {
+            let _ = cell_pixel_size();
+        }
+        let (_, cursor_row) = match crate::event::reply::cursor_position() {
             Ok(pos) => pos,
             Err(err) => {
                 session.restore(&mut raw, false);
                 return Err(err);
             }
+        };
+        let (cols, rows) = terminal::size()?;
+        let actual = Rect::new(0, 0, u32::from(cols), height);
+        let (current, previous) = if actual == area {
+            (current, previous)
+        } else {
+            try_buffer_pair(actual)?
         };
         Ok(Self {
             stdout: Sink::Stdout(BufWriter::with_capacity(65536, raw)),
@@ -2024,18 +2125,29 @@ impl InlineTerminal {
             cursor::MoveTo(0, self.start_row),
             terminal::Clear(terminal::ClearType::FromCursorDown)
         )?;
+        let width = self.current.area.width.max(1);
+        let mut physical_rows = 0u32;
         for line in lines {
             let safe = crate::sanitize_terminal_text(line);
-            queue!(self.stdout, Print(safe), Print("\r\n"))?;
+            for row in scrollback_rows(&safe, width) {
+                queue!(self.stdout, Print(row), Print("\r\n"))?;
+                physical_rows = physical_rows.saturating_add(1);
+            }
+        }
+        // Reserve the dynamic rows after the permanent text, letting LF at
+        // the bottom scroll the text into history before the next repaint.
+        for _ in 0..self.height.saturating_sub(1) {
+            queue!(self.stdout, Print("\r\n"))?;
         }
         self.stdout.flush()?;
 
-        let line_count = lines.len().min(u32::MAX as usize) as u32;
-        self.anchor_row = self.anchor_row.saturating_add(sat_u16(line_count));
         self.start_row = self
-            .anchor_row
+            .start_row
+            .saturating_add(sat_u16(physical_rows))
             .min(self.viewport_rows.saturating_sub(sat_u16(self.height)));
-        self.previous = Buffer::try_empty(self.current.area).map_err(buffer_error)?;
+        self.anchor_row = self.start_row;
+        self.reserved = true;
+        self.previous.reset();
         self.cursor_visible = false;
         Ok(())
     }
@@ -2047,26 +2159,59 @@ impl InlineTerminal {
     }
 
     fn handle_resize_to(&mut self, cols: u16, rows: u16) -> io::Result<()> {
+        let previous_start_row = self.start_row;
         let start_row = self
             .anchor_row
             .min(rows.saturating_sub(sat_u16(self.height)));
         let area = Rect::new(0, 0, cols as u32, self.height);
-        let (current, previous) = try_buffer_pair(area)?;
+        reset_buffer_pair(&mut self.current, &mut self.previous, area)?;
+        invalidate_cell_pixel_size();
         self.viewport_rows = rows;
         self.start_row = start_row;
-        self.current = current;
-        self.previous = previous;
         if self.graphics_support.should_emit_kitty() {
             self.kitty_mgr.delete_all(&mut self.stdout)?;
         }
         self.cursor_visible = false;
-        execute!(
-            self.stdout,
-            terminal::Clear(terminal::ClearType::All),
-            cursor::MoveTo(0, 0)
-        )?;
+        // Erase only rows owned by either placement, including a previously
+        // bottom-clamped viewport that moves down again when the host grows.
+        for row in 0..rows {
+            if (row >= previous_start_row && u32::from(row - previous_start_row) < self.height)
+                || (row >= self.start_row && u32::from(row - self.start_row) < self.height)
+            {
+                queue!(
+                    self.stdout,
+                    cursor::MoveTo(0, row),
+                    terminal::Clear(terminal::ClearType::CurrentLine)
+                )?;
+            }
+        }
+        execute!(self.stdout, cursor::MoveTo(0, self.start_row))?;
         Ok(())
     }
+}
+
+fn scrollback_rows(text: &str, width: u32) -> Vec<String> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let width = width.max(1) as usize;
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut used = 0;
+    for grapheme in text.graphemes(true) {
+        let cells = UnicodeWidthStr::width(grapheme);
+        if used > 0 && used + cells > width {
+            rows.push(std::mem::take(&mut row));
+            used = 0;
+        }
+        if cells > width {
+            row.push('?');
+            used += 1;
+        } else {
+            row.push_str(grapheme);
+            used += cells;
+        }
+    }
+    rows.push(row);
+    rows
 }
 
 #[cfg(test)]
@@ -2178,11 +2323,20 @@ pub enum ColorScheme {
 
 /// Read an OSC-style reply (BEL- or ST-terminated), hard-bounded by `timeout`.
 #[cfg(feature = "crossterm")]
-fn read_osc_response(timeout: Duration) -> Option<String> {
-    read_stdin_reply(timeout, osc_reply_complete)
+fn read_osc_response(request: &str, timeout: Duration, prefixes: &[&[u8]]) -> Option<String> {
+    read_stdin_reply(request, timeout, |bytes| {
+        prefixes.iter().any(|prefix| {
+            bytes
+                .windows(prefix.len())
+                .position(|window| window == *prefix)
+                .is_some_and(|start| osc_reply_complete(&bytes[start..]))
+        })
+    })
 }
 
 /// Query the terminal's background color via OSC 11 and return the detected scheme.
+/// Returns `Unknown` after the native input reader has started; raw queries
+/// cannot safely take over crossterm's private partial-input state.
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn detect_color_scheme() -> ColorScheme {
@@ -2190,15 +2344,9 @@ pub fn detect_color_scheme() -> ColorScheme {
         return ColorScheme::Unknown;
     }
 
-    let mut stdout = io::stdout();
-    if write!(stdout, "\x1b]11;?\x07").is_err() {
-        return ColorScheme::Unknown;
-    }
-    if stdout.flush().is_err() {
-        return ColorScheme::Unknown;
-    }
-
-    let Some(response) = read_osc_response(Duration::from_millis(100)) else {
+    let Some(response) =
+        read_osc_response("\x1b]11;?\x07", Duration::from_millis(100), &[b"\x1b]11;"])
+    else {
         return ColorScheme::Unknown;
     };
 
@@ -2310,28 +2458,17 @@ fn parse_osc52_response(response: &str) -> Option<String> {
 ///
 /// # Note
 ///
-/// This call reads the **same stdin** the [`run`](crate::run) event loop polls,
-/// **synchronously and outside** the loop's own event dispatch. That creates a
-/// typeahead-swallow hazard: during the blocking read window, any bytes the user
-/// types — and any other terminal report in flight (mouse, focus, paste, a
-/// different OSC reply) — land in this function's byte reader instead of the
-/// event queue. Keystrokes consumed here are silently lost, and a foreign report
-/// interleaved with the OSC 52 reply can corrupt parsing so the read returns
-/// `None`. There is no locking between this reader and the run loop's poll, so
-/// calling it concurrently from another thread while the loop is running races
-/// on stdin.
+/// This standalone fallback is only valid **before any native event reader**
+/// has touched stdin. SLT permanently disables raw queries once its native
+/// event polling or cursor query starts, returning `None` without writing a
+/// request. Draining ready events is insufficient: crossterm can still own a
+/// partial UTF-8, key or paste sequence. Direct calls to external crossterm
+/// input APIs cannot be tracked by SLT; callers must not invoke this function
+/// after those calls or concurrently with another input reader.
 ///
-/// Recommended usage:
-///   * Call it from the main thread, **not** from a spawned thread, and never
-///     concurrently with a running [`run`](crate::run) loop on another thread.
-///   * Trigger it only in direct response to an explicit user action (e.g. a
-///     paste keybinding) and keep the window brief, so the typeahead lost to the
-///     blocking read is bounded to that moment.
-///   * Prefer the OS clipboard via a dedicated crate when reliable, race-free
-///     clipboard reads are required; reserve this for the no-dependency,
-///     terminal-only fallback.
-///   * For *writing* the clipboard there is no such hazard — that path only
-///     emits bytes and never reads stdin.
+/// Startup probes preserve interleaved input for SLT's event adapter. For
+/// clipboard reads inside a running application, use an OS clipboard API.
+/// Clipboard writing is unaffected because it never reads stdin.
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn read_clipboard() -> Option<String> {
@@ -2339,11 +2476,11 @@ pub fn read_clipboard() -> Option<String> {
         return None;
     }
 
-    let mut stdout = io::stdout();
-    write!(stdout, "\x1b]52;c;?\x07").ok()?;
-    stdout.flush().ok()?;
-
-    let response = read_osc_response(Duration::from_millis(200))?;
+    let response = read_osc_response(
+        "\x1b]52;c;?\x07",
+        Duration::from_millis(200),
+        &[b"\x1b]52;"],
+    )?;
     parse_osc52_response(&response)
 }
 
@@ -2795,7 +2932,7 @@ pub fn __bench_new_sprixel_fixture(n: usize) -> __BenchSprixelFixture {
     for i in 0..n {
         let placement = SprixelPlacement {
             content_hash: 0x5000 + i as u64,
-            seq: "<SIXEL>".to_string(),
+            seq: "<SIXEL>".into(),
             x: 0,
             y: i as u32 * 3,
             cols: 4,
@@ -3220,7 +3357,9 @@ fn apply_style_delta(
     // Underline style and color use raw escapes: crossterm 0.28 cannot
     // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
     // color reliably (its discriminants collide on these terminals).
-    if old.underline_style != new.underline_style {
+    if new.modifiers.contains(Modifiers::UNDERLINE)
+        && (old.underline_style != new.underline_style || added.contains(Modifiers::UNDERLINE))
+    {
         write!(w, "\x1b[4:{}m", underline_style_param(new.underline_style))?;
     }
     if old.underline_color != new.underline_color {
@@ -3298,7 +3437,9 @@ fn apply_style(w: &mut impl Write, style: &Style, depth: ColorDepth) -> io::Resu
     if m.contains(Modifiers::OVERLINE) {
         queue!(w, SetAttribute(Attribute::OverLined))?;
     }
-    if style.underline_style != UnderlineStyle::Straight {
+    if style.modifiers.contains(Modifiers::UNDERLINE)
+        && style.underline_style != UnderlineStyle::Straight
+    {
         write!(
             w,
             "\x1b[4:{}m",
@@ -3494,21 +3635,39 @@ fn write_session_exit(
     write_session_cleanup(stdout, mode, inline_reserved)
 }
 
-/// Best-effort restoration of the most recently entered active SLT session.
+fn panic_cleanup_snapshots(aborting: bool) -> Vec<SessionSnapshot> {
+    if aborting {
+        ACTIVE_SESSIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .rev()
+            .map(|session| session.snapshot)
+            .collect()
+    } else {
+        active_session_snapshot().into_iter().collect()
+    }
+}
+
+/// Unwind restores this thread's session; process abort restores every active
+/// session because neither other threads nor their guards will run again.
 #[cfg(feature = "crossterm")]
 pub(crate) fn cleanup_after_panic() -> bool {
-    let Some(snapshot) = active_session_snapshot() else {
+    let snapshots = panic_cleanup_snapshots(cfg!(panic = "abort"));
+    if snapshots.is_empty() {
         return false;
-    };
+    }
     let mut stdout = io::stdout();
-    let _ = write_session_exit(
-        &mut stdout,
-        snapshot.mode,
-        false,
-        snapshot.mouse_enabled,
-        snapshot.kitty_keyboard,
-    );
-    if snapshot.raw_mode_owned {
+    for snapshot in &snapshots {
+        let _ = write_session_exit(
+            &mut stdout,
+            snapshot.mode,
+            false,
+            snapshot.mouse_enabled,
+            snapshot.kitty_keyboard,
+        );
+    }
+    if snapshots.iter().any(|snapshot| snapshot.raw_mode_owned) {
         let _ = terminal::disable_raw_mode();
     }
     let _ = stdout.flush();
@@ -3656,6 +3815,384 @@ pub(crate) fn test_session_snapshot() -> SessionSnapshot {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn review_resize_clears_old_owned_rows_but_preserves_unrelated_text() {
+        fn apply(bytes: &[u8], cells: &mut [[u8; 40]; 24]) {
+            let (mut x, mut y, mut index) = (0usize, 0usize, 0usize);
+            while index < bytes.len() {
+                if bytes[index..].starts_with(b"\x1b[") {
+                    let start = index + 2;
+                    let end = (start..bytes.len())
+                        .find(|&i| (0x40..=0x7e).contains(&bytes[i]))
+                        .unwrap();
+                    let parameters = std::str::from_utf8(&bytes[start..end]).unwrap();
+                    match bytes[end] {
+                        b'H' => {
+                            let mut values = parameters
+                                .split(';')
+                                .map(|value| value.parse::<usize>().unwrap());
+                            y = values.next().unwrap() - 1;
+                            x = values.next().unwrap() - 1;
+                        }
+                        b'K' => {
+                            assert_eq!(parameters, "2");
+                            cells[y].fill(b' ');
+                        }
+                        b'J' => {
+                            assert!(parameters.is_empty() || parameters == "0");
+                            cells[y][x..].fill(b' ');
+                            for row in &mut cells[y + 1..] {
+                                row.fill(b' ');
+                            }
+                        }
+                        b'm' | b'h' | b'l' => {}
+                        other => panic!("unexpected CSI final {other}"),
+                    }
+                    index = end + 1;
+                    continue;
+                }
+                match bytes[index] {
+                    b'\r' => x = 0,
+                    b'\n' => y += 1,
+                    byte => {
+                        assert!(x < 40 && y < 24);
+                        cells[y][x] = byte;
+                        x += 1;
+                    }
+                }
+                index += 1;
+            }
+        }
+        let mut cells = [[b' '; 40]; 24];
+        cells[0][..10].copy_from_slice(b"STATIC_LOG");
+        cells[12][..9].copy_from_slice(b"UNRELATED");
+        let mut term = InlineTerminal::with_sink(40, 24, 4, 18);
+        term.reserved = true;
+        term.handle_resize_to(40, 10).unwrap();
+        term.current
+            .set_string(0, 0, "OLD_MARKER", Style::default());
+        term.flush().unwrap();
+        apply(&term.take_sink_bytes(), &mut cells);
+        assert_eq!(&cells[6][..10], b"OLD_MARKER");
+        term.handle_resize_to(40, 24).unwrap();
+        term.current
+            .set_string(0, 0, "NEW_MARKER", Style::default());
+        term.flush().unwrap();
+        apply(&term.take_sink_bytes(), &mut cells);
+        assert!(
+            cells[6..10]
+                .iter()
+                .all(|row| row.iter().all(|&byte| byte == b' '))
+        );
+        assert_eq!(&cells[18][..10], b"NEW_MARKER");
+        assert_eq!(&cells[0][..10], b"STATIC_LOG");
+        assert_eq!(&cells[12][..9], b"UNRELATED");
+    }
+
+    #[test]
+    fn review_abort_cleanup_includes_other_thread_sessions() {
+        let id = register_active_session(SessionSnapshot {
+            mode: TerminalSessionMode::Inline,
+            mouse_enabled: false,
+            kitty_keyboard: false,
+            report_all_keys: false,
+            raw_mode_owned: false,
+        });
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let id = register_active_session(SessionSnapshot {
+                mode: TerminalSessionMode::Fullscreen,
+                mouse_enabled: true,
+                kitty_keyboard: true,
+                report_all_keys: true,
+                raw_mode_owned: true,
+            });
+            ready_tx.send(()).unwrap();
+            done_rx.recv().unwrap();
+            unregister_active_session(id);
+        });
+        ready_rx.recv().unwrap();
+        let unwind = panic_cleanup_snapshots(false);
+        assert_eq!(unwind.len(), 1);
+        assert!(!unwind[0].raw_mode_owned);
+        let abort = panic_cleanup_snapshots(true);
+        assert!(abort.len() >= 2);
+        assert!(
+            abort
+                .iter()
+                .any(|snapshot| snapshot.raw_mode_owned && snapshot.report_all_keys)
+        );
+        done_tx.send(()).unwrap();
+        worker.join().unwrap();
+        unregister_active_session(id);
+    }
+
+    #[test]
+    fn review_failed_resize_metric_refresh_keeps_last_known_size() {
+        let mut cache = CellPixelCache::default();
+        let now = Instant::now();
+        assert_eq!(cache.resolve(now, || Some((9, 18))), (9, 18));
+        cache.refresh = true;
+        cache.retry_after = None;
+        assert_eq!(cache.resolve(now, || None), (9, 18));
+        assert_eq!(
+            cache.resolve(now + Duration::from_secs(1), || Some((10, 20))),
+            (10, 20)
+        );
+    }
+
+    #[test]
+    fn v024_failed_cell_size_queries_are_backed_off_and_resettable() {
+        let mut cache = CellPixelCache::default();
+        let now = Instant::now();
+        let mut queries = 0;
+        for _ in 0..100 {
+            assert_eq!(
+                cache.resolve(now, || {
+                    queries += 1;
+                    None
+                }),
+                (8, 16)
+            );
+        }
+        assert_eq!(queries, 1);
+        assert_eq!(
+            cache.resolve(now + Duration::from_secs(1), || {
+                queries += 1;
+                Some((9, 18))
+            }),
+            (9, 18)
+        );
+        assert_eq!(queries, 2);
+        assert_eq!(
+            cache.resolve(now + Duration::from_secs(2), || panic!(
+                "success must cache"
+            )),
+            (9, 18)
+        );
+        cache = CellPixelCache::default();
+        assert_eq!(cache.resolve(now, || Some((10, 20))), (10, 20));
+    }
+
+    #[test]
+    #[ignore = "release-mode allocation and payload-sharing experiment"]
+    fn v024_terminal_preparation_benchmark() {
+        use std::hint::black_box;
+        let area = Rect::new(0, 0, 200, 60);
+        let rounds = 1000;
+        let before = Instant::now();
+        for _ in 0..rounds {
+            black_box(try_buffer_pair(area).unwrap());
+        }
+        let fresh = before.elapsed();
+        let (mut current, mut previous) = try_buffer_pair(area).unwrap();
+        let before = Instant::now();
+        for _ in 0..rounds {
+            reset_buffer_pair(&mut current, &mut previous, area).unwrap();
+            black_box(&current);
+        }
+        let reuse = before.elapsed();
+        let payload = "x".repeat(1024 * 1024);
+        let shared: std::sync::Arc<str> = payload.clone().into();
+        let before = Instant::now();
+        for _ in 0..rounds {
+            black_box(payload.clone());
+        }
+        let strings = before.elapsed();
+        let before = Instant::now();
+        for _ in 0..rounds {
+            black_box(shared.clone());
+        }
+        let arcs = before.elapsed();
+        std::println!(
+            "rounds={rounds} area=200x60 fresh={fresh:?} reuse={reuse:?} string_1mib={strings:?} arc_1mib={arcs:?} retained_cell_bytes={}",
+            (current.content.capacity() + previous.content.capacity())
+                * std::mem::size_of::<crate::Cell>()
+        );
+    }
+
+    #[test]
+    fn v024_kitty_delete_all_requires_fresh_upload_and_placement() {
+        let mut manager = KittyImageManager::new();
+        let current = kitty_placements(1);
+        let mut bytes = Vec::new();
+        manager.flush(&mut bytes, &current, 0).unwrap();
+        manager.delete_all(&mut bytes).unwrap();
+        bytes.clear();
+        manager.flush(&mut bytes, &current, 0).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("a=t,"));
+        assert!(text.contains("a=p,"));
+    }
+
+    #[test]
+    fn v024_kitty_shape_and_crop_participate_in_identity() {
+        let mut manager = KittyImageManager::new();
+        let mut current = kitty_placements(1);
+        let mut bytes = Vec::new();
+        manager.flush(&mut bytes, &current, 0).unwrap();
+        bytes.clear();
+        current[0].src_width = 16;
+        current[0].src_height = 4;
+        manager.flush(&mut bytes, &current, 0).unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("s=16,v=4"));
+        bytes.clear();
+        current[0].crop_y = 1;
+        current[0].crop_h = 2;
+        manager.flush(&mut bytes, &current, 3).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("a=t,"));
+        assert!(text.contains("y=1,h=2"));
+        bytes.clear();
+        manager.flush(&mut bytes, &current, 3).unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn v024_kitty_failed_output_invalidates_uploads() {
+        struct Fails;
+        impl Write for Fails {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("injected"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut manager = KittyImageManager::new();
+        let mut placements = kitty_placements(1);
+        manager.flush(&mut Vec::new(), &placements, 0).unwrap();
+        placements[0].x += 1;
+        assert!(manager.flush(&mut Fails, &placements, 0).is_err());
+        assert!(manager.uploaded.is_empty());
+        let mut bytes = Vec::new();
+        manager.flush(&mut bytes, &placements, 0).unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("a=t,"));
+    }
+
+    #[test]
+    fn v024_underline_extended_to_plain_never_reenables() {
+        for style in [
+            UnderlineStyle::Straight,
+            UnderlineStyle::Double,
+            UnderlineStyle::Curly,
+            UnderlineStyle::Dotted,
+            UnderlineStyle::Dashed,
+        ] {
+            let old = Style {
+                modifiers: Modifiers::UNDERLINE,
+                underline_style: style,
+                ..Style::default()
+            };
+            let bytes = delta_bytes(&old, &Style::default());
+            assert!(contains_seq(&bytes, b"\x1b[24m"));
+            assert!(!contains_seq(&bytes, b"\x1b[4:"));
+            let bytes = delta_bytes(&Style::default(), &old);
+            assert!(
+                String::from_utf8_lossy(&bytes)
+                    .contains(&format!("\x1b[4:{}m", underline_style_param(style)))
+            );
+            let bytes = delta_bytes(
+                &old,
+                &Style {
+                    underline_style: UnderlineStyle::Straight,
+                    ..old
+                },
+            );
+            if style != UnderlineStyle::Straight {
+                assert!(contains_seq(&bytes, b"\x1b[4:1m"));
+            }
+        }
+    }
+
+    #[test]
+    fn v024_inline_mouse_coordinates_and_pixels_after_scrollback() {
+        let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
+        term.reserved = true;
+        let event = crate::Event::mouse_click(2, 10)
+            .as_mouse()
+            .cloned()
+            .unwrap();
+        assert_eq!(term.localize_mouse(event.clone()).unwrap().y, 0);
+        let mut pixel_event = event.clone();
+        pixel_event.pixel_y = Some(160);
+        assert_eq!(term.localize_mouse(pixel_event).unwrap().pixel_y, Some(160));
+        for y in [0, 9, 13, 23] {
+            assert!(
+                term.localize_mouse(crate::event::MouseEvent { y, ..event.clone() })
+                    .is_none()
+            );
+        }
+        term.write_scrollback(&["log".into()]).unwrap();
+        assert_eq!(term.origin_row(), 11);
+        assert!(term.localize_mouse(event.clone()).is_none());
+        term.handle_resize_to(40, 12).unwrap();
+        assert_eq!(term.origin_row(), 9);
+        assert_eq!(term.localize_mouse(event).unwrap().y, 1);
+    }
+
+    #[test]
+    fn v024_scrollback_wraps_physical_rows_without_empty_exact_width_row() {
+        assert_eq!(scrollback_rows("abcdefgh", 4), ["abcd", "efgh"]);
+        assert_eq!(scrollback_rows("abcde", 4), ["abcd", "e"]);
+        assert_eq!(scrollback_rows("a\u{754c}b", 2), ["a", "\u{754c}", "b"]);
+        assert_eq!(scrollback_rows("", 4), [""]);
+        let mut term = InlineTerminal::with_sink(4, 24, 3, 10);
+        term.reserved = true;
+        term.write_scrollback(&["abcdefgh".into()]).unwrap();
+        assert_eq!(term.origin_row(), 12);
+        assert!(
+            String::from_utf8_lossy(&term.take_sink_bytes()).contains("abcd\r\nefgh\r\n\r\n\r\n")
+        );
+    }
+
+    #[test]
+    fn v024_same_size_redraw_reuses_buffer_pair_but_invalidates_graphics() {
+        let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
+        let current = term.current.content.as_ptr();
+        let previous = term.previous.content.as_ptr();
+        term.current.set_string(0, 0, "old", Style::default());
+        term.handle_resize_to(40, 24).unwrap();
+        assert_eq!(current, term.current.content.as_ptr());
+        assert_eq!(previous, term.previous.content.as_ptr());
+        assert_eq!(term.current.get(0, 0).symbol, " ");
+        assert!(String::from_utf8_lossy(&term.take_sink_bytes()).contains("\x1b[2K"));
+    }
+
+    #[test]
+    fn v024_cell_size_reply_completes_at_t_not_timeout() {
+        let (bytes, elapsed) = collect_with_feed(
+            b"\x1b[6;16;8t",
+            Duration::ZERO,
+            Duration::from_secs(2),
+            &mut cell_size_reply_complete,
+        );
+        assert_eq!(parse_cell_pixel_size(&bytes), Some((8, 16)));
+        assert!(elapsed < Duration::from_secs(1));
+        assert!(!cell_size_reply_complete(b"\x1b[6;0;8t"));
+        assert!(!cell_size_reply_complete(b"\x1b[6;16;8;9t"));
+        assert!(!cell_size_reply_complete(b"\x1b[6;16;8"));
+    }
+
+    #[test]
+    fn v024_session_registry_is_owner_thread_local() {
+        let id = register_active_session(SessionSnapshot {
+            mode: TerminalSessionMode::Inline,
+            mouse_enabled: false,
+            kitty_keyboard: false,
+            report_all_keys: false,
+            raw_mode_owned: false,
+        });
+        assert!(active_session_snapshot().is_some());
+        assert!(
+            std::thread::spawn(|| active_session_snapshot().is_none())
+                .join()
+                .unwrap()
+        );
+        unregister_active_session(id);
+    }
 
     /// Feed `bytes` to a channel from a helper thread after `delay`, then run
     /// [`collect_reply`] against it with the given budget and predicate.
@@ -4382,11 +4919,11 @@ mod tests {
 
     #[cfg(feature = "crossterm")]
     #[test]
-    fn parse_da2_kitty_id_sets_kitty_graphics() {
+    fn parse_da2_shared_id_does_not_set_kitty_graphics() {
         let mut caps = Capabilities::default();
         // Kitty reports DA2 primary id 41.
         parse_da2("\x1b[>41;4000;0c", &mut caps);
-        assert!(caps.kitty_graphics);
+        assert!(!caps.kitty_graphics);
     }
 
     #[cfg(feature = "crossterm")]
@@ -5853,7 +6390,7 @@ mod tests {
     fn make_sprixel(cells: Vec<SprixelCell>) -> SprixelPlacement {
         SprixelPlacement {
             content_hash: 0xABCD,
-            seq: "<SIXEL>".to_string(),
+            seq: "<SIXEL>".into(),
             x: 1,
             y: 1,
             cols: 2,
@@ -5869,7 +6406,7 @@ mod tests {
         let mut stable = make_sprixel(vec![SprixelCell::Opaque; 4]);
         stable.x = 5;
         stable.content_hash = 0xBEEF;
-        stable.seq = "<STABLE>".to_string();
+        stable.seq = "<STABLE>".into();
 
         let mut current = Buffer::empty(area);
         current.sprixels.push(stable.clone());
@@ -5919,7 +6456,7 @@ mod tests {
             force_iterm: false,
         };
         let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
-        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+        placement.seq = "\x1bPqpayload\x1b\\".into();
         term.current.sprixels.push(placement);
         term.flush().unwrap();
         assert!(String::from_utf8_lossy(&term.take_sink_bytes()).contains("payload"));
@@ -5934,7 +6471,7 @@ mod tests {
     fn checked_sprixel_flush_suppresses_mux_without_ack_or_force() {
         let area = Rect::new(0, 0, 10, 5);
         let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
-        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+        placement.seq = "\x1bPqpayload\x1b\\".into();
 
         let mut current = Buffer::empty(area);
         current.sprixels.push(placement);
@@ -5959,7 +6496,7 @@ mod tests {
     fn checked_sprixel_flush_allows_mux_with_probe_ack() {
         let area = Rect::new(0, 0, 10, 5);
         let mut placement = make_sprixel(vec![SprixelCell::Opaque; 4]);
-        placement.seq = "\x1bPqpayload\x1b\\".to_string();
+        placement.seq = "\x1bPqpayload\x1b\\".into();
 
         let mut current = Buffer::empty(area);
         current.sprixels.push(placement);
@@ -6116,7 +6653,7 @@ mod tests {
         let mut recolored = make_sprixel(vec![SprixelCell::Opaque; 4]);
         let original = recolored.clone();
         recolored.content_hash = 0x1234;
-        recolored.seq = "<SIXEL2>".to_string();
+        recolored.seq = "<SIXEL2>".into();
 
         let mut current = Buffer::empty(area);
         current.sprixels.push(recolored);
@@ -6303,7 +6840,7 @@ mod tests {
         for i in 0..3u32 {
             let p = SprixelPlacement {
                 content_hash: 0x100 + i as u64,
-                seq: format!("<S{i}>"),
+                seq: format!("<S{i}>").into(),
                 x: 0,
                 y: i * 3,
                 cols: 2,

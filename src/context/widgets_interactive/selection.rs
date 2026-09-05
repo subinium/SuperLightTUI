@@ -117,7 +117,9 @@ impl Context {
         if state.is_dirty() {
             state.recompute_widths();
         }
-        state.resolve_column_widths(self.area_width);
+        let (available, _) = self.available_content_size();
+        let separators = (state.headers().len().saturating_sub(1) as u32).saturating_mul(3);
+        state.resolve_column_widths(available.saturating_sub(separators));
 
         self.table_render(state, focused, colors, cell);
 

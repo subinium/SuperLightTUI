@@ -303,7 +303,6 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
         "cpp" | "c++" | "cxx" | "cc" | "hpp" => {
             static CFG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
             CFG.get_or_init(|| {
-                #[cfg(feature = "syntax-c")]
                 let highlights = {
                     let mut combined = String::with_capacity(
                         tree_sitter_c::HIGHLIGHT_QUERY.len()
@@ -315,9 +314,6 @@ fn get_config(lang: &str) -> Option<&'static HighlightConfiguration> {
                     combined.push_str(tree_sitter_cpp::HIGHLIGHT_QUERY);
                     combined
                 };
-                #[cfg(not(feature = "syntax-c"))]
-                let highlights = tree_sitter_cpp::HIGHLIGHT_QUERY.to_string();
-
                 HighlightConfiguration::new(
                     tree_sitter_cpp::LANGUAGE.into(),
                     "cpp",

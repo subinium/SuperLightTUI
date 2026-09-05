@@ -1,4 +1,5 @@
 /target
+__pycache__/
 .ddudu/
 .sisyphus/
 SESSION-SUMMARY.md

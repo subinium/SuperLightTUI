@@ -10,6 +10,15 @@
 #[cfg(feature = "crossterm")]
 use crossterm::event as crossterm_event;
 
+#[cfg(feature = "crossterm")]
+pub(crate) mod reply;
+
+#[cfg(all(feature = "crossterm", unix))]
+mod native;
+
+#[cfg(feature = "crossterm")]
+pub(crate) use reply::{poll, read};
+
 /// A terminal input event.
 ///
 /// Produced each frame by the run loop and passed to your UI closure via

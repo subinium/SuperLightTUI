@@ -1,0 +1,11 @@
+{
+  "name": "slt-browser-verification",
+  "version": "0.24.0",
+  "private": true,
+  "scripts": {
+    "test": "node browser.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

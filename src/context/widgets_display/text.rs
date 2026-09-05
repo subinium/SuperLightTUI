@@ -18,6 +18,7 @@ impl Context {
         self.commands.push(Command::Text {
             content,
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new().fg(default_fg),
             grow: 0,
             align: Align::Start,
@@ -94,6 +95,7 @@ impl Context {
         self.commands.push(Command::Text {
             content,
             cursor_offset: None,
+            cursor_masked: false,
             style: Style::new().fg(self.theme.text),
             grow: 0,
             align: Align::Start,
@@ -458,9 +460,20 @@ impl Context {
         style: Style,
         cursor_offset: Option<usize>,
     ) -> &mut Self {
+        self.styled_with_cursor_privacy(s, style, cursor_offset, false)
+    }
+
+    pub(crate) fn styled_with_cursor_privacy(
+        &mut self,
+        s: impl Into<String>,
+        style: Style,
+        cursor_offset: Option<usize>,
+        cursor_masked: bool,
+    ) -> &mut Self {
         self.commands.push(Command::Text {
             content: s.into(),
             cursor_offset,
+            cursor_masked,
             style,
             grow: 0,
             align: Align::Start,

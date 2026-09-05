@@ -111,7 +111,7 @@ pub(crate) fn needs_bidi_reorder(s: &str) -> bool {
 /// `String` allocation here is incurred solely on the RTL path; pure-LTR
 /// input never reaches this function.
 #[cfg(feature = "bidi")]
-fn reorder_line_visual(s: &str) -> String {
+pub(crate) fn reorder_line_visual(s: &str) -> String {
     use unicode_bidi::BidiInfo;
     // No paragraph override: let the first strong char set base direction.
     let info = BidiInfo::new(s, None);
@@ -207,7 +207,7 @@ pub(crate) struct SprixelPlacement {
     /// Hash of the source bytes for change detection across frames.
     pub content_hash: u64,
     /// Encoded passthrough payload (Sixel `DCS` or iTerm2 OSC 1337).
-    pub seq: String,
+    pub seq: Arc<str>,
     /// Screen cell position of the top-left corner.
     pub x: u32,
     pub y: u32,
@@ -230,6 +230,100 @@ impl PartialEq for SprixelPlacement {
             && self.y == other.y
             && self.cols == other.cols
             && self.rows == other.rows
+    }
+}
+
+#[cfg(test)]
+mod v024_tests {
+    use super::*;
+
+    proptest::proptest! {
+        #[test]
+        fn distant_suffix_writes_are_noops(
+            origin_x in 0u32..1000,
+            origin_y in 0u32..1000,
+            width in 0u32..16,
+            height in 0u32..8,
+            distance in 1u32..=u32::MAX,
+        ) {
+            let area = Rect::new(origin_x, origin_y, width, height);
+            let mut buffer = Buffer::empty(area);
+            buffer.set_string(origin_x, origin_y, "ABCDEFGHIJKLMNOP", Style::new());
+            let before = buffer.content.clone();
+            buffer.set_char(area.right().saturating_add(distance), origin_y, '\u{301}', Style::new());
+            proptest::prop_assert_eq!(buffer.content, before);
+        }
+    }
+
+    #[test]
+    fn media_requires_full_visibility_and_uncropped_source() {
+        let mut buffer = Buffer::empty(Rect::new(3, 4, 10, 8));
+        let rect = Rect::new(4, 5, 4, 3);
+        assert!(buffer.media_rect_visible(rect));
+        assert!(!buffer.media_rect_visible(Rect::new(2, 5, 4, 3)));
+        assert!(!buffer.media_rect_visible(Rect::new(u32::MAX, 5, 4, 3)));
+        assert!(!buffer.media_rect_visible(Rect::default()));
+        buffer.push_clip(rect);
+        assert!(buffer.media_rect_visible(rect));
+        buffer.push_clip(Rect::new(5, 5, 3, 3));
+        assert!(!buffer.media_rect_visible(rect));
+        buffer.pop_clip();
+        buffer.push_kitty_clip(KittyClipInfo {
+            top_clip_rows: 1,
+            original_height: 4,
+        });
+        assert!(!buffer.media_rect_visible(rect));
+        buffer.pop_kitty_clip();
+        buffer.push_kitty_clip(KittyClipInfo {
+            top_clip_rows: 0,
+            original_height: 4,
+        });
+        assert!(!buffer.media_rect_visible(rect));
+        buffer.pop_kitty_clip();
+        buffer.push_kitty_horizontal_clip(KittyHorizontalClipInfo {
+            left_clip_cols: 1,
+            original_width: 5,
+        });
+        assert!(!buffer.media_rect_visible(rect));
+        buffer.pop_kitty_horizontal_clip();
+        buffer.push_kitty_horizontal_clip(KittyHorizontalClipInfo {
+            left_clip_cols: 0,
+            original_width: 5,
+        });
+        assert!(!buffer.media_rect_visible(rect));
+        buffer.pop_kitty_horizontal_clip();
+        assert!(buffer.media_rect_visible(rect));
+    }
+
+    #[test]
+    fn kitty_identity_includes_original_raster_shape() {
+        let placement = KittyPlacement {
+            content_hash: 1,
+            rgba: Arc::new(vec![0; 32]),
+            src_width: 4,
+            src_height: 2,
+            x: 0,
+            y: 0,
+            cols: 4,
+            rows: 2,
+            crop_y: 0,
+            crop_h: 0,
+        };
+        let mut other = placement.clone();
+        other.src_width = 2;
+        other.src_height = 4;
+        assert_ne!(placement, other);
+    }
+
+    #[test]
+    fn public_caret_getter_tracks_reset_without_consuming_it() {
+        let mut buffer = Buffer::empty(Rect::new(3, 4, 10, 8));
+        assert_eq!(buffer.cursor_position(), None);
+        buffer.set_cursor_pos(5, 6, false);
+        assert_eq!(buffer.cursor_position(), Some((5, 6)));
+        assert_eq!(buffer.cursor_position(), Some((5, 6)));
+        buffer.reset();
+        assert_eq!(buffer.cursor_position(), None);
     }
 }
 
@@ -354,6 +448,8 @@ fn crop_kitty_horizontal(placement: &mut KittyPlacement, info: KittyHorizontalCl
 impl PartialEq for KittyPlacement {
     fn eq(&self, other: &Self) -> bool {
         self.content_hash == other.content_hash
+            && self.src_width == other.src_width
+            && self.src_height == other.src_height
             && self.x == other.x
             && self.y == other.y
             && self.cols == other.cols
@@ -406,6 +502,7 @@ pub struct Buffer {
     pub(crate) sprixels: Vec<SprixelPlacement>,
     pub(crate) kitty_placements: Vec<KittyPlacement>,
     pub(crate) cursor_pos: Option<(u32, u32)>,
+    cursor_masked: bool,
     /// Stack of scroll clip infos set by the run loop before invoking draw
     /// closures. The top entry is the active clip; nested raw-draw regions
     /// push and pop without losing the outer clip.
@@ -510,6 +607,7 @@ impl Buffer {
             sprixels: Vec::new(),
             kitty_placements: Vec::new(),
             cursor_pos: None,
+            cursor_masked: false,
             kitty_clip_info_stack: Vec::new(),
             kitty_horizontal_clip_stack: Vec::new(),
             // Empty buffers start with default cells on every row; their
@@ -551,13 +649,73 @@ impl Buffer {
         self.kitty_horizontal_clip_stack.last()
     }
 
-    pub(crate) fn set_cursor_pos(&mut self, x: u32, y: u32) {
+    pub(crate) fn set_cursor_pos(&mut self, x: u32, y: u32, masked: bool) {
+        if !self.area.contains(x, y)
+            || self
+                .effective_clip()
+                .is_some_and(|clip| !clip.contains(x, y))
+        {
+            return;
+        }
         self.cursor_pos = Some((x, y));
+        self.cursor_masked = masked;
+    }
+
+    /// Return the requested caret position in buffer coordinates.
+    ///
+    /// Returns `None` when the frame has no visible caret. Browser backends can
+    /// use this position to anchor an IME input element. Resetting the buffer
+    /// clears the position; reading it does not change cursor visibility.
+    pub fn cursor_position(&self) -> Option<(u32, u32)> {
+        self.cursor_pos
+    }
+
+    /// Whether the visible caret belongs to a masked text input.
+    ///
+    /// Browser backends must suppress plaintext IME preedit for this caret.
+    /// The flag comes from the widget's explicit privacy state, not rendered
+    /// glyphs or styling. Returns `false` without a visible caret; buffer resets
+    /// clear both the position and privacy flag.
+    pub fn cursor_is_masked(&self) -> bool {
+        self.cursor_pos.is_some() && self.cursor_masked
     }
 
     #[cfg(feature = "crossterm")]
     pub(crate) fn cursor_pos(&self) -> Option<(u32, u32)> {
-        self.cursor_pos
+        self.cursor_position()
+    }
+
+    /// Whether an uncroppable media payload fits wholly in the active region.
+    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    pub(crate) fn media_rect_visible(&self, rect: Rect) -> bool {
+        if rect.is_empty() || !rect.has_valid_edges() || self.area.intersection(rect) != Some(rect)
+        {
+            return false;
+        }
+        if self
+            .effective_clip()
+            .is_some_and(|clip| clip.intersection(rect) != Some(rect))
+        {
+            return false;
+        }
+        if self
+            .current_kitty_clip()
+            .is_some_and(|clip| clip.top_clip_rows != 0 || clip.original_height > rect.height)
+        {
+            return false;
+        }
+        !self
+            .current_kitty_horizontal_clip()
+            .is_some_and(|clip| clip.left_clip_cols != 0 || clip.original_width > rect.width)
+    }
+
+    pub(crate) fn draw_source_offset(&self) -> (u32, u32) {
+        (
+            self.current_kitty_horizontal_clip()
+                .map_or(0, |info| info.left_clip_cols),
+            self.current_kitty_clip()
+                .map_or(0, |info| info.top_clip_rows),
+        )
     }
 
     /// Store a raw escape sequence to be written at position `(x, y)` during flush.
@@ -891,14 +1049,21 @@ impl Buffer {
     }
 
     fn append_zero_width(&mut self, x: u32, y: u32, suffix: &str, clip: Option<Rect>) {
-        if suffix.is_empty() || y < self.area.y || y >= self.area.bottom() || x <= self.area.x {
+        if suffix.is_empty()
+            || self.area.is_empty()
+            || y < self.area.y
+            || y >= self.area.bottom()
+            || x <= self.area.x
+            || x > self.area.right()
+        {
             return;
         }
-        let mut leading_x = x.saturating_sub(1).min(self.area.right().saturating_sub(1));
+        let mut leading_x = x - 1;
         if self.content[self.index_of(leading_x, y)].is_continuation() && leading_x > self.area.x {
             leading_x -= 1;
         }
-        if clip.is_some_and(|clip| !clip.contains(leading_x, y)) {
+        let (_, right) = self.existing_grapheme_range(leading_x, y);
+        if clip.is_some_and(|clip| !clip.contains(leading_x, y) || right > clip.right()) {
             return;
         }
 
@@ -915,6 +1080,8 @@ impl Buffer {
     /// Write a single character at `(x, y)` with the given style.
     ///
     /// No-ops if `(x, y)` is out of bounds or outside the current clip region.
+    /// A zero-width suffix may also be written at the exclusive right edge to
+    /// extend the preceding grapheme, provided that entire grapheme is visible.
     pub fn set_char(&mut self, x: u32, y: u32, ch: char, style: Style) {
         let mut encoded = [0; 4];
         self.set_grapheme_visual(x, y, ch.encode_utf8(&mut encoded), style, None);
@@ -1080,6 +1247,7 @@ impl Buffer {
         self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
+        self.cursor_masked = false;
         self.kitty_clip_info_stack.clear();
         self.kitty_horizontal_clip_stack.clear();
         // Issue #171: every row is now blank — flag them all dirty so the
@@ -1098,6 +1266,7 @@ impl Buffer {
         self.sprixels.clear();
         self.kitty_placements.clear();
         self.cursor_pos = None;
+        self.cursor_masked = false;
         self.kitty_clip_info_stack.clear();
         self.kitty_horizontal_clip_stack.clear();
         // Issue #171: every cell was just rewritten — mark all rows dirty.

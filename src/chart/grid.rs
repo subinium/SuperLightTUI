@@ -80,44 +80,22 @@ pub(super) fn marker_char(marker: Marker) -> char {
     }
 }
 
-pub(super) fn overlay_legend_on_plot(
-    position: LegendPosition,
-    items: &[(char, String, Color)],
-    plot_chars: &mut [char],
-    plot_styles: &mut [Style],
+pub(super) fn overlay_legend_row(
+    item: &(char, String, Color),
     cols: usize,
-    rows: usize,
+    plot_styles: &mut [Style],
     axis_style: Style,
-) {
-    if cols == 0 || rows == 0 || items.is_empty() {
-        return;
+) -> Vec<String> {
+    let (symbol, name, color) = item;
+    let text = format!("{symbol} {name}");
+    let mut cells = vec![String::new(); cols.min(UnicodeWidthStr::width(text.as_str()))];
+    let end = write_text_cells(&mut cells, 0, &text);
+    cells.truncate(end);
+    plot_styles[..end].fill(axis_style);
+    if end > 0 {
+        plot_styles[0] = Style::new().fg(*color);
     }
-
-    let start_row = match position {
-        LegendPosition::TopLeft => 0,
-        LegendPosition::BottomLeft => rows.saturating_sub(items.len()),
-        _ => 0,
-    };
-
-    for (i, (symbol, name, color)) in items.iter().enumerate() {
-        let row = start_row + i;
-        if row >= rows {
-            break;
-        }
-        let legend_text = format!("{symbol} {name}");
-        for (col, ch) in legend_text.chars().enumerate() {
-            if col >= cols {
-                break;
-            }
-            let idx = row * cols + col;
-            plot_chars[idx] = ch;
-            plot_styles[idx] = if col == 0 {
-                Style::new().fg(*color)
-            } else {
-                axis_style
-            };
-        }
-    }
+    cells
 }
 
 pub(super) fn build_y_tick_row_map(

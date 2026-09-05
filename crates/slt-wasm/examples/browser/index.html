@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperLightTUI Browser</title>
+<style>
+  body { margin: 24px; background: #17191b; color: #e3e7eb; font-family: system-ui, sans-serif; }
+  #terminal { width: max-content; max-width: 100%; overflow: auto; padding: 16px; border: 1px solid #626870; }
+</style>
+<div id="terminal"></div>
+<script type="module">
+  import init, { mount } from './pkg/slt_browser_example.js';
+  await init();
+  const runtime = mount(document.getElementById('terminal'));
+  window.addEventListener('pagehide', () => runtime.dispose(), { once: true });
+</script>
+</html>

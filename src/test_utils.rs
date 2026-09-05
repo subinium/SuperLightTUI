@@ -393,7 +393,7 @@ impl TestBackend {
                 panic!("render closure called twice");
             }
         };
-        let _ = run_frame_kernel(
+        let result = run_frame_kernel(
             &mut self.buffer,
             &mut self.frame_state,
             &RunConfig::default(),
@@ -402,12 +402,37 @@ impl TestBackend {
             false,
             &mut render,
         );
+        if !result.should_quit {
+            self.frame_state.diagnostics.tick = self.frame_state.diagnostics.tick.wrapping_add(1);
+        }
         self.capture_frame();
     }
 
     /// Run a UI closure for one frame and render to the internal buffer.
     pub fn render(&mut self, f: impl FnOnce(&mut Context)) {
         self.render_frame(Vec::new(), |_| {}, f);
+    }
+
+    /// Advance a deterministic frame clock without sleeping.
+    ///
+    /// The first call freezes the clock at the latest frame's start (or now
+    /// before the first frame), then advances it. Later frames retain that
+    /// instant until the next call. Passing zero freezes without advancing.
+    /// Returns an error when the duration cannot be represented by the clock.
+    pub fn advance_time(&mut self, duration: std::time::Duration) -> std::io::Result<()> {
+        let diagnostics = &mut self.frame_state.diagnostics;
+        let current = diagnostics
+            .clock_override
+            .or(diagnostics.frame_started)
+            .unwrap_or_else(crate::clock::Instant::now);
+        let next = current.checked_add(duration).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "test clock duration is out of range",
+            )
+        })?;
+        diagnostics.clock_override = Some(next);
+        Ok(())
     }
 
     /// Render with injected events and focus state for interaction testing.

@@ -174,6 +174,9 @@ pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str
 /// preserving the pre-v0.21 string-grid output byte-for-byte.
 pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
     let cell_width = UnicodeWidthStr::width(cell);
     if cell_width <= width {
         let mut out = String::with_capacity(width);
@@ -181,21 +184,18 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
         out.extend(std::iter::repeat_n(' ', width - cell_width));
         return out;
     }
-    if width == 0 {
-        return String::new();
-    }
     if width == 1 {
         return "\u{2026}".to_string();
     }
     let target = width - 1;
     let mut out = String::with_capacity(width);
     let mut acc = 0usize;
-    for ch in cell.chars() {
-        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+    for grapheme in cell.graphemes(true) {
+        let ch_width = UnicodeWidthStr::width(grapheme);
         if acc + ch_width > target {
             break;
         }
-        out.push(ch);
+        out.push_str(grapheme);
         acc += ch_width;
     }
     out.push('\u{2026}');
@@ -203,6 +203,50 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     let out_width = UnicodeWidthStr::width(out.as_str());
     out.extend(std::iter::repeat_n(' ', width.saturating_sub(out_width)));
     out
+}
+
+#[cfg(test)]
+mod v024_table_tests {
+    use super::*;
+
+    #[test]
+    fn truncation_keeps_clusters_and_exact_column_budgets() {
+        for cluster in [
+            "\u{1f469}\u{200d}\u{1f4bb}",
+            "\u{1f1f0}\u{1f1f7}",
+            "e\u{301}",
+            "\u{915}\u{94d}\u{937}\u{93f}",
+        ] {
+            let source = format!("{cluster}abcd");
+            for width in 0..=10 {
+                let rendered = clamp_table_cell(&source, width);
+                assert_eq!(
+                    UnicodeWidthStr::width(rendered.as_str()),
+                    width as usize,
+                    "{source:?} width={width}"
+                );
+                if rendered.contains('\u{2026}') {
+                    let prefix = rendered.split('\u{2026}').next().unwrap();
+                    assert!(
+                        source
+                            .grapheme_indices(true)
+                            .any(|(byte, _)| byte == prefix.len()),
+                        "partial cluster: {rendered:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(clamp_table_cell("abcdef", 4), "abc\u{2026}");
+        assert_eq!(clamp_table_cell("\u{301}", 0), "");
+        assert_eq!(
+            format_table_row(
+                &["\u{1f469}\u{200d}\u{1f4bb}abcd".into(), "Z".into()],
+                &[4, 2],
+                "|"
+            ),
+            "\u{1f469}\u{200d}\u{1f4bb}a\u{2026}|Z "
+        );
+    }
 }
 
 pub(crate) fn table_visible_len(state: &TableState) -> usize {

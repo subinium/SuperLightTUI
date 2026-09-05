@@ -191,11 +191,7 @@ fn issue_223_split_pane_mouse_drag_updates_ratio() {
     let mut tb = TestBackend::new(40, 5);
     let mut state = SplitPaneState::new(0.5);
 
-    // The split_pane mouse-drag implementation looks up the prior-frame's
-    // hit-map at `interaction_count` (captured before the row is allocated,
-    // i.e. the row's id slot). The previous frame must therefore have
-    // populated that slot. We render two warm-up frames so that
-    // `prev_hit_map` is stable.
+    // Warm the previous-frame geometry before targeting the actual divider.
     for _ in 0..2 {
         tb.render(|ui| {
             let _ = ui.split_pane(
@@ -211,22 +207,19 @@ fn issue_223_split_pane_mouse_drag_updates_ratio() {
     }
 
     // Verify the handle char rendered (sanity-check before driving mouse).
-    let mut found_handle = false;
+    let mut handle = None;
     for y in 0..5u32 {
-        if tb.line(y).contains('│') {
-            found_handle = true;
+        if let Some(x) = tb.line(y).chars().position(|ch| ch == '│') {
+            handle = Some((x as u32, y));
             break;
         }
     }
-    assert!(found_handle, "split_pane must render '│' handle");
+    let (handle_x, handle_y) = handle.expect("split_pane must render '│' handle");
 
     let ratio_before_drag = state.ratio;
-    // The split_pane row defaults to grow=0, so its prev-frame rect
-    // height equals the content height (one row of text). The mouse-Down
-    // therefore must hit y=0 to land inside the row's rect.
     let events = EventBuilder::new()
-        .click(20, 0) // MouseDown inside the row (y=0 is text row)
-        .drag(5, 0) // MouseDrag toward the left edge
+        .click(handle_x, handle_y)
+        .drag(5, handle_y)
         .build();
 
     // ── Frame 3: feed the click + drag events with the handle as the
@@ -248,7 +241,7 @@ fn issue_223_split_pane_mouse_drag_updates_ratio() {
     // the ratio toward the left (smaller value).
     assert!(
         state.dragging,
-        "MouseDown inside split_pane's prev-frame hit area must enter drag mode (state.dragging was false, ratio={})",
+        "MouseDown on the divider must enter drag mode (state.dragging was false, ratio={})",
         state.ratio
     );
     assert!(

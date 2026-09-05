@@ -68,6 +68,118 @@ frames touch a small fraction of cells (see `flush/sparse_change_*`).
 
 ## 2. Allocation budget
 
+### v0.24 diagnostic baseline
+
+`benches/v024_audit.rs` is a standalone release diagnostic, not a timing gate.
+It covers idle rendering, typing, paste, filtered lists, static-log enqueue,
+and line charts at 80x24, 120x40 and 240x80, plus per-issue chart, animation
+and syntax workloads. It does not replace terminal resize, image-update or
+idle-process measurements.
+
+```bash
+cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit > before.csv
+# Run the same command on the changed revision, using the identical harness:
+cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit > after.csv
+SLT_AUDIT_FILTER=issue420 cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit
+SLT_AUDIT_FILTER=textarea_memory cargo +1.98.1 bench -p superlighttui --no-default-features --features syntax-cpp --bench v024_audit
+```
+
+Compare matching rows without running workspace gates:
+
+```bash
+python3 - before.csv after.csv <<'PY'
+import csv, sys
+def read(path):
+    with open(path) as stream:
+        return {r['workload']: r for r in csv.DictReader(line for line in stream if not line.startswith('#'))}
+before, after = map(read, sys.argv[1:])
+for name in before.keys() & after.keys():
+    a, b = before[name], after[name]
+    ratio = float(b['p50_ns']) / float(a['p50_ns'])
+    delta = float(b['requested_bytes']) - float(a['requested_bytes'])
+    print(f'{name}: p50 ratio={ratio:.3f}, requested bytes delta={delta:+.2f}')
+PY
+```
+
+Method: 32 warm-up operations and 101 samples; each sample averages the
+batch size specified in the source (1 for full frames, up to 1000 for tiny
+animation calls). p50 is sorted sample 50 and p95 is sample 95. Every
+allocation/reallocation is delegated to `System` and instrumented, so wall
+times include allocator-counter overhead and scheduler noise. Allocation
+calls include reallocations; requested bytes are allocation sizes, not RSS.
+`retained_delta_bytes` is the live requested-byte change across the sample
+window, and `peak_extra_bytes` is its maximum increase above the starting
+live allocation total. Neither is process peak RSS or total cache capacity.
+
+The textarea mode uses ASCII, CJK and ZWJ input near 1 KB, 100 KB and 1 MB,
+40-grapheme logical lines, an 80x24 viewport, and history caps 0/8. Each
+sustained paste adds 128 content graphemes and four newlines. Fixture comments
+report actual source bytes, history length and total live requested bytes
+for source + document + backend + history after 32+101 pastes. This is a
+bounded-count history measurement, not a byte cap or a delta-undo claim.
+The document grows deterministically during sampling; these are not repeated
+edits of an immutable input. Idle fixtures do not contain undo snapshots.
+
+On 2026-09-05, Apple M3 Pro, macOS 26.5.1, rustc 1.98.1
+(`48a229cea`, aarch64, LLVM 22.1.8), an archived `37933f9` baseline was
+compared with only the secondary chart/animation/syntax fixes applied.
+Features were exactly `--no-default-features --features syntax-cpp`.
+Representative sequential #420 rerun results follow; concurrent development
+on this host makes the tail timings unsuitable for release speed claims.
+
+| Workload | Before p50 / p95 | After p50 / p95 | Requested bytes/op before -> after |
+|---|---|---|---|
+| Histogram, 1,000 values, 32 bins | 295 / 702 us | 294 / 1,770 us | 181,863 -> 157,238 |
+| Histogram, 100,000 values, 32 bins | 1,279 / 2,326 us | 897 / 4,131 us | 3,118,451 -> 223,021 |
+| Sequence, 64 segments, early sample | 52.9 / 53.8 ns | 3.3 / 3.3 ns | 0 -> 0 |
+| Sequence, 1,024 segments, early sample | 576 / 781 ns | 3.3 / 3.3 ns | 0 -> 0 |
+| Sequence, 1,024 segments, late sample | 1,543 / 1,594 ns | 580 / 718 ns | 0 -> 0 |
+
+Histogram preparation now scans finite values for min/max/count, then counts
+bins, without allocating/sorting a data copy. The histogram comparison also
+includes corrected zero bins and edge labels; output parity of the counting
+algorithm is tested independently against sorted counting. In the 100,000
+case the sampled extra live allocation peak fell from 1,848,576 to 113,972
+bytes, while allocation *calls* increased from 634 to 641 because corrected
+labels change rendering work. This is not an allocation-count win.
+Sequence stores one saturating duration sum when segments are appended;
+sampling late segments still scans the segment list. The new private field
+does not promise a whole-frame speedup.
+
+Correctness fixes have separate diagnostic rows. Zero bars and unchanged
+Spring targets showed no material timing change. Left CJK legend rendering
+kept allocation calls at 422, with requests 59,514 -> 59,644 bytes, while
+preserving graphemes and row width. Warm standalone C++ highlighting changed
+from 7 allocations / 246 requested bytes to 24 / 926: the old output was
+unstyled text, so the additional style segments are expected, not a regression
+against equivalent output. No performance win is claimed for these fixes.
+
+These are **in-memory render-kernel** results. They do not measure terminal
+flush duration/output bytes, real input-to-display latency, idle CPU,
+retained OS pages, or image transport. Static-log rows measure enqueueing,
+not terminal scrollback writes. No threshold here should fail shared-runner CI.
+
+The #414 textarea follow-up compared that same archived baseline with a
+snapshot of the **integrated** v0.24 work, including the input worker's #415
+changes (not secondary fixes alone). The 1 MB cases below use history cap 8:
+
+| Input / operation | Allocation calls/op before -> after | Requested bytes/op before -> after |
+|---|---|---|
+| ASCII idle | 24,549 -> 54 | 3,163,544 -> 27,085 |
+| CJK idle | 8,444 -> 54 | 2,010,744 -> 28,845 |
+| ZWJ idle | 2,489 -> 54 | 1,315,110 -> 35,885 |
+| ASCII sustained paste | 49,611 -> 49,502 | 6,334,093 -> 3,186,413 |
+| CJK sustained paste | 17,390 -> 17,250 | 4,066,237 -> 2,489,165 |
+| ZWJ sustained paste | 5,437 -> 5,256 | 2,809,439 -> 2,391,469 |
+
+The 1 MB ASCII fixture with eight retained undo snapshots still occupied
+15,625,750 requested live bytes after the run, versus 15,634,486 before.
+With history disabled those totals were 2,906,326 and 2,915,702. These include
+the source string, current document and backend as well as history. The
+roughly 12.7 MB history-related difference did **not** disappear: undo remains
+whole-document snapshots capped by count, not a byte-bounded or delta history.
+Do not infer retained-memory improvement from the lower per-frame requests.
+
 The steady-state render path targets zero unnecessary heap allocations.
 What we reuse, and where:
 
@@ -281,7 +393,7 @@ For your own derived values, use `ui.use_memo(deps, |d| compute(d))` from
 `src/context/runtime.rs` — the hook stores `(deps, value)` and
 recomputes only on `PartialEq` deps change.
 
-### Pattern 7: Token streaming — cache the chrome, not the stream (#273)
+### Pattern 7: Token streaming diagnostics (#273, #419)
 
 The dominant LLM-streaming loop is "append one token, re-render the
 whole frame": `stream.push(delta)` then the entire closure runs again.
@@ -292,8 +404,8 @@ change. The flush-stage row-hash (#171, `buffer.rs` `line_dirty`) only
 short-circuits *emitting* unchanged rows to stdout; the upstream
 build/layout/collect/render cost was already paid.
 
-`ContainerBuilder::cached(version_key, f)` is the **author-controlled**
-gate for this. You wrap the *static surroundings* — keyed off a value
+`ContainerBuilder::cached(version_key, f)` is an **author-controlled diagnostic**
+for this. You wrap the *static surroundings* — keyed off a value
 you already own (a hash of the non-streaming inputs, or the
 `StreamingTextState::version()` of the *other* panes) — and leave the
 stream itself uncached:
@@ -327,6 +439,23 @@ The Phase-0 baseline lives in `benches/benchmarks.rs` as
 `bench_streaming_append_chat` (`chrome_uncached` vs `chrome_cached`,
 ~2000 lines of static chrome above a streaming line): it quantifies the
 per-token full-frame cost the gate is designed to eventually elide.
+
+The bounded `issue419_chrome_2000` workload in `v024_audit` uses the same
+2,000 static lines and one changing, constant-length token label for both
+`.col(f)` and `.cached(1, f)`. Unlike an ever-growing streaming buffer, its
+input size is stable. In the secondary-only run, p50 was 549 us without the
+diagnostic and 536 us with it; both requested exactly 1,823,798 bytes in
+4,017 allocations per frame, with zero sample-window retained growth and
+1,087,742 extra live bytes at peak. The small timing difference is noise,
+not evidence that `cached` skips work. Callback/output parity is covered by
+`tests/v024_secondary.rs`.
+
+Decision for #419: keep diagnostics-only semantics. No command/tree replay,
+new preparation cache, or promised cache speedup follows from this
+whole-kernel measurement. Pure wrapping/highlighting and media preparation
+need their own stage measurements and invalidation/memory budgets before
+adding further reuse. Existing bounded syntax preparation reuse remains
+unchanged by the C++ query fix.
 
 ## 5. Compared to other UI frameworks
 

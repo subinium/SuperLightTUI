@@ -100,6 +100,18 @@ fn visual_demo_cjk() {
 }
 
 #[test]
+fn cjk_wrapped_body_and_form_survive_height_growth() {
+    let mut tb = TestBackend::new(80, 48);
+    tb.render(demo_cjk::render);
+    // Intrinsic wrapped height must preserve all paragraphs without hiding the form.
+    tb.assert_contains("测试中文换行与右边界裁剪。");
+    tb.assert_contains("折り返しと右端の境界を確認します。");
+    tb.assert_contains("이름을 입력하세요");
+    tb.assert_contains("▎태그");
+    tb.assert_contains("Truncation table");
+}
+
+#[test]
 fn visual_demo_infoviz() {
     snapshot_frame("demo_infoviz", 120, 40, demo_infoviz::render);
 }

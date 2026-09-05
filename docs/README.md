@@ -51,6 +51,7 @@ The idea is simple:
 - [STATE_APIS.md](STATE_APIS.md) - public state fields, accessors, and mutation APIs
 - [TESTING.md](TESTING.md) - `TestBackend`, `EventBuilder`, input simulation, snapshots
 - [THEMING.md](THEMING.md) - theme struct, presets, ThemeBuilder, custom themes
+- [WASM.md](WASM.md) - browser runtime, input, embedding, and publication boundaries
 - [CHANGELOG.md](../CHANGELOG.md) - release history and migration notes
 
 ## Contributor docs

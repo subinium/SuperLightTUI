@@ -660,6 +660,22 @@ fn set_string_clipped_x(
     style: Style,
     link: Option<&str>,
 ) -> i64 {
+    #[cfg(feature = "bidi")]
+    if screen_x < i64::from(buf.area.x) && crate::buffer::needs_bidi_reorder(text) {
+        let visual = crate::buffer::reorder_line_visual(text);
+        let link = link
+            .filter(|url| crate::buffer::is_valid_osc8_url(url))
+            .map(compact_str::CompactString::new);
+        let mut x = screen_x;
+        for grapheme in visual.graphemes(true) {
+            let width = UnicodeWidthStr::width(grapheme) as i64;
+            if x >= i64::from(buf.area.x) && x < i64::from(buf.area.right()) {
+                buf.set_grapheme_visual(x as u32, y, grapheme, style, link.as_ref());
+            }
+            x = x.saturating_add(width);
+        }
+        return x;
+    }
     let full_width = UnicodeWidthStr::width(text) as i64;
     let left = i64::from(buf.area.x);
     if screen_x >= left {
@@ -687,10 +703,11 @@ fn set_string_clipped_x(
         return screen_x + full_width;
     }
     let visible = &text[byte_start..];
+    let visible_x = left.saturating_add(i64::from(consumed.saturating_sub(skip))) as u32;
     if let Some(url) = link {
-        buf.set_string_linked(buf.area.x, y, visible, style, url);
+        buf.set_string_linked(visible_x, y, visible, style, url);
     } else {
-        buf.set_string(buf.area.x, y, visible, style);
+        buf.set_string(visible_x, y, visible, style);
     }
     screen_x + full_width
 }
@@ -995,8 +1012,8 @@ fn render_inner(
                                 })
                                 .fold(0u32, u32::saturating_add);
                             let cursor_screen_x = draw_x + i64::from(cursor_x);
-                            if cursor_screen_x >= 0 {
-                                buf.set_cursor_pos(cursor_screen_x as u32, sy as u32);
+                            if let Ok(cursor_screen_x) = u32::try_from(cursor_screen_x) {
+                                buf.set_cursor_pos(cursor_screen_x, sy as u32, td.cursor_masked);
                             }
                         }
                         set_string_clipped_x(
@@ -1314,6 +1331,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v024_clipped_text_matches_visual_source_cell_positions() {
+        let style = Style::new().fg(Color::Red);
+        let url = "https://example.com";
+        for text in [
+            "ABCDE",
+            "\u{65e5}AB",
+            "e\u{301}\u{1f469}\u{200d}\u{1f4bb}AB",
+            "\u{5d0}\u{5d1}\u{65e5}AB",
+        ] {
+            let mut source = Buffer::empty(Rect::new(0, 0, 20, 1));
+            source.set_string_linked(0, 0, text, style, url);
+            for crop in 0..=5 {
+                let mut clipped = Buffer::empty(Rect::new(4, 7, 3, 1));
+                set_string_clipped_x(&mut clipped, 4 - i64::from(crop), 7, text, style, Some(url));
+                for x in 0..3 {
+                    let cell = source.get(crop + x, 0);
+                    let width = UnicodeWidthStr::width(cell.symbol.as_str()) as u32;
+                    if (x == 0 && cell.is_continuation()) || x + width > 3 {
+                        assert_eq!(
+                            clipped.get(4 + x, 7).symbol.as_str(),
+                            " ",
+                            "{text:?} crop={crop}"
+                        );
+                    } else {
+                        assert_eq!(clipped.get(4 + x, 7), cell, "{text:?} crop={crop} x={x}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn render_tracks_cursor_position_from_text_node() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
         let mut node = LayoutNode::text(
@@ -1330,7 +1379,7 @@ mod tests {
 
         render(&node, &mut buf);
 
-        assert_eq!(buf.cursor_pos(), Some((5, 1)));
+        assert_eq!(buf.cursor_position(), Some((5, 1)));
     }
 
     #[test]

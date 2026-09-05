@@ -82,6 +82,7 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
         return String::new();
     }
     out.push_str(SIXEL_START);
+    out.push_str(&format!("\"1;1;{width};{height}"));
 
     for (reg, &palette_idx) in reg_to_palette.iter().enumerate() {
         let (r, g, b) = palette_index_to_rgb_percent(palette_idx);
@@ -127,11 +128,46 @@ pub(crate) fn encode_sixel(rgba: &[u8], width: u32, height: u32, max_colors: u32
             );
         }
 
-        out.push('-');
+        if row + 1 < sixel_rows {
+            out.push('-');
+        }
     }
 
     out.push_str(SIXEL_END);
     out
+}
+
+/// Nearest-neighbor resampling to the final terminal footprint, with bounded
+/// work and fallible allocation before touching the source raster.
+pub(crate) fn resize_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    cols: u32,
+    rows: u32,
+) -> Option<Vec<u8>> {
+    let count = u64::from(cols).checked_mul(u64::from(rows))?;
+    let source_count = u64::from(width).checked_mul(u64::from(height))?;
+    if count == 0
+        || source_count == 0
+        || count > crate::buffer::MAX_IMAGE_PIXELS
+        || source_count > crate::buffer::MAX_IMAGE_PIXELS
+        || rgba.len() < usize::try_from(source_count.checked_mul(4)?).ok()?
+    {
+        return None;
+    }
+    let len = usize::try_from(count.checked_mul(4)?).ok()?;
+    let mut result = Vec::new();
+    result.try_reserve_exact(len).ok()?;
+    for y in 0..rows {
+        let sy = u64::from(y) * u64::from(height) / u64::from(rows);
+        for x in 0..cols {
+            let sx = u64::from(x) * u64::from(width) / u64::from(cols);
+            let offset = usize::try_from((sy * u64::from(width) + sx) * 4).ok()?;
+            result.extend_from_slice(&rgba[offset..offset + 4]);
+        }
+    }
+    Some(result)
 }
 
 fn sixel_output_budget(width: u32, height: u32, registers: usize) -> Option<usize> {
@@ -295,6 +331,68 @@ fn push_run(out: &mut String, ch: char, run_len: usize) {
 mod tests {
     use super::{encode_sixel, sixel_output_budget};
     use crate::TestBackend;
+
+    #[test]
+    fn v024_sixel_resample_decodes_to_expected_four_color_quadrants() {
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let resized = super::resize_rgba(&rgba, 2, 2, 4, 4).unwrap();
+        let encoded = encode_sixel(&resized, 4, 4, 256);
+        let data = encoded
+            .strip_prefix("\x1bPq\"1;1;4;4")
+            .unwrap()
+            .strip_suffix("\x1b\\")
+            .unwrap()
+            .as_bytes();
+        let mut decoded = [[usize::MAX; 4]; 4];
+        let (mut x, mut y, mut color, mut index) = (0, 0, 0, 0);
+        while index < data.len() {
+            match data[index] {
+                b'#' => {
+                    index += 1;
+                    let start = index;
+                    while index < data.len() && data[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                    color = std::str::from_utf8(&data[start..index])
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if data.get(index) == Some(&b';') {
+                        while index < data.len()
+                            && (data[index] == b';' || data[index].is_ascii_digit())
+                        {
+                            index += 1;
+                        }
+                    }
+                    continue;
+                }
+                b'$' => x = 0,
+                b'-' => {
+                    x = 0;
+                    y += 6;
+                }
+                value @ b'?'..=b'~' => {
+                    for bit in 0..6 {
+                        if value - b'?' & (1 << bit) != 0 {
+                            assert!(x < 4 && y + bit < 4, "out-of-footprint pixel");
+                            decoded[y + bit][x] = color;
+                        }
+                    }
+                    x += 1;
+                }
+                other => panic!("unexpected fixture byte {other}"),
+            }
+            index += 1;
+        }
+        assert_eq!(
+            decoded,
+            [[0, 0, 1, 1], [0, 0, 1, 1], [2, 2, 3, 3], [2, 2, 3, 3]]
+        );
+        assert!(super::resize_rgba(&rgba, 2, 2, u32::MAX, 2).is_none());
+        assert!(super::resize_rgba(&rgba[..3], 2, 2, 4, 4).is_none());
+    }
 
     #[test]
     fn encode_sixel_single_color_image_has_wrapper() {

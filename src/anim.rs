@@ -499,6 +499,7 @@ struct SequenceSegment {
 /// ```
 pub struct Sequence {
     segments: Vec<SequenceSegment>,
+    total_duration: u64,
     loop_mode: LoopMode,
     start_tick: u64,
     done: bool,
@@ -520,6 +521,7 @@ impl Sequence {
     pub fn new() -> Self {
         Self {
             segments: Vec::new(),
+            total_duration: 0,
             loop_mode: LoopMode::Once,
             start_tick: 0,
             done: false,
@@ -530,6 +532,7 @@ impl Sequence {
 
     /// Append a segment from `from` to `to` over `duration_ticks` ticks.
     pub fn then(mut self, from: f64, to: f64, duration_ticks: u64, easing: fn(f64) -> f64) -> Self {
+        self.total_duration = self.total_duration.saturating_add(duration_ticks);
         self.segments.push(SequenceSegment {
             from,
             to,
@@ -558,16 +561,12 @@ impl Sequence {
             return 0.0;
         }
 
-        let total_duration = self
-            .segments
-            .iter()
-            .fold(0_u64, |acc, s| acc.saturating_add(s.duration_ticks));
         let end_value = self.segments.last().map_or(0.0, |s| s.to);
 
         let loop_tick = match map_loop_tick(
             tick,
             self.start_tick,
-            total_duration,
+            self.total_duration,
             self.loop_mode,
             &mut self.done,
         ) {
@@ -949,7 +948,14 @@ impl Spring {
     }
 
     /// Set the target value the spring will move toward.
+    ///
+    /// Restating the same target does not re-arm the settlement callback.
+    /// A changed target already within the settlement tolerance does not
+    /// start a new unsettled transition. Position and velocity are not snapped.
     pub fn set_target(&mut self, target: f64) {
+        if self.target == target {
+            return;
+        }
         self.target = target;
         self.settled = self.is_settled();
     }

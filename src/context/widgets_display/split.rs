@@ -102,21 +102,31 @@ impl Context {
         A: FnOnce(&mut Context),
         B: FnOnce(&mut Context),
     {
+        let old_ratio = state.ratio;
         // Reserve the focusable slot for the handle BEFORE the panes so
         // tab order stays stable across frames regardless of pane content.
         let handle_focused = self.register_focusable();
+        let focus_marker = if matches!(self.commands.last(), Some(Command::FocusMarker(_))) {
+            self.commands.pop()
+        } else {
+            None
+        };
+        let (gained_focus, lost_focus) = self.focus_transitions(handle_focused);
 
         // Process keyboard input (arrow keys) when the handle is focused.
         if handle_focused {
             self.consume_split_pane_keys(state, orientation);
         }
 
-        // Process mouse drag against the previous-frame handle rect.
-        // The handle interaction id is the next slot to be allocated when
-        // we render the splitter cell below; record it now so we can match
-        // mouse events with the prior frame's rect.
-        let handle_interaction_id = self.rollback.interaction_count;
-        self.consume_split_pane_drag(state, handle_interaction_id, orientation);
+        // Reserve the divider independently of the number of widgets in either pane.
+        let handle_interaction_id = self.reserve_interaction_slot();
+        let outer_interaction_id = self.rollback.interaction_count;
+        self.consume_split_pane_drag(
+            state,
+            handle_interaction_id,
+            outer_interaction_id,
+            orientation,
+        );
 
         let theme = self.theme;
         let ratio = state.ratio.clamp(state.min_ratio, 1.0 - state.min_ratio);
@@ -125,38 +135,93 @@ impl Context {
 
         let drag_active = state.dragging;
 
-        let response = match orientation {
-            SplitOrientation::Horizontal => self.row(|ui| {
-                let _ = ui.container().grow(left_grow).col(first);
+        let mut response = match orientation {
+            SplitOrientation::Horizontal => self.container().grow(1).row(|ui| {
+                let _ = ui.container().basis(0).grow(left_grow).col(first);
                 let handle_color = if handle_focused || drag_active {
                     theme.accent
                 } else {
                     theme.border
                 };
-                let _ = ui.container().w(1).grow(0).col(|ui| {
-                    ui.styled("│", Style::new().fg(handle_color));
-                });
-                let _ = ui.container().grow(right_grow).col(second);
+                ui.split_handle(
+                    handle_interaction_id,
+                    focus_marker,
+                    orientation,
+                    handle_color,
+                );
+                let _ = ui.container().basis(0).grow(right_grow).col(second);
             }),
-            SplitOrientation::Vertical => self.col(|ui| {
-                let _ = ui.container().grow(left_grow).col(first);
+            SplitOrientation::Vertical => self.container().grow(1).col(|ui| {
+                let _ = ui.container().basis(0).grow(left_grow).col(first);
                 let handle_color = if handle_focused || drag_active {
                     theme.accent
                 } else {
                     theme.border
                 };
-                let _ = ui.container().h(1).grow(0).col(|ui| {
-                    ui.styled("─", Style::new().fg(handle_color));
-                });
-                let _ = ui.container().grow(right_grow).col(second);
+                ui.split_handle(
+                    handle_interaction_id,
+                    focus_marker,
+                    orientation,
+                    handle_color,
+                );
+                let _ = ui.container().basis(0).grow(right_grow).col(second);
             }),
         };
+        response.focused = handle_focused;
+        response.gained_focus = gained_focus;
+        response.lost_focus = lost_focus;
+        response.changed = state.ratio != old_ratio;
 
         SplitPaneResponse {
             response,
             ratio,
             drag_active,
         }
+    }
+
+    fn split_handle(
+        &mut self,
+        interaction_id: usize,
+        focus_marker: Option<Command>,
+        orientation: SplitOrientation,
+        color: Color,
+    ) {
+        if let Some(marker) = focus_marker {
+            self.commands.push(marker);
+        }
+        self.commands
+            .push(Command::InteractionMarker(interaction_id));
+        let (constraints, glyph) = match orientation {
+            SplitOrientation::Horizontal => (Constraints::default().w(1).h_pct(100), '│'),
+            SplitOrientation::Vertical => (Constraints::default().h(1).w_pct(100), '─'),
+        };
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Column,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new(),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints,
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+        self.container().grow(1).draw(move |buffer, rect| {
+            for y in rect.y..rect.bottom() {
+                for x in rect.x..rect.right() {
+                    buffer.set_char(x, y, glyph, Style::new().fg(color));
+                }
+            }
+        });
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
     }
 
     fn consume_split_pane_keys(
@@ -194,29 +259,55 @@ impl Context {
         &mut self,
         state: &mut SplitPaneState,
         handle_interaction_id: usize,
+        outer_interaction_id: usize,
         orientation: SplitOrientation,
     ) {
-        // The container that owns the panes has its own interaction id
-        // allocated by `row()` / `col()` later in this method. To compute the
-        // ratio we need the bounds of THAT container, but at this point in
-        // execution we haven't pushed it yet. Instead, we track drag activity
-        // against the handle's own rect from the previous frame and use the
-        // larger axis bound from the previous handle position to anchor the
-        // drag math. Concretely:
-        //
-        //   - On Mouse::Down inside the handle rect → enter drag mode.
-        //   - While dragging, update ratio based on the cursor's position
-        //     within the previous outer container rect (interaction_id - 1
-        //     for the row/col that hosts the handle).
-        //   - On Mouse::Up → exit drag mode.
-        //
-        // The container's interaction id is allocated AFTER the handle, but
-        // the previous-frame `prev_hit_map` already has both. We resolve the
-        // outer container by `handle_interaction_id - 1` — the splitter ran
-        // last frame too and the slots are stable.
-        let outer_id = handle_interaction_id.saturating_sub(1);
-        let outer_rect = self.prev_hit_map.get(outer_id).copied();
+        if !self.interaction_allowed() {
+            state.dragging = false;
+            return;
+        }
+        if self.events.is_empty() {
+            return;
+        }
+        let outer_rect = self.prev_allocated_areas.get(outer_interaction_id).copied();
         let handle_rect = self.prev_hit_map.get(handle_interaction_id).copied();
+        let logical_handle = self
+            .prev_allocated_areas
+            .get(handle_interaction_id)
+            .copied();
+        let mut offsets = (0_i64, 0_i64);
+        let mut parents = Vec::new();
+        for command in &self.commands {
+            match command {
+                Command::BeginContainer(_) => parents.push(offsets),
+                Command::BeginScrollable(args) => {
+                    parents.push(offsets);
+                    match args.direction {
+                        Direction::Row => offsets.0 += i64::from(args.scroll_offset_x),
+                        Direction::Column => offsets.1 += i64::from(args.scroll_offset),
+                    }
+                }
+                Command::BeginOverlay { .. } => {
+                    parents.push(offsets);
+                    offsets = (0, 0);
+                }
+                Command::EndContainer | Command::EndOverlay => {
+                    offsets = parents.pop().unwrap_or_default();
+                }
+                _ => {}
+            }
+        }
+        // A visible one-cell divider gives an exact previous-frame translation,
+        // even when an ancestor clips the outer pane. The active scroll stack
+        // is the fallback while a captured divider is outside the viewport.
+        if let (Some(hit), Some(logical)) = (handle_rect, logical_handle)
+            && !hit.is_empty()
+        {
+            match orientation {
+                SplitOrientation::Horizontal => offsets.0 = i64::from(logical.x) - i64::from(hit.x),
+                SplitOrientation::Vertical => offsets.1 = i64::from(logical.y) - i64::from(hit.y),
+            }
+        }
 
         let mut consumed: Vec<usize> = Vec::new();
         let events: Vec<(usize, crate::event::MouseEvent)> = self
@@ -250,22 +341,18 @@ impl Context {
                                 if outer.width <= 1 {
                                     state.ratio
                                 } else {
-                                    let rel = mouse
-                                        .x
-                                        .saturating_sub(outer.x)
-                                        .min(outer.width.saturating_sub(1));
-                                    f64::from(rel) / f64::from(outer.width)
+                                    let rel = (i64::from(mouse.x) + offsets.0 - i64::from(outer.x))
+                                        .clamp(0, i64::from(outer.width - 1));
+                                    rel as f64 / f64::from(outer.width - 1)
                                 }
                             }
                             SplitOrientation::Vertical => {
                                 if outer.height <= 1 {
                                     state.ratio
                                 } else {
-                                    let rel = mouse
-                                        .y
-                                        .saturating_sub(outer.y)
-                                        .min(outer.height.saturating_sub(1));
-                                    f64::from(rel) / f64::from(outer.height)
+                                    let rel = (i64::from(mouse.y) + offsets.1 - i64::from(outer.y))
+                                        .clamp(0, i64::from(outer.height - 1));
+                                    rel as f64 / f64::from(outer.height - 1)
                                 }
                             }
                         };

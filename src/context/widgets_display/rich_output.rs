@@ -294,8 +294,7 @@ impl Context {
             return response;
         }
 
-        let Some((content_hash, encoded)) = prepare_sixel(rgba, pixel_width, pixel_height, 256)
-        else {
+        let Some((_, rgba_data)) = prepare_rgba(rgba, pixel_width, pixel_height) else {
             let response = self.interaction();
             self.container().w(cols).h(rows).draw(|buf, rect| {
                 if rect.width == 0 || rect.height == 0 {
@@ -306,6 +305,7 @@ impl Context {
             return response;
         };
 
+        let (cell_width, cell_height) = crate::terminal::cell_pixel_size();
         // Issue #265: route through the sprixel damage matrix instead of a flat
         // `raw_sequence`, so a text edit adjacent to the image no longer forces
         // a full re-blit. The footprint is recorded as fully `Opaque`; the flush
@@ -315,6 +315,23 @@ impl Context {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
+            if !buf.media_rect_visible(rect) {
+                draw_rgba_fallback(buf, rect, &rgba_data, pixel_width, pixel_height, cols, rows);
+                return;
+            }
+            let target_width = rect.width.saturating_mul(cell_width);
+            let target_height = rect.height.saturating_mul(cell_height);
+            let Some((content_hash, encoded)) = prepare_sixel(
+                &rgba_data,
+                pixel_width,
+                pixel_height,
+                256,
+                target_width,
+                target_height,
+            ) else {
+                draw_rgba_fallback(buf, rect, &rgba_data, pixel_width, pixel_height, cols, rows);
+                return;
+            };
             let cells = (rect.width as usize).saturating_mul(rect.height as usize);
             buf.sprixel_place(crate::buffer::SprixelPlacement {
                 content_hash,
@@ -374,6 +391,10 @@ impl Context {
             if rect.width == 0 || rect.height == 0 {
                 return;
             }
+            if !buf.media_rect_visible(rect) || rect.width != cols || rect.height != rows {
+                buf.set_string(rect.x, rect.y, "[iterm2 clipped]", Style::new());
+                return;
+            }
             let cells = (rect.width as usize).saturating_mul(rect.height as usize);
             buf.sprixel_place(crate::buffer::SprixelPlacement {
                 content_hash,
@@ -392,11 +413,13 @@ impl Context {
     ///
     /// `data` is **encoded image-file bytes** (PNG/JPEG/GIF). The container is
     /// `cols` cells wide; height is reserved from the detected cell pixel
-    /// dimensions (falling back to 8×16) and the OSC 1337 `height=auto` /
-    /// `preserveAspectRatio=1` flags let the terminal scale to fit. Mirrors
+    /// dimensions (falling back to 8×16); explicit cell dimensions and
+    /// `preserveAspectRatio=1` keep the payload inside that box. Mirrors
     /// [`Context::kitty_image_fit`] (issue #265).
     ///
     /// Falls back to `[iterm2 unsupported]` on terminals without OSC 1337.
+    /// Partially clipped images use `[iterm2 clipped]` because OSC 1337 has
+    /// no portable source-crop operation.
     ///
     /// # Example
     ///
@@ -430,14 +453,19 @@ impl Context {
             return self.iterm_placeholder(cols, rows, "[iterm2 unsupported]");
         };
 
-        // `rows == 0` signals `height=auto`; the reserved cell box is `rows`.
-        let Some((content_hash, encoded)) = prepare_iterm(data, cols, 0, true) else {
+        // An explicit height prevents the terminal's aspect rounding from
+        // painting beyond the tracked cell footprint.
+        let Some((content_hash, encoded)) = prepare_iterm(data, cols, rows, true) else {
             return self.iterm_placeholder(cols, rows, "[iterm2 invalid]");
         };
 
         let response = self.interaction();
         self.container().w(cols).h(rows).draw(move |buf, rect| {
             if rect.width == 0 || rect.height == 0 {
+                return;
+            }
+            if !buf.media_rect_visible(rect) || rect.width != cols || rect.height != rows {
+                buf.set_string(rect.x, rect.y, "[iterm2 clipped]", Style::new());
                 return;
             }
             let cells = (rect.width as usize).saturating_mul(rect.height as usize);
@@ -456,16 +484,11 @@ impl Context {
 
     #[cfg(feature = "crossterm")]
     fn kitty_graphics_supported(&self) -> bool {
-        if !self.is_real_terminal {
-            return false;
-        }
-        if terminal_force_graphics("SLT_FORCE_KITTY") {
-            return true;
-        }
-        if terminal_graphics_blocked_by_multiplexer() {
-            return false;
-        }
-        self.capabilities.kitty_graphics || terminal_supports_kitty()
+        crate::terminal::GraphicsEmissionSupport::for_context(
+            self.capabilities,
+            self.is_real_terminal,
+        )
+        .should_emit_kitty()
     }
 
     #[cfg(not(feature = "crossterm"))]
@@ -475,30 +498,20 @@ impl Context {
 
     #[cfg(feature = "crossterm")]
     fn sixel_supported(&self) -> bool {
-        if !self.is_real_terminal {
-            return false;
-        }
-        if terminal_force_graphics("SLT_FORCE_SIXEL") {
-            return true;
-        }
-        if terminal_graphics_blocked_by_multiplexer() {
-            return false;
-        }
-        self.capabilities.sixel || terminal_supports_sixel()
+        crate::terminal::GraphicsEmissionSupport::for_context(
+            self.capabilities,
+            self.is_real_terminal,
+        )
+        .should_emit_sprixel(crate::terminal::SprixelProtocol::Sixel)
     }
 
     #[cfg(feature = "crossterm")]
     fn iterm_supported(&self) -> bool {
-        if !self.is_real_terminal {
-            return false;
-        }
-        if terminal_force_graphics("SLT_FORCE_ITERM") {
-            return true;
-        }
-        if terminal_graphics_blocked_by_multiplexer() {
-            return false;
-        }
-        self.capabilities.iterm2 || terminal_supports_iterm()
+        crate::terminal::GraphicsEmissionSupport::for_context(
+            self.capabilities,
+            self.is_real_terminal,
+        )
+        .should_emit_sprixel(crate::terminal::SprixelProtocol::Iterm2)
     }
 
     fn rgba_halfblock_fallback(
@@ -530,30 +543,7 @@ impl Context {
                 return;
             }
 
-            let dst_pixel_height = rect.height.saturating_mul(2).max(1);
-            for row in 0..rect.height {
-                for col in 0..rect.width {
-                    let upper = sample_rgba_color(
-                        rgba_data.as_slice(),
-                        pixel_width,
-                        pixel_height,
-                        col,
-                        row * 2,
-                        rect.width,
-                        dst_pixel_height,
-                    );
-                    let lower = sample_rgba_color(
-                        rgba_data.as_slice(),
-                        pixel_width,
-                        pixel_height,
-                        col,
-                        row.saturating_mul(2).saturating_add(1),
-                        rect.width,
-                        dst_pixel_height,
-                    );
-                    draw_halfblock_cell(buf, rect.x + col, rect.y + row, upper, lower);
-                }
-            }
+            draw_rgba_fallback(buf, rect, &rgba_data, pixel_width, pixel_height, cols, rows);
         });
         response
     }
@@ -1018,6 +1008,61 @@ impl Context {
 #[cfg(test)]
 mod media_response_tests {
     use crate::{Response, TestBackend};
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn v024_clipped_sixel_falls_back_and_preserves_source_offset() {
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let mut backend = TestBackend::new(4, 1);
+        let mut scroll = crate::ScrollState::default();
+        backend.render(|ui| {
+            ui.is_real_terminal = true;
+            ui.capabilities.sixel = true;
+            let _ = ui.scrollable(&mut scroll).h(1).col(|ui| {
+                let _ = ui.sixel_image(&rgba, 1, 4, 4, 2);
+            });
+        });
+        assert!(backend.buffer().sprixels.is_empty());
+        assert!((0..4).any(|x| backend.buffer().get(x, 0).symbol == "\u{2580}"));
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn v024_unclipped_sixel_payload_matches_final_cell_footprint() {
+        let rgba = [255, 0, 0, 255].repeat(4);
+        let mut backend = TestBackend::new(4, 2);
+        backend.render(|ui| {
+            ui.is_real_terminal = true;
+            ui.capabilities.sixel = true;
+            let _ = ui.sixel_image(&rgba, 2, 2, 4, 2);
+        });
+        let placement = &backend.buffer().sprixels[0];
+        assert_eq!((placement.cols, placement.rows), (4, 2));
+        assert!(placement.seq.contains("\"1;1;32;32"));
+    }
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn v024_iterm_partial_viewport_never_emits_full_payload() {
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&4u32.to_be_bytes());
+        png[20..24].copy_from_slice(&4u32.to_be_bytes());
+        let mut backend = TestBackend::new(20, 1);
+        let mut scroll = crate::ScrollState::default();
+        backend.render(|ui| {
+            ui.is_real_terminal = true;
+            ui.capabilities.iterm2 = true;
+            let _ = ui.scrollable(&mut scroll).h(1).col(|ui| {
+                let _ = ui.iterm_image(&png, 20, 2);
+            });
+        });
+        assert!(backend.buffer().sprixels.is_empty());
+        backend.assert_contains("[iterm2 clipped]");
+    }
 
     #[test]
     fn big_text_returns_warm_frame_rect() {

@@ -420,6 +420,8 @@ struct PreparedSixelKey {
     width: u32,
     height: u32,
     colors: u32,
+    target_width: u32,
+    target_height: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -557,44 +559,55 @@ fn prepare_halfblock(
 }
 
 #[cfg(feature = "crossterm")]
-fn prepare_sixel(data: &[u8], width: u32, height: u32, colors: u32) -> Option<(u64, String)> {
+type EncodedMedia = (u64, std::sync::Arc<str>);
+#[cfg(feature = "crossterm")]
+type EncodedMediaCache<K> = std::sync::Mutex<PreparationCache<K, EncodedMedia>>;
+
+#[cfg(feature = "crossterm")]
+fn prepare_sixel(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    colors: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Option<EncodedMedia> {
     let (content_hash, rgba) = prepare_rgba(data, width, height)?;
     let key = PreparedSixelKey {
         content_hash,
         width,
         height,
         colors,
+        target_width,
+        target_height,
     };
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<PreparationCache<PreparedSixelKey, String>>,
-    > = std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<EncodedMediaCache<PreparedSixelKey>> =
+        std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(PreparationCache::new()));
     let cached = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key);
-    if let Some(encoded) = cached {
-        return Some((content_hash, encoded));
+    if let Some(prepared) = cached {
+        return Some(prepared);
     }
 
-    let encoded = crate::sixel::encode_sixel(rgba.as_slice(), width, height, colors);
+    let scaled = crate::sixel::resize_rgba(&rgba, width, height, target_width, target_height)?;
+    let encoded: std::sync::Arc<str> =
+        crate::sixel::encode_sixel(&scaled, target_width, target_height, colors).into();
     if encoded.is_empty() {
         return None;
     }
+    let payload_hash = crate::buffer::hash_rgba(encoded.as_bytes());
     cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(key, encoded.clone(), encoded.len());
-    Some((content_hash, encoded))
+        .insert(key, (payload_hash, encoded.clone()), encoded.len());
+    Some((payload_hash, encoded))
 }
 
 #[cfg(feature = "crossterm")]
-fn prepare_iterm(
-    data: &[u8],
-    cols: u32,
-    rows: u32,
-    preserve_aspect: bool,
-) -> Option<(u64, String)> {
+fn prepare_iterm(data: &[u8], cols: u32, rows: u32, preserve_aspect: bool) -> Option<EncodedMedia> {
     encoded_image_dimensions(data)?;
     let content_hash = crate::buffer::hash_rgba(data);
     let key = PreparedItermKey {
@@ -604,27 +617,28 @@ fn prepare_iterm(
         rows,
         preserve_aspect,
     };
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<PreparationCache<PreparedItermKey, String>>,
-    > = std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<EncodedMediaCache<PreparedItermKey>> =
+        std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(PreparationCache::new()));
     let cached = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key);
-    if let Some(encoded) = cached {
-        return Some((content_hash, encoded));
+    if let Some(prepared) = cached {
+        return Some(prepared);
     }
 
-    let encoded = crate::iterm::encode_iterm_osc1337(data, cols, rows, preserve_aspect);
+    let encoded: std::sync::Arc<str> =
+        crate::iterm::encode_iterm_osc1337(data, cols, rows, preserve_aspect).into();
     if encoded.is_empty() {
         return None;
     }
+    let payload_hash = crate::buffer::hash_rgba(encoded.as_bytes());
     cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(key, encoded.clone(), encoded.len());
-    Some((content_hash, encoded))
+        .insert(key, (payload_hash, encoded.clone()), encoded.len());
+    Some((payload_hash, encoded))
 }
 
 fn encoded_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
@@ -761,85 +775,52 @@ fn draw_halfblock_cell(
     }
 }
 
-#[cfg(feature = "crossterm")]
-fn terminal_force_graphics(var: &str) -> bool {
-    std::env::var(var)
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+fn draw_rgba_fallback(
+    buf: &mut crate::Buffer,
+    rect: Rect,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    cols: u32,
+    rows: u32,
+) {
+    let (source_x, source_y) = buf.draw_source_offset();
+    let pixel_rows = rows.saturating_mul(2).max(1);
+    for y in 0..rect.height {
+        for x in 0..rect.width {
+            let sx = source_x.saturating_add(x);
+            let sy = source_y.saturating_add(y).saturating_mul(2);
+            let upper = sample_rgba_color(rgba, width, height, sx, sy, cols, pixel_rows);
+            let lower = sample_rgba_color(
+                rgba,
+                width,
+                height,
+                sx,
+                sy.saturating_add(1),
+                cols,
+                pixel_rows,
+            );
+            draw_halfblock_cell(buf, rect.x + x, rect.y + y, upper, lower);
+        }
+    }
 }
 
-#[cfg(feature = "crossterm")]
-fn terminal_graphics_blocked_by_multiplexer() -> bool {
-    let term = std::env::var("TERM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-    let tmux = std::env::var_os("TMUX").is_some();
-    let screen = std::env::var_os("STY").is_some();
-
-    tmux || screen
-        || term == "tmux"
-        || term.starts_with("tmux-")
-        || term == "screen"
-        || term.starts_with("screen-")
-        || term.starts_with("screen.")
-}
-
-#[cfg(feature = "crossterm")]
+#[cfg(all(test, feature = "crossterm"))]
 fn terminal_supports_kitty() -> bool {
-    if terminal_force_graphics("SLT_FORCE_KITTY") {
-        return true;
-    }
-    if terminal_graphics_blocked_by_multiplexer() {
-        return false;
-    }
-
-    let term = std::env::var("TERM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-    let term_program = std::env::var("TERM_PROGRAM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    term.contains("kitty") || matches!(term_program.as_str(), "ghostty" | "wezterm" | "kitty")
+    crate::terminal::GraphicsEmissionSupport::for_context(
+        crate::terminal::Capabilities::default(),
+        true,
+    )
+    .should_emit_kitty()
 }
 
-#[cfg(feature = "crossterm")]
+#[cfg(all(test, feature = "crossterm"))]
 fn terminal_supports_sixel() -> bool {
-    if terminal_force_graphics("SLT_FORCE_SIXEL") {
-        return true;
-    }
-    if terminal_graphics_blocked_by_multiplexer() {
-        return false;
-    }
-
-    let term = std::env::var("TERM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-    let term_program = std::env::var("TERM_PROGRAM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    // Exact-match known sixel terminals; substring "sixel" catches custom builds.
-    // The previous `term.contains("xterm")` check fired on `xterm-256color`,
-    // which is the default for macOS Terminal.app, VS Code, and most SSH
-    // clients — none of which support sixel. Patched-xterm-with-sixel users
-    // can opt in with `SLT_FORCE_SIXEL=1`.
-    const KNOWN_SIXEL_TERMS: &[&str] = &["mlterm", "foot", "yaft", "xterm-256color-sixel"];
-    // Issue #264 companion fix: WezTerm (sixel + iTerm2 protocol) and Ghostty
-    // (Kitty graphics + sixel) are capable image hosts that the env-only
-    // allowlist previously rejected, painting `[sixel unsupported]` on the best
-    // available terminals. They are matched via `TERM_PROGRAM` here as the
-    // env-fallback when the runtime DA1 probe returns unknown.
-    const KNOWN_SIXEL_TERM_PROGRAMS: &[&str] = &["foot", "mlterm", "wezterm", "ghostty"];
-    KNOWN_SIXEL_TERMS.iter().any(|&t| term == t)
-        || term.contains("sixel")
-        || KNOWN_SIXEL_TERM_PROGRAMS.contains(&term_program.as_str())
+    crate::terminal::GraphicsEmissionSupport::for_context(
+        crate::terminal::Capabilities::default(),
+        true,
+    )
+    .should_emit_sprixel(crate::terminal::SprixelProtocol::Sixel)
 }
 
 /// Env-fallback detection for the iTerm2 OSC 1337 inline-image protocol
@@ -851,26 +832,13 @@ fn terminal_supports_sixel() -> bool {
 /// itself, WezTerm (iTerm2-compat mode), Tabby, and mintty. `SLT_FORCE_ITERM=1`
 /// forces a positive. Never fires on `xterm-256color`, matching the sixel
 /// regression-test parity.
-#[cfg(feature = "crossterm")]
+#[cfg(all(test, feature = "crossterm"))]
 fn terminal_supports_iterm() -> bool {
-    if terminal_force_graphics("SLT_FORCE_ITERM") {
-        return true;
-    }
-    if terminal_graphics_blocked_by_multiplexer() {
-        return false;
-    }
-
-    let term_program = std::env::var("TERM_PROGRAM")
-        .ok()
-        .map(|v| v.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    // iTerm2 reports `TERM_PROGRAM=iTerm.app`; WezTerm, Tabby, and mintty all
-    // implement OSC 1337. Detection is `TERM_PROGRAM`-only on purpose: these
-    // hosts ship `TERM=xterm-256color`, so a `TERM` substring check would
-    // false-positive on plain xterm.
-    const KNOWN_ITERM_TERM_PROGRAMS: &[&str] = &["iterm.app", "wezterm", "tabby", "mintty"];
-    KNOWN_ITERM_TERM_PROGRAMS.contains(&term_program.as_str())
+    crate::terminal::GraphicsEmissionSupport::for_context(
+        crate::terminal::Capabilities::default(),
+        true,
+    )
+    .should_emit_sprixel(crate::terminal::SprixelProtocol::Iterm2)
 }
 
 #[cfg(all(test, feature = "crossterm"))]
@@ -1411,6 +1379,17 @@ mod fallback_syntax_theme_tests {
 #[cfg(test)]
 mod media_preparation_tests {
     use super::*;
+
+    #[cfg(feature = "crossterm")]
+    #[test]
+    fn v024_sixel_preparation_shares_payload_and_keys_final_geometry() {
+        let rgba = [255, 0, 0, 255].repeat(4);
+        let (_, first) = prepare_sixel(&rgba, 2, 2, 256, 8, 16).unwrap();
+        let (_, second) = prepare_sixel(&rgba, 2, 2, 256, 8, 16).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        let (_, resized) = prepare_sixel(&rgba, 2, 2, 256, 16, 8).unwrap();
+        assert_ne!(first, resized);
+    }
 
     #[test]
     fn rgba_preparation_is_strict_and_reuses_cached_allocation() {

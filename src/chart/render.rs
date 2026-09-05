@@ -267,23 +267,6 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
         }
     }
 
-    if !legend_items.is_empty()
-        && matches!(
-            config.legend,
-            LegendPosition::TopLeft | LegendPosition::BottomLeft
-        )
-    {
-        overlay_legend_on_plot(
-            config.legend,
-            &legend_items,
-            &mut plot_chars,
-            &mut plot_styles,
-            plot_width,
-            plot_height,
-            axis_style,
-        );
-    }
-
     let y_tick_rows = build_y_tick_row_map(
         &y_ticks.values,
         if use_manual_y_labels {
@@ -365,6 +348,18 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
 
         let mut current_style = Style::new();
         let mut buffer = String::new();
+        let legend_start = match config.legend {
+            LegendPosition::TopLeft => Some(0),
+            LegendPosition::BottomLeft => Some(plot_height.saturating_sub(legend_items.len())),
+            _ => None,
+        };
+        let legend_cells = legend_start
+            .and_then(|start| row.checked_sub(start))
+            .and_then(|index| legend_items.get(index))
+            .map(|item| {
+                let range = row * plot_width..(row + 1) * plot_width;
+                overlay_legend_row(item, plot_width, &mut plot_styles[range], axis_style)
+            });
         for col in 0..plot_width {
             let idx = row * plot_width + col;
             let style = plot_styles[idx];
@@ -378,7 +373,11 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
                 }
                 current_style = style;
             }
-            buffer.push(plot_chars[idx]);
+            if let Some(cell) = legend_cells.as_ref().and_then(|cells| cells.get(col)) {
+                buffer.push_str(cell);
+            } else {
+                buffer.push(plot_chars[idx]);
+            }
         }
         if !buffer.is_empty() {
             segments.push((buffer, current_style));
@@ -421,19 +420,31 @@ pub(crate) fn render_chart(config: &ChartConfig) -> Vec<ChartRow> {
 
         let mut x_label_line: Vec<String> = vec![" ".to_string(); plot_width];
         let mut occupied_until: usize = 0;
-        for (col, label) in &x_tick_cols {
+        // Reserve the final endpoint before accepting interior labels. Dropping
+        // an overlapping label is preferable to hiding the range's upper bound.
+        let final_start = x_tick_cols.last().and_then(|(col, label)| {
+            let width = UnicodeWidthStr::width(label.as_str());
+            (width > 0 && width <= plot_width)
+                .then(|| col.saturating_sub(width / 2).min(plot_width - width))
+        });
+        for (index, (col, label)) in x_tick_cols.iter().enumerate() {
             if label.is_empty() {
                 continue;
             }
-            let label = clip_text_cells(label, plot_width);
             let label_width = UnicodeWidthStr::width(label.as_str());
+            if label_width > plot_width {
+                continue;
+            }
             let start = col
                 .saturating_sub(label_width / 2)
                 .min(plot_width.saturating_sub(label_width));
-            if start < occupied_until {
+            if start < occupied_until
+                || (index + 1 < x_tick_cols.len()
+                    && final_start.is_some_and(|end| start + label_width + 1 > end))
+            {
                 continue;
             }
-            write_text_cells(&mut x_label_line, start, &label);
+            write_text_cells(&mut x_label_line, start, label);
             occupied_until = start + label_width + 1;
         }
 

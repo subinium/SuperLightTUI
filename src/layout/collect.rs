@@ -14,6 +14,10 @@ pub(crate) struct FrameData {
     pub scroll_infos: Vec<(u32, u32, bool)>,
     pub scroll_rects: Vec<Rect>,
     pub hit_areas: Vec<Rect>,
+    /// Full node rectangles indexed by interaction ID, in logical layout
+    /// coordinates before scroll offsets or viewport clipping. Unlike hit
+    /// areas, these preserve offscreen sizes for next-frame measurement.
+    pub allocated_areas: Vec<Rect>,
     pub group_rects: Vec<(Arc<str>, Rect)>,
     pub content_areas: Vec<(Rect, Rect)>,
     pub focus_rects: Vec<(usize, Rect)>,
@@ -30,6 +34,7 @@ impl FrameData {
         self.scroll_infos.clear();
         self.scroll_rects.clear();
         self.hit_areas.clear();
+        self.allocated_areas.clear();
         self.group_rects.clear();
         self.content_areas.clear();
         self.focus_rects.clear();
@@ -47,6 +52,10 @@ impl FrameData {
         std::mem::swap(&mut self.scroll_infos, &mut feedback.prev_scroll_infos);
         std::mem::swap(&mut self.scroll_rects, &mut feedback.prev_scroll_rects);
         std::mem::swap(&mut self.hit_areas, &mut feedback.prev_hit_map);
+        std::mem::swap(
+            &mut self.allocated_areas,
+            &mut feedback.prev_allocated_areas,
+        );
         std::mem::swap(&mut self.group_rects, &mut feedback.prev_group_rects);
         std::mem::swap(&mut self.content_areas, &mut feedback.prev_content_map);
         std::mem::swap(&mut self.focus_rects, &mut feedback.prev_focus_rects);
@@ -163,6 +172,7 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
         data.focus_rects.push((id, visible_rect));
     }
     if let Some(id) = node.interaction_id {
+        record_allocated_area(node, data, id);
         if id >= data.hit_areas.len() {
             data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }
@@ -199,13 +209,14 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     }
 }
 
-/// Push the `(content_extent, viewport_extent, is_horizontal)` tuple for a
-/// scrollable node, choosing the axis from its layout direction (#247).
-///
-/// A scrollable `Direction::Row` reports content width / viewport width; any
-/// other scrollable (the historic `Direction::Column`) reports content height
-/// / viewport height. Keeps the axis-selection logic in one place so both
-/// `collect_all` and `collect_all_inner` push identical tuples.
+fn record_allocated_area(node: &LayoutNode, data: &mut FrameData, id: usize) {
+    if id >= data.allocated_areas.len() {
+        data.allocated_areas.resize(id + 1, Rect::default());
+    }
+    data.allocated_areas[id] = Rect::new(node.pos.0, node.pos.1, node.size.0, node.size.1);
+}
+
+/// Record the content and viewport extent for the container's scroll axis.
 fn push_scroll_info(node: &LayoutNode, data: &mut FrameData) {
     if matches!(node.kind, NodeKind::Container(Direction::Row)) {
         let viewport_w = node.size.0.saturating_sub(node.frame_horizontal());
@@ -252,6 +263,7 @@ fn collect_all_inner(
     }
 
     if let Some(id) = node.interaction_id {
+        record_allocated_area(node, data, id);
         if id >= data.hit_areas.len() {
             data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
         }

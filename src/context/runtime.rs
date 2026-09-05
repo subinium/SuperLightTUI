@@ -35,15 +35,22 @@ impl Context {
         // `focus_name_map`. The fresh map is swapped back into
         // `focus_name_map_prev` at frame end.
         let focus_name_map_prev = std::mem::take(&mut focus.focus_name_map_prev);
+        let mut focus_name_map = std::mem::take(&mut focus.focus_name_map_buf);
+        focus_name_map.clear();
         let pending_focus_name = focus.pending_focus_name.take();
         let prev_focus_index = focus.prev_focus_index;
         let layout_feedback = &mut state.layout_feedback;
         let diagnostics = &mut state.diagnostics;
-        let consumed = vec![false; events.len()];
+        let mut consumed = std::mem::take(&mut state.consumed_buf);
+        consumed.clear();
+        consumed.resize(events.len(), false);
 
         // Single wall-clock sample for this frame, reused for double-click
         // timing below and for `frame_instant` (the timer/scheduler clock).
-        let frame_now = std::time::Instant::now();
+        let frame_now = diagnostics
+            .clock_override
+            .or(diagnostics.frame_started)
+            .unwrap_or_else(crate::clock::Instant::now);
         let mut mouse_pos = layout_feedback.last_mouse_pos;
         let mut click_pos = None;
         let mut right_click_pos = None;
@@ -51,6 +58,16 @@ impl Context {
         let mut scroll_pos = None;
         let mut scroll_delta_frame: i32 = 0;
         for event in &events {
+            if matches!(event, Event::FocusLost) {
+                mouse_pos = None;
+                click_pos = None;
+                right_click_pos = None;
+                double_click_pos = None;
+                scroll_pos = None;
+                scroll_delta_frame = 0;
+                layout_feedback.last_click_at = None;
+                layout_feedback.last_click_pos = None;
+            }
             if let Event::Mouse(mouse) = event {
                 mouse_pos = Some((mouse.x, mouse.y));
                 match mouse.kind {
@@ -134,6 +151,8 @@ impl Context {
         // `run_frame_kernel`.
         let mut commands = std::mem::take(&mut state.commands_buf);
         commands.clear();
+        let mut geometry_stack = std::mem::take(&mut state.geometry_stack_buf);
+        geometry_stack.clear();
 
         // Issue #204: reuse the six per-frame `Vec`/`HashSet` allocations
         // (`context_stack`, `deferred_draws`, `rollback.group_stack`,
@@ -169,6 +188,9 @@ impl Context {
 
         let mut ctx = Self {
             commands,
+            geometry_cursor: 0,
+            geometry_stack,
+            geometry_pending_interaction: None,
             events,
             consumed,
             should_quit: false,
@@ -186,7 +208,9 @@ impl Context {
             prev_modal_focus_count: focus.prev_modal_focus_count,
             prev_scroll_infos: std::mem::take(&mut layout_feedback.prev_scroll_infos),
             prev_scroll_rects: std::mem::take(&mut layout_feedback.prev_scroll_rects),
+            scroll_wheel_targets: None,
             prev_hit_map: std::mem::take(&mut layout_feedback.prev_hit_map),
+            prev_allocated_areas: std::mem::take(&mut layout_feedback.prev_allocated_areas),
             prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
             prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
             mouse_pos,
@@ -239,7 +263,7 @@ impl Context {
             widget_theme: WidgetTheme::new(),
             prev_focus_index,
             focus_name_map_prev,
-            focus_name_map: std::collections::HashMap::new(),
+            focus_name_map,
             pending_focus_name: still_pending,
             // Issue #248: sample a single wall-clock "now" for every timer
             // method called this frame. v0.21.1: reuse the `frame_now` sampled
@@ -494,6 +518,8 @@ impl Context {
     ///
     /// If the closure panics, the panic is caught and an error message is
     /// rendered in place of the children. The app continues running.
+    /// Recovery requires `panic = "unwind"`. Abort builds cannot catch a
+    /// panic; native session cleanup remains best-effort before termination.
     ///
     /// # Example
     ///
@@ -539,27 +565,11 @@ impl Context {
     ) {
         let snapshot = ContextCheckpoint::capture(self);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            f(self);
-        }));
+        let result = crate::catch_recoverable_unwind(|| f(self));
 
         match result {
             Ok(()) => {}
             Err(panic_info) => {
-                if self.is_real_terminal {
-                    #[cfg(feature = "crossterm")]
-                    {
-                        let _ = crossterm::terminal::enable_raw_mode();
-                        let _ = crossterm::execute!(
-                            std::io::stdout(),
-                            crossterm::terminal::EnterAlternateScreen
-                        );
-                    }
-
-                    #[cfg(not(feature = "crossterm"))]
-                    {}
-                }
-
                 snapshot.restore(self);
 
                 let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -668,6 +678,10 @@ impl Context {
         id
     }
 
+    pub(crate) fn interaction_allowed(&self) -> bool {
+        !(self.rollback.modal_active || self.prev_modal_active) || self.rollback.overlay_depth > 0
+    }
+
     /// Allocate a click/hover interaction slot and return the [`Response`].
     ///
     /// Use this in custom widgets to detect mouse clicks and hovers without
@@ -676,9 +690,7 @@ impl Context {
     /// Each call reserves one slot in the hit-test map, so the call order
     /// must be stable across frames.
     pub fn interaction(&mut self) -> Response {
-        if (self.rollback.modal_active || self.prev_modal_active)
-            && self.rollback.overlay_depth == 0
-        {
+        if !self.interaction_allowed() {
             return Response::none();
         }
         let id = self.next_interaction_id();
@@ -776,7 +788,7 @@ impl Context {
             .iter()
             .enumerate()
             .filter_map(move |(i, event)| {
-                if self.consumed[i] {
+                if !self.interaction_allowed() || self.consumed[i] {
                     return None;
                 }
 
