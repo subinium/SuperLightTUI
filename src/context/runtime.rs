@@ -206,11 +206,14 @@ impl Context {
             prev_focus_count: focus.prev_focus_count,
             prev_modal_focus_start: focus.prev_modal_focus_start,
             prev_modal_focus_count: focus.prev_modal_focus_count,
+            prev_modal_id: focus.prev_modal_id,
             prev_scroll_infos: std::mem::take(&mut layout_feedback.prev_scroll_infos),
             prev_scroll_rects: std::mem::take(&mut layout_feedback.prev_scroll_rects),
             scroll_wheel_targets: None,
             prev_hit_map: std::mem::take(&mut layout_feedback.prev_hit_map),
             prev_allocated_areas: std::mem::take(&mut layout_feedback.prev_allocated_areas),
+            prev_geometry: std::mem::take(&mut layout_feedback.geometry),
+            pending_scroll: std::mem::take(&mut focus.scroll.pending),
             prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
             prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
             mouse_pos,
@@ -232,6 +235,24 @@ impl Context {
             capabilities: crate::terminal::Capabilities::default(),
             deferred_draws,
             rollback: ContextRollbackState {
+                focus_origin: Some(if focus.prev_focus_count > 0 {
+                    focus_index % focus.prev_focus_count
+                } else {
+                    focus_index
+                }),
+                focus_history_origin: prev_focus_index,
+                focus_generation: 0,
+                focus_count_origin: focus.prev_focus_count,
+                screen_focus_guard: None,
+                new_focus_slot: false,
+                focus_interaction_origin: None,
+                focused_widget_id: None,
+                current_modal_id: None,
+                modal_id: None,
+                modal_count: 0,
+                modal_request_local: None,
+                modal_focus_rebase: None,
+                modal_restore_index: focus.modal_restore_index,
                 last_text_idx: None,
                 focus_count: 0,
                 last_focusable_id: None,
@@ -252,6 +273,8 @@ impl Context {
             pending_tooltips,
             pending_screen_nav: Vec::new(),
             screen_nav_depth: 0,
+            screen_focus_ranges: std::mem::take(&mut focus.screen_ranges),
+            screen_focus_scopes: std::mem::take(&mut focus.screen_scopes_buf),
             screen_nav_render_origins: std::collections::HashMap::new(),
             hovered_groups,
             region_versions_prev,
@@ -327,6 +350,8 @@ impl Context {
     /// # });
     /// ```
     pub fn set_focus_index(&mut self, index: usize) {
+        self.rollback.focus_origin = None;
+        self.rollback.focus_generation = self.rollback.focus_generation.wrapping_add(1);
         self.focus_index = index;
     }
 
@@ -340,7 +365,7 @@ impl Context {
     /// still-incrementing counter for the current frame).
     #[allow(clippy::misnamed_getters)]
     pub fn focus_count(&self) -> usize {
-        self.prev_focus_count
+        self.rollback.focus_count_origin
     }
 
     /// Advance keyboard focus one step, honoring an active modal's focus trap.
@@ -348,6 +373,8 @@ impl Context {
     /// [`focus_next`](Self::focus_next) / [`focus_prev`](Self::focus_prev) and
     /// the `Tab`/`Shift+Tab` handler in `process_focus_keys` (v0.21.1).
     pub(crate) fn advance_focus(&mut self, forward: bool) {
+        self.rollback.focus_origin = None;
+        self.rollback.focus_generation = self.rollback.focus_generation.wrapping_add(1);
         if self.prev_modal_active && self.prev_modal_focus_count > 0 {
             let mut modal_local = self.focus_index.saturating_sub(self.prev_modal_focus_start);
             modal_local %= self.prev_modal_focus_count;
@@ -447,6 +474,8 @@ impl Context {
             None => 0,
         };
         self.focus_index = members[new_pos];
+        self.rollback.focus_origin = None;
+        self.rollback.focus_generation = self.rollback.focus_generation.wrapping_add(1);
     }
 
     /// Read-only snapshot of the terminal's negotiated capabilities
@@ -502,8 +531,53 @@ impl Context {
                 }
             }
         }
+        // Widget consumption keeps priority, but the surviving Tab events
+        // traverse this completed declaration's slots, not a previous screen.
+        let previous = (
+            self.prev_focus_count,
+            self.prev_modal_active,
+            self.prev_modal_focus_start,
+            self.prev_modal_focus_count,
+        );
+        self.prev_focus_count = self.rollback.focus_count;
+        self.prev_modal_active = self.rollback.modal_active;
+        self.prev_modal_focus_start = self.rollback.modal_focus_start;
+        self.prev_modal_focus_count = self.rollback.modal_focus_count;
         for forward in actions {
             self.advance_focus(forward);
+        }
+        (
+            self.prev_focus_count,
+            self.prev_modal_active,
+            self.prev_modal_focus_start,
+            self.prev_modal_focus_count,
+        ) = previous;
+    }
+
+    pub(crate) fn finish_screen_focus(&mut self) {
+        self.screen_focus_ranges.clear();
+        let focused = if self.rollback.focus_count > 0 {
+            self.focus_index % self.rollback.focus_count
+        } else {
+            self.focus_index
+        };
+        for scope in &self.screen_focus_scopes {
+            self.screen_focus_ranges
+                .insert(scope.id, scope.range.clone());
+            let mut mailbox = scope
+                .updates
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if mailbox.leases.get(scope.range.name.as_ref()) == Some(&scope.generation) {
+                if focused >= scope.range.start && focused - scope.range.start < scope.range.count {
+                    mailbox.update = Some(crate::widgets::ScreenFocusUpdate {
+                        name: std::sync::Arc::clone(&scope.range.name),
+                        index: focused - scope.range.start,
+                        count: scope.range.count,
+                    });
+                }
+                mailbox.leases.remove(scope.range.name.as_ref());
+            }
         }
     }
 
@@ -679,7 +753,15 @@ impl Context {
     }
 
     pub(crate) fn interaction_allowed(&self) -> bool {
-        !(self.rollback.modal_active || self.prev_modal_active) || self.rollback.overlay_depth > 0
+        if (self.rollback.modal_active || self.prev_modal_active)
+            && self.rollback.overlay_depth == 0
+        {
+            return false;
+        }
+        !(self.prev_modal_active
+            && self.prev_modal_id.is_some()
+            && self.rollback.current_modal_id.is_some()
+            && self.rollback.current_modal_id != self.prev_modal_id)
     }
 
     /// Allocate a click/hover interaction slot and return the [`Response`].
@@ -860,9 +942,7 @@ impl Context {
     /// instead of allocating a fresh one. That keeps the name binding
     /// pointed at the widget the user sees rather than at a dummy slot.
     pub fn register_focusable(&mut self) -> bool {
-        if (self.rollback.modal_active || self.prev_modal_active)
-            && self.rollback.overlay_depth == 0
-        {
+        if !self.interaction_allowed() {
             self.rollback.last_focusable_id = None;
             // Drop any pending reservation: the suppressed widget never
             // attached, so reusing the reserved id from a later widget in
@@ -890,21 +970,7 @@ impl Context {
         if freshly_allocated {
             self.commands.push(Command::FocusMarker(id));
         }
-        if self.prev_modal_active
-            && self.prev_modal_focus_count > 0
-            && self.rollback.modal_active
-            && self.rollback.overlay_depth > 0
-        {
-            let mut modal_local_id = id.saturating_sub(self.rollback.modal_focus_start);
-            modal_local_id %= self.prev_modal_focus_count;
-            let mut modal_focus_idx = self.focus_index.saturating_sub(self.prev_modal_focus_start);
-            modal_focus_idx %= self.prev_modal_focus_count;
-            return modal_local_id == modal_focus_idx;
-        }
-        if self.prev_focus_count == 0 {
-            return true;
-        }
-        self.focus_index % self.prev_focus_count == id
+        self.focus_slot_is_current(id)
     }
 
     /// Create persistent state that survives across frames.
@@ -2019,9 +2085,7 @@ impl Context {
         // inside it, focusables outside the modal must be invisible to
         // tab/click cycling. Drop the registration entirely (no slot
         // allocation, no name binding, no reservation leak).
-        if (self.rollback.modal_active || self.prev_modal_active)
-            && self.rollback.overlay_depth == 0
-        {
+        if !self.interaction_allowed() {
             self.rollback.pending_focusable_id = None;
             return false;
         }
@@ -2044,21 +2108,47 @@ impl Context {
         // its name in `focus_name_map`, just without a widget attached).
         self.rollback.pending_focusable_id = Some(id);
         // Same focus-index prediction as `register_focusable`.
-        if self.prev_modal_active
+        self.focus_slot_is_current(id)
+    }
+
+    fn focus_slot_is_current(&mut self, id: usize) -> bool {
+        if self
+            .rollback
+            .focus_interaction_origin
+            .is_none_or(|(slot, _)| slot != id)
+        {
+            self.rollback.focus_interaction_origin = Some((id, self.rollback.interaction_count));
+        }
+        self.rollback.new_focus_slot = self
+            .rollback
+            .screen_focus_guard
+            .is_some_and(|guard| id >= guard.start && id - guard.start >= guard.previous_count);
+        if self
+            .rollback
+            .screen_focus_guard
+            .is_some_and(|guard| guard.blocked_generation == Some(self.rollback.focus_generation))
+        {
+            return false;
+        }
+        let target = if self.prev_modal_active
             && self.prev_modal_focus_count > 0
             && self.rollback.modal_active
             && self.rollback.overlay_depth > 0
         {
-            let mut modal_local_id = id.saturating_sub(self.rollback.modal_focus_start);
-            modal_local_id %= self.prev_modal_focus_count;
-            let mut modal_focus_idx = self.focus_index.saturating_sub(self.prev_modal_focus_start);
-            modal_focus_idx %= self.prev_modal_focus_count;
-            return modal_local_id == modal_focus_idx;
+            self.rollback.modal_focus_start.saturating_add(
+                self.focus_index.saturating_sub(self.prev_modal_focus_start)
+                    % self.prev_modal_focus_count,
+            )
+        } else if self.prev_focus_count > 0 {
+            self.focus_index % self.prev_focus_count
+        } else {
+            self.focus_index
+        };
+        let focused = target == id;
+        if focused {
+            self.rollback.focused_widget_id = Some(id);
         }
-        if self.prev_focus_count == 0 {
-            return true;
-        }
-        self.focus_index % self.prev_focus_count == id
+        focused
     }
 
     /// Request focus on the named widget.

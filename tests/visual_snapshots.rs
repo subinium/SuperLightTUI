@@ -107,7 +107,11 @@ fn cjk_wrapped_body_and_form_survive_height_growth() {
     tb.assert_contains("测试中文换行与右边界裁剪。");
     tb.assert_contains("折り返しと右端の境界を確認します。");
     tb.assert_contains("이름을 입력하세요");
-    tb.assert_contains("▎태그");
+    // Only the first input owns initial focus; the tag field stays visible
+    // without gaining a second caret on the first layout frame.
+    tb.assert_contains("▎이름을 입력하세요");
+    tb.assert_contains("태그");
+    tb.assert_not_contains("▎태그");
     tb.assert_contains("Truncation table");
 }
 

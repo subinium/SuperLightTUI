@@ -282,6 +282,8 @@ fn flex_wrap_measures_wrapped_descendants_per_line() {
 fn nonzero_origin_partial_wide_clip_preserves_link_and_style() {
     let mut tb = TestBackend::new(10, 3);
     let mut scroll = ScrollState::new();
+    // This tests manual partial clipping, not automatic reveal of the link.
+    scroll.follow_focus = false;
     scroll.offset_x = 1;
     tb.render(|ui| {
         let _ = ui.scrollable(&mut scroll).ml(3).w(3).h(2).row(|ui| {

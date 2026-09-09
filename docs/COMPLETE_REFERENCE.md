@@ -1,6 +1,6 @@
 # SuperLightTUI — Complete Reference (LLM-optimized)
 
-> Version: 0.24.0. This document condenses the full SLT API and common patterns into one file. Source signatures and compile-tested examples remain authoritative when this guide and rustdoc disagree.
+> Version: 0.25.0. This document condenses the full SLT API and common patterns into one file. Source signatures and compile-tested examples remain authoritative when this guide and rustdoc disagree.
 
 ### Example classification
 
@@ -299,6 +299,9 @@ Legend: `Response = { clicked, hovered, changed, focused, rect }`. `&mut Self` m
 | `ui.push_screen(name)` / `ui.pop_screen()` / `ui.reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. State updates when the closure returns; the destination renders next frame (issue #279). |
 | `ui.form(&mut form_state, |ui|{...})` | `&mut Self` | Form container. |
 | `ui.form_field(&mut field)` | `&mut Self` | One field (label + input + error). |
+| `ui.form_field_response(&mut field)` | `FormFieldResponse` | Field/input responses and optional full previous-frame `layout_rect`. |
+| `ui.focused_layout_rect()` | `Option<Rect>` | Full focused-widget border box before scrolling/clipping. |
+| `ui.measured_layout_rect(name)` | `Option<Rect>` | Full previous-frame named-group layout, including hidden groups. |
 | `ui.form_submit(label)` | `Response` | Submit button. |
 
 ### 5.5 `ContainerBuilder` — full method list
@@ -560,7 +563,36 @@ slt::run(|ui| {
 
 ### 6.7 Form with validation
 
-`FormValidator` is `type FormValidator = fn(&str) -> Result<(), String>`. Pass a fixed-size slice of function pointers.
+Prefer field-local validators and `validate_all`. The positional
+`FormValidator` slice shown in the legacy example below remains a compatibility
+path. For scrollable forms, the following recipe also exposes field feedback:
+
+<!-- slt-check: {"name":"focus_scrolling_form","features":["crossterm"],"context":"module"} -->
+```rust
+fn scrollable_form() -> std::io::Result<()> {
+    let mut form = slt::FormState::new()
+        .field(slt::FormField::new("Email").validate(|value| {
+            if value.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
+        }))
+        .field(slt::FormField::new("Password"));
+    let mut scroll = slt::ScrollState::new();
+    let mut focused_label = String::new();
+    slt::run(|ui| {
+        let _ = ui.scrollable(&mut scroll).h(6).col(|ui| {
+            for field in &mut form.fields {
+                let response = ui.form_field_response(field);
+                if response.gained_focus { focused_label.clone_from(&field.label); }
+            }
+        });
+        ui.text(format!("Editing: {focused_label}"));
+        if ui.form_submit("Submit").clicked && form.validate_all() { ui.quit(); }
+        if ui.raw_key_code(slt::KeyCode::Esc) { ui.quit(); }
+    })
+}
+```
+
+Full layout queries (`focused_layout_rect`, `measured_layout_rect`) are separate
+from clipped `Response.rect`; see `PREVIOUS_FRAME_GUIDE.md` for timing and coordinates.
 
 ```rust
 let mut form = FormState::new()
@@ -1134,7 +1166,7 @@ WidgetColors, WidgetTheme, WidthSpec
 AlertLevel, ApprovalAction, ButtonVariant, CalendarState, ChordState,
 ColorPickerState, CommandPaletteState, ContextItem, DirectoryTreeState,
 FileEntry, FilePickerScanError,
-FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField,
+FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse,
 FormState, GridColumn, ListState, ModeState, MultiSelectState, PaletteCommand,
 NumberInputState, PaginatorState, PaginatorStyle, PickerMode, RadioState,
 RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
@@ -1421,9 +1453,18 @@ description: String
 offset: usize              // current vertical offset
 offset_x: usize            // current horizontal offset
 dragging: bool             // scrollbar drag state
+follow_focus: bool         // reveal focus/caret/layout changes; true by default
 // dimensions and highlights are private — read via getters
 ```
 `.can_scroll_up()`, `.can_scroll_down()`, `.content_height()`, `.viewport_height()`, `.progress_ratio()`.
+`.max_offset()` and `.max_offset_x()` include leading clipping; use these instead
+of assuming the maximum always equals content extent minus visible extent.
+
+Use one state per scrollable container; a clone has independent binding identity.
+Automatic corrections render against current geometry and synchronize offsets
+on the next binding, unless application code changed the offset in between.
+`follow_focus = false` keeps position application-controlled. Full geometry is
+in root/overlay logical coordinates, not local scroll-content coordinates.
 
 ### NumberInputState
 ```text

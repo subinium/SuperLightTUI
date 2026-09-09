@@ -235,14 +235,14 @@ pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
     DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerScanError,
-    FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormState,
-    GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState, ModeState,
-    MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand, PickerMode,
-    RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState, SelectState,
-    SliderOpts, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState, StaticOutput,
-    StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState, TextInputState,
-    TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
-    Trend, ValidateTrigger, Validator,
+    FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse,
+    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState,
+    ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand,
+    PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
+    SelectState, SliderOpts, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState,
+    StaticOutput, StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState,
+    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
+    TreeNode, TreeState, Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.
@@ -348,6 +348,14 @@ impl AppState {
     /// Returns the current frame tick count (increments each frame).
     pub fn tick(&self) -> u64 {
         self.inner.diagnostics.tick
+    }
+
+    /// Whether input after a focus-navigation boundary awaits the next frame.
+    ///
+    /// Custom loops should schedule another frame before blocking for new
+    /// events. Built-in native and browser loops do this automatically.
+    pub fn has_pending_input(&self) -> bool {
+        !self.inner.pending_input.is_empty()
     }
 
     /// Returns the smoothed FPS estimate (exponential moving average).
@@ -1003,11 +1011,16 @@ impl RunConfig {
 
 #[derive(Default)]
 pub(crate) struct FocusState {
+    pub scroll: layout::FocusScrollState,
+    pub screen_ranges: std::collections::HashMap<u64, context::ScreenFocusRange>,
+    pub screen_scopes_buf: Vec<context::ScreenFocusScope>,
     pub focus_index: usize,
     pub prev_focus_count: usize,
     pub prev_modal_active: bool,
     pub prev_modal_focus_start: usize,
     pub prev_modal_focus_count: usize,
+    pub prev_modal_id: Option<usize>,
+    pub modal_restore_index: Option<usize>,
     /// Issue #208: focus index at the end of the previous frame. `None` on
     /// the first frame so widgets do not falsely report `gained_focus`.
     pub prev_focus_index: Option<usize>,
@@ -1028,6 +1041,7 @@ pub(crate) const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration:
 
 #[derive(Default)]
 pub(crate) struct LayoutFeedbackState {
+    pub geometry: layout::GeometryFeedback,
     pub size: Option<(u32, u32)>,
     #[cfg(feature = "crossterm")]
     pub origin_row: Option<u32>,
@@ -1135,6 +1149,7 @@ pub(crate) type FrameDeferredDrawSlot =
 pub(crate) struct FrameState {
     pub consumed_buf: Vec<bool>,
     pub events_buf: Vec<Event>,
+    pub pending_input: std::collections::VecDeque<Event>,
     pub geometry_stack_buf: Vec<(usize, Option<usize>)>,
     pub hook_states: Vec<Box<dyn std::any::Any>>,
     pub named_states: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
@@ -1408,13 +1423,14 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
+        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
         if !poll_events(
             &mut events,
             &mut state,
-            config.tick_rate,
+            true,
+            input_wait,
             &mut || term.handle_resize(),
-            config.handle_ctrl_c,
-            config.handle_suspend,
+            &config,
             &mut on_suspend,
         )? {
             break;
@@ -1813,6 +1829,7 @@ fn run_async_loop_inner<M: Send + 'static>(
     state
         .async_tasks
         .set_waker(std::sync::Arc::clone(&wake.notify));
+    let mut input_disconnected = false;
 
     'app: loop {
         if cancel.load(std::sync::atomic::Ordering::Acquire) {
@@ -1826,9 +1843,13 @@ fn run_async_loop_inner<M: Send + 'static>(
         let (w, h) = term.size();
         if w > 0 && h > 0 {
             messages.clear();
-            let input_disconnected =
+            input_disconnected |=
                 drain_async_messages(&mut rx, &mut messages, config.async_message_budget);
-            if input_disconnected && messages.is_empty() {
+            if input_disconnected
+                && messages.is_empty()
+                && events.is_empty()
+                && state.pending_input.is_empty()
+            {
                 break;
             }
             let mut render = |ctx: &mut Context| {
@@ -1848,7 +1869,7 @@ fn run_async_loop_inner<M: Send + 'static>(
             // and drop any pending static_log lines.
             discard_static_log(&mut state, "run_async()");
             events = std::mem::take(&mut state.events_buf);
-            if input_disconnected {
+            if input_disconnected && state.pending_input.is_empty() {
                 break;
             }
         } else if rx.is_closed() && rx.is_empty() {
@@ -1868,6 +1889,10 @@ fn run_async_loop_inner<M: Send + 'static>(
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
                 break 'app;
             }
+            // A normal channel close drains only already-received UI input.
+            // Keep polling terminal controls, but do not extend the drain with
+            // fresh typing after the sender has disconnected.
+            input_disconnected |= rx.is_closed() && rx.is_empty();
             notified |= wake.generation() != observed_wake
                 || runtime.block_on(async {
                     tokio::time::timeout(Duration::ZERO, wake.notify.notified())
@@ -1876,7 +1901,7 @@ fn run_async_loop_inner<M: Send + 'static>(
                 });
             let pending = async_work_pending(
                 term.size(),
-                !events.is_empty(),
+                !events.is_empty() || !state.pending_input.is_empty(),
                 notified || !rx.is_empty() || rx.is_closed(),
             );
             let remaining = async_wait_remaining(
@@ -1895,17 +1920,17 @@ fn run_async_loop_inner<M: Send + 'static>(
             if !poll_events(
                 &mut events,
                 &mut state,
+                !input_disconnected,
                 wait,
                 &mut || term.handle_resize(),
-                config.handle_ctrl_c,
-                config.handle_suspend,
+                &config,
                 &mut on_suspend,
             )? {
                 break 'app;
             }
             let pending = async_work_pending(
                 term.size(),
-                !events.is_empty(),
+                !events.is_empty() || !state.pending_input.is_empty(),
                 notified || !rx.is_empty() || rx.is_closed(),
             );
             if async_wait_remaining(
@@ -1949,6 +1974,22 @@ fn async_wait_remaining(
 #[cfg(feature = "crossterm")]
 fn localize_inline_events(term: &InlineTerminal, state: &mut FrameState, events: &mut Vec<Event>) {
     let origin = term.origin_row();
+    if let Some(previous) = state.layout_feedback.origin_row {
+        state.pending_input.retain_mut(|event| match event {
+            Event::Mouse(mouse) => match mouse.y.checked_add(previous).and_then(|y| {
+                let mut physical = mouse.clone();
+                physical.y = y;
+                term.localize_mouse(physical)
+            }) {
+                Some(local) => {
+                    *mouse = local;
+                    true
+                }
+                None => false,
+            },
+            _ => true,
+        });
+    }
     if let Some(previous) = state.layout_feedback.origin_row
         && previous != origin
     {
@@ -2084,13 +2125,14 @@ fn run_inline_with_inner(
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
+        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
         if !poll_events(
             &mut events,
             &mut state,
-            config.tick_rate,
+            true,
+            input_wait,
             &mut || term.handle_resize(),
-            config.handle_ctrl_c,
-            config.handle_suspend,
+            &config,
             &mut on_suspend,
         )? {
             break;
@@ -2205,13 +2247,14 @@ fn run_static_with_inner(
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
+        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
         if !poll_events(
             &mut events,
             &mut state,
-            config.tick_rate,
+            true,
+            input_wait,
             &mut || term.handle_resize(),
-            config.handle_ctrl_c,
-            config.handle_suspend,
+            &config,
             &mut on_suspend,
         )? {
             break;
@@ -2377,6 +2420,15 @@ fn resize_invocations_for_batch(events: &[Event]) -> usize {
     usize::from(events.iter().any(|e| matches!(e, Event::Resize(_, _))))
 }
 
+#[cfg(feature = "crossterm")]
+fn input_poll_wait(state: &FrameState, size: (u32, u32), idle: Duration) -> Duration {
+    if size.0 > 0 && size.1 > 0 && !state.pending_input.is_empty() {
+        Duration::ZERO
+    } else {
+        idle
+    }
+}
+
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
 ///
@@ -2396,10 +2448,10 @@ fn resize_invocations_for_batch(events: &[Event]) -> usize {
 fn poll_events(
     events: &mut Vec<Event>,
     state: &mut FrameState,
+    accept_input: bool,
     tick_rate: Duration,
     on_resize: &mut impl FnMut() -> io::Result<()>,
-    handle_ctrl_c: bool,
-    handle_suspend: bool,
+    config: &RunConfig,
     on_suspend: &mut impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
     let mut has_resize = false;
@@ -2413,10 +2465,10 @@ fn poll_events(
         let raw = event::read()?;
         let mut raw_events = 1;
         if let Some(ev) = event::from_crossterm(raw) {
-            if handle_ctrl_c && is_ctrl_c(&ev) {
+            if config.handle_ctrl_c && is_ctrl_c(&ev) {
                 return Ok(false);
             }
-            if handle_suspend && is_ctrl_z(&ev) {
+            if config.handle_suspend && is_ctrl_z(&ev) {
                 on_suspend()?;
                 return Ok(true);
             }
@@ -2424,7 +2476,9 @@ fn poll_events(
             // single `on_resize` call is deferred to end-of-batch so a burst
             // collapses into one geometry sync.
             process_ev(&ev, &mut has_resize);
-            events.push(ev);
+            if accept_input {
+                events.push(ev);
+            }
         }
 
         // Unmapped native events (for example media keys) also consume the
@@ -2433,15 +2487,17 @@ fn poll_events(
             let raw = event::read()?;
             raw_events += 1;
             if let Some(ev) = event::from_crossterm(raw) {
-                if handle_ctrl_c && is_ctrl_c(&ev) {
+                if config.handle_ctrl_c && is_ctrl_c(&ev) {
                     return Ok(false);
                 }
-                if handle_suspend && is_ctrl_z(&ev) {
+                if config.handle_suspend && is_ctrl_z(&ev) {
                     on_suspend()?;
                     return Ok(true);
                 }
                 process_ev(&ev, &mut has_resize);
-                events.push(ev);
+                if accept_input {
+                    events.push(ev);
+                }
             }
         }
     }
@@ -2449,11 +2505,13 @@ fn poll_events(
     // Coalesced resize: fire `on_resize` exactly once for the whole batch,
     // after every event has been read, so it picks up the final terminal size.
     // `has_resize` is the per-batch "saw a resize" flag set by `process_ev`.
-    debug_assert_eq!(
-        usize::from(has_resize),
-        resize_invocations_for_batch(&events[batch_start..]),
-        "has_resize must agree with the coalescing helper"
-    );
+    if accept_input {
+        debug_assert_eq!(
+            usize::from(has_resize),
+            resize_invocations_for_batch(&events[batch_start..]),
+            "has_resize must agree with the coalescing helper"
+        );
+    }
     if has_resize {
         on_resize()?;
     }
@@ -2473,6 +2531,40 @@ struct FrameKernelResult {
     should_copy_selection: bool,
 }
 
+fn input_frame(state: &mut FrameState, mut events: Vec<Event>) -> Vec<Event> {
+    fn navigation(event: &Event) -> bool {
+        matches!(event, Event::Key(key) if key.kind == event::KeyEventKind::Press
+            && matches!(key.code, event::KeyCode::Tab | event::KeyCode::BackTab))
+    }
+    if !state.pending_input.is_empty() {
+        state.pending_input.extend(events.drain(..));
+        let mut navigated = false;
+        while let Some(event) = state.pending_input.front() {
+            let is_navigation = navigation(event);
+            if navigated && !is_navigation {
+                break;
+            }
+            navigated |= is_navigation;
+            if let Some(event) = state.pending_input.pop_front() {
+                events.push(event);
+            }
+        }
+        return events;
+    }
+    if let Some(first) = events.iter().position(navigation) {
+        let end = first
+            + events[first..]
+                .iter()
+                .take_while(|event| navigation(event))
+                .count();
+        // Keep consecutive navigation keys together, but do not let a later
+        // character/activation edit the widget that is about to lose focus.
+        // Moving events preserves large paste payloads without cloning them.
+        state.pending_input.extend(events.drain(end..));
+    }
+    events
+}
+
 pub(crate) fn run_frame_kernel(
     buffer: &mut Buffer,
     state: &mut FrameState,
@@ -2482,6 +2574,7 @@ pub(crate) fn run_frame_kernel(
     is_real_terminal: bool,
     f: &mut impl FnMut(&mut context::Context),
 ) -> FrameKernelResult {
+    let events = input_frame(state, events);
     let frame_start = Instant::now();
     let now = state.diagnostics.clock_override.unwrap_or(frame_start);
     if let Some(previous) = state.diagnostics.frame_started {
@@ -2541,7 +2634,16 @@ pub(crate) fn run_frame_kernel(
     ctx.widget_theme = config.widget_theme;
 
     f(&mut ctx);
+    if ctx.prev_modal_active && !ctx.rollback.modal_active {
+        ctx.focus_index = ctx.rollback.modal_restore_index.take().unwrap_or(0);
+    } else if ctx.rollback.modal_active
+        && let Some((requested, resolved)) = ctx.rollback.modal_focus_rebase
+        && ctx.focus_index == requested
+    {
+        ctx.focus_index = resolved;
+    }
     ctx.process_focus_keys();
+    ctx.finish_screen_focus();
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
@@ -2567,6 +2669,7 @@ pub(crate) fn run_frame_kernel(
     );
 
     if ctx.should_quit {
+        state.pending_input.clear();
         reclaim_feedback(&mut ctx, state);
         reclaim_event_scratch(&mut ctx, state);
         state.hook_states = ctx.hook_states;
@@ -2600,7 +2703,7 @@ pub(crate) fn run_frame_kernel(
         // Issue #208 / #217: persist focus tracking state on quit so a later
         // resumed run starts in a sensible place. (Real TUI exits before
         // resuming, but tests reuse `FrameState` across calls.)
-        state.focus.prev_focus_index = Some(ctx.focus_index);
+        state.focus.prev_focus_index = ctx.rollback.focused_widget_id;
         state.focus.focus_name_map_prev = ctx.focus_name_map;
         state.focus.pending_focus_name = ctx.pending_focus_name;
         // Issue #204: reclaim the 6 alloc-reuse buffers on the quit path
@@ -2644,6 +2747,8 @@ pub(crate) fn run_frame_kernel(
     state.focus.prev_modal_active = ctx.rollback.modal_active;
     state.focus.prev_modal_focus_start = ctx.rollback.modal_focus_start;
     state.focus.prev_modal_focus_count = ctx.rollback.modal_focus_count;
+    state.focus.prev_modal_id = ctx.rollback.modal_id;
+    state.focus.modal_restore_index = ctx.rollback.modal_restore_index;
     #[cfg(feature = "crossterm")]
     let clipboard_text = ctx.clipboard_text.take();
     #[cfg(not(feature = "crossterm"))]
@@ -2700,6 +2805,16 @@ pub(crate) fn run_frame_kernel(
     let mut fd = std::mem::take(&mut state.frame_data);
     fd.swap_feedback(&mut state.layout_feedback);
     layout::collect_all(&tree, &mut fd);
+    if state
+        .focus
+        .scroll
+        .prepare(ctx.rollback.focused_widget_id, &fd.geometry)
+    {
+        layout::apply_scroll_adjustments(&mut tree, &state.focus.scroll.pending);
+        // Recollect only when a focus transition or fresh bounds moved a
+        // viewport, so rendering and mouse feedback share the adjusted tree.
+        layout::collect_all(&tree, &mut fd);
+    }
     debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
@@ -2708,6 +2823,15 @@ pub(crate) fn run_frame_kernel(
     fd.swap_feedback(&mut state.layout_feedback);
     let mut raw_rects = std::mem::take(&mut fd.raw_draw_rects);
     layout::render(&tree, buffer);
+    if ctx
+        .rollback
+        .focused_widget_id
+        .is_some_and(|rendered| rendered != ctx.focus_index % ctx.rollback.focus_count.max(1))
+    {
+        // A late focus request has not rendered its privacy policy yet. Do not
+        // let an IME backend preview new input at the previous plain caret.
+        buffer.cursor_pos = None;
+    }
     let mut deferred_draw_panic = None;
     for rdr in raw_rects.drain(..) {
         if rdr.rect.width == 0 || rdr.rect.height == 0 {
@@ -2778,7 +2902,7 @@ pub(crate) fn run_frame_kernel(
     state.diagnostics.inspector_mode = ctx.inspector_mode;
     // Issue #208: remember the focus index that finished this frame so the
     // next frame can compute `Response::gained_focus` / `lost_focus`.
-    state.focus.prev_focus_index = Some(ctx.focus_index);
+    state.focus.prev_focus_index = ctx.rollback.focused_widget_id;
     // Issue #217: swap the freshly-built focus name map into the previous
     // slot for next-frame resolution; carry forward any unresolved pending
     // name (deferred until the named widget exists).
@@ -2870,6 +2994,8 @@ pub(crate) fn run_frame_kernel(
 }
 
 fn reclaim_feedback(ctx: &mut Context, state: &mut FrameState) {
+    state.layout_feedback.geometry = std::mem::take(&mut ctx.prev_geometry);
+    state.focus.scroll.pending = std::mem::take(&mut ctx.pending_scroll);
     state.layout_feedback.prev_scroll_infos = std::mem::take(&mut ctx.prev_scroll_infos);
     state.layout_feedback.prev_scroll_rects = std::mem::take(&mut ctx.prev_scroll_rects);
     state.layout_feedback.prev_hit_map = std::mem::take(&mut ctx.prev_hit_map);
@@ -2879,6 +3005,9 @@ fn reclaim_feedback(ctx: &mut Context, state: &mut FrameState) {
 }
 
 fn reclaim_event_scratch(ctx: &mut Context, state: &mut FrameState) {
+    state.focus.screen_ranges = std::mem::take(&mut ctx.screen_focus_ranges);
+    ctx.screen_focus_scopes.clear();
+    state.focus.screen_scopes_buf = std::mem::take(&mut ctx.screen_focus_scopes);
     ctx.events.clear();
     ctx.consumed.clear();
     state.events_buf = std::mem::take(&mut ctx.events);
@@ -2947,6 +3076,8 @@ fn run_frame(
 }
 
 fn clear_frame_layout_cache(state: &mut FrameState) {
+    state.layout_feedback.geometry.clear();
+    state.focus.scroll.invalidate();
     state.layout_feedback.prev_hit_map.clear();
     state.layout_feedback.prev_allocated_areas.clear();
     state.layout_feedback.prev_group_rects.clear();

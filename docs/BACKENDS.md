@@ -110,6 +110,18 @@ returns `None`. Windows does not perform raw console probes. Cached values,
 environment policy and ioctl metrics remain available. No background stdin
 reader survives a successful, partial or silent query deadline.
 
+### Focus-navigation input boundaries
+
+When a batch contains Tab/Shift+Tab, later non-navigation input is retained for
+the next frame. This prevents following text or Enter from reaching the widget
+that is about to lose focus. Built-in loops handle the queue; custom loops should
+check `AppState::has_pending_input()` and schedule the next frame before blocking
+for new events. Each `frame`/`frame_owned` call still invokes the UI closure once.
+Native loops continue polling termination controls while input is queued. The
+async loop retains its FPS wait; a normal message-channel close drains input
+already received, without accepting more typing. Explicit cancellation and
+`ui.quit()` still stop immediately.
+
 ### Unix input ownership (v0.24)
 
 Built-in Unix loops own a separately opened, nonblocking terminal descriptor;

@@ -123,7 +123,9 @@ impl Context {
                         suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
-                    KeyCode::Tab if suggestions_visible => {
+                    KeyCode::Tab
+                        if suggestions_visible && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
                         if let Some(selected) = matched_suggestions
                             .get(state.suggestion_index)
                             .or_else(|| matched_suggestions.first())

@@ -72,6 +72,8 @@ pub(crate) struct BeginScrollableArgs {
     pub scroll_offset: u32,
     /// Horizontal scroll offset in columns (used when `direction == Row`, #247).
     pub scroll_offset_x: u32,
+    pub scroll_follow_focus: Option<bool>,
+    pub scroll_state_id: u64,
     /// Group name for hover/focus registration. Fixes #141.
     pub group_name: Option<std::sync::Arc<str>>,
 }

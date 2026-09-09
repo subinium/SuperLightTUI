@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-09
+
+### Added
+
+- Focus-following scroll containers (#435), including nested axes, clipped
+  parents, modal forms, resize and variable field heights. Tiny viewports prefer
+  the caret. `ScrollState::follow_focus` opts out without changing the run API.
+- `FormFieldResponse` / `Context::form_field_response`, plus full previous-frame
+  `focused_layout_rect` and `measured_layout_rect` queries. Existing chaining
+  calls and clipped `Response.rect` hit semantics remain available.
+- Focus/scroll regressions, a native PTY Tab/edit handshake and compiled browser
+  form navigation tests covering the shared frame path.
+
+### Fixed
+
+- Unique initial focus and accurate gain/loss edges for Tab, late requests and
+  modulo-resolved slots. Shift+Tab no longer accepts an input completion.
+- Input after a Tab group is queued in order for the next frame, preventing
+  fast navigation/typing or navigation/Enter batches from targeting the old
+  widget. `AppState` and `TestBackend` expose `has_pending_input` for custom loops.
+  Native termination controls remain responsive while input is queued; async
+  channel closure drains received input without extending shutdown with new keys.
+- Screen focus restoration no longer overwrites Tab/mouse requests or activates
+  the wrong button when returning from a screen with a different widget count.
+- Modal focus no longer jumps when background slots disappear; settled lower
+  modals stay inert, and closing a modal restores the background request.
+- Scroll feedback uses state identity instead of unstable declaration/hit IDs.
+  Unrelated widget insertions, overlays and raw scrollers cannot rebind bounds.
+- Fresh layout bounds clamp scroll offsets after content shrink; scroll arithmetic
+  saturates for extreme public offsets and amounts.
+- Error-boundary rollback restores focus metadata and drops phantom names/scopes.
+- Withhold stale caret metadata during focus transitions so an IME composition
+  starting immediately after Tab cannot briefly expose masked input at the
+  previous plain field. A compiled browser observer checks transient DOM paints.
+- Publication verification uses fresh targets outside the dependency-cache tree
+  to avoid generated package paths confusing cache cleanup (#434).
+
+### Docs
+
+- Document focus-follow opt-out, full versus clipped geometry, offset feedback
+  timing and the v0.25 migration contract while retaining existing examples.
+
 ## [0.24.0] - 2026-09-05
 
 ### Added

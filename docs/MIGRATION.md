@@ -8,6 +8,53 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.24.x to v0.25.0
+
+Existing `form_field`, `scrollable`, and native/browser entry points remain
+available. Both packages are versioned at `0.25.0`.
+
+- `ScrollState::follow_focus` defaults to `true`. Focus/caret/layout changes now
+  reveal the relevant child through its ancestor scrollers. Set it to `false`
+  for application-controlled offsets. Idle frames and manual scrolling do not
+  continually snap back; editing the focused caret can reveal it again.
+- Give each scrollable container its own `ScrollState`. State identity is
+  preserved when moved and is independent of surrounding widget order; cloning
+  produces an independent binding with copied offsets. Reusing the same mutable
+  state for different viewports is not supported.
+- Current-layout bounds and reveal corrections are applied before rendering.
+  The public offsets are synchronized on the next binding. An explicit app
+  offset change made in between takes precedence over the pending correction.
+- `form_field_response` returns `FormFieldResponse`: field-level interaction,
+  the input's own `Response`, and an optional full `layout_rect`. The old
+  chainable `form_field` delegates to it. Labels/errors share the input's single
+  focus slot; a viewport too small for the field prioritizes its caret.
+- `focused_layout_rect()` and `measured_layout_rect(group_name)` return full
+  previous-frame border boxes, before scrolling and clipping. Coordinates are
+  root/overlay logical coordinates, not screen or local scroll coordinates.
+  They reset on resize; use visible `Response.rect` for mouse hit testing.
+- Initial focus is unique. Focus gain/loss follows the slot that actually
+  rendered, not a later Tab or programmatic request. Screen navigation preserves
+  its local slot without overwriting live Tab/mouse input; the first frame after
+  returning uses the restored screen's focus rather than the old screen's count.
+- Modal focus remains stable when background slots are suppressed, inactive
+  lower modals do not capture input on settled frames, and closing the modal
+  restores the background request. As with other previous-frame hit feedback,
+  keep modal declaration order stable while interacting with stacked dialogs.
+- Plain Tab can still accept input completion. Shift+Tab remains reverse focus
+  navigation instead of accepting a completion.
+- Input after a consecutive Tab/Shift+Tab group is queued for the following
+  frame, so a fast `Tab` plus text/Enter cannot edit or activate the old field.
+  Events stay ordered, paste payloads are moved without cloning, and callbacks
+  still run once per frame. Custom backend loops must render again while
+  `AppState::has_pending_input()` is true before waiting for more external input.
+  `TestBackend::has_pending_input()` exposes the same condition in tests.
+- `Buffer::cursor_position()` is temporarily `None` when a late focus request
+  has not rendered its target yet. IME backends must treat that as an unknown
+  caret and suppress preedit, rather than reuse the previous field's privacy.
+
+These behavior changes are shared by the frame kernel, native run loops, and
+WASM backend. They do not add new terminal-protocol or physical IME guarantees.
+
 ## v0.23.x to v0.24.0
 
 Existing native run and widget signatures remain available. Review these

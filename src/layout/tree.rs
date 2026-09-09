@@ -37,7 +37,8 @@ use super::*;
 /// invalidation. Scalars (no heap), so this is the minimum footprint —
 /// boxing the cache would cost a per-node allocation every frame, defeating
 /// the optimization.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 360);
+// v0.25 adds one scalar identity for bound scroll state, without per-node heap allocation.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 368);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -144,6 +145,8 @@ pub(crate) struct LayoutNode {
     pub(crate) pos: (u32, u32),
     pub(crate) size: (u32, u32),
     pub(crate) is_scrollable: bool,
+    pub(crate) scroll_follow_focus: Option<bool>,
+    pub(crate) scroll_state_id: u64,
     pub(crate) scroll_offset: u32,
     pub(crate) content_height: u32,
     /// Horizontal scroll offset in cells (#247).
@@ -284,6 +287,8 @@ impl LayoutNode {
             pos: (0, 0),
             size: (width, 1),
             is_scrollable: false,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             scroll_offset: 0,
             content_height: 0,
             scroll_offset_x: 0,
@@ -341,6 +346,8 @@ impl LayoutNode {
             pos: (0, 0),
             size: (width, 1),
             is_scrollable: false,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             scroll_offset: 0,
             content_height: 0,
             scroll_offset_x: 0,
@@ -384,6 +391,8 @@ impl LayoutNode {
             pos: (0, 0),
             size: (0, 0),
             is_scrollable: false,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             scroll_offset: 0,
             content_height: 0,
             scroll_offset_x: 0,
@@ -445,6 +454,8 @@ impl LayoutNode {
                 constraints.min_height().unwrap_or(0),
             ),
             is_scrollable: false,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             scroll_offset: 0,
             content_height: 0,
             scroll_offset_x: 0,
@@ -488,6 +499,8 @@ impl LayoutNode {
             pos: (0, 0),
             size: (0, 0),
             is_scrollable: false,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             scroll_offset: 0,
             content_height: 0,
             scroll_offset_x: 0,
@@ -1500,6 +1513,8 @@ fn build_children(
                     title,
                     scroll_offset,
                     scroll_offset_x,
+                    scroll_follow_focus,
+                    scroll_state_id,
                     group_name,
                 } = *args;
                 // #247: honor the caller's `.row()` / `.col()` direction instead
@@ -1526,6 +1541,8 @@ fn build_children(
                     },
                 );
                 node.is_scrollable = true;
+                node.scroll_follow_focus = scroll_follow_focus;
+                node.scroll_state_id = scroll_state_id;
                 match direction {
                     Direction::Column => node.scroll_offset = scroll_offset,
                     Direction::Row => node.scroll_offset_x = scroll_offset_x,

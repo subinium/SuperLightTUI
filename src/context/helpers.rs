@@ -491,6 +491,45 @@ impl Context {
             .find(|(group_name, _)| group_name.as_ref() == name)
             .map(|(_, rect)| *rect)
     }
+
+    /// Full border-box layout of a named group on the previous completed frame.
+    ///
+    /// Unlike [`measured_rect`](Self::measured_rect), this includes offscreen
+    /// portions and does not subtract any ancestor scroll offsets. Coordinates
+    /// are in the logical layout space of the root or overlay, not screen or
+    /// scroll-content-local coordinates. Border and padding are included.
+    /// Returns `None` before measurement, after resize, or if the group was
+    /// absent. Duplicate names use the first group in paint order.
+    pub fn measured_layout_rect(&self, name: &str) -> Option<Rect> {
+        self.prev_geometry
+            .groups
+            .iter()
+            .find(|(group, _)| group.as_ref() == name)
+            .map(|(_, rect)| *rect)
+    }
+
+    /// Full previous-frame layout rectangle of the currently focused widget.
+    ///
+    /// This is the widget's border box before scrolling or clipping, in the
+    /// same coordinate space as [`measured_layout_rect`](Self::measured_layout_rect).
+    /// It is not a mouse hit rectangle. Positional focus IDs must remain stable
+    /// across frames. Returns `None` on the first frame, after resize, or when
+    /// the focus slot had no layout node on the previous frame.
+    pub fn focused_layout_rect(&self) -> Option<Rect> {
+        let id = self.rollback.focused_widget_id.unwrap_or_else(|| {
+            if self.prev_focus_count > 0 {
+                self.focus_index % self.prev_focus_count
+            } else {
+                self.focus_index
+            }
+        });
+        self.prev_geometry
+            .focus
+            .get(id)
+            .copied()
+            .flatten()
+            .map(|target| target.rect)
+    }
 }
 
 /// Saturating `usize -> u16` for intrinsic-size results.

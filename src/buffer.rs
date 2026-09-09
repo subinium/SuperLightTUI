@@ -666,6 +666,8 @@ impl Buffer {
     /// Returns `None` when the frame has no visible caret. Browser backends can
     /// use this position to anchor an IME input element. Resetting the buffer
     /// clears the position; reading it does not change cursor visibility.
+    /// The frame runtime also withholds the position while a focus request
+    /// awaits the next UI declaration, so backends cannot reuse stale privacy.
     pub fn cursor_position(&self) -> Option<(u32, u32)> {
         self.cursor_pos
     }

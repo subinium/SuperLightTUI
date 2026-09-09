@@ -413,6 +413,12 @@ impl TestBackend {
         self.render_frame(Vec::new(), |_| {}, f);
     }
 
+    /// Whether a navigation boundary left input for a subsequent render call.
+    /// Mirrors [`AppState::has_pending_input`](crate::AppState::has_pending_input).
+    pub fn has_pending_input(&self) -> bool {
+        !self.frame_state.pending_input.is_empty()
+    }
+
     /// Advance a deterministic frame clock without sleeping.
     ///
     /// The first call freezes the clock at the latest frame's start (or now

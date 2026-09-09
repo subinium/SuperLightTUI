@@ -1782,8 +1782,17 @@ impl HighlightRange {
 /// [`scroll_right`]: ScrollState::scroll_right
 /// [`Context::scroll_col`]: crate::Context::scroll_col
 /// [`Context::scroll_row`]: crate::Context::scroll_row
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ScrollState {
+    id: u64,
+    /// Reveal newly focused children automatically. Defaults to `true`.
+    ///
+    /// Also follows changes to the focused child's layout or viewport size.
+    /// Manual scrolling is preserved while focus and geometry stay unchanged.
+    /// Set to `false` for application-controlled scrolling. Layout corrections
+    /// are rendered immediately and synchronized into this state on its next
+    /// `Context::scrollable` binding unless the application changed the offset.
+    pub follow_focus: bool,
     /// Current vertical scroll offset in rows.
     pub offset: usize,
     /// Current horizontal scroll offset in columns (#247).
@@ -1802,14 +1811,43 @@ pub struct ScrollState {
     viewport_height: u32,
     content_width: u32,
     viewport_width: u32,
+    max_offset_y: u32,
+    max_offset_x: u32,
     highlights: Vec<HighlightRange>,
     current_highlight: Option<usize>,
+}
+
+fn next_scroll_state_id() -> u64 {
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Clone for ScrollState {
+    fn clone(&self) -> Self {
+        Self {
+            id: next_scroll_state_id(),
+            follow_focus: self.follow_focus,
+            offset: self.offset,
+            offset_x: self.offset_x,
+            dragging: self.dragging,
+            content_height: self.content_height,
+            viewport_height: self.viewport_height,
+            content_width: self.content_width,
+            viewport_width: self.viewport_width,
+            max_offset_y: self.max_offset_y,
+            max_offset_x: self.max_offset_x,
+            highlights: self.highlights.clone(),
+            current_highlight: self.current_highlight,
+        }
+    }
 }
 
 impl ScrollState {
     /// Create scroll state starting at offset 0.
     pub fn new() -> Self {
         Self {
+            id: next_scroll_state_id(),
+            follow_focus: true,
             offset: 0,
             offset_x: 0,
             dragging: false,
@@ -1817,10 +1855,14 @@ impl ScrollState {
             viewport_height: 0,
             content_width: 0,
             viewport_width: 0,
+            max_offset_y: 0,
+            max_offset_x: 0,
             highlights: Vec::new(),
             current_highlight: None,
         }
     }
+
+    pub(crate) fn id(&self) -> u64 { self.id }
 
     /// Check if scrolling upward is possible (offset is greater than 0).
     pub fn can_scroll_up(&self) -> bool {
@@ -1829,7 +1871,7 @@ impl ScrollState {
 
     /// Check if scrolling downward is possible (content extends below the viewport).
     pub fn can_scroll_down(&self) -> bool {
-        (self.offset as u32) + self.viewport_height < self.content_height
+        self.offset < self.max_offset()
     }
 
     /// Get the total content height in rows.
@@ -1841,6 +1883,13 @@ impl ScrollState {
     pub fn viewport_height(&self) -> u32 {
         self.viewport_height
     }
+
+    /// Maximum vertical offset from the most recent viewport binding.
+    /// Accounts for leading clipping; it need not equal content minus visible height.
+    pub fn max_offset(&self) -> usize { self.max_offset_y as usize }
+
+    /// Maximum horizontal offset from the most recent viewport binding.
+    pub fn max_offset_x(&self) -> usize { self.max_offset_x as usize }
 
     /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
     ///
@@ -1861,11 +1910,11 @@ impl ScrollState {
     /// assert!((0.0..=1.0).contains(&ratio));
     /// ```
     pub fn progress_ratio(&self) -> f64 {
-        let max = self.content_height.saturating_sub(self.viewport_height);
+        let max = self.max_offset();
         if max == 0 {
             0.0
         } else {
-            self.offset as f64 / max as f64
+            self.offset.min(max) as f64 / max as f64
         }
     }
 
@@ -1891,8 +1940,8 @@ impl ScrollState {
 
     /// Scroll down by the given number of rows, clamped to the maximum offset.
     pub fn scroll_down(&mut self, amount: usize) {
-        let max_offset = self.content_height.saturating_sub(self.viewport_height) as usize;
-        self.offset = (self.offset + amount).min(max_offset);
+        let max_offset = self.max_offset();
+        self.offset = self.offset.saturating_add(amount).min(max_offset);
     }
 
     /// Set the absolute scroll offset, clamped to `[0, content - viewport]`.
@@ -1914,13 +1963,19 @@ impl ScrollState {
     /// assert_eq!(scroll.offset, 0);
     /// ```
     pub fn set_offset(&mut self, offset: usize) {
-        let max_offset = self.content_height.saturating_sub(self.viewport_height) as usize;
+        let max_offset = self.max_offset();
         self.offset = offset.min(max_offset);
     }
 
     pub(crate) fn set_bounds(&mut self, content_height: u32, viewport_height: u32) {
         self.content_height = content_height;
         self.viewport_height = viewport_height;
+        self.max_offset_y = content_height.saturating_sub(viewport_height);
+    }
+
+    pub(crate) fn set_clipped_bounds(&mut self, content: u32, viewport: u32, max: u32, horizontal: bool) {
+        if horizontal { self.set_bounds_x(content, viewport); self.max_offset_x = max; }
+        else { self.set_bounds(content, viewport); self.max_offset_y = max; }
     }
 
     /// Update the horizontal (x-axis) bounds (#247).
@@ -1935,6 +1990,7 @@ impl ScrollState {
     pub(crate) fn set_bounds_x(&mut self, content_width: u32, viewport_width: u32) {
         self.content_width = content_width;
         self.viewport_width = viewport_width;
+        self.max_offset_x = content_width.saturating_sub(viewport_width);
     }
 
     /// Check if scrolling left is possible (`offset_x` is greater than 0, #247).
@@ -1958,7 +2014,7 @@ impl ScrollState {
     /// assert!(!scroll.can_scroll_right());
     /// ```
     pub fn can_scroll_right(&self) -> bool {
-        (self.offset_x as u32) + self.viewport_width < self.content_width
+        self.offset_x < self.max_offset_x()
     }
 
     /// Total horizontal content width in columns (#247).
@@ -1984,11 +2040,11 @@ impl ScrollState {
     /// assert!((0.0..=1.0).contains(&p));
     /// ```
     pub fn progress_x(&self) -> f64 {
-        let max = self.content_width.saturating_sub(self.viewport_width);
+        let max = self.max_offset_x();
         if max == 0 {
             0.0
         } else {
-            self.offset_x as f64 / max as f64
+            self.offset_x.min(max) as f64 / max as f64
         }
     }
 
@@ -2014,8 +2070,8 @@ impl ScrollState {
     /// assert_eq!(scroll.offset_x, 0);
     /// ```
     pub fn scroll_right(&mut self, amount: usize) {
-        let max_offset = self.content_width.saturating_sub(self.viewport_width) as usize;
-        self.offset_x = (self.offset_x + amount).min(max_offset);
+        let max_offset = self.max_offset_x();
+        self.offset_x = self.offset_x.saturating_add(amount).min(max_offset);
     }
 
     /// Set the active highlight ranges. Replaces any previous highlights.
@@ -2093,8 +2149,7 @@ impl ScrollState {
         };
         let target = range.start_line;
         let viewport = self.viewport_height as usize;
-        let content = self.content_height as usize;
-        let max_offset = content.saturating_sub(viewport);
+        let max_offset = self.max_offset();
         if target < self.offset {
             self.offset = target.saturating_sub(1).min(max_offset);
         } else if viewport > 0 && target >= self.offset + viewport {

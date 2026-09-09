@@ -4108,6 +4108,31 @@ mod tests {
     }
 
     #[test]
+    fn deferred_inline_mouse_keeps_physical_position_after_scroll_and_resize() {
+        let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
+        term.reserved = true;
+        let mut state = crate::FrameState::default();
+        let mut events = vec![
+            crate::Event::key(crate::KeyCode::Tab),
+            crate::Event::mouse_click(2, 11),
+        ];
+        crate::localize_inline_events(&term, &mut state, &mut events);
+        let delivered = crate::input_frame(&mut state, events);
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(state.pending_input[0].as_mouse().unwrap().y, 1);
+        term.write_scrollback(&["log".into()]).unwrap();
+        crate::localize_inline_events(&term, &mut state, &mut Vec::new());
+        assert_eq!(state.pending_input[0].as_mouse().unwrap().y, 0);
+        term.handle_resize_to(40, 12).unwrap();
+        crate::clear_frame_layout_cache(&mut state);
+        crate::localize_inline_events(&term, &mut state, &mut Vec::new());
+        assert_eq!(state.pending_input[0].as_mouse().unwrap().y, 2);
+        term.handle_resize_to(1, 12).unwrap();
+        crate::localize_inline_events(&term, &mut state, &mut Vec::new());
+        assert!(state.pending_input.is_empty());
+    }
+
+    #[test]
     fn v024_inline_mouse_coordinates_and_pixels_after_scrollback() {
         let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
         term.reserved = true;

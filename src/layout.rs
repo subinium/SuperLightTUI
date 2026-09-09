@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 mod collect;
 mod command;
 mod flexbox;
+mod focus;
 mod render;
 mod tree;
 
@@ -21,6 +22,9 @@ pub(crate) use collect::{FrameData, collect_all};
 pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
+pub(crate) use focus::{
+    FocusScrollState, GeometryFeedback, ScrollAdjustment, apply_scroll_adjustments,
+};
 pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
 pub(crate) use tree::{LayoutNode, NodeKind, build_tree, wrap_lines, wrap_segments};
 
