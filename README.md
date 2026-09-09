@@ -130,11 +130,24 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 `RunConfig` tunes mouse, kitty keyboard, color depth, max FPS, scroll speed, theme, and title across every mode.
 
+## Focus and Scrolling
+
+Scrollable containers reveal the focused widget when focus, caret, or layout
+changes, including nested horizontal/vertical views and modal forms. Manual
+scrolling is preserved between those changes; set `scroll.follow_focus = false`
+for application-controlled positioning. Keep one `ScrollState` per container.
+
+Use `ui.form_field_response(...)` for field/input interaction feedback without
+changing existing `ui.form_field(...)` callers. `ui.focused_layout_rect()` and
+`ui.measured_layout_rect(name)` expose previous-frame geometry before scrolling
+and clipping; `Response.rect` remains the visible mouse-hit rectangle.
+See [the migration guide](docs/MIGRATION.md) for the coordinate and timing rules.
+
 ## Feature Flags
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.24.0", features = ["async", "image"] }
+superlighttui = { version = "0.25.0", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |

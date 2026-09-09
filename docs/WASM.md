@@ -46,8 +46,8 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-superlighttui = { version = "=0.24.0", default-features = false }
-slt-wasm = "=0.24.0"
+superlighttui = { version = "=0.25.0", default-features = false }
+slt-wasm = "=0.25.0"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["HtmlElement"] }
 ```

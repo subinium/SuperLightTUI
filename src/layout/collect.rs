@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct FrameData {
+    pub geometry: super::focus::GeometryFeedback,
     /// Per-scrollable feedback: `(content_extent, viewport_extent, is_horizontal)`.
     ///
     /// For a vertical scrollable (`Direction::Column`) the extents are content
@@ -31,6 +32,7 @@ impl FrameData {
     /// call writes into these slots, so the per-frame allocation churn of
     /// 8 fresh `Vec::new()`s is amortized to zero after warm-up.
     pub(crate) fn clear(&mut self) {
+        self.geometry.clear();
         self.scroll_infos.clear();
         self.scroll_rects.clear();
         self.hit_areas.clear();
@@ -49,6 +51,7 @@ impl FrameData {
     /// rectangles stay in `FrameData` because callbacks consume them in-frame.
     #[allow(dead_code)]
     pub(crate) fn swap_feedback(&mut self, feedback: &mut crate::LayoutFeedbackState) {
+        std::mem::swap(&mut self.geometry, &mut feedback.geometry);
         std::mem::swap(&mut self.scroll_infos, &mut feedback.prev_scroll_infos);
         std::mem::swap(&mut self.scroll_rects, &mut feedback.prev_scroll_rects);
         std::mem::swap(&mut self.hit_areas, &mut feedback.prev_hit_map);
@@ -158,6 +161,8 @@ impl SignedRect {
 /// pay zero allocation churn for the 8 collection vectors.
 pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     data.clear();
+    let (parent_scroll, logical_clip, active_focus) =
+        data.geometry.record(node, None, Default::default(), None);
 
     let screen_rect = SignedRect::from_node(node, 0, 0);
     let visible_rect = screen_rect.to_rect().unwrap_or_default();
@@ -200,12 +205,26 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
             child_y_offset,
             None,
             child_viewport,
+            parent_scroll,
+            logical_clip,
+            active_focus,
             1,
         );
     }
 
     for overlay in &node.overlays {
-        collect_all_inner(&overlay.node, data, 0, 0, None, None, 1);
+        collect_all_inner(
+            &overlay.node,
+            data,
+            0,
+            0,
+            None,
+            None,
+            None,
+            Default::default(),
+            None,
+            1,
+        );
     }
 }
 
@@ -218,6 +237,13 @@ fn record_allocated_area(node: &LayoutNode, data: &mut FrameData, id: usize) {
 
 /// Record the content and viewport extent for the container's scroll axis.
 fn push_scroll_info(node: &LayoutNode, data: &mut FrameData) {
+    if node.scroll_state_id != 0
+        && let Some(scroll) = data.geometry.scrolls.last()
+    {
+        data.scroll_infos
+            .push((scroll.content, scroll.viewport_extent(), scroll.horizontal));
+        return;
+    }
     if matches!(node.kind, NodeKind::Container(Direction::Row)) {
         let viewport_w = node.size.0.saturating_sub(node.frame_horizontal());
         data.scroll_infos
@@ -237,6 +263,9 @@ fn collect_all_inner(
     y_offset: i64,
     active_group: Option<&Arc<str>>,
     viewport: Option<SignedRect>,
+    parent_scroll: Option<usize>,
+    logical_clip: super::focus::LayoutClip,
+    active_focus: Option<usize>,
     depth: usize,
 ) {
     // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
@@ -250,6 +279,9 @@ fn collect_all_inner(
             super::tree::MAX_LAYOUT_DEPTH
         );
     }
+    let (parent_scroll, logical_clip, active_focus) =
+        data.geometry
+            .record(node, parent_scroll, logical_clip, active_focus);
     let screen_rect = SignedRect::from_node(node, x_offset, y_offset);
     let visible = screen_rect.visible_within(viewport);
     let visible_rect = visible.to_rect();
@@ -341,6 +373,9 @@ fn collect_all_inner(
             child_y_offset,
             current_group,
             child_viewport,
+            parent_scroll,
+            logical_clip,
+            active_focus,
             depth + 1,
         );
     }

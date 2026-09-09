@@ -465,11 +465,9 @@ pub struct FormField {
     validators: Vec<Validator>,
     /// Whether the field's input held keyboard focus on the previous frame.
     ///
-    /// [`Context::form_field`](crate::Context::form_field) uses the
-    /// focused → unfocused edge to detect blur for
-    /// [`ValidateTrigger::OnBlur`]. This is tracked here (rather than read from
-    /// the input's [`Response`]) because the `text_input` Response does not yet
-    /// carry the `lost_focus` signal on its container-assembled response.
+    /// [`Context::form_field`](crate::Context::form_field) tracks this field's
+    /// focused-to-unfocused edge for [`ValidateTrigger::OnBlur`], even when
+    /// surrounding positional focus slots change between frames.
     was_focused: bool,
     /// One in-flight async validation, if any. Polled each frame by
     /// [`Context::form_field`](crate::Context::form_field).

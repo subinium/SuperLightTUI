@@ -432,6 +432,7 @@ Vertical scroll bookkeeping for `Context::scrollable`.
 | `offset` | `usize` | First visible row. |
 | `offset_x` | `usize` | First visible horizontal column. |
 | `dragging` | `bool` | Whether the scrollbar thumb is being dragged. |
+| `follow_focus` | `bool` | Default `true`: reveal focused children/carets when their layout changes; disable for manual positioning. |
 
 ### Constructors
 
@@ -443,6 +444,7 @@ Vertical scroll bookkeeping for `Context::scrollable`.
 | Signature | Description |
 |-----------|-------------|
 | `can_scroll_up(&self) -> bool` | `offset > 0`. |
+| `max_offset(&self) -> usize`, `max_offset_x(&self) -> usize` | Bounds from the latest viewport binding, including leading clipping. |
 | `can_scroll_down(&self) -> bool` | Content extends past the viewport. |
 | `content_height(&self) -> u32` | Total content rows. |
 | `viewport_height(&self) -> u32` | Visible rows. |

@@ -272,19 +272,92 @@ impl Context {
                     .insert(name.to_string(), value);
                 value
             });
-            // Save outer focus, restore this screen's focus
-            let outer_focus_index = self.focus_index;
-            let (saved_focus_idx, _saved_focus_count) = screens.restore_focus(name);
-            self.focus_index = saved_focus_idx;
+            screens.sync_focus();
+            let previous_range = self.screen_focus_ranges.get(&screen_state_id).cloned();
+            let focus_count_before = self.rollback.focus_count;
+            let previous_focus_count = self.prev_focus_count;
+            let requested = self.rollback.focus_origin.unwrap_or_else(|| {
+                if self.prev_focus_count > 0 {
+                    self.focus_index % self.prev_focus_count
+                } else {
+                    self.focus_index
+                }
+            });
+            let (saved_focus_idx, saved_focus_count) = screens.restore_focus(name);
+            let returning = previous_range
+                .as_ref()
+                .is_none_or(|range| range.name.as_ref() != name);
+            let owned_previous_focus = self.rollback.focus_origin.is_some()
+                && previous_range.as_ref().is_some_and(|range| {
+                    requested >= range.start && requested - range.start < range.count
+                });
+            let restored = returning
+                && self.rollback.focus_generation == 0
+                && (owned_previous_focus
+                    || (previous_range.is_none()
+                        && saved_focus_count > 0
+                        && requested >= focus_count_before
+                        && requested - focus_count_before < saved_focus_count));
+            if restored {
+                self.focus_index = focus_count_before.saturating_add(if saved_focus_count > 0 {
+                    saved_focus_idx % saved_focus_count
+                } else {
+                    0
+                });
+                // A restored slot belongs to this screen, not the previous
+                // screen's total. Do not modulo it by that unrelated count.
+                self.prev_focus_count = 0;
+                self.prev_focus_index = None;
+                self.rollback.focus_origin = None;
+                self.rollback.focus_history_origin = None;
+            } else if let Some(range) = &previous_range
+                && range.name.as_ref() == name
+                && owned_previous_focus
+            {
+                self.focus_index = focus_count_before.saturating_add(requested - range.start);
+                self.prev_focus_count = self
+                    .rollback
+                    .focus_count_origin
+                    .saturating_sub(range.start)
+                    .saturating_add(focus_count_before);
+                if let Some(previous) = self.rollback.focus_history_origin
+                    && previous >= range.start
+                    && previous - range.start < range.count
+                {
+                    self.prev_focus_index =
+                        Some(focus_count_before.saturating_add(previous - range.start));
+                }
+            }
+
+            let previous_guard = self.rollback.screen_focus_guard;
+            let previous_new_slot = self.rollback.new_focus_slot;
+            let inherited_block = previous_guard
+                .and_then(|guard| guard.blocked_generation)
+                .filter(|generation| *generation == self.rollback.focus_generation);
+            let blocked_generation = inherited_block.or_else(|| {
+                (self.rollback.focus_origin.is_some()
+                    && previous_range.is_some()
+                    && !owned_previous_focus)
+                    .then_some(self.rollback.focus_generation)
+            });
+            self.rollback.screen_focus_guard = Some(ScreenFocusGuard {
+                start: focus_count_before,
+                previous_count: previous_range
+                    .as_ref()
+                    .filter(|range| range.name.as_ref() == name)
+                    .map_or(0, |range| range.count),
+                blocked_generation,
+            });
+            self.rollback.new_focus_slot = false;
 
             // Set hook cursor to this screen's segment start
             self.rollback.hook_cursor = seg_start;
-            let focus_count_before = self.rollback.focus_count;
 
             // Scope deferred navigation to this exact screen closure. Nested
             // screens get their own range and cannot drain an outer request.
             let nav_scope_start = self.pending_screen_nav.len();
             self.screen_nav_depth += 1;
+            let request_generation = self.rollback.focus_generation;
 
             // Execute the screen's closure
             f(self);
@@ -314,12 +387,77 @@ impl Context {
                     .insert(name.to_string(), (seg_start, hooks_used));
             }
 
-            // Save this screen's focus state
+            // Store local slots, then let the frame's post-widget Tab pass
+            // deliver its final request through an owned update handle.
             let screen_focus_count = self.rollback.focus_count - focus_count_before;
-            screens.save_focus(name, self.focus_index, screen_focus_count);
-
-            // Restore outer focus
-            self.focus_index = outer_focus_index;
+            let end = focus_count_before.saturating_add(screen_focus_count);
+            if request_generation == self.rollback.focus_generation {
+                if (restored || owned_previous_focus) && self.focus_index >= end {
+                    // A removed/restored slot must not spill its activation into
+                    // a footer that happens to reuse the old numeric index.
+                    self.consume_activation_keys(true);
+                    self.focus_index =
+                        focus_count_before.saturating_add(screen_focus_count.saturating_sub(1));
+                } else if let Some(origin) = self.rollback.focus_origin
+                    && let Some(range) = &previous_range
+                    && range.name.as_ref() == name
+                    && origin >= range.start.saturating_add(range.count)
+                {
+                    self.focus_index =
+                        end.saturating_add(origin - range.start.saturating_add(range.count));
+                }
+            }
+            if let Some(origin) = self.rollback.focus_history_origin
+                && let Some(range) = &previous_range
+                && range.name.as_ref() == name
+                && origin >= range.start.saturating_add(range.count)
+            {
+                self.prev_focus_index =
+                    Some(end.saturating_add(origin - range.start.saturating_add(range.count)));
+            }
+            let current = if self.prev_focus_count > 0 {
+                self.focus_index % self.prev_focus_count
+            } else {
+                self.focus_index
+            };
+            let local = if current >= focus_count_before
+                && current - focus_count_before < screen_focus_count
+            {
+                current - focus_count_before
+            } else {
+                saved_focus_idx.min(screen_focus_count.saturating_sub(1))
+            };
+            screens.save_focus(name, local, screen_focus_count);
+            self.prev_focus_count = if self.rollback.focus_count_origin == 0 {
+                0
+            } else if let Some(range) = &previous_range {
+                self.rollback
+                    .focus_count_origin
+                    .saturating_sub(range.start.saturating_add(range.count))
+                    .saturating_add(end)
+            } else {
+                previous_focus_count.saturating_add(screen_focus_count)
+            };
+            self.rollback.screen_focus_guard = previous_guard;
+            self.rollback.new_focus_slot = previous_new_slot;
+            let screen_name = previous_range
+                .as_ref()
+                .filter(|range| range.name.as_ref() == name)
+                .map_or_else(
+                    || std::sync::Arc::<str>::from(name),
+                    |range| std::sync::Arc::clone(&range.name),
+                );
+            let (updates, generation) = screens.focus_updates(&screen_name);
+            self.screen_focus_scopes.push(ScreenFocusScope {
+                id: screen_state_id,
+                range: ScreenFocusRange {
+                    name: screen_name,
+                    start: focus_count_before,
+                    count: screen_focus_count,
+                },
+                updates,
+                generation,
+            });
 
             // Issue #279: apply navigation requested from inside the closure
             // now that the closure's `&mut Context` borrow has ended. We still
@@ -749,15 +887,48 @@ impl Context {
     /// ```
     pub fn modal_with(&mut self, opts: ModalOptions, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
+        // Modal ownership must not shift when unrelated widgets reserve hit IDs.
+        let modal_id = self.rollback.modal_count;
+        self.rollback.modal_count += 1;
         self.commands.push(Command::BeginOverlay { modal: true });
         self.rollback.overlay_depth += 1;
+        if !self.prev_modal_active && !self.rollback.modal_active {
+            self.rollback.modal_restore_index = Some(self.focus_index);
+        }
         self.rollback.modal_active = true;
+        let previous_owner = self.rollback.current_modal_id.replace(modal_id);
+        self.rollback.modal_id = Some(modal_id);
         let modal_focus_start = self.rollback.focus_count;
         self.rollback.modal_focus_start = modal_focus_start;
+        let previous_start = self.prev_modal_focus_start;
+        let previous_count = self.prev_focus_count;
+        let previous_focus_index = self.prev_focus_index;
+        let requested_focus = self.focus_index;
+        if self.prev_modal_active && self.prev_modal_focus_count > 0 {
+            let local = *self.rollback.modal_request_local.get_or_insert_with(|| {
+                self.focus_index.saturating_sub(previous_start) % self.prev_modal_focus_count
+            });
+            self.focus_index = modal_focus_start.saturating_add(local);
+            self.prev_modal_focus_start = modal_focus_start;
+            if let Some(previous) = self.prev_focus_index
+                && previous >= previous_start
+                && previous - previous_start < self.prev_modal_focus_count
+            {
+                self.prev_focus_index =
+                    Some(modal_focus_start.saturating_add(previous - previous_start));
+            }
+        } else {
+            self.focus_index = modal_focus_start;
+            self.prev_focus_count = 0;
+        }
 
+        let rendered_request = self.focus_index;
         f(self);
+        let requested_in_body = self.focus_index != rendered_request;
         let modal_focus_count = self.rollback.focus_count.saturating_sub(modal_focus_start);
-        self.rollback.modal_focus_count = modal_focus_count;
+        if self.rollback.modal_id == Some(modal_id) {
+            self.rollback.modal_focus_count = modal_focus_count;
+        }
 
         // Tab trap: when enabled, ensure `focus_index` lies in this frame's
         // modal range `[start, start + count)`. If `set_focus_index` from a
@@ -767,7 +938,7 @@ impl Context {
         //
         // WCAG 2.1 SC 2.4.3 (Focus Order) requirement: the user must not be
         // able to navigate to content outside an active modal dialog.
-        if opts.tab_trap && modal_focus_count > 0 {
+        if opts.tab_trap && modal_focus_count > 0 && self.rollback.modal_id == Some(modal_id) {
             let lo = modal_focus_start;
             let hi = lo.saturating_add(modal_focus_count);
             if self.focus_index < lo || self.focus_index >= hi {
@@ -775,6 +946,25 @@ impl Context {
             }
         }
 
+        if self.rollback.modal_id == Some(modal_id) {
+            let resolved = if modal_focus_count > 0 {
+                modal_focus_start
+                    + self.focus_index.saturating_sub(modal_focus_start) % modal_focus_count
+            } else {
+                self.focus_index
+            };
+            if !opts.tab_trap && !requested_in_body {
+                // Keep the legacy callback-visible request untouched. The
+                // frame boundary translates it into the new modal slot range.
+                self.focus_index = requested_focus;
+            }
+            self.rollback.modal_focus_rebase = Some((self.focus_index, resolved));
+        }
+
+        self.prev_modal_focus_start = previous_start;
+        self.prev_focus_count = previous_count;
+        self.prev_focus_index = previous_focus_index;
+        self.rollback.current_modal_id = previous_owner;
         self.rollback.overlay_depth = self.rollback.overlay_depth.saturating_sub(1);
         self.commands.push(Command::EndOverlay);
         self.rollback.last_text_idx = None;
@@ -1073,6 +1263,8 @@ impl Context {
             basis: None,
             scroll_offset: None,
             scroll_offset_x: None,
+            scroll_follow_focus: None,
+            scroll_state_id: 0,
             theme_override: None,
         }
     }
@@ -1253,31 +1445,55 @@ impl Context {
     /// # });
     /// ```
     pub fn scrollable(&mut self, state: &mut ScrollState) -> ContainerBuilder<'_> {
-        let index = self.rollback.scroll_count;
         self.rollback.scroll_count += 1;
+        // State identity survives insertion/reordering of unrelated widgets,
+        // overlays, and raw offset containers between completed frames.
+        let id = state.id();
+        let index = self.prev_geometry.scroll_by_id.get(&id).copied();
+        if let Some(adjustment) = self.pending_scroll.get(&id).copied() {
+            let offset = if adjustment.horizontal {
+                &mut state.offset_x
+            } else {
+                &mut state.offset
+            };
+            if u32::try_from(*offset).unwrap_or(u32::MAX) == adjustment.from {
+                *offset = adjustment.to as usize;
+            }
+        }
         // #247: the previous frame recorded the scroll axis (`is_horizontal`)
         // because this binding runs before `.row()` / `.col()` is known. Bind
         // the matching axis so a horizontal scrollable updates `offset_x` while
         // a vertical one keeps the byte-identical `offset` path.
         let mut is_horizontal = false;
-        if let Some(&(content, viewport, horizontal)) = self.prev_scroll_infos.get(index) {
+        if let Some(&(content, viewport, horizontal)) =
+            index.and_then(|index| self.prev_scroll_infos.get(index))
+        {
             is_horizontal = horizontal;
-            let max = content.saturating_sub(viewport) as usize;
+            let max = index
+                .and_then(|index| self.prev_geometry.scrolls.get(index))
+                .map_or(content.saturating_sub(viewport), |scroll| {
+                    scroll.max_offset()
+                });
+            state.set_clipped_bounds(content, viewport, max, horizontal);
             if horizontal {
-                state.set_bounds_x(content, viewport);
-                state.offset_x = state.offset_x.min(max);
+                state.offset_x = state.offset_x.min(max as usize);
             } else {
-                state.set_bounds(content, viewport);
-                state.offset = state.offset.min(max);
+                state.offset = state.offset.min(max as usize);
             }
         }
 
-        self.auto_scroll_nested(index, state, is_horizontal);
+        if let Some(index) = index {
+            self.auto_scroll_nested(index, state, is_horizontal);
+        }
 
         // Carry both axis offsets; the tree builder applies the one matching
         // the finalizing `.row()` / `.col()` direction (#247).
-        let mut builder = self.container().scroll_offset(state.offset as u32);
-        builder.scroll_offset_x = Some(state.offset_x as u32);
+        let mut builder = self
+            .container()
+            .scroll_offset(u32::try_from(state.offset).unwrap_or(u32::MAX));
+        builder.scroll_offset_x = Some(u32::try_from(state.offset_x).unwrap_or(u32::MAX));
+        builder.scroll_follow_focus = Some(state.follow_focus);
+        builder.scroll_state_id = id;
         builder
     }
 
@@ -1400,7 +1616,7 @@ impl Context {
 
         let track_height = vh;
         let thumb_height = ((vh as f64 * vh as f64 / ch as f64).ceil() as u32).max(1);
-        let max_offset = ch.saturating_sub(vh);
+        let max_offset = state.max_offset() as u32;
 
         // The upcoming `self.container()…col()` allocates the next interaction
         // slot, so its id is the current `interaction_count`. We hit-test
@@ -1683,8 +1899,12 @@ impl Context {
     }
 
     pub(crate) fn response_for(&self, interaction_id: usize) -> Response {
-        if (self.rollback.modal_active || self.prev_modal_active)
-            && self.rollback.overlay_depth == 0
+        if !self.interaction_allowed()
+            || (self.rollback.new_focus_slot
+                && self
+                    .rollback
+                    .focus_interaction_origin
+                    .is_some_and(|(_, start)| interaction_id >= start))
         {
             return Response::none();
         }
@@ -1826,10 +2046,37 @@ impl Context {
     /// # });
     /// ```
     pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
+        let _ = self.form_field_response(field);
+        self
+    }
+
+    /// Render a form field and return its focus, input and full layout feedback.
+    ///
+    /// Runs the same validators as [`form_field`](Self::form_field), but returns
+    /// a [`FormFieldResponse`](crate::FormFieldResponse) instead of a chainable
+    /// context. Geometry is from the previous completed frame; see
+    /// [`focused_layout_rect`](Self::focused_layout_rect) for coordinate rules.
+    pub fn form_field_response(&mut self, field: &mut FormField) -> crate::FormFieldResponse {
+        let id = self.rollback.interaction_count;
+        let layout_rect = self
+            .prev_allocated_areas
+            .get(id)
+            .copied()
+            .filter(|rect| !rect.is_empty());
         #[cfg(feature = "async")]
         let async_resolved = field.poll_async();
+        // Bind the input's single focus slot to the entire field so keyboard
+        // reveal includes its label/error, while a tiny viewport prefers the
+        // actual input caret. Named reservations remain attached to this slot.
+        self.register_focusable();
+        self.rollback.pending_focusable_id = self.rollback.last_focusable_id;
+        let layout_rect = if self.rollback.new_focus_slot {
+            None
+        } else {
+            layout_rect
+        };
         let mut resp = Response::none();
-        let _ = self.col(|ui| {
+        let mut response = self.col(|ui| {
             ui.styled(field.label.as_str(), Style::new().bold().fg(ui.theme.text));
             resp = ui.text_input(&mut field.input);
             if let Some(error) = field.error.as_deref() {
@@ -1838,9 +2085,8 @@ impl Context {
         });
         #[cfg(feature = "async")]
         let _ = async_resolved;
-        // `text_input` reports `.focused` reliably but does not yet populate
-        // `.lost_focus` on its container-assembled response, so blur is derived
-        // from the focus edge tracked on the field itself.
+        // Validation retains a field-local edge even if positional focus slots
+        // change as other fields are inserted or removed.
         let lost_focus = field.observe_focus(resp.focused);
         match field.trigger {
             ValidateTrigger::OnChange if resp.changed => {
@@ -1851,7 +2097,16 @@ impl Context {
             }
             _ => {}
         }
-        self
+        response.focused = resp.focused;
+        response.gained_focus = resp.gained_focus;
+        response.lost_focus = resp.lost_focus;
+        response.changed = resp.changed;
+        response.submitted = resp.submitted;
+        crate::FormFieldResponse {
+            response,
+            input: resp,
+            layout_rect,
+        }
     }
 
     /// Render a primary-styled submit button.

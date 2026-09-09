@@ -277,7 +277,7 @@ jobs:
             echo "superlighttui $VERSION is already published"
             exit 0
           fi
-          cargo publish -p superlighttui
+          CARGO_TARGET_DIR="$(mktemp -d "$RUNNER_TEMP/slt-publish.XXXXXX")" cargo publish -p superlighttui --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -317,7 +317,7 @@ jobs:
             echo "slt-wasm $VERSION is already published"
             exit 0
           fi
-          cargo publish -p slt-wasm
+          CARGO_TARGET_DIR="$(mktemp -d "$RUNNER_TEMP/slt-wasm-publish.XXXXXX")" cargo publish -p slt-wasm --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

@@ -5,6 +5,29 @@
 // [`Deref<Target = Response>`] so callers can read the standard `hovered`,
 // `clicked`, `rect`, and `focused` fields without explicit field navigation.
 
+/// Response from [`Context::form_field_response`](crate::Context::form_field_response).
+///
+/// The outer field response covers label, input and validation output; its
+/// focus, edit and submit flags are forwarded from the input. The existing
+/// `Context::form_field` chaining API remains available.
+#[derive(Debug, Clone, Default)]
+#[must_use = "FormFieldResponse contains focus, validation and layout feedback"]
+pub struct FormFieldResponse {
+    /// Field-level hit rectangle with the input's focus/edit/submit flags.
+    pub response: Response,
+    /// The input's own interaction response and clipped hit rectangle.
+    pub input: Response,
+    /// Previous-frame full field border box, before scroll offsets or clipping.
+    /// Uses root/overlay logical coordinates, not local scroll coordinates.
+    /// `None` before measurement, after resize, or for an empty layout area.
+    pub layout_rect: Option<crate::Rect>,
+}
+
+impl std::ops::Deref for FormFieldResponse {
+    type Target = Response;
+    fn deref(&self) -> &Response { &self.response }
+}
+
 /// Response from [`Context::breadcrumb`](crate::Context::breadcrumb).
 ///
 /// Wraps the row-level [`Response`] and exposes the index of the clicked

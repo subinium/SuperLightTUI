@@ -42,6 +42,7 @@ pub struct Context {
     pub(crate) prev_focus_count: usize,
     pub(crate) prev_modal_focus_start: usize,
     pub(crate) prev_modal_focus_count: usize,
+    pub(crate) prev_modal_id: Option<usize>,
     /// `(content_extent, viewport_extent, is_horizontal)` per scrollable from
     /// the previous frame (#247).
     pub(crate) prev_scroll_infos: Vec<(u32, u32, bool)>,
@@ -49,6 +50,8 @@ pub struct Context {
     pub(crate) scroll_wheel_targets: Option<Vec<Option<usize>>>,
     pub(crate) prev_hit_map: Vec<Rect>,
     pub(crate) prev_allocated_areas: Vec<Rect>,
+    pub(crate) prev_geometry: crate::layout::GeometryFeedback,
+    pub(crate) pending_scroll: std::collections::HashMap<u64, crate::layout::ScrollAdjustment>,
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
     pub(crate) prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
@@ -106,6 +109,8 @@ pub struct Context {
     /// navigation helpers reject calls made outside any screen without a
     /// per-frame heap allocation.
     pub(crate) screen_nav_depth: usize,
+    pub(crate) screen_focus_ranges: std::collections::HashMap<u64, ScreenFocusRange>,
+    pub(crate) screen_focus_scopes: Vec<ScreenFocusScope>,
     /// Original active screen for each `ScreenState` that navigated this frame.
     /// Later `screen` declarations keep rendering this origin until the next
     /// frame, preventing source and destination screens from being composed in
@@ -170,6 +175,27 @@ pub struct Context {
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;
 
+#[derive(Clone)]
+pub(crate) struct ScreenFocusRange {
+    pub name: std::sync::Arc<str>,
+    pub start: usize,
+    pub count: usize,
+}
+
+pub(crate) struct ScreenFocusScope {
+    pub id: u64,
+    pub range: ScreenFocusRange,
+    pub updates: crate::widgets::PendingScreenFocus,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ScreenFocusGuard {
+    pub start: usize,
+    pub previous_count: usize,
+    pub blocked_generation: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PendingTooltip {
     pub anchor_rect: Rect,
@@ -178,6 +204,20 @@ pub(crate) struct PendingTooltip {
 
 #[derive(Clone)]
 pub(crate) struct ContextRollbackState {
+    pub(crate) focus_origin: Option<usize>,
+    pub(crate) focus_history_origin: Option<usize>,
+    pub(crate) focus_generation: u64,
+    pub(crate) focus_count_origin: usize,
+    pub(crate) screen_focus_guard: Option<ScreenFocusGuard>,
+    pub(crate) new_focus_slot: bool,
+    pub(crate) focus_interaction_origin: Option<(usize, usize)>,
+    pub(crate) focused_widget_id: Option<usize>,
+    pub(crate) current_modal_id: Option<usize>,
+    pub(crate) modal_id: Option<usize>,
+    pub(crate) modal_count: usize,
+    pub(crate) modal_request_local: Option<usize>,
+    pub(crate) modal_focus_rebase: Option<(usize, usize)>,
+    pub(crate) modal_restore_index: Option<usize>,
     pub(crate) last_text_idx: Option<usize>,
     pub(crate) focus_count: usize,
     /// Issue #208: id assigned by the most recent `register_focusable()` /
@@ -226,6 +266,11 @@ pub(crate) struct ContextRollbackState {
 }
 
 pub(super) struct ContextCheckpoint {
+    focus_index: usize,
+    prev_focus_count: usize,
+    prev_focus_index: Option<usize>,
+    prev_modal_focus_start: usize,
+    pending_focus_name: Option<String>,
     commands_len: usize,
     hook_states_len: usize,
     deferred_draws_len: usize,
@@ -237,6 +282,7 @@ pub(super) struct ContextCheckpoint {
     pending_screen_nav_len: usize,
     /// Drop navigation scopes opened by a panicking nested `screen` call.
     screen_nav_depth: usize,
+    screen_focus_scopes_len: usize,
     /// Issue #273: `cached` region keys recorded so far, so a panicking
     /// `cached` region inside an `error_boundary` rolls back its key entry
     /// (and any nested ones) — keeping the recorded keys consistent with the
@@ -248,6 +294,11 @@ pub(super) struct ContextCheckpoint {
 impl ContextCheckpoint {
     pub(super) fn capture(ctx: &Context) -> Self {
         Self {
+            focus_index: ctx.focus_index,
+            prev_focus_count: ctx.prev_focus_count,
+            prev_focus_index: ctx.prev_focus_index,
+            prev_modal_focus_start: ctx.prev_modal_focus_start,
+            pending_focus_name: ctx.pending_focus_name.clone(),
             commands_len: ctx.commands.len(),
             hook_states_len: ctx.hook_states.len(),
             deferred_draws_len: ctx.deferred_draws.len(),
@@ -255,12 +306,20 @@ impl ContextCheckpoint {
             pending_tooltips_len: ctx.pending_tooltips.len(),
             pending_screen_nav_len: ctx.pending_screen_nav.len(),
             screen_nav_depth: ctx.screen_nav_depth,
+            screen_focus_scopes_len: ctx.screen_focus_scopes.len(),
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
         }
     }
 
     pub(super) fn restore(&self, ctx: &mut Context) {
+        ctx.focus_index = self.focus_index;
+        ctx.prev_focus_count = self.prev_focus_count;
+        ctx.prev_focus_index = self.prev_focus_index;
+        ctx.prev_modal_focus_start = self.prev_modal_focus_start;
+        ctx.pending_focus_name.clone_from(&self.pending_focus_name);
+        ctx.focus_name_map
+            .retain(|_, id| *id < self.rollback.focus_count);
         ctx.commands.truncate(self.commands_len);
         ctx.invalidate_geometry_cache();
         ctx.hook_states.truncate(self.hook_states_len);
@@ -274,6 +333,8 @@ impl ContextCheckpoint {
         // subtree but keep any recorded before the error boundary was entered.
         ctx.pending_screen_nav.truncate(self.pending_screen_nav_len);
         ctx.screen_nav_depth = self.screen_nav_depth;
+        ctx.screen_focus_scopes
+            .truncate(self.screen_focus_scopes_len);
         // Issue #273: drop `cached` keys recorded by the panicking subtree.
         ctx.region_versions_cur
             .truncate(self.region_versions_cur_len);

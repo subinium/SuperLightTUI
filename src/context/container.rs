@@ -119,6 +119,8 @@ pub struct ContainerBuilder<'a> {
     /// `BeginScrollableArgs` and applied by the tree builder only when the
     /// finalizing direction is `Direction::Row`.
     pub(crate) scroll_offset_x: Option<u32>,
+    pub(crate) scroll_follow_focus: Option<bool>,
+    pub(crate) scroll_state_id: u64,
     pub(crate) theme_override: Option<Theme>,
 }
 
@@ -2158,6 +2160,8 @@ impl<'a> ContainerBuilder<'a> {
                     title: self.title,
                     scroll_offset,
                     scroll_offset_x: self.scroll_offset_x.unwrap_or(0),
+                    scroll_follow_focus: self.scroll_follow_focus,
+                    scroll_state_id: self.scroll_state_id,
                     group_name,
                 })));
         } else {

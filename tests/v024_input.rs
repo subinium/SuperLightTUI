@@ -7,9 +7,17 @@ use unicode_segmentation::UnicodeSegmentation;
 
 fn input(state: &mut TextInputState, events: Vec<Event>) -> Response {
     let mut response = Response::default();
-    TestBackend::new(40, 12).render_with_events(events, 0, 1, |ui| {
+    let mut backend = TestBackend::new(40, 12);
+    backend.render_with_events(events, 0, 1, |ui| {
         response = ui.text_input(state);
     });
+    while backend.has_pending_input() {
+        backend.render(|ui| {
+            let next = ui.text_input(state);
+            response.submitted |= next.submitted;
+            response.changed |= next.changed;
+        });
+    }
     assert!(state.cursor <= state.value.graphemes(true).count());
     response
 }

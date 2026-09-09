@@ -16,6 +16,11 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen(inline_js = "
 export async function frames(n) { while(n--) await new Promise(requestAnimationFrame); }
+export function tabKey(host, shift) {
+  host.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {
+    key:'Tab', code:'Tab', shiftKey:shift, bubbles:true, cancelable:true
+  }));
+}
 export function failStyleOnce() {
   const original = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function(name, value) {
@@ -54,9 +59,20 @@ export function trailingCompositionInput(host, text) {
 export function composingInput(host, text) {
   host.querySelector('textarea').dispatchEvent(new InputEvent('input', { data:text, inputType:'insertCompositionText', isComposing:true, bubbles:true }));
 }
+export function watchPreedit(host) {
+  const seen = [];
+  seen.observer = new MutationObserver(() => {
+    seen.push(host.querySelector('[data-slt-preedit]')?.textContent || '');
+  });
+  seen.observer.observe(host, {childList:true, subtree:true, characterData:true});
+  return seen;
+}
+export function finishPreeditWatch(seen) { seen.observer.disconnect(); return seen.join('|'); }
 ")]
 extern "C" {
     fn frames(n: u32) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = tabKey)]
+    fn tab_key(host: &HtmlElement, shift: bool);
     #[wasm_bindgen(js_name = failStyleOnce)]
     fn fail_style_once();
     #[wasm_bindgen(js_name = dispatchDuringFrame)]
@@ -68,10 +84,84 @@ extern "C" {
     fn trailing_composition_input(host: &HtmlElement, text: &str);
     #[wasm_bindgen(js_name = composingInput)]
     fn composing_input(host: &HtmlElement, text: &str);
+    #[wasm_bindgen(js_name = watchPreedit)]
+    fn watch_preedit(host: &HtmlElement) -> JsValue;
+    #[wasm_bindgen(js_name = finishPreeditWatch)]
+    fn finish_preedit_watch(seen: &JsValue) -> String;
 }
 
 async fn wait_frames() {
     JsFuture::from(frames(6)).await.expect("RAF frames");
+}
+
+#[wasm_bindgen_test(async)]
+async fn tab_reveals_modal_form_fields_before_browser_text_commit() {
+    let host = host();
+    let state = Rc::new(RefCell::new((0usize, 0usize, String::new(), String::new())));
+    let output = Rc::clone(&state);
+    let mut form = (0..10).fold(slt::FormState::new(), |state, index| {
+        let mut field = slt::FormField::new(format!("Label {index:02}"));
+        field.input.value = format!("FIELD_{index:02}");
+        state.field(field)
+    });
+    let mut scroll = slt::ScrollState::new();
+    let handle = run_wasm_with_options(
+        host.clone(),
+        WasmOptions {
+            width: 30,
+            height: 8,
+            ..Default::default()
+        },
+        move |ui| {
+            let mut focus = 0;
+            let _ = ui.modal(|ui| {
+                let _ = ui.scrollable(&mut scroll).w(28).h(6).col(|ui| {
+                    for (index, field) in form.fields.iter_mut().enumerate() {
+                        if ui.form_field_response(field).focused {
+                            focus = index;
+                        }
+                    }
+                });
+            });
+            *output.borrow_mut() = (
+                focus,
+                scroll.offset,
+                form.fields[0].input.value.clone(),
+                form.fields[9].input.value.clone(),
+            );
+        },
+    )
+    .expect("form runtime");
+    wait_frames().await;
+    host.focus().expect("focus form");
+    assert!(text(&host).contains("FIELD_00"));
+    for _ in 0..9 {
+        tab_key(&host, false);
+    }
+    wait_frames().await;
+    assert_eq!(state.borrow().0, 9);
+    assert!(state.borrow().1 > 0);
+    assert!(text(&host).contains("FIELD_09"));
+    trailing_composition_input(&host, "Z");
+    wait_frames().await;
+    assert_eq!(state.borrow().2, "FIELD_00");
+    assert_eq!(state.borrow().3, "ZFIELD_09");
+    tab_key(&host, false);
+    trailing_composition_input(&host, "Q");
+    wait_frames().await;
+    assert_eq!(state.borrow().0, 0);
+    assert_eq!(state.borrow().2, "QFIELD_00");
+    assert_eq!(state.borrow().3, "ZFIELD_09");
+    assert!(text(&host).contains("Label 00"));
+    tab_key(&host, true);
+    trailing_composition_input(&host, "R");
+    wait_frames().await;
+    assert_eq!(state.borrow().0, 9);
+    assert_eq!(state.borrow().3, "ZRFIELD_09");
+    assert!(text(&host).contains("FIELD_09"));
+    handle.dispose();
+    wait_frames().await;
+    host.remove();
 }
 
 fn host() -> HtmlElement {
@@ -614,6 +704,44 @@ async fn masked_input_never_exposes_raw_preedit_even_when_masking_changes_mid_co
     wait_frames().await;
     assert!(!text(&host).contains("leak"));
     compose(&host, "compositionend", "");
+    handle.dispose();
+    wait_frames().await;
+    host.remove();
+}
+
+#[wasm_bindgen_test(async)]
+async fn tab_to_masked_input_never_paints_preedit_at_the_previous_plain_caret() {
+    let host = host();
+    let values = Rc::new(RefCell::new((String::new(), String::new())));
+    let output = Rc::clone(&values);
+    let mut plain = slt::TextInputState::new();
+    let mut masked = slt::TextInputState::new();
+    masked.masked = true;
+    let handle = run_wasm_with_handle(host.clone(), 20, 8, move |ui| {
+        let _ = ui.text_input(&mut plain);
+        let _ = ui.text_input(&mut masked);
+        *output.borrow_mut() = (plain.value.clone(), masked.value.clone());
+    })
+    .expect("mount");
+    wait_frames().await;
+    host.focus().expect("focus");
+    let seen = watch_preedit(&host);
+    let secret = "private-preedit";
+    tab_key(&host, false);
+    compose(&host, "compositionstart", "");
+    compose(&host, "compositionupdate", secret);
+    wait_frames().await;
+    let painted = finish_preedit_watch(&seen);
+    assert!(
+        !painted.contains(secret),
+        "Tab transition exposed a transient plaintext preview: {painted}"
+    );
+    assert_eq!(&*values.borrow(), &(String::new(), String::new()));
+    compose(&host, "compositionend", secret);
+    trailing_composition_input(&host, secret);
+    wait_frames().await;
+    assert_eq!(&*values.borrow(), &(String::new(), secret.to_owned()));
+    assert!(!text(&host).contains(secret));
     handle.dispose();
     wait_frames().await;
     host.remove();

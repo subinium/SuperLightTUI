@@ -77,12 +77,25 @@ slt::run(|ui: &mut slt::Context| {
     let r = ui.button("Save");
 
     if ui.tick() > 0 && r.rect.width > 0 {
-        // Safe to use r.rect for anim targets, scroll snapping,
+        // Safe to use the visible r.rect for anim targets
         // or tooltip anchors. The rect reflects last frame's layout.
         anim_target = r.rect;
     }
 });
 ```
+
+`Response.rect` is clipped to ancestor viewports: it can be zero even after
+many frames when the widget is offscreen. Do not reconstruct document positions
+by adding a scroll offset to this rectangle. In v0.25, use
+`ui.focused_layout_rect()` or `ui.measured_layout_rect(group_name)` for a full
+border box before scrolling/clipping. These are previous-frame root/overlay
+logical coordinates, including border and padding, not local scroll coordinates.
+They return `None` before measurement or after resize. `form_field_response`
+also exposes the full field rectangle as optional `layout_rect`.
+
+Focus-following scroll corrections render with the completed layout and update
+the bound `ScrollState` on its next use. Application offset edits between those
+frames override the pending state update. No UI closure is executed twice.
 
 Equivalent guards that also work:
 
@@ -122,12 +135,12 @@ let inset = *cached.get(ui) / 2;
 
 A widget added on frame 1 has no entry in `prev_hit_map`, so a click that
 lands on it during frame 1 is ignored — `prev_focus_rects` is still empty.
-`ui.register_focusable()` returns `true` on frame 1 only when
-`prev_focus_count == 0`, which is why brand-new widgets can briefly
-"capture" focus and then immediately lose it when the rest of the tree
-catches up on frame 2. If you care about deterministic startup focus,
-call `ui.set_focus_index(desired)` on frame 0 based on your own app state
-rather than relying on mouse hit-testing.
+On the first frame, `ui.register_focusable()` matches only the requested slot
+(0 by default), rather than granting focus to every new widget. Call
+`ui.set_focus_index(desired)` before declaring the widgets for deterministic
+startup selection instead of relying on mouse hit-testing. Responses already
+returned before a later programmatic focus request keep their original flags;
+the next frame reflects that request and reports its gain/loss edges.
 
 ### Pitfall 3: animating toward a previous-frame rect
 
