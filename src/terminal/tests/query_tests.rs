@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn v024_cell_size_reply_completes_at_t_not_timeout() {
+fn cell_size_reply_completes_at_t_not_timeout() {
     let (bytes, elapsed) = collect_with_feed(
         b"\x1b[6;16;8t",
         Duration::ZERO,

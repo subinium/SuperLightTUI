@@ -82,12 +82,14 @@ impl MenuItem {
     /// Show a shortcut hint such as `"Ctrl+S"` on the right of the entry.
     ///
     /// Display only: bind the key yourself.
+    #[must_use]
     pub fn shortcut(mut self, hint: impl Into<String>) -> Self {
         self.shortcut = Some(hint.into());
         self
     }
 
     /// Disable or enable the entry.
+    #[must_use]
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self

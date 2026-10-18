@@ -8,7 +8,7 @@
 //! The bridge is render-only: a ratatui [`Widget`] draws into a scratch
 //! ratatui [`Buffer`](ratatui_core::buffer::Buffer) sized to the laid-out SLT
 //! region, and the result is copied cell by cell into SLT's
-//! [`Buffer`](crate::Buffer) through the normal clipped, grapheme-safe write
+//! [`Buffer`] through the normal clipped, grapheme-safe write
 //! path. Input handling, focus, and `StatefulWidget` state stay with the
 //! caller.
 //!
@@ -327,7 +327,10 @@ fn hidden_by_clipped_wide(scratch: &RatBuffer, left: u16, y: u16) -> Option<(u16
 
 /// Read a cell's diff option, honouring the deprecated `skip` flag that older
 /// widgets may still set.
-#[allow(deprecated)] // `Cell::skip` is deprecated since ratatui-core 0.30.1 but still honoured.
+#[expect(
+    deprecated,
+    reason = "Cell::skip is deprecated since ratatui-core 0.30.1 but older widgets still set it"
+)]
 fn diff_option(cell: &RatCell) -> CellDiffOption {
     if cell.skip {
         CellDiffOption::Skip

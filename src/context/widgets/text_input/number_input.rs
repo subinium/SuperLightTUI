@@ -1,3 +1,6 @@
+//! The `number_input` stepper widget: keyboard and wheel stepping, typed
+//! entry and range clamping.
+
 use super::*;
 
 impl Context {
@@ -31,8 +34,8 @@ impl Context {
     /// ```
     pub fn number_input(&mut self, state: &mut NumberInputState) -> Response {
         let focused = self.register_focusable();
-        // v0.21.1: capture focus-edge flags (issue #208 gap — number_input
-        // assembled its Response by hand and never set gained/lost_focus).
+        // Capture focus-edge flags here: number_input assembles its Response
+        // by hand, so it must set gained/lost_focus itself (#208).
         let (gained_focus, lost_focus) = self.focus_transitions(focused);
 
         // Normalize the committed value before processing input so the

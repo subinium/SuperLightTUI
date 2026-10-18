@@ -8,7 +8,7 @@
 #   SLT_HELLO_MAX_BYTES=1200000 bash ...        # also exit 1 when SLT default
 #                                               # (stripped) exceeds the limit
 #
-# Record the table in docs/PERFORMANCE.md ("Binary size") on every release.
+# Record the table in docs/internals/performance.md ("Binary size") on every release.
 # Linker and toolchain changes move the numbers by a few KB, so gate only on
 # large deltas. Scratch crates live in this crate's ignored target/ directory.
 set -euo pipefail

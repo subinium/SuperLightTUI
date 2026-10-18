@@ -1,3 +1,5 @@
+//! Unit and property tests for unified-diff parsing.
+
 use super::*;
 use proptest::prelude::*;
 

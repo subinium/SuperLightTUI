@@ -433,7 +433,13 @@ impl Cell {
     /// returned as-is; anything else is defensively re-normalized because
     /// `symbol` is a public field. Equal to [`Cell::normalized_symbol`].
     #[inline]
-    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "crossterm"),
+        expect(
+            dead_code,
+            reason = "read only by the crossterm flush layer, which is compiled out"
+        )
+    )]
     pub(crate) fn emit_symbol(&self) -> std::borrow::Cow<'_, str> {
         let symbol = self.symbol.as_str();
         let bytes = symbol.as_bytes();
@@ -718,8 +724,10 @@ mod tests {
 
     #[test]
     fn setters_keep_one_safe_grapheme_and_clear_links() {
-        let mut cell = Cell::default();
-        cell.hyperlink = Some(CompactString::new("https://example.com"));
+        let mut cell = Cell {
+            hyperlink: Some(CompactString::new("https://example.com")),
+            ..Cell::default()
+        };
         cell.set_symbol("👩‍💻tail\x1b");
 
         assert_eq!(cell.symbol, "👩‍💻");
@@ -739,8 +747,10 @@ mod tests {
 
     #[test]
     fn normalized_symbol_defends_against_direct_public_mutation() {
-        let mut cell = Cell::default();
-        cell.symbol = CompactString::new("\x1b]52;c;payload");
+        let cell = Cell {
+            symbol: CompactString::new("\x1b]52;c;payload"),
+            ..Cell::default()
+        };
         assert_eq!(cell.normalized_symbol(), "\u{FFFD}");
     }
 }

@@ -1,3 +1,5 @@
+//! The `rich_log` widget: a scrollable log of styled entries.
+
 use super::*;
 use crate::RichLogState;
 

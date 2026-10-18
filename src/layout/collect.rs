@@ -1,3 +1,6 @@
+//! Single-pass collection of per-frame layout feedback (hit areas, scroll
+//! regions, focus rects, raw-draw rects) into [`FrameData`].
+
 use super::*;
 use std::sync::Arc;
 
@@ -114,7 +117,6 @@ impl FrameData {
     /// Call this once before [`collect_all`] to recover last frame's capacities,
     /// then again after collection to publish the newly filled vectors. Raw draw
     /// rectangles stay in `FrameData` because callbacks consume them in-frame.
-    #[allow(dead_code)]
     pub(crate) fn swap_feedback(&mut self, feedback: &mut crate::LayoutFeedbackState) {
         std::mem::swap(&mut self.geometry, &mut feedback.geometry);
         std::mem::swap(&mut self.scroll_infos, &mut feedback.prev_scroll_infos);
@@ -133,7 +135,6 @@ impl FrameData {
 }
 
 /// Information about a raw-draw node's visible screen rect.
-#[allow(dead_code)] // Horizontal crop fields are consumed by the pending lib.rs integration.
 pub(crate) struct RawDrawRect {
     pub draw_id: usize,
     /// The visible portion of the node on screen (clipped to viewport).
@@ -343,7 +344,10 @@ fn push_scroll_info(node: &LayoutNode, data: &mut FrameData) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive DFS threads the per-node clip, scroll and focus context"
+)]
 fn collect_all_inner(
     node: &LayoutNode,
     data: &mut FrameData,

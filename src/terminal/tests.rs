@@ -1,6 +1,5 @@
 //! Terminal backend unit tests, grouped by the submodule they exercise.
 
-#![allow(clippy::unwrap_used)]
 use super::*;
 
 mod capability_tests;

@@ -94,6 +94,10 @@ pub struct LineChart<'a> {
     response: OnceCell<Response>,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl<'a> LineChart<'a> {
     fn new(ctx: &'a mut Context, data: &'a [f64], width: u32, height: u32, fill: bool) -> Self {
         Self {

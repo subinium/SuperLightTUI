@@ -355,6 +355,15 @@
   (#446).
 - tmux is identified from `TMUX` even when `TERM` is `screen-256color`
   (without GNU screen's `STY`) (#446).
+- By-value builders are `#[must_use]` (#479): `ContainerStyle`, `Tween`,
+  `Keyframes`, `Sequence`, `Stagger`, `Spring`, `WidgetColors` and
+  `WidgetTheme` as types, and the `Self`-returning builder methods on
+  `Rect`, `Color`, `KeyMap`, `Bar`, `ModalOpts`, widget state types and
+  `TestBackend` / `TestSequence`. Discarding a builder call such as
+  `style.p(1);` now warns instead of silently doing nothing. `Context`
+  widget builders (`ui.text(..).bold();`) and the `Response::on_*`
+  callbacks are unchanged. Public functions that can panic document it
+  under `# Panics`.
 
 ### Added
 

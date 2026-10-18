@@ -1,3 +1,6 @@
+//! The `file_picker` widget: directory listing with keyboard navigation and
+//! selection.
+
 use super::*;
 
 impl Context {

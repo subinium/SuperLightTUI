@@ -53,7 +53,10 @@ struct GraphicsEnv<'a> {
 static GRAPHICS_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(all(test, feature = "crossterm"))]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "edition 2024 env mutation; serialised by GRAPHICS_ENV_GUARD"
+)]
 fn with_graphics_env<F: FnOnce()>(env: GraphicsEnv<'_>, f: F) {
     let _g = GRAPHICS_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let prev_term = std::env::var("TERM").ok();

@@ -15,6 +15,13 @@ pub(crate) struct SessionSnapshot {
     pub(super) mode: TerminalSessionMode,
     pub(super) mouse_mode: crate::MouseMode,
     pub(super) kitty_keyboard: bool,
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "read only when resuming from a unix job-control suspend"
+        )
+    )]
     pub(super) report_all_keys: bool,
     pub(super) raw_mode_owned: bool,
 }
@@ -247,6 +254,8 @@ pub(super) fn write_session_enter(
 
 /// DEC private modes requested for each [`crate::MouseMode`], in enable order
 /// (#444). SGR (`?1006`) is always last on enable and first on disable.
+/// Windows consoles use crossterm's console-API capture instead.
+#[cfg(not(windows))]
 pub(super) fn mouse_mode_sequences(mode: crate::MouseMode) -> &'static [u16] {
     match mode {
         crate::MouseMode::Off => &[],

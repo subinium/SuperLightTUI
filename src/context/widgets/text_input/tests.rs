@@ -1,3 +1,6 @@
+//! Unit tests for the text-input widget family (suggestions, form
+//! validation, grapheme editing).
+
 use super::*;
 use crate::{EventBuilder, KeyCode, TestBackend};
 

@@ -1,3 +1,5 @@
+//! The `qr_code` widget (`qrcode` feature).
+
 use super::*;
 
 impl Context {

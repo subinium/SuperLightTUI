@@ -66,7 +66,7 @@ fn keep_selection_in_window(offset: usize, selected: usize, rows: usize, total: 
 }
 
 #[cfg(test)]
-mod v024_collection_command_tests {
+mod collection_command_count_tests {
     use super::*;
 
     #[test]
@@ -111,7 +111,7 @@ mod v024_collection_command_tests {
 }
 
 #[cfg(test)]
-mod v026_list_table_viewport_tests {
+mod list_table_viewport_tests {
     //! Issue #487: `list` and unpaged `table` render only the rows that fit
     //! and keep the selected row inside the drawn viewport.
     use super::*;

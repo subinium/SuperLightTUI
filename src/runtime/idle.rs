@@ -28,7 +28,13 @@ use super::RunConfig;
 
 /// Idle-skip bookkeeping carried between frames inside [`FrameState`].
 #[derive(Default)]
-#[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "crossterm"),
+    expect(
+        dead_code,
+        reason = "idle skipping is driven by the crossterm run loop, which is compiled out"
+    )
+)]
 pub(crate) struct IdleState {
     /// At least one frame has been rendered this session.
     rendered: bool,
@@ -244,7 +250,10 @@ pub(crate) fn record_frame_change(state: &mut FrameState, config: &RunConfig, ch
     idle.follow_up = idle.signalled || changed;
 }
 
-#[cfg(all(test, feature = "crossterm"))]
+// Split from `cfg(all(..))` so clippy sees `cfg(test)` and applies
+// `allow-unwrap-in-tests` to the non-`#[test]` helpers below.
+#[cfg(test)]
+#[cfg(feature = "crossterm")]
 mod tests {
     use std::time::Duration;
 

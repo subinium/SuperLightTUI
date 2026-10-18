@@ -1,3 +1,6 @@
+//! Terminal backends: the fullscreen [`Terminal`] and [`InlineTerminal`],
+//! capability detection, diff flushing and session lifecycle.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, BufWriter, IsTerminal, Stdout, Write};
@@ -288,9 +291,9 @@ impl Terminal {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
 
-        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
-        // (v0.21.1): emit unless the terminal definitively reported the mode
-        // unrecognized. A silent / headless probe keeps emitting as before.
+        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe:
+        // emit unless the terminal definitively reported the mode
+        // unrecognized. A silent / headless probe keeps emitting.
         let sync_guard = self.synchronized_output;
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;
@@ -605,8 +608,8 @@ impl InlineTerminal {
             execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
         }
 
-        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe
-        // (v0.21.1); see `Terminal::flush`. Silent / headless keeps emitting.
+        // Synchronized output (BSU/ESU) is gated on the DECRQM ?2026 probe;
+        // see `Terminal::flush`. Silent / headless keeps emitting.
         let sync_guard = self.synchronized_output;
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;

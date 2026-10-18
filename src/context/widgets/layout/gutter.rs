@@ -1,14 +1,13 @@
-// Scrollable container variant with a per-line left gutter and search-style
-// highlight rendering.
-//
-// Introduced in v0.20.0 (#235). Companion to the existing `scrollable` /
-// `scroll_col` / `scroll_row` widgets in `layout.rs` and the `ScrollState`
-// highlight extensions in `widgets/collections.rs`.
-//
-// API consistency pass (v0.20.0): the four+ positional args were collapsed
-// into a [`GutterOpts<G>`] struct so callers don't have to remember argument
-// order. The 90% case (line numbers) gets a [`GutterOpts::line_numbers`]
-// shortcut so most callers never write the closure manually.
+//! Scrollable container variant with a per-line left gutter and search-style
+//! highlight rendering.
+//!
+//! Issue #235. Companion to the existing `scrollable` /
+//! `scroll_col` / `scroll_row` widgets in `layout.rs` and the `ScrollState`
+//! highlight extensions in `widgets/collections.rs`.
+//!
+//! Options live in a [`GutterOpts<G>`] struct rather than positional args so
+//! callers don't have to remember argument order. The 90% case (line numbers) gets a [`GutterOpts::line_numbers`]
+//! shortcut so most callers never write the closure manually.
 
 use super::*;
 

@@ -1,3 +1,5 @@
+//! Unit tests for the display widget family.
+
 use super::*;
 use crate::TestBackend;
 use std::time::Duration;

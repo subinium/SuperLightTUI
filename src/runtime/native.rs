@@ -36,8 +36,8 @@ use crate::{
 ///
 /// # Ctrl+C opt-out (issue #238)
 ///
-/// By default, Ctrl+C exits the loop cleanly — matching the v0.19 contract
-/// and the convention most TUIs follow. To match RataTUI's raw-mode
+/// By default, Ctrl+C exits the loop cleanly, the convention most TUIs
+/// follow. To match RataTUI's raw-mode
 /// semantics (Ctrl+C delivered as a regular `Event::Key`), set
 /// [`RunConfig::handle_ctrl_c(false)`](RunConfig::handle_ctrl_c) and decide
 /// inside the frame closure whether to call [`Context::quit`]:
@@ -627,7 +627,10 @@ pub(super) fn discard_static_log(state: &mut FrameState, mode: &str) {
     let drained = drain_static_log(state);
     #[cfg(debug_assertions)]
     if !drained.is_empty() {
-        #[allow(clippy::print_stderr)]
+        #[expect(
+            clippy::print_stderr,
+            reason = "debug-build warning; the terminal is already restored here"
+        )]
         {
             eprintln!(
                 "[slt] {} static_log lines were dropped: {} runtime has no scrollback channel; use slt::run_static for streaming output",
@@ -644,7 +647,7 @@ pub(super) fn discard_static_log(state: &mut FrameState, mode: &str) {
 
 /// Number of `on_resize` invocations a batch of events should trigger.
 ///
-/// v0.21.1 resize coalescing: a single poll batch may deliver a burst of
+/// Resize coalescing: a single poll batch may deliver a burst of
 /// `Event::Resize` events while a user drags the window edge. Each
 /// [`Terminal::handle_resize`](crate::terminal::Terminal::handle_resize) does a
 /// `terminal::size()` syscall, two buffer reallocations, and a `Clear(All)`, so
@@ -673,11 +676,11 @@ fn input_poll_wait(state: &FrameState, size: (u32, u32), idle: Duration) -> Dura
 /// Poll for terminal events, handling resize, Ctrl-C, F12 debug toggle,
 /// and layout cache invalidation. Returns `Ok(false)` when the loop should exit.
 ///
-/// `handle_ctrl_c` controls whether Ctrl+C exits the loop (`true`, default
-/// v0.19 behavior) or is delivered to the frame closure as a regular key
+/// `handle_ctrl_c` controls whether Ctrl+C exits the loop (`true`, the
+/// default) or is delivered to the frame closure as a regular key
 /// event (`false`, RataTUI parity, issue #238).
 ///
-/// v0.21.1: resize events within one poll batch are *coalesced* — `on_resize`
+/// Resize events within one poll batch are *coalesced*: `on_resize`
 /// is invoked at most once, after the whole batch is drained, using the final
 /// terminal size (`handle_resize` re-reads `terminal::size()`). Dragging a
 /// window edge can emit dozens of `Event::Resize` per poll; firing the

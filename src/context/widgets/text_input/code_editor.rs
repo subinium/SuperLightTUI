@@ -94,6 +94,10 @@ pub struct CodeEditor<'a> {
     opts: CodeEditorOpts,
 }
 
+#[expect(
+    clippy::return_self_not_must_use,
+    reason = "the widget call already recorded the element (or renders on drop); modifiers edit it in place, so a statement-terminated chain is the intended use"
+)]
 impl CodeEditor<'_> {
     /// Fixed width in cells, gutter included. Defaults to the parent's
     /// available width.

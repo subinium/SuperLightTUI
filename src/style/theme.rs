@@ -1,3 +1,6 @@
+//! [`Theme`], the spacing scale, theme color tokens, syntax palettes and the
+//! built-in presets.
+
 use super::*;
 
 /// Spacing scale for consistent padding, margin, and gap values.
@@ -782,7 +785,7 @@ impl Theme {
         }
     }
 
-    /// Compact density preset — base spacing = 1 (matches v0.19 default behavior).
+    /// Compact density preset: base spacing = 1.
     ///
     /// Use when terminal space is tight or you want maximum information
     /// density. Built on [`Theme::dark()`] colors with `Spacing::new(1)`.
@@ -864,6 +867,7 @@ impl Theme {
     /// // Nord colors preserved.
     /// assert_eq!(dense_nord.bg, Theme::nord().bg);
     /// ```
+    #[must_use]
     pub const fn with_spacing(mut self, spacing: Spacing) -> Self {
         self.spacing = spacing;
         self

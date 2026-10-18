@@ -10,6 +10,12 @@ current APIs, see `docs/guide/03-patterns.md` and `docs/reference/cookbook.md`.
 
 ## v0.25.x → v0.26.0
 
+- **Discarded builders warn (#479).** `ContainerStyle`, the animation
+  builders (`Tween`, `Keyframes`, `Sequence`, `Stagger`, `Spring`) and the
+  `Self`-returning builder methods on value and state types are
+  `#[must_use]`. A statement like `card.p(1);` never changed `card`; bind
+  the result (`let card = card.p(1);`). `ui.text(..).bold();` and other
+  `Context` widget chains still need no `let _ =`.
 - **Textarea undo is byte-bounded (#415).** `TextareaState` and
   `TextInputState` store undo steps as edit records instead of document
   copies, and drop the oldest steps once the records exceed 8 MiB
