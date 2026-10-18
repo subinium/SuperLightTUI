@@ -8,9 +8,12 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// File contents with `\r\n` folded to `\n`, so the contracts hold on a
+/// Windows checkout where git's `core.autocrlf` rewrites line endings.
 fn read(path: impl AsRef<Path>) -> String {
     fs::read_to_string(path.as_ref())
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.as_ref().display()))
+        .replace("\r\n", "\n")
 }
 
 fn package_version(manifest: &str) -> &str {
@@ -163,10 +166,7 @@ fn every_advertised_example_is_a_registered_target() {
         let text = read(&path);
         for name in advertised_examples(&text) {
             if !targets.contains(name) {
-                invalid.push(format!(
-                    "{}: {name}",
-                    path.strip_prefix(&root).unwrap().display()
-                ));
+                invalid.push(format!("{}: {name}", relative(&root, &path)));
             }
         }
     }
@@ -221,7 +221,7 @@ fn every_example_source_is_compiled_by_some_target() {
     let mut unreachable: Vec<String> = examples
         .iter()
         .filter(|path| !reached.contains(&path.canonicalize().expect("example path")))
-        .map(|path| path.strip_prefix(&root).unwrap().display().to_string())
+        .map(|path| relative(&root, path))
         .collect();
     unreachable.sort();
 
