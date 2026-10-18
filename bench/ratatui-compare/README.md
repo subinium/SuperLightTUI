@@ -92,7 +92,15 @@ cargo run --release --features count-alloc -- alloc [filter] # allocations + req
 cargo run --release -- bytes [filter]                        # first/steady bytes, one-cell and idle frame dump
 cargo run --release -- show [filter] [--dump]                # text equivalence (exit 1 on mismatch)
 cargo test                                                   # deterministic gate (debug and release agree)
+bash size.sh                                                 # stripped hello-world size, SLT vs ratatui (#491)
 ```
+
+`size.sh` builds the #491 hello-world programs as separate crates under
+`target/size` with the default release profile and prints a markdown table
+for docs/PERFORMANCE.md ("Binary size"). Re-record it on every release.
+`SLT_HELLO_MAX_BYTES=<n>` makes it exit 1 when the stripped default SLT
+binary is larger; gate only on large deltas, since toolchain and linker
+updates move the numbers by a few KB.
 
 `filter` is a substring of the case name (`<workload>/<slt|ratatui>/<mem|sink>`),
 for example `sink`, `d_nested` or `slt/sink`. Every report starts with host,
@@ -263,7 +271,7 @@ Out of scope for this change, still open on #482:
   persistent `#[doc(hidden)]` sink `Terminal` in `superlighttui` (the current
   `PtyBackend` builds a new `Terminal` per render, so every frame is a full
   redraw).
-- Prototype modes not ported: `live`, `sizes`, `micro`, `loop`, and the
-  hello-world binary-size probe (#491).
+- Prototype modes not ported: `live`, `sizes`, `micro`, `loop`. The
+  hello-world binary-size probe is `size.sh` (#491).
 - No CI job (gate on PRs, timing artifact on main) and docs/PERFORMANCE.md is
   not regenerated from this output yet.

@@ -209,6 +209,11 @@ impl Context {
     pub fn line_wrap(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
         let start = self.commands.len();
         f(self);
+        // Non-generic tail (#491): one copy instead of one per closure.
+        self.line_wrap_finish(start)
+    }
+
+    fn line_wrap_finish(&mut self, start: usize) -> &mut Self {
         let has_link = self.commands[start..]
             .iter()
             .any(|cmd| matches!(cmd, Command::Link { .. }));
@@ -1059,6 +1064,22 @@ impl Context {
         direction: Direction,
         gap: u32,
         f: impl FnOnce(&mut Context),
+    ) -> Response {
+        // Binary size (#491): keep the per-closure copy to this shim, like
+        // `ContainerBuilder::finish`.
+        let mut f = Some(f);
+        self.push_container_dyn(direction, gap, &mut |ui: &mut Context| {
+            if let Some(f) = f.take() {
+                f(ui);
+            }
+        })
+    }
+
+    fn push_container_dyn(
+        &mut self,
+        direction: Direction,
+        gap: u32,
+        f: &mut dyn FnMut(&mut Context),
     ) -> Response {
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;

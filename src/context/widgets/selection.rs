@@ -128,6 +128,11 @@ impl Context {
 
     /// Render a clickable button with custom widget colors.
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
+        // Non-generic body (#491): one copy instead of one per label type.
+        self.button_colored_string(label.into(), colors)
+    }
+
+    fn button_colored_string(&mut self, label: String, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
         let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -172,7 +177,7 @@ impl Context {
                 grow: 0,
                 group_name: None,
             })));
-        let raw_label = label.into();
+        let raw_label = label;
         let mut label_text = String::with_capacity(raw_label.len() + 4);
         label_text.push_str("[ ");
         label_text.push_str(&raw_label);

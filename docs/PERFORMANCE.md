@@ -595,8 +595,9 @@ Output bytes per frame:
   *more* (44 vs 32) because SLT writes a redundant SGR reset.
 - **Dependencies.** A default-feature build resolves 26 unique normal
   dependencies against 67 for ratatui 0.30.2 + crossterm. Binary size and
-  build time do **not** follow: a stripped release hello-world is 1,039 KiB
-  vs 540 KiB (1.9× larger), and a cold release build is about 1.6× slower.
+  build time do **not** follow: a stripped release hello-world is 1,137 KiB
+  vs 540 KiB (2.1× larger, see [Binary size](#binary-size)), and a cold
+  release build is about 1.6× slower.
 - **Viewport-limited widgets.** `ui.virtual_list` over 10k items (258 µs)
   is faster than ratatui's `List` built from all 10k items (648 µs). This is
   not like-for-like, since a ratatui app can slice its items to the viewport
@@ -631,6 +632,133 @@ audit tracker. Until it lands, do not describe SLT as faster than ratatui.
   may no longer apply, but no in-repo comparison bench exists yet. Only the
   SLT `dashboard_200x60/slt` arm ships, and it measures the in-memory kernel
   only: `cargo bench --bench benchmarks -- dashboard_200x60`.
+
+### Binary size
+
+Hello-world from #491 (`slt::run` + `ui.text` + `ui.key('q')`; ratatui:
+`ratatui::run` + `render_widget(&str)` + `event::read`), each in its own crate
+with the default `[profile.release]` (no LTO, `opt-level = 3`,
+`panic = "unwind"`), then `strip`. Apple M3 Pro, aarch64 macOS, rustc 1.98.0.
+Reproduce with `bash bench/ratatui-compare/size.sh` and re-record this table
+on every release.
+
+| Program (stripped bytes) | v0.25.0 | 0.26 base (`0a8cf43`) | 0.26 (#491) |
+|---|---|---|---|
+| SLT, default (`crossterm`, `bidi`) | 1,063,944 | 1,198,888 | **1,164,360** |
+| SLT, `default-features = false, features = ["crossterm"]` | 996,128 | 1,147,544 | **1,096,520** |
+| ratatui 0.30.2, default | 553,376 | 553,376 | 553,384 |
+| SLT default / ratatui | 1.92x | 2.17x | **2.10x** |
+
+Of the 0.25 → 0.26 growth (+134,944 B default), the accessible output mode
+(#469) accounts for ~32 KiB of `.text` plus a second ~16 KiB frame-kernel
+copy (removed below). The rest was not attributed commit by commit.
+
+**Composition** (default build after #491; `cargo bloat --release --crates`
+and per symbol, `size -m` for sections; cargo-bloat attribution is
+approximate):
+
+| Part | SLT | ratatui |
+|---|---|---|
+| `.text` total | 755 KiB | 320 KiB |
+| — `slt` crate / `ratatui_core` + `crossterm` | 399 KiB | 14 + 31 KiB |
+| — std backtrace symbolization (gimli, addr2line, demangle) | 142 KiB | 141 KiB |
+| — drop glue (std + slt) | 55 KiB | 8 KiB |
+| — `hashbrown` + SipHash, slice sort instances | 23 + 21 KiB | ~0 |
+| — `unicode-bidi` / `-segmentation` / `-width` | 11 / 8 / 8 KiB | 0 / 1 / 1 KiB |
+| `__eh_frame` + `__gcc_except_tab` (unwind tables) | 101 + 24 KiB | 47 + 10 KiB |
+| `__const` read-only data (Unicode tables, vtables) | 93 KiB | 50 KiB |
+
+The `crossterm`-only build drops `unicode-bidi` (code plus ~19 KiB of
+tables); everything else is the same.
+
+Largest SLT symbols (default build): `run_frame_kernel` 19.9 KiB,
+`accessible::Session::run` 10.2 KiB, `event::reply::Replay::decode` 6.3 KiB,
+`terminal::flush::flush_buffer_diff_rows` 6.2 KiB, `width::str_width`
+6.0 KiB (plus three 3.1 KiB copies), `Context::new` 5.7 KiB,
+`layout::render::render_inner` 5.0 KiB, `unicode_bidi::BidiInfo::new`
+4.7 KiB. By module: `runtime::accessible` 32 KiB, `runtime::kernel` 24 KiB,
+`layout::tree` 21 KiB, `layout::render` 20 KiB, `event::native` 20 KiB and
+`event::reply` 18 KiB (SLT's own input parser; `crossterm` itself
+contributes 6 KiB), `context::core` 17 KiB, inlined `Graphemes::next`
+copies 17 KiB, `str_width` and its inlined `unicode-width` walks 31 KiB,
+`layout::flexbox` 15 KiB, `buffer` 12 KiB. `serde`, `image`, tree-sitter and
+the syntax tables are absent with default features.
+
+**Why SLT stays about 2x ratatui.** ratatui links only what the program
+calls: a `&str` render pulls 14 KiB of `ratatui_core`. `slt::run` reaches
+the whole runtime through run-time switches (layout, input parser, focus,
+overlays, notifications, tooltips, debug overlay, inspector, accessible mode,
+terminal probes, kitty/sixel image passes), so a hello-world already
+contains the code a full app uses. That code, its drop glue and its unwind
+tables make up most of the ~611 KB difference; #491 only removed
+duplication.
+
+**Reductions in #491** (stripped bytes, same toolchain, each step measured on
+top of the previous one; `codegen-units = 16` reshuffles duplicate copies
+between steps, so per-step numbers carry some partition noise):
+
+| Change | hello (issue) | `examples/hello` | `examples/demo` | `examples/widgets_tour` |
+|---|---|---|---|---|
+| Baseline `0a8cf43` | 1,198,888 | 1,215,608 | 2,698,200 | 1,715,256 |
+| `ContainerBuilder::finish`, `push_container`, `line_wrap`, `button_colored`: generic shim + non-generic body | +80 | −16,464 | **−593,392** | **−230,752** |
+| `run_frame_kernel` takes `&mut dyn FnMut` (one copy, not one per run mode) | −17,584 | −17,600 | −17,552 | −17,536 |
+| Debug bar formats ms / fps with integers (no float formatting) | −17,032 | −17,032 | −16,552 | −48 |
+| **Total** | **−34,536 (−2.9%)** | **−51,096 (−4.2%)** | **−627,496 (−23.3%)** | **−248,336 (−14.5%)** |
+
+The `crossterm`-only hello-world went from 1,147,544 to 1,096,520 B
+(−51,024, −4.4%).
+
+- `finish` was monomorphized once per `.col(..)` / `.row(..)` closure, each
+  copy carrying the whole ~4 KB container body: 122 copies, ~520 KB of
+  `examples/demo`. Every SLT app with more than a handful of containers
+  pays this, so it matters far more than the hello-world number.
+- The frame kernel was instantiated for the native loop and again for the
+  accessible session (and once more per test closure). Passing the frame
+  closure as `dyn` costs one indirect call per frame.
+- The F12 debug bar was the only `f32`/`f64` `Display` user in a default
+  build; `{:.1}ms` / `{:.0}fps` are now integer formatted and digit for
+  digit identical (a test compares every frame time below 2 s and ranges
+  near 2^32, 2^40 and 2^48 µs against `format!`, including decimal ties).
+  Apps that format floats themselves (charts, gauges) still link it.
+
+Frame time (`bench/ratatui-compare`, `time slt`, three interleaved runs of
+the base and the #491 binary, median of medians): every SLT workload is
+within ±2% of the base (dashboard mem 97.1 → 97.6 µs, sink 190.7 → 189.2 µs;
+nested mem 852.8 → 855.2 µs, sink 1033.5 → 1028.7 µs; list, table, one-cell
+and idle likewise), inside run-to-run spread.
+
+**Target (set from this profile): not met.** The profile attributed about
+80 KB of the default hello-world to duplication (second kernel copy, float
+formatting for the debug bar, per-unit copies of `str_width` and
+`Graphemes::next`). The target was 1,140,000 B stripped (≥ 5% under the
+0.26 base) without removing features or slowing frames; #491 reached
+1,164,360 B. The rejected step:
+
+- Un-inlining `width::str_width` saved another 16.6 KB in hello-world and
+  49.7 KB in `demo`, but cost ~5% (≈5 µs) on every 200x60 in-memory
+  workload (dashboard, one-cell, idle), reproducibly across interleaved runs.
+  Keeping the default walk inline and moving only the ambiguous-wide walk out
+  of line saved 16.5 KB and cost the same. Reverted. A size-neutral version
+  needs the per-grapheme callers (`buffer`, `layout::render`) to measure
+  ASCII runs in bulk instead of calling `str_width` per cell.
+
+**Follow-ups** (measured, not landed; the call sites are in files under
+concurrent change):
+
+- `unicode_segmentation::Graphemes::next` is copied into 4 codegen units
+  (~10 KiB duplicate in hello, ~24 KiB in `demo`): `buffer`, `cell`,
+  `layout::{tree,render,focus}`. A crate-local wrapper with one out-of-line
+  `next` would keep a single copy. `next` is already an out-of-line call at
+  those sites, but measure frame time as for `str_width` above.
+- Direct `UnicodeWidthStr::width` calls (`terminal::flush`,
+  `terminal::effects`, tooltips) keep inlined copies of the width table walk.
+- `accessible::Session<I, F>` (~16 KiB) is generic over the app closure; only
+  apps that call `run` with several closure types duplicate it.
+
+**User options** (not SLT's result): `lto = true`, `codegen-units = 1`,
+`opt-level = "z"`, `panic = "abort"` and `strip = true` in the application's
+`[profile.release]` remove most cross-unit duplication and landing pads;
+measure them on the application rather than this hello-world.
 
 ## 6. Detecting regressions
 
