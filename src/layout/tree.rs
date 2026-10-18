@@ -255,7 +255,7 @@ impl LayoutNode {
         constraints: Constraints,
     ) -> Self {
         let (cursor_offset, wrap, truncate) = text_meta;
-        let width = UnicodeWidthStr::width(content.as_str()) as u32;
+        let width = crate::width::str_width(content.as_str()) as u32;
         Self {
             kind: NodeKind::Text,
             text_data: Some(Box::new(TextNodeData {
@@ -313,7 +313,7 @@ impl LayoutNode {
     ) -> Self {
         let width = segments.iter().fold(0u32, |total, (text, _)| {
             total.saturating_add(
-                u32::try_from(UnicodeWidthStr::width(text.as_str())).unwrap_or(u32::MAX),
+                u32::try_from(crate::width::str_width(text.as_str())).unwrap_or(u32::MAX),
             )
         });
         Self {
@@ -860,7 +860,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         // single-wide-char behavior.
         for (rel_i, g) in slice.grapheme_indices(true) {
             let abs_i = word_start + rel_i;
-            let ch_width = UnicodeWidthStr::width(g) as u32;
+            let ch_width = crate::width::str_width(g) as u32;
             let ch_len = g.len();
 
             if chunk_end == chunk_start {
@@ -1038,7 +1038,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 continue;
             }
             word_width = word_width
-                .saturating_add(u32::try_from(UnicodeWidthStr::width(g)).unwrap_or(u32::MAX));
+                .saturating_add(u32::try_from(crate::width::str_width(g)).unwrap_or(u32::MAX));
         }
 
         push_word(
@@ -1215,7 +1215,7 @@ fn wrap_segments_paragraph(
                 .next()
                 .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
             let ch_len = g.len();
-            let ch_width = UnicodeWidthStr::width(g) as u32;
+            let ch_width = crate::width::str_width(g) as u32;
 
             if line_width + ch_width > max_width && line_width > 0 {
                 if let Some((segs_len, last_byte_len, _w, sp_seg, sp_off)) = last_space_break {

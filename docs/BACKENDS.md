@@ -76,9 +76,9 @@ as one global capability switch.
 
 | Environment | Automatic replies | Synchronized output | Kitty graphics | Sixel | iTerm2 images | Kitty keyboard |
 |-------------|-------------------|---------------------|----------------|-------|---------------|----------------|
-| Identified direct terminal | Probed once | Probe result; unknown keeps the historical default | Probe or known direct identity | DA1 or known direct identity | Known direct identity | Allowed when requested |
+| Identified direct terminal | Probed once | Probe result; unknown keeps the historical default | Probe or known direct identity | DA1 or known direct identity | Known direct identity | Pushed when requested and confirmed by a `CSI ? u` reply |
 | tmux 3.2+ | Off | Off | Off | Off | Off | Off |
-| Zellij 0.43.1+ | Off | Off | Off | On | Off | Allowed when requested |
+| Zellij 0.43.1+ | Off | Off | Off | On | Off | Pushed when requested (policy only) |
 | GNU screen 4.09+ | Off | Off | Off | Off | Off | Off |
 | SSH | Direct-terminal rules apply, but generic `TERM=xterm-256color` is not enough to start automatic probes | Direct-terminal policy | Do not rely on an inherited outer identity | Do not rely on an inherited outer identity | Off unless explicitly forced | Depends on the remote endpoint |
 | Generic PTY / unknown bridge | Off | Historical direct default; disable when the bridge strips DEC modes | Off | Off | Off | Not negotiated |
@@ -94,7 +94,14 @@ protocol works through the current multiplexer.
 | Kitty graphics | `SLT_FORCE_KITTY` | `SLT_DISABLE_KITTY` |
 | Sixel | `SLT_FORCE_SIXEL` | `SLT_DISABLE_SIXEL` |
 | iTerm2 images | `SLT_FORCE_ITERM` | `SLT_DISABLE_ITERM` |
-| Kitty keyboard | `SLT_FORCE_KITTY_KEYBOARD` | `SLT_DISABLE_KITTY_KEYBOARD` |
+| Kitty keyboard (force also skips the `CSI ? u` confirmation) | `SLT_FORCE_KITTY_KEYBOARD` | `SLT_DISABLE_KITTY_KEYBOARD` |
+| OSC 9;4 progress | `SLT_FORCE_PROGRESS` | `SLT_DISABLE_PROGRESS` |
+| OSC 7501 program status | `SLT_FORCE_PROGRAM_STATUS` | `SLT_DISABLE_PROGRAM_STATUS` |
+
+tmux is identified from `TMUX` even when its `default-terminal` sets
+`TERM=screen-256color`, unless GNU screen's `STY` is also present. The
+distinction matters for OSC 52 passthrough, which uses a different wrapper
+for each.
 
 CI starts isolated real sessions for tmux 3.2 and the Ubuntu package, Zellij
 0.43.1 and 0.45.0, and the Ubuntu GNU screen package. Each run is bounded and
@@ -160,9 +167,17 @@ Both `Terminal` and `InlineTerminal` wrap stdout in `BufWriter::with_capacity(65
 
 The contract for custom backends is unchanged: `Backend::flush()` is still called once per frame and may itself defer or batch writes however it likes.
 
+### Terminal side effects go through the built-in flush (v0.26)
+
+Terminal metadata (`ui.set_title`, `ui.set_progress`, `ui.set_status`, `ui.set_cursor_shape`) and OSC 52 clipboard writes (`ui.copy_to_clipboard` and mouse-selection copies) are staged by the frame kernel and written by the built-in `Terminal` / `InlineTerminal` flush into the same buffered stream as the frame. Metadata is compared with what was last emitted and written only on change; the title stack, progress, program status, and cursor shape are restored when the session ends (including Ctrl+Z suspend and panic cleanup). Clipboard writes happen after the frame bytes are flushed, and their outcome is reported through `ui.clipboard_status()` on the next frame instead of printing to stderr or failing the frame.
+
+Custom backends never emit any of this: they keep `owns_terminal_session() == false`, so nothing is staged for them, and no bytes reach process stdout behind their back. The recorded state stays observable through `ui.terminal_title()`, `ui.terminal_progress()`, `ui.program_status()`, `ui.cursor_shape()`, and `ui.clipboard_status()` (which stays `None` because no write happens). `RunConfig::ambiguous_wide(true)` is different: it changes measurement in the buffer and layout, so it applies to every backend, `frame()` callers included.
+
 ### `kitty_keyboard` honored in inline mode (v0.19.1)
 
 `InlineTerminal::new` now reads `RunConfig::kitty_keyboard` and propagates it through `TerminalSessionGuard`. Earlier versions hardcoded inline-mode kitty keyboard support to `false` regardless of config; both full-screen and inline runs now agree on the flag.
+
+Since v0.26 the session guard runs the capability probe before pushing the protocol. When startup queries run, the push happens only if the terminal answered `CSI ? u` (or `SLT_FORCE_KITTY_KEYBOARD` is set), and teardown pops exactly what was pushed.
 
 ## `RunConfig` in practice
 
@@ -187,6 +202,10 @@ Important details:
 - `max_fps` caps the render rate after work is done
 - `mouse(true)` enables clicks, hovers, and wheel input; it is `false` by default, so `slt::run` apps receive no mouse events
 - `kitty_keyboard(true)` requests richer key events on supported terminals
+- `title(..)` is the initial window title; `ui.set_title(..)` replaces it at runtime, and the previous title is restored on exit
+- `color_depth(..)` pins the depth; without it, the built-in loops resolve it from the environment plus the startup probe (`ColorDepth::resolve`)
+- `clipboard_passthrough(true)` / `clipboard_max_bytes(n)` control OSC 52 delivery inside tmux / screen and the payload cap (default 74,994 bytes)
+- `ambiguous_wide(true)`, `width_conservative(..)`, and `width_probe(true)` control cluster-width handling (see [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md))
 - `RunConfig` and `Theme` are both `#[non_exhaustive]`, so prefer builder methods over struct literals
 
 ## Driving `frame()` yourself

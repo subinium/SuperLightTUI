@@ -265,13 +265,13 @@ value may look different on a 256-color or 16-color terminal. See
 | Browser | SLT |
 |---------|-----|
 | `<a href>` / `window.open` | `ui.link(text, url)`: focusable; click or Enter opens the URL with the system opener (`open` / `xdg-open` / `start`) on the machine running the app, and OSC 8 is emitted for terminals with native hyperlinks |
-| `navigator.clipboard.writeText` | `ui.copy_to_clipboard(text)` (OSC 52; the terminal must allow it) |
+| `navigator.clipboard.writeText` | `ui.copy_to_clipboard(text)` (OSC 52; the terminal must allow it). The promise result maps to `ui.clipboard_status()` on the next frame: `Sent`, `TooLarge`, or `WriteFailed` |
 | `fetch` + `await` | `ui.spawn(async { .. })` + `ui.poll(&handle)` (`async` feature), or `slt::run_async` with a message channel |
 | `setTimeout` | `ui.schedule("id", duration)` returns `true` once when the delay has passed |
 | `setInterval` | `ui.every("id", duration)` returns how many intervals elapsed |
 | `requestAnimationFrame` | the closure already runs every frame; `RunConfig::tick_rate` / `max_fps` set the cadence |
 | `localStorage` | none built in: read and write files yourself (`serde` feature helps) |
-| `document.title` | `RunConfig::title` |
+| `document.title` | `RunConfig::title` for the initial value, `ui.set_title(..)` at runtime (restored on exit) |
 | `console.log` | not while the UI owns the terminal: log to a file or a `rich_log` panel |
 
 <!-- slt-check: {"name":"web_timers","features":[],"context":"ui"} -->
@@ -308,7 +308,9 @@ Be honest with yourself about these before porting a design:
 - **No `:disabled` or `:active` states.** Render a dimmed, non-interactive
   variant yourself and skip handling its `clicked`.
 - **No element-anchored popovers or context menus**, apart from tooltips.
-- **No cursor-shape API** (`cursor: pointer`). The terminal owns the pointer.
+- **No pointer-cursor API** (`cursor: pointer`). The terminal owns the mouse
+  pointer. The text cursor's shape is settable with `ui.set_cursor_shape(..)`
+  (block, underline, bar).
 - **No sub-cell positioning, fonts, or font sizes.** One character per cell.
 - **No scroll anchoring or stick-to-bottom.** Collapsing content above the
   viewport shifts what is visible.

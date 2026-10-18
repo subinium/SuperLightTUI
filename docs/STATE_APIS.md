@@ -242,7 +242,7 @@ Selectable list.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `selected` | `usize` | Current selection, as a **view index** (position in the filtered view). |
+| `selected` | `usize` | **Deprecated in 0.26.** Current selection as a **view index**. Use `selected_index()`, `selected_view_index()`, `set_selected_index()`. |
 
 Items and filter state are private because they are coupled to search and
 viewport caches. Read or mutate them through the methods below.
@@ -252,25 +252,24 @@ viewport caches. Read or mutate them through the methods below.
 `ListState` uses two different indices, and they only coincide while no filter
 is active:
 
-- **View index** — position in the filtered list the user sees. `selected` is a
-  view index.
-- **Data index** — position in the underlying `items()`. `item`, `insert_item`,
-  `remove_item`, and `move_item` take data indices.
+- **View index** — position in the filtered list the user sees.
+  `selected_view_index()` / `set_selected_view_index()` use it.
+- **Data index** — position in the underlying `items()`. `selected_index()`,
+  `set_selected_index()`, `item`, `insert_item`, `remove_item`, and `move_item`
+  use data indices.
 
 `visible_indices()` maps one to the other: `visible_indices()[view] == data`.
-To delete the selected item correctly while a filter is active:
+To delete the item the user sees highlighted, filter or not:
 
 ```rust
-// Wrong with a filter active: `selected` is a view index.
-// list.remove_item(list.selected);
-
-// Right: map the view index to the data index first.
-if let Some(&data_idx) = list.visible_indices().get(list.selected) {
-    let removed = list.remove_item(data_idx);
-}
+let removed = list.remove_selected(); // Option<String>
 ```
 
-`selected_item()` already performs this mapping when you only need the text.
+`selected_index()` returns the highlighted item's data index (`None` when the
+filtered view is empty), so `list.item(i)` / `list.move_item(i, ..)` act on the
+right item. `selected_item()` performs the same mapping when you only need the
+text. The public `selected` field is deprecated since 0.26: it is a view index,
+so `list.remove_item(list.selected)` removes the wrong item under a filter.
 
 ### Constructors
 
@@ -290,6 +289,9 @@ if let Some(&data_idx) = list.visible_indices().get(list.selected) {
 | `set_filter(&mut self, filter: impl Into<String>)` | Update filter and recompute visible indices. |
 | `visible_indices(&self) -> &[usize]` | Indices into `items` that survive the filter. |
 | `selected_item(&self) -> Option<&str>` | Text of the currently selected item. |
+| `selected_index(&self) -> Option<usize>` / `set_selected_index(&mut self, data: usize) -> bool` | Read or set the selection by data index; `false` if the item is hidden or out of range. |
+| `selected_view_index(&self) -> usize` / `set_selected_view_index(&mut self, view: usize) -> bool` | Read or set the selection by view position. |
+| `remove_selected(&mut self) -> Option<String>` | Remove the highlighted item. |
 | `with_item_heights(...)`, `set_item_heights(...)`, `clear_item_heights()` | Configure variable-height virtualization. |
 | `move_item(&mut self, from: usize, to: usize) -> bool` | Reorder an item while preserving cache invariants. |
 
@@ -412,7 +414,7 @@ Sortable, filterable, paginated table.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `selected` | `usize` | Selected row, as a **view index** (position after filter + sort). |
+| `selected` | `usize` | **Deprecated in 0.26.** Focused row as a **view index** (after filter + sort). Use `selected_index()`, `selected_view_index()`, `set_selected_index()`. |
 | `multi_selected` | `HashSet<usize>` | Multi-selected rows, as view indices. |
 | `sort_column` | `Option<usize>` | Active sort column. |
 | `sort_ascending` | `bool` | Sort direction. |
@@ -423,19 +425,19 @@ Sortable, filterable, paginated table.
 Headers, rows, filter text, and width caches are private. Use the methods below
 so filtering, sorting, selection, and width caches stay synchronized.
 
-Like `ListState`, `TableState` has two index spaces. `selected` and
-`multi_selected` are **view** indices (after filter and sort);
-`row`, `insert_row`, and `remove_row` take **data** indices into `rows()`.
-They differ as soon as a filter or sort is active. Map through
-`visible_indices()` before mutating:
+Like `ListState`, `TableState` has two index spaces. The focused row
+(`selected_view_index()`) and `multi_selected` are **view** indices (after
+filter and sort, absolute across pages); `selected_index()`, `row`,
+`insert_row`, and `remove_row` use **data** indices into `rows()`. They differ
+as soon as a filter or sort is active. Act on the highlighted row with:
 
 ```rust
-if let Some(&data_idx) = table.visible_indices().get(table.selected) {
-    let removed = table.remove_row(data_idx);
-}
+let removed = table.remove_selected(); // Option<Vec<String>>
 ```
 
-`selected_row()` and `selected_rows()` already perform this mapping for reads.
+`selected_row()` and `selected_rows()` perform the same mapping for reads.
+`set_selected_index()` / `set_selected_view_index()` also switch to the row's
+page when pagination is on.
 
 ### Constructors
 
@@ -461,6 +463,9 @@ if let Some(&data_idx) = table.visible_indices().get(table.selected) {
 | `total_pages(&self) -> usize` | Pages given current filter and `page_size`. |
 | `visible_indices(&self) -> &[usize]` | Row indices after filter + sort. |
 | `selected_row(&self) -> Option<&[String]>` | The currently selected row. |
+| `selected_index(&self) -> Option<usize>` / `set_selected_index(&mut self, data: usize) -> bool` | Read or set the focused row by data index (switches page when paged). |
+| `selected_view_index(&self) -> usize` / `set_selected_view_index(&mut self, view: usize) -> bool` | Read or set the focused row by view position. |
+| `remove_selected(&mut self) -> Option<Vec<String>>` | Remove the highlighted row. |
 | `column_widths_spec(&mut self, specs: &[TableColumn])` | Configure per-column width policies. |
 | `selected_rows(&self) -> Vec<&[String]>` | Resolve multi-selected rows in visible order. |
 | `is_row_selected(&self, view_idx: usize) -> bool` | Check focused or multi-selected state. |
@@ -523,7 +528,7 @@ Dropdown.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `selected` | `usize` | Current option index. |
+| `selected` | `usize` | Selected option, as a data index into `items()`. The type-to-filter query never changes its meaning. |
 | `open` | `bool` | Whether the dropdown is expanded. |
 | `placeholder` | `String` | Fallback label when `items` is empty. |
 | `filter` | `String` | Live type-to-filter query while open. |
@@ -924,6 +929,57 @@ Human-in-the-loop approval prompt for an AI tool call.
 ### Related enum
 
 `ApprovalAction` has variants `Pending`, `Approved`, `Rejected`.
+
+## DiffState
+
+Source: `src/widgets/rich/diff.rs`.
+
+Parsed unified diff plus review state (collapsed hunks, per-hunk decisions,
+cursor) for `Context::diff`. Parse once with `from_unified` and keep the
+state across frames.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `keys` | `DiffKeys` | Key bindings used while the viewer is focused (`up`, `down`, `next_hunk`, `prev_hunk`, `toggle`, `accept`, `reject`, each a `Vec<KeyCode>`). |
+
+### Constructors
+
+- `DiffState::new() -> Self` (also `Default`) — empty diff.
+- `DiffState::from_unified(patch: &str) -> Result<Self, DiffParseError>` —
+  parse multi-file unified / `git diff` output. Malformed input returns
+  `DiffParseError` (`.line()`, `.kind()`); it never panics.
+
+### Methods
+
+| Signature | Description |
+|-----------|-------------|
+| `to_unified(&self) -> String` | Write the parsed patch back as unified diff text. |
+| `files(&self) -> &[DiffFile]` | Parsed files in patch order. |
+| `is_empty(&self) -> bool` | `true` when the patch has no files. |
+| `hunk_count(&self) -> usize` | Total hunks across all files. |
+| `hunk_ids(&self) -> impl Iterator<Item = HunkId>` | Every hunk id in patch order. |
+| `hunk(&self, id: HunkId) -> Option<&DiffHunk>` | The hunk for `id`. |
+| `decision(&self, id: HunkId) -> Option<HunkDecision>` | Stored decision, `None` when out of range. |
+| `set_decision(&mut self, id: HunkId, decision: HunkDecision) -> bool` | Set a decision; not reported in `DiffResponse::hunk_actions`. |
+| `is_collapsed(&self, id: HunkId) -> bool` | Whether the hunk body is hidden. |
+| `set_collapsed(&mut self, id: HunkId, collapsed: bool) -> bool` | Collapse or expand one hunk. |
+| `collapse_all(&mut self)` / `expand_all(&mut self)` | Collapse or expand every hunk. |
+| `focused_hunk(&self) -> Option<HunkId>` | Hunk under the cursor. |
+| `focus_hunk(&mut self, id: HunkId) -> bool` | Move the cursor to a hunk header. |
+
+### Related types
+
+- `HunkId { file, hunk }` indexes `files()[file].hunks[hunk]`.
+- `HunkDecision`: `Pending` (default), `Accepted`, `Rejected`.
+- `HunkAction`: `Accept`, `Reject` — reported once per change in
+  `DiffResponse::hunk_actions`, alongside `toggled` and `focused_hunk`.
+- `DiffLayout`: `Unified` (default), `Split`.
+- `DiffColors { added_bg, removed_bg, hunk_fg }` overrides the theme-derived
+  colors.
+- Model types in `slt::widgets`: `DiffFile`, `DiffHunk`, `DiffLine`,
+  `DiffLineKind`, `DiffFileStatus`.
 
 ## ContextItem
 

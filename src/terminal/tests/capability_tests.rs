@@ -301,6 +301,16 @@ fn terminal_multiplexer_detection_is_conservative() {
         Some(MultiplexerKind::Tmux),
         "the innermost TERM identity wins over inherited variables"
     );
+    // Issue #446: tmux with `default-terminal "screen-256color"`.
+    assert_eq!(
+        terminal_multiplexer_env("screen-256color", true, false, false, false),
+        Some(MultiplexerKind::Tmux)
+    );
+    // GNU screen nested inside tmux keeps the screen identity.
+    assert_eq!(
+        terminal_multiplexer_env("screen-256color", true, true, false, false),
+        Some(MultiplexerKind::Screen)
+    );
 }
 
 #[test]
@@ -516,4 +526,75 @@ fn sprixel_protocol_detects_sixel_and_iterm() {
         SprixelProtocol::Iterm2
     );
     assert_eq!(sprixel_protocol("plain"), SprixelProtocol::Unknown);
+}
+
+#[test]
+fn issue_448_kitty_keyboard_reply_parser() {
+    assert_eq!(parse_kitty_keyboard_reply("\x1b[?0u"), Some(0));
+    assert_eq!(parse_kitty_keyboard_reply("\x1b[?15u"), Some(15));
+    // The reply arrives before the DA1 sentinel in the combined probe read.
+    let combined = "\x1b[?1u\x1b[?62;22c\x1b[>1;4000;29c";
+    assert_eq!(parse_kitty_keyboard_reply(combined), Some(1));
+    let mut caps = Capabilities::default();
+    parse_da1(combined, &mut caps);
+    assert!(!caps.sixel, "a keyboard reply is not DA1 attribute 4");
+    // `CSI ? 4 u` before a DA1 that does advertise sixel.
+    let mut caps = Capabilities::default();
+    parse_da1("\x1b[?4u\x1b[?62;4c", &mut caps);
+    assert!(caps.sixel);
+    // Malformed / unrelated input is rejected.
+    for bad in [
+        "",
+        "\x1b[?u",
+        "\x1b[?1",
+        "\x1b[?1x",
+        "\x1b[?a1u",
+        "\x1b[1u",
+        "\x1b[?62;4c",
+        "\x1b[?2026;2$y",
+    ] {
+        assert_eq!(parse_kitty_keyboard_reply(bad), None, "{bad:?}");
+    }
+    // The demultiplexer keeps the reply out of the input stream.
+    let (replies, input) = crate::event::reply::split(b"a\x1b[?7ub\x1b[?62c");
+    assert_eq!(replies, b"\x1b[?7u\x1b[?62c");
+    assert_eq!(input, b"ab");
+}
+
+#[test]
+fn issue_448_kitty_keyboard_push_decision_matrix() {
+    // (requested, policy, probe_ran, confirmed, forced) -> push
+    let cases = [
+        // Not requested: never push.
+        ((false, true, true, true, true), false),
+        // Policy denies (tmux/screen or disabled): never push.
+        ((true, false, true, true, true), false),
+        ((true, false, false, false, false), false),
+        // Probe ran and the terminal confirmed.
+        ((true, true, true, true, false), true),
+        // Probe ran, terminal silent: no push unless forced.
+        ((true, true, true, false, false), false),
+        ((true, true, true, false, true), true),
+        // No-query path (zellij, Windows, unidentified PTY): policy only.
+        ((true, true, false, false, false), true),
+    ];
+    for ((requested, policy, probe_ran, confirmed, forced), expected) in cases {
+        assert_eq!(
+            kitty_keyboard_push_decision(requested, policy, probe_ran, confirmed, forced),
+            expected,
+            "{:?}",
+            (requested, policy, probe_ran, confirmed, forced)
+        );
+    }
+}
+
+#[test]
+fn issue_449_cpr_reply_is_demultiplexed_but_f3_is_not() {
+    let (replies, input) = crate::event::reply::split(b"x\x1b[2;3Ry");
+    assert_eq!(replies, b"\x1b[2;3R");
+    assert_eq!(input, b"xy");
+    // Legacy modified F3 (`CSI 1 ; 2 R`) stays input.
+    let (replies, input) = crate::event::reply::split(b"\x1b[1;2R");
+    assert!(replies.is_empty());
+    assert_eq!(input, b"\x1b[1;2R");
 }

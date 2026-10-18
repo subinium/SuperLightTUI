@@ -2,8 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ListState` and `TableState` selection helpers that are correct under a
+  filter or sort (#455): `selected_index()` / `set_selected_index()` (data
+  index), `selected_view_index()` / `set_selected_view_index()` (view index)
+  and `remove_selected()`, which removes the item or row the user sees
+  highlighted. The table setters switch to the row's page when paged.
+
 ### Changed
 
+- **Behaviour:** `list`, `list_colored`, `list_reorderable*` and unpaged
+  `table` / `table_colored` / `table_with` now scroll themselves (#487). They
+  are at most as tall as the content height their parent leaves below them
+  (the terminal height at the top level), build only the rows that fit, and
+  keep the selected row in view; table headers and the rule stay pinned.
+  Lists and tables that fit render exactly as before. An app that wrapped a
+  long `ui.list` in its own `scrollable` now gets a list sized to that
+  viewport that scrolls itself, instead of all rows for the outer scroller.
+  Siblings below a long list need a sized parent (`.grow(1)`, `.h(n)`,
+  `.max_h(n)`) to stay visible, as before. Paged tables, `virtual_list` and
+  `virtual_list_variable` are unchanged.
+- **Deprecated:** the public `ListState::selected` and `TableState::selected`
+  fields (#455). They hold a view index, so `list.remove_item(list.selected)`
+  removed a different item while a filter (or, for tables, a sort) was active.
+  Use the accessors above; the fields become private in a later release.
 - **Breaking:** public dependencies upgraded to `crossterm` 0.29 and
   `compact_str` 0.10 (#475). The `slt::crossterm` re-export and
   `event::from_crossterm` now use crossterm 0.29 types, and `Cell::symbol` is a
@@ -49,6 +72,24 @@
   traps) keep their positional semantics. A keyed widget whose key was not
   registered on the previous frame (for example state rebuilt inside the
   closure each frame) keeps the 0.25 positional behaviour.
+- Color depth auto-detection resolves a precedence chain (#447): `NO_COLOR` /
+  `TERM=dumb` (now `NoColor`), then `COLORTERM` or a probe-confirmed XTGETTCAP
+  `Tc`, then terminal identity (`TERM` `xterm-kitty` / `xterm-ghostty` /
+  `wezterm`, `TERM_PROGRAM` `iTerm.app` / `WezTerm` / `ghostty` / `vscode`),
+  then a VT-enabled Windows console, then `256color`. Many terminals now get
+  more colors; explicit `RunConfig::color_depth` still wins over everything.
+- `RunConfig::kitty_keyboard(true)` pushes the protocol only when the terminal
+  answers `CSI ? u` (sent with the DA1 sentinel, no extra timeout), or when
+  `SLT_FORCE_KITTY_KEYBOARD` is set; hosts where queries are skipped keep the
+  policy-only behavior (#448).
+- The window title is emitted through the backend flush, only when it
+  changes, and restored on exit via the XTWINOPS title stack (#468).
+- Clipboard writes go through the backend flush after the frame bytes; write
+  errors no longer `eprintln!` over the UI or abort the frame, and payloads
+  over `RunConfig::clipboard_max_bytes` (default 74,994 bytes) are not sent
+  (#446).
+- tmux is identified from `TMUX` even when `TERM` is `screen-256color`
+  (without GNU screen's `STY`) (#446).
 
 ### Added
 
@@ -82,6 +123,51 @@
   (`ThemeBuilder::selection_bg`, default `None` = `selected_bg` /
   `selected_fg`) and `Theme::text_selection_style()`. A drag inside a text
   widget no longer starts the screen-level selection overlay.
+- `Context::set_title`, `set_progress`, `set_status`, and `set_cursor_shape`
+  with `Progress` (OSC 9;4), `ProgramState` / `ProgramStatus` (OSC 7501), and
+  `CursorShape` (DECSCUSR). Setters persist until changed, emit only on
+  change, are capability-gated (progress only on known hosts, status only on
+  direct terminals, nothing for `TERM=dumb`), and are undone on exit, suspend,
+  and panic cleanup. `terminal_title`, `terminal_progress`, `program_status`,
+  and `cursor_shape` expose the recorded state, including on `TestBackend`.
+  New `SLT_FORCE_PROGRESS` / `SLT_DISABLE_PROGRESS` and
+  `SLT_FORCE_PROGRAM_STATUS` / `SLT_DISABLE_PROGRAM_STATUS` flags (#468).
+- `Context::clipboard_status` and `ClipboardStatus` (`Sent`, `TooLarge`,
+  `WriteFailed`) report the previous frame's OSC 52 outcome.
+  `RunConfig::clipboard_passthrough(true)` wraps OSC 52 for tmux
+  (`ESC P tmux;` with doubled `ESC`) and GNU screen (DCS chunks);
+  `RunConfig::clipboard_max_bytes` caps the payload (#446).
+- `ColorDepth::resolve(&Capabilities)` applies the environment chain plus the
+  startup probe (#447).
+- `Capabilities::kitty_keyboard` is populated from the `CSI ? u` probe (#448).
+- `RunConfig::ambiguous_wide(true)` measures East Asian Ambiguous characters as
+  two columns in the buffer, layout, wrapping, and truncation;
+  `RunConfig::width_conservative` and the opt-in startup `RunConfig::width_probe`
+  (CPR measurement of VS16, ZWJ, skin-tone, and flag clusters on fullscreen
+  direct terminals) resolve the cluster-width policy. The flush-side cursor
+  reposition that consumes it lands with #441 (#449).
+- Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
+  and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT
+  containers, honouring scroll/clip geometry, wide graphemes and the parent
+  background; `From` conversions map `Color`, `Modifiers` and `Style` both
+  ways (lossy cases documented in `slt::ratatui_compat`). Depends only on
+  `ratatui-core` 0.1 (ratatui 0.30, no backend) and is not part of `full`, so
+  default and `full` dependency trees are unchanged.
+- Diff viewer widget (#467): `DiffState::from_unified(patch)` parses
+  multi-file unified / `git diff` output (renames, copies, created/deleted
+  files, binary markers reported but not rendered, `\ No newline at end of
+  file`) with no new dependency, returning `DiffParseError` for malformed
+  input instead of panicking; `DiffState::to_unified()` writes it back.
+  `ui.diff(&mut state)` renders it unified or side by side
+  (`.layout(DiffLayout::Split)`, unified below `.split_min_width`) with an
+  old/new line-number gutter, collapsible hunks (Enter/Space or a click on the
+  header), keyboard navigation (`j`/`k`, `]`/`[`, `n`/`p`, configurable via
+  `DiffKeys`) and per-hunk accept/reject reported once in
+  `DiffResponse::hunk_actions`. Rendering is virtualized (one command per
+  visible row), long lines truncate at grapheme boundaries with tab expansion,
+  and syntax highlighting reuses the `syntax-*` features per file extension.
+  Added/removed backgrounds derive from the theme's `success` / `error`
+  colors; override them with `DiffColors`. New example: `diff_viewer`.
 
 ### Fixed
 
@@ -90,6 +176,23 @@
   the graphemes around the cursor (ZWJ emoji sequences, conjoining Hangul
   jamo, CR+LF, Indic conjuncts) (#496). The old search only examined a fixed
   window of `budget + 2` clusters and could drop text that fits.
+- `list` and unpaged `table` showed a selection below the viewport off
+  screen, and clicks mapped to the wrong row once scrolled; clicks now map
+  to `offset + row` (below the header for tables) (#487).
+
+### Perf
+
+- `list` and unpaged `table` per-frame work is proportional to the visible
+  rows instead of the item count (#487): a 10k-item list at 100x50 drops
+  from ~1,875 to ~255 µs and from 20,018 to 109 allocations per frame; a
+  1000x6 table at 200x60 from ~995 to ~600 µs (ratatui `Table`: ~1,035 µs)
+  and from 9,038 to 129 allocations (matched harness, `bench/ratatui-compare`).
+- Table rows are built into one `String` each, with no per-cell `String`, and
+  the header and rule no longer clone labels or join per-column strings.
+- `ListState::set_items` / `clear_items` release view-index, prefix-sum and
+  item-height buffers sized for a much larger previous list (#416): replacing
+  100k items with 10 now retains under 1 KB instead of ~1.6 MB.
+  `TableState::set_rows` already released them; filter changes keep capacity.
 
 ### Deprecated
 
@@ -103,14 +206,6 @@
   text-focus rule above, and `Context::raw_key(c)`, which ignores both the
   modal guard and text-focus ownership (#453). `raw_key_code` / `raw_key_mod`
   now also document that they ignore text-focus ownership.
-
-- Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
-  and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT
-  containers, honouring scroll/clip geometry, wide graphemes and the parent
-  background; `From` conversions map `Color`, `Modifiers` and `Style` both
-  ways (lossy cases documented in `slt::ratatui_compat`). Depends only on
-  `ratatui-core` 0.1 (ratatui 0.30, no backend) and is not part of `full`, so
-  default and `full` dependency trees are unchanged.
 
 ### Security
 

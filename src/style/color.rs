@@ -866,33 +866,286 @@ mod color_depth_tests {
 }
 
 impl ColorDepth {
-    /// Detect the terminal's color depth from environment variables.
+    /// Detect the terminal's color depth from environment variables only.
     ///
-    /// Order of precedence:
+    /// Order of precedence (first match wins):
     /// 1. `NO_COLOR` (any non-empty value) → [`ColorDepth::NoColor`]
-    /// 2. `COLORTERM=truecolor|24bit` → [`ColorDepth::TrueColor`]
-    /// 3. `TERM` contains `256color` → [`ColorDepth::EightBit`]
-    /// 4. Fallback → [`ColorDepth::Basic`] (16 colors)
+    /// 2. `TERM=dumb` → [`ColorDepth::NoColor`]
+    /// 3. `COLORTERM=truecolor|24bit` → [`ColorDepth::TrueColor`]
+    /// 4. Truecolor terminal identity: `TERM` is `xterm-kitty`,
+    ///    `xterm-ghostty` or `wezterm`, or `TERM_PROGRAM` is `iTerm.app`,
+    ///    `WezTerm`, `ghostty` or `vscode` → [`ColorDepth::TrueColor`]
+    /// 5. Windows Terminal (`WT_SESSION` set) → [`ColorDepth::TrueColor`]
+    /// 6. `TERM` contains `256color` → [`ColorDepth::EightBit`]
+    /// 7. Fallback → [`ColorDepth::Basic`] (16 colors)
+    ///
+    /// The run loops use `ColorDepth::resolve` instead, which also consults
+    /// the startup terminal probe. An explicit [`crate::RunConfig::color_depth`]
+    /// always wins over both.
     pub fn detect() -> Self {
-        // https://no-color.org — ANY non-empty value disables color.
-        if std::env::var("NO_COLOR")
-            .ok()
-            .is_some_and(|v| !v.is_empty())
-        {
-            return Self::NoColor;
+        let env = ColorEnv::from_process();
+        resolve_color_depth(&env.view(), false)
+    }
+
+    /// Resolve the color depth from the environment plus the negotiated
+    /// terminal [`Capabilities`](crate::Capabilities).
+    ///
+    /// Same chain as [`ColorDepth::detect`], with two extra positive signals
+    /// for [`ColorDepth::TrueColor`]: a probe-confirmed XTGETTCAP `Tc` reply
+    /// (`caps.truecolor`, for example over SSH where `COLORTERM` is not
+    /// forwarded), and on Windows a console with virtual-terminal processing
+    /// enabled (Windows 10+). `NO_COLOR` and `TERM=dumb` still resolve to
+    /// [`ColorDepth::NoColor`] first.
+    ///
+    /// The built-in run loops call this when [`crate::RunConfig::color_depth`]
+    /// is `None`; an explicit depth is never replaced.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let depth = slt::ColorDepth::resolve(&slt::capabilities());
+    /// # let _ = depth;
+    /// ```
+    #[cfg(feature = "crossterm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
+    pub fn resolve(caps: &crate::Capabilities) -> Self {
+        let mut env = ColorEnv::from_process();
+        env.windows_vt = env.windows_vt || windows_vt_enabled();
+        resolve_color_depth(&env.view(), caps.truecolor)
+    }
+}
+
+/// Whether the Windows console accepts VT sequences (Windows 10+ with virtual
+/// terminal processing). Always `false` elsewhere.
+#[cfg(feature = "crossterm")]
+fn windows_vt_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        crossterm::ansi_support::supports_ansi()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Owned snapshot of the environment inputs to color-depth resolution.
+#[derive(Debug, Default)]
+struct ColorEnv {
+    no_color: bool,
+    colorterm: String,
+    term: String,
+    term_program: String,
+    windows_vt: bool,
+}
+
+impl ColorEnv {
+    fn from_process() -> Self {
+        let var = |name: &str| std::env::var(name).unwrap_or_default();
+        Self {
+            // https://no-color.org — ANY non-empty value disables color.
+            no_color: !var("NO_COLOR").is_empty(),
+            colorterm: var("COLORTERM"),
+            term: var("TERM"),
+            term_program: var("TERM_PROGRAM"),
+            // Windows Terminal always runs a VT-enabled ConPTY host.
+            windows_vt: cfg!(windows) && std::env::var_os("WT_SESSION").is_some(),
         }
-        if let Ok(ct) = std::env::var("COLORTERM") {
-            let ct = ct.to_lowercase();
-            if ct == "truecolor" || ct == "24bit" {
-                return Self::TrueColor;
-            }
+    }
+
+    fn view(&self) -> ColorEnvView<'_> {
+        ColorEnvView {
+            no_color: self.no_color,
+            colorterm: &self.colorterm,
+            term: &self.term,
+            term_program: &self.term_program,
+            windows_vt: self.windows_vt,
         }
-        if let Ok(term) = std::env::var("TERM")
-            && term.contains("256color")
-        {
-            return Self::EightBit;
+    }
+}
+
+/// Injected environment for [`resolve_color_depth`], so the precedence chain
+/// is testable without mutating process env.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ColorEnvView<'a> {
+    pub(crate) no_color: bool,
+    pub(crate) colorterm: &'a str,
+    pub(crate) term: &'a str,
+    pub(crate) term_program: &'a str,
+    pub(crate) windows_vt: bool,
+}
+
+/// `TERM` values of terminals that always render 24-bit color.
+const TRUECOLOR_TERMS: &[&str] = &["xterm-kitty", "xterm-ghostty", "wezterm"];
+/// `TERM_PROGRAM` values (lowercased) of terminals that always render 24-bit color.
+const TRUECOLOR_TERM_PROGRAMS: &[&str] = &["iterm.app", "wezterm", "ghostty", "vscode"];
+
+/// Auto-detected color depth (issue #447). Explicit configuration is applied
+/// by the caller and never reaches this function.
+///
+/// Precedence: `NO_COLOR` / `TERM=dumb` → `NoColor`; `COLORTERM` or a
+/// probe-confirmed `Tc` → `TrueColor`; truecolor terminal identity →
+/// `TrueColor`; a VT-enabled Windows console → `TrueColor`; `TERM` containing
+/// `256color` → `EightBit`; otherwise `Basic`.
+pub(crate) fn resolve_color_depth(env: &ColorEnvView<'_>, probe_truecolor: bool) -> ColorDepth {
+    let term = env.term.to_ascii_lowercase();
+    if env.no_color || term == "dumb" {
+        return ColorDepth::NoColor;
+    }
+    let colorterm = env.colorterm.to_ascii_lowercase();
+    if colorterm == "truecolor" || colorterm == "24bit" || probe_truecolor {
+        return ColorDepth::TrueColor;
+    }
+    let term_program = env.term_program.to_ascii_lowercase();
+    if TRUECOLOR_TERMS.contains(&term.as_str())
+        || TRUECOLOR_TERM_PROGRAMS.contains(&term_program.as_str())
+    {
+        return ColorDepth::TrueColor;
+    }
+    if env.windows_vt {
+        return ColorDepth::TrueColor;
+    }
+    if term.contains("256color") {
+        return ColorDepth::EightBit;
+    }
+    ColorDepth::Basic
+}
+
+/// Effective run-loop color depth: an explicit configuration wins over every
+/// detected signal, including `NO_COLOR` (#284 invariant).
+#[cfg(feature = "crossterm")]
+pub(crate) fn effective_color_depth(
+    explicit: Option<ColorDepth>,
+    detected: impl FnOnce() -> ColorDepth,
+) -> ColorDepth {
+    explicit.unwrap_or_else(detected)
+}
+
+#[cfg(all(test, feature = "crossterm"))]
+mod color_resolve_tests {
+    use super::{ColorDepth, ColorEnvView, effective_color_depth, resolve_color_depth};
+
+    fn env<'a>(term: &'a str, colorterm: &'a str, term_program: &'a str) -> ColorEnvView<'a> {
+        ColorEnvView {
+            no_color: false,
+            colorterm,
+            term,
+            term_program,
+            windows_vt: false,
         }
-        Self::Basic
+    }
+
+    #[test]
+    fn issue_447_env_matrix() {
+        // Windows Terminal-like: no TERM, no COLORTERM, VT enabled.
+        let mut wt = env("", "", "");
+        wt.windows_vt = true;
+        assert_eq!(resolve_color_depth(&wt, false), ColorDepth::TrueColor);
+        // The same host without VT processing (legacy conhost) stays Basic.
+        assert_eq!(
+            resolve_color_depth(&env("", "", ""), false),
+            ColorDepth::Basic
+        );
+        // SSH to a truecolor host: the probe decides TrueColor vs EightBit.
+        let ssh = env("xterm-256color", "", "");
+        assert_eq!(resolve_color_depth(&ssh, true), ColorDepth::TrueColor);
+        assert_eq!(resolve_color_depth(&ssh, false), ColorDepth::EightBit);
+        // Identity without COLORTERM.
+        for term in ["xterm-kitty", "xterm-ghostty", "wezterm"] {
+            assert_eq!(
+                resolve_color_depth(&env(term, "", ""), false),
+                ColorDepth::TrueColor,
+                "{term}"
+            );
+        }
+        for program in ["iTerm.app", "WezTerm", "ghostty", "vscode"] {
+            assert_eq!(
+                resolve_color_depth(&env("xterm-256color", "", program), false),
+                ColorDepth::TrueColor,
+                "{program}"
+            );
+        }
+        assert_eq!(
+            resolve_color_depth(&env("dumb", "", ""), false),
+            ColorDepth::NoColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("linux", "", ""), false),
+            ColorDepth::Basic
+        );
+        assert_eq!(
+            resolve_color_depth(&env("xterm-ghostty", "truecolor", ""), false),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("xterm", "24bit", ""), false),
+            ColorDepth::TrueColor
+        );
+    }
+
+    #[test]
+    fn issue_447_precedence_chain() {
+        // NO_COLOR beats probe, identity, Windows VT and COLORTERM.
+        let mut no_color = env("xterm-kitty", "truecolor", "ghostty");
+        no_color.no_color = true;
+        no_color.windows_vt = true;
+        assert_eq!(resolve_color_depth(&no_color, true), ColorDepth::NoColor);
+        // TERM=dumb beats a stray COLORTERM / probe.
+        assert_eq!(
+            resolve_color_depth(&env("dumb", "truecolor", ""), true),
+            ColorDepth::NoColor
+        );
+        // Probe beats the TERM fallback.
+        assert_eq!(
+            resolve_color_depth(&env("linux", "", ""), true),
+            ColorDepth::TrueColor
+        );
+        // Identity beats `256color`.
+        assert_eq!(
+            resolve_color_depth(&env("xterm-256color", "", "vscode"), false),
+            ColorDepth::TrueColor
+        );
+        // Under tmux the probe is skipped; COLORTERM passthrough still wins.
+        assert_eq!(
+            resolve_color_depth(&env("tmux-256color", "truecolor", "tmux"), false),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(
+            resolve_color_depth(&env("tmux-256color", "", "tmux"), false),
+            ColorDepth::EightBit
+        );
+    }
+
+    #[test]
+    fn issue_447_explicit_depth_wins_over_probe_and_no_color() {
+        let mut no_color = env("xterm-kitty", "truecolor", "");
+        no_color.no_color = true;
+        assert_eq!(
+            effective_color_depth(Some(ColorDepth::TrueColor), || {
+                resolve_color_depth(&no_color, true)
+            }),
+            ColorDepth::TrueColor
+        );
+        let ssh = env("xterm-256color", "", "");
+        assert_eq!(
+            effective_color_depth(Some(ColorDepth::Basic), || resolve_color_depth(&ssh, true)),
+            ColorDepth::Basic
+        );
+        assert_eq!(
+            effective_color_depth(None, || resolve_color_depth(&ssh, true)),
+            ColorDepth::TrueColor
+        );
+    }
+
+    /// Windows CI (`windows-latest`) runs the VT-enabled resolution path under
+    /// the platform's own `cfg`, matching the runtime branch.
+    #[cfg(windows)]
+    #[test]
+    fn issue_447_windows_vt_path_resolves_truecolor() {
+        let mut host = env("", "", "");
+        let _ = super::windows_vt_enabled();
+        host.windows_vt = true;
+        assert_eq!(resolve_color_depth(&host, false), ColorDepth::TrueColor);
     }
 }
 

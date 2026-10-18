@@ -546,10 +546,14 @@ These are current behaviors, not misuse. Design around them for now.
    for logs. Adjust `ScrollState::offset` yourself when you need either.
 6. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
-   can leave artifacts on that row.
-7. **Missing primitives.** No disabled or active (pressed) widget states, no
-   context-menu widget (use `right_clicked` plus your own overlay), and no
-   cursor-shape API.
+   can leave artifacts on that row. `RunConfig::width_conservative` /
+   `width_probe` resolve which clusters are uncertain, but the explicit cursor
+   reposition in the diff flush lands with #441. For CJK terminals set to wide
+   ambiguous characters, `RunConfig::ambiguous_wide(true)` already matches
+   `→±①` widths.
+7. **Missing primitives.** No disabled or active (pressed) widget states and
+   no context-menu widget (use `right_clicked` plus your own overlay). The
+   hardware cursor shape is available through `ui.set_cursor_shape(..)`.
 
 ## Related docs
 

@@ -830,7 +830,7 @@ fn table_pagination_uses_absolute_view_indices_for_keyboard_and_mouse() {
         ui.table(&mut table);
     });
     assert_eq!(table.page, 2);
-    assert_eq!(table.selected, 4);
+    assert_eq!(table.selected_view_index(), 4);
     assert_eq!(
         table.selected_row().map(|row| row[0].as_str()),
         Some("row-4")
@@ -841,7 +841,7 @@ fn table_pagination_uses_absolute_view_indices_for_keyboard_and_mouse() {
     tb.render_with_events(click, 0, 1, |ui| {
         ui.table(&mut table);
     });
-    assert_eq!(table.selected, 5);
+    assert_eq!(table.selected_view_index(), 5);
     assert_eq!(
         table.selected_row().map(|row| row[0].as_str()),
         Some("row-5")
@@ -856,10 +856,10 @@ fn table_row_mutations_keep_filter_and_selection_caches_coherent() {
         vec![vec!["alpha"], vec!["beta"], vec!["alphabet"]],
     );
     table.set_filter("alpha");
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     table.set_rows(vec![vec!["gamma"]]);
     assert!(table.visible_indices().is_empty());
-    assert_eq!(table.selected, 0);
+    assert_eq!(table.selected_view_index(), 0);
     assert_eq!(table.selected_row(), None);
 
     table.push_row(vec!["alpha-new"]);
@@ -891,7 +891,7 @@ fn table_selected_row_with_sort() {
         vec![vec!["Bob", "2"], vec!["Alice", "1"], vec!["Carol", "3"]],
     );
     table.sort_by(0);
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     let selected = table
         .selected_row()
         .expect("expected selected row after sorting");
@@ -912,7 +912,7 @@ fn table_backward_compat() {
     assert_eq!(table.page_size, 0);
     assert_eq!(table.visible_indices(), &[0, 1]);
 
-    table.selected = 1;
+    assert!(table.set_selected_view_index(1));
     let selected = table
         .selected_row()
         .expect("expected selected row in default behavior");
@@ -1099,7 +1099,7 @@ fn table_multiselect_shift_down_extends_range() {
     let mut selected: Vec<usize> = table.multi_selected.iter().copied().collect();
     selected.sort_unstable();
     assert_eq!(selected, vec![0, 1, 2]);
-    assert_eq!(table.selected, 2);
+    assert_eq!(table.selected_view_index(), 2);
 }
 
 #[test]
@@ -1151,7 +1151,7 @@ fn table_multiselect_mouse_click_and_shift_click() {
     tb.render_with_events(click, 0, 1, |ui| {
         ui.table(&mut table);
     });
-    assert_eq!(table.selected, 0);
+    assert_eq!(table.selected_view_index(), 0);
     assert!(table.is_row_selected(0));
     assert_eq!(table.multi_selected.len(), 1);
 
@@ -3031,7 +3031,8 @@ fn virtual_list_variable_page_down_by_rows() {
     });
 
     assert_eq!(
-        state.selected, 2,
+        state.selected_view_index(),
+        2,
         "PageDown should advance by rows (item 2), not by 6 items"
     );
 }
@@ -3065,7 +3066,7 @@ fn virtual_list_variable_more_affordance_counts_items() {
     // the viewport at items 3..5.
     let mut state = ListState::new((0..10).map(|i| format!("Item {i}")).collect::<Vec<_>>())
         .with_item_heights(vec![1; 10]);
-    state.selected = 5;
+    assert!(state.set_selected_view_index(5));
 
     // First frame anchors the viewport bottom at item 5 (start = 3).
     tb.render(|ui| {
@@ -4486,10 +4487,10 @@ fn demo_list_set_items_no_panic() {
     use slt::*;
     let mut tb = TestBackend::new(80, 24);
     let mut list = ListState::new(vec!["A", "B", "C", "D", "E"]);
-    list.selected = 4;
+    assert!(list.set_selected_view_index(4));
     // Shrink items - old selected (4) should be clamped
     list.set_items(vec!["X".to_string(), "Y".to_string(), "Z".to_string()]);
-    assert_eq!(list.selected, 2);
+    assert_eq!(list.selected_view_index(), 2);
     tb.render(|ui| {
         ui.list(&mut list);
     });
@@ -6412,7 +6413,7 @@ fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
 
     // Frame 1: scroll the cursor to row 10. The viewport snaps so that
     // `Item 10` is the last visible row (start = 6).
-    state.selected = 10;
+    assert!(state.set_selected_view_index(10));
     tb.render(|ui| {
         ui.virtual_list(&mut state, visible_height, |ui, idx| {
             ui.text(format!("Item {idx}"));
@@ -6425,7 +6426,7 @@ fn virtual_list_cursor_not_anchored_to_viewport_bottom() {
     // visible. With the fix the viewport stays put and `Item 10` is still
     // on screen — the cursor moved off the bottom row instead of dragging
     // the viewport with it.
-    state.selected = 9;
+    assert!(state.set_selected_view_index(9));
     tb.render(|ui| {
         ui.virtual_list(&mut state, visible_height, |ui, idx| {
             ui.text(format!("Item {idx}"));
@@ -7154,8 +7155,8 @@ proptest::proptest! {
         h.resize(len, 1);
         let items: Vec<String> = (0..len).map(|i| format!("Item {i}")).collect();
         let mut state = ListState::new(items).with_item_heights(h.clone());
-        state.selected = selected.min(len - 1);
-        let sel = state.selected;
+        assert!(state.set_selected_view_index(selected.min(len - 1)));
+        let sel = state.selected_view_index();
 
         let mut tb = TestBackend::new(40, 40);
         let rendered = std::cell::RefCell::new(Vec::<usize>::new());

@@ -574,11 +574,21 @@ impl Context {
 
     /// Copy text to the system clipboard via OSC 52.
     ///
-    /// Works transparently over SSH connections. The text is queued and
-    /// written to the terminal after the current frame renders.
+    /// The text is queued and written to the terminal after the current
+    /// frame renders; it travels over SSH because the terminal, not the
+    /// remote host, owns the clipboard. Requires a terminal that accepts
+    /// OSC 52 writes (Ghostty, kitty, WezTerm, iTerm2, Windows Terminal).
     ///
-    /// Requires a terminal that supports OSC 52 (most modern terminals:
-    /// Ghostty, kitty, WezTerm, iTerm2, Windows Terminal).
+    /// Inside tmux the default `set-clipboard external` drops the sequence.
+    /// Set `set -g set-clipboard on`, or enable
+    /// [`RunConfig::clipboard_passthrough`](crate::RunConfig::clipboard_passthrough)
+    /// together with `set -g allow-passthrough on`. Payloads larger than
+    /// [`RunConfig::clipboard_max_bytes`](crate::RunConfig::clipboard_max_bytes)
+    /// are not sent. The outcome is reported for one frame through
+    /// [`clipboard_status`](Self::clipboard_status); OSC 52 has no
+    /// acknowledgement, so [`ClipboardStatus::Sent`](crate::ClipboardStatus::Sent)
+    /// means "written", not "received". Custom backends and `TestBackend`
+    /// never write the clipboard.
     pub fn copy_to_clipboard(&mut self, text: impl Into<String>) {
         self.clipboard_text = Some(text.into());
     }

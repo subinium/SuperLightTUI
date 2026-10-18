@@ -28,6 +28,10 @@ fn move_table_selection(selected: &mut usize, start: usize, end: usize, key: &Ke
     }
 }
 
+/// Rows above an unpaged table body that never scroll: the header and the
+/// `─┼─` rule.
+const TABLE_CHROME_ROWS: u32 = 2;
+
 /// Per-column cell renderer for [`Context::table_with`]: maps
 /// `(row_view_index, col_index, raw_cell)` to styled content.
 type TableCellRenderer = Box<dyn Fn(usize, usize, &str) -> (String, Style)>;
@@ -38,6 +42,11 @@ impl Context {
     /// Handles Up/Down selection when focused. Column widths are computed
     /// automatically from header and cell content. The selected row is
     /// highlighted with the theme's selection colors.
+    ///
+    /// Without pagination (`page_size == 0`) the table scrolls itself: it is
+    /// at most as tall as the content height its parent leaves below it, the
+    /// header and rule stay pinned, only the body rows that fit are built, and
+    /// the body follows the focused row. Paged tables draw the whole page.
     pub fn table(&mut self, state: &mut TableState) -> Response {
         let colors = self.widget_theme.table;
         self.table_colored(state, &colors)
@@ -104,7 +113,7 @@ impl Context {
             state.recompute_widths();
         }
 
-        let old_selected = state.selected;
+        let old_selected = state.view_cursor();
         let old_sort_column = state.sort_column;
         let old_sort_ascending = state.sort_ascending;
         let old_page = state.page;
@@ -123,9 +132,9 @@ impl Context {
         let separators = (state.headers().len().saturating_sub(1) as u32).saturating_mul(3);
         state.resolve_column_widths(available.saturating_sub(separators));
 
-        self.table_render(state, focused, colors, cell);
+        self.table_render(state, interaction_id, focused, colors, cell);
 
-        response.changed = state.selected != old_selected
+        response.changed = state.view_cursor() != old_selected
             || state.sort_column != old_sort_column
             || state.sort_ascending != old_sort_ascending
             || state.page != old_page
@@ -155,7 +164,7 @@ impl Context {
                     for (col_idx, width) in state.column_widths().iter().enumerate() {
                         if rel_x >= x_offset && rel_x < x_offset + *width {
                             state.toggle_sort(col_idx);
-                            state.selected = 0;
+                            *state.view_cursor_mut() = 0;
                             consumed.push(i);
                             break;
                         }
@@ -171,12 +180,17 @@ impl Context {
                     continue;
                 }
 
+                // Body rows map through the window drawn last frame: the
+                // page start when paged, the scroll offset otherwise (#487).
                 let (page_start, page_end) = table_page_bounds(state);
-                let visible_len = page_end.saturating_sub(page_start);
-                let clicked_idx = (mouse.y - rect.y - 2) as usize;
-                if clicked_idx < visible_len {
-                    let clicked_idx = page_start + clicked_idx;
-                    state.selected = clicked_idx;
+                let row_start = if state.page_size == 0 {
+                    state.viewport_offset.min(page_end)
+                } else {
+                    page_start
+                };
+                let clicked_idx = row_start.saturating_add((mouse.y - rect.y - 2) as usize);
+                if clicked_idx < page_end {
+                    *state.view_cursor_mut() = clicked_idx;
                     if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                         let anchor = state.selection_anchor.unwrap_or(clicked_idx);
                         state.select_range(anchor, clicked_idx);
@@ -195,6 +209,7 @@ impl Context {
     fn table_render(
         &mut self,
         state: &mut TableState,
+        interaction_id: usize,
         focused: bool,
         colors: &WidgetColors,
         cell: Option<TableCellRenderer>,
@@ -215,10 +230,27 @@ impl Context {
         };
         let visible_len = page_end.saturating_sub(page_start);
         if visible_len == 0 {
-            state.selected = 0;
+            *state.view_cursor_mut() = 0;
         } else {
-            state.selected = state.selected.clamp(page_start, page_end - 1);
+            *state.view_cursor_mut() = state.view_cursor().clamp(page_start, page_end - 1);
         }
+        // Unpaged tables scroll their body under the pinned header and rule:
+        // only the rows that fit are formatted, and the window follows the
+        // focused row (#487). Paged tables keep drawing the whole page.
+        let (body_start, body_len) = if state.page_size == 0 {
+            let rows =
+                self.collection_viewport_rows(interaction_id, total_visible, TABLE_CHROME_ROWS);
+            let start = keep_selection_in_window(
+                state.viewport_offset,
+                state.view_cursor(),
+                rows,
+                total_visible,
+            );
+            state.viewport_offset = start;
+            (start, rows.min(total_visible - start))
+        } else {
+            (page_start, visible_len)
+        };
 
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {
@@ -240,7 +272,13 @@ impl Context {
             })));
 
         self.render_table_header(state, colors);
-        self.render_table_rows(state, focused, page_start, visible_len, colors, cell);
+        self.render_table_rows(
+            state,
+            focused,
+            (body_start, body_len, page_start),
+            colors,
+            cell,
+        );
 
         if state.page_size > 0 && state.total_pages() > 1 {
             let current_page = (state.page + 1).to_string();
@@ -273,36 +311,36 @@ impl Context {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let (page_start, page_end) = table_page_bounds(state);
             if page_start < page_end {
-                state.selected = state.selected.clamp(page_start, page_end - 1);
+                *state.view_cursor_mut() = state.view_cursor().clamp(page_start, page_end - 1);
             }
             match key.code {
                 // Shift+Up/Down: extend a contiguous range from the anchor.
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if shift => {
-                    let anchor = *state.selection_anchor.get_or_insert(state.selected);
-                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
-                    state.select_range(anchor, state.selected);
+                    let anchor = *state.selection_anchor.get_or_insert(state.view_cursor());
+                    move_table_selection(state.view_cursor_mut(), page_start, page_end, &key.code);
+                    state.select_range(anchor, state.view_cursor());
                     consumed_indices.push(i);
                 }
                 // Plain Up/Down (or k/j): move the cursor only (back-compat).
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
+                    move_table_selection(state.view_cursor_mut(), page_start, page_end, &key.code);
                     consumed_indices.push(i);
                 }
                 // Ctrl+Space: toggle the focused row without clearing the set.
                 // Space: toggle the focused row (additive toggle).
                 KeyCode::Char(' ') if ctrl => {
-                    state.toggle_row(state.selected);
+                    state.toggle_row(state.view_cursor());
                     consumed_indices.push(i);
                 }
                 KeyCode::Char(' ') => {
-                    state.toggle_row(state.selected);
+                    state.toggle_row(state.view_cursor());
                     consumed_indices.push(i);
                 }
                 KeyCode::PageUp => {
                     let old_page = state.page;
                     state.prev_page();
                     if state.page != old_page {
-                        state.selected = table_page_bounds(state).0;
+                        *state.view_cursor_mut() = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -310,7 +348,7 @@ impl Context {
                     let old_page = state.page;
                     state.next_page();
                     if state.page != old_page {
-                        state.selected = table_page_bounds(state).0;
+                        *state.view_cursor_mut() = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -321,40 +359,43 @@ impl Context {
     }
 
     fn render_table_header(&mut self, state: &TableState, colors: &WidgetColors) {
-        let header_cells = state
-            .headers()
-            .iter()
-            .enumerate()
-            .map(|(i, header)| {
-                if state.sort_column == Some(i) {
-                    if state.sort_ascending {
-                        let mut sorted_header = String::with_capacity(header.len() + 2);
-                        sorted_header.push_str(header);
-                        sorted_header.push_str(" ▲");
-                        sorted_header
-                    } else {
-                        let mut sorted_header = String::with_capacity(header.len() + 2);
-                        sorted_header.push_str(header);
-                        sorted_header.push_str(" ▼");
-                        sorted_header
-                    }
-                } else {
-                    header.clone()
-                }
-            })
-            .collect::<Vec<_>>();
-        let header_line = format_table_row(&header_cells, state.column_widths(), " │ ");
+        let header_line = match state.sort_column {
+            // Only the sorted column needs an owned label (` ▲` / ` ▼`); the
+            // rest are borrowed straight from the state.
+            Some(sorted) if sorted < state.headers().len() => {
+                let arrow = if state.sort_ascending { " ▲" } else { " ▼" };
+                let mut sorted_label = String::with_capacity(state.headers()[sorted].len() + 4);
+                sorted_label.push_str(&state.headers()[sorted]);
+                sorted_label.push_str(arrow);
+                let cells: smallvec::SmallVec<[&str; 16]> = state
+                    .headers()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, header)| {
+                        if i == sorted {
+                            sorted_label.as_str()
+                        } else {
+                            header.as_str()
+                        }
+                    })
+                    .collect();
+                format_table_row(&cells, state.column_widths(), " │ ")
+            }
+            _ => format_table_row(state.headers(), state.column_widths(), " │ "),
+        };
         self.styled(
             header_line,
             Style::new().bold().fg(colors.fg.unwrap_or(self.theme.text)),
         );
 
-        let separator = state
-            .column_widths()
+        let widths = state.column_widths();
+        let rule_bytes: usize = widths
             .iter()
-            .map(|w| "─".repeat(*w as usize))
-            .collect::<Vec<_>>()
-            .join("─┼─");
+            .map(|w| *w as usize * '─'.len_utf8())
+            .sum::<usize>()
+            + widths.len().saturating_sub(1) * "─┼─".len();
+        let mut separator = String::with_capacity(rule_bytes);
+        push_table_separator(&mut separator, widths);
         self.text(separator);
     }
 
@@ -362,13 +403,14 @@ impl Context {
         &mut self,
         state: &TableState,
         focused: bool,
-        page_start: usize,
-        visible_len: usize,
+        (start, len, zebra_origin): (usize, usize, usize),
         colors: &WidgetColors,
         cell: Option<TableCellRenderer>,
     ) {
-        for idx in 0..visible_len {
-            let view_idx = page_start + idx;
+        for view_idx in start..start + len {
+            // Stripe parity is anchored to the page (or view) start so stripes
+            // stay attached to their rows while an unpaged body scrolls.
+            let idx = view_idx - zebra_origin;
             let data_idx = state.visible_indices()[view_idx];
             let Some(row) = state.row(data_idx) else {
                 continue;
@@ -378,7 +420,7 @@ impl Context {
             // per-column renderer overrides it. Priority: focused cursor row >
             // multi-selected row > zebra > plain. When `multi_selected` is empty
             // (the default), this collapses to the pre-v0.21 behavior verbatim.
-            let base = if view_idx == state.selected {
+            let base = if view_idx == state.view_cursor() {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
@@ -435,8 +477,7 @@ impl Context {
                             merged.bg = cell_style.bg;
                         }
                         merged.modifiers |= cell_style.modifiers;
-                        let padded = clamp_table_cell(&content, *width);
-                        segments.push((padded, merged));
+                        segments.push((fit_table_cell_owned(content, *width), merged));
                     }
                     self.line(move |ui| {
                         for (text, style) in segments {

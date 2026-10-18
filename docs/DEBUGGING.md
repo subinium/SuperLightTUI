@@ -166,8 +166,10 @@ If a custom widget behaves strangely in overlays, inspect both `focused` and whe
 ## Clipboard and terminal caveats
 
 - `read_clipboard()` depends on OSC 52 support in the terminal.
-- `copy_to_clipboard(...)` writes OSC 52 escape sequences through the active terminal backend.
-- Kitty keyboard support is best-effort: unsupported terminals silently ignore it.
+- `copy_to_clipboard(...)` writes OSC 52 through the built-in terminal backend after the frame. It never prints to stderr or fails the frame; check `ui.clipboard_status()` on the next frame: `Sent` (written, not necessarily received: OSC 52 has no acknowledgement), `TooLarge { bytes, max }` (over `RunConfig::clipboard_max_bytes`, default 74,994 bytes, nothing written), or `WriteFailed(kind)`.
+- Inside tmux, the default `set-clipboard external` drops OSC 52. Use `set -g set-clipboard on`, or `RunConfig::clipboard_passthrough(true)` with `set -g allow-passthrough on` (GNU screen gets DCS-chunked passthrough). Measured results for tmux 3.5a are in [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
+- Kitty keyboard: on a direct terminal that answers startup queries, the protocol is pushed only after a `CSI ? u` reply; `ui.capabilities().kitty_keyboard` reports it. Elsewhere it is best-effort and unsupported terminals ignore it. `SLT_FORCE_KITTY_KEYBOARD=1` skips the confirmation.
+- Title, progress, program status, and cursor-shape sequences are suppressed for `TERM=dumb`; `SLT_FORCE_PROGRESS=1` sends OSC 9;4 to terminals SLT does not recognize as progress hosts.
 
 ## Hot reload (experimental)
 

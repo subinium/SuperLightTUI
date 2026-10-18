@@ -8,7 +8,6 @@ use crate::clock::{SystemTime, UNIX_EPOCH};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use unicode_width::UnicodeWidthStr;
 
 use crate::Style;
 use crate::context::Response;

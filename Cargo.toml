@@ -244,6 +244,10 @@ name = "color_picker"
 path = "examples/color_picker.rs"
 
 [[example]]
+name = "diff_viewer"
+path = "examples/diff_viewer.rs"
+
+[[example]]
 name = "counter"
 path = "examples/counter.rs"
 
