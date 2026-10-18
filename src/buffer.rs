@@ -1149,6 +1149,17 @@ impl Buffer {
             }
             let symbol = normalize_grapheme(grapheme);
             let width = display_width(&symbol) as u32;
+            if width == 1
+                && let Some(idx) = self.narrow_cell_index(x, y, clip)
+            {
+                self.touch_cols(y, x, x + 1);
+                let cell = &mut self.content[idx];
+                cell.symbol = symbol;
+                cell.style = style;
+                cell.hyperlink = link.cloned();
+                x = x.saturating_add(1);
+                continue;
+            }
             let width = self.set_grapheme_normalized(x, y, symbol, width, style, link, clip);
             x = x.saturating_add(width);
         }
@@ -1185,6 +1196,21 @@ impl Buffer {
             let offset = (col - x) as usize;
             self.write_ascii_cell(col, y, &s[offset..=offset], style, link, clip);
         }
+    }
+
+    /// Index of `(x, y)` when a width-1 grapheme written there replaces
+    /// exactly that one cell: the column is inside the area and clip and its
+    /// stored grapheme is one column wide (not a continuation, not a wide
+    /// leading cell). The general write path would then reset only this
+    /// cell, so callers may overwrite it in place.
+    #[inline]
+    fn narrow_cell_index(&self, x: u32, y: u32, clip: Option<Rect>) -> Option<usize> {
+        if !self.ascii_cell_writable(x, y, clip) {
+            return None;
+        }
+        let idx = self.index_of(x, y);
+        let old = &self.content[idx].symbol;
+        (!old.is_empty() && stored_symbol_width(old) <= 1).then_some(idx)
     }
 
     /// Whether a width-1 grapheme at `(x, y)` lies inside the area and clip.
@@ -1381,6 +1407,18 @@ impl Buffer {
             return;
         }
         let width = char_display_width(ch) as u32;
+        // Narrow non-ASCII glyph (box drawing, most symbols) over a narrow
+        // cell: overwrite it in place like the ASCII path.
+        if width == 1
+            && let Some(idx) = self.narrow_cell_index(x, y, clip)
+        {
+            self.touch_cols(y, x, x + 1);
+            let cell = &mut self.content[idx];
+            cell.symbol = compact_str::CompactString::new(symbol);
+            cell.style = style;
+            cell.hyperlink = None;
+            return;
+        }
         let symbol = compact_str::CompactString::new(symbol);
         self.set_grapheme_normalized(x, y, symbol, width, style, None, clip);
     }
