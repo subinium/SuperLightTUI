@@ -215,6 +215,40 @@ Tooltips appear under the widget (or above it when there is no room), wrap at
 [The mouse is on by default](#the-mouse-is-on-by-default)). Text-only;
 use `on_hover_ui` plus an overlay for richer content.
 
+A tooltip waits until the pointer has rested on the same target for
+`RunConfig::tooltip_delay` (500 ms by default), so sweeping across a toolbar
+does not flash one tooltip per button; it then appears on the next frame
+without further input. `RunConfig::default().tooltip_delay(Duration::ZERO)`
+shows tooltips immediately. Tooltip panels never take clicks.
+
+Terminals send no "pointer left the window" event, so the last hovered widget
+stays hovered until the next mouse event, terminal focus loss, or a resize.
+`RunConfig::default().hover_timeout(Some(Duration::from_secs(3)))` also clears
+hover after that long without motion.
+
+### Cursor and pointer shapes
+
+`ui.set_cursor_shape(CursorShape::Bar, true)` asks for a text cursor shape
+(DECSCUSR) for the current frame, for example while your own input is
+focused; a frame without a request returns to the terminal default. Pointer
+shapes follow CSS `cursor` and are opt-in because terminals without OSC 22
+support may print the payload:
+
+<!-- slt-check: {"name":"ix_pointer_shape","features":[],"context":"ui"} -->
+```rust
+let _ = ui
+    .bordered(Border::Rounded)
+    .pointer_shape(PointerShape::Pointer)
+    .col(|ui| {
+        ui.text("Open the file");
+    });
+// In main: RunConfig::default().mouse_mode(MouseMode::Hover).pointer_shapes(true)
+```
+
+The shape follows the innermost hovered slot (descendants inherit it), is
+written only when it changes, and both shapes are restored on exit, in the
+panic hook, and on Ctrl+Z.
+
 ## Drag and splitters
 
 For resizable panes, use the built-in split containers. The handle is dragged
@@ -639,16 +673,17 @@ Notes:
 
 [TESTING.md](TESTING.md) covers snapshots, style assertions, and sequences.
 
-## Known limitations (v0.25)
+## Known limitations (v0.26)
 
 These are current behaviors, not misuse. Design around them for now.
 
 1. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row.
-2. **Missing primitives.** No disabled or active (pressed) widget states, no
-   context-menu widget (use `right_clicked` plus your own overlay), and no
-   cursor-shape API.
+2. **Missing primitives.** No disabled or active (pressed) widget states and
+   no context-menu widget (use `right_clicked` plus your own overlay).
+3. **Off-screen selection text is not copied.** A selection that extends past
+   a scrollable's viewport copies only the part visible at release.
 
 ## Related docs
 

@@ -196,6 +196,9 @@ fn tooltip_overlay_does_not_steal_clicks() {
     let (sx, sy) = tb.find_text("SAVE").expect("save rendered");
     let (ox, oy) = tb.find_text("OTHER").expect("other rendered");
     tb.run_with_events(vec![Event::mouse_move(sx, sy)], |ui| view(ui, &mut clicks));
+    tb.advance_time(std::time::Duration::from_millis(500))
+        .expect("advance clock");
+    tb.render(|ui| view(ui, &mut clicks));
     tb.assert_contains("Write the file");
     tb.run_with_events(EventBuilder::new().click(ox, oy).build(), |ui| {
         view(ui, &mut clicks)

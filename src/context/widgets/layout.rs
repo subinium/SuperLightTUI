@@ -349,6 +349,7 @@ impl Context {
             scroll_state_id: 0,
             theme_override: None,
             pointer_flags: 0,
+            pointer_shape: None,
         }
     }
 

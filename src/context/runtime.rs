@@ -121,6 +121,16 @@ impl Context {
             }
         }
 
+        // #452: `RunConfig::hover_timeout` clears a stale hover when no mouse
+        // event arrived for the configured time (terminals send no leave).
+        if pointer.hover_timed_out(
+            frame_now,
+            events.iter().any(|event| matches!(event, Event::Mouse(_))),
+        ) {
+            mouse_pos = None;
+            layout_feedback.last_mouse_pos = None;
+        }
+
         let mut focus_index = focus.focus_index;
         let last_left_press = presses
             .iter()

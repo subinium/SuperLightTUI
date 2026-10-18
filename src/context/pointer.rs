@@ -78,12 +78,34 @@ pub(crate) struct PointerState {
     /// Text-selection edge auto-scroll for the next frame: `ScrollState` id
     /// and direction (#445). Written by the frame kernel.
     pub selection_autoscroll: Option<(u64, i8)>,
+    /// `RunConfig::tooltip_delay` (#452).
+    pub tooltip_delay: std::time::Duration,
+    /// `RunConfig::hover_timeout` (#452).
+    pub hover_timeout: Option<std::time::Duration>,
+    /// Hover winner and the instant it became the winner (#452).
+    pub hover_tracked: Option<(Option<usize>, crate::clock::Instant)>,
+    /// Instant of the most recent frame that carried a mouse event.
+    pub last_motion: Option<crate::clock::Instant>,
+    /// Pointer shapes recorded by the previous frame, by interaction id.
+    pub shapes_prev: Vec<(usize, crate::PointerShape)>,
+    /// Recycled buffer for this frame's pointer shapes.
+    pub shapes_buf: Vec<(usize, crate::PointerShape)>,
+    /// Text cursor shape the last frame asked for (`None` = default).
+    pub cursor_wanted: Option<(crate::CursorShape, bool)>,
+    /// Text cursor shape last written to the terminal.
+    pub cursor_emitted: Option<(crate::CursorShape, bool)>,
+    /// Pointer shape under the hover winner after the last frame.
+    pub pointer_wanted: Option<crate::PointerShape>,
+    /// Pointer shape last written to the terminal.
+    pub pointer_emitted: Option<crate::PointerShape>,
 }
 
 impl PointerState {
     /// Copy the pointer-related `RunConfig` switches for the next frame.
     pub(crate) fn configure(&mut self, config: &crate::RunConfig) {
         self.click_on_release = config.click_on_release;
+        self.tooltip_delay = config.tooltip_delay;
+        self.hover_timeout = config.hover_timeout;
     }
 
     /// Drop the active capture (focus loss, resize, layout cache reset).
@@ -158,6 +180,20 @@ pub(crate) struct PointerFrame {
     pub click_on_release: bool,
     /// Selection edge auto-scroll requested by the previous frame (#445).
     pub selection_autoscroll: Option<(u64, i8)>,
+    /// `RunConfig::tooltip_delay` for this frame (#452).
+    pub tooltip_delay: std::time::Duration,
+    /// `RunConfig::hover_timeout` for this frame (#452).
+    pub hover_timeout: Option<std::time::Duration>,
+    /// Hover winner tracked across frames and when it started (#452).
+    pub hover_tracked: Option<(Option<usize>, crate::clock::Instant)>,
+    /// Instant of the most recent earlier frame with a mouse event.
+    pub last_motion: Option<crate::clock::Instant>,
+    /// Previous-frame pointer shapes by interaction id (#452).
+    pub shapes_prev: Vec<(usize, crate::PointerShape)>,
+    /// This frame's pointer shapes by interaction id.
+    pub shapes: Vec<(usize, crate::PointerShape)>,
+    /// Text cursor shape requested this frame (#452).
+    pub cursor_request: Option<(crate::CursorShape, bool)>,
     /// Lazily computed gestures for this frame.
     gestures: OnceCell<Gestures>,
     /// Lazily resolved winner per entry of `presses`.
@@ -175,6 +211,8 @@ impl PointerFrame {
         contain.clear();
         let mut scroll_policies = std::mem::take(&mut state.pointer.scroll_policy_buf);
         scroll_policies.clear();
+        let mut shapes = std::mem::take(&mut state.pointer.shapes_buf);
+        shapes.clear();
         Self {
             presses: SmallVec::new(),
             hit_meta: std::mem::take(&mut state.layout_feedback.prev_hit_meta),
@@ -187,9 +225,27 @@ impl PointerFrame {
             scroll_policies,
             click_on_release: state.pointer.click_on_release,
             selection_autoscroll: state.pointer.selection_autoscroll,
+            tooltip_delay: state.pointer.tooltip_delay,
+            hover_timeout: state.pointer.hover_timeout,
+            hover_tracked: state.pointer.hover_tracked,
+            last_motion: state.pointer.last_motion,
+            shapes_prev: std::mem::take(&mut state.pointer.shapes_prev),
+            shapes,
+            cursor_request: None,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),
             hover_target: OnceCell::new(),
+        }
+    }
+
+    /// Whether `RunConfig::hover_timeout` has expired: no mouse event in this
+    /// frame and none for at least the timeout (#452).
+    pub(crate) fn hover_timed_out(&self, now: crate::clock::Instant, has_mouse: bool) -> bool {
+        match (self.hover_timeout, self.last_motion) {
+            (Some(timeout), Some(last)) if !has_mouse => {
+                now.saturating_duration_since(last) >= timeout
+            }
+            _ => false,
         }
     }
 
@@ -213,6 +269,23 @@ impl Context {
     /// capture left at the end of this frame's events is carried forward.
     pub(crate) fn reclaim_pointer(&mut self, state: &mut FrameState) {
         state.pointer.capture = self.gestures().capture_out;
+        // #452: hover dwell, motion time, cursor and pointer shape wishes.
+        let hover = self.hover_target();
+        state.pointer.hover_tracked = match self.pointer.hover_tracked {
+            Some((tracked, since)) if tracked == hover => Some((tracked, since)),
+            _ => Some((hover, self.frame_instant)),
+        };
+        if self
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Mouse(_)))
+        {
+            state.pointer.last_motion = Some(self.frame_instant);
+        } else if self.mouse_pos.is_none() {
+            state.pointer.last_motion = None;
+        }
+        state.pointer.cursor_wanted = self.pointer.cursor_request;
+        state.pointer.pointer_wanted = hover.and_then(|id| self.inherited_pointer_shape(id));
         let pointer = &mut self.pointer;
         state.layout_feedback.prev_hit_meta = std::mem::take(&mut pointer.hit_meta);
         let mut previous = std::mem::take(&mut pointer.hit_flags_prev);
@@ -223,6 +296,10 @@ impl Context {
         previous.clear();
         state.pointer.contain_buf = previous;
         state.pointer.contain_prev = std::mem::take(&mut pointer.contain);
+        let mut previous = std::mem::take(&mut pointer.shapes_prev);
+        previous.clear();
+        state.pointer.shapes_buf = previous;
+        state.pointer.shapes_prev = std::mem::take(&mut pointer.shapes);
         pointer.gestures = OnceCell::new();
         pointer.targets = OnceCell::new();
     }
@@ -515,12 +592,65 @@ impl Context {
     }
 
     /// Record a finished container's pointer flags: hit-test flags for its
-    /// interaction slot and, for a scrollable, its overscroll containment.
-    pub(crate) fn mark_pointer_flags(&mut self, id: usize, flags: u8, scroll_state_id: u64) {
+    /// interaction slot, for a scrollable its overscroll containment, and its
+    /// pointer shape (#452).
+    pub(crate) fn mark_pointer_flags(
+        &mut self,
+        id: usize,
+        flags: u8,
+        scroll_state_id: u64,
+        shape: Option<crate::PointerShape>,
+    ) {
         if flags & SCROLL_CONTAIN != 0 && scroll_state_id != 0 {
             self.pointer.contain.push(scroll_state_id);
         }
+        if let Some(shape) = shape {
+            self.pointer.shapes.push((id, shape));
+        }
         self.mark_hit_flags(id, flags & (HIT_PASSTHROUGH | HIT_BUBBLE));
+    }
+
+    /// Pointer shape of slot `id` or its nearest ancestor with one, from the
+    /// previous frame's records (CSS `cursor` inheritance).
+    fn inherited_pointer_shape(&self, id: usize) -> Option<crate::PointerShape> {
+        let shape_of = |slot: usize| {
+            self.pointer
+                .shapes_prev
+                .iter()
+                .find(|(owner, _)| *owner == slot)
+                .map(|(_, shape)| *shape)
+        };
+        let mut current = id;
+        for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
+            if let Some(shape) = shape_of(current) {
+                return Some(shape);
+            }
+            let parent = self
+                .pointer
+                .hit_meta
+                .get(current)
+                .map_or(NO_HIT_PARENT, |meta| meta.parent);
+            if parent == NO_HIT_PARENT {
+                return None;
+            }
+            current = parent as usize;
+        }
+        None
+    }
+
+    /// Whether a hover tooltip may show this frame: the hover target has not
+    /// changed for at least `RunConfig::tooltip_delay` (#452).
+    pub(crate) fn tooltip_ready(&self) -> bool {
+        let delay = self.pointer.tooltip_delay;
+        if delay.is_zero() {
+            return true;
+        }
+        match self.pointer.hover_tracked {
+            Some((tracked, since)) if tracked == self.hover_target() => {
+                self.frame_instant.saturating_duration_since(since) >= delay
+            }
+            _ => false,
+        }
     }
 
     /// Whether the scroll region bound to `state_id` was marked

@@ -37,6 +37,8 @@ version, and the output of the diagnostics below is very welcome.
 | Images | Kitty graphics, Sixel, or iTerm2 inline images (`image` feature) | Probe, then known terminal identity; preference Kitty, then Sixel, then iTerm2 | Half-block cell art |
 | Light/dark background | OSC 11 reply | `slt::detect_color_scheme()`, called before `run`; subject to the query rules below | Returns `ColorScheme::Unknown` |
 | Window title | OSC 2 | `RunConfig::title(..)` | Ignored |
+| Text cursor shape | DECSCUSR (`CSI n SP q`) | Written when `ui.set_cursor_shape(..)` changes; `CSI 0 SP q` restores the default on exit, panic and suspend, only if a shape was set | Cursor keeps the terminal's shape |
+| Pointer shape | OSC 22 | Opt-in: `RunConfig::pointer_shapes(true)` plus `ContainerBuilder::pointer_shape(..)`; written when the hovered shape changes, reset on exit. Needs `MouseMode::Hover` to follow plain moves | Off by default because unsupported terminals may print the payload |
 | Clean Ctrl+Z | Unix job control | `RunConfig::handle_suspend` (default on, Unix only) | Ctrl+Z arrives as a key event (Windows) |
 | Scrollback | Normal screen | `run` / `run_with` use the alternate screen, which hides scrollback | Use `run_inline` / `run_static` for CLI-style output that stays in scrollback |
 

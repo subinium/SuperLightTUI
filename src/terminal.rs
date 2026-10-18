@@ -419,6 +419,10 @@ impl crate::Backend for Terminal {
         // the frame bytes (and captured by the PTY harness sink).
         copy_to_clipboard(&mut self.stdout, text)
     }
+
+    fn write_terminal_sequence(&mut self, sequence: &str) -> io::Result<()> {
+        self.stdout.write_all(sequence.as_bytes())
+    }
 }
 
 impl InlineTerminal {
@@ -781,6 +785,10 @@ impl crate::Backend for InlineTerminal {
     fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
         copy_to_clipboard(&mut self.stdout, text)
     }
+
+    fn write_terminal_sequence(&mut self, sequence: &str) -> io::Result<()> {
+        self.stdout.write_all(sequence.as_bytes())
+    }
 }
 
 impl Drop for Terminal {
@@ -803,6 +811,8 @@ impl Drop for InlineTerminal {
         self.session.restore(&mut self.stdout, self.reserved);
     }
 }
+
+pub(crate) use session::{note_cursor_shape_written, note_pointer_shape_written};
 
 mod selection;
 pub(crate) use selection::{

@@ -247,6 +247,30 @@ pub struct RunConfig {
     /// button is released is copied; rows scrolled out of view are not
     /// retained.
     pub text_selection: bool,
+    /// How long the pointer must rest on a widget before its hover tooltip
+    /// ([`Context::tooltip`](crate::Context::tooltip),
+    /// [`Response::on_hover`](crate::Response::on_hover)) appears.
+    ///
+    /// Defaults to 500 ms, like desktop and browser tooltips; moving to
+    /// another widget restarts the wait. `Duration::ZERO` shows tooltips on
+    /// the first hovered frame (the pre-0.26 behavior). The tooltip appears on
+    /// the first frame after the delay, without further input. Since 0.26.0.
+    pub tooltip_delay: Duration,
+    /// Clear the hover state after the pointer has not moved for this long.
+    ///
+    /// Terminals report no "pointer left the window" event, so the last
+    /// hovered widget would otherwise stay highlighted (and its tooltip open)
+    /// until the next mouse event, focus loss, or resize. `None` (the default)
+    /// keeps hover until then. Since 0.26.0.
+    pub hover_timeout: Option<Duration>,
+    /// Whether [`ContainerBuilder::pointer_shape`](crate::ContainerBuilder::pointer_shape)
+    /// requests are written as OSC 22 pointer-shape escapes.
+    ///
+    /// Defaults to `false` because terminals without OSC 22 support may print
+    /// the payload. Enable it for terminals known to support it (kitty, foot,
+    /// Ghostty, recent xterm). The default pointer is restored on exit, in the
+    /// panic hook and on suspend. Since 0.26.0.
+    pub pointer_shapes: bool,
 }
 
 impl Default for RunConfig {
@@ -267,6 +291,9 @@ impl Default for RunConfig {
             async_message_budget: 100,
             click_on_release: false,
             text_selection: true,
+            tooltip_delay: Duration::from_millis(500),
+            hover_timeout: None,
+            pointer_shapes: false,
         }
     }
 }
@@ -472,6 +499,55 @@ impl RunConfig {
     /// ```
     pub fn text_selection(mut self, enabled: bool) -> Self {
         self.text_selection = enabled;
+        self
+    }
+
+    /// Set how long the pointer must rest before a hover tooltip appears.
+    ///
+    /// See [`RunConfig::tooltip_delay`]; `Duration::ZERO` shows tooltips
+    /// immediately. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// use std::time::Duration;
+    /// let cfg = RunConfig::default().tooltip_delay(Duration::from_millis(250));
+    /// assert_eq!(cfg.tooltip_delay, Duration::from_millis(250));
+    /// ```
+    pub fn tooltip_delay(mut self, delay: Duration) -> Self {
+        self.tooltip_delay = delay;
+        self
+    }
+
+    /// Clear the hover state after `timeout` without pointer motion, or never
+    /// with `None`. See [`RunConfig::hover_timeout`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// use std::time::Duration;
+    /// let cfg = RunConfig::default().hover_timeout(Some(Duration::from_secs(3)));
+    /// assert_eq!(cfg.hover_timeout, Some(Duration::from_secs(3)));
+    /// ```
+    pub fn hover_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.hover_timeout = timeout;
+        self
+    }
+
+    /// Opt in to OSC 22 pointer-shape escapes. See
+    /// [`RunConfig::pointer_shapes`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().pointer_shapes(true);
+    /// assert!(cfg.pointer_shapes);
+    /// ```
+    pub fn pointer_shapes(mut self, enabled: bool) -> Self {
+        self.pointer_shapes = enabled;
         self
     }
 }

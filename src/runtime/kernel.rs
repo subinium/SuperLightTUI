@@ -634,6 +634,12 @@ pub(crate) fn run_frame(
         state.selection.clear();
     }
 
+    // #452: cursor (DECSCUSR) and pointer (OSC 22) shapes, only on change.
+    #[cfg(feature = "crossterm")]
+    if terminal_side_effects {
+        emit_shape_requests(term, state, config)?;
+    }
+
     let flush_start = Instant::now();
     term.flush()?;
     state.diagnostics.flush_duration = flush_start.elapsed();
@@ -647,6 +653,39 @@ pub(crate) fn run_frame(
     state.diagnostics.tick = state.diagnostics.tick.wrapping_add(1);
 
     Ok(true)
+}
+
+/// Write the cursor and pointer shapes the last frame asked for, when they
+/// differ from what the terminal shows (#452).
+#[cfg(feature = "crossterm")]
+fn emit_shape_requests(
+    term: &mut impl Backend,
+    state: &mut FrameState,
+    config: &RunConfig,
+) -> io::Result<()> {
+    let pointer = &mut state.pointer;
+    if pointer.cursor_wanted != pointer.cursor_emitted {
+        let code = pointer
+            .cursor_wanted
+            .map_or(0, |(shape, blink)| shape.decscusr(blink));
+        term.write_terminal_sequence(&format!("\x1b[{code} q"))?;
+        pointer.cursor_emitted = pointer.cursor_wanted;
+        terminal::note_cursor_shape_written(pointer.cursor_wanted.is_some());
+    }
+    let wanted = if config.pointer_shapes {
+        pointer
+            .pointer_wanted
+            .filter(|shape| *shape != crate::PointerShape::Default)
+    } else {
+        None
+    };
+    if wanted != pointer.pointer_emitted {
+        let name = wanted.map_or("default", crate::PointerShape::css_name);
+        term.write_terminal_sequence(&format!("\x1b]22;{name}\x1b\\"))?;
+        pointer.pointer_emitted = wanted;
+        terminal::note_pointer_shape_written(wanted.is_some());
+    }
+    Ok(())
 }
 
 pub(crate) fn clear_frame_layout_cache(state: &mut FrameState) {

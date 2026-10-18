@@ -124,6 +124,8 @@ pub struct ContainerBuilder<'a> {
     pub(crate) theme_override: Option<Theme>,
     /// Hit-test flags for this container's slot (#439), e.g. `bubble_clicks`.
     pub(crate) pointer_flags: u8,
+    /// Mouse pointer shape while this container is hovered (#452).
+    pub(crate) pointer_shape: Option<crate::PointerShape>,
 }
 
 /// A colored pixel in the canvas grid.
@@ -2055,8 +2057,12 @@ impl<'a> ContainerBuilder<'a> {
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
-        self.ctx
-            .mark_pointer_flags(interaction_id, self.pointer_flags, self.scroll_state_id);
+        self.ctx.mark_pointer_flags(
+            interaction_id,
+            self.pointer_flags,
+            self.scroll_state_id,
+            self.pointer_shape,
+        );
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).
         let resolved_gap: i32 = match direction {

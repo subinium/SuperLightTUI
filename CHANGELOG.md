@@ -30,11 +30,25 @@
   reverse order on exit, panic and suspend; the urxvt `?1015` encoding is no
   longer requested. `Terminal::new` / `InlineTerminal::new` accept a
   `MouseMode` (a `bool` still works).
+- Tooltip dwell delay, hover timeout and cursor/pointer shapes (#452):
+  `RunConfig::tooltip_delay(Duration)` (default 500 ms),
+  `RunConfig::hover_timeout(Option<Duration>)` (default `None`),
+  `Context::set_cursor_shape(CursorShape, blink)` (DECSCUSR, written only on
+  change, `CSI 0 SP q` restored on exit, panic and suspend when a shape was
+  set) and `ContainerBuilder::pointer_shape(PointerShape)` (OSC 22, opt-in
+  via `RunConfig::pointer_shapes(true)`, follows the hovered slot with CSS
+  `cursor` inheritance). `EventBuilder::mouse_move` and
+  `PtyBackend::with_run_config` support testing them.
 - `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
   text selection and copy-on-release off for apps with their own drag or
   selection model (#438).
 
 ### Changed
+
+- Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
+  the pointer rests on the same target, instead of appearing on the first
+  hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old
+  behavior. Tooltip panels are transparent to clicks (#439).
 
 - **Breaking:** the mouse is on by default (#444, owner decision).
   `RunConfig::default()` resolves to `MouseMode::Drag` locally (clicks,

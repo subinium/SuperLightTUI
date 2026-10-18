@@ -41,6 +41,11 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `.mouse(true)` still means Hover. Code that read or wrote the
   `RunConfig::mouse` field must use `mouse_mode` (`Option<MouseMode>`) or
   `effective_mouse_mode()`.
+- **Tooltip delay (#452).** Tooltips now appear after the pointer rests for
+  500 ms. Tests that assert a tooltip on the first hovered frame should
+  either advance the clock (`TestBackend::advance_time`) or set
+  `RunConfig::default().tooltip_delay(Duration::ZERO)` (with
+  `TestBackend::with_run_config`).
 - **Scroll anchoring (#443).** `ScrollState::anchor` defaults to `true`, so the
   offset moves when content above the viewport changes height. Apps that do
   their own offset math for that case should set `scroll.anchor = false` (or

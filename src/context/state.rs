@@ -455,7 +455,8 @@ impl Response {
     }
 
     /// Attach a tooltip to this widget. Renders only when the widget is
-    /// currently hovered.
+    /// currently hovered and the pointer has rested for
+    /// [`RunConfig::tooltip_delay`](crate::RunConfig::tooltip_delay).
     ///
     /// Equivalent to calling [`Context::tooltip`] immediately after the
     /// widget, but composes cleanly with the chained `Response` style:
@@ -476,7 +477,7 @@ impl Response {
     /// chaining further widgets afterward does not strip it.
     #[must_use = "on_hover returns the Response for further chaining"]
     pub fn on_hover(self, ctx: &mut Context, text: impl Into<String>) -> Self {
-        if !self.hovered || self.rect.width == 0 || self.rect.height == 0 {
+        if !self.hovered || self.rect.width == 0 || self.rect.height == 0 || !ctx.tooltip_ready() {
             return self;
         }
         let tooltip_text = text.into();

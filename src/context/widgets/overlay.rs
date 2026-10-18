@@ -457,6 +457,11 @@ impl Context {
 
     /// Render a hover tooltip for the previously rendered interactive widget.
     ///
+    /// The tooltip appears once the pointer has rested on the same target for
+    /// [`RunConfig::tooltip_delay`](crate::RunConfig::tooltip_delay) (500 ms by
+    /// default), so sweeping across a toolbar does not flash one tooltip per
+    /// button. Hover needs [`MouseMode::Hover`](crate::MouseMode::Hover).
+    ///
     /// Call this right after a widget or container response:
     /// ```ignore
     /// if ui.button("Save").clicked { save(); }
@@ -469,7 +474,10 @@ impl Context {
         }
         let last_interaction_id = self.rollback.interaction_count.saturating_sub(1);
         let last_response = self.response_for(last_interaction_id);
-        if !last_response.hovered || last_response.rect.width == 0 || last_response.rect.height == 0
+        if !last_response.hovered
+            || last_response.rect.width == 0
+            || last_response.rect.height == 0
+            || !self.tooltip_ready()
         {
             return;
         }

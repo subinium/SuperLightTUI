@@ -209,6 +209,34 @@ pub(super) fn write_session_enter(
     Ok(())
 }
 
+/// Set once a non-default text cursor shape was written (#452), so restore
+/// writes `CSI 0 SP q` only when needed.
+static CURSOR_SHAPE_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set once a non-default OSC 22 pointer shape was written (#452).
+static POINTER_SHAPE_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record whether the terminal now shows a non-default text cursor shape.
+pub(crate) fn note_cursor_shape_written(non_default: bool) {
+    CURSOR_SHAPE_SET.store(non_default, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Record whether the terminal now shows a non-default pointer shape.
+pub(crate) fn note_pointer_shape_written(non_default: bool) {
+    POINTER_SHAPE_SET.store(non_default, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Restore the default cursor and pointer shapes if SLT changed them.
+fn write_shape_restore(stdout: &mut impl Write) -> io::Result<()> {
+    use std::sync::atomic::Ordering;
+    if CURSOR_SHAPE_SET.swap(false, Ordering::SeqCst) {
+        stdout.write_all(b"\x1b[0 q")?;
+    }
+    if POINTER_SHAPE_SET.swap(false, Ordering::SeqCst) {
+        stdout.write_all(b"\x1b]22;default\x1b\\")?;
+    }
+    Ok(())
+}
+
 /// DEC private modes requested for each [`crate::MouseMode`], in enable order
 /// (#444). SGR (`?1006`) is always last on enable and first on disable.
 pub(super) fn mouse_mode_sequences(mode: crate::MouseMode) -> &'static [u16] {
@@ -345,6 +373,7 @@ pub(super) fn write_session_exit(
     // restoration is best-effort so it cannot prevent the core cursor,
     // paste, and screen cleanup below.
     let _ = write_mouse_disable(stdout, mouse_mode);
+    let _ = write_shape_restore(stdout);
     let _ = execute!(stdout, DisableFocusChange);
     write_session_cleanup(stdout, mode, inline_reserved)
 }

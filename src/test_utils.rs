@@ -139,6 +139,32 @@ impl EventBuilder {
         self
     }
 
+    /// Append pointer motion with no button held at `(x, y)` (hover).
+    ///
+    /// Real terminals only report this in
+    /// [`MouseMode::Hover`](crate::MouseMode::Hover); `TestBackend` delivers
+    /// injected events regardless of the mode. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{EventBuilder, TestBackend};
+    ///
+    /// let mut tb = TestBackend::new(20, 3);
+    /// tb.render(|ui| {
+    ///     let _ = ui.button("Hi");
+    /// });
+    /// let mut hovered = false;
+    /// tb.run_with_events(EventBuilder::new().mouse_move(1, 0).build(), |ui| {
+    ///     hovered = ui.button("Hi").hovered;
+    /// });
+    /// assert!(hovered);
+    /// ```
+    pub fn mouse_move(mut self, x: u32, y: u32) -> Self {
+        self.events.push(Event::mouse_move(x, y));
+        self
+    }
+
     /// Append a mouse drag (movement with the left button held) at `(x, y)`.
     pub fn drag(mut self, x: u32, y: u32) -> Self {
         self.events.push(Event::mouse_drag(x, y));
@@ -1119,6 +1145,15 @@ impl PtyBackend {
             config: RunConfig::default(),
             frames: Vec::new(),
         }
+    }
+
+    /// Render every frame with `config` instead of `RunConfig::default()`,
+    /// e.g. to enable [`RunConfig::pointer_shapes`]. Session-level settings
+    /// (mouse mode, kitty keyboard) do not apply: the capture terminal never
+    /// writes session enter/exit sequences. Since 0.26.0.
+    pub fn with_run_config(mut self, config: RunConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Set the [`ColorDepth`](crate::ColorDepth) the flush pipeline encodes

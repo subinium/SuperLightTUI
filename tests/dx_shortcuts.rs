@@ -69,6 +69,14 @@ fn on_hover_renders_tooltip_when_hovered() {
         let _ = ui.button("Save").on_hover(ui, "Saves the file");
     });
 
+    // v0.26 (#452): the tooltip waits for `RunConfig::tooltip_delay`
+    // (500 ms by default) while the pointer rests on the same target.
+    tb.advance_time(std::time::Duration::from_millis(500))
+        .expect("advance clock");
+    tb.render(|ui| {
+        let _ = ui.button("Save").on_hover(ui, "Saves the file");
+    });
+
     // Tooltip text should now be in the buffer.
     tb.assert_contains("Saves the file");
 }
