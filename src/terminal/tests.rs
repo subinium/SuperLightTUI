@@ -4,6 +4,7 @@
 use super::*;
 
 mod capability_tests;
+mod detection_tests;
 mod flush_tests;
 mod graphics_tests;
 mod lifecycle_tests;

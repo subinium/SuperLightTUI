@@ -225,6 +225,10 @@ src/
 │   │   ├── gauge.rs            # gauge / line_gauge builders
 │   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
 │   │   ├── split.rs            # split_pane / vsplit_pane
+│   │   ├── font8x8.rs          # 8x8 bitmap font for big_text
+│   │   ├── fallback_highlight.rs # keyword fallback highlighter, tree-sitter line renderer
+│   │   ├── media.rs            # image preparation caches, encoders, half-block / RGBA fallback
+│   │   ├── tooltip_wrap.rs     # tooltip word wrapping
 │   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
 │   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
 │   ├── widgets_interactive.rs  # Interactive facade
@@ -287,7 +291,7 @@ src/
 │   ├── bench_hooks.rs          # `#[doc(hidden)]` __bench_* fixtures
 │   ├── selection.rs            # SelectionState, text selection overlay rendering
 │   ├── tests.rs                # Test facade
-│   └── tests/                  # capability / flush / graphics / lifecycle / query / selection tests
+│   └── tests/                  # capability / detection / flush / graphics / lifecycle / query / selection tests
 │
 ├── anim.rs                     # Animation primitives
 │   ├── Tween                   # Linear interpolation with 9 easing functions
