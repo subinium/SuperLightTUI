@@ -174,7 +174,10 @@ pub(super) fn flush_buffer_diff_rows(
 
                 if cell.style != last_style {
                     if first_style {
-                        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                        // One SGR reset (#489): crossterm's `ResetColor` and
+                        // `SetAttribute(Reset)` both encode `CSI 0m`, and only
+                        // `ResetColor` acts on the legacy WinAPI console.
+                        queue!(stdout, ResetColor)?;
                         apply_style(stdout, &cell.style, color_depth)?;
                         first_style = false;
                     } else {
@@ -226,7 +229,8 @@ pub(super) fn flush_buffer_diff_rows(
         if active_link.is_some() {
             queue!(stdout, Print("\x1b]8;;\x07"))?;
         }
-        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+        // Single end-of-frame SGR reset (#489).
+        queue!(stdout, ResetColor)?;
     }
 
     Ok(())

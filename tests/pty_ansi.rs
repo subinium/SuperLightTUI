@@ -68,6 +68,22 @@ fn styled_text_emits_sgr_run() {
     pb.assert_emits("x");
 }
 
+/// Issue #489: each frame site emits one SGR reset, not `CSI 0m CSI 0m`.
+#[test]
+fn styled_frame_emits_one_sgr_reset_per_site() {
+    let mut pb = PtyBackend::new(10, 1);
+    pb.render(|ui| {
+        ui.text("x").fg(Color::Red);
+    });
+    pb.assert_not_emits("\u{1b}[0m\u{1b}[0m");
+    let raw = String::from_utf8_lossy(pb.last_raw()).into_owned();
+    // One reset before the first styled run, one at the end of the frame.
+    assert_eq!(raw.matches("\u{1b}[0m").count(), 2, "{raw:?}");
+    let first_run = raw.find("\u{1b}[0m\u{1b}[31m").expect("reset then style");
+    let end = raw.rfind("\u{1b}[0m").expect("end-of-frame reset");
+    assert!(first_run < end);
+}
+
 /// A `sixel_image` call emits a `\x1bPq`-wrapped Sixel payload terminated by
 /// the String Terminator. Sixel support is normally terminal-detected; force
 /// it on so the headless harness exercises the real encode + flush path.

@@ -7,7 +7,7 @@ use super::*;
 /// Reference copy of `flush_buffer_diff_rows` before #486, minus its row
 /// hash skip: every cell of every row is compared and normalized. It shares
 /// one rule added with #486: a leading cell whose continuation cells changed
-/// is redrawn.
+/// is redrawn, and the single SGR reset per frame site from #489.
 #[allow(unused_assignments)]
 fn reference_flush_rows(
     stdout: &mut impl Write,
@@ -118,7 +118,7 @@ fn reference_flush_rows(
 
                 if cell.style != last_style {
                     if first_style {
-                        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+                        queue!(stdout, ResetColor)?;
                         apply_style(stdout, &cell.style, color_depth)?;
                         first_style = false;
                     } else {
@@ -170,7 +170,7 @@ fn reference_flush_rows(
         if active_link.is_some() {
             queue!(stdout, Print("\x1b]8;;\x07"))?;
         }
-        queue!(stdout, ResetColor, SetAttribute(Attribute::Reset))?;
+        queue!(stdout, ResetColor)?;
     }
 
     Ok(())
