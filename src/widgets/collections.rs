@@ -1,3 +1,7 @@
+//! List, file picker, tabs, table, paginator, scroll, split-pane and grid state.
+
+use super::*;
+
 /// State for a selectable list widget.
 ///
 /// Pass a mutable reference to `Context::list` each frame. Up/Down arrow
@@ -959,8 +963,8 @@ pub struct TableState {
     /// Whether alternating row backgrounds are enabled.
     pub zebra: bool,
     view_indices: Vec<usize>,
-    row_search_cache: Vec<String>,
-    filter_tokens: Vec<String>,
+    pub(super) row_search_cache: Vec<String>,
+    pub(super) filter_tokens: Vec<String>,
 }
 
 impl Default for TableState {
@@ -1874,7 +1878,9 @@ impl ScrollState {
         }
     }
 
-    pub(crate) fn id(&self) -> u64 { self.id }
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
 
     /// Check if scrolling upward is possible (offset is greater than 0).
     pub fn can_scroll_up(&self) -> bool {
@@ -1898,10 +1904,14 @@ impl ScrollState {
 
     /// Maximum vertical offset from the most recent viewport binding.
     /// Accounts for leading clipping; it need not equal content minus visible height.
-    pub fn max_offset(&self) -> usize { self.max_offset_y as usize }
+    pub fn max_offset(&self) -> usize {
+        self.max_offset_y as usize
+    }
 
     /// Maximum horizontal offset from the most recent viewport binding.
-    pub fn max_offset_x(&self) -> usize { self.max_offset_x as usize }
+    pub fn max_offset_x(&self) -> usize {
+        self.max_offset_x as usize
+    }
 
     /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
     ///
@@ -1985,9 +1995,20 @@ impl ScrollState {
         self.max_offset_y = content_height.saturating_sub(viewport_height);
     }
 
-    pub(crate) fn set_clipped_bounds(&mut self, content: u32, viewport: u32, max: u32, horizontal: bool) {
-        if horizontal { self.set_bounds_x(content, viewport); self.max_offset_x = max; }
-        else { self.set_bounds(content, viewport); self.max_offset_y = max; }
+    pub(crate) fn set_clipped_bounds(
+        &mut self,
+        content: u32,
+        viewport: u32,
+        max: u32,
+        horizontal: bool,
+    ) {
+        if horizontal {
+            self.set_bounds_x(content, viewport);
+            self.max_offset_x = max;
+        } else {
+            self.set_bounds(content, viewport);
+            self.max_offset_y = max;
+        }
     }
 
     /// Update the horizontal (x-axis) bounds (#247).

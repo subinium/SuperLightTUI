@@ -1,6 +1,10 @@
-// Included into `crate::widgets::validators` via `include!`. Keep this file
-// free of `use` statements that conflict with the parent module — refer to
-// items by fully-qualified paths where ambiguity is possible.
+//! Built-in field validator constructors (required / length / email / range /
+//! regex / one-of).
+//!
+//! Each function returns a closure suitable for
+//! [`FormField::validate`](crate::widgets::FormField::validate) or
+//! [`Validator::new`](crate::widgets::Validator::new). All matchers are
+//! handwritten — there is no `regex` or email-parsing dependency.
 
 /// Reject empty or whitespace-only input.
 ///

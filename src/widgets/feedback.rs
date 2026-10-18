@@ -1,3 +1,7 @@
+//! Rich log, calendar, button variant, trend and scheduler state.
+
+use super::*;
+
 /// State for the rich log viewer widget.
 #[derive(Debug, Clone)]
 pub struct RichLogState {

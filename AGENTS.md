@@ -203,8 +203,8 @@ src/
 │   │   └── tests.rs            # Input widget tests
 │   └── widgets_viz.rs          # charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
 │
-├── widgets.rs                  # Single `widgets` module: the files below are spliced in with `include!()`
-│                               # (not separate Rust modules); validators.rs is included inside `pub mod validators`
+├── widgets.rs                  # Facade: private submodules below, glob re-exported (`pub use input::*;` …)
+│                               # so every state type stays at `slt::widgets::*`; `validators` is `pub mod`
 ├── widgets/
 │   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
 │   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn

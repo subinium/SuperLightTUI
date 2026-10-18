@@ -1,9 +1,12 @@
-// Widget response types introduced in v0.20.0.
-//
-// These wrap a [`Response`] alongside widget-specific interaction data
-// (clicked segment index, drag state, search highlight info). Each implements
-// [`Deref<Target = Response>`] so callers can read the standard `hovered`,
-// `clicked`, `rect`, and `focused` fields without explicit field navigation.
+//! Widget response types introduced in v0.20.0.
+//!
+//! These wrap a [`Response`] alongside widget-specific interaction data
+//! (clicked segment index, drag state, search highlight info). Each implements
+//! [`Deref<Target = Response>`](std::ops::Deref) so callers can read the
+//! standard `hovered`, `clicked`, `rect`, and `focused` fields without explicit
+//! field navigation.
+
+use super::*;
 
 /// Response from [`Context::form_field_response`](crate::Context::form_field_response).
 ///
@@ -25,7 +28,9 @@ pub struct FormFieldResponse {
 
 impl std::ops::Deref for FormFieldResponse {
     type Target = Response;
-    fn deref(&self) -> &Response { &self.response }
+    fn deref(&self) -> &Response {
+        &self.response
+    }
 }
 
 /// Response from [`Context::breadcrumb`](crate::Context::breadcrumb).
