@@ -58,7 +58,22 @@ pub(crate) struct FocusSlotMeta {
     pub key: Option<u64>,
     /// Issue #453: `Some` when the slot is a text-entry widget.
     pub text_entry: Option<TextEntryKind>,
+    /// Issue #465: `CHORD_*` bits for the Ctrl/Super chords the text widget
+    /// handles itself (select all, copy/cut while a selection exists, undo /
+    /// redo, kill line). Shortcut queries do not see those chords while the
+    /// widget owns focus.
+    pub chords: u8,
 }
+
+/// Issue #465: the focused text widget handles `Ctrl+A`.
+pub(crate) const CHORD_SELECT_ALL: u8 = 1;
+/// Issue #465: the focused text widget has a selection and handles
+/// `Ctrl+C` / `Ctrl+X`.
+pub(crate) const CHORD_COPY_CUT: u8 = 2;
+/// Issue #465: the focused text widget handles `Ctrl+Z` / `Ctrl+Y`.
+pub(crate) const CHORD_HISTORY: u8 = 4;
+/// Issue #465: the focused text widget handles `Ctrl+K`.
+pub(crate) const CHORD_KILL_LINE: u8 = 8;
 
 /// Issue #454: high bit reserved for widget-state focus keys so they never
 /// collide with hashed user keys (which have it cleared).
@@ -85,8 +100,9 @@ pub(crate) struct FocusIdentity {
     pub slots: Vec<FocusSlotMeta>,
     /// Metadata recorded by the previous frame, indexed by slot id.
     pub prev_slots: Vec<FocusSlotMeta>,
-    /// Issue #453: text-entry ownership at the start of this frame.
-    pub prev_text_entry: Option<TextEntryKind>,
+    /// Issue #453: text-entry ownership (kind and handled chords) at the
+    /// start of this frame.
+    pub prev_text_entry: Option<(TextEntryKind, u8)>,
     /// Issue #454: key of the slot focus starts on. While set (and focus has
     /// not been moved explicitly this frame), focus follows this key instead
     /// of the slot number.
@@ -120,7 +136,10 @@ impl FocusIdentityCarry {
         slots.clear();
         let prev_slots = std::mem::take(&mut self.slots);
         let start = prev_slots.get(target).copied().unwrap_or_default();
-        let prev_text_entry = self.text_claim.or(start.text_entry);
+        let prev_text_entry = self
+            .text_claim
+            .map(|kind| (kind, 0))
+            .or(start.text_entry.map(|kind| (kind, start.chords)));
         let prev_focused_key = prev_focused
             .and_then(|id| prev_slots.get(id))
             .and_then(|slot| slot.key);

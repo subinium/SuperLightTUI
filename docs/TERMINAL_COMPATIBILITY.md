@@ -28,7 +28,7 @@ version, and the output of the diagnostics below is very welcome.
 | No color | `NO_COLOR` set to any non-empty value | Environment (wins over everything else) | n/a: no color codes are emitted |
 | Mouse (click, hover, wheel, drag) | SGR mouse reporting | Opt-in: `RunConfig::default().mouse(true)`. Enables all-motion tracking | Keyboard focus (Tab) and activation (Enter/Space) still work |
 | Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release | Native terminal selection (mouse off, or the terminal's bypass modifier) |
-| Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` always emits it | Silently ignored by the terminal |
+| Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` always emits it (also Ctrl+C / Ctrl+X on a selection in a focused `text_input` / `textarea`) | Silently ignored by the terminal |
 | Hyperlinks | OSC 8 | `ui.link(..)` always emits it, and also opens the URL with the local system opener on click or Enter | Plain styled text; the local opener still runs |
 | Bracketed paste | Bracketed paste mode | Always requested | Pasted text arrives as individual key presses |
 | Focus in/out events | Focus reporting | Always requested | No `FocusGained` / `FocusLost` events |

@@ -75,7 +75,7 @@ assert!(!my_light.is_dark);
 
 ### `const fn` ThemeBuilder (v0.19.2)
 
-Every `ThemeBuilder` setter is `const fn`, including `builder()`, `builder_from()`, `light_builder()`, `build()`, and all field setters (`primary`, `secondary`, `accent`, `text`, `text_dim`, `border`, `bg`, `success`, `warning`, `error`, `selected_bg`, `selected_fg`, `surface`, `surface_hover`, `surface_text`, `is_dark`, `spacing`). You can define themes at compile time:
+Every `ThemeBuilder` setter is `const fn`, including `builder()`, `builder_from()`, `light_builder()`, `build()`, and all field setters (`primary`, `secondary`, `accent`, `text`, `text_dim`, `border`, `bg`, `success`, `warning`, `error`, `selected_bg`, `selected_fg`, `selection_bg`, `surface`, `surface_hover`, `surface_text`, `is_dark`, `spacing`). You can define themes at compile time:
 
 ```rust
 use slt::{Color, Theme};
@@ -104,6 +104,7 @@ Compile-time themes incur no runtime construction cost and let you embed branded
 | `error` | Error states |
 | `selected_bg` | Selected list/table row background |
 | `selected_fg` | Selected list/table row foreground |
+| `selection_bg` | `Option<Color>`: selected text in `text_input` / `textarea`; `None` uses `selected_bg` / `selected_fg` (see `Theme::text_selection_style()`) |
 | `surface` | Card backgrounds, elevated containers |
 | `surface_hover` | Hover/active surface, one step brighter than `surface` |
 | `surface_text` | Text color readable on `surface` backgrounds |

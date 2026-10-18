@@ -108,10 +108,141 @@ mod insertion_regressions {
     }
 }
 
+/// Issue #465: mouse-selection bookkeeping shared by `text_input` and
+/// `textarea` (press-drag state and a click counter for double / triple
+/// clicks).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PointerSelect {
+    /// A left-button press inside the widget started a drag selection that
+    /// has not been released yet.
+    pub(crate) dragging: bool,
+    clicks: u8,
+    last_at: Option<crate::clock::Instant>,
+    last_pos: Option<(u32, u32)>,
+}
+
+impl PointerSelect {
+    /// Count a left press at `pos`: 1 for a single click, 2 for a double and
+    /// 3 for a triple click (same cell, each within the double-click window).
+    pub(crate) fn register_click(&mut self, now: crate::clock::Instant, pos: (u32, u32)) -> u8 {
+        let repeat = self.last_pos == Some(pos)
+            && self
+                .last_at
+                .is_some_and(|at| now.duration_since(at) <= crate::DOUBLE_CLICK_WINDOW);
+        self.clicks = if repeat { (self.clicks + 1).min(3) } else { 1 };
+        self.last_at = Some(now);
+        self.last_pos = Some(pos);
+        self.clicks
+    }
+}
+
+/// Undo snapshot for [`TextInputState`] (issue #465).
+#[derive(Debug, Clone)]
+pub(crate) struct TextInputSnapshot {
+    value: String,
+    cursor: usize,
+    anchor: Option<usize>,
+}
+
+/// Issue #465: selection, undo history and pointer state of a
+/// [`TextInputState`]. Private so the invariants stay inside the widget.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TextInputEditing {
+    /// Selection anchor (grapheme index). The selection spans
+    /// `anchor..cursor`, normalized.
+    pub(crate) anchor: Option<usize>,
+    undo: Vec<TextInputSnapshot>,
+    redo: Vec<TextInputSnapshot>,
+    /// The last edit was a typed character, so the next one joins its undo
+    /// step.
+    pub(crate) last_typing: bool,
+    pub(crate) pointer: PointerSelect,
+    /// `Ctrl+A` does *not* select all (opt-out flag; select-all is the
+    /// default).
+    pub(crate) ctrl_a_disabled: bool,
+    /// Previous frame's rendered layout: `(cell, grapheme index)` for every
+    /// visible grapheme plus a trailing end entry, relative to the first text
+    /// cell. Used to map mouse positions to cursor positions.
+    pub(crate) visual: Vec<(u32, usize)>,
+}
+
+/// Normalized grapheme range between an anchor and a cursor, or `None` when
+/// they coincide.
+pub(crate) fn normalized_range(anchor: usize, cursor: usize) -> Option<std::ops::Range<usize>> {
+    match anchor.cmp(&cursor) {
+        std::cmp::Ordering::Less => Some(anchor..cursor),
+        std::cmp::Ordering::Greater => Some(cursor..anchor),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+/// Byte offset of grapheme index `index` in `text` (the length when past the
+/// end).
+pub(crate) fn grapheme_byte(text: &str, index: usize) -> usize {
+    text.grapheme_indices(true)
+        .nth(index)
+        .map_or(text.len(), |(byte, _)| byte)
+}
+
+/// Whether a grapheme counts as part of a word for word-wise movement and
+/// double-click selection: its base scalar is alphanumeric (so CJK
+/// ideographs and accented letters are word characters).
+pub(crate) fn cluster_is_word(cluster: &str) -> bool {
+    cluster
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Grapheme range of the word (or run of non-word, non-space graphemes, or
+/// run of spaces) containing grapheme `index`.
+pub(crate) fn word_range_at(text: &str, index: usize) -> std::ops::Range<usize> {
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    if clusters.is_empty() {
+        return 0..0;
+    }
+    let index = index.min(clusters.len() - 1);
+    let class = |cluster: &str| {
+        if cluster_is_word(cluster) {
+            0u8
+        } else if cluster.chars().all(char::is_whitespace) {
+            1
+        } else {
+            2
+        }
+    };
+    let target = class(clusters[index]);
+    let mut start = index;
+    while start > 0 && class(clusters[start - 1]) == target {
+        start -= 1;
+    }
+    let mut end = index + 1;
+    while end < clusters.len() && class(clusters[end]) == target {
+        end += 1;
+    }
+    start..end
+}
+
 /// State for a single-line text input widget.
 ///
 /// Pass a mutable reference to `Context::text_input` each frame. The widget
 /// handles all keyboard events when focused.
+///
+/// # Selection, clipboard and undo
+///
+/// While focused, `Shift` + `Left` / `Right` / `Home` / `End` (and
+/// `Shift+Ctrl`/`Shift+Alt` + arrows for whole words) extend a selection,
+/// `Ctrl+A` selects everything (opt out with
+/// [`ctrl_a_select_all(false)`](Self::ctrl_a_select_all)), and with mouse
+/// capture a press-drag selects a range, a double-click a word and a
+/// triple-click everything. Typing or pasting replaces the selection as one
+/// undo step, Backspace / Delete remove it, `Ctrl+C` copies it and `Ctrl+X`
+/// cuts it through [`Context::copy_to_clipboard`](crate::Context::copy_to_clipboard)
+/// (OSC 52). `Ctrl+Z` undoes and `Ctrl+Y` / `Ctrl+Shift+Z` redoes. Masked
+/// inputs never put their plaintext on the clipboard: `Ctrl+C` / `Ctrl+X`
+/// do not copy (cut still deletes). `Ctrl+C` without a selection is left to
+/// the app; note that the default `RunConfig` quits on `Ctrl+C` before the
+/// frame runs, so copying needs `RunConfig::handle_ctrl_c(false)`.
 ///
 /// # Example
 ///
@@ -151,6 +282,8 @@ pub struct TextInputState {
     validation_errors: Vec<String>,
     /// Issue #454: process-unique focus identity (fresh on `Clone`).
     focus_key: u64,
+    /// Issue #465: selection, undo history and pointer state.
+    pub(crate) editing: TextInputEditing,
 }
 
 impl std::fmt::Debug for TextInputState {
@@ -168,6 +301,7 @@ impl std::fmt::Debug for TextInputState {
             .field("validators_len", &self.validators.len())
             .field("validation_errors", &self.validation_errors)
             .field("focus_key", &self.focus_key)
+            .field("selection", &self.selection())
             .finish()
     }
 }
@@ -199,6 +333,10 @@ impl Clone for TextInputState {
             validators: Vec::new(),
             validation_errors: self.validation_errors.clone(),
             focus_key: crate::runtime::next_state_focus_key(),
+            editing: TextInputEditing {
+                pointer: PointerSelect::default(),
+                ..self.editing.clone()
+            },
         }
     }
 }
@@ -219,6 +357,7 @@ impl TextInputState {
             validators: Vec::new(),
             validation_errors: Vec::new(),
             focus_key: crate::runtime::next_state_focus_key(),
+            editing: TextInputEditing::default(),
         }
     }
 
@@ -305,6 +444,7 @@ impl TextInputState {
     pub fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;
+        self.reset_editing();
         self.validation_error = None;
         self.validation_errors.clear();
         self.suggestion_index = 0;
@@ -342,6 +482,240 @@ impl TextInputState {
         }
         self.cursor = value.graphemes(true).count();
         self.value = value;
+        self.reset_editing();
+    }
+
+    /// Programmatic replacement starts a fresh editing session: no selection
+    /// and no undo history (matching `TextareaState::set_value`).
+    fn reset_editing(&mut self) {
+        self.editing.anchor = None;
+        self.editing.undo.clear();
+        self.editing.redo.clear();
+        self.editing.last_typing = false;
+    }
+
+    // ── selection (issue #465) ─────────────────────────────────────────
+
+    /// The selected range as grapheme-cluster indices into
+    /// [`value`](Self::value), normalized so `start <= end`. `None` when
+    /// nothing is selected.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut s = TextInputState::new();
+    /// s.set_value("hello world");
+    /// s.set_selection(6, 11);
+    /// assert_eq!(s.selection(), Some(6..11));
+    /// assert_eq!(s.selected_text(), Some("world"));
+    /// ```
+    pub fn selection(&self) -> Option<std::ops::Range<usize>> {
+        let len = self.value.graphemes(true).count();
+        let anchor = self.editing.anchor?.min(len);
+        normalized_range(anchor, self.cursor.min(len))
+    }
+
+    /// The selected text, or `None` when nothing is selected. For a
+    /// [`masked`](Self::masked) input this is still the plaintext; the widget
+    /// itself never copies it to the clipboard.
+    pub fn selected_text(&self) -> Option<&str> {
+        let range = self.selection()?;
+        let start = grapheme_byte(&self.value, range.start);
+        let end = grapheme_byte(&self.value, range.end);
+        Some(&self.value[start..end])
+    }
+
+    /// Select the whole value (cursor at the end).
+    pub fn select_all(&mut self) {
+        let len = self.value.graphemes(true).count();
+        self.editing.anchor = Some(0);
+        self.cursor = len;
+    }
+
+    /// Select from `anchor` to `cursor` (grapheme indices, clamped to the
+    /// value). The cursor ends at `cursor`; `anchor == cursor` clears the
+    /// selection.
+    pub fn set_selection(&mut self, anchor: usize, cursor: usize) {
+        let len = self.value.graphemes(true).count();
+        self.editing.anchor = Some(anchor.min(len));
+        self.cursor = cursor.min(len);
+    }
+
+    /// Drop the selection, keeping the cursor where it is.
+    pub fn clear_selection(&mut self) {
+        self.editing.anchor = None;
+    }
+
+    /// Builder: whether `Ctrl+A` selects all text while focused (default
+    /// `true`). Set `false` to leave `Ctrl+A` to app shortcuts.
+    pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
+        self.editing.ctrl_a_disabled = !on;
+        self
+    }
+
+    pub(crate) fn ctrl_a_selects_all(&self) -> bool {
+        !self.editing.ctrl_a_disabled
+    }
+
+    // ── editing primitives used by `Context::text_input` ───────────────
+
+    fn snapshot(&self) -> TextInputSnapshot {
+        TextInputSnapshot {
+            value: self.value.clone(),
+            cursor: self.cursor,
+            anchor: self.editing.anchor,
+        }
+    }
+
+    fn restore(&mut self, snap: TextInputSnapshot) {
+        self.value = snap.value;
+        self.cursor = snap.cursor;
+        self.editing.anchor = snap.anchor;
+    }
+
+    /// Record the current state as an undo step (dropping the redo branch).
+    pub(crate) fn push_undo(&mut self) {
+        self.editing.redo.clear();
+        self.editing.undo.push(self.snapshot());
+        if self.editing.undo.len() > DEFAULT_TEXTAREA_HISTORY_MAX {
+            self.editing.undo.remove(0);
+        }
+    }
+
+    /// Undo the last edit. Returns `true` when something changed.
+    pub(crate) fn undo(&mut self) -> bool {
+        let Some(snap) = self.editing.undo.pop() else {
+            return false;
+        };
+        let current = self.snapshot();
+        self.editing.redo.push(current);
+        self.restore(snap);
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Redo the last undone edit. Returns `true` when something changed.
+    pub(crate) fn redo(&mut self) -> bool {
+        let Some(snap) = self.editing.redo.pop() else {
+            return false;
+        };
+        let current = self.snapshot();
+        self.editing.undo.push(current);
+        self.restore(snap);
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Move the cursor to `target`, extending the selection when `extend`,
+    /// otherwise dropping it.
+    pub(crate) fn move_cursor(&mut self, target: usize, extend: bool) {
+        if extend {
+            self.editing.anchor.get_or_insert(self.cursor);
+        } else {
+            self.editing.anchor = None;
+        }
+        self.cursor = target;
+        self.editing.last_typing = false;
+    }
+
+    /// Delete the selection as one undo step. Returns `false` (and does
+    /// nothing) when nothing is selected.
+    pub(crate) fn delete_selection(&mut self) -> bool {
+        let Some(range) = self.selection() else {
+            return false;
+        };
+        self.push_undo();
+        let start = grapheme_byte(&self.value, range.start);
+        let end = grapheme_byte(&self.value, range.end);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        self.editing.anchor = None;
+        self.editing.last_typing = false;
+        true
+    }
+
+    /// Insert `text` at the cursor, replacing the selection (one undo step
+    /// for delete + insert). Consecutive typed characters (`typing`) share
+    /// an undo step. Returns `true` when the value changed.
+    pub(crate) fn insert_text(&mut self, text: &str) -> bool {
+        self.insert_text_as(text, false)
+    }
+
+    /// Typed-character form of [`insert_text`](Self::insert_text).
+    pub(crate) fn type_text(&mut self, text: &str) -> bool {
+        self.insert_text_as(text, true)
+    }
+
+    fn insert_text_as(&mut self, text: &str, typing: bool) -> bool {
+        if let Some(range) = self.selection() {
+            let start = grapheme_byte(&self.value, range.start);
+            let end = grapheme_byte(&self.value, range.end);
+            let mut base = String::with_capacity(self.value.len());
+            base.push_str(&self.value[..start]);
+            base.push_str(&self.value[end..]);
+            self.push_undo();
+            match prepare_text_insert(&base, start, text, self.max_length) {
+                Some((value, caret)) => {
+                    self.cursor = grapheme_cursor_after(&value, caret);
+                    self.value = value;
+                }
+                None => {
+                    self.cursor = grapheme_cursor_after(&base, start);
+                    self.value = base;
+                }
+            }
+            self.editing.anchor = None;
+            self.editing.last_typing = typing;
+            return true;
+        }
+        let byte = grapheme_byte(&self.value, self.cursor);
+        let Some((value, caret)) = prepare_text_insert(&self.value, byte, text, self.max_length)
+        else {
+            return false;
+        };
+        if !(typing && self.editing.last_typing) {
+            self.push_undo();
+        }
+        self.cursor = grapheme_cursor_after(&value, caret);
+        self.value = value;
+        self.editing.last_typing = typing;
+        true
+    }
+
+    /// Backspace: delete the selection, or the grapheme before the cursor.
+    pub(crate) fn delete_backward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        self.editing.last_typing = false;
+        if self.cursor == 0 {
+            return false;
+        }
+        self.push_undo();
+        let start = grapheme_byte(&self.value, self.cursor - 1);
+        let end = grapheme_byte(&self.value, self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        true
+    }
+
+    /// Delete: delete the selection, or the grapheme after the cursor.
+    pub(crate) fn delete_forward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        self.editing.last_typing = false;
+        if self.cursor >= self.value.graphemes(true).count() {
+            return false;
+        }
+        self.push_undo();
+        let start = grapheme_byte(&self.value, self.cursor);
+        let end = grapheme_byte(&self.value, self.cursor + 1);
+        self.value.replace_range(start..end, "");
+        self.cursor = grapheme_cursor_after(&self.value, start);
+        true
     }
 
     /// Run `validator` against the current value once, now, and store the
@@ -1130,6 +1504,18 @@ pub(crate) struct TextareaNavigation {
 /// batch is not an undo transaction: accepted edits retain their normal undo
 /// grouping even when their net content change is zero.
 ///
+/// # Selection
+///
+/// `Shift` + arrows / `Home` / `End` (and `Shift+Ctrl`/`Shift+Alt` +
+/// `Left`/`Right` for words) extend a selection, `Ctrl+A` selects all (opt
+/// out with [`ctrl_a_select_all(false)`](Self::ctrl_a_select_all)), and with
+/// mouse capture a press-drag selects a range, a double-click a word and a
+/// triple-click a line. Typing, `Enter` or a paste replaces the selection as
+/// one undo step; Backspace / Delete remove it; `Ctrl+C` copies and `Ctrl+X`
+/// cuts through OSC 52. Positions are `(row, column)` pairs in grapheme
+/// clusters, like [`cursor_row`](Self::cursor_row) /
+/// [`cursor_col`](Self::cursor_col).
+///
 /// # Example
 ///
 /// ```no_run
@@ -1174,6 +1560,17 @@ pub struct TextareaState {
     pub(crate) navigation: Option<TextareaNavigation>,
     /// Issue #454: process-unique focus identity (fresh on `Clone`).
     focus_key: u64,
+    /// Issue #465: selection anchor `(row, col)`; the selection spans
+    /// `anchor..cursor`, normalized.
+    pub(crate) anchor: Option<(usize, usize)>,
+    /// Issue #465: press-drag and click-count state.
+    pub(crate) pointer: PointerSelect,
+    /// Issue #465: `Ctrl+A` does *not* select all (opt-out flag).
+    pub(crate) ctrl_a_disabled: bool,
+    /// Issue #465: visual `(row, col)` where the previous frame drew the
+    /// caret glyph, which shifts the cells after it by one. Used to map
+    /// mouse positions back to text positions.
+    pub(crate) caret_glyph: Option<(usize, usize)>,
 }
 
 impl Clone for TextareaState {
@@ -1195,6 +1592,10 @@ impl Clone for TextareaState {
             last_was_char_insert: self.last_was_char_insert,
             navigation: self.navigation,
             focus_key: crate::runtime::next_state_focus_key(),
+            anchor: self.anchor,
+            pointer: PointerSelect::default(),
+            ctrl_a_disabled: self.ctrl_a_disabled,
+            caret_glyph: None,
         }
     }
 }
@@ -1216,6 +1617,10 @@ impl TextareaState {
             last_was_char_insert: false,
             navigation: None,
             focus_key: crate::runtime::next_state_focus_key(),
+            anchor: None,
+            pointer: PointerSelect::default(),
+            ctrl_a_disabled: false,
+            caret_glyph: None,
         }
     }
 
@@ -1258,6 +1663,137 @@ impl TextareaState {
         self.redo_tip = None;
         self.last_was_char_insert = false;
         self.navigation = None;
+        self.anchor = None;
+    }
+
+    // ── selection (issue #465) ─────────────────────────────────────────
+
+    /// Clamp a `(row, col)` position into the current text.
+    fn clamp_pos(&self, (row, col): (usize, usize)) -> (usize, usize) {
+        let row = row.min(self.lines.len().saturating_sub(1));
+        let len = self
+            .lines
+            .get(row)
+            .map_or(0, |line| line.graphemes(true).count());
+        (row, col.min(len))
+    }
+
+    /// The selected range as `(row, col)` grapheme positions, normalized so
+    /// `start <= end`. `None` when nothing is selected.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextareaState;
+    ///
+    /// let mut s = TextareaState::new();
+    /// s.set_value("one\ntwo");
+    /// s.set_selection((0, 1), (1, 2));
+    /// assert_eq!(s.selection(), Some((0, 1)..(1, 2)));
+    /// assert_eq!(s.selected_text().as_deref(), Some("ne\ntw"));
+    /// ```
+    pub fn selection(&self) -> Option<std::ops::Range<(usize, usize)>> {
+        let anchor = self.clamp_pos(self.anchor?);
+        let cursor = self.clamp_pos((self.cursor_row, self.cursor_col));
+        match anchor.cmp(&cursor) {
+            std::cmp::Ordering::Less => Some(anchor..cursor),
+            std::cmp::Ordering::Greater => Some(cursor..anchor),
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+
+    /// The selected text with `\n` between lines, or `None` when nothing is
+    /// selected.
+    pub fn selected_text(&self) -> Option<String> {
+        let range = self.selection()?;
+        let ((r1, c1), (r2, c2)) = (range.start, range.end);
+        let b1 = grapheme_byte(&self.lines[r1], c1);
+        let b2 = grapheme_byte(&self.lines[r2], c2);
+        if r1 == r2 {
+            return Some(self.lines[r1][b1..b2].to_string());
+        }
+        let mut out = String::from(&self.lines[r1][b1..]);
+        for line in &self.lines[r1 + 1..r2] {
+            out.push('\n');
+            out.push_str(line);
+        }
+        out.push('\n');
+        out.push_str(&self.lines[r2][..b2]);
+        Some(out)
+    }
+
+    /// Select the whole document (cursor at the end).
+    pub fn select_all(&mut self) {
+        self.anchor = Some((0, 0));
+        self.cursor_row = self.lines.len().saturating_sub(1);
+        self.cursor_col = self
+            .lines
+            .last()
+            .map_or(0, |line| line.graphemes(true).count());
+        self.navigation = None;
+    }
+
+    /// Select from `anchor` to `cursor` (`(row, col)` grapheme positions,
+    /// clamped). The cursor ends at `cursor`.
+    pub fn set_selection(&mut self, anchor: (usize, usize), cursor: (usize, usize)) {
+        self.anchor = Some(self.clamp_pos(anchor));
+        (self.cursor_row, self.cursor_col) = self.clamp_pos(cursor);
+        self.navigation = None;
+    }
+
+    /// Drop the selection, keeping the cursor where it is.
+    pub fn clear_selection(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Builder: whether `Ctrl+A` selects all text while focused (default
+    /// `true`).
+    pub fn ctrl_a_select_all(mut self, on: bool) -> Self {
+        self.ctrl_a_disabled = !on;
+        self
+    }
+
+    /// Delete the selection as one undo step. Returns `false` when nothing
+    /// is selected.
+    pub(crate) fn delete_selection(&mut self) -> bool {
+        let Some(range) = self.selection() else {
+            return false;
+        };
+        self.push_history();
+        self.remove_range(range);
+        true
+    }
+
+    /// Remove `range` without recording history and put the cursor at its
+    /// start.
+    fn remove_range(&mut self, range: std::ops::Range<(usize, usize)>) {
+        let ((r1, c1), (r2, c2)) = (range.start, range.end);
+        let b1 = grapheme_byte(&self.lines[r1], c1);
+        let b2 = grapheme_byte(&self.lines[r2], c2);
+        let mut joined = String::with_capacity(b1 + self.lines[r2].len() - b2);
+        joined.push_str(&self.lines[r1][..b1]);
+        joined.push_str(&self.lines[r2][b2..]);
+        self.lines.splice(r1..=r2, std::iter::once(joined));
+        self.cursor_row = r1;
+        self.cursor_col = grapheme_cursor_after(&self.lines[r1], b1);
+        self.anchor = None;
+        self.last_was_char_insert = false;
+        self.navigation = None;
+    }
+
+    /// Insert `text`, replacing the selection. Replacement is one undo step
+    /// (a single snapshot before the delete + insert).
+    pub(crate) fn replace_selection_or_insert(&mut self, text: &str, typing: bool) -> bool {
+        let Some(range) = self.selection() else {
+            return self.insert_text(text, typing);
+        };
+        self.push_history();
+        self.remove_range(range);
+        // The snapshot above already covers this edit.
+        self.last_was_char_insert = true;
+        self.insert_text(text, true);
+        self.last_was_char_insert = typing;
+        true
     }
 
     pub(crate) fn insert_text(&mut self, text: &str, typing: bool) -> bool {

@@ -29,6 +29,13 @@
   app's first frame nothing is withheld. Ctrl/Super/Meta chords (#349), Esc,
   Tab and F-keys are unchanged. Migration: code that intentionally reads typed
   characters while a field is focused switches to `raw_key`.
+- **Breaking (behaviour):** a focused `text_input` now handles Ctrl+A, Ctrl+Z,
+  Ctrl+Y and, while text is selected, Ctrl+C / Ctrl+X itself (#465); a
+  focused `textarea` additionally owns Ctrl+K as before. Those chords are
+  withheld from `key_mod` / `shortcut` while the widget owns focus, in either
+  call order. Ctrl+C without a selection still reaches the app. Copying with
+  Ctrl+C needs `RunConfig::handle_ctrl_c(false)`, because the default config
+  quits on Ctrl+C before the frame runs.
 - Focus follows the widget, not the slot number (#454). `text_input`,
   `textarea` and `form_field` key their focus slot by a process-unique id
   stored in their state (a `Clone` gets a fresh id), and
@@ -55,6 +62,26 @@
   `FormField::masked(bool)` / `password()` / `key(..)`; keyed form access via
   `FormState::get(key)` and `FormState::field_mut(key)` (explicit key first,
   then the label of unkeyed fields), which survives field reordering.
+- Text selection in `text_input` and `textarea` (#465): Shift + arrows /
+  Home / End, Shift+Ctrl/Alt + Left/Right by word (also new plain
+  Ctrl/Alt + Left/Right word movement in `text_input`), Shift+Up/Down in
+  `textarea`, Ctrl+A select all (`ctrl_a_select_all(false)` opts out), and
+  with mouse capture press-drag, double-click word and triple-click
+  everything (`text_input`) or the line (`textarea`). Typing, Enter or paste
+  replaces the selection as one undo step; Backspace/Delete remove it; Ctrl+C
+  copies and Ctrl+X cuts through OSC 52 (`copy_to_clipboard`). Masked inputs
+  never copy plaintext (copy is a no-op, cut only deletes) and a
+  double-click there selects everything rather than revealing word
+  boundaries. Ranges are grapheme indices, so CJK, ZWJ emoji, flags and
+  combining marks are never split; wide graphemes highlight both cells and
+  soft-wrapped textarea lines highlight per visual line. API:
+  `selection()`, `selected_text()`, `select_all()`, `set_selection(..)`,
+  `clear_selection()` on both states (`(row, col)` pairs for textarea).
+  `TextInputState` gains undo/redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, 100 steps,
+  typing bursts coalesce). New theme token `Theme::selection_bg`
+  (`ThemeBuilder::selection_bg`, default `None` = `selected_bg` /
+  `selected_fg`) and `Theme::text_selection_style()`. A drag inside a text
+  widget no longer starts the screen-level selection overlay.
 
 ### Deprecated
 

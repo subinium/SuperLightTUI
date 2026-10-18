@@ -15,9 +15,26 @@ use crate::runtime::TextEntryKind;
 /// to it with any modifier (Ctrl+Left is word navigation). Multi-line editors
 /// also own Enter, Up and Down. Everything else (Esc, Tab, F-keys, chords)
 /// stays visible to shortcut queries.
-fn text_entry_owns(kind: TextEntryKind, key: &KeyEvent) -> bool {
+///
+/// Issue #465: Ctrl/Super chords the widget handles itself (`chords`, see
+/// `CHORD_*`) are owned too: select all, copy / cut while text is selected,
+/// undo / redo and kill-line.
+fn text_entry_owns(kind: TextEntryKind, chords: u8, key: &KeyEvent) -> bool {
+    use crate::runtime::{CHORD_COPY_CUT, CHORD_HISTORY, CHORD_KILL_LINE, CHORD_SELECT_ALL};
     match key.code {
-        KeyCode::Char(_) => !has_global_shortcut_modifier(key.modifiers),
+        KeyCode::Char(ch) if has_global_shortcut_modifier(key.modifiers) => {
+            let command = key.modifiers.contains(KeyModifiers::CONTROL)
+                || key.modifiers.contains(KeyModifiers::SUPER);
+            let bit = match ch.to_ascii_lowercase() {
+                'a' => CHORD_SELECT_ALL,
+                'c' | 'x' if !key.modifiers.contains(KeyModifiers::SHIFT) => CHORD_COPY_CUT,
+                'z' | 'y' => CHORD_HISTORY,
+                'k' => CHORD_KILL_LINE,
+                _ => 0,
+            };
+            command && chords & bit != 0
+        }
+        KeyCode::Char(_) => true,
         KeyCode::Backspace
         | KeyCode::Delete
         | KeyCode::Left
@@ -41,8 +58,9 @@ impl Context {
     /// does not depend on whether the query runs before or after the widget.
     fn shortcut_key_presses(&self) -> impl Iterator<Item = (usize, &KeyEvent)> + '_ {
         let owner = self.text_entry_owner();
-        self.available_key_presses()
-            .filter(move |(_, key)| !owner.is_some_and(|kind| text_entry_owns(kind, key)))
+        self.available_key_presses().filter(move |(_, key)| {
+            !owner.is_some_and(|(kind, chords)| text_entry_owns(kind, chords, key))
+        })
     }
 
     /// Check if a character key was pressed this frame.

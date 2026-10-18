@@ -31,6 +31,12 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   with `s.clear()`, `s.masked = true` with `TextInputState::password()` /
   `.masked(true)`, and positional `form.value(i)` with `form.get("key")`
   (set keys with `FormField::key`, otherwise the label is used).
+- **Text selection (#465).** Focused `text_input` / `textarea` now handle
+  Ctrl+A, Ctrl+Z / Ctrl+Y and, with a selection, Ctrl+C / Ctrl+X. If your app
+  binds those chords globally, they no longer fire while a text field has
+  focus; opt out of select-all with `.ctrl_a_select_all(false)`, or check
+  them with `ui.raw_key_mod(..)`. To let Ctrl+C copy, run with
+  `RunConfig::default().handle_ctrl_c(false)` and quit on your own key.
 
 ## 1. v0.24.x → v0.25.0
 

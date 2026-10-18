@@ -305,6 +305,7 @@ impl Context {
             focus_name_map,
             pending_focus_name: still_pending,
             focus_identity,
+            text_pointer_capture: false,
             // Issue #248: sample a single wall-clock "now" for every timer
             // method called this frame. v0.21.1: reuse the `frame_now` sampled
             // above (also used for double-click timing) so the frame has one
@@ -1007,6 +1008,7 @@ impl Context {
         self.register_focusable_slot(crate::runtime::FocusSlotMeta {
             key: Some(crate::runtime::hashed_focus_key(key)),
             text_entry: None,
+            chords: 0,
         })
     }
 
@@ -1053,6 +1055,7 @@ impl Context {
         self.register_focusable_slot(crate::runtime::FocusSlotMeta {
             key: Some(key),
             text_entry: Some(kind),
+            chords: 0,
         })
     }
 
@@ -1155,17 +1158,25 @@ impl Context {
     /// A slot focused earlier in this frame decides; before any slot has
     /// registered, the slot that held focus as the frame started decides.
     /// An open command palette claims text entry without a slot.
-    pub(crate) fn text_entry_owner(&self) -> Option<crate::runtime::TextEntryKind> {
+    pub(crate) fn text_entry_owner(&self) -> Option<(crate::runtime::TextEntryKind, u8)> {
         if let Some(kind) = self.rollback.text_entry_claim {
-            return Some(kind);
+            return Some((kind, 0));
         }
         match self.rollback.focused_widget_id {
             Some(id) => self
                 .focus_identity
                 .slots
                 .get(id)
-                .and_then(|slot| slot.text_entry),
+                .and_then(|slot| slot.text_entry.map(|kind| (kind, slot.chords))),
             None => self.focus_identity.prev_text_entry,
+        }
+    }
+
+    /// Issue #465: record which chords the text widget in slot `id` handles
+    /// as of the end of its event processing.
+    pub(crate) fn set_focus_slot_chords(&mut self, id: Option<usize>, chords: u8) {
+        if let Some(slot) = id.and_then(|id| self.focus_identity.slots.get_mut(id)) {
+            slot.chords = chords;
         }
     }
 
@@ -2319,6 +2330,7 @@ impl Context {
             crate::runtime::FocusSlotMeta {
                 key: Some(crate::runtime::hashed_focus_key(name)),
                 text_entry: None,
+                chords: 0,
             },
             true,
         );

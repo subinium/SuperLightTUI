@@ -340,6 +340,25 @@ inside it is clickable, so a click is never reported twice (see Known
 limitations). And collapsing a block above the viewport shifts everything
 below it up, because SLT has no scroll anchoring.
 
+## Selecting and copying text in fields
+
+A focused `text_input` or `textarea` supports the usual editing selection:
+Shift + arrows / Home / End (Shift+Ctrl or Shift+Alt + Left/Right by word),
+Ctrl+A to select all, and with mouse capture press-drag, double-click (word)
+and triple-click (whole input, or the line in a `textarea`). Typing or
+pasting replaces the selection as one undo step, Backspace / Delete remove
+it, Ctrl+C copies and Ctrl+X cuts through OSC 52, and Ctrl+Z / Ctrl+Y undo and
+redo. Read or set it from code with `state.selection()`,
+`state.selected_text()`, `state.select_all()`, `state.set_selection(..)` and
+`state.clear_selection()`.
+
+- Masked inputs never put plaintext on the clipboard.
+- Ctrl+C without a selection stays an app shortcut. The default `RunConfig`
+  quits on Ctrl+C before your closure runs, so enable
+  `handle_ctrl_c(false)` if users should be able to copy.
+- The highlight uses `Theme::selection_bg` when set, otherwise
+  `selected_bg` / `selected_fg`.
+
 ## Keyboard focus and shortcuts
 
 - Tab / Shift+Tab cycle focus through focusable widgets in render order.
@@ -520,7 +539,8 @@ These are current behaviors, not misuse. Design around them for now.
    frame collapse into one.
 4. **Text selection can start during handle drags.** Dragging a scrollbar
    thumb or a split handle may also activate the built-in selection overlay
-   and copy text on release.
+   and copy text on release. (Drags inside a `text_input` / `textarea` select
+   text in the field instead and never start the overlay.)
 5. **No scroll anchoring.** Collapsing or inserting content above the
    viewport shifts the visible content, and there is no stick-to-bottom mode
    for logs. Adjust `ScrollState::offset` yourself when you need either.
