@@ -1,44 +1,31 @@
 use super::*;
 
-/// Regression guard for the size of [`LayoutNode`] (issue #153).
+/// Regression guard for the size of [`LayoutNode`] (issues #153, #488).
 ///
 /// A frame may build hundreds of layout nodes, and `LayoutNode` is moved /
-/// recursed over throughout the layout pipeline. The text-only fields
-/// (`content`, `cursor_offset`, `cached_*`, `segments`) are split into
-/// [`TextNodeData`] behind a `Box`, so non-text variants (`Spacer`,
-/// `Container`, `RawDraw`) — which are the vast majority of nodes — pay
-/// only the 8-byte `Option<Box<TextNodeData>>` rather than ~120 bytes of
-/// always-`None` fields inline. Pre-split the struct measured 432 bytes;
-/// post-split it should be substantially smaller. If a future field
-/// addition pushes this past the bound, either box the new field or audit
-/// whether the addition needs to live on `LayoutNode` at all.
+/// recursed over throughout the layout pipeline. Text-only fields live in
+/// [`TextNodeData`] behind a `Box` (#153), so non-text variants (`Spacer`,
+/// `Container`, `RawDraw`), which are the vast majority of nodes, pay only
+/// the 8-byte `Option<Box<TextNodeData>>`.
 ///
-/// Bumped 320 → 328 for the flex-wrap / flex-basis fields (#258):
-/// `cross_gap: i32` (4 bytes) and `flex_basis_raw: u32` (4 bytes), the two
-/// new scalar layout properties read by `flexbox::layout_row`. The
-/// `wrap_children: bool` flag packs into existing bool padding and adds
-/// nothing. Both are scalars (no heap, no niche), so this is the minimum
-/// footprint for the feature; boxing two 4-byte fields would cost a pointer
-/// (8 bytes) plus an allocation per wrapping container, a net loss.
+/// History: 432 B before the #153 split; grown by scalar layout fields for
+/// flex-wrap / flex-basis (#258), horizontal scroll (#247), the per-frame
+/// intrinsic-size memo (v0.22) and bound scroll identity (v0.25) to 368 B.
 ///
-/// Bumped 328 → 336 for the horizontal-scroll fields (#247):
-/// `scroll_offset_x: u32` (4 bytes) and `content_width: u32` (4 bytes), the
-/// x-axis mirror of `scroll_offset` / `content_height`. Same scalar rationale
-/// as #258 — boxing 4-byte fields would cost more than it saves.
-/// Bumped 336 → 360 for the per-frame intrinsic-size memo (v0.22.0):
-/// `cached_min_width` / `cached_min_height` (`Cell<Option<u32>>`, 8 bytes
-/// each) and `cached_min_height_for_width` (`Cell<Option<(u32, u32)>>`,
-/// 12 bytes). These memoize the previously-recomputed top-down intrinsic
-/// queries (`min_width` / `min_height` / `min_height_for_width`) so each
-/// node is measured at most once per width per frame instead of being
-/// re-walked O(depth) times by the flexbox call sites. The fields are
-/// `Cell`s so memoization works through the `&self` query signatures; the
-/// tree is rebuilt fresh every frame, so they start `None` and need no
-/// invalidation. Scalars (no heap), so this is the minimum footprint —
-/// boxing the cache would cost a per-node allocation every frame, defeating
-/// the optimization.
-// v0.25 adds one scalar identity for bound scroll state, without per-node heap allocation.
-const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 368);
+/// v0.26 (#488) lowered the bound to 336 B: the text-only `link_url`
+/// moved into [`TextNodeData`] (24 B), and the three intrinsic-size memos
+/// switched from `Cell<Option<..>>` to `u32::MAX` sentinels (28 B -> 16 B),
+/// which pays for the new 4-byte [`LayoutNode::arena_slot`]. If a future
+/// field pushes past the bound, move it to a side payload or audit whether
+/// it needs to live on `LayoutNode` at all.
+const _ASSERT_LAYOUT_NODE_SIZE: () = assert!(std::mem::size_of::<LayoutNode>() <= 336);
+
+/// Sentinel for an empty intrinsic-size memo slot (#488).
+///
+/// A measured value of `u32::MAX` (saturated) is indistinguishable from the
+/// sentinel and is simply recomputed on the next query, so the memo stays
+/// byte-identical to the uncached computation.
+const NO_MEMO: u32 = u32::MAX;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayLayer {
@@ -57,21 +44,30 @@ pub(crate) enum NodeKind {
 /// Text-only data for [`NodeKind::Text`] nodes (issue #153).
 ///
 /// These fields are unused by `Spacer`, `Container`, and `RawDraw`
-/// nodes, so we hide them behind a `Box` on `LayoutNode` to keep the
-/// hot non-text paths small. Boxing is cheap because text nodes already
-/// own at least one heap allocation (`content` or `segments`), so the
-/// extra indirection costs one more allocation per text node in exchange
-/// for ~120 bytes saved on every non-text node — a clear win when most
-/// nodes are containers.
+/// nodes, so they sit behind a `Box` on `LayoutNode` to keep the hot
+/// non-text paths small. The boxes are recycled across frames through
+/// [`LayoutArena`] (#488), so the indirection costs no steady-state
+/// allocation.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TextNodeData {
     pub(crate) content: Option<String>,
+    /// Display width of `content` (or the summed width of `segments`),
+    /// measured once when the node is built (#494). Render reuses it for
+    /// alignment and clipping instead of re-measuring the string.
+    pub(crate) width: u32,
     pub(crate) cursor_offset: Option<usize>,
     pub(crate) cursor_masked: bool,
     pub(crate) cached_wrap_width: Option<u32>,
     pub(crate) cached_wrapped: Option<Vec<String>>,
     pub(crate) segments: Option<Vec<(String, Style)>>,
+    /// Display width of each entry of `segments`, measured at build (#494)
+    /// so render can chain unwrapped segments without re-measuring them.
+    /// Recycled with the box, so it costs no steady-state allocation.
+    pub(crate) segment_widths: Vec<u32>,
     pub(crate) cached_wrapped_segments: Option<Vec<Vec<(String, Style)>>>,
+    /// OSC 8 hyperlink target of a `link` text node. Text-only, so it lives
+    /// here rather than on every `LayoutNode` (#488).
+    pub(crate) link_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,9 +159,13 @@ pub(crate) struct LayoutNode {
     /// scrollable row overflows its viewport; `0` for every non-scrollable
     /// container and for scrollable columns.
     pub(crate) content_width: u32,
+    /// [`LayoutArena`] slot whose recycled `children` vector this container
+    /// borrowed (#488), or [`LayoutArena::NO_SLOT`] for nodes built outside
+    /// an arena. Returned to the same slot at frame end, so a stable tree
+    /// gets every vector back at the capacity it needed last frame.
+    pub(crate) arena_slot: u32,
     pub(crate) focus_id: Option<usize>,
     pub(crate) interaction_id: Option<usize>,
-    pub(crate) link_url: Option<String>,
     /// Group name for hover/focus registration.
     ///
     /// Stored as `Arc<str>` so the collect-side handoff into
@@ -173,19 +173,19 @@ pub(crate) struct LayoutNode {
     /// rather than a fresh `String` → `Arc<str>` allocation per group node.
     pub(crate) group_name: Option<std::sync::Arc<str>>,
     pub(crate) overlays: Vec<OverlayLayer>,
-    /// Per-frame memo for [`LayoutNode::min_width`]. `None` until the first
-    /// query; the value is width-independent, so it never needs a key. The
-    /// tree is rebuilt fresh every frame, so a new node starts `None` — no
-    /// invalidation logic exists or is needed.
-    pub(crate) cached_min_width: std::cell::Cell<Option<u32>>,
+    /// Per-frame memo for [`LayoutNode::min_width`]; [`NO_MEMO`] until the
+    /// first query. The value is width-independent, so it never needs a key.
+    /// The tree is rebuilt every frame, so a new node starts empty.
+    pub(crate) cached_min_width: std::cell::Cell<u32>,
     /// Per-frame memo for [`LayoutNode::min_height`]. Same width-independent
     /// semantics as [`LayoutNode::cached_min_width`].
-    pub(crate) cached_min_height: std::cell::Cell<Option<u32>>,
-    /// Per-frame memo for [`LayoutNode::min_height_for_width`], keyed by the
-    /// `available_width` it was computed for: `Some((width, result))`. A query
-    /// at a different width recomputes and overwrites (the flex pipeline queries
-    /// each node at one settled width, so this is effectively a one-slot cache).
-    pub(crate) cached_min_height_for_width: std::cell::Cell<Option<(u32, u32)>>,
+    pub(crate) cached_min_height: std::cell::Cell<u32>,
+    /// Per-frame memo for [`LayoutNode::min_height_for_width`] as
+    /// `(available_width, result)`; empty while the width is [`NO_MEMO`]. A
+    /// query at a different width recomputes and overwrites (the flex
+    /// pipeline queries each node at one settled width, so this is
+    /// effectively a one-slot cache).
+    pub(crate) cached_min_height_for_width: std::cell::Cell<(u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +204,12 @@ pub(crate) struct ContainerConfig {
     pub(crate) constraints: Constraints,
     pub(crate) title: Option<(String, Style)>,
     pub(crate) grow: u16,
+}
+
+/// Display width of a text node's content, saturated into `u32`.
+#[inline]
+fn text_width(text: &str) -> u32 {
+    u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX)
 }
 
 impl LayoutNode {
@@ -245,247 +251,26 @@ impl LayoutNode {
             .expect("text_data_mut called on non-text node")
     }
 
-    pub(crate) fn text(
-        content: String,
-        style: Style,
-        grow: u16,
-        align: Align,
-        text_meta: (Option<usize>, bool, bool),
-        margin: Margin,
-        constraints: Constraints,
-    ) -> Self {
-        let (cursor_offset, wrap, truncate) = text_meta;
-        let width = crate::cell::display_width(&content) as u32;
+    /// A node of `kind` with every layout property at its default.
+    ///
+    /// The single field list every constructor starts from, so adding a field
+    /// to `LayoutNode` only touches this function.
+    fn blank(kind: NodeKind) -> Self {
         Self {
-            kind: NodeKind::Text,
-            text_data: Some(Box::new(TextNodeData {
-                content: Some(content),
-                cursor_offset,
-                ..Default::default()
-            })),
-            style,
-            grow,
-            shrink: false,
-            align,
-            align_self: None,
-            justify: Justify::Start,
-            wrap,
-            wrap_children: false,
-            flex_basis_raw: Self::NO_BASIS,
-            cross_gap: 0,
-            truncate,
-            gap: 0,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new(),
-            bg_color: None,
-            padding: Padding::default(),
-            margin,
-            constraints,
-            title: None,
-            children: Vec::new(),
-            pos: (0, 0),
-            size: (width, 1),
-            is_scrollable: false,
-            scroll_follow_focus: None,
-            scroll_state_id: 0,
-            scroll_offset: 0,
-            content_height: 0,
-            scroll_offset_x: 0,
-            content_width: 0,
-            focus_id: None,
-            interaction_id: None,
-            link_url: None,
-            group_name: None,
-            overlays: Vec::new(),
-            cached_min_width: std::cell::Cell::new(None),
-            cached_min_height: std::cell::Cell::new(None),
-            cached_min_height_for_width: std::cell::Cell::new(None),
-        }
-    }
-
-    pub(crate) fn rich_text(
-        segments: Vec<(String, Style)>,
-        wrap: bool,
-        align: Align,
-        margin: Margin,
-        constraints: Constraints,
-    ) -> Self {
-        let width = segments.iter().fold(0u32, |total, (text, _)| {
-            total
-                .saturating_add(u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX))
-        });
-        Self {
-            kind: NodeKind::Text,
-            text_data: Some(Box::new(TextNodeData {
-                segments: Some(segments),
-                ..Default::default()
-            })),
+            kind,
+            text_data: None,
             style: Style::new(),
             grow: 0,
             shrink: false,
-            align,
-            align_self: None,
-            justify: Justify::Start,
-            wrap,
-            wrap_children: false,
-            flex_basis_raw: Self::NO_BASIS,
-            cross_gap: 0,
-            truncate: false,
-            gap: 0,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new(),
-            bg_color: None,
-            padding: Padding::default(),
-            margin,
-            constraints,
-            title: None,
-            children: Vec::new(),
-            pos: (0, 0),
-            size: (width, 1),
-            is_scrollable: false,
-            scroll_follow_focus: None,
-            scroll_state_id: 0,
-            scroll_offset: 0,
-            content_height: 0,
-            scroll_offset_x: 0,
-            content_width: 0,
-            focus_id: None,
-            interaction_id: None,
-            link_url: None,
-            group_name: None,
-            overlays: Vec::new(),
-            cached_min_width: std::cell::Cell::new(None),
-            cached_min_height: std::cell::Cell::new(None),
-            cached_min_height_for_width: std::cell::Cell::new(None),
-        }
-    }
-
-    pub(crate) fn container(direction: Direction, config: ContainerConfig) -> Self {
-        Self {
-            kind: NodeKind::Container(direction),
-            text_data: None,
-            style: Style::new(),
-            grow: config.grow,
-            shrink: false,
-            align: config.align,
-            align_self: config.align_self,
-            justify: config.justify,
-            wrap: false,
-            wrap_children: false,
-            flex_basis_raw: Self::NO_BASIS,
-            cross_gap: 0,
-            truncate: false,
-            gap: config.gap,
-            border: config.border,
-            border_sides: config.border_sides,
-            border_style: config.border_style,
-            bg_color: config.bg_color,
-            padding: config.padding,
-            margin: config.margin,
-            constraints: config.constraints,
-            title: config.title,
-            children: Vec::new(),
-            pos: (0, 0),
-            size: (0, 0),
-            is_scrollable: false,
-            scroll_follow_focus: None,
-            scroll_state_id: 0,
-            scroll_offset: 0,
-            content_height: 0,
-            scroll_offset_x: 0,
-            content_width: 0,
-            focus_id: None,
-            interaction_id: None,
-            link_url: None,
-            group_name: None,
-            overlays: Vec::new(),
-            cached_min_width: std::cell::Cell::new(None),
-            cached_min_height: std::cell::Cell::new(None),
-            cached_min_height_for_width: std::cell::Cell::new(None),
-        }
-    }
-
-    /// Construct a `RawDraw` leaf node.
-    ///
-    /// Mirrors the `text` / `rich_text` / `container` / `spacer` constructor
-    /// pattern so that adding a field to `LayoutNode` only requires editing
-    /// the constructors, not every call site in `build_children`. The initial
-    /// `size` is seeded from the constraints' minimum so the parent's
-    /// `min_height_for_width` / `min_width` queries report the same values
-    /// the previous inline literal produced.
-    pub(crate) fn raw_draw(
-        draw_id: usize,
-        constraints: Constraints,
-        grow: u16,
-        margin: Margin,
-        focus_id: Option<usize>,
-        interaction_id: Option<usize>,
-    ) -> Self {
-        Self {
-            kind: NodeKind::RawDraw(draw_id),
-            text_data: None,
-            style: Style::new(),
-            grow,
-            shrink: false,
             align: Align::Start,
             align_self: None,
             justify: Justify::Start,
             wrap: false,
             wrap_children: false,
-            flex_basis_raw: Self::NO_BASIS,
-            cross_gap: 0,
             truncate: false,
             gap: 0,
-            border: None,
-            border_sides: BorderSides::all(),
-            border_style: Style::new(),
-            bg_color: None,
-            padding: Padding::default(),
-            margin,
-            constraints,
-            title: None,
-            children: Vec::new(),
-            pos: (0, 0),
-            size: (
-                constraints.min_width().unwrap_or(0),
-                constraints.min_height().unwrap_or(0),
-            ),
-            is_scrollable: false,
-            scroll_follow_focus: None,
-            scroll_state_id: 0,
-            scroll_offset: 0,
-            content_height: 0,
-            scroll_offset_x: 0,
-            content_width: 0,
-            focus_id,
-            interaction_id,
-            link_url: None,
-            group_name: None,
-            overlays: Vec::new(),
-            cached_min_width: std::cell::Cell::new(None),
-            cached_min_height: std::cell::Cell::new(None),
-            cached_min_height_for_width: std::cell::Cell::new(None),
-        }
-    }
-
-    pub(crate) fn spacer(grow: u16) -> Self {
-        Self {
-            kind: NodeKind::Spacer,
-            text_data: None,
-            style: Style::new(),
-            grow,
-            shrink: false,
-            align: Align::Start,
-            align_self: None,
-            justify: Justify::Start,
-            wrap: false,
-            wrap_children: false,
-            flex_basis_raw: Self::NO_BASIS,
             cross_gap: 0,
-            truncate: false,
-            gap: 0,
+            flex_basis_raw: Self::NO_BASIS,
             border: None,
             border_sides: BorderSides::all(),
             border_style: Style::new(),
@@ -504,15 +289,146 @@ impl LayoutNode {
             content_height: 0,
             scroll_offset_x: 0,
             content_width: 0,
+            arena_slot: LayoutArena::NO_SLOT,
             focus_id: None,
             interaction_id: None,
-            link_url: None,
             group_name: None,
             overlays: Vec::new(),
-            cached_min_width: std::cell::Cell::new(None),
-            cached_min_height: std::cell::Cell::new(None),
-            cached_min_height_for_width: std::cell::Cell::new(None),
+            cached_min_width: std::cell::Cell::new(NO_MEMO),
+            cached_min_height: std::cell::Cell::new(NO_MEMO),
+            cached_min_height_for_width: std::cell::Cell::new((NO_MEMO, 0)),
         }
+    }
+
+    /// A text node with fresh payload storage (tests build trees by hand).
+    #[cfg(test)]
+    pub(crate) fn text(
+        content: String,
+        style: Style,
+        grow: u16,
+        align: Align,
+        text_meta: (Option<usize>, bool, bool),
+        margin: Margin,
+        constraints: Constraints,
+    ) -> Self {
+        Self::text_in(
+            Box::default(),
+            content,
+            style,
+            grow,
+            align,
+            text_meta,
+            margin,
+            constraints,
+        )
+    }
+
+    /// [`LayoutNode::text`] reusing a recycled (reset) payload box (#488).
+    #[allow(clippy::too_many_arguments)]
+    fn text_in(
+        mut data: Box<TextNodeData>,
+        content: String,
+        style: Style,
+        grow: u16,
+        align: Align,
+        text_meta: (Option<usize>, bool, bool),
+        margin: Margin,
+        constraints: Constraints,
+    ) -> Self {
+        let (cursor_offset, wrap, truncate) = text_meta;
+        let width = text_width(&content);
+        data.content = Some(content);
+        data.width = width;
+        data.cursor_offset = cursor_offset;
+        let mut node = Self::blank(NodeKind::Text);
+        node.text_data = Some(data);
+        node.style = style;
+        node.grow = grow;
+        node.align = align;
+        node.wrap = wrap;
+        node.truncate = truncate;
+        node.margin = margin;
+        node.constraints = constraints;
+        node.size = (width, 1);
+        node
+    }
+
+    /// A rich-text node whose payload reuses a recycled (reset) box (#488).
+    fn rich_text_in(
+        mut data: Box<TextNodeData>,
+        segments: Vec<(String, Style)>,
+        wrap: bool,
+        align: Align,
+        margin: Margin,
+        constraints: Constraints,
+    ) -> Self {
+        data.segment_widths.clear();
+        data.segment_widths
+            .extend(segments.iter().map(|(text, _)| text_width(text)));
+        let width = data
+            .segment_widths
+            .iter()
+            .fold(0u32, |total, &w| total.saturating_add(w));
+        data.segments = Some(segments);
+        data.width = width;
+        let mut node = Self::blank(NodeKind::Text);
+        node.text_data = Some(data);
+        node.align = align;
+        node.wrap = wrap;
+        node.margin = margin;
+        node.constraints = constraints;
+        node.size = (width, 1);
+        node
+    }
+
+    pub(crate) fn container(direction: Direction, config: ContainerConfig) -> Self {
+        let mut node = Self::blank(NodeKind::Container(direction));
+        node.grow = config.grow;
+        node.align = config.align;
+        node.align_self = config.align_self;
+        node.justify = config.justify;
+        node.gap = config.gap;
+        node.border = config.border;
+        node.border_sides = config.border_sides;
+        node.border_style = config.border_style;
+        node.bg_color = config.bg_color;
+        node.padding = config.padding;
+        node.margin = config.margin;
+        node.constraints = config.constraints;
+        node.title = config.title;
+        node
+    }
+
+    /// Construct a `RawDraw` leaf node.
+    ///
+    /// The initial `size` is seeded from the constraints' minimum so the
+    /// parent's `min_height_for_width` / `min_width` queries report the same
+    /// values the original inline literal produced (#156).
+    pub(crate) fn raw_draw(
+        draw_id: usize,
+        constraints: Constraints,
+        grow: u16,
+        margin: Margin,
+        focus_id: Option<usize>,
+        interaction_id: Option<usize>,
+    ) -> Self {
+        let mut node = Self::blank(NodeKind::RawDraw(draw_id));
+        node.grow = grow;
+        node.margin = margin;
+        node.constraints = constraints;
+        node.size = (
+            constraints.min_width().unwrap_or(0),
+            constraints.min_height().unwrap_or(0),
+        );
+        node.focus_id = focus_id;
+        node.interaction_id = interaction_id;
+        node
+    }
+
+    pub(crate) fn spacer(grow: u16) -> Self {
+        let mut node = Self::blank(NodeKind::Spacer);
+        node.grow = grow;
+        node
     }
 
     pub(crate) fn border_inset(&self) -> u32 {
@@ -589,11 +505,12 @@ impl LayoutNode {
     /// change the result mid-frame — so the memoized value stays byte-identical
     /// to the uncached computation.
     pub(crate) fn min_width(&self) -> u32 {
-        if let Some(cached) = self.cached_min_width.get() {
+        let cached = self.cached_min_width.get();
+        if cached != NO_MEMO {
             return cached;
         }
         let width = self.min_width_uncached();
-        self.cached_min_width.set(Some(width));
+        self.cached_min_width.set(width);
         width
     }
 
@@ -668,20 +585,21 @@ impl LayoutNode {
     /// no-op and the clear is cheap (three `Cell::set(None)`).
     #[inline]
     pub(crate) fn invalidate_size_cache(&self) {
-        self.cached_min_width.set(None);
-        self.cached_min_height.set(None);
-        self.cached_min_height_for_width.set(None);
+        self.cached_min_width.set(NO_MEMO);
+        self.cached_min_height.set(NO_MEMO);
+        self.cached_min_height_for_width.set((NO_MEMO, 0));
     }
 
     /// Width-independent intrinsic minimum height, memoized for the frame.
     ///
     /// Same caching contract as [`LayoutNode::min_width`].
     pub(crate) fn min_height(&self) -> u32 {
-        if let Some(cached) = self.cached_min_height.get() {
+        let cached = self.cached_min_height.get();
+        if cached != NO_MEMO {
             return cached;
         }
         let height = self.min_height_uncached();
-        self.cached_min_height.set(Some(height));
+        self.cached_min_height.set(height);
         height
     }
 
@@ -770,10 +688,9 @@ impl LayoutNode {
             let lines = self.ensure_wrapped_for_width(width);
             return self.constrain_outer_height(lines);
         }
-        if let Some((w, height)) = self.cached_min_height_for_width.get()
-            && w == available_width
-        {
-            return height;
+        let (memo_width, memo_height) = self.cached_min_height_for_width.get();
+        if memo_width != NO_MEMO && memo_width == available_width {
+            return memo_height;
         }
         let inner_width = width.saturating_sub(self.frame_horizontal());
         let content_height = match self.kind {
@@ -815,7 +732,7 @@ impl LayoutNode {
         let height =
             self.constrain_outer_height(content_height.saturating_add(self.frame_vertical()));
         self.cached_min_height_for_width
-            .set(Some((available_width, height)));
+            .set((available_width, height));
         height
     }
 }
@@ -859,7 +776,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
         // single-wide-char behavior.
         for (rel_i, g) in slice.grapheme_indices(true) {
             let abs_i = word_start + rel_i;
-            let ch_width = crate::width::str_width(g) as u32;
+            let ch_width = crate::cell::display_width(g) as u32;
             let ch_len = g.len();
 
             if chunk_end == chunk_start {
@@ -1037,7 +954,7 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
                 continue;
             }
             word_width = word_width
-                .saturating_add(u32::try_from(crate::width::str_width(g)).unwrap_or(u32::MAX));
+                .saturating_add(u32::try_from(crate::cell::display_width(g)).unwrap_or(u32::MAX));
         }
 
         push_word(
@@ -1214,7 +1131,7 @@ fn wrap_segments_paragraph(
                 .next()
                 .expect("advance_past_empty guarantees cur_off < s.len() with a valid cluster");
             let ch_len = g.len();
-            let ch_width = crate::width::str_width(g) as u32;
+            let ch_width = crate::cell::display_width(g) as u32;
 
             if line_width + ch_width > max_width && line_width > 0 {
                 if let Some((segs_len, last_byte_len, _w, sp_seg, sp_off)) = last_space_break {
@@ -1316,6 +1233,162 @@ fn wrap_segments_paragraph(
 /// SIGSEGV. Normal TUI trees reach depth 5–15.
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 512;
 
+/// Frame-to-frame storage for the layout tree (issue #488).
+///
+/// The tree is rebuilt from the command stream every frame. Without reuse,
+/// every container allocates (and regrows) its `children` vector and every
+/// text node boxes a fresh [`TextNodeData`]; that was more than half of a
+/// static dashboard's per-frame allocations. The arena lives in
+/// `FrameState` across frames: [`build_tree_in`] borrows vectors and boxes
+/// from it, and [`LayoutArena::recycle`] returns them cleared (capacity
+/// kept) once the frame no longer needs the tree.
+///
+/// Containers take `children` vectors by *slot*, numbered in command order,
+/// and each node records its slot so recycling returns the vector to the
+/// same slot. A tree with a stable shape therefore gets back exactly the
+/// capacities it grew to last frame and allocates nothing in steady state;
+/// a shape change only costs regrowth on the containers that moved. Node
+/// order, overlay order and focus geometry are unchanged: the tree is the
+/// same nested `LayoutNode` structure as before, only its storage is reused.
+///
+/// Retained memory is bounded: after [`LayoutArena::TRIM_AFTER_FRAMES`]
+/// consecutive frames that use much less than the arena holds, the next
+/// recycle drops unused slots and boxes and shrinks oversized vectors.
+#[derive(Debug, Default)]
+pub(crate) struct LayoutArena {
+    /// Recycled `children` vectors, indexed by slot (empty while lent out).
+    child_vecs: Vec<Vec<LayoutNode>>,
+    /// Slots handed out by the current build.
+    used_slots: usize,
+    /// Reset text payload boxes ready for reuse. The boxes themselves are
+    /// the recycled allocations (a node holds `Box<TextNodeData>`), so the
+    /// pool must keep them boxed.
+    #[allow(clippy::vec_box)]
+    text_pool: Vec<Box<TextNodeData>>,
+    /// Text payloads handed out by the current build.
+    used_text: usize,
+    /// Recycled root overlay list.
+    overlays: Vec<OverlayLayer>,
+    /// Consecutive recycles whose tree used much less than the arena holds.
+    oversized_frames: u32,
+}
+
+impl LayoutArena {
+    /// [`LayoutNode::arena_slot`] of a node whose `children` vector does not
+    /// come from an arena.
+    pub(crate) const NO_SLOT: u32 = u32::MAX;
+
+    /// Consecutive oversized frames before the arena trims itself.
+    pub(crate) const TRIM_AFTER_FRAMES: u32 = 120;
+
+    /// Spare entries always kept, so small trees never trim or regrow.
+    const SLACK: usize = 64;
+
+    /// Lend `node` the recycled `children` vector of the next slot.
+    fn attach_children(&mut self, node: &mut LayoutNode) {
+        let slot = self.used_slots;
+        let Ok(slot_id) = u32::try_from(slot) else {
+            return;
+        };
+        if slot_id == Self::NO_SLOT {
+            return;
+        }
+        self.used_slots += 1;
+        node.arena_slot = slot_id;
+        match self.child_vecs.get_mut(slot) {
+            Some(children) => node.children = std::mem::take(children),
+            None => self.child_vecs.push(Vec::new()),
+        }
+    }
+
+    /// A reset text payload box, recycled when one is available.
+    fn take_text(&mut self) -> Box<TextNodeData> {
+        self.used_text += 1;
+        self.text_pool.pop().unwrap_or_default()
+    }
+
+    /// Return the storage of a finished frame's tree to the arena.
+    ///
+    /// Every `children` vector goes back to its slot cleared but with its
+    /// capacity, and every text payload is reset and pooled. Dropping the
+    /// tree instead is always correct; it only forfeits the reuse.
+    pub(crate) fn recycle(&mut self, mut root: LayoutNode) {
+        let trim = self.oversized_frames >= Self::TRIM_AFTER_FRAMES;
+        let mut overlays = std::mem::take(&mut root.overlays);
+        let mut used_nodes = overlays.len();
+        for layer in &mut overlays {
+            used_nodes = used_nodes.saturating_add(self.harvest(&mut layer.node, trim));
+        }
+        overlays.clear();
+        self.overlays = overlays;
+        used_nodes = used_nodes.saturating_add(self.harvest(&mut root, trim));
+
+        if trim {
+            self.child_vecs.truncate(self.used_slots);
+            self.child_vecs.shrink_to(self.used_slots.saturating_mul(2));
+            self.text_pool.truncate(self.used_text);
+            self.text_pool.shrink_to(self.used_text.saturating_mul(2));
+            self.oversized_frames = 0;
+        } else {
+            let retained_nodes = self.child_vecs.iter().fold(0usize, |total, children| {
+                total.saturating_add(children.capacity())
+            });
+            let oversized = self.child_vecs.len() > self.used_slots.saturating_mul(2) + Self::SLACK
+                || self.text_pool.len() > self.used_text.saturating_mul(2) + Self::SLACK
+                || retained_nodes > used_nodes.saturating_mul(4) + Self::SLACK;
+            self.oversized_frames = if oversized {
+                self.oversized_frames.saturating_add(1)
+            } else {
+                0
+            };
+        }
+        self.used_slots = 0;
+        self.used_text = 0;
+    }
+
+    /// Retained storage as `(slots, pooled text boxes, child capacity)`.
+    #[cfg(test)]
+    pub(crate) fn retained(&self) -> (usize, usize, usize) {
+        let capacity = self
+            .child_vecs
+            .iter()
+            .map(|children| children.capacity())
+            .sum();
+        (self.child_vecs.len(), self.text_pool.len(), capacity)
+    }
+
+    /// Recycle `node`'s subtree storage; returns the subtree's child count.
+    fn harvest(&mut self, node: &mut LayoutNode, trim: bool) -> usize {
+        if let Some(mut data) = node.text_data.take() {
+            let mut segment_widths = std::mem::take(&mut data.segment_widths);
+            segment_widths.clear();
+            if trim && segment_widths.capacity() > Self::SLACK {
+                segment_widths = Vec::new();
+            }
+            *data = TextNodeData::default();
+            data.segment_widths = segment_widths;
+            self.text_pool.push(data);
+        }
+        let mut count = node.children.len();
+        for child in &mut node.children {
+            count = count.saturating_add(self.harvest(child, trim));
+        }
+        let slot = node.arena_slot as usize;
+        if let Some(entry) = self.child_vecs.get_mut(slot)
+            && entry.capacity() == 0
+        {
+            let len = node.children.len();
+            let mut children = std::mem::take(&mut node.children);
+            children.clear();
+            if trim && children.capacity() > len.saturating_mul(4).max(Self::SLACK) {
+                children.shrink_to(len.saturating_mul(2));
+            }
+            *entry = children;
+        }
+        count
+    }
+}
+
 /// Build the layout tree from a recorded command stream.
 ///
 /// Takes `&mut Vec<Command>` and consumes the contents via `drain(..)` so the
@@ -1324,11 +1397,24 @@ pub(crate) const MAX_LAYOUT_DEPTH: usize = 512;
 /// route through [`crate::FrameState::commands_buf`] reclaim that capacity at
 /// frame end (issue #150) so the per-frame `Vec::new` allocation churn is
 /// amortized to one allocation across the session.
+///
+/// Uses fresh storage; the frame kernel calls [`build_tree_in`] with the
+/// session's [`LayoutArena`] instead (#488).
 pub(crate) fn build_tree(commands: &mut Vec<Command>) -> LayoutNode {
+    build_tree_in(commands, &mut LayoutArena::default())
+}
+
+/// [`build_tree`] borrowing node storage from `arena` (#488). Hand the tree
+/// back with [`LayoutArena::recycle`] when the frame is done with it.
+pub(crate) fn build_tree_in(commands: &mut Vec<Command>, arena: &mut LayoutArena) -> LayoutNode {
+    arena.used_slots = 0;
+    arena.used_text = 0;
     let mut root = LayoutNode::container(Direction::Column, default_container_config());
-    let mut overlays: Vec<OverlayLayer> = Vec::new();
+    arena.attach_children(&mut root);
+    let mut overlays = std::mem::take(&mut arena.overlays);
+    overlays.clear();
     let mut iter = commands.drain(..);
-    build_children(&mut root, &mut iter, &mut overlays, false, 0);
+    build_children(&mut root, &mut iter, &mut overlays, arena, false, 0);
     root.overlays = overlays;
     root
 }
@@ -1355,6 +1441,7 @@ fn build_children(
     parent: &mut LayoutNode,
     commands: &mut std::vec::Drain<'_, Command>,
     overlays: &mut Vec<OverlayLayer>,
+    arena: &mut LayoutArena,
     stop_on_end_overlay: bool,
     depth: usize,
 ) {
@@ -1393,7 +1480,8 @@ fn build_children(
                 margin,
                 constraints,
             } => {
-                let mut node = LayoutNode::text(
+                let mut node = LayoutNode::text_in(
+                    arena.take_text(),
                     content,
                     style,
                     grow,
@@ -1414,7 +1502,14 @@ fn build_children(
                 margin,
                 constraints,
             } => {
-                let mut node = LayoutNode::rich_text(segments, wrap, align, margin, constraints);
+                let mut node = LayoutNode::rich_text_in(
+                    arena.take_text(),
+                    segments,
+                    wrap,
+                    align,
+                    margin,
+                    constraints,
+                );
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);
@@ -1427,7 +1522,8 @@ fn build_children(
                 margin,
                 constraints,
             } => {
-                let mut node = LayoutNode::text(
+                let mut node = LayoutNode::text_in(
+                    arena.take_text(),
                     text,
                     style,
                     0,
@@ -1436,7 +1532,7 @@ fn build_children(
                     margin,
                     constraints,
                 );
-                node.link_url = Some(url);
+                node.text_data_mut().link_url = Some(url);
                 node.focus_id = pending_focus_id.take();
                 node.interaction_id = pending_interaction_id.take();
                 parent.children.push(node);
@@ -1491,7 +1587,8 @@ fn build_children(
                 if let Some(basis) = pending_basis.take() {
                     node.flex_basis_raw = basis;
                 }
-                build_children(&mut node, commands, overlays, false, depth + 1);
+                arena.attach_children(&mut node);
+                build_children(&mut node, commands, overlays, arena, false, depth + 1);
                 parent.children.push(node);
             }
             Command::BeginScrollable(args) => {
@@ -1564,12 +1661,14 @@ fn build_children(
                 if let Some(basis) = pending_basis.take() {
                     node.flex_basis_raw = basis;
                 }
-                build_children(&mut node, commands, overlays, false, depth + 1);
+                arena.attach_children(&mut node);
+                build_children(&mut node, commands, overlays, arena, false, depth + 1);
                 parent.children.push(node);
             }
             Command::BeginOverlay { modal } => {
                 let mut overlay_node =
                     LayoutNode::container(Direction::Column, default_container_config());
+                arena.attach_children(&mut overlay_node);
                 overlay_node.interaction_id = pending_interaction_id.take();
                 // #459: reserve this layer's paint slot before its children,
                 // so an overlay opened inside it (a select dropdown or menu in
@@ -1579,7 +1678,14 @@ fn build_children(
                     node: LayoutNode::container(Direction::Column, default_container_config()),
                     modal,
                 });
-                build_children(&mut overlay_node, commands, overlays, true, depth + 1);
+                build_children(
+                    &mut overlay_node,
+                    commands,
+                    overlays,
+                    arena,
+                    true,
+                    depth + 1,
+                );
                 overlays[slot].node = overlay_node;
             }
             Command::Spacer { grow } => parent.children.push(LayoutNode::spacer(grow)),

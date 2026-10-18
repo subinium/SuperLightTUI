@@ -36,7 +36,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 - `TestBackend::has_pending_input()` / `AppState::has_pending_input()` — input queued behind a Tab group for the next frame.
 - `TestBackend::advance_time(Duration)` — deterministic headless clock (ticks now advance per frame).
 - `Context::try_canvas(w, h, draw) -> Result<Response, CanvasError>`, `Context::canvas_with(&mut CanvasContext, draw)` — bounded / reusable canvas storage.
-- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/WASM.md`.
+- Browser runtime: `crates/slt-wasm` with `WasmOptions`; see `docs/guide/10-browser.md`.
 
 ## v0.20 API surface (highlights AI agents miss)
 
@@ -102,12 +102,12 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 ### Accessibility (v0.26)
 - `RunConfig::accessible(bool)` / `SLT_ACCESSIBLE=1` — linear prompt mode for screen readers (no screen takeover; widgets become sequential prompts). Explicit call wins over the env var
 - `ui.a11y_label("Email")` — accessible name of the next widget; `ui.is_accessible()` — hide visual-only hints
-- Details: `docs/TERMINAL_COMPATIBILITY.md#accessibility`
+- Details: `docs/guide/11-terminal-compatibility.md#accessibility`
 
 ### Idle frame skipping (v0.26)
 - `RunConfig::idle_redraw(false)` — opt-in: idle ticks render no frame and write no bytes (default `true` redraws every tick)
 - `ui.request_frame()` / `ui.request_frame_after(Duration)` — ask for the next frame when showing the clock, cross-thread state or a hand-rolled `ui.tick()` animation; built-in animations, spinners, toasts, timers and tooltips request their own
-- Details: `docs/PERFORMANCE.md#idle-cost`
+- Details: `docs/internals/performance.md#idle-cost`
 
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
@@ -135,27 +135,26 @@ These were either v0.19 preview or pre-1.0 mistakes consolidated by the v0.20 AP
 
 These docs are maintained for the current release, but source and compile-tested examples remain authoritative.
 
-- `docs/COMPLETE_REFERENCE.md` — broad single-file reference.
-- `docs/WIDGETS.md` — categorized widget and state reference.
-- `docs/STATE_APIS.md` — method-level state reference.
-- `docs/PREVIOUS_FRAME_GUIDE.md` — current. Read for `Response.rect` timing.
-- `docs/PATTERNS.md` — current. `provide`/`use_context`/`use_state_keyed`/`with_if` covered.
+- `docs/reference/complete-reference.md` — broad single-file reference.
+- `docs/reference/widgets.md` — categorized widget and state reference.
+- `docs/reference/state.md` — method-level state reference.
+- `docs/guide/02-state.md` — current. App state vs hooks, and the previous-frame rule (`Response.rect` timing).
+- `docs/guide/03-patterns.md` — current. `provide`/`use_context`/`use_state_keyed`/`with_if` covered.
 
-- `docs/QUICK_START.md` — current.
-- `docs/COOKBOOK.md` — composition recipes; run through `cookbook_tour`.
-- `docs/THEMING.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
-- `docs/TESTING.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/example_snapshots/testing_report.rs` for the `record_frames` / `sequence` helpers.
-- `docs/ANIMATION.md` — current.
-- `docs/AI_GUIDE.md` — concise overview, current.
-- `docs/BACKENDS.md` — `Backend`, `AppState`, `frame()` low-level paths.
-- `docs/ARCHITECTURE.md` — render pipeline.
-- `docs/DEBUGGING.md` — F12 layout overlay, debug flags.
-- `docs/MIGRATION.md` — version-by-version public API migration guide.
+- `docs/guide/01-quick-start.md` — current.
+- `docs/reference/cookbook.md` — composition recipes; run through `cookbook_tour`.
+- `docs/guide/06-theming.md` — current. `ThemeBuilder` `const fn` since v0.19.2.
+- `docs/guide/08-testing.md` — covers v0.19.1 EventBuilder additions. Read alongside `tests/example_snapshots/testing_report.rs` for the `record_frames` / `sequence` helpers.
+- `docs/guide/07-animation.md` — current.
+- `docs/reference/ai-guide.md` — concise overview, current.
+- `docs/guide/09-runtime-modes.md` — `run` / `run_inline` / `run_static` and `RunConfig`.
+- `docs/internals/custom-backends.md` — `Backend`, `AppState`, `frame()` low-level paths.
+- `docs/internals/architecture.md` — render pipeline.
+- `docs/reference/debugging.md` — F12 layout overlay, debug flags.
+- `docs/reference/migration.md` — version-by-version public API migration guide.
 - `docs/llms.txt` — short coding-agent index.
-- `docs/RUSTDOC_GUIDE.md` — current. Doctest standards.
-- `docs/NAMING.md` — current. The micro-tier rubric this skill encodes.
-- `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
-- `docs/DESIGN_PRINCIPLES.md` — current. North-star + audit matrix.
+- `docs/internals/rustdoc-guide.md` — current. Doctest standards.
+- `docs/internals/design-principles.md` — current. North-star, audit matrix, the 5 API review rules (`#api-review-rules`) and the naming micro-tier rubric (`#naming-conventions`) this skill encodes.
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets/` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 

@@ -1,0 +1,611 @@
+# Widget API Catalog
+
+This page is the API map, not the onboarding guide.
+Use it when you already know the SLT mental model and want to find the right method or state type quickly.
+
+If you are new, read in this order first:
+
+1. [README](../../README.md)
+2. [Quick start](../guide/01-quick-start.md)
+3. this file
+
+For composition advice, see the [patterns guide](../guide/03-patterns.md).
+For animation, see the [animation guide](../guide/07-animation.md) (`animate_bool` / `animate_value` quick transitions and the `anim` module structs).
+Field-level state reference lives in the [State API Guide](state.md).
+
+**Interaction:** focus, keyboard routing, mouse, and how `Response` signals are
+produced are covered in the [interaction guide](../guide/04-interaction.md). The mouse is on by
+default, so `clicked` fires from a mouse click as well as the keyboard (focus +
+Enter / Space). Pointer hover is only reported with
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`; without
+it `hovered` changes only on clicks and drags.
+
+## If you only learn a small core first
+
+Most apps can go a long way with this subset:
+
+- `text()`
+- `row()` / `col()`
+- `container()` / `bordered()`
+- `button()`, `text_input()`, `checkbox()`
+- `list()`, `table()`, `tabs()`
+- `modal()`, `overlay()`, `tooltip()`
+- `use_state()` / `use_memo()`
+
+---
+
+## Return type conventions
+
+Every widget method on `Context` follows one of these return patterns:
+
+| Return type | Meaning | When to use |
+|---|---|---|
+| `Text<'_>` | Scoped text builder; chained style options apply to that element only, `.show()` returns a `Response` | `text`, `styled`, `link`, `timer_display` |
+| `&mut Self` | Chainable side effect | `spacer`, `toast`, `line_wrap`, `form`, `form_field` |
+| `Response` | Widget with click/hover/changed/focused/rect — includes display widgets | `list`, `table`, `tabs`, `col`, `row`, `line`, `alert`, `markdown`, `sparkline`, `bar_chart` |
+| `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
+| Response builder | Recorded immediately (`slider`, `line_chart`, `area_chart`: when the response is first read or at end of statement); options chain as methods; derefs to `Response`, `.show()` returns an owned `Response` | `button`, `badge`, `stat`, `help`, `separator`, `progress`, `progress_bar`, `slider`, `line_chart`, `area_chart` |
+| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff`, `code_editor` |
+| `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
+
+**`Response` fields:**
+
+<!-- slt-check-skip: struct field excerpt copied from src/context/state.rs -->
+```rust
+pub struct Response {
+    pub clicked: bool,
+    pub clicked_any: bool,
+    pub right_clicked: bool,
+    pub middle_clicked: bool,
+    pub double_clicked: bool,
+    pub hovered: bool,
+    pub hovered_top: bool,
+    pub pressed: bool,
+    pub released: bool,
+    pub drag_started: bool,
+    pub dragging: bool,
+    pub drag_delta: (i32, i32),
+    pub modifiers: KeyModifiers,
+    pub changed: bool,
+    pub focused: bool,
+    pub gained_focus: bool,
+    pub lost_focus: bool,
+    pub submitted: bool,
+    pub scroll_delta: i32,
+    pub rect: Rect,
+    pub disabled: bool,
+}
+```
+
+`rect` and the mouse-driven fields are zero on a widget's first frame.
+Why: see [the previous-frame rule](../guide/02-state.md#the-previous-frame-rule).
+`Response.rect` is also clipped to ancestor viewports.
+Instead of reading fields you can chain callbacks, since `Response` does not
+borrow `ui`:
+
+<!-- slt-check: {"name":"widgets_response_callbacks","features":[],"context":"ui","setup":"let save = || {};"} -->
+```rust
+ui
+    .button("Save")
+    .on_click(ui, |_| save())          // runs when `clicked`
+    .on_hover(ui, "Write to disk");    // tooltip while `hovered`
+```
+
+Related: `on_changed(ui, f)`, `on_hover_ui(ui, |ui| ...)` for a custom tooltip
+body. Hover-based callbacks need `MouseMode::Hover`.
+
+Response builders hold `&mut ui` until their last use. Reading a field on the
+same line (`ui.button("Save").clicked`) is fine; to keep the result while you
+call `ui.` again, store an owned copy with `.show()`:
+
+<!-- slt-check: {"name":"widgets_owned_response","features":[],"context":"ui"} -->
+```rust
+let save = ui.button("Save").show();
+ui.text("unsaved changes");
+if save.clicked { /* ... */ }
+```
+
+Builder arguments cannot borrow `ui` either, so bind theme colors first:
+`let ok = ui.theme().success; ui.badge("ok").color(ok);`.
+
+---
+
+## Text & Display
+
+`text`, `styled`, `link` and `timer_display` return the scoped `Text` builder;
+its chain options style that element only, and `.show()` returns a `Response`.
+
+| Method | Description |
+|---|---|
+| `text(s)` | Render text. Chain: `.bold()`, `.italic()`, `.dim()`, `.underline()`, `.reversed()`, `.strikethrough()`, `.fg(color)`, `.bg(color)`, `.gradient(a, b)`, `.wrap()`, `.truncate()`, `.grow(n)`, `.align(a)`, `.text_center()`, `.text_right()`, `.w()`, `.h()`, `.min_w()`, `.max_w()`, `.min_h()`, `.max_h()`, `.m()`, `.mx()`, `.my()`, `.mt()`, `.mr()`, `.mb()`, `.ml()`, `.group_hover_fg()`, `.group_hover_bg()` |
+| `styled(s, style)` | Text with an explicit `Style` struct |
+| `link(text, url)` | Clickable hyperlink (OSC 8). Opens URL on Enter/Space/click |
+| `spacer()` | Invisible flex element — pushes siblings apart |
+| `separator()` | Horizontal divider line; `Separator` builder. Chain `.color(color)`; `.show()` returns `Response` |
+| `timer_display(elapsed)` | Format `Duration` as HH:MM:SS.CC |
+
+### Rich text (return `Response`)
+
+| Method | Description |
+|---|---|
+| `markdown(text)` | Render Markdown with headings, bold, italic, links, lists, code |
+| `code_block(code)` | Fenced code block builder (renders on Drop). Chain `.lang(lang)` for highlighting, `.numbered()` for line numbers; `.show()` returns `Response` |
+| `big_text(s)` | 8x8 bitmap text rendered as half-block pixels (4 rows tall) |
+
+<!-- slt-check: {"name":"widgets_text_usage","features":[],"context":"ui"} -->
+```rust
+// Typical text usage
+ui.text("Hello").bold().fg(Color::Cyan);
+ui.styled("inline", Style::new().underline());
+ui.link("Docs", "https://docs.rs/superlighttui");
+```
+
+---
+
+## Status & Info
+
+All return `Response` unless noted.
+
+| Method | Description |
+|---|---|
+| `alert(message, level)` | Banner with icon. `AlertLevel`: `Info`, `Success`, `Warning`, `Error` |
+| `badge(label)` | Themed badge pill; `Badge` builder. Chain `.color(color)` |
+| `key_hint(key)` | Keyboard shortcut hint badge |
+| `stat(label, value)` | Label-value stat display; `Stat` builder. Chain `.color(color)`. Variant: `stat_trend(label, value, trend)` where `Trend`: `Up`, `Down` |
+| `empty_state(title, desc)` | Centered empty-state message. Variant: `empty_state_action(title, desc, action)` |
+| `divider_text(label)` | Horizontal divider with centered label |
+| `definition_list(items)` | Key-value list from `&[(&str, &str)]` |
+| `accordion(title, open, f)` | Collapsible section. `open: &mut bool` |
+| `confirm(question, result)` | Yes/No dialog. `result: &mut bool`, `Response.clicked` on answer |
+| `breadcrumb(segments)` | Clickable breadcrumb builder. Chain `.separator(...)` / `.color(...)`; `.show()` returns `BreadcrumbResponse` with `clicked_segment`. |
+| `help(bindings)` | Keybinding help bar from `&[(&str, &str)]`; `Help` builder. Chain `.key_color(color)` / `.text_color(color)` |
+| `help_from_keymap(keymap)` | Help bar from a `KeyMap` struct |
+
+Note: `separator()` is listed under Text & Display.
+
+---
+
+## Layout & Containers
+
+| Method | Returns | Description |
+|---|---|---|
+| `col(f)` | `Response` | Vertical container. With a gap: `container().gap(n).col(f)` |
+| `row(f)` | `Response` | Horizontal container. With a gap: `container().gap(n).row(f)` |
+| `line(f)` | `Response` | Inline rich text (zero-gap row, no interaction) |
+| `line_wrap(f)` | `&mut Self` | Wrapping inline text |
+| `grid(cols, f)` | `Response` | Fixed-column grid layout |
+| `grid_columns(&[GridColumn], f)` | `Response` | Grid with per-column widths (`GridColumn::{Auto, Fixed(n), Grow(w), Percent(p)}`) |
+| `container()` | `ContainerBuilder` | Fluent builder for borders, padding, grow, constraints, title |
+| `scrollable(state)` | `ContainerBuilder` | Scrollable container. `ScrollState` |
+| `scroll_col(state, f)` | `Response` | Vertically scrollable column; shortcut for `scrollable(state).grow(1).col(f)` |
+| `scroll_row(state, f)` | `Response` | Horizontally scrollable row; shortcut for `scrollable(state).grow(1).row(f)`. Nest inside `scroll_col` to scroll both axes |
+| `scrollbar(state)` | `Response` | Render and interact with a mutable `ScrollState` scrollbar track |
+| `split_pane(state, left, right)` | `SplitPaneResponse` | Draggable horizontal split. `SplitPaneState` |
+| `vsplit_pane(state, top, bottom)` | `SplitPaneResponse` | Draggable vertical split. `SplitPaneState` |
+| `bordered(border)` | `ContainerBuilder` | Shorthand for `container().border(border)` |
+| `modal(f)` | `Response` | Modal overlay with dimmed background; traps Tab and restores focus on close. Same as `modal_with(ModalOpts::default(), f)` |
+| `modal_with(opts, f)` | `Response` | Modal with `ModalOpts::new().tab_trap(bool).anchor(Anchor).offset(dx, dy)`. `tab_trap` defaults to `true`; without an anchor the content is centered (`modal_at` / `modal_at_offset` are deprecated wrappers) |
+| `overlay(f)` | `Response` | Floating overlay (no dimming) |
+| `popover(anchor_rect, placement, f)` | `PopoverResponse` | Bordered panel next to an element (`Placement::{Below, BelowEnd, Above, AboveEnd, Right, Left}`), flips at screen edges, clamped inside; `.dismissed` on `Esc` / outside press, `.placement` after flipping |
+| `context_menu(&mut MenuState, &response)` | `Option<String>` | Right-click / `Shift+F10` / `Menu`-key menu; keyboard navigation, submenus, outside click closes without clicking through, focus returns to the trigger |
+| `menu_bar(&mut MenuBarState)` | `Option<String>` | Application menu bar: click, `F10`, `Alt+letter`; Left/Right switch menus |
+| `tooltip(text)` | `()` | Hover tooltip near cursor |
+| `group(name)` | `ContainerBuilder` | Named group whose `group_hover_*` styles follow that group instance's hover |
+| `disabled(cond, f)` | `R` | Disable every widget in `f`: no focus, clicks or keys, dim style, `Response::disabled`; Tab skips them without renumbering later widgets |
+| `screen(name, &mut screens, f)` | `()` | Renders `f` only when `screens.current() == name`. Hook state and focus are isolated per screen. `ScreenState` |
+| `push_screen(name)` / `pop_screen()` / `reset_screen()` | `()` | Navigate from **inside** a `screen(...)` closure. The change applies when that closure returns and the destination renders on the next frame. Panics outside a `screen` closure; there, call `ScreenState::push` / `pop` / `reset` directly |
+| `form(state, f)` | `&mut Self` | Form container. `FormState` |
+| `form_field(field)` | `&mut Self` | Single form field (label + input + error). `FormField` |
+| `form_field_response(field)` | `FormFieldResponse` | Like `form_field`, but returns `.response` (field), `.input` (the input's own response) and `.layout_rect: Option<Rect>` (full field border box before scrolling or clipping) |
+| `form_submit(label)` | `Response` | Form submit button |
+| `focused_layout_rect()` | `Option<Rect>` | Full border box of the focused widget before scrolling or clipping |
+| `measured_layout_rect(name)` | `Option<Rect>` | Full border box of a named `group`, including offscreen parts |
+
+`form_field_response(..).layout_rect`, `focused_layout_rect()` and
+`measured_layout_rect()` use root or overlay logical coordinates, not
+scroll-local ones. They return `None` before the first measurement and after a
+resize. For their timing, see
+[the previous-frame rule](../guide/02-state.md#the-previous-frame-rule).
+
+<!-- slt-check: {"name":"widgets_layout_composition","features":[],"context":"ui"} -->
+```rust
+// Layout composition
+ui.row(|ui| {
+    ui.container()
+        .border(Border::Rounded)
+        .p(1)
+        .grow(1)
+        .col(|ui| {
+            ui.text("Panel content");
+        });
+    ui.spacer();
+    ui.col(|ui| { ui.text("Right side"); });
+});
+```
+
+---
+
+## Interactive Widgets
+
+All return `Response` (or a builder that derefs to it). Stateful widgets have a `_colored(state, &WidgetColors)` variant; builders take colors as a chained method.
+
+| Method | State type | Description |
+|---|---|---|
+| `button(label)` | — | Click button; `Button` builder. Chain `.variant(ButtonVariant)` (`Default`, `Primary`, `Danger`, `Outline`) and/or `.colors(&WidgetColors)`, e.g. `ui.button("Delete").variant(ButtonVariant::Danger).colors(&c)`; `.show()` returns the `Response` |
+| `checkbox(label, checked)` | `&mut bool` | Checkbox toggle. Variant: `checkbox_colored(...)` |
+| `toggle(label, on)` | `&mut bool` | Toggle switch. Variant: `toggle_colored(...)` |
+| `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider; `Slider` builder (default step = `span / 20`, `.step(1.0)` sets it explicitly) |
+| `number_input(state)` | `NumberInputState` | Editable integer or floating-point stepper |
+| `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
+| `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
+| `code_editor(state)` | `CodeEditorState` | Builder (renders on Drop, `.show()` returns `Response`; `changed` when the text changed). Editable code field on a `TextareaState` (same keys, selection, clipboard and undo / redo) with a right-aligned line-number gutter (`.line_numbers(false)` hides it), syntax highlighting from `CodeEditorState::lang("rust")` (needs the `syntax-*` feature; plain text otherwise, same editing), current-line tint (`.current_line(false)`), bracket-match highlight (`.bracket_match(false)`), horizontal scrolling or `.wrap(true)`, `.h(rows)`, `.w(cols)`. Tab inserts spaces to the next tab stop (`CodeEditorState::tab_width`, `hard_tabs`), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (one level more after `{`, `(`, `[`), PageUp / PageDown page. While focused it owns Tab (`tab_indents(false)` gives it back to focus traversal). Only visible rows render and only the highlight chunk containing an edit is re-highlighted |
+| `select(state)` | `SelectState` | Dropdown select; the open list floats over the content below (above near the bottom edge). Variant: `select_colored(...)` |
+| `radio(state)` | `RadioState` | Radio button group. Variant: `radio_colored(...)` |
+| `multi_select(state)` | `MultiSelectState` | Multi-select checkbox list |
+| `tabs(state)` | `TabsState` | Tab bar. Variant: `tabs_colored(...)` |
+| `list(state)` | `ListState` | Self-scrolling list with selection: draws only the rows that fit the height its parent leaves (the terminal height at the top level) and keeps the selected row in view. Variant: `list_colored(...)` |
+| `table(state)` | `TableState` | Data table with sorting, pagination, filtering. Unpaged tables scroll their body under a pinned header and keep the focused row in view. Variant: `table_colored(...)` |
+| `tree(state)` | `TreeState` | Expandable tree view |
+| `directory_tree(state)` | `DirectoryTreeState` | Filesystem tree |
+| `calendar(state)` | `CalendarState` | Month calendar with date selection |
+| `paginator(state)` | `PaginatorState` | Standalone page navigation for arbitrary data |
+| `file_picker(state)` | `FilePickerState` | File browser dialog |
+| `color_picker(state)` | `ColorPickerState` | Palette grid with optional hex-entry mode |
+| `command_palette(state)` | `CommandPaletteState` | Modal fuzzy-search command palette |
+| `virtual_list(state, visible_height, f)` | `ListState` | Virtualized list — only renders visible rows |
+
+`list` and unpaged `table` size themselves to the content height left below
+them in their parent. To keep siblings such as a footer or buttons visible
+below a long list, give the list a sized parent: `ui.container().grow(1).col(...)`,
+`.h(n)` or `.max_h(n)`. Inside a `scrollable` they size to that viewport and
+scroll themselves; the outer scroller does not see every row.
+
+<!-- slt-check: {"name":"widgets_tabs_response","features":[],"context":"ui"} -->
+```rust
+// Interactive widget with Response
+let mut tabs = TabsState::new(vec!["Overview", "Details", "Settings"]);
+if ui.tabs(&mut tabs).changed {
+    // tab switched
+}
+```
+
+---
+
+## Feedback & Progress
+
+| Method | Returns | State type | Description |
+|---|---|---|---|
+| `progress(ratio)` | `ProgressBar` | — | Progress bar, `f64` 0.0..1.0. Chain `.color(color)` |
+| `progress_bar(ratio, width)` | `ProgressBar` | — | Fixed-width progress bar. Chain `.color(color)` |
+| `spinner(state)` | `Response` | `SpinnerState` | Animated spinner (dots, line, etc.) |
+| `toast(state)` | `&mut Self` | `ToastState` | Render active toast notifications |
+| `notify(message, level)` | `()` | — | Fire-and-forget toast. `ToastLevel`: `Info`, `Success`, `Warning`, `Error` |
+
+---
+
+## Visualization
+
+All return `Response`.
+
+| Method | Description |
+|---|---|
+| `bar_chart(data, max_width)` | Horizontal bar chart from `&[(&str, f64)]`. Variant: `bar_chart_with(bars: &[Bar], configure: impl FnOnce(&mut BarChartConfig), max_size)` for per-bar colors and layout options |
+| `bar_chart_grouped(groups, max_width)` | Grouped bar chart from `&[BarGroup]`. Variant: `bar_chart_grouped_with(groups, configure, max_size)` |
+| `sparkline(data, width)` | Inline sparkline from `&[f64]`. Variant: `sparkline_styled(data, width)` with per-point `Option<Color>` |
+| `line_chart(data, width, height)` | Line chart; `LineChart` builder. Chain `.color(color)` |
+| `area_chart(data, width, height)` | Filled area chart; same builder, `.color(color)` |
+| `scatter(data, width, height)` | Braille scatter plot from `&[(f64, f64)]` |
+| `histogram(data, width, height)` | Histogram from `&[f64]`. Variant: `histogram_with(data, configure, w, h)` |
+| `bar_chart_stacked(groups, max_height)` | Stacked bar chart from `&[BarGroup]`. Variant: `bar_chart_stacked_with(groups, configure, max_height)` |
+| `candlestick(candles, up_color, down_color)` | OHLC candlestick chart |
+| `candlestick_hd(candles, up_color, down_color)` | HD candlestick with heavy `┃` wicks and center-aligned bodies |
+| `heatmap(data, w, h, low_color, high_color)` | 2D color gradient heatmap |
+| `heatmap_halfblock(data, w, h, low_color, high_color)` | Half-block heatmap with 2× vertical resolution using `▀` fg/bg |
+| `treemap(items)` | Squarified treemap from `&[TreemapItem]`. Auto-sizes via `grow(1)` |
+| `canvas(width, height, draw)` | Braille drawing canvas. Closure receives `&mut CanvasContext` |
+| `chart(configure, width, height)` | Multi-series chart via `ChartBuilder`. Closure receives `&mut ChartBuilder` |
+| `qr_code(data)` | QR code (requires `qrcode` feature) |
+
+Chart data types: `Bar::new(label, value).color(c).text_value(s)`;
+`BarGroup::new(label, bars)` groups bars. The `configure` closure of the
+`_with` variants sets `BarChartConfig`: `.direction(BarDirection)`,
+`.bar_width(n)`, `.bar_gap(n)`, `.group_gap(n)`, `.max_value(v)`. `Candle` is
+`{ open, high, low, close: f64 }`. `TreemapItem::new(label, value, color)`.
+
+<!-- slt-check: {"name":"widgets_chart_canvas","features":[],"context":"ui","setup":"let data1 = vec![(0.0, 1.0), (1.0, 3.0)]; let data2 = vec![(0.0, 2.0), (1.0, 1.0)];"} -->
+```rust
+// Multi-series chart with builder
+ui.chart(|c| {
+    c.line(&data1);
+    c.area(&data2);
+    c.grid(true);
+}, 60, 20);
+
+// Braille canvas
+ui.canvas(40, 12, |cv| {
+    cv.set_color(Color::Cyan);
+    cv.circle(40, 24, 20);
+    cv.line(0, 0, 79, 47);
+});
+```
+
+---
+
+## AI-Native & Rich Terminal
+
+All return `Response`.
+
+| Method | State type | Description |
+|---|---|---|
+| `streaming_text(state)` | `StreamingTextState` | Incrementally rendered text stream |
+| `streaming_markdown(state)` | `StreamingMarkdownState` | Incrementally rendered Markdown stream |
+| `tool_approval(state)` | `ToolApprovalState` | Tool call approval dialog. `ApprovalAction`: `Pending`, `Approved`, `Rejected` |
+| `diff(state)` | `DiffState` | Builder (renders on Drop, `.show()` returns `DiffResponse`, which derefs to `Response`). Patch review viewer. `DiffState::from_unified(patch)?` parses multi-file unified / `git diff` output, including renames, binary markers and no-newline markers; malformed input returns `DiffParseError` and never panics. Options: `.layout(DiffLayout::Split)` side by side (default `Unified`; falls back to unified below `.split_min_width(n)`, default 80), `.h(rows)`, `.w(cols)`, `.lang("rust")` (default: each file's extension; needs the `syntax-*` feature, plain text otherwise), `.tab_width(n)`, `.line_numbers(false)`, `.colors(DiffColors { added_bg, removed_bg, hunk_fg })`. Keys while focused: Up/Down `j`/`k`, `]`/`n` `[`/`p` hunks, Enter/Space collapse, `a`/`r` accept/reject (rebind via `DiffState::keys`), PageUp/PageDown/Home/End; click a hunk header to collapse. Virtualized — only visible rows are emitted. `DiffResponse::hunk_actions: Vec<(HunkId, HunkAction)>` reports each decision once; `.toggled` lists hunks collapsed or expanded this frame, `.focused_hunk` is the hunk under the cursor; decisions persist in `state.decision(id)` |
+| `context_bar(items)` | `&[ContextItem]` | Context display with token counts. `ContextItem::new(label, tokens)` |
+| `image(img)` | `HalfBlockImage` | Half-block image rendering (2 pixels per cell) |
+| `kitty_image(rgba, pw, ph, cols, rows)` | — | Kitty graphics protocol image |
+| `kitty_image_fit(rgba, sw, sh, cols)` | — | Auto-fit Kitty image to column width |
+| `sixel_image(rgba, pw, ph, cols, rows)` | — | Sixel protocol image (requires `crossterm`) |
+| `rich_log(state)` | `RichLogState` | Scrollable styled log viewer. `RichLogState::new()` is bounded at `RichLogState::DEFAULT_MAX_ENTRIES` (10,000 entries) — older entries drop from the front. Use `RichLogState::new_unbounded()` only when growth is bounded elsewhere. |
+
+---
+
+## Runtime & Hooks
+
+These are not widgets but essential `Context` methods for state, input, and environment.
+
+### State management
+
+| Method | Returns | Description |
+|---|---|---|
+| `use_state(init)` | `State<T>` | Persistent state across frames, keyed by call order. Read with `.get(ui)`, mutate with `.get_mut(ui)` |
+| `use_state_keyed(id, init)` / `use_state_keyed_default::<T>(id)` | `State<T>` | Same, keyed by an id (`&'static str` or `String`), so safe inside `if`/`match`/loops |
+| `use_memo(deps, compute)` | `Memo<T>` | Memoized computation; read with `.get(ui)` / `.copied(ui)` |
+
+### Focus & interaction
+
+| Method | Returns | Description |
+|---|---|---|
+| `register_focusable()` | `bool` | Register current widget as focusable, returns whether it has focus |
+| `interaction()` | `Response` | Get click/hover Response for current interaction slot |
+| `disabled(cond, f)` / `is_disabled()` | `R` / `bool` | Disabled scope for built-in and custom widgets |
+| `widget(w)` | `W::Response` | Render a custom `Widget` trait implementor |
+| `error_boundary(f)` | — | Catch panics in closure, render error message. Variant: `error_boundary_with(f, fallback)` |
+| `focus_index()` | `usize` | Current focus index |
+| `set_focus_index(index)` | — | Set focus index programmatically |
+| `focus_count()` | `usize` | Focusable widgets registered on the last completed frame; `0` on the first frame ([why](../guide/02-state.md#the-previous-frame-rule)) |
+
+### Keyboard input
+
+| Method | Returns | Description |
+|---|---|---|
+| `key(c)` | `bool` | Char key pressed (non-consuming) |
+| `key_code(code)` | `bool` | KeyCode pressed (non-consuming) |
+| `raw_key_code(code)` | `bool` | KeyCode pressed, ignoring consumed state |
+| `consume_key(c)` | `bool` | Char key pressed (marks as consumed) |
+| `consume_key_code(code)` | `bool` | KeyCode pressed (marks as consumed) |
+| `key_mod(c, mods)` | `bool` | Char + modifier (Ctrl, Alt, Shift) |
+| `raw_key_mod(c, mods)` | `bool` | Char + modifier, ignoring consumed state |
+| `key_chord(seq)` | `bool` | Cross-frame multi-key sequence (vi `gg`, leader keys); buffers partial input and times out on inactivity |
+| `key_chord_timeout(seq, ticks)` | `bool` | `key_chord` with an explicit per-call timeout in ticks |
+| `key_release(c)` | `bool` | Char key released |
+| `key_code_release(code)` | `bool` | KeyCode released |
+
+### Mouse input
+
+| Method | Returns | Description |
+|---|---|---|
+| `mouse_down()` | `Option<(u32, u32)>` | Mouse button down position |
+| `mouse_up()` / `mouse_drag()` | `Option<(u32, u32)>` | Mouse button release / drag position |
+| `mouse_down_button(b)` / `mouse_up_button(b)` / `mouse_drag_button(b)` | `Option<(u32, u32)>` | Same, for one `MouseButton` |
+| `mouse_pos()` | `Option<(u32, u32)>` | Current mouse position |
+| `scroll_up()` / `scroll_down()` | `bool` | Vertical scroll events |
+| `scroll_left()` / `scroll_right()` | `bool` | Horizontal scroll events |
+
+### Clipboard & system
+
+| Method | Returns | Description |
+|---|---|---|
+| `paste()` | `Option<&str>` | Bracketed paste content |
+| `copy_to_clipboard(text)` | — | Copy text via OSC 52 |
+| `quit()` | — | Exit the application |
+
+### Theme & environment
+
+| Method | Returns | Description |
+|---|---|---|
+| `theme()` | `&Theme` | Current theme |
+| `color(ThemeColor)` | `Color` | Resolve a semantic color token |
+| `spacing()` | `Spacing` | Current spacing scale |
+| `set_theme(theme)` | — | Change theme |
+| `is_dark_mode()` | `bool` | Terminal dark mode state |
+| `set_dark_mode(dark)` | — | Override dark mode |
+| `light_dark(light, dark)` | `Color` | Pick color based on dark mode |
+| `width()` | `u32` | Terminal width in columns |
+| `height()` | `u32` | Terminal height in rows |
+| `breakpoint()` | `Breakpoint` | Responsive breakpoint (`Xs`, `Sm`, `Md`, `Lg`, `Xl`) |
+| `tick()` | `u64` | Frame counter |
+| `debug_enabled()` | `bool` | Whether debug mode is active |
+| `set_scroll_speed(lines)` | — | Set scroll speed |
+| `scroll_speed()` | `u32` | Current scroll speed |
+
+---
+
+## State Type Quick Reference
+
+| Widget | State type | Key fields / methods |
+|---|---|---|
+| `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `::password()`, `.clear()`, `.set_value(s)`, `.selection()`, `.selected_text()`, `.select_all()`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
+| `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length`, `.selection()`, `.selected_text()`, `.select_all()` |
+| `code_editor` | `CodeEditorState` | `::new(source)`, `.lang("rust")`, `.tab_width(n)`, `.hard_tabs(bool)`, `.tab_indents(bool)`, `.auto_indent(bool)`, `.value()`, `.set_value(s)`, `.lines()`, `.cursor()`, `.set_cursor(row, col)`, `.textarea()` / `.textarea_mut()` |
+| `select` | `SelectState` | `.items()`, `.set_items(...)`, `.selected`, `.open`, `.filter` |
+| `context_menu` | `MenuState` | `::new(items)`, `.items: Vec<MenuItem>`, `.is_open()`, `.open_at(rect)`, `.close()`, `.cursor()`; `MenuItem::new(id, label)`, `::separator()`, `::submenu(id, label, children)`, `.shortcut(hint)`, `.disabled(bool)` |
+| `menu_bar` | `MenuBarState` | `::new([(title, items)])`, `.menus`, `.is_active()`, `.is_open()`, `.selected()`, `.close()` |
+| `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
+| `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |
+| `tabs` | `TabsState` | `.labels: Vec<String>`, `.selected: usize`, `::new(labels)` |
+| `list` | `ListState` | `.items()`, `.item(index)`, `.set_items(...)`, `.filter()`, `.set_filter(...)`, `.selected_item()`, `.selected_index()`, `.set_selected_index(...)`, `.remove_selected()` |
+| `table` | `TableState` | `.headers()`, `.rows()`, `.set_headers(...)`, `.set_rows(...)`, `.filter()`, `.selected_row()`, `.selected_index()`, `.set_selected_index(...)`, `.remove_selected()`, `.sort_column`, `.page`, `.page_size` |
+| `tree` | `TreeState` | `.nodes`, `.selected`; each `TreeNode` owns `.expanded` |
+| `directory_tree` | `DirectoryTreeState` | `.tree`, `.show_icons`, `.selected_label()` |
+| `calendar` | `CalendarState` | `.year`, `.month`, `.selected_date()`, `.selected_range()`, `.selected_time()` |
+| `number_input` | `NumberInputState` | `.value`, `.min`, `.max`, `.step`, `.integer`, `.normalize()`, `.clamped()` |
+| `paginator` | `PaginatorState` | `.total_items`, `.per_page`, `.page`, `.style`, `.page_bounds()` |
+| `file_picker` | `FilePickerState` | `.current_dir`, `.selected_file()`, `.scan_status()`, `.scan_errors()`, `.retry()` |
+| `color_picker` | `ColorPickerState` | `.colors`, `.columns`, `.selected`, `.mode`, `.selected()` |
+| `command_palette` | `CommandPaletteState` | `.commands()`, `.set_commands(...)`, `.open`, `.input`, `.last_selected` |
+| `scroll` | `ScrollState` | `.offset`, `.offset_x`, `.dragging`, `.content_height()`, `.viewport_height()`, `.progress_ratio()` |
+| `spinner` | `SpinnerState` | `::dots()`, `::line()`, `.frame(tick)` |
+| `toast` | `ToastState` | `.info(msg, tick)`, `.push(msg, level, tick, duration)`, `.messages`, `.cleanup(tick)` |
+| `form` | `FormState` | `.fields: Vec<FormField>`, `.submitted: bool` |
+| `form_field` | `FormField` | `.label`, `.input: TextInputState`, `.error` |
+| `screen` | `ScreenState` | `.current()`, `.push(name)`, `.pop()`, `::new(initial)` |
+| (modes) | `ModeState` | `.active_mode()`, `.switch_mode(name)`, `.screens_mut()`, `::new(mode, screen)` |
+| (key chords) | `ChordState` | Context-owned partial chord state; use `ui.key_chord(...)` |
+| (timers) | `SchedulerState` | Context-owned timer state; use `ui.schedule(...)`, `ui.every(...)`, and `ui.exclusive(...)` |
+| `split_pane` / `vsplit_pane` | `SplitPaneState` | `.ratio`, `.dragging`, `.min_ratio`, `.set_ratio(...)` |
+| `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
+| `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
+| `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
+| `diff` | `DiffState` | `::from_unified(patch) -> Result<_, DiffParseError>`, `.files()` (`DiffFile` → `DiffHunk` → `DiffLine`), `.hunk_ids()`, `.decision(id)` / `.set_decision(id, HunkDecision)`, `.is_collapsed(id)` / `.set_collapsed(id, bool)`, `.collapse_all()`, `.expand_all()`, `.focused_hunk()`, `.focus_hunk(id)`, `.to_unified()`, `.keys: DiffKeys` |
+| `rich_log` | `RichLogState` | `.push(text, style)`, `.entries()`, `.entry(index)`, `.auto_scroll`, `.max_entries`. `::new()` uses O(1)-amortized capped deque retention; `::new_unbounded()` opts out. |
+| `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
+
+---
+
+## ContainerBuilder Quick Reference
+
+Obtained via `ui.container()`, `ui.bordered(border)`, `ui.scrollable(state)`, or `ui.group(name)`.
+Chain in any order, then finalize with a method from [Finalization](#finalization).
+
+### Border & style
+
+| Method | Description |
+|---|---|
+| `.border(border)` | Set border type (`Border::Single`, `Rounded`, `Double`, `Heavy`, etc.) |
+| `.border_sides(sides)` | Which sides to draw. Shortcuts: `.border_x()`, `.border_y()`, `.border_top(bool)`, `.border_right(bool)`, `.border_bottom(bool)`, `.border_left(bool)` |
+| `.rounded()` | Shorthand for `.border(Border::Rounded)` |
+| `.border_style(style)` | Style for border lines |
+| `.border_fg(color)` | Border foreground color |
+| `.dark_border_style(style)` | Border style override in dark mode |
+| `.bg(color)` / `.dark_bg(color)` | Background color (with dark mode variant) |
+| `.fg(color)` / `.text_color(color)` | Default text color for children |
+| `.hover_bg(color)` / `.hover_fg(color)` / `.hover_border_fg(color)` | `:hover`: this container's own rect is under the pointer |
+| `.focus_bg(color)` / `.focus_fg(color)` / `.focus_border_fg(color)` | `:focus`: the focusable registered right before the container holds focus |
+| `.focus_within_bg(color)` / `.focus_within_border_fg(color)` | `:focus-within`: a widget inside holds focus |
+| `.active_bg(color)` / `.active_fg(color)` / `.active_border_fg(color)` | `:active`: left button held after pressing the container |
+| `.group_hover_bg(color)` | Background while the enclosing group instance is hovered (not on focus) |
+| `.group_hover_border_style(style)` | Border style while the enclosing group instance is hovered |
+| `.title(text)` / `.title_styled(text, style)` | Title displayed in border |
+
+### Spacing
+
+| Method | Description |
+|---|---|
+| `.p(n)` | Uniform padding |
+| `.px(n)` / `.py(n)` | Horizontal / vertical padding |
+| `.pt(n)` / `.pr(n)` / `.pb(n)` / `.pl(n)` | Individual side padding |
+| `.padding(Padding)` | Full `Padding` struct |
+| `.m(n)` | Uniform margin |
+| `.mx(n)` / `.my(n)` | Horizontal / vertical margin |
+| `.mt(n)` / `.mr(n)` / `.mb(n)` / `.ml(n)` | Individual side margin |
+| `.margin(Margin)` | Full `Margin` struct |
+| `.gap(n)` | Gap between children |
+| `.row_gap(n)` / `.col_gap(n)` | Direction-specific gap |
+
+### Size constraints
+
+| Method | Description |
+|---|---|
+| `.w(n)` / `.h(n)` | Fixed width / height |
+| `.min_w(n)` / `.max_w(n)` | Min / max width |
+| `.min_h(n)` / `.max_h(n)` | Min / max height |
+| `.w_pct(p)` / `.h_pct(p)` | Percentage of parent (`u8`, 0-100) |
+| `.w_ratio(num, den)` / `.h_ratio(num, den)` | Fraction of parent, e.g. `.w_ratio(1, 3)` |
+| `.constraints(Constraints)` | Full `Constraints` struct |
+
+### Layout
+
+| Method | Description |
+|---|---|
+| `.grow(n)` | Flex grow factor |
+| `.align(Align)` | Cross-axis alignment (`Start`, `Center`, `End`) |
+| `.center()` | Shorthand for `.align(Align::Center)` |
+| `.align_self(Align)` | Override parent's cross-axis alignment |
+| `.justify(Justify)` | Main-axis justification |
+| `.space_between()` / `.space_around()` / `.space_evenly()` | Justify shortcuts |
+| `.flex_center()` | `.center().justify(Justify::Center)` |
+| `.scroll_offset(n)` | Manual scroll offset |
+
+### Responsive (breakpoint variants)
+
+`w`, `h`, `min_w`, `max_w`, `min_h`, `max_h`, `gap`, `grow` and `p` have
+breakpoint variants. The breakpoint is a **prefix**: `.xs_w(v)`, `.sm_w(v)`,
+`.md_w(v)`, `.lg_w(v)`, `.xl_w(v)`, plus `.w_at(Breakpoint::Md, v)`.
+Example: `.sm_w(40)` sets width to 40 only at the `Sm` breakpoint (40-79 cols).
+
+### Finalization
+
+| Method | Description |
+|---|---|
+| `.col(f)` | Render as vertical container, returns `Response` |
+| `.row(f)` | Render as horizontal container, returns `Response` |
+| `.line(f)` | Inline zero-gap row, returns `Response` |
+| `.draw(f)` | Raw buffer access. Closure: `FnOnce(&mut Buffer, Rect) + 'static`. No interaction |
+| `.draw_with(data, f)` | Like `.draw`, but moves per-frame `data` into the `'static` closure |
+| `.draw_interactive(f)` | Raw draw that also returns a `Response` with click/hover |
+| `.draw_precomputed(w, h, f)` | Immediate borrowed-data cell snapshot, deferred compositing |
+| `.draw_with_fallback(draw, fallback)` | Raw draw with a render-stage panic fallback |
+| `.apply(style)` | Apply a `ContainerStyle` struct |
+
+---
+
+## CanvasContext Quick Reference
+
+Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (cols*2 x rows*4 braille resolution).
+
+| Method | Description |
+|---|---|
+| `.width()` / `.height()` | Pixel dimensions |
+| `.dot(x, y)` | Set single pixel |
+| `.line(x0, y0, x1, y1)` | Bresenham line |
+| `.rect(x, y, w, h)` | Rectangle outline |
+| `.filled_rect(x, y, w, h)` | Filled rectangle |
+| `.circle(cx, cy, r)` | Circle outline |
+| `.filled_circle(cx, cy, r)` | Filled circle |
+| `.triangle(x0, y0, x1, y1, x2, y2)` | Triangle outline |
+| `.filled_triangle(x0, y0, x1, y1, x2, y2)` | Filled triangle |
+| `.points(pts)` | Multiple dots from `&[(usize, usize)]` |
+| `.polyline(pts)` | Connected line segments from `&[(usize, usize)]` |
+| `.print(x, y, text)` | Text label overlay at pixel position |
+| `.set_color(color)` / `.color()` | Set/get drawing color |
+| `.layer()` | Start a new z-layer (later layers overlay earlier ones) |
+
+---
+
+## Where to look in the codebase
+
+| Path | Contents |
+|---|---|
+| `src/context/widgets.rs` | Widget-method facade (one module per family) |
+| `src/context/widgets/display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
+| `src/context/widgets/display/status.rs` | `breadcrumb`, `accordion`, `divider_text`, `definition_list`, `empty_state`, `key_hint`, `stat_trend` (+ `status/builders.rs`: `help`, `badge`, `stat`) |
+| `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered` (+ `layout/separator.rs`, `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
+| `src/context/widgets/overlay.rs` | `modal`, `modal_with`, `ModalOpts`, `overlay`, `overlay_at`, `tooltip`, `Anchor` (+ `overlay/popover.rs` (`popover`, `Placement`), `overlay/menu.rs` (`context_menu`, `menu_bar`)) |
+| `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord` |
+| `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`, `text_input/code_editor.rs` (`code_editor`)) |
+| `src/context/widgets/feedback.rs` | `spinner`, `toast`, `alert`, `confirm` (+ `feedback/slider.rs`, `feedback/progress.rs` (`progress`, `progress_bar`), `feedback/gauge.rs`) |
+| `src/context/widgets/selection.rs` | `tabs`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` (+ `selection/button.rs`) |
+
+| `src/context/widgets/collections/` | `list.rs` (`list`, `virtual_list`), `table.rs` (`table`, `paginator`), `tree.rs` (`tree`, `directory_tree`), `calendar.rs`, `file_picker.rs` |
+| `src/context/widgets/rich/` | `rich_log.rs`, `markdown.rs`, `streaming.rs` (`streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`), `code_block.rs`, `diff.rs` (`diff`) |
+| `src/context/widgets/media.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `iterm_image` |
+| `src/context/widgets/events.rs` | Key/mouse input, clipboard, theme, environment queries |
+| `src/context/widgets/viz/` | `bars.rs` (`bar_chart*`), `charts.rs` (`sparkline`, `line_chart`, `candlestick`, `chart`, `scatter`, `histogram`), `heat_tree.rs` (`heatmap`, `treemap`), `canvas.rs`, `qr.rs` |
+| `src/context/runtime.rs` | `use_state`, `use_memo`, `register_focusable`, `widget`, `error_boundary`, `notify`, `light_dark`, focus/scroll management |
+| `src/context/container.rs` | `ContainerBuilder`, `CanvasContext` |
+| `src/context/state.rs` | `Response`, `State<T>` |
+| `src/widgets.rs` | All `*State` types (facade) |
+| `src/widgets/` | State definitions, one file per family: `text_input.rs`, `selection.rs`, `collections.rs`, `feedback.rs`, `rich.rs`, `commanding.rs`, `layout.rs`, `display.rs`, `runtime.rs` |
+
+If you are contributing a new widget, read [CONTRIBUTING.md](../../CONTRIBUTING.md), the [design principles](../internals/design-principles.md), and the [architecture notes](../internals/architecture.md) first.
