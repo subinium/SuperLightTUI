@@ -906,6 +906,57 @@ Human-in-the-loop approval prompt for an AI tool call.
 
 `ApprovalAction` has variants `Pending`, `Approved`, `Rejected`.
 
+## DiffState
+
+Source: `src/widgets/rich/diff.rs`.
+
+Parsed unified diff plus review state (collapsed hunks, per-hunk decisions,
+cursor) for `Context::diff`. Parse once with `from_unified` and keep the
+state across frames.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `keys` | `DiffKeys` | Key bindings used while the viewer is focused (`up`, `down`, `next_hunk`, `prev_hunk`, `toggle`, `accept`, `reject`, each a `Vec<KeyCode>`). |
+
+### Constructors
+
+- `DiffState::new() -> Self` (also `Default`) — empty diff.
+- `DiffState::from_unified(patch: &str) -> Result<Self, DiffParseError>` —
+  parse multi-file unified / `git diff` output. Malformed input returns
+  `DiffParseError` (`.line()`, `.kind()`); it never panics.
+
+### Methods
+
+| Signature | Description |
+|-----------|-------------|
+| `to_unified(&self) -> String` | Write the parsed patch back as unified diff text. |
+| `files(&self) -> &[DiffFile]` | Parsed files in patch order. |
+| `is_empty(&self) -> bool` | `true` when the patch has no files. |
+| `hunk_count(&self) -> usize` | Total hunks across all files. |
+| `hunk_ids(&self) -> impl Iterator<Item = HunkId>` | Every hunk id in patch order. |
+| `hunk(&self, id: HunkId) -> Option<&DiffHunk>` | The hunk for `id`. |
+| `decision(&self, id: HunkId) -> Option<HunkDecision>` | Stored decision, `None` when out of range. |
+| `set_decision(&mut self, id: HunkId, decision: HunkDecision) -> bool` | Set a decision; not reported in `DiffResponse::hunk_actions`. |
+| `is_collapsed(&self, id: HunkId) -> bool` | Whether the hunk body is hidden. |
+| `set_collapsed(&mut self, id: HunkId, collapsed: bool) -> bool` | Collapse or expand one hunk. |
+| `collapse_all(&mut self)` / `expand_all(&mut self)` | Collapse or expand every hunk. |
+| `focused_hunk(&self) -> Option<HunkId>` | Hunk under the cursor. |
+| `focus_hunk(&mut self, id: HunkId) -> bool` | Move the cursor to a hunk header. |
+
+### Related types
+
+- `HunkId { file, hunk }` indexes `files()[file].hunks[hunk]`.
+- `HunkDecision`: `Pending` (default), `Accepted`, `Rejected`.
+- `HunkAction`: `Accept`, `Reject` — reported once per change in
+  `DiffResponse::hunk_actions`, alongside `toggled` and `focused_hunk`.
+- `DiffLayout`: `Unified` (default), `Split`.
+- `DiffColors { added_bg, removed_bg, hunk_fg }` overrides the theme-derived
+  colors.
+- Model types in `slt::widgets`: `DiffFile`, `DiffHunk`, `DiffLine`,
+  `DiffLineKind`, `DiffFileStatus`.
+
 ## ContextItem
 
 Source: `src/widgets/rich.rs`.
