@@ -321,40 +321,43 @@ impl Context {
     }
 
     fn render_table_header(&mut self, state: &TableState, colors: &WidgetColors) {
-        let header_cells = state
-            .headers()
-            .iter()
-            .enumerate()
-            .map(|(i, header)| {
-                if state.sort_column == Some(i) {
-                    if state.sort_ascending {
-                        let mut sorted_header = String::with_capacity(header.len() + 2);
-                        sorted_header.push_str(header);
-                        sorted_header.push_str(" ▲");
-                        sorted_header
-                    } else {
-                        let mut sorted_header = String::with_capacity(header.len() + 2);
-                        sorted_header.push_str(header);
-                        sorted_header.push_str(" ▼");
-                        sorted_header
-                    }
-                } else {
-                    header.clone()
-                }
-            })
-            .collect::<Vec<_>>();
-        let header_line = format_table_row(&header_cells, state.column_widths(), " │ ");
+        let header_line = match state.sort_column {
+            // Only the sorted column needs an owned label (` ▲` / ` ▼`); the
+            // rest are borrowed straight from the state.
+            Some(sorted) if sorted < state.headers().len() => {
+                let arrow = if state.sort_ascending { " ▲" } else { " ▼" };
+                let mut sorted_label = String::with_capacity(state.headers()[sorted].len() + 4);
+                sorted_label.push_str(&state.headers()[sorted]);
+                sorted_label.push_str(arrow);
+                let cells: smallvec::SmallVec<[&str; 16]> = state
+                    .headers()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, header)| {
+                        if i == sorted {
+                            sorted_label.as_str()
+                        } else {
+                            header.as_str()
+                        }
+                    })
+                    .collect();
+                format_table_row(&cells, state.column_widths(), " │ ")
+            }
+            _ => format_table_row(state.headers(), state.column_widths(), " │ "),
+        };
         self.styled(
             header_line,
             Style::new().bold().fg(colors.fg.unwrap_or(self.theme.text)),
         );
 
-        let separator = state
-            .column_widths()
+        let widths = state.column_widths();
+        let rule_bytes: usize = widths
             .iter()
-            .map(|w| "─".repeat(*w as usize))
-            .collect::<Vec<_>>()
-            .join("─┼─");
+            .map(|w| *w as usize * '─'.len_utf8())
+            .sum::<usize>()
+            + widths.len().saturating_sub(1) * "─┼─".len();
+        let mut separator = String::with_capacity(rule_bytes);
+        push_table_separator(&mut separator, widths);
         self.text(separator);
     }
 
@@ -435,8 +438,7 @@ impl Context {
                             merged.bg = cell_style.bg;
                         }
                         merged.modifiers |= cell_style.modifiers;
-                        let padded = clamp_table_cell(&content, *width);
-                        segments.push((padded, merged));
+                        segments.push((fit_table_cell_owned(content, *width), merged));
                     }
                     self.line(move |ui| {
                         for (text, style) in segments {
