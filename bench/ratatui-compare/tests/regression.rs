@@ -141,11 +141,12 @@ const BYTE_CEILINGS: &[ByteCeiling] = &[
         first: 27_760,
         steady: 16.0,
     },
-    // (1_008 / 44) — 44 vs ratatui's 32 for one changed cell, see #489.
+    // (1_008 / 44) — 36 since #489 dropped the duplicate `CSI 0m` before the
+    // first styled run and at the end of the frame (ratatui: 32).
     ByteCeiling {
         workload: Workload::OneCell,
         first: 1_060,
-        steady: 44.0,
+        steady: 36.0,
     },
     // (1_008 / 16)
     ByteCeiling {

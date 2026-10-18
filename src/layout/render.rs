@@ -37,10 +37,12 @@ pub(crate) fn render(node: &LayoutNode, buf: &mut Buffer) {
 /// Walks `buf.content` as one contiguous slice rather than per-cell
 /// `get_mut` so the per-cell bounds assert is paid zero times and the
 /// compiler can vectorize the modifier OR over the whole grid.
-fn dim_entire_buffer(buf: &mut Buffer) {
+pub(super) fn dim_entire_buffer(buf: &mut Buffer) {
     for cell in &mut buf.content {
         cell.style.modifiers |= crate::style::Modifiers::DIM;
     }
+    // Direct `content` writes must be recorded in the written spans.
+    buf.mark_touched_rect(buf.area);
 }
 
 /// OR the `DIM` modifier into a contiguous run of cells `[start, end)` in
@@ -125,6 +127,16 @@ fn dim_buffer_around(buf: &mut Buffer, modal_rect: Rect) {
         dim_cell_range(content, row_base, row_base + left_hi);
         // Right segment: columns [clip_right, area.right()).
         dim_cell_range(content, row_base + right_lo, row_base + full_hi);
+    }
+
+    // Record the four strips in the written spans (direct `content` writes).
+    let top = Rect::new(area.x, area.y, area.width, clip_y - area.y);
+    let bottom = Rect::new(area.x, clip_bottom, area.width, area.bottom() - clip_bottom);
+    let band = clip_bottom - clip_y;
+    let left = Rect::new(area.x, clip_y, clip_x - area.x, band);
+    let right = Rect::new(clip_right, clip_y, area.right() - clip_right, band);
+    for strip in [top, bottom, left, right] {
+        buf.mark_touched_rect(strip);
     }
 }
 
@@ -713,7 +725,7 @@ fn set_string_clipped_x(
         }
         return x;
     }
-    let full_width = crate::width::str_width(text) as i64;
+    let full_width = crate::cell::display_width(text) as i64;
     let left = i64::from(buf.area.x);
     if screen_x >= left {
         let sx = screen_x as u32;
@@ -984,7 +996,7 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        let text_width = crate::width::str_width(line.as_str()) as u32;
+                        let text_width = crate::cell::display_width(line) as u32;
                         let x_align = if text_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
@@ -1007,10 +1019,10 @@ fn render_inner(
                     if sy < 0 {
                         return;
                     }
-                    let text_width = crate::width::str_width(text.as_str()) as u32;
+                    let text_width = crate::cell::display_width(text) as u32;
                     if node.truncate && text_width > node.size.0 && node.size.0 > 1 {
                         let truncated = truncate_with_ellipsis(text, node.size.0 as usize);
-                        let trunc_width = crate::width::str_width(truncated.as_str()) as u32;
+                        let trunc_width = crate::cell::display_width(&truncated) as u32;
                         let x_align = if trunc_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
@@ -1070,12 +1082,9 @@ fn render_inner(
             if let Some(color) = node.bg_color
                 && let Some(area) = visible_area(node, x_offset, y_offset, buf.area)
             {
-                let fill_style = Style::new().bg(color);
-                for y in area.y..area.bottom() {
-                    for x in area.x..area.right() {
-                        buf.set_string(x, y, " ", fill_style);
-                    }
-                }
+                // Bulk blank fill; edge cells that cut a wide grapheme take
+                // the general write path inside `fill_rect` (#493).
+                buf.fill_rect(area, Style::new().bg(color));
             }
             let child_bg = node.bg_color.or(parent_bg);
             render_container_border(node, buf, x_offset, y_offset, child_bg);

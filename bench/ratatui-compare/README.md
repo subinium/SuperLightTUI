@@ -17,8 +17,8 @@ per call, with persistent front/back buffers so steady-state diffing is
 measured, not full redraws.
 
 - **SLT**: `slt::frame_owned` driving `SltSink`, a `Backend` whose `flush`
-  mirrors `Terminal::flush` (src/terminal.rs): BSU, row-hash refresh of both
-  buffers plus the run-coalesced diff via
+  mirrors `Terminal::flush` (src/terminal.rs): BSU, the written-span
+  row skip plus the run-coalesced diff via
   `__bench_flush_buffer_diff_mut_with_buf` (the production
   `flush_buffer_diff` kernel), ESU, swap, then `reset_with_bg(theme.bg)`
   exactly as `run_with` configures it. Kitty, sprixel, raw-sequence and cursor

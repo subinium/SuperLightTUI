@@ -2,6 +2,7 @@
 
 use compact_str::CompactString;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthChar;
 
 use crate::style::Style;
 
@@ -22,16 +23,120 @@ pub(crate) fn sanitize_cell_char(ch: char) -> char {
     }
 }
 
+/// Return whether `ch` is a terminal control code point (C0, DEL or C1).
+#[inline]
+pub(crate) fn is_control_char(ch: char) -> bool {
+    sanitize_cell_char(ch) != ch
+}
+
+/// Return whether `byte` is printable ASCII (`0x20..=0x7E`).
+#[inline]
+pub(crate) const fn is_printable_ascii_byte(byte: u8) -> bool {
+    byte >= 0x20 && byte < 0x7f
+}
+
+/// Return whether every byte of `s` is printable ASCII (`0x20..=0x7E`).
+///
+/// Printable ASCII is the fast path of the cell-write and width code: each
+/// byte is its own extended grapheme cluster (no ASCII code point is Extend,
+/// ZWJ, SpacingMark, Prepend or Control-like under UAX #29), has display
+/// width 1, is a strong-LTR or neutral bidi class, and needs no
+/// sanitization. Checks eight bytes per step (SWAR) without `unsafe`.
+#[inline]
+pub(crate) fn is_printable_ascii(s: &str) -> bool {
+    const ONES: u64 = u64::from_ne_bytes([0x01; 8]);
+    const HIGHS: u64 = u64::from_ne_bytes([0x80; 8]);
+
+    let (words, remainder) = s.as_bytes().as_chunks::<8>();
+    for word in words {
+        let x = u64::from_ne_bytes(*word);
+        // Any byte < 0x20: the classic "has less than" test. Any byte > 0x7E
+        // (DEL or non-ASCII): adding 1 sets its high bit, or it already had
+        // one. Carries can only add false positives next to a true positive,
+        // which is fine for an "any byte" test.
+        let below = x.wrapping_sub(ONES.wrapping_mul(0x20)) & !x & HIGHS;
+        let above = (x.wrapping_add(ONES) | x) & HIGHS;
+        if below | above != 0 {
+            return false;
+        }
+    }
+    remainder.iter().all(|&byte| is_printable_ascii_byte(byte))
+}
+
+/// Display width of `s` in terminal columns.
+///
+/// Equal to [`crate::width::str_width`] (which honours the frame's
+/// ambiguous-width setting, #449) for every input, with an O(len) byte-check
+/// fast path for printable ASCII, which is never ambiguous.
+#[inline]
+pub(crate) fn display_width(s: &str) -> usize {
+    if is_printable_ascii(s) {
+        s.len()
+    } else {
+        crate::width::str_width(s)
+    }
+}
+
+/// Display width of a single-scalar symbol, as [`crate::width::str_width`]
+/// would measure the one-char string.
+///
+/// `UnicodeWidthChar` reports `None` for C0/DEL/C1 controls, which the
+/// string measure counts as width 1; every other scalar agrees in both the
+/// default and the ambiguous-wide interpretation (verified exhaustively in
+/// the tests).
+#[inline]
+pub(crate) fn char_display_width(ch: char) -> usize {
+    if ch.is_ascii() {
+        return 1;
+    }
+    if crate::width::ambiguous_wide() {
+        UnicodeWidthChar::width_cjk(ch).unwrap_or(1)
+    } else {
+        UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
+}
+
 /// Normalize an arbitrary string into one bounded, terminal-safe grapheme.
 ///
 /// An empty result is reserved for continuation cells. Additional graphemes
 /// are discarded because a `Cell` represents exactly one display atom.
+///
+/// The result is idempotent: `normalize_cell_symbol(&normalize_cell_symbol(s))
+/// == normalize_cell_symbol(s)`. A grapheme that starts with a control code
+/// point (a lone C0/DEL/C1 control, or the two-scalar `"\r\n"` cluster)
+/// becomes exactly one `U+FFFD`, so the stored symbol always re-segments to
+/// itself and its display width equals the cells reserved for it (#484).
 pub(crate) fn normalize_cell_symbol(symbol: &str) -> CompactString {
     let Some(grapheme) = symbol.graphemes(true).next() else {
-        return CompactString::new("");
+        return CompactString::const_new("");
     };
+    normalize_grapheme(grapheme)
+}
 
-    let mut normalized = CompactString::new("");
+/// Normalize one already-segmented extended grapheme cluster.
+///
+/// Callers must pass a single grapheme (for example one item of
+/// `str::graphemes(true)`); see [`normalize_cell_symbol`] for the contract.
+pub(crate) fn normalize_grapheme(grapheme: &str) -> CompactString {
+    let mut chars = grapheme.chars();
+    let Some(first) = chars.next() else {
+        return CompactString::const_new("");
+    };
+    // UAX #29 GB4/GB5 break before and after every control except inside
+    // CR LF, so a control can only start a cluster. Collapse the whole
+    // cluster to one replacement glyph instead of one per scalar: `"\r\n"`
+    // previously became two `U+FFFD` (width 2) that re-normalized to one.
+    if is_control_char(first) {
+        return CompactString::const_new("\u{FFFD}");
+    }
+    if grapheme.len() <= MAX_CELL_SYMBOL_BYTES && !chars.any(is_control_char) {
+        return CompactString::new(grapheme);
+    }
+
+    // Defensive slow path: over-long clusters are truncated at a scalar
+    // boundary (a prefix of a cluster is still one cluster), and any control
+    // that is not at the start is replaced.
+    let mut normalized = CompactString::const_new("");
     for ch in grapheme.chars() {
         let ch = sanitize_cell_char(ch);
         if normalized.len().saturating_add(ch.len_utf8()) > MAX_CELL_SYMBOL_BYTES {
@@ -63,7 +168,7 @@ const _: () = assert!(
 /// inline storage of short strings — no heap allocation for ≤24 bytes).
 /// Wide graphemes occupy adjacent cells. The leading cell stores the
 /// grapheme and every continuation cell has an empty `symbol`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Cell {
     /// The grapheme cluster displayed in this cell. Defaults to a single space.
     pub symbol: CompactString,
@@ -72,6 +177,33 @@ pub struct Cell {
     /// Optional OSC 8 hyperlink URL. When set, the terminal renders this cell
     /// as a clickable link.
     pub hyperlink: Option<CompactString>,
+}
+
+/// Field-wise equality, as `#[derive(PartialEq)]` would compare, with an
+/// inline byte compare for short symbols: the flush and `Buffer::diff`
+/// compare every candidate cell, and a `memcmp` call per one-to-four-byte
+/// symbol dominated that loop (#486).
+impl PartialEq for Cell {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        symbol_eq(&self.symbol, &other.symbol)
+            && self.style == other.style
+            && self.hyperlink == other.hyperlink
+    }
+}
+
+#[inline]
+fn symbol_eq(a: &CompactString, b: &CompactString) -> bool {
+    const INLINE_COMPARE_BYTES: usize = 8;
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    if a.len() <= INLINE_COMPARE_BYTES {
+        a.iter().zip(b).all(|(x, y)| x == y)
+    } else {
+        a == b
+    }
 }
 
 impl Default for Cell {
@@ -92,6 +224,23 @@ impl Cell {
     /// cleared so direct symbol replacement cannot inherit stale link state.
     pub fn set_symbol(&mut self, s: &str) -> &mut Self {
         self.symbol = normalize_cell_symbol(s);
+        self.hyperlink = None;
+        self
+    }
+
+    /// Store a symbol that is already the output of [`normalize_cell_symbol`].
+    ///
+    /// Internal cell-write paths normalize each grapheme once and store it
+    /// through here instead of [`Cell::set_symbol`], which would segment and
+    /// sanitize it again. Clears the hyperlink like `set_symbol`.
+    #[inline]
+    pub(crate) fn set_symbol_normalized(&mut self, symbol: CompactString) -> &mut Self {
+        debug_assert_eq!(
+            normalize_cell_symbol(&symbol),
+            symbol,
+            "set_symbol_normalized requires a normalized symbol"
+        );
+        self.symbol = symbol;
         self.hyperlink = None;
         self
     }
@@ -129,6 +278,33 @@ impl Cell {
         normalize_cell_symbol(&self.symbol)
     }
 
+    /// The symbol to write to the terminal, borrowed when it is already a
+    /// normalization fixed point (#486).
+    ///
+    /// One printable-ASCII byte and one non-control scalar (the forms every
+    /// setter stores for ASCII, CJK, box drawing and most symbols) are
+    /// returned as-is; anything else is defensively re-normalized because
+    /// `symbol` is a public field. Equal to [`Cell::normalized_symbol`].
+    #[inline]
+    #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
+    pub(crate) fn emit_symbol(&self) -> std::borrow::Cow<'_, str> {
+        let symbol = self.symbol.as_str();
+        let bytes = symbol.as_bytes();
+        if bytes.len() == 1 {
+            if is_printable_ascii_byte(bytes[0]) {
+                return std::borrow::Cow::Borrowed(symbol);
+            }
+        } else {
+            let mut chars = symbol.chars();
+            if let (Some(ch), None) = (chars.next(), chars.next())
+                && !is_control_char(ch)
+            {
+                return std::borrow::Cow::Borrowed(symbol);
+            }
+        }
+        std::borrow::Cow::Owned(normalize_cell_symbol(symbol).into())
+    }
+
     /// Set the cell's style.
     pub fn set_style(&mut self, style: Style) -> &mut Self {
         self.style = style;
@@ -136,17 +312,197 @@ impl Cell {
     }
 
     /// Reset the cell to a blank space with default style.
+    #[inline]
     pub fn reset(&mut self) {
-        self.symbol.clear();
-        self.symbol.push(' ');
-        self.style = Style::new();
-        self.hyperlink = None;
+        *self = Self::default();
+    }
+}
+
+/// Proptest strategies shared by the cell, buffer and flush test suites.
+#[cfg(test)]
+pub(crate) mod test_strategies {
+    use proptest::prelude::*;
+
+    /// One text fragment drawn from the classes that stress grapheme,
+    /// width, sanitization and bidi handling.
+    pub(crate) fn fragment() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[ -~]{1,6}",
+            1 => Just("\r\n".to_string()),
+            1 => prop::sample::select(vec![
+                "\r", "\n", "\t", "\x1b", "\x07", "\x00", "\x7f", "\u{85}", "\u{9b}",
+                "\x1b[31m", "\x1b]52;c;x\x07",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "\u{301}", "\u{200D}", "\u{FE0F}", "\u{FE0E}", "\u{200B}", "\u{0903}",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "世", "界", "한", "ｱ", "👩\u{200D}💻", "❤\u{FE0F}", "🇰🇷", "\u{1100}\u{1161}\u{11A8}",
+                "e\u{301}", "क\u{094D}\u{0937}",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "\u{05E9}\u{05DC}", "\u{0627}\u{0644}", "\u{202E}", "\u{200F}", "\u{2067}",
+            ])
+            .prop_map(str::to_string),
+            1 => (1usize..24).prop_map(|n| format!("a{}", "\u{301}".repeat(n))),
+            1 => any::<char>().prop_map(String::from),
+        ]
+    }
+
+    /// A string assembled from [`fragment`]s.
+    pub(crate) fn cell_text() -> impl Strategy<Value = String> {
+        prop::collection::vec(fragment(), 0..10).prop_map(|parts| parts.concat())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use unicode_width::UnicodeWidthStr;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        #[test]
+        fn normalize_cell_symbol_is_idempotent(s in test_strategies::cell_text()) {
+            let once = normalize_cell_symbol(&s);
+            prop_assert_eq!(normalize_cell_symbol(&once), once.clone());
+            prop_assert!(once.len() <= MAX_CELL_SYMBOL_BYTES);
+            prop_assert!(!once.chars().any(is_control_char));
+        }
+
+        #[test]
+        fn emit_symbol_equals_normalized_symbol(s in prop_oneof![test_strategies::cell_text(), ".{0,6}"]) {
+            let cell = Cell { symbol: CompactString::new(&s), ..Cell::default() };
+            let (emitted, normalized) = (cell.emit_symbol().into_owned(), cell.normalized_symbol());
+            prop_assert_eq!(emitted.as_str(), normalized.as_str());
+        }
+
+        #[test]
+        fn cell_eq_matches_field_wise_equality(
+            a in prop_oneof![Just(String::new()), test_strategies::fragment(), ".{0,12}"],
+            b in prop_oneof![Just(String::new()), test_strategies::fragment(), ".{0,12}"],
+            same_symbol in any::<bool>(),
+            bold in any::<(bool, bool)>(),
+            link in any::<(bool, bool)>(),
+        ) {
+            let b = if same_symbol { a.clone() } else { b };
+            let make = |symbol: &str, bold: bool, link: bool| Cell {
+                symbol: CompactString::new(symbol),
+                style: if bold { Style::new().bold() } else { Style::new() },
+                hyperlink: link.then(|| CompactString::new("https://example.com")),
+            };
+            let (x, y) = (make(&a, bold.0, link.0), make(&b, bold.1, link.1));
+            let field_wise = x.symbol.as_str() == y.symbol.as_str()
+                && x.style == y.style
+                && x.hyperlink == y.hyperlink;
+            prop_assert_eq!(x == y, field_wise);
+        }
+
+        #[test]
+        fn normalize_cell_symbol_is_idempotent_for_arbitrary_text(s in ".{0,16}") {
+            let once = normalize_cell_symbol(&s);
+            prop_assert_eq!(normalize_cell_symbol(&once), once);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+
+        #[test]
+        fn display_width_matches_unicode_width(s in test_strategies::cell_text()) {
+            prop_assert_eq!(display_width(&s), UnicodeWidthStr::width(s.as_str()));
+        }
+
+        #[test]
+        fn display_width_matches_unicode_width_for_arbitrary_text(s in ".{0,40}") {
+            prop_assert_eq!(display_width(&s), UnicodeWidthStr::width(s.as_str()));
+        }
+
+        #[test]
+        fn printable_ascii_check_matches_bytewise_reference(
+            bytes in prop::collection::vec(0u8..=0x7f, 0..40),
+            tail in ".{0,3}",
+        ) {
+            let mut s = String::from_utf8(bytes).expect("ASCII is UTF-8");
+            s.push_str(&tail);
+            let reference = s.bytes().all(|b| (0x20..=0x7e).contains(&b));
+            prop_assert_eq!(is_printable_ascii(&s), reference);
+        }
+    }
+
+    #[test]
+    fn printable_ascii_check_rejects_every_non_printable_byte_in_every_lane() {
+        for len in 1..=17usize {
+            assert!(is_printable_ascii(&"~".repeat(len)));
+            for position in 0..len {
+                for byte in (0u8..0x20).chain([0x7f]) {
+                    let mut bytes = vec![b' '; len];
+                    bytes[position] = byte;
+                    let s = String::from_utf8(bytes).expect("ASCII");
+                    assert!(!is_printable_ascii(&s), "{len} {position} {byte:#x}");
+                }
+                let mut s = " ".repeat(position);
+                s.push('é');
+                s.push_str(&" ".repeat(len - position));
+                assert!(!is_printable_ascii(&s), "non-ASCII at {position}");
+            }
+        }
+        assert!(is_printable_ascii(""));
+    }
+
+    #[test]
+    fn char_display_width_matches_string_width_for_every_scalar() {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::width::set_ambiguous_wide(false);
+            }
+        }
+        let _reset = Reset;
+        let mut encoded = [0u8; 4];
+        let mut mismatches = Vec::new();
+        for ambiguous_wide in [false, true] {
+            crate::width::set_ambiguous_wide(ambiguous_wide);
+            for ch in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+                let s = ch.encode_utf8(&mut encoded);
+                let expected = if ambiguous_wide {
+                    UnicodeWidthStr::width_cjk(&*s)
+                } else {
+                    UnicodeWidthStr::width(&*s)
+                };
+                if char_display_width(ch) != expected || display_width(s) != expected {
+                    mismatches.push((
+                        ambiguous_wide,
+                        u32::from(ch),
+                        char_display_width(ch),
+                        expected,
+                    ));
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} mismatches (ambiguous_wide, scalar, char path, str width): {:x?}",
+            mismatches.len(),
+            &mismatches[..mismatches.len().min(64)]
+        );
+    }
+
+    #[test]
+    fn control_led_graphemes_collapse_to_one_replacement() {
+        for input in [
+            "\r\n", "\r\nb", "\r", "\n", "\x1b", "\x7f", "\u{85}", "\u{9f}",
+        ] {
+            let normalized = normalize_cell_symbol(input);
+            assert_eq!(normalized, "\u{FFFD}", "input {input:?}");
+            assert_eq!(UnicodeWidthStr::width(normalized.as_str()), 1);
+        }
+    }
 
     #[test]
     fn cell_size_within_cache_line() {
