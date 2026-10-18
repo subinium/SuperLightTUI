@@ -9,6 +9,8 @@ use unicode_segmentation::UnicodeSegmentation as _;
 
 mod code_editor;
 pub use code_editor::*;
+mod history;
+use history::{TextInputHistory, TextInputMeta, TextareaHistory, TextareaMeta};
 
 /// Locate the first complete grapheme boundary at or after an insertion edge.
 pub(crate) fn grapheme_cursor_after(text: &str, byte: usize) -> usize {
@@ -243,14 +245,6 @@ impl PointerSelect {
     }
 }
 
-/// Undo snapshot for [`TextInputState`] (issue #465).
-#[derive(Debug, Clone)]
-pub(crate) struct TextInputSnapshot {
-    value: String,
-    cursor: usize,
-    anchor: Option<usize>,
-}
-
 /// Issue #465: selection, undo history and pointer state of a
 /// [`TextInputState`]. Private so the invariants stay inside the widget.
 #[derive(Debug, Clone, Default)]
@@ -258,8 +252,8 @@ pub(crate) struct TextInputEditing {
     /// Selection anchor (grapheme index). The selection spans
     /// `anchor..cursor`, normalized.
     pub(crate) anchor: Option<usize>,
-    undo: Vec<TextInputSnapshot>,
-    redo: Vec<TextInputSnapshot>,
+    /// Undo / redo steps as delta records (#415).
+    history: TextInputHistory,
     /// The last edit was a typed character, so the next one joins its undo
     /// step.
     pub(crate) last_typing: bool,
@@ -596,8 +590,7 @@ impl TextInputState {
     /// and no undo history (matching `TextareaState::set_value`).
     fn reset_editing(&mut self) {
         self.editing.anchor = None;
-        self.editing.undo.clear();
-        self.editing.redo.clear();
+        self.editing.history.clear();
         self.editing.last_typing = false;
     }
 
@@ -668,50 +661,51 @@ impl TextInputState {
 
     // ── editing primitives used by `Context::text_input` ───────────────
 
-    fn snapshot(&self) -> TextInputSnapshot {
-        TextInputSnapshot {
-            value: self.value.clone(),
+    fn history_meta(&self) -> TextInputMeta {
+        TextInputMeta {
             cursor: self.cursor,
             anchor: self.editing.anchor,
         }
     }
 
-    fn restore(&mut self, snap: TextInputSnapshot) {
-        self.value = snap.value;
-        self.cursor = snap.cursor;
-        self.editing.anchor = snap.anchor;
+    fn restore(&mut self, meta: TextInputMeta) {
+        self.cursor = meta.cursor;
+        self.editing.anchor = meta.anchor;
+        self.editing.last_typing = false;
     }
 
     /// Record the current state as an undo step (dropping the redo branch).
+    ///
+    /// Issue #415: steps are stored as edit records against one shared copy
+    /// of the value, capped at `DEFAULT_TEXTAREA_HISTORY_MAX` steps and
+    /// `DEFAULT_HISTORY_MAX_BYTES` of records.
     pub(crate) fn push_undo(&mut self) {
-        self.editing.redo.clear();
-        self.editing.undo.push(self.snapshot());
-        if self.editing.undo.len() > DEFAULT_TEXTAREA_HISTORY_MAX {
-            self.editing.undo.remove(0);
-        }
+        let meta = self.history_meta();
+        self.editing.history.push(
+            &self.value,
+            meta,
+            DEFAULT_TEXTAREA_HISTORY_MAX,
+            history::DEFAULT_HISTORY_MAX_BYTES,
+        );
     }
 
     /// Undo the last edit. Returns `true` when something changed.
     pub(crate) fn undo(&mut self) -> bool {
-        let Some(snap) = self.editing.undo.pop() else {
+        let live = self.history_meta();
+        let Some(meta) = self.editing.history.undo(&mut self.value, live) else {
             return false;
         };
-        let current = self.snapshot();
-        self.editing.redo.push(current);
-        self.restore(snap);
-        self.editing.last_typing = false;
+        self.restore(meta);
         true
     }
 
     /// Redo the last undone edit. Returns `true` when something changed.
     pub(crate) fn redo(&mut self) -> bool {
-        let Some(snap) = self.editing.redo.pop() else {
+        let live = self.history_meta();
+        let Some(meta) = self.editing.history.redo(&mut self.value, live) else {
             return false;
         };
-        let current = self.snapshot();
-        self.editing.undo.push(current);
-        self.restore(snap);
-        self.editing.last_typing = false;
+        self.restore(meta);
         true
     }
 
@@ -1535,38 +1529,82 @@ mod async_validation_tests {
     }
 }
 
-/// Default maximum number of [`TextareaSnapshot`] entries kept in
-/// [`TextareaState::history`]. Used by [`TextareaState::new`] and the
-/// `Default` impl. Override per-instance via
-/// [`TextareaState::history_max`].
+/// Default maximum number of undo steps kept in [`TextareaState`] history.
+/// Used by [`TextareaState::new`] and the `Default` impl. Override
+/// per-instance via [`TextareaState::history_max`].
 pub(crate) const DEFAULT_TEXTAREA_HISTORY_MAX: usize = 100;
 
-/// Snapshot of textarea content + cursor for the undo/redo history stack.
-///
-/// One snapshot is pushed before every destructive mutation (char insert,
-/// delete, Enter, Backspace, paste). `Ctrl+Z` walks the index backward to a
-/// previous snapshot; `Ctrl+Y` walks it forward.
-///
-/// Crate-internal — the `pub(crate)` visibility keeps the history layout an
-/// implementation detail. Inspect via the public undo/redo behavior instead.
-#[derive(Debug, Clone)]
-pub(crate) struct TextareaSnapshot {
-    /// Lines of text at the time of the snapshot.
-    pub(crate) lines: Vec<String>,
-    /// Cursor row at the time of the snapshot.
-    pub(crate) cursor_row: usize,
-    /// Cursor column at the time of the snapshot.
-    pub(crate) cursor_col: usize,
-    pub(crate) navigation: Option<TextareaNavigation>,
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct TextareaNavigation {
     pub(crate) row: usize,
     pub(crate) col: usize,
     pub(crate) wrap_width: Option<u32>,
     pub(crate) upstream: bool,
     pub(crate) desired_cells: usize,
+}
+
+/// Issue #415: the soft-wrap layout of a [`TextareaState`], kept across
+/// frames so an unchanged wrapped document is not re-wrapped every frame.
+///
+/// Validity is checked against a contiguous copy of the rows the layout was
+/// built from (one byte comparison per frame), because `lines` is public and
+/// may change without the widget seeing an edit.
+#[derive(Default)]
+pub(crate) struct TextareaWrapCache {
+    width: u32,
+    /// The rows the layout was built from, concatenated.
+    text: String,
+    /// End offset of each row in `text`.
+    ends: Vec<usize>,
+    vlines: Vec<crate::context::TextareaVLine>,
+    built: bool,
+}
+
+impl std::fmt::Debug for TextareaWrapCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextareaWrapCache")
+            .field("width", &self.width)
+            .field("rows", &self.ends.len())
+            .field("visual_lines", &self.vlines.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TextareaWrapCache {
+    /// Whether the cached layout was built from exactly `lines` at `width`.
+    fn matches(&self, lines: &[String], width: u32) -> bool {
+        if !self.built || self.width != width || self.ends.len() != lines.len() {
+            return false;
+        }
+        let text = self.text.as_bytes();
+        let mut start = 0;
+        lines.iter().zip(&self.ends).all(|(line, &end)| {
+            let same = text.get(start..end) == Some(line.as_bytes());
+            start = end;
+            same
+        })
+    }
+
+    /// The soft-wrap layout of `lines` at `width`, rebuilt only when either
+    /// changed since the previous call.
+    pub(crate) fn visual_lines(
+        &mut self,
+        lines: &[String],
+        width: u32,
+    ) -> &[crate::context::TextareaVLine] {
+        if !self.matches(lines, width) {
+            self.vlines = crate::context::textarea_build_visual_lines(lines, width);
+            self.text.clear();
+            self.ends.clear();
+            for line in lines {
+                self.text.push_str(line);
+                self.ends.push(self.text.len());
+            }
+            self.width = width;
+            self.built = true;
+        }
+        &self.vlines
+    }
 }
 
 /// State for a multi-line text area widget.
@@ -1577,14 +1615,22 @@ pub(crate) struct TextareaNavigation {
 /// # Undo / redo
 ///
 /// `Ctrl+Z` undoes the most recent edit and `Ctrl+Y` redoes it. The widget
-/// pushes a snapshot before every destructive mutation (char insert, delete,
-/// Enter, Backspace, paste). Rapid character typing coalesces into a single
-/// undoable batch — only the first char of a typing burst pushes a snapshot.
-/// History is capped at [`history_max`](Self::history_max) entries (default
-/// `100`); the oldest snapshot is dropped when the cap is exceeded.
-/// Rejected or empty pastes do not record history or discard redo. An event
-/// batch is not an undo transaction: accepted edits retain their normal undo
-/// grouping even when their net content change is zero.
+/// records an undo step before every destructive mutation (char insert,
+/// delete, Enter, Backspace, paste). Rapid character typing coalesces into a
+/// single undoable batch — only the first char of a typing burst records a
+/// step. Rejected or empty pastes do not record history or discard redo. An
+/// event batch is not an undo transaction: accepted edits retain their normal
+/// undo grouping even when their net content change is zero.
+///
+/// Steps are stored as edit records (the changed rows before and after),
+/// not as copies of the document, so retained memory scales with what was
+/// edited: history keeps one copy of the document, taken at the first
+/// recorded edit, plus the records. History is capped at
+/// [`history_max`](Self::history_max) steps (default `100`) and
+/// [`history_max_bytes`](Self::history_max_bytes) of records (default
+/// 8 MiB); the oldest steps are dropped first and the newest step is always
+/// kept. Changing [`lines`](Self::lines) directly between edits is recorded
+/// exactly like an edit made by the widget.
 ///
 /// # Selection
 ///
@@ -1624,17 +1670,9 @@ pub struct TextareaState {
     pub wrap_width: Option<u32>,
     /// First visible visual line (managed internally by `textarea()`).
     pub scroll_offset: usize,
-    /// Undo/redo snapshot stack. Newest entry is at the tip; the index walks
-    /// backward on `Ctrl+Z` and forward on `Ctrl+Y`.
-    pub(crate) history: Vec<TextareaSnapshot>,
-    /// Pointer into [`history`](Self::history) for the next undo target.
-    pub(crate) history_index: usize,
-    /// Maximum [`history`](Self::history) length before the oldest snapshot is
-    /// evicted. Defaults to [`DEFAULT_TEXTAREA_HISTORY_MAX`].
-    pub(crate) history_max: usize,
-    /// Live state captured by the first undo. Kept outside `history` so redo
-    /// does not consume one of the bounded past-snapshot slots.
-    pub(crate) redo_tip: Option<TextareaSnapshot>,
+    /// Undo/redo steps as delta records (#415); the count cap and byte
+    /// budget live inside.
+    pub(crate) history: TextareaHistory,
     /// Whether the previous keypress was a `Char` insert. Used to coalesce
     /// rapid typing into a single undoable burst — when true, the next `Char`
     /// keypress does not push a snapshot.
@@ -1653,6 +1691,8 @@ pub struct TextareaState {
     /// caret glyph, which shifts the cells after it by one. Used to map
     /// mouse positions back to text positions.
     pub(crate) caret_glyph: Option<(usize, usize)>,
+    /// Issue #415: soft-wrap layout reused while the document is unchanged.
+    pub(crate) wrap_cache: TextareaWrapCache,
 }
 
 impl Clone for TextareaState {
@@ -1668,9 +1708,6 @@ impl Clone for TextareaState {
             wrap_width: self.wrap_width,
             scroll_offset: self.scroll_offset,
             history: self.history.clone(),
-            history_index: self.history_index,
-            history_max: self.history_max,
-            redo_tip: self.redo_tip.clone(),
             last_was_char_insert: self.last_was_char_insert,
             navigation: self.navigation,
             focus_key: crate::runtime::next_state_focus_key(),
@@ -1678,6 +1715,7 @@ impl Clone for TextareaState {
             pointer: PointerSelect::default(),
             ctrl_a_disabled: self.ctrl_a_disabled,
             caret_glyph: None,
+            wrap_cache: TextareaWrapCache::default(),
         }
     }
 }
@@ -1692,10 +1730,7 @@ impl TextareaState {
             max_length: None,
             wrap_width: None,
             scroll_offset: 0,
-            history: Vec::new(),
-            history_index: 0,
-            history_max: DEFAULT_TEXTAREA_HISTORY_MAX,
-            redo_tip: None,
+            history: TextareaHistory::new(DEFAULT_TEXTAREA_HISTORY_MAX),
             last_was_char_insert: false,
             navigation: None,
             focus_key: crate::runtime::next_state_focus_key(),
@@ -1703,6 +1738,7 @@ impl TextareaState {
             pointer: PointerSelect::default(),
             ctrl_a_disabled: false,
             caret_glyph: None,
+            wrap_cache: TextareaWrapCache::default(),
         }
     }
 
@@ -1741,8 +1777,6 @@ impl TextareaState {
         self.cursor_col = 0;
         self.scroll_offset = 0;
         self.history.clear();
-        self.history_index = 0;
-        self.redo_tip = None;
         self.last_was_char_insert = false;
         self.navigation = None;
         self.anchor = None;
@@ -1935,16 +1969,39 @@ impl TextareaState {
         self
     }
 
-    /// Override the maximum number of undo snapshots kept (default `100`).
+    /// Override the maximum number of undo steps kept (default `100`).
     ///
-    /// When the history exceeds this cap the oldest snapshot is dropped.
+    /// When the history exceeds this cap the oldest step is dropped.
     /// Setting `0` disables undo recording — the field is read every keypress.
     pub fn history_max(mut self, cap: usize) -> Self {
-        self.history_max = cap;
+        self.history.max = cap;
         self
     }
 
-    /// Number of undo snapshots currently retained.
+    /// Override the byte budget for retained undo records (default 8 MiB).
+    ///
+    /// Each undo step stores the rows it changed, before and after; when the
+    /// records together exceed `bytes` the oldest steps are dropped. The
+    /// newest step is always kept, however large. The budget does not
+    /// include the one copy of the document that history keeps once an
+    /// edit has been recorded. Use [`history_max`](Self::history_max)`(0)`
+    /// to disable history entirely.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextareaState;
+    ///
+    /// let state = TextareaState::new().history_max_bytes(1 << 20);
+    /// assert_eq!(state.history_bytes_cap(), 1 << 20);
+    /// assert_eq!(state.history_bytes(), 0);
+    /// ```
+    pub fn history_max_bytes(mut self, bytes: usize) -> Self {
+        self.history.max_bytes = bytes;
+        self
+    }
+
+    /// Number of undo steps currently retained.
     ///
     /// Read-only — useful for tests and debugging the history cap. The cap
     /// itself is set via [`history_max`](Self::history_max).
@@ -1952,96 +2009,77 @@ impl TextareaState {
         self.history.len()
     }
 
-    /// Maximum number of undo snapshots retained.
+    /// Maximum number of undo steps retained.
     ///
     /// Mirrors [`history_max`](Self::history_max) (the builder setter) but as
     /// a getter — useful for tests asserting the cap stays bounded.
     pub fn history_cap(&self) -> usize {
-        self.history_max
+        self.history.max
     }
 
-    /// Push a snapshot of the current content + cursor onto the undo stack.
-    ///
-    /// Truncates any redo tail beyond `history_index`, appends the snapshot,
-    /// and caps the stack at [`history_max`](Self::history_max) by dropping the
-    /// oldest entry. `history_index` is left pointing one past the newest
-    /// snapshot so the next `Ctrl+Z` returns to the just-pushed state.
-    pub(crate) fn push_history(&mut self) {
-        if self.history_max == 0 {
-            return;
-        }
-        // Drop any redo tail — a fresh edit invalidates the redo branch.
-        if self.history_index < self.history.len() {
-            self.history.truncate(self.history_index);
-        }
-        self.redo_tip = None;
-        self.history.push(TextareaSnapshot {
-            lines: self.lines.clone(),
+    /// Approximate bytes retained by undo records (the changed rows of each
+    /// step plus per-record overhead), excluding the history's one copy of
+    /// the document. Bounded by
+    /// [`history_max_bytes`](Self::history_max_bytes) except for the newest
+    /// step.
+    pub fn history_bytes(&self) -> usize {
+        self.history.bytes()
+    }
+
+    /// Byte budget for undo records, as set by
+    /// [`history_max_bytes`](Self::history_max_bytes).
+    pub fn history_bytes_cap(&self) -> usize {
+        self.history.max_bytes
+    }
+
+    fn history_meta(&self) -> TextareaMeta {
+        TextareaMeta {
             cursor_row: self.cursor_row,
             cursor_col: self.cursor_col,
             navigation: self.navigation,
-        });
-        // Evict oldest when over the cap. `Vec::remove(0)` is O(n) but the
-        // history cap is small (default 100) and this only runs at the cap
-        // boundary, so the cost is bounded.
-        while self.history.len() > self.history_max {
-            self.history.remove(0);
         }
-        self.history_index = self.history.len();
     }
 
-    /// Walk the undo index back one step and apply the snapshot.
+    fn restore_meta(&mut self, meta: TextareaMeta) {
+        self.cursor_row = meta.cursor_row;
+        self.cursor_col = meta.cursor_col;
+        self.navigation = meta.navigation;
+    }
+
+    /// Record the current content + cursor as an undo step.
+    ///
+    /// Drops any redo branch, then evicts the oldest steps beyond
+    /// [`history_max`](Self::history_max) or
+    /// [`history_max_bytes`](Self::history_max_bytes). The next `Ctrl+Z`
+    /// returns to the recorded state.
+    pub(crate) fn push_history(&mut self) {
+        let meta = self.history_meta();
+        self.history.push(&self.lines, meta);
+    }
+
+    /// Step back to the previous recorded state.
     ///
     /// No-op when the history is empty or already at the start. Returns `true`
-    /// when a snapshot was applied.
+    /// when a state was restored.
     pub(crate) fn undo(&mut self) -> bool {
-        if self.history.is_empty() || self.history_index == 0 {
+        let live = self.history_meta();
+        let Some(meta) = self.history.undo(&mut self.lines, live) else {
             return false;
-        }
-        // Keep the live tip outside the bounded past-snapshot vector so the
-        // first undo remains redoable even when `history_max == 1`.
-        if self.history_index == self.history.len() {
-            self.redo_tip = Some(TextareaSnapshot {
-                lines: self.lines.clone(),
-                cursor_row: self.cursor_row,
-                cursor_col: self.cursor_col,
-                navigation: self.navigation,
-            });
-        }
-        self.history_index -= 1;
-        let snap = &self.history[self.history_index];
-        self.lines = snap.lines.clone();
-        self.cursor_row = snap.cursor_row;
-        self.cursor_col = snap.cursor_col;
-        self.navigation = snap.navigation;
+        };
+        self.restore_meta(meta);
         true
     }
 
-    /// Walk the undo index forward one step and apply the snapshot.
+    /// Step forward to the next recorded state (or the state before the
+    /// first undo).
     ///
-    /// No-op when already at the redo tip. Returns `true` when a snapshot was
-    /// applied.
+    /// No-op when already at the newest state. Returns `true` when a state
+    /// was restored.
     pub(crate) fn redo(&mut self) -> bool {
-        if self.history_index < self.history.len().saturating_sub(1) {
-            self.history_index += 1;
-            let snap = &self.history[self.history_index];
-            self.lines = snap.lines.clone();
-            self.cursor_row = snap.cursor_row;
-            self.cursor_col = snap.cursor_col;
-            self.navigation = snap.navigation;
-            return true;
-        }
-        if self.history_index + 1 != self.history.len() {
-            return false;
-        }
-        let Some(snap) = self.redo_tip.as_ref() else {
+        let Some(meta) = self.history.redo(&mut self.lines) else {
             return false;
         };
-        self.history_index = self.history.len();
-        self.lines = snap.lines.clone();
-        self.cursor_row = snap.cursor_row;
-        self.cursor_col = snap.cursor_col;
-        self.navigation = snap.navigation;
+        self.restore_meta(meta);
         true
     }
 }

@@ -665,7 +665,7 @@ impl Context {
     /// current line. `Ctrl+Left` / `Alt+Left` jumps to the previous word
     /// boundary; `Ctrl+Right` / `Alt+Right` jumps past the next word end.
     /// `Ctrl+Z` undoes the last edit and `Ctrl+Y` redoes it — see the
-    /// [`TextareaState`] docs for the snapshot policy.
+    /// [`TextareaState`] docs for the undo history policy.
     pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
         if state.lines.is_empty() {
             state.lines.push(String::new());
@@ -714,10 +714,15 @@ impl Context {
             },
         );
 
-        let vlines = wrapping
-            .then(|| vlines.unwrap_or_else(|| textarea_build_visual_lines(&state.lines, wrap_w)));
+        // Issue #415: reuse last frame's soft-wrap layout while the document
+        // and width are unchanged instead of re-wrapping it every frame.
+        let mut wrap_cache = std::mem::take(&mut state.wrap_cache);
+        let vlines = match (&vlines, wrapping) {
+            (_, false) => None,
+            (Some(map), true) => Some(map.as_slice()),
+            (None, true) => Some(wrap_cache.visual_lines(&state.lines, wrap_w)),
+        };
         let (cursor_vrow, cursor_vcol) = vlines
-            .as_ref()
             .map_or((state.cursor_row, state.cursor_col), |map| {
                 visual_cursor(state, map)
             });
@@ -758,7 +763,7 @@ impl Context {
         state.caret_glyph = focused.then_some((cursor_vrow, cursor_vcol));
         for vi in 0..visible_rows as usize {
             let actual_vi = state.scroll_offset + vi;
-            let (seg_text, seg_selection) = if let Some(map) = &vlines {
+            let (seg_text, seg_selection) = if let Some(map) = vlines {
                 if let Some(vl) = map.get(actual_vi) {
                     let line = &state.lines[vl.logical_row];
                     let start = byte_index_for_grapheme(line, vl.char_start);
@@ -843,6 +848,7 @@ impl Context {
         }
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        state.wrap_cache = wrap_cache;
 
         response.changed = pre_lines.is_some_and(|before| state.lines != before) || a11y_changed;
         if let Some(begin) = a11y {
