@@ -89,7 +89,7 @@ impl Context {
         let last_line_index = lines.len().saturating_sub(1);
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -105,7 +105,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.skip_interaction_slot();
 
         let text_style = Style::new().fg(self.theme.text);

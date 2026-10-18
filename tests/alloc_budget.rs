@@ -113,8 +113,9 @@ fn framestate_reuse_steady_state_alloc_count_low() {
     // (one per field). With the fix, those six are reused across frames so
     // the count is dominated by per-render content allocations (e.g.
     // formatting). Since #488 the layout tree storage is recycled too: the
-    // frame measures 4 allocations (title, two texts, one boxed container
-    // command), down from 9 before #488.
+    // frame measures 4 allocations, down from 9 before #488. Since v0.26 the
+    // container command is inline and only its rare title is boxed, so the
+    // four are the title `String`, its box and the two texts.
     let (_, count) = measure_allocs("framestate_100_frames", || {
         for _ in 0..100 {
             tb.render(|ui| {
@@ -867,12 +868,12 @@ fn layout_tree_allocations_do_not_scale_per_node() {
     let small = bordered_boxes_allocs(10);
     let large = bordered_boxes_allocs(40);
     let extra = large.saturating_sub(small);
-    // Each extra box records one boxed `BeginContainerArgs` command and one
-    // label `String`; both belong to the command stream, not the tree. Before
-    // #488 the tree added a `children` vector and a `TextNodeData` box per
-    // box (4 allocations per box per frame).
+    // Each extra box records one label `String` (the user's `&str` becomes
+    // an owned `String` in `ui.text`). Before #488 the tree added a
+    // `children` vector and a `TextNodeData` box per box (4 allocations per
+    // box per frame); before v0.26 the container command was boxed (+1).
     assert!(
-        extra <= 30 * FRAMES * 2,
-        "30 extra boxes added {extra} allocations over {FRAMES} frames (budget 2 per box per frame)"
+        extra <= 30 * FRAMES,
+        "30 extra boxes added {extra} allocations over {FRAMES} frames (budget 1 per box per frame)"
     );
 }

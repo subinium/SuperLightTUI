@@ -353,7 +353,7 @@ fn render_diff(ctx: &mut Context, state: &mut DiffState, opts: DiffOpts<'_>) -> 
     let palette = DiffPalette::new(&theme, opts.colors, focused);
 
     ctx.commands
-        .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        .push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -369,7 +369,7 @@ fn render_diff(ctx: &mut Context, state: &mut DiffState, opts: DiffOpts<'_>) -> 
             title: None,
             grow: 0,
             group_name: None,
-        })));
+        }));
 
     let row_opts = RowOpts {
         width: width as usize,

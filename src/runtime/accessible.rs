@@ -602,12 +602,12 @@ fn harvest(commands: &[Command], frame: &mut A11yFrame) {
             Command::BeginContainer(args) => builder.open(
                 items,
                 args.direction == Direction::Row,
-                args.title.as_ref().map(|(title, _)| title.as_str()),
+                args.title.as_deref().map(|(title, _)| title.as_str()),
             ),
             Command::BeginScrollable(args) => builder.open(
                 items,
                 args.direction == Direction::Row,
-                args.title.as_ref().map(|(title, _)| title.as_str()),
+                args.title.as_deref().map(|(title, _)| title.as_str()),
             ),
             Command::BeginOverlay { .. } => builder.open(items, false, None),
             Command::EndContainer | Command::EndOverlay => builder.close(items),

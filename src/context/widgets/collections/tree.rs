@@ -55,7 +55,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -71,7 +71,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let entries = state.flatten();
         for (idx, entry) in entries.iter().enumerate() {
@@ -179,7 +179,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -195,7 +195,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let mut rows = Vec::new();
         flatten_directory_rows(&state.tree.nodes, Vec::new(), &mut rows);

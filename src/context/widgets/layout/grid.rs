@@ -23,7 +23,7 @@ impl Context {
         let border = self.theme.border;
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -39,7 +39,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let children_start = self.commands.len();
         f(self);
@@ -52,7 +52,7 @@ impl Context {
         for row in elements.chunks(cols) {
             self.skip_interaction_slot();
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -68,12 +68,12 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
 
             for element in row {
                 self.skip_interaction_slot();
                 self.commands
-                    .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    .push(Command::BeginContainer(BeginContainerArgs {
                         direction: Direction::Column,
                         gap: 0,
                         align: Align::Start,
@@ -89,7 +89,7 @@ impl Context {
                         title: None,
                         grow: 1,
                         group_name: None,
-                    })));
+                    }));
                 self.commands.extend(element.iter().cloned());
                 self.commands.push(Command::EndContainer);
             }
@@ -150,7 +150,7 @@ impl Context {
         let border = self.theme.border;
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -166,7 +166,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let children_start = self.commands.len();
         f(self);
@@ -178,7 +178,7 @@ impl Context {
         for row in elements.chunks(cols) {
             self.skip_interaction_slot();
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -194,7 +194,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
 
             for (col_idx, element) in row.iter().enumerate() {
                 let spec = columns.get(col_idx).copied().unwrap_or(GridColumn::Auto);
@@ -207,7 +207,7 @@ impl Context {
 
                 self.skip_interaction_slot();
                 self.commands
-                    .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                    .push(Command::BeginContainer(BeginContainerArgs {
                         direction: Direction::Column,
                         gap: 0,
                         align: Align::Start,
@@ -223,7 +223,7 @@ impl Context {
                         title: None,
                         grow,
                         group_name: None,
-                    })));
+                    }));
                 self.commands.extend(element.iter().cloned());
                 self.commands.push(Command::EndContainer);
             }

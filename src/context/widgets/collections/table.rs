@@ -253,7 +253,7 @@ impl Context {
         };
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -269,7 +269,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         self.render_table_header(state, colors);
         self.render_table_rows(
@@ -602,7 +602,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -618,7 +618,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         if use_dots {
             let active_color = colors.accent.unwrap_or(self.theme.primary);

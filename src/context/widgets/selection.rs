@@ -82,7 +82,7 @@ impl Context {
 
         let tabs_gap = self.theme.spacing.xs();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: tabs_gap as i32,
                 align: Align::Start,
@@ -98,7 +98,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         for (idx, label) in state.labels.iter().enumerate() {
             let style = if idx == state.selected {
                 let s = Style::new()
@@ -158,7 +158,7 @@ impl Context {
         };
         let cb_gap = self.theme.spacing.xs();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: cb_gap as i32,
                 align: Align::Start,
@@ -174,7 +174,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         let marker_style = if *checked {
             Style::new().fg(colors.accent.unwrap_or(self.theme.success))
         } else {
@@ -247,7 +247,7 @@ impl Context {
         };
         let toggle_gap = self.theme.spacing.sm();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: toggle_gap as i32,
                 align: Align::Start,
@@ -263,7 +263,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         let label_text = label.into();
         let a11y_name = a11y.as_ref().map(|_| label_text.clone());
         let switch = if *on { "●━━ ON" } else { "━━● OFF" };
@@ -526,7 +526,7 @@ impl Context {
         let arrow = if state.open { "▲" } else { "▼" };
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -542,7 +542,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         self.render_select_trigger(&display_text, arrow, border_color, colors);
 
@@ -568,7 +568,7 @@ impl Context {
         let trig_gap = self.theme.spacing.xs();
         let trig_h = self.theme.spacing.xs();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: trig_gap as i32,
                 align: Align::Start,
@@ -589,7 +589,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.skip_interaction_slot();
         self.styled(
             display_text,
@@ -739,7 +739,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -755,7 +755,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         for (idx, item) in state.items.iter().enumerate() {
             let is_selected = idx == state.selected;
@@ -847,7 +847,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -863,7 +863,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         for (idx, item) in state.items().iter().enumerate() {
             let checked = state.selected.contains(&idx);
@@ -1104,7 +1104,7 @@ impl Context {
         let text_color = colors.fg.unwrap_or(self.theme.text);
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -1120,13 +1120,13 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         // Swatch grid: one Row container per grid row, one cell per swatch.
         let rows = state.colors.len().div_ceil(columns);
         for row in 0..rows {
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -1142,7 +1142,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
             for col in 0..columns {
                 let idx = row * columns + col;
                 let Some(&swatch) = state.colors.get(idx) else {

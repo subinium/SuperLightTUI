@@ -735,7 +735,7 @@ impl Context {
 
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -751,7 +751,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let selection = state.selection();
         let selected_style = self.theme.text_selection_style();

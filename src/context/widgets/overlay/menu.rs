@@ -718,7 +718,7 @@ impl Context {
             .fg(self.theme.selected_fg)
             .bg(self.theme.selected_bg);
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -734,7 +734,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         for (index, (title, _)) in state.menus.iter().enumerate() {
             let style = if state.active && index == state.selected {
                 highlight

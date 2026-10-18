@@ -196,7 +196,7 @@ impl Context {
             SplitOrientation::Vertical => (Constraints::default().h(1).w_pct(100), '─'),
         };
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -212,7 +212,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.container().grow(1).draw(move |buffer, rect| {
             for y in rect.y..rect.bottom() {
                 for x in rect.x..rect.right() {

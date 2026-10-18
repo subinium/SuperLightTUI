@@ -1554,7 +1554,7 @@ fn build_children(
                     title,
                     grow,
                     group_name,
-                } = *args;
+                } = args;
                 let mut node = LayoutNode::container(
                     direction,
                     ContainerConfig {
@@ -1569,7 +1569,7 @@ fn build_children(
                         padding,
                         margin,
                         constraints,
-                        title,
+                        title: title.map(|title| *title),
                         grow,
                     },
                 );
@@ -1612,7 +1612,7 @@ fn build_children(
                     scroll_follow_focus,
                     scroll_state_id,
                     group_name,
-                } = *args;
+                } = args;
                 // #247: honor the caller's `.row()` / `.col()` direction instead
                 // of hardcoding `Direction::Column`. A `Row` scrollable scrolls
                 // horizontally; a `Column` scrollable scrolls vertically. The
@@ -1632,7 +1632,7 @@ fn build_children(
                         padding,
                         margin,
                         constraints,
-                        title,
+                        title: title.map(|title| *title),
                         grow,
                     },
                 );
