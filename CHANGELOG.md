@@ -83,6 +83,14 @@
   `selected_fg`) and `Theme::text_selection_style()`. A drag inside a text
   widget no longer starts the screen-level selection overlay.
 
+### Fixed
+
+- Inserting into a `max_length`-limited `text_input` / `textarea` now keeps
+  the longest prefix whose resulting text fits even when inserted text joins
+  the graphemes around the cursor (ZWJ emoji sequences, conjoining Hangul
+  jamo, CR+LF, Indic conjuncts) (#496). The old search only examined a fixed
+  window of `budget + 2` clusters and could drop text that fits.
+
 ### Deprecated
 
 - `TextInputState::validate` is renamed `TextInputState::validate_now`

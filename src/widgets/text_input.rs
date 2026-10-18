@@ -37,19 +37,46 @@ pub(crate) fn prepare_text_insert(
         return Some((result, byte + text.len()));
     }
     let max = max_length?;
-    // Concatenation can merge one cluster at either insertion edge (RI runs
-    // can also change pairing). Examine the two extra candidates against the
-    // complete resulting string, not an additive pre-insertion length check.
-    let budget = max.saturating_sub(value.graphemes(true).count());
-    let mut ends = [0; 3];
-    for (start, cluster) in text.grapheme_indices(true).take(budget.saturating_add(2)) {
-        ends.rotate_left(1);
-        ends[2] = start + cluster.len();
-    }
-    for end in ends.into_iter().rev() {
-        if end == 0 || end == text.len() {
-            continue;
-        }
+    // The longest prefix of `text`, cut at one of its own grapheme
+    // boundaries, whose *resulting* string fits `max` (issue #496).
+    //
+    // Inserted clusters can merge into the grapheme before the cursor (ZWJ
+    // emoji sequences, conjoining jamo, combining marks, CR+LF), and the cut
+    // end can merge into the grapheme after it, so the answer is not a fixed
+    // number of clusters past the remaining budget. Two facts keep the
+    // search exact and cheap:
+    //
+    // * `prefix(e) = graphemes(before + text[..e])` never decreases with `e`:
+    //   UAX #29 boundaries depend only on what precedes them (plus the next
+    //   scalar), so appending text never removes a boundary inside the
+    //   already-segmented part.
+    // * `prefix(e) <= total(e) <= prefix(e) + after_count`, and gluing `after`
+    //   on removes at most two boundaries (the junction, plus one inside
+    //   `after` when GB11 / GB9c look back across it; RI pairing keeps the
+    //   count). So no end with `prefix(e) > max + 2 - after_count` can fit,
+    //   and every end with `prefix(e) + after_count <= max` fits.
+    //
+    // Binary search the first bound, then walk down exactly; only the few
+    // ends between the two bounds need a full count.
+    const MAX_JUNCTION_LOSS: usize = 2;
+    let before = &value[..byte];
+    let after = &value[byte..];
+    let after_count = after.graphemes(true).count();
+    let ends: Vec<usize> = text
+        .grapheme_indices(true)
+        .map(|(start, cluster)| start + cluster.len())
+        .filter(|&end| end < text.len())
+        .collect();
+    let prefix_count = |end: usize| {
+        let mut joined = String::with_capacity(before.len() + end);
+        joined.push_str(before);
+        joined.push_str(&text[..end]);
+        joined.graphemes(true).count()
+    };
+    let ceiling = (max + MAX_JUNCTION_LOSS).checked_sub(after_count)?;
+    // `ends[..upper]` are the ends whose prefix count is within `ceiling`.
+    let upper = ends.partition_point(|&end| prefix_count(end) <= ceiling);
+    for &end in ends[..upper].iter().rev() {
         let candidate = build(&text[..end]);
         if candidate.graphemes(true).count() <= max {
             return Some((candidate, byte + end));
@@ -91,18 +118,95 @@ mod insertion_regressions {
         .prop_map(|chars| chars.into_iter().collect())
     }
 
+    /// Exhaustive reference: the longest prefix of `inserted` (cut at one of
+    /// its own grapheme boundaries) whose *resulting* string fits `max`.
+    fn reference(
+        value: &str,
+        cursor: usize,
+        inserted: &str,
+        max: usize,
+    ) -> Option<(String, usize)> {
+        let byte = value
+            .grapheme_indices(true)
+            .nth(cursor)
+            .map_or(value.len(), |(byte, _)| byte);
+        inserted
+            .grapheme_indices(true)
+            .map(|(start, cluster)| start + cluster.len())
+            .filter_map(|end| {
+                let candidate = format!("{}{}{}", &value[..byte], &inserted[..end], &value[byte..]);
+                (candidate.graphemes(true).count() <= max).then_some((candidate, byte + end))
+            })
+            .next_back()
+    }
+
+    fn check(value: &str, cursor: usize, inserted: &str, max: usize) {
+        let byte = value
+            .grapheme_indices(true)
+            .nth(cursor)
+            .map_or(value.len(), |(byte, _)| byte);
+        assert_eq!(
+            prepare_text_insert(value, byte, inserted, Some(max)),
+            reference(value, cursor, inserted, max),
+            "value={value:?} cursor={cursor} inserted={inserted:?} max={max}"
+        );
+    }
+
+    /// Issue #496: proptest shrink. The inserted ZWJ and emoji both merge
+    /// into the emoji before the cursor, and a truncated prefix ending in a
+    /// leading jamo joins the vowel jamo after the cursor, so the fitting
+    /// prefix lies further out than a fixed `budget + 2` cluster window.
+    #[test]
+    fn issue_496_zwj_and_jamo_joins_across_the_cursor() {
+        check("aकककa👩ᅡ🇰कaᄀaᄀ", 6, "\u{200d}👩\raᆨकaaaᅡकaaᄀa", 24);
+    }
+
+    #[test]
+    fn leading_jamo_at_cursor_joins_inserted_vowel() {
+        // value "ᄀ|x": inserting V after L forms one syllable.
+        check("ᄀx", 1, "ᅡbcd", 3);
+        check("ᄀx", 1, "ᅡᆨbcd", 3);
+    }
+
+    #[test]
+    fn vowel_and_trailing_jamo_join_across_the_cursor() {
+        // "가" (L+V) before the cursor, T inserted: still one syllable.
+        check("\u{1100}\u{1161}x", 1, "\u{11a8}yz", 2);
+        // V before the cursor, T + more inserted, limit hit right away.
+        check("\u{1100}\u{1161}\u{1100}", 1, "\u{11a8}\u{1161}q", 3);
+    }
+
+    #[test]
+    fn limit_hit_mid_syllable() {
+        // The cut must fall on a boundary of the inserted text while the
+        // resulting syllable count stays within the limit.
+        check("ab", 1, "\u{1100}\u{1161}\u{11a8}\u{1100}\u{1161}", 3);
+        check("ab", 1, "\u{1100}\u{1161}\u{11a8}\u{1100}\u{1161}", 4);
+        check("a\u{1100}", 2, "\u{1161}\u{11a8}\u{1100}\u{1161}x", 2);
+    }
+
+    #[test]
+    fn long_zwj_chain_merges_into_the_emoji_before_the_cursor() {
+        let chain: String = "\u{200d}👩".repeat(40);
+        check("👩b", 1, &format!("{chain}xyz"), 3);
+        check("👩b", 1, &format!("{chain}xyz"), 2);
+    }
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|cases| cases.parse().ok())
+            .unwrap_or(2048)
+    }
+
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(2048))]
+        #![proptest_config(ProptestConfig::with_cases(cases()))]
         #[test]
         fn limited_insert_matches_exhaustive_resulting_grapheme_reference(
             value in text(), inserted in text(), cursor in 0usize..24, max in 0usize..30,
         ) {
             let byte = value.grapheme_indices(true).nth(cursor).map_or(value.len(), |(byte, _)| byte);
-            let expected = inserted.grapheme_indices(true).map(|(start, cluster)| start + cluster.len())
-                .filter_map(|end| {
-                    let candidate = format!("{}{}{}", &value[..byte], &inserted[..end], &value[byte..]);
-                    (candidate.graphemes(true).count() <= max).then_some((candidate, byte + end))
-                }).next_back();
+            let expected = reference(&value, cursor, &inserted, max);
             prop_assert_eq!(prepare_text_insert(&value, byte, &inserted, Some(max)), expected);
         }
     }
