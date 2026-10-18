@@ -252,14 +252,21 @@ fn use_memo_ref_still_compiles() {
 #[test]
 fn interaction_allocator_keeps_dense_slots_and_explicit_markers() {
     let mut state = FrameState::default();
-    let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
+    // #439: presses are kept as events and resolved lazily against the hit
+    // map, so a test may install `prev_hit_map` after construction.
+    let mut ctx = Context::new(
+        vec![Event::mouse_click(4, 0)],
+        20,
+        5,
+        &mut state,
+        Theme::dark(),
+    );
     ctx.prev_hit_map = vec![
         crate::rect::Rect::new(0, 0, 1, 1),
         crate::rect::Rect::new(2, 0, 1, 1),
         crate::rect::Rect::new(4, 0, 1, 1),
     ];
     ctx.mouse_pos = Some((4, 0));
-    ctx.click_pos = Some((4, 0));
 
     let marked = ctx.next_interaction_id();
     let skipped = ctx.reserve_interaction_slot();
@@ -758,9 +765,14 @@ fn events_blocked_by_modal_guard() {
 #[test]
 fn draw_interactive_emits_interaction_marker_and_raw_draw() {
     let mut state = FrameState::default();
-    let mut ctx = Context::new(Vec::new(), 40, 20, &mut state, Theme::dark());
+    let mut ctx = Context::new(
+        vec![Event::mouse_click(5, 5)],
+        40,
+        20,
+        &mut state,
+        Theme::dark(),
+    );
     ctx.prev_hit_map = vec![crate::rect::Rect::new(0, 0, 40, 20)];
-    ctx.click_pos = Some((5, 5));
 
     let resp = ctx
         .container()

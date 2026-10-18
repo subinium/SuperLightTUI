@@ -15,6 +15,12 @@ pub(crate) struct FrameData {
     pub scroll_infos: Vec<(u32, u32, bool)>,
     pub scroll_rects: Vec<Rect>,
     pub hit_areas: Vec<Rect>,
+    /// Hit-test z-order metadata parallel to `hit_areas` (#439): which paint
+    /// layer, tree depth and paint order each interaction slot had, plus its
+    /// nearest interactive ancestor. Lets the next frame resolve one press to
+    /// the topmost, innermost slot instead of every slot whose rect contains
+    /// the pointer.
+    pub hit_meta: Vec<HitMeta>,
     /// Full node rectangles indexed by interaction ID, in logical layout
     /// coordinates before scroll offsets or viewport clipping. Unlike hit
     /// areas, these preserve offscreen sizes for next-frame measurement.
@@ -24,6 +30,63 @@ pub(crate) struct FrameData {
     pub focus_rects: Vec<(usize, Rect)>,
     pub focus_groups: Vec<Option<Arc<str>>>,
     pub raw_draw_rects: Vec<RawDrawRect>,
+    /// Running paint-order counter for `hit_meta` (#439). Reset by `clear`.
+    hit_order: u32,
+}
+
+/// Sentinel for "no interactive ancestor" in [`HitMeta::parent`].
+pub(crate) const NO_HIT_PARENT: u32 = u32::MAX;
+
+/// Hit-test ordering for one interaction slot, recorded at collect time.
+///
+/// Compared lexicographically by the pointer resolver: a higher `layer`
+/// (later overlay) wins, then a deeper `depth`, then a smaller rect area,
+/// then a later `order`. `parent` links to the nearest ancestor slot in the
+/// same layer so opt-in click bubbling can walk upward.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HitMeta {
+    /// `0` for the base tree, `n` for the n-th painted overlay.
+    pub layer: u16,
+    /// Tree depth of the node that owns the slot.
+    pub depth: u16,
+    /// Paint order among slots (DFS order, overlays after the base tree).
+    pub order: u32,
+    /// Nearest interactive ancestor in the same layer, or [`NO_HIT_PARENT`].
+    pub parent: u32,
+    /// Whether this entry was written this frame (gaps stay `false`).
+    pub live: bool,
+}
+
+impl Default for HitMeta {
+    fn default() -> Self {
+        Self {
+            layer: 0,
+            depth: 0,
+            order: 0,
+            parent: NO_HIT_PARENT,
+            live: false,
+        }
+    }
+}
+
+impl FrameData {
+    fn record_hit(&mut self, id: usize, rect: Rect, layer: u16, depth: usize, parent: u32) {
+        if id >= self.hit_areas.len() {
+            self.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
+        }
+        self.hit_areas[id] = rect;
+        if id >= self.hit_meta.len() {
+            self.hit_meta.resize(id + 1, HitMeta::default());
+        }
+        self.hit_meta[id] = HitMeta {
+            layer,
+            depth: u16::try_from(depth).unwrap_or(u16::MAX),
+            order: self.hit_order,
+            parent,
+            live: true,
+        };
+        self.hit_order = self.hit_order.saturating_add(1);
+    }
 }
 
 impl FrameData {
@@ -36,6 +99,8 @@ impl FrameData {
         self.scroll_infos.clear();
         self.scroll_rects.clear();
         self.hit_areas.clear();
+        self.hit_meta.clear();
+        self.hit_order = 0;
         self.allocated_areas.clear();
         self.group_rects.clear();
         self.content_areas.clear();
@@ -55,6 +120,7 @@ impl FrameData {
         std::mem::swap(&mut self.scroll_infos, &mut feedback.prev_scroll_infos);
         std::mem::swap(&mut self.scroll_rects, &mut feedback.prev_scroll_rects);
         std::mem::swap(&mut self.hit_areas, &mut feedback.prev_hit_map);
+        std::mem::swap(&mut self.hit_meta, &mut feedback.prev_hit_meta);
         std::mem::swap(
             &mut self.allocated_areas,
             &mut feedback.prev_allocated_areas,
@@ -176,12 +242,11 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     {
         data.focus_rects.push((id, visible_rect));
     }
+    let mut hit_parent = NO_HIT_PARENT;
     if let Some(id) = node.interaction_id {
         record_allocated_area(node, data, id);
-        if id >= data.hit_areas.len() {
-            data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
-        }
-        data.hit_areas[id] = visible_rect;
+        data.record_hit(id, visible_rect, 0, 0, NO_HIT_PARENT);
+        hit_parent = u32::try_from(id).unwrap_or(NO_HIT_PARENT);
     }
 
     // #247: scrollable nodes shift their children on exactly one axis.
@@ -208,11 +273,15 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
             parent_scroll,
             logical_clip,
             active_focus,
+            HitScope {
+                layer: 0,
+                parent: hit_parent,
+            },
             1,
         );
     }
 
-    for overlay in &node.overlays {
+    for (index, overlay) in node.overlays.iter().enumerate() {
         collect_all_inner(
             &overlay.node,
             data,
@@ -223,9 +292,20 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
             None,
             Default::default(),
             None,
+            HitScope {
+                layer: u16::try_from(index + 1).unwrap_or(u16::MAX),
+                parent: NO_HIT_PARENT,
+            },
             1,
         );
     }
+}
+
+/// Paint layer and nearest interactive ancestor threaded through the DFS.
+#[derive(Clone, Copy)]
+struct HitScope {
+    layer: u16,
+    parent: u32,
 }
 
 fn record_allocated_area(node: &LayoutNode, data: &mut FrameData, id: usize) {
@@ -266,6 +346,7 @@ fn collect_all_inner(
     parent_scroll: Option<usize>,
     logical_clip: super::focus::LayoutClip,
     active_focus: Option<usize>,
+    hit_scope: HitScope,
     depth: usize,
 ) {
     // Hard upper bound — see `tree::MAX_LAYOUT_DEPTH`. `build_children`
@@ -294,12 +375,17 @@ fn collect_all_inner(
         data.scroll_rects.push(visible_rect.unwrap_or_default());
     }
 
+    let mut child_hit_scope = hit_scope;
     if let Some(id) = node.interaction_id {
         record_allocated_area(node, data, id);
-        if id >= data.hit_areas.len() {
-            data.hit_areas.resize(id + 1, Rect::new(0, 0, 0, 0));
-        }
-        data.hit_areas[id] = visible_rect.unwrap_or_default();
+        data.record_hit(
+            id,
+            visible_rect.unwrap_or_default(),
+            hit_scope.layer,
+            depth,
+            hit_scope.parent,
+        );
+        child_hit_scope.parent = u32::try_from(id).unwrap_or(NO_HIT_PARENT);
     }
 
     if let NodeKind::RawDraw(draw_id) = node.kind
@@ -376,6 +462,7 @@ fn collect_all_inner(
             parent_scroll,
             logical_clip,
             active_focus,
+            child_hit_scope,
             depth + 1,
         );
     }

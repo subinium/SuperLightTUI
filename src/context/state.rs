@@ -325,24 +325,49 @@ impl<T: 'static> Memo<T> {
 pub struct Response {
     /// Whether the widget was left-clicked (or activated) this frame.
     ///
-    /// Mouse clicks require mouse capture (`RunConfig::default().mouse(true)`;
-    /// off by default). Keyboard-activatable widgets such as
-    /// [`button`](Context::button) also set `clicked` on Enter / Space while
-    /// focused, regardless of mouse capture.
+    /// A left press activates only the **topmost, innermost** interactive
+    /// slot under the pointer (since v0.26): a button in an overlay does not
+    /// also click the container drawn behind it, and a clickable row inside a
+    /// clickable card sets `clicked` on the row only. An ancestor opts back in
+    /// with [`ContainerBuilder::bubble_clicks`]; [`clicked_any`](Self::clicked_any)
+    /// keeps the raw "press landed inside my rect" meaning. Every press in a
+    /// frame is kept, so two clicks on two widgets in one batch activate both.
+    ///
+    /// `clicked` fires on the mouse **press**. Widgets that act on a press
+    /// (selection, toggles) feel immediate this way, and it matches SLT's
+    /// pre-0.26 behavior.
+    ///
+    /// Keyboard-activatable widgets such as [`button`](Context::button) also
+    /// set `clicked` on Enter / Space while focused, regardless of the mouse.
     pub clicked: bool,
+    /// Whether a left press landed anywhere inside the widget's rect this
+    /// frame, even when a nested or overlaying slot won the click.
+    ///
+    /// This is the pre-0.26 meaning of `clicked`. Use it for "click inside
+    /// this region" logic that must not depend on which descendant was hit.
+    /// Available since v0.26.0.
+    pub clicked_any: bool,
     /// Whether the widget was right-clicked this frame.
     ///
-    /// Detected when a `MouseButton::Right` `Down` event lands inside the
-    /// widget's `rect`. Suppressed for non-overlay widgets while a modal is
-    /// active (consistent with the existing modal-suppression behavior of
-    /// `clicked` / `hovered`). Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.20.0.
+    /// Detected when a `MouseButton::Right` `Down` event resolves to this
+    /// widget under the same topmost/innermost rule as
+    /// [`clicked`](Self::clicked). Suppressed for non-overlay widgets while a
+    /// modal is active. Available since v0.20.0.
     pub right_clicked: bool,
-    /// Whether the mouse is hovering over the widget.
+    /// Whether the pointer is over the widget's rect.
     ///
-    /// Requires mouse capture (`RunConfig::default().mouse(true)`); always
-    /// `false` otherwise.
+    /// Containment only: an outer card and the button inside it are both
+    /// `hovered` while the pointer is over the button, which is what hover
+    /// styling usually wants. Use [`hovered_top`](Self::hovered_top) for the
+    /// single slot that would receive a click there. Needs pointer motion
+    /// reporting (`RunConfig::mouse(true)`) to track
+    /// moves without a button held.
     pub hovered: bool,
+    /// Whether the widget is the topmost, innermost slot under the pointer:
+    /// the one a press at the current position would activate.
+    ///
+    /// Available since v0.26.0.
+    pub hovered_top: bool,
     /// Whether the widget's value changed this frame.
     pub changed: bool,
     /// Whether the widget currently has keyboard focus.
@@ -366,9 +391,9 @@ pub struct Response {
     /// terminal cell within the double-click window (~400ms). When `true`,
     /// `clicked` is also `true` for the same frame (the second click is still a
     /// click). This is the standard open/activate gesture for file pickers,
-    /// lists, tables, and trees. Suppressed for non-overlay widgets while a
-    /// modal is active, consistent with `clicked`. Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
+    /// lists, tables, and trees. Follows the same topmost/innermost winner rule
+    /// as `clicked` and is suppressed for non-overlay widgets while a modal is
+    /// active. Available since v0.21.1.
     pub double_clicked: bool,
     /// Whether the widget submitted its value this frame.
     ///
@@ -383,8 +408,7 @@ pub struct Response {
     /// not move while the cursor was over the widget's `rect`. Hover-gated, so
     /// each widget consumes only the wheel motion that occurred above it — a
     /// chart, canvas, or custom viewport can scroll/zoom locally without a
-    /// frame-global scroll handler. Requires mouse capture
-    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
+    /// frame-global scroll handler. Available since v0.21.1.
     pub scroll_delta: i32,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,

@@ -1,0 +1,348 @@
+//! Pointer model: per-press hit-target resolution (#439).
+//!
+//! Every mouse press in a frame is kept (not only the last one) and resolved
+//! independently to a single *winner* slot: the topmost, innermost
+//! interaction slot whose previous-frame rect contains the press. Responses
+//! report `clicked` / `right_clicked` / `double_clicked` only for that winner,
+//! so a popup button no longer also clicks the container behind it and a
+//! clickable row inside a clickable card fires once. Ancestors opt back in
+//! with [`ContainerBuilder::bubble_clicks`]; raw containment stays available
+//! as [`Response::clicked_any`].
+
+use super::*;
+use crate::layout::{HitMeta, NO_HIT_PARENT};
+use smallvec::SmallVec;
+use std::cell::OnceCell;
+
+/// Slot flag: the slot never wins hit-testing (CSS `pointer-events: none`).
+/// Used for full-area wrappers SLT creates itself (overlay roots, anchoring
+/// wrappers, tooltip panels) so they do not block the content underneath.
+pub(crate) const HIT_PASSTHROUGH: u8 = 1 << 0;
+/// Slot flag: the slot also receives clicks whose winner is a descendant.
+pub(crate) const HIT_BUBBLE: u8 = 1 << 1;
+
+/// One mouse button press (or release) observed this frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Press {
+    /// Index into `Context::events`.
+    pub event_index: usize,
+    /// Cell position of the press.
+    pub pos: (u32, u32),
+    /// Which button was pressed.
+    pub button: MouseButton,
+    /// Second left press on the same cell inside the double-click window.
+    pub double: bool,
+}
+
+/// Pointer bookkeeping that persists across frames inside `FrameState`.
+#[derive(Default)]
+pub(crate) struct PointerState {
+    /// Slot flags recorded by the previous frame, indexed by interaction id.
+    pub hit_flags_prev: Vec<u8>,
+    /// Recycled buffer for the current frame's slot flags.
+    pub hit_flags_buf: Vec<u8>,
+}
+
+/// Per-frame pointer data owned by `Context`.
+#[derive(Default)]
+pub(crate) struct PointerFrame {
+    /// Every press this frame, in event order.
+    pub presses: SmallVec<[Press; 2]>,
+    /// Previous-frame z-order metadata, parallel to `Context::prev_hit_map`.
+    pub hit_meta: Vec<HitMeta>,
+    /// Previous-frame slot flags (passthrough), indexed by interaction id.
+    pub hit_flags_prev: Vec<u8>,
+    /// This frame's slot flags, swapped into `PointerState` at frame end.
+    pub hit_flags: Vec<u8>,
+    /// Nesting depth of scopes whose containers are hit-transparent.
+    pub passthrough_depth: u32,
+    /// Lazily resolved winner per entry of `presses`.
+    targets: OnceCell<SmallVec<[Option<usize>; 2]>>,
+    /// Lazily resolved winner under the hover position.
+    hover_target: OnceCell<Option<usize>>,
+}
+
+impl PointerFrame {
+    /// Move the persistent pieces out of `state` for one frame.
+    pub(crate) fn begin(state: &mut FrameState) -> Self {
+        let mut hit_flags = std::mem::take(&mut state.pointer.hit_flags_buf);
+        hit_flags.clear();
+        Self {
+            presses: SmallVec::new(),
+            hit_meta: std::mem::take(&mut state.layout_feedback.prev_hit_meta),
+            hit_flags_prev: std::mem::take(&mut state.pointer.hit_flags_prev),
+            hit_flags,
+            passthrough_depth: 0,
+            targets: OnceCell::new(),
+            hover_target: OnceCell::new(),
+        }
+    }
+
+    /// Attach this frame's presses (collected while scanning the events).
+    pub(crate) fn with_presses(mut self, presses: SmallVec<[Press; 2]>) -> Self {
+        self.presses = presses;
+        self
+    }
+
+    /// Hand the persistent pieces back to `state` at frame end. This frame's
+    /// flags become the next frame's `hit_flags_prev`.
+    pub(crate) fn reclaim(&mut self, state: &mut FrameState) {
+        state.layout_feedback.prev_hit_meta = std::mem::take(&mut self.hit_meta);
+        let mut previous = std::mem::take(&mut self.hit_flags_prev);
+        previous.clear();
+        state.pointer.hit_flags_buf = previous;
+        state.pointer.hit_flags_prev = std::mem::take(&mut self.hit_flags);
+    }
+}
+
+/// Hit-test rank: `(layer, depth, smaller area first, paint order)`.
+type HitRank = (u16, u16, std::cmp::Reverse<u64>, u32);
+
+fn rect_contains(rect: &Rect, (x, y): (u32, u32)) -> bool {
+    x >= rect.x && x < rect.right() && y >= rect.y && y < rect.bottom()
+}
+
+impl Context {
+    /// Resolve the topmost, innermost slot under `pos` against the previous
+    /// frame's hit map. `None` when no non-transparent slot contains `pos`.
+    ///
+    /// Ranking: higher overlay layer, then deeper tree depth, then smaller
+    /// area (matching click-to-focus), then later paint order.
+    pub(crate) fn hit_test(&self, pos: (u32, u32)) -> Option<usize> {
+        let mut best: Option<(usize, HitRank)> = None;
+        for (id, rect) in self.prev_hit_map.iter().enumerate() {
+            if rect.width == 0 || rect.height == 0 || !rect_contains(rect, pos) {
+                continue;
+            }
+            if self
+                .pointer
+                .hit_flags_prev
+                .get(id)
+                .is_some_and(|flags| flags & HIT_PASSTHROUGH != 0)
+            {
+                continue;
+            }
+            let meta = self.pointer.hit_meta.get(id).copied().unwrap_or_default();
+            let order = if meta.live {
+                meta.order
+            } else {
+                u32::try_from(id).unwrap_or(u32::MAX)
+            };
+            let key = (
+                meta.layer,
+                meta.depth,
+                std::cmp::Reverse(rect.area_u64()),
+                order,
+            );
+            if best.as_ref().is_none_or(|(_, best_key)| key > *best_key) {
+                best = Some((id, key));
+            }
+        }
+        best.map(|(id, _)| id)
+    }
+
+    /// Winner slot of each press this frame, resolved once on first use.
+    fn press_targets(&self) -> &SmallVec<[Option<usize>; 2]> {
+        self.pointer.targets.get_or_init(|| {
+            self.pointer
+                .presses
+                .iter()
+                .map(|press| self.hit_test(press.pos))
+                .collect()
+        })
+    }
+
+    /// Winner slot under the hover position, resolved once on first use.
+    pub(crate) fn hover_target(&self) -> Option<usize> {
+        *self
+            .pointer
+            .hover_target
+            .get_or_init(|| self.mouse_pos.and_then(|pos| self.hit_test(pos)))
+    }
+
+    /// Whether `ancestor` is a strict ancestor slot of `id` in the previous
+    /// frame's tree (same paint layer).
+    pub(crate) fn is_hit_ancestor(&self, ancestor: usize, id: usize) -> bool {
+        let mut current = id;
+        // Bounded by tree depth; the guard also protects against a corrupted
+        // parent chain ever looping.
+        for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
+            let parent = self
+                .pointer
+                .hit_meta
+                .get(current)
+                .map_or(NO_HIT_PARENT, |meta| meta.parent);
+            if parent == NO_HIT_PARENT {
+                return false;
+            }
+            let parent = parent as usize;
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn hit_flags_now(&self, id: usize) -> u8 {
+        self.pointer.hit_flags.get(id).copied().unwrap_or(0)
+    }
+
+    /// Whether a press resolved to `target` activates slot `id`: the winner
+    /// itself, or an ancestor that opted in with `bubble_clicks`.
+    fn slot_receives(&self, id: usize, target: Option<usize>) -> bool {
+        match target {
+            Some(target) if target == id => true,
+            Some(target) => {
+                self.hit_flags_now(id) & HIT_BUBBLE != 0 && self.is_hit_ancestor(id, target)
+            }
+            None => false,
+        }
+    }
+
+    /// Whether any press with `button` (and optionally only double presses)
+    /// activates slot `id` this frame.
+    pub(crate) fn slot_pressed(&self, id: usize, button: MouseButton, double_only: bool) -> bool {
+        let targets = self.press_targets();
+        self.pointer
+            .presses
+            .iter()
+            .zip(targets.iter())
+            .any(|(press, target)| {
+                press.button == button
+                    && (!double_only || press.double)
+                    && self.slot_receives(id, *target)
+            })
+    }
+
+    /// Whether any left press this frame lands inside `rect`, ignoring the
+    /// winner rule (the pre-#439 `clicked` semantics).
+    pub(crate) fn any_left_press_in(&self, rect: &Rect) -> bool {
+        self.pointer
+            .presses
+            .iter()
+            .any(|press| press.button == MouseButton::Left && rect_contains(rect, press.pos))
+    }
+
+    /// Position of the last left press this frame (click-to-focus and the
+    /// `confirm` widget's inline hit-test).
+    pub(crate) fn last_left_press_pos(&self) -> Option<(u32, u32)> {
+        self.pointer
+            .presses
+            .iter()
+            .rev()
+            .find(|press| press.button == MouseButton::Left)
+            .map(|press| press.pos)
+    }
+
+    fn press_target_for_event(&self, event_index: usize) -> Option<Option<usize>> {
+        let position = self
+            .pointer
+            .presses
+            .iter()
+            .position(|press| press.event_index == event_index)?;
+        Some(self.press_targets()[position])
+    }
+
+    /// Whether the press at `event_index` may reach the composite widget that
+    /// owns `slot`: the winner is the slot itself, one of its descendants, or
+    /// no slot at all. Non-press events always pass.
+    pub(crate) fn press_reaches_slot(&self, event_index: usize, slot: usize) -> bool {
+        match self.press_target_for_event(event_index) {
+            None | Some(None) => true,
+            Some(Some(target)) => target == slot || self.is_hit_ancestor(slot, target),
+        }
+    }
+
+    /// Whether the press at `event_index` landed on overlay content while the
+    /// caller renders in the base layer. Rect-based handlers use this so an
+    /// overlay blocks the widgets drawn underneath it.
+    pub(crate) fn press_blocked_by_overlay(&self, event_index: usize) -> bool {
+        if self.rollback.overlay_depth > 0 {
+            return false;
+        }
+        match self.press_target_for_event(event_index) {
+            Some(Some(target)) => self
+                .pointer
+                .hit_meta
+                .get(target)
+                .is_some_and(|meta| meta.layer > 0),
+            _ => false,
+        }
+    }
+
+    /// Record pointer flags for interaction slot `id` this frame. Slots
+    /// created inside a hit-transparent scope are marked transparent too.
+    pub(crate) fn mark_hit_flags(&mut self, id: usize, mut flags: u8) {
+        if self.pointer.passthrough_depth > 0 {
+            flags |= HIT_PASSTHROUGH;
+        }
+        if flags == 0 {
+            return;
+        }
+        if self.pointer.hit_flags.len() <= id {
+            self.pointer.hit_flags.resize(id + 1, 0);
+        }
+        self.pointer.hit_flags[id] |= flags;
+    }
+
+    /// Build the pointer part of a [`Response`] for slot `id` at `rect`.
+    pub(crate) fn pointer_response(&self, id: usize, rect: Rect) -> Response {
+        let hovered = self.mouse_pos.is_some_and(|pos| rect_contains(&rect, pos));
+        // v0.21.1: per-widget wheel delta is hover-gated — only the widget
+        // under the cursor when the wheel moved sees a non-zero delta.
+        let scroll_delta = self
+            .scroll_pos
+            .filter(|&pos| rect_contains(&rect, pos))
+            .map_or(0, |_| self.scroll_delta_frame);
+        Response {
+            clicked: self.slot_pressed(id, MouseButton::Left, false),
+            clicked_any: self.any_left_press_in(&rect),
+            right_clicked: self.slot_pressed(id, MouseButton::Right, false),
+            double_clicked: self.slot_pressed(id, MouseButton::Left, true),
+            hovered,
+            hovered_top: hovered && self.hover_target() == Some(id),
+            scroll_delta,
+            rect,
+            ..Response::default()
+        }
+    }
+}
+
+impl ContainerBuilder<'_> {
+    /// Also report clicks that land on a nested interactive descendant.
+    ///
+    /// Since v0.26 a press activates only the topmost, innermost interactive
+    /// slot under the pointer: a clickable row inside a clickable card sets
+    /// `clicked` on the row, not on the card. Call `bubble_clicks()` on the
+    /// outer container to receive those clicks as well (like a DOM handler
+    /// that does not call `stopPropagation`). `right_clicked` and
+    /// `double_clicked` bubble the same way. For raw containment, read
+    /// [`Response::clicked_any`] instead.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # slt::TestBackend::new(30, 5).render(|ui| {
+    /// let card = ui.bordered(slt::Border::Rounded).bubble_clicks().col(|ui| {
+    ///     if ui.button("Open").clicked {
+    ///         // the button fires
+    ///     }
+    /// });
+    /// if card.clicked {
+    ///     // ...and so does the card, because it opted in
+    /// }
+    /// # });
+    /// ```
+    pub fn bubble_clicks(mut self) -> Self {
+        self.pointer_flags |= HIT_BUBBLE;
+        self
+    }
+
+    /// Make this container's own slot transparent to hit-testing. Children
+    /// still receive clicks. Used for SLT's internal full-area wrappers.
+    pub(crate) fn hit_passthrough(mut self) -> Self {
+        self.pointer_flags |= HIT_PASSTHROUGH;
+        self
+    }
+}

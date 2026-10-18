@@ -48,10 +48,12 @@ Most widgets and every container return a `#[must_use]` `Response`:
 
 | Field | Meaning | Needs mouse? |
 |-------|---------|--------------|
-| `clicked` | Left-clicked this frame, or activated with Enter/Space on keyboard-activatable widgets | Click: yes. Keyboard activation: no |
+| `clicked` | Left-clicked this frame (topmost, innermost target only), or activated with Enter/Space on keyboard-activatable widgets | Click: yes. Keyboard activation: no |
+| `clicked_any` | A left press landed anywhere in the rect, even if a nested or overlaying slot won it | Yes |
 | `double_clicked` | Two left presses on the same cell within ~400 ms (`clicked` is also `true`) | Yes |
 | `right_clicked` | Right button pressed inside the widget | Yes |
-| `hovered` | Pointer is over the widget | Yes |
+| `hovered` | Pointer is over the widget's rect (an outer card and the button in it are both hovered) | Yes |
+| `hovered_top` | This widget is the one a press at the pointer would hit | Yes |
 | `scroll_delta` | Net wheel motion over the widget this frame (positive = up) | Yes |
 | `focused` | Widget currently has keyboard focus | No |
 | `gained_focus` / `lost_focus` | Focus arrived / left this frame | No |
@@ -93,6 +95,31 @@ for (i, item) in items.iter().enumerate() {
     }
 }
 ```
+
+A press goes to **one** target: the topmost, innermost interactive slot under
+the pointer. A button inside a clickable row sets `clicked` on the button
+only, and a click on overlay content does not reach the widget drawn under it.
+Every container counts as a slot, so a plain `ui.row(..)` inside a clickable
+card takes the clicks that land on it. When the outer container should react
+too, opt in with `.bubble_clicks()`:
+
+<!-- slt-check: {"name":"ix_bubble_clicks","features":[],"context":"ui"} -->
+```rust
+let mut opened = 0;
+let card = ui.bordered(Border::Rounded).bubble_clicks().col(|ui| {
+    let _ = ui.row(|ui| {
+        ui.text("Title").bold();
+    });
+    ui.text("body");
+});
+if card.clicked {
+    // fires for clicks on the title row and the body
+    opened += 1;
+}
+```
+
+`Response::clicked_any` is the raw "a press landed inside my rect" check, for
+logic that must not depend on which descendant won.
 
 For custom content where a container is not the right shape, call
 `ui.interaction()` **immediately before** the text, link, or container that
@@ -397,9 +424,11 @@ edge cases.
 
 `ui.modal(..)`, `ui.modal_at(..)`, and `ui.modal_at_offset(..)` dim the screen
 and suppress clicks, hover, and keys for everything outside the modal.
-`ui.overlay(..)` and `ui.overlay_at(..)` do **not**: a click inside a non-modal
-overlay also reaches the widget drawn underneath it. Use a modal for anything
-that must block input, such as confirmation dialogs and pickers.
+`ui.overlay(..)` and `ui.overlay_at(..)` block clicks only where their content
+is: a press on a popup button does not reach the widget drawn underneath, but a
+press beside the popup does, and keys still reach the background. Use a modal
+for anything that must block all input, such as confirmation dialogs and
+pickers.
 
 <!-- slt-check: {"name":"ix_modal","features":[],"context":"ui"} -->
 ```rust
@@ -493,11 +522,7 @@ These are current behaviors, not misuse. Design around them for now.
    reaches its end, further wheel motion over it does not scroll the outer
    one. Avoid nesting vertical scrollables, or give the inner one a fixed
    height and keep it short.
-2. **Clicks fire on press and propagate.** `clicked` is set on mouse *down*,
-   not release, and is not stopped at the innermost target: a button inside a
-   clickable row reports `clicked` on both, and a click inside a non-modal
-   overlay also hits what is underneath. Do not make a parent and a child
-   clickable at the same time; use `modal` for popups that must block input.
+2. **Clicks fire on press.** `clicked` is set on mouse *down*, not release.
 3. **Only the last click per frame is kept.** Several clicks arriving in one
    frame collapse into one.
 4. **Text selection can start during handle drags.** Dragging a scrollbar

@@ -55,16 +55,11 @@ pub struct Context {
     pub(crate) prev_group_rects: Vec<(std::sync::Arc<str>, Rect)>,
     pub(crate) prev_focus_groups: Vec<Option<std::sync::Arc<str>>>,
     pub(crate) mouse_pos: Option<(u32, u32)>,
-    pub(crate) click_pos: Option<(u32, u32)>,
-    /// Issue #208: position of the most recent `MouseButton::Right` `Down`
-    /// event in this frame. Mirrors `click_pos` for the right-button. Used
-    /// by `response_for` to populate `Response::right_clicked`.
-    pub(crate) right_click_pos: Option<(u32, u32)>,
-    /// v0.21.1: position of a detected double-click this frame (second
-    /// `MouseButton::Left` `Down` on the same cell within the double-click
-    /// window). `None` when no double-click occurred. Hit-tested by
-    /// `response_for` to populate `Response::double_clicked`.
-    pub(crate) double_click_pos: Option<(u32, u32)>,
+    /// Issue #439: every press this frame plus the previous frame's hit-test
+    /// z-order, used to resolve each press to one topmost, innermost slot.
+    /// Replaces the single `click_pos` / `right_click_pos` /
+    /// `double_click_pos` slots that dropped all but the last press.
+    pub(crate) pointer: PointerFrame,
     /// v0.21.1: position of the most recent scroll-wheel event this frame, used
     /// to hover-gate `Response::scroll_delta`. `None` when the wheel did not
     /// move.

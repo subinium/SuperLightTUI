@@ -122,6 +122,8 @@ pub struct ContainerBuilder<'a> {
     pub(crate) scroll_follow_focus: Option<bool>,
     pub(crate) scroll_state_id: u64,
     pub(crate) theme_override: Option<Theme>,
+    /// Hit-test flags for this container's slot (#439), e.g. `bubble_clicks`.
+    pub(crate) pointer_flags: u8,
 }
 
 /// A colored pixel in the canvas grid.
@@ -2053,6 +2055,7 @@ impl<'a> ContainerBuilder<'a> {
 
     fn finish(mut self, direction: Direction, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.ctx.next_interaction_id();
+        self.ctx.mark_hit_flags(interaction_id, self.pointer_flags);
         // `row_gap` / `col_gap` are `Option<u32>` (positive override); fall back
         // to the signed builder `gap`, which alone can carry an overlap (#222).
         let resolved_gap: i32 = match direction {

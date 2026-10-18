@@ -324,6 +324,7 @@ impl Context {
             match mouse.kind {
                 MouseKind::Down(MouseButton::Left) => {
                     if let Some(rect) = handle_rect
+                        && self.press_reaches_slot(i, handle_interaction_id)
                         && rect.width > 0
                         && mouse.x >= rect.x
                         && mouse.x < rect.right()

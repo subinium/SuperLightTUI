@@ -194,10 +194,13 @@ Two rules do not exist on the web:
    *yet*. A focused `text_input` consumes the characters typed into it while it
    renders, so check global shortcuts **after** rendering widgets. Checked
    before, `q` would both type a letter and quit.
-2. **Clicks are not bubbled and stopped.** A click on a button inside a
-   clickable container reports `clicked` on both. Avoid making a parent and a
-   child clickable at the same time. [INTERACTION.md](INTERACTION.md) covers
-   this and the other hit-testing rules.
+2. **Clicks stop at the innermost target unless the parent opts in.** A press
+   sets `clicked` only on the topmost, innermost slot under the pointer, as if
+   every handler called `stopPropagation()`. Overlay content blocks what is
+   drawn under it. Add `.bubble_clicks()` to a container that should also
+   react to clicks on its descendants, or read `Response::clicked_any` for
+   plain containment. [INTERACTION.md](INTERACTION.md) covers this and the
+   other hit-testing rules.
 
 ## Positioning and overflow
 
@@ -207,7 +210,7 @@ Two rules do not exist on the web:
 | `scrollIntoView()` on focus | automatic: `ScrollState::follow_focus` (on by default) | Set `follow_focus = false` for app-controlled scrolling. |
 | `overflow: hidden` | the default: children clip to their container | |
 | `position: fixed` / `absolute` | `ui.overlay_at(Anchor::TopRight, \|ui\| ..)`, `ui.overlay_at_offset(anchor, dx, dy, ..)` | Positioned against the whole screen, not a parent element. |
-| `<dialog>` / modal | `ui.modal(..)`, `ui.modal_at(anchor, ..)`, `ui.modal_at_offset(..)` | Dims the background and blocks clicks and keys underneath. |
+| `<dialog>` / modal | `ui.modal(..)`, `ui.modal_at(anchor, ..)`, `ui.modal_at_offset(..)` | Dims the background and blocks clicks and keys underneath. Non-modal overlays block clicks only where their content is. |
 | `z-index` | none: overlays stack in call order | Later overlays draw on top. |
 | element-anchored popover | only tooltips (`on_hover`, `ui.tooltip`) | For other popovers, position an overlay from a previous-frame `Response.rect`. |
 | `position: sticky` | none | Render the header outside the scrollable instead. |

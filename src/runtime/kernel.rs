@@ -562,6 +562,7 @@ pub(crate) fn run_frame_kernel(
 }
 
 fn reclaim_feedback(ctx: &mut Context, state: &mut FrameState) {
+    ctx.pointer.reclaim(state);
     state.layout_feedback.geometry = std::mem::take(&mut ctx.prev_geometry);
     state.focus.scroll.pending = std::mem::take(&mut ctx.pending_scroll);
     state.layout_feedback.prev_scroll_infos = std::mem::take(&mut ctx.prev_scroll_infos);
@@ -647,6 +648,7 @@ pub(crate) fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.geometry.clear();
     state.focus.scroll.invalidate();
     state.layout_feedback.prev_hit_map.clear();
+    state.layout_feedback.prev_hit_meta.clear();
     state.layout_feedback.prev_allocated_areas.clear();
     state.layout_feedback.prev_group_rects.clear();
     state.layout_feedback.prev_content_map.clear();

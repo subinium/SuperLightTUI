@@ -8,6 +8,7 @@ impl Context {
         state: &mut FrameState,
         theme: Theme,
     ) -> Self {
+        let pointer = PointerFrame::begin(state);
         let hook_states = &mut state.hook_states;
         let named_states = std::mem::take(&mut state.named_states);
         // Issue #215: hand off the keyed-state map for this frame. Same
@@ -52,17 +53,15 @@ impl Context {
             .or(diagnostics.frame_started)
             .unwrap_or_else(crate::clock::Instant::now);
         let mut mouse_pos = layout_feedback.last_mouse_pos;
-        let mut click_pos = None;
-        let mut right_click_pos = None;
-        let mut double_click_pos = None;
+        // Issue #439: keep every press of the frame; each one is resolved to
+        // its own topmost, innermost target by `response_for`.
+        let mut presses: smallvec::SmallVec<[Press; 2]> = smallvec::SmallVec::new();
         let mut scroll_pos = None;
         let mut scroll_delta_frame: i32 = 0;
-        for event in &events {
+        for (event_index, event) in events.iter().enumerate() {
             if matches!(event, Event::FocusLost) {
                 mouse_pos = None;
-                click_pos = None;
-                right_click_pos = None;
-                double_click_pos = None;
+                presses.clear();
                 scroll_pos = None;
                 scroll_delta_frame = 0;
                 layout_feedback.last_click_at = None;
@@ -72,7 +71,6 @@ impl Context {
                 mouse_pos = Some((mouse.x, mouse.y));
                 match mouse.kind {
                     MouseKind::Down(MouseButton::Left) => {
-                        click_pos = Some((mouse.x, mouse.y));
                         // v0.21.1: a left click on the same cell as the previous
                         // click, within `DOUBLE_CLICK_WINDOW`, is a double-click.
                         // Clear the tracker after firing so a third click starts
@@ -83,18 +81,28 @@ impl Context {
                                 frame_now.duration_since(t) <= crate::DOUBLE_CLICK_WINDOW
                             });
                         if is_double {
-                            double_click_pos = Some(pos);
                             layout_feedback.last_click_at = None;
                             layout_feedback.last_click_pos = None;
                         } else {
                             layout_feedback.last_click_at = Some(frame_now);
                             layout_feedback.last_click_pos = Some(pos);
                         }
+                        presses.push(Press {
+                            event_index,
+                            pos,
+                            button: MouseButton::Left,
+                            double: is_double,
+                        });
                     }
-                    MouseKind::Down(MouseButton::Right) => {
-                        // Issue #208: capture last right-click position so
-                        // `response_for` can hit-test against per-widget rects.
-                        right_click_pos = Some((mouse.x, mouse.y));
+                    MouseKind::Down(button) => {
+                        // Issue #208 / #442: right and middle presses are kept
+                        // and hit-tested per widget like left presses.
+                        presses.push(Press {
+                            event_index,
+                            pos: (mouse.x, mouse.y),
+                            button,
+                            double: false,
+                        });
                     }
                     // v0.21.1: accumulate net vertical wheel delta + the cursor
                     // position, hover-gated per-widget by `response_for`.
@@ -112,7 +120,12 @@ impl Context {
         }
 
         let mut focus_index = focus.focus_index;
-        if let Some((mx, my)) = click_pos {
+        let last_left_press = presses
+            .iter()
+            .rev()
+            .find(|press| press.button == MouseButton::Left)
+            .map(|press| press.pos);
+        if let Some((mx, my)) = last_left_press {
             let mut best: Option<(usize, u64)> = None;
             for &(fid, rect) in &layout_feedback.prev_focus_rects {
                 if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
@@ -217,9 +230,7 @@ impl Context {
             prev_group_rects: std::mem::take(&mut layout_feedback.prev_group_rects),
             prev_focus_groups: std::mem::take(&mut layout_feedback.prev_focus_groups),
             mouse_pos,
-            click_pos,
-            right_click_pos,
-            double_click_pos,
+            pointer: pointer.with_presses(presses),
             scroll_pos,
             scroll_delta_frame,
             prev_modal_active: focus.prev_modal_active,
@@ -877,6 +888,11 @@ impl Context {
                 let Event::Mouse(mouse) = event else {
                     return None;
                 };
+                // #439: a press that landed on overlay content does not reach
+                // base-layer widgets drawn underneath it.
+                if self.press_blocked_by_overlay(i) {
+                    return None;
+                }
 
                 if mouse.x < rect.x
                     || mouse.x >= rect.right()
@@ -895,7 +911,12 @@ impl Context {
         interaction_id: usize,
     ) -> Option<(Rect, Vec<(usize, &crate::event::MouseEvent)>)> {
         let rect = self.prev_hit_map.get(interaction_id).copied()?;
-        let clicks = self.left_clicks_in_rect(rect).collect();
+        // #439: composite widgets (list, table, tabs, ...) see a press only
+        // when it resolved to their slot or to one of their descendants.
+        let clicks = self
+            .left_clicks_in_rect(rect)
+            .filter(|(i, _)| self.press_reaches_slot(*i, interaction_id))
+            .collect();
         Some((rect, clicks))
     }
 

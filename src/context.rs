@@ -68,6 +68,9 @@ pub use container::*;
 
 mod runtime;
 
+mod pointer;
+pub(crate) use pointer::*;
+
 /// Issue #234: in-frame async task API (`spawn`/`poll`), gated behind `async`.
 #[cfg(feature = "async")]
 mod async_tasks;

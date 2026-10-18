@@ -2,7 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Response::clicked_any` (raw "a press landed in my rect"), `Response::hovered_top`
+  (the single slot a press at the pointer would hit) and
+  `ContainerBuilder::bubble_clicks()` to let an ancestor also receive clicks
+  from its descendants (#439).
+
 ### Changed
+
+- **Breaking:** each mouse press now activates only the topmost, innermost
+  interactive slot under the pointer (#439). A button in a non-modal
+  `overlay` no longer also clicks the container behind it, and a clickable row
+  inside a clickable card sets `clicked` on the row only. `right_clicked` and
+  `double_clicked` follow the same rule; `hovered` keeps its containment
+  meaning. Overlay roots, `overlay_at`/`modal_at` positioning wrappers and
+  tooltips are transparent to hit-testing, so only overlay content blocks the
+  widgets underneath. Migration: read `Response::clicked_any` for the old
+  containment check, or call `.bubble_clicks()` on the outer container.
 
 - **Breaking:** public dependencies upgraded to `crossterm` 0.29 and
   `compact_str` 0.10 (#475). The `slt::crossterm` re-export and

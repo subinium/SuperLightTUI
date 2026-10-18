@@ -348,6 +348,7 @@ impl Context {
             scroll_follow_focus: None,
             scroll_state_id: 0,
             theme_override: None,
+            pointer_flags: 0,
         }
     }
 
@@ -720,7 +721,7 @@ impl Context {
         let thumb_pos =
             Self::scrollbar_thumb_pos(state.offset, max_offset, track_height, thumb_height);
         let changed = if let Some(rect) = self.prev_hit_map.get(track_id).copied() {
-            self.handle_scrollbar_drag(rect, state, thumb_pos, thumb_height, max_offset)
+            self.handle_scrollbar_drag(rect, track_id, state, thumb_pos, thumb_height, max_offset)
         } else {
             false
         };
@@ -803,6 +804,7 @@ impl Context {
     fn handle_scrollbar_drag(
         &mut self,
         rect: Rect,
+        track_id: usize,
         state: &mut ScrollState,
         thumb_pos: u32,
         thumb_height: u32,
@@ -840,7 +842,9 @@ impl Context {
         for (i, kind, mx, my) in events {
             let in_track = mx >= rect.x && mx < rect.right() && my >= track_y && my < rect.bottom();
             match kind {
-                MouseKind::Down(MouseButton::Left) if in_track => {
+                MouseKind::Down(MouseButton::Left)
+                    if in_track && self.press_reaches_slot(i, track_id) =>
+                {
                     let on_thumb = my >= thumb_top && my < thumb_bottom;
                     if on_thumb {
                         // Grab the thumb; offset only moves on subsequent drags.
@@ -1002,62 +1006,10 @@ impl Context {
         {
             return Response::none();
         }
-        if let Some(rect) = self.prev_hit_map.get(interaction_id) {
-            let clicked = self
-                .click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // Issue #208: right-click hit-test uses the same rect as the
-            // existing left-click logic. Keeps modal suppression (the early
-            // return above) consistent for both buttons.
-            let right_clicked = self
-                .right_click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // v0.21.1: double-click hit-test mirrors the left-click logic. The
-            // second click of a double also reports `clicked`, so callers that
-            // only check `clicked` are unaffected.
-            let double_clicked = self
-                .double_click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            let hovered = self
-                .mouse_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // v0.21.1: per-widget wheel delta is hover-gated — only the widget
-            // under the cursor when the wheel moved sees a non-zero delta.
-            let scroll_delta = self
-                .scroll_pos
-                .map(|(mx, my)| {
-                    if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
-                        self.scroll_delta_frame
-                    } else {
-                        0
-                    }
-                })
-                .unwrap_or(0);
-            Response {
-                clicked,
-                right_clicked,
-                double_clicked,
-                hovered,
-                changed: false,
-                focused: false,
-                gained_focus: false,
-                lost_focus: false,
-                submitted: false,
-                scroll_delta,
-                rect: *rect,
-            }
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            // Issue #439: each press activates only its topmost, innermost
+            // slot; see `Context::pointer_response`.
+            self.pointer_response(interaction_id, rect)
         } else {
             Response::none()
         }

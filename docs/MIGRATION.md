@@ -8,6 +8,21 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## 0.25 → 0.26
+
+- **One press, one target (#439).** A press activates only the topmost,
+  innermost interactive slot: overlay content blocks what is drawn under it,
+  and a child container wins over its parent. If an outer container relied on
+  firing together with an inner widget, switch it to
+  `ui.container().bubble_clicks()` (the ancestor also receives descendant
+  clicks) or read `Response::clicked_any` (any press inside the rect). Layout
+  wrappers count as slots: a plain `ui.row(..)` inside a clickable card now
+  takes clicks that land on it, so either add `.bubble_clicks()` to the card or
+  check `clicked_any`. `hovered` is unchanged; `hovered_top` is the new
+  winner-only variant.
+
+---
+
 ## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain
