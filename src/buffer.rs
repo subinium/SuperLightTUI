@@ -1283,9 +1283,28 @@ impl Buffer {
         }
         let (lo, hi) = (lo as u32, hi as u32);
         self.touch_cols(y, lo, hi);
-        for col in lo..hi {
-            let offset = (col - x) as usize;
-            self.write_ascii_cell(col, y, &s[offset..=offset], style, link, clip);
+        // `write_ascii_cell` per byte, with the row index computed once.
+        let base = self.index_of(lo, y);
+        let first = (lo - x) as usize;
+        for k in 0..(hi - lo) as usize {
+            let offset = first + k;
+            let symbol = &s[offset..=offset];
+            let cell = &mut self.content[base + k];
+            if cell.symbol.len() == 1 {
+                cell.symbol = compact_str::CompactString::new(symbol);
+                cell.style = style;
+                cell.hyperlink = link.cloned();
+            } else {
+                self.set_grapheme_normalized(
+                    lo + k as u32,
+                    y,
+                    compact_str::CompactString::new(symbol),
+                    1,
+                    style,
+                    link,
+                    clip,
+                );
+            }
         }
     }
 
