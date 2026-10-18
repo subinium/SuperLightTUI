@@ -81,32 +81,66 @@ pub(super) fn flush_buffer_diff_rows(
         };
     }
 
+    // Issue #486: rows are compared through the written-span invariant
+    // instead of per-row digests. A row untouched in both buffers with the
+    // same fill is skipped in O(1); otherwise only the columns between the
+    // first and last differing cell are scanned. Forced rows (sprixel
+    // repaints) and buffers without a shared layout scan every column.
+    let layout_shared = crate::buffer::same_layout(current, previous);
+    let width = current.area.width as usize;
     for y in current.area.y..current.area.bottom() {
         let force_row = forced_rows.binary_search(&y).is_ok();
-        // Issue #171: skip the per-cell scan for rows that were not touched
-        // since the last hash refresh AND match the previous frame's
-        // digest. Both conditions must hold:
-        //   * `row_clean` rules out rows that received writes this frame
-        //     even if those writes happened to land on identical cells.
-        //   * The hash equality is the actual unchanged-row signal.
-        // Falling through to the per-cell loop on either failure preserves
-        // legacy behavior; the skip is a pure short-circuit.
-        if !force_row
-            && current.row_clean(y)
-            && current.row_hash(y).is_some()
-            && current.row_hash(y) == previous.row_hash(y)
-        {
-            continue;
+        let row = (y - current.area.y) as usize;
+        let (mut lo, hi) = if force_row || !layout_shared {
+            (0, width)
+        } else {
+            match crate::buffer::row_diff_range(current, previous, row) {
+                Some(range) => range,
+                None => continue,
+            }
+        };
+        // `(current, previous)` cells of column `col` on this row.
+        let cells_at = |col: usize| -> (&crate::cell::Cell, Option<&crate::cell::Cell>) {
+            if layout_shared {
+                let index = row * width + col;
+                (&current.content[index], Some(&previous.content[index]))
+            } else {
+                let x = current.area.x + col as u32;
+                (current.get(x, y), previous.try_get(x, y))
+            }
+        };
+        // A changed continuation cell is drawn by its leading cell, which may
+        // sit left of the first differing column.
+        while lo > 0 && lo < hi && cells_at(lo).0.is_continuation() {
+            lo -= 1;
         }
-        for x in current.area.x..current.area.right() {
-            let cell = current.get(x, y);
-            let prev = previous.get(x, y);
-            let symbol = cell.normalized_symbol();
-            if (!force_row && cell == prev) || symbol.is_empty() {
+        for col in lo..hi {
+            let x = current.area.x + col as u32;
+            let (cell, prev) = cells_at(col);
+            // Compare before any symbol work; continuation cells (empty
+            // symbol) are drawn by their leading cell.
+            if cell.is_continuation() {
+                flush_run!(stdout);
+                continue;
+            }
+            let mut unchanged = !force_row && prev == Some(cell);
+            // A leading cell is redrawn when any of its continuation cells
+            // changed, so a stale glyph cannot survive behind it.
+            let mut next = col + 1;
+            while unchanged && next < width {
+                let (cont, prev_cont) = cells_at(next);
+                if !cont.is_continuation() {
+                    break;
+                }
+                unchanged = prev_cont == Some(cont);
+                next += 1;
+            }
+            if unchanged {
                 // Gap — any open run on this row must be flushed.
                 flush_run!(stdout);
                 continue;
             }
+            let symbol = cell.emit_symbol();
 
             let abs_y = row_offset + y;
             // Defense-in-depth: `Cell::hyperlink` is a public field that can
@@ -174,7 +208,7 @@ pub(super) fn flush_buffer_diff_rows(
             // carries combining marks). Wide chars advance by their column
             // width so subsequent cells line up.
             run_buf.push_str(&symbol);
-            let char_width = UnicodeWidthStr::width(symbol.as_str()).max(1) as u32;
+            let char_width = crate::cell::display_width(&symbol).max(1) as u32;
             if char_width > 1 && symbol.chars().any(|c| c == '\u{FE0F}') {
                 // Emoji variation selector — terminal renders 2 cols but the
                 // glyph often measures as 1; pad so the cursor ends up where

@@ -545,7 +545,7 @@ impl<'a> RatWorkload<'a> {
 /// [`slt::Backend`] writing ANSI into a `Vec<u8>`.
 ///
 /// `flush` mirrors `slt::Terminal::flush` (src/terminal.rs) for the paths
-/// these workloads reach: BSU, row-hash refresh of both buffers plus the
+/// these workloads reach: BSU, the written-span row skip plus the
 /// run-coalesced diff (`__bench_flush_buffer_diff_mut_with_buf`, which calls
 /// the same `flush_buffer_diff` kernel production uses), ESU, swap, then
 /// `reset_with_bg` with the theme background exactly as `run_with`

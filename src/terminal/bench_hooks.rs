@@ -27,12 +27,9 @@ pub fn __bench_flush_buffer_diff<W: Write>(
 
 /// Mutable-buffer variant of [`__bench_flush_buffer_diff`] (issue #171).
 ///
-/// Refreshes per-row digests on both buffers before invoking
-/// `flush_buffer_diff`, matching what the real `Terminal::flush` and
-/// `InlineTerminal::flush` paths do. Benches that want to measure the
-/// flush including the hash-refresh cost should use this entry point;
-/// the immutable variant is preserved for backwards compatibility with
-/// existing benches that own only `&Buffer`.
+/// Kept for signature stability: the per-row digests it used to refresh
+/// were replaced by written-span tracking (#486), which needs no pre-pass,
+/// so it now runs exactly the same kernel as the immutable variant.
 #[doc(hidden)]
 pub fn __bench_flush_buffer_diff_mut<W: Write>(
     w: &mut W,
@@ -49,7 +46,7 @@ pub fn __bench_flush_buffer_diff_mut<W: Write>(
 
 /// Reuse-aware variant of [`__bench_flush_buffer_diff_mut`] that threads a
 /// caller-owned `run_buf` (issue #269), mirroring how the real backends carry
-/// the buffer across frames. Refreshes per-row digests before the diff.
+/// the buffer across frames.
 ///
 /// Not part of the stable API.
 ///
@@ -79,8 +76,6 @@ pub fn __bench_flush_buffer_diff_mut_with_buf<W: Write>(
     color_depth: ColorDepth,
     run_buf: &mut String,
 ) -> io::Result<()> {
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
     flush_buffer_diff(w, current, previous, color_depth, 0, run_buf)
 }
 
@@ -187,8 +182,8 @@ pub struct __BenchSprixelFixture {
 ///
 /// Creates `n` opaque sprixel placements laid out down the buffer and mirrors
 /// them into both the current and previous frame so the steady-state flush
-/// re-blits nothing. Per-row digests are refreshed (as the real `flush` does)
-/// so the per-row clean+hash shortcut in [`sprixel_needs_reblit`] is exercised.
+/// re-blits nothing, so the untouched-row shortcut in [`sprixel_needs_reblit`]
+/// is exercised.
 ///
 /// Not part of the stable API.
 #[doc(hidden)]
@@ -214,11 +209,6 @@ pub fn __bench_new_sprixel_fixture(n: usize) -> __BenchSprixelFixture {
         current.sprixels.push(placement.clone());
         previous.sprixels.push(placement);
     }
-
-    // Refresh digests so the per-row shortcut can fire, matching the real
-    // `Terminal::flush` ordering (recompute happens before `flush_sprixels`).
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     __BenchSprixelFixture { current, previous }
 }

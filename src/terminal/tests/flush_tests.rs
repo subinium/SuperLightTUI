@@ -312,13 +312,12 @@ fn bufwriter_coalesces_writes_into_single_flush() {
     );
 }
 
-/// Issue #171 regression: identical buffers must produce no flush
-/// output once both have refreshed line hashes. Validates that the
-/// per-row skip path is correctness-preserving — a skipped row
-/// emits zero bytes, exactly like the per-cell path would for an
-/// unchanged row.
+/// Issue #171/#486 regression: identical buffers must produce no flush
+/// output. Validates that the per-row skip path is correctness-preserving —
+/// a skipped row emits zero bytes, exactly like the per-cell path would for
+/// an unchanged row.
 #[test]
-fn flush_skips_unchanged_rows_when_hashes_match() {
+fn flush_skips_unchanged_rows() {
     let area = Rect::new(0, 0, 20, 4);
     let mut current = Buffer::empty(area);
     let mut previous = Buffer::empty(area);
@@ -327,8 +326,6 @@ fn flush_skips_unchanged_rows_when_hashes_match() {
         current.set_string(0, y, "identical-row-content", Style::new());
         previous.set_string(0, y, "identical-row-content", Style::new());
     }
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_buffer_diff(
@@ -348,7 +345,7 @@ fn flush_skips_unchanged_rows_when_hashes_match() {
     );
 }
 
-/// Issue #171 regression: when only some rows match, only those rows
+/// Issue #171/#486 regression: when only some rows match, only those rows
 /// are skipped. The differing row must still drive its full per-cell
 /// flush path so the terminal sees the correct glyphs.
 #[test]
@@ -362,8 +359,6 @@ fn flush_skips_only_matching_rows_in_mixed_diff() {
     previous.set_string(0, 1, "yyyyyy", Style::new());
     current.set_string(0, 2, "zzzzzz", Style::new());
     previous.set_string(0, 2, "zzzzzz", Style::new());
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_buffer_diff(

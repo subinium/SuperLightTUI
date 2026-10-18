@@ -245,6 +245,32 @@ impl Cell {
         normalize_cell_symbol(&self.symbol)
     }
 
+    /// The symbol to write to the terminal, borrowed when it is already a
+    /// normalization fixed point (#486).
+    ///
+    /// One printable-ASCII byte and one non-control scalar (the forms every
+    /// setter stores for ASCII, CJK, box drawing and most symbols) are
+    /// returned as-is; anything else is defensively re-normalized because
+    /// `symbol` is a public field. Equal to [`Cell::normalized_symbol`].
+    #[inline]
+    pub(crate) fn emit_symbol(&self) -> std::borrow::Cow<'_, str> {
+        let symbol = self.symbol.as_str();
+        let bytes = symbol.as_bytes();
+        if bytes.len() == 1 {
+            if is_printable_ascii_byte(bytes[0]) {
+                return std::borrow::Cow::Borrowed(symbol);
+            }
+        } else {
+            let mut chars = symbol.chars();
+            if let (Some(ch), None) = (chars.next(), chars.next())
+                && !is_control_char(ch)
+            {
+                return std::borrow::Cow::Borrowed(symbol);
+            }
+        }
+        std::borrow::Cow::Owned(normalize_cell_symbol(symbol).into())
+    }
+
     /// Set the cell's style.
     pub fn set_style(&mut self, style: Style) -> &mut Self {
         self.style = style;
@@ -313,6 +339,13 @@ mod tests {
             prop_assert_eq!(normalize_cell_symbol(&once), once.clone());
             prop_assert!(once.len() <= MAX_CELL_SYMBOL_BYTES);
             prop_assert!(!once.chars().any(is_control_char));
+        }
+
+        #[test]
+        fn emit_symbol_equals_normalized_symbol(s in prop_oneof![test_strategies::cell_text(), ".{0,6}"]) {
+            let cell = Cell { symbol: CompactString::new(&s), ..Cell::default() };
+            let (emitted, normalized) = (cell.emit_symbol().into_owned(), cell.normalized_symbol());
+            prop_assert_eq!(emitted.as_str(), normalized.as_str());
         }
 
         #[test]

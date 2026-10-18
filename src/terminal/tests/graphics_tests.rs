@@ -489,12 +489,12 @@ fn sprixel_reblit_count_invariant_over_single_cell_writes() {
 
 // ---- v0.21.1 sprixel reblit-scan optimization regression ---------------
 //
-// These drive the hashed-key position lookup and the per-row clean+hash
-// shortcut with `recompute_line_hashes` engaged (the real `flush` ordering),
-// proving the optimization preserves the exact #265 re-blit semantics.
+// These drive the hashed-key position lookup and the per-row written-span
+// shortcut (#486), proving the optimization preserves the exact #265 re-blit
+// semantics.
 
 #[test]
-fn sprixel_unchanged_with_hashes_engaged_emits_zero_bytes() {
+fn sprixel_unchanged_with_span_shortcut_emits_zero_bytes() {
     // Regression: a steady frame (identical to previous) with per-row
     // digests refreshed must NOT re-blit. This exercises the per-row
     // clean+hash shortcut: every footprint row is clean and hash-matched, so
@@ -507,13 +507,11 @@ fn sprixel_unchanged_with_hashes_engaged_emits_zero_bytes() {
     let mut previous = Buffer::empty(area);
     previous.sprixels.push(placement);
 
-    // Match `Terminal::flush`: refresh digests before the sprixel pass.
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
-    // Sanity: the footprint rows are clean and hash-identical, so the
-    // shortcut is the path actually taken.
-    assert!(current.row_clean(1) && current.row_clean(2));
-    assert_eq!(current.row_hash(1), previous.row_hash(1));
+    // Sanity: the footprint rows are provably identical, so the shortcut is
+    // the path actually taken.
+    assert!(crate::buffer::same_layout(&current, &previous));
+    assert_eq!(crate::buffer::row_diff_range(&current, &previous, 1), None);
+    assert_eq!(crate::buffer::row_diff_range(&current, &previous, 2), None);
 
     let mut out: Vec<u8> = Vec::new();
     flush_sprixels(&mut out, &current, &previous, 0).unwrap();
@@ -524,7 +522,7 @@ fn sprixel_unchanged_with_hashes_engaged_emits_zero_bytes() {
 }
 
 #[test]
-fn sprixel_changed_text_with_hashes_engaged_reblits_once() {
+fn sprixel_changed_text_with_span_shortcut_reblits_once() {
     // Regression: a text write over an opaque footprint cell must still
     // re-blit exactly once even with digests refreshed. The touched row is
     // dirty (or hash-mismatched), so the shortcut correctly does NOT skip it
@@ -538,10 +536,11 @@ fn sprixel_changed_text_with_hashes_engaged_reblits_once() {
     let mut previous = Buffer::empty(area);
     previous.sprixels.push(placement);
 
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
     // The footprint's top row differs from the previous frame.
-    assert_ne!(current.row_hash(1), previous.row_hash(1));
+    assert_eq!(
+        crate::buffer::row_diff_range(&current, &previous, 1),
+        Some((1, 2))
+    );
 
     let mut out: Vec<u8> = Vec::new();
     flush_sprixels(&mut out, &current, &previous, 0).unwrap();
@@ -554,7 +553,7 @@ fn sprixel_changed_text_with_hashes_engaged_reblits_once() {
 }
 
 #[test]
-fn sprixel_changed_text_in_transparent_cell_with_hashes_does_not_reblit() {
+fn sprixel_changed_text_in_transparent_cell_with_span_shortcut_does_not_reblit() {
     // Regression edge case: even though the touched row is dirty/hash-mismatched
     // (so the per-row shortcut does NOT skip it), a write landing only on a
     // Transparent footprint cell must still emit zero bytes — the per-cell
@@ -573,9 +572,6 @@ fn sprixel_changed_text_in_transparent_cell_with_hashes_does_not_reblit() {
     current.set_char(1, 1, 'X', Style::new());
     let mut previous = Buffer::empty(area);
     previous.sprixels.push(placement);
-
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_sprixels(&mut out, &current, &previous, 0).unwrap();
@@ -631,9 +627,6 @@ fn sprixel_multi_placement_only_changed_one_reblits() {
     }
     // Move only the middle sprixel.
     current.sprixels[1].x = 5;
-
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_sprixels(&mut out, &current, &previous, 0).unwrap();

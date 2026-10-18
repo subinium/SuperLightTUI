@@ -341,8 +341,7 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// A tiny, allocation-free [`Hasher`] implementing the FNV-1a algorithm.
 ///
-/// Used for internal dirty-row digests ([`Buffer::recompute_line_hashes`]) and
-/// RGBA content hashing ([`hash_rgba`]). Row/image equality is **not** a
+/// Used for RGBA content hashing ([`hash_rgba`]). Image equality is **not** a
 /// security boundary, so the crypto-strength SipHash that
 /// [`std::collections::hash_map::DefaultHasher`] uses is unnecessary tax in the
 /// per-frame flush loop. FNV-1a is a non-cryptographic hash with no DoS
@@ -523,24 +522,6 @@ pub struct Buffer {
     pub(crate) kitty_clip_info_stack: Vec<KittyClipInfo>,
     /// Horizontal counterpart to `kitty_clip_info_stack`.
     pub(crate) kitty_horizontal_clip_stack: Vec<KittyHorizontalClipInfo>,
-    /// Per-row digest of every cell on row `y`, used by `flush_buffer_diff`
-    /// to skip the per-cell scan when both the dirty flag and the hash
-    /// match the previous frame (issue #171).
-    ///
-    /// Length equals `area.height`. Stale until
-    /// [`Buffer::recompute_line_hashes`] is called — `flush_buffer_diff` is
-    /// the only call site that relies on these being up to date.
-    pub(crate) line_hashes: Vec<u64>,
-    /// Per-row dirty flag. Set by every cell-write path
-    /// ([`Buffer::set_string`], [`Buffer::set_string_linked`],
-    /// [`Buffer::set_char`], [`Buffer::reset`], [`Buffer::reset_with_bg`]).
-    /// Cleared by [`Buffer::recompute_line_hashes`] after the row hash is
-    /// refreshed.
-    ///
-    /// A `false` entry means the row has not been touched since the last
-    /// hash refresh, so `flush_buffer_diff` can short-circuit the cell
-    /// scan when its hash also matches `previous.line_hashes[y]`.
-    pub(crate) line_dirty: Vec<bool>,
     /// Per-row written span (issues #485/#486).
     ///
     /// Invariant: every cell of row `y` outside `touched[y - area.y]` equals
@@ -580,6 +561,15 @@ impl RowSpan {
     pub(crate) fn widen(&mut self, lo: u32, hi: u32) {
         self.lo = self.lo.min(lo);
         self.hi = self.hi.max(hi);
+    }
+
+    /// Smallest span covering both spans.
+    #[inline]
+    pub(crate) fn union(self, other: Self) -> Self {
+        Self {
+            lo: self.lo.min(other.lo),
+            hi: self.hi.max(other.hi),
+        }
     }
 }
 
@@ -664,11 +654,6 @@ impl Buffer {
             cursor_masked: false,
             kitty_clip_info_stack: Vec::new(),
             kitty_horizontal_clip_stack: Vec::new(),
-            // Empty buffers start with default cells on every row; their
-            // hashes are equal across two empty buffers, so initialise to
-            // 0 with `line_dirty=true` so the first flush still recomputes.
-            line_hashes: try_repeated(0, height)?,
-            line_dirty: try_repeated(true, height)?,
             touched: try_repeated(RowSpan::EMPTY, height)?,
             fill_bg: None,
         })
@@ -686,7 +671,7 @@ impl Buffer {
     /// Widen row `y`'s written span by the absolute columns `[x_lo, x_hi)`.
     ///
     /// Coordinates outside the area are clamped; rows outside the area are
-    /// ignored. Also flags the row dirty for the per-row flush skip.
+    /// ignored.
     #[inline]
     pub(crate) fn touch_cols(&mut self, y: u32, x_lo: u32, x_hi: u32) {
         if y < self.area.y {
@@ -700,9 +685,6 @@ impl Buffer {
         }
         if let Some(span) = self.touched.get_mut(row) {
             span.widen(lo, hi);
-        }
-        if let Some(slot) = self.line_dirty.get_mut(row) {
-            *slot = true;
         }
     }
 
@@ -1403,93 +1385,6 @@ impl Buffer {
         self.set_grapheme_normalized(x, y, symbol, width, style, None, clip);
     }
 
-    /// Recompute the per-row digest for every row currently flagged dirty.
-    ///
-    /// This is the only call site that updates [`Self::line_hashes`]; once
-    /// a row's hash is refreshed its `line_dirty` entry is cleared. Hashes
-    /// derive from each cell's `(symbol, style, hyperlink)` tuple via the
-    /// non-cryptographic [`Fnv1a`] hasher — sufficient for equality detection,
-    /// faster than SipHash in the per-frame loop, and with no extra dependency.
-    ///
-    /// Called by `flush_buffer_diff` once per frame, before the per-row
-    /// skip check (issue #171).
-    ///
-    /// Gated on `crossterm` (the only flush call site) and `test`. Without
-    /// the gate it shows as `dead_code` under `--no-default-features`.
-    #[cfg(any(feature = "crossterm", test))]
-    pub(crate) fn recompute_line_hashes(&mut self) {
-        let height = self.area.height;
-        if height == 0 {
-            return;
-        }
-        // `line_hashes` / `line_dirty` are sized at construction / resize;
-        // an interior mutation (e.g. resize before reset) could leave them
-        // out of step with `area.height`. Repair lazily here so callers
-        // never observe a stale length.
-        let expected_len = height as usize;
-        if self.line_hashes.len() != expected_len {
-            self.line_hashes.resize(expected_len, 0);
-        }
-        if self.line_dirty.len() != expected_len {
-            self.line_dirty.resize(expected_len, true);
-        }
-
-        let width = self.area.width as usize;
-        for (idx, dirty) in self.line_dirty.iter_mut().enumerate() {
-            if !*dirty {
-                continue;
-            }
-            let row_start = idx * width;
-            let row_end = row_start + width;
-            let mut hasher = Fnv1a::default();
-            for cell in &self.content[row_start..row_end] {
-                cell.symbol.as_str().hash(&mut hasher);
-                cell.style.hash(&mut hasher);
-                cell.hyperlink.as_deref().hash(&mut hasher);
-            }
-            self.line_hashes[idx] = hasher.finish();
-            *dirty = false;
-        }
-    }
-
-    /// Returns `true` if row `y` (buffer-space) was not touched since the
-    /// last [`Self::recompute_line_hashes`] call.
-    ///
-    /// Gated on `crossterm` (consumed by `flush_buffer_diff`) and `test`.
-    ///
-    /// Used by `flush_buffer_diff` to short-circuit the per-cell scan when
-    /// combined with a hash match against the previous frame (issue #171).
-    /// Out-of-range rows report as dirty so callers fall back to the
-    /// existing per-cell path on edge inputs.
-    #[inline]
-    #[cfg(any(feature = "crossterm", test))]
-    pub(crate) fn row_clean(&self, y: u32) -> bool {
-        if y < self.area.y {
-            return false;
-        }
-        let idx = (y - self.area.y) as usize;
-        self.line_dirty
-            .get(idx)
-            .copied()
-            .map(|d| !d)
-            .unwrap_or(false)
-    }
-
-    /// Read row `y`'s cached digest, or `None` if out of range.
-    ///
-    /// Pairs with [`Self::row_clean`] inside `flush_buffer_diff`: only the
-    /// hash for clean rows is used as a short-circuit signal, so callers
-    /// must check `row_clean` first.
-    #[inline]
-    #[cfg(any(feature = "crossterm", test))]
-    pub(crate) fn row_hash(&self, y: u32) -> Option<u64> {
-        if y < self.area.y {
-            return None;
-        }
-        let idx = (y - self.area.y) as usize;
-        self.line_hashes.get(idx).copied()
-    }
-
     /// Compute the diff between `self` (current) and `other` (previous).
     ///
     /// Returns `(x, y, cell)` tuples for every cell that changed. Useful for
@@ -1523,6 +1418,26 @@ impl Buffer {
             && self.content.len() == expected
             && other.content.len() == expected;
         let mut updates = Vec::new();
+        if same_layout(self, other) {
+            // Rows that are identical by the written-span invariant (or by a
+            // direct slice compare) contribute nothing; scan only the
+            // columns that differ.
+            let width = self.area.width as usize;
+            for row in 0..self.area.height as usize {
+                let Some((lo, hi)) = row_diff_range(self, other, row) else {
+                    continue;
+                };
+                let y = self.area.y.saturating_add(row as u32);
+                for col in lo..hi {
+                    let index = row * width + col;
+                    let cell = &self.content[index];
+                    if other.content[index] != *cell {
+                        updates.push((self.area.x.saturating_add(col as u32), y, cell));
+                    }
+                }
+            }
+            return updates;
+        }
         for (index, cell) in self.content[..len].iter().enumerate() {
             let changed = !same_geometry || other.content.get(index) != Some(cell);
             if !changed {
@@ -1593,9 +1508,6 @@ impl Buffer {
         self.cursor_masked = false;
         self.kitty_clip_info_stack.clear();
         self.kitty_horizontal_clip_stack.clear();
-        // Issue #171: every row is now blank — flag them all dirty so the
-        // next flush refreshes the digest before any skip check.
-        self.line_dirty.fill(true);
     }
 
     /// Resize the buffer to fit a new area, resetting all cells.
@@ -1615,30 +1527,19 @@ impl Buffer {
         self.content
             .try_reserve_exact(size.saturating_sub(self.content.len()))
             .map_err(|_| BufferError::AllocationFailed)?;
-        self.line_hashes
-            .try_reserve_exact(height.saturating_sub(self.line_hashes.len()))
-            .map_err(|_| BufferError::AllocationFailed)?;
-        self.line_dirty
-            .try_reserve_exact(height.saturating_sub(self.line_dirty.len()))
-            .map_err(|_| BufferError::AllocationFailed)?;
         self.touched
             .try_reserve_exact(height.saturating_sub(self.touched.len()))
             .map_err(|_| BufferError::AllocationFailed)?;
 
         self.area = area;
         self.content.resize(size, Cell::default());
-        // Issue #171: keep the per-row tracking arrays sized to the new
-        // height. `reset()` re-marks every row dirty so initial values
-        // here don't affect correctness.
-        self.line_hashes.resize(height, 0);
-        self.line_dirty.resize(height, true);
+        // The cell vector was re-laid out: refill everything and size the
+        // written spans to the new height.
         self.reset_to(None, false);
         // A sustained downsize should not retain a pathological high-water
         // allocation forever. Keep up to 2x headroom once capacity exceeds 4x
         // the active length, avoiding churn around ordinary terminal resizes.
         trim_excess_capacity(&mut self.content);
-        trim_excess_capacity(&mut self.line_hashes);
-        trim_excess_capacity(&mut self.line_dirty);
         trim_excess_capacity(&mut self.touched);
         Ok(())
     }
@@ -1886,6 +1787,55 @@ pub(crate) fn sanitize_osc8_url(url: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Whether `a` and `b` cover the same area with complete cell vectors and
+/// written spans, so per-row span comparisons between them are valid.
+#[inline]
+pub(crate) fn same_layout(a: &Buffer, b: &Buffer) -> bool {
+    let cells = a.area.area_u64();
+    a.area == b.area
+        && a.content.len() as u64 == cells
+        && b.content.len() as u64 == cells
+        && a.touched.len() == a.area.height as usize
+        && b.touched.len() == b.area.height as usize
+}
+
+/// Column offsets `[lo, hi)` (relative to `area.x`) of row `row` that
+/// contain every cell differing between `current` and `previous`, or `None`
+/// when the row is identical (#486).
+///
+/// Requires [`same_layout`]. When both buffers were reset to the same fill,
+/// only the union of their written spans can differ (outside it both hold
+/// the fill cell), so an untouched row costs O(1). Otherwise the whole row
+/// is compared. The returned range is trimmed to the first and last
+/// differing cell, so callers scan each changed row once.
+#[inline]
+pub(crate) fn row_diff_range(
+    current: &Buffer,
+    previous: &Buffer,
+    row: usize,
+) -> Option<(usize, usize)> {
+    let width = current.area.width as usize;
+    let (lo, hi) = if current.fill_bg == previous.fill_bg {
+        let span = current.touched[row].union(previous.touched[row]);
+        if span.is_empty() {
+            return None;
+        }
+        (span.lo as usize, (span.hi as usize).min(width))
+    } else {
+        (0, width)
+    };
+    let base = row * width;
+    let now = &current.content[base + lo..base + hi];
+    let before = &previous.content[base + lo..base + hi];
+    let first = now.iter().zip(before).position(|(a, b)| a != b)?;
+    let last = now
+        .iter()
+        .zip(before)
+        .rposition(|(a, b)| a != b)
+        .unwrap_or(first);
+    Some((lo + first, lo + last + 1))
 }
 
 /// Overwrite every cell of `cells` with `blank` (a space with no hyperlink).
@@ -2310,119 +2260,77 @@ mod tests {
         assert_eq!(buf.snapshot_format(), "aaa\nbbb\nccc");
     }
 
-    // ---- per-row hash skip (#171) -----------------------------------------
+    // ---- written-span row skip (#485/#486, replaces the #171 row hash) ----
 
     #[test]
-    fn line_dirty_initial_state_is_all_dirty() {
-        // Fresh buffer must start with every row dirty so the first flush
-        // refreshes hashes before the per-row skip ever fires.
+    fn fresh_buffer_has_no_written_spans() {
         let buf = Buffer::empty(Rect::new(0, 0, 4, 3));
-        assert_eq!(buf.line_dirty.len(), 3);
-        assert!(buf.line_dirty.iter().all(|d| *d));
+        assert_eq!(buf.touched.len(), 3);
+        assert!(buf.touched.iter().all(|span| span.is_empty()));
+        assert_eq!(buf.fill_invariant_violation(), None);
     }
 
     #[test]
-    fn set_string_marks_row_dirty() {
-        // After a recompute every row is clean. A subsequent write must
-        // re-mark the touched row as dirty so its hash gets refreshed.
-        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 4));
-        buf.recompute_line_hashes();
-        assert!(buf.line_dirty.iter().all(|d| !*d));
-
-        buf.set_string(0, 1, "hello", Style::new());
-        assert!(!buf.line_dirty[0]);
-        assert!(buf.line_dirty[1]);
-        assert!(!buf.line_dirty[2]);
-        assert!(!buf.line_dirty[3]);
+    fn writes_widen_only_their_row_span() {
+        let mut buf = Buffer::empty(Rect::new(2, 0, 8, 4));
+        buf.set_string(3, 1, "hello", Style::new());
+        buf.set_char(9, 2, 'X', Style::new());
+        assert!(buf.touched[0].is_empty());
+        assert_eq!(buf.touched[1], RowSpan { lo: 1, hi: 6 });
+        assert_eq!(buf.touched[2], RowSpan { lo: 7, hi: 8 });
+        assert!(buf.touched[3].is_empty());
     }
 
     #[test]
-    fn set_char_marks_row_dirty() {
-        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 3));
-        buf.recompute_line_hashes();
-        buf.set_char(2, 2, 'X', Style::new());
-        assert!(!buf.line_dirty[0]);
-        assert!(!buf.line_dirty[1]);
-        assert!(buf.line_dirty[2]);
-    }
-
-    #[test]
-    fn recompute_line_hashes_clears_dirty_and_caches_hashes() {
-        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
-        buf.set_string(0, 0, "abcd", Style::new());
-        buf.set_string(0, 1, "wxyz", Style::new());
-        buf.recompute_line_hashes();
-
-        assert!(buf.line_dirty.iter().all(|d| !*d));
-        // Different content → different hashes.
-        assert_ne!(buf.line_hashes[0], buf.line_hashes[1]);
-        assert!(buf.row_clean(0));
-        assert!(buf.row_clean(1));
-    }
-
-    #[test]
-    fn row_clean_returns_false_for_unrecomputed_or_dirty_row() {
-        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
-        // Initial state — every row dirty until recompute.
-        assert!(!buf.row_clean(0));
-        buf.recompute_line_hashes();
-        assert!(buf.row_clean(0));
-        // Touching the row re-marks it dirty.
-        buf.set_string(0, 0, "z", Style::new());
-        assert!(!buf.row_clean(0));
-    }
-
-    #[test]
-    fn identical_buffers_share_line_hashes_after_recompute() {
-        // Foundation of the flush short-circuit: two buffers with the same
-        // cells must produce equal per-row digests.
-        let area = Rect::new(0, 0, 5, 3);
-        let mut a = Buffer::empty(area);
-        let mut b = Buffer::empty(area);
-        a.set_string(0, 0, "hello", Style::new());
-        b.set_string(0, 0, "hello", Style::new());
-        a.set_string(0, 1, "world", Style::new());
-        b.set_string(0, 1, "world", Style::new());
-        a.recompute_line_hashes();
-        b.recompute_line_hashes();
-
-        assert_eq!(a.row_hash(0), b.row_hash(0));
-        assert_eq!(a.row_hash(1), b.row_hash(1));
-        // Untouched row 2 — both buffers have it as default-cell row.
-        assert_eq!(a.row_hash(2), b.row_hash(2));
-    }
-
-    #[test]
-    fn different_styles_yield_different_line_hashes() {
-        // Identical glyph but different style must still hash distinctly —
-        // the flush would otherwise emit the wrong style if it skipped a
-        // "matching" row.
+    fn row_diff_range_skips_identical_rows_and_trims_changed_ones() {
         use crate::style::Color;
-        let area = Rect::new(0, 0, 3, 1);
+        let area = Rect::new(0, 0, 6, 4);
         let mut a = Buffer::empty(area);
         let mut b = Buffer::empty(area);
-        a.set_string(0, 0, "abc", Style::new().fg(Color::Red));
-        b.set_string(0, 0, "abc", Style::new().fg(Color::Blue));
-        a.recompute_line_hashes();
-        b.recompute_line_hashes();
+        a.set_string(0, 0, "abcdef", Style::new());
+        b.set_string(0, 0, "abcdef", Style::new());
+        a.set_string(0, 1, "abXdef", Style::new());
+        b.set_string(0, 1, "abcdef", Style::new());
+        a.set_string(1, 2, "q", Style::new().fg(Color::Red));
+        b.set_string(1, 2, "q", Style::new());
+        assert!(same_layout(&a, &b));
+        assert_eq!(row_diff_range(&a, &b, 0), None, "identical touched row");
+        assert_eq!(row_diff_range(&a, &b, 1), Some((2, 3)));
+        assert_eq!(row_diff_range(&a, &b, 2), Some((1, 2)), "style-only change");
+        assert_eq!(row_diff_range(&a, &b, 3), None, "untouched in both");
 
-        assert_ne!(a.row_hash(0), b.row_hash(0));
+        // Different fills force a full-row compare.
+        b.reset_with_bg(Color::Blue);
+        assert_eq!(row_diff_range(&a, &b, 3), Some((0, 6)));
+        a.reset_with_bg(Color::Blue);
+        assert_eq!(row_diff_range(&a, &b, 3), None);
     }
 
     #[test]
-    fn resize_keeps_line_arrays_in_sync() {
+    fn row_diff_range_detects_hyperlink_and_continuation_changes() {
+        let area = Rect::new(0, 0, 6, 2);
+        let mut a = Buffer::empty(area);
+        let mut b = Buffer::empty(area);
+        a.set_string_linked(0, 0, "link", Style::new(), "https://example.com");
+        b.set_string(0, 0, "link", Style::new());
+        assert_eq!(row_diff_range(&a, &b, 0), Some((0, 4)));
+        a.set_string(0, 1, "世", Style::new());
+        b.set_string(0, 1, "世", Style::new());
+        b.get_mut(1, 1).set_char('x');
+        assert_eq!(row_diff_range(&a, &b, 1), Some((1, 2)));
+    }
+
+    #[test]
+    fn resize_keeps_span_array_in_sync() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 4, 3));
-        buf.recompute_line_hashes();
-        // Grow → all rows dirty + arrays sized to new height.
+        buf.set_string(0, 0, "abcd", Style::new());
         buf.resize(Rect::new(0, 0, 4, 5));
-        assert_eq!(buf.line_dirty.len(), 5);
-        assert_eq!(buf.line_hashes.len(), 5);
-        assert!(buf.line_dirty.iter().all(|d| *d));
-        // Shrink — same invariants.
-        buf.resize(Rect::new(0, 0, 4, 2));
-        assert_eq!(buf.line_dirty.len(), 2);
-        assert_eq!(buf.line_hashes.len(), 2);
-        assert!(buf.line_dirty.iter().all(|d| *d));
+        assert_eq!(buf.touched.len(), 5);
+        assert!(buf.touched.iter().all(|span| span.is_empty()));
+        assert!(buf.content.iter().all(|cell| *cell == Cell::default()));
+        buf.resize(Rect::new(0, 0, 3, 2));
+        assert_eq!(buf.touched.len(), 2);
+        assert_eq!(buf.fill_invariant_violation(), None);
     }
 
     #[test]
@@ -2518,30 +2426,6 @@ mod tests {
         buf.set_char(1, 0, 'a', Style::new());
         assert_eq!(buf.get(1, 0).symbol, "世");
         assert!(buf.get(2, 0).is_continuation());
-    }
-
-    #[test]
-    fn fnv1a_distinct_rows_distinct_identical_rows_collide() {
-        // After swapping SipHash for FNV-1a, the dirty-row digest must keep its
-        // two contract guarantees: distinct content → distinct digest, and
-        // identical content → identical digest (deterministic within a run).
-        let area = Rect::new(0, 0, 5, 3);
-        let mut buf = Buffer::empty(area);
-        buf.set_string(0, 0, "alpha", Style::new());
-        buf.set_string(0, 1, "alpha", Style::new()); // identical to row 0
-        buf.set_string(0, 2, "omega", Style::new()); // distinct
-        buf.recompute_line_hashes();
-
-        assert_eq!(
-            buf.row_hash(0),
-            buf.row_hash(1),
-            "identical rows must collide"
-        );
-        assert_ne!(
-            buf.row_hash(0),
-            buf.row_hash(2),
-            "distinct rows must not collide"
-        );
     }
 
     #[test]
@@ -3190,7 +3074,7 @@ mod tests {
             let mut expected = Cell::default();
             expected.style.bg = bg;
             assert!(buf.content.iter().all(|cell| *cell == expected), "{bg:?}");
-            assert!(buf.line_dirty.iter().all(|dirty| *dirty));
+            assert!(buf.touched.iter().all(|span| span.is_empty()));
             assert!(buf.clip_stack.is_empty());
             assert!(buf.raw_sequences.is_empty());
             assert!(buf.sprixels.is_empty());
