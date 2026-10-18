@@ -466,19 +466,9 @@ pub(super) fn terminal_multiplexer_env(
 
 #[cfg(feature = "crossterm")]
 fn terminal_is_remote() -> bool {
-    terminal_is_remote_env(
-        std::env::var_os("SSH_CONNECTION").is_some(),
-        std::env::var_os("SSH_TTY").is_some(),
-        std::env::var_os("MOSH_IP").is_some(),
-    )
-}
-
-pub(super) fn terminal_is_remote_env(
-    has_ssh_connection: bool,
-    has_ssh_tty: bool,
-    has_mosh_ip: bool,
-) -> bool {
-    has_ssh_connection || has_ssh_tty || has_mosh_ip
+    // Shared with link opening (`Context::link`), which must not spawn a
+    // browser on the remote host.
+    crate::context::session_is_remote()
 }
 
 #[cfg(feature = "crossterm")]

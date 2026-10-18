@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Security
+
+- `Context::link` (and Markdown links) now only open `http`, `https` and
+  `mailto` URLs, rejecting other schemes, whitespace and control characters
+  before anything is spawned. Windows opens links via
+  `rundll32 url.dll,FileProtocolHandler` instead of the command shell, no
+  opener is spawned in SSH/mosh sessions (OSC 8 is still emitted), the
+  opener's output is detached, and failures show a warning toast instead of
+  writing to stderr. (GHSA-h7r7-gv76-cqqf)
+
 ## [0.25.0] - 2026-09-09
 
 ### Added

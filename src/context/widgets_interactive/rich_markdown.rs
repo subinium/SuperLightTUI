@@ -501,6 +501,11 @@ impl Context {
     /// horizontal rules (`---`), links (`[text](url)`), image placeholders
     /// (`![alt](url)`), code blocks with syntax highlighting, and GFM-style
     /// pipe tables. Paragraph text auto-wraps to container width.
+    ///
+    /// Links are rendered with [`Context::link`] and follow its rules: only
+    /// `http`, `https` and `mailto` targets are opened on activation, other
+    /// schemes are never launched, and nothing is spawned over SSH/mosh (the
+    /// OSC 8 hyperlink is still emitted for the local terminal).
     pub fn markdown(&mut self, text: &str) -> Response {
         self.commands
             .push(Command::BeginContainer(Box::new(BeginContainerArgs {

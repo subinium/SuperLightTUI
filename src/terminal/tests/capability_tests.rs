@@ -1,6 +1,7 @@
 //! Capability model, blitter ladder and host / multiplexer policy tests.
 
 use super::*;
+use crate::context::terminal_is_remote_env;
 
 #[test]
 fn graphics_emission_requires_protocol_support() {
