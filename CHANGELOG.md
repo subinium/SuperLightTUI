@@ -357,6 +357,10 @@
 
 ### Fixed
 
+- Border titles are truncated by grapheme cluster with the frame's
+  ambiguous-width setting (`RunConfig::ambiguous_wide`, #449) instead of per
+  `char` with the Unicode default, so a title never splits a cluster and
+  never overruns the corner on CJK-configured terminals (#494).
 - Inserting into a `max_length`-limited `text_input` / `textarea` now keeps
   the longest prefix whose resulting text fits even when inserted text joins
   the graphemes around the cursor (ZWJ emoji sequences, conjoining Hangul
@@ -368,6 +372,23 @@
 
 ### Perf
 
+- The layout tree's storage is reused across frames (#488): containers get
+  their `children` vectors back from a `FrameState`-owned arena and text
+  nodes reuse their payload boxes, flexbox scratch for containers over 16
+  children comes from a per-thread pool, and `LayoutNode` shrank from 368 to
+  336 bytes. Retained storage is trimmed after 120 consecutive frames that
+  use much less of it. Steady-state allocations per frame (matched harness,
+  `bench/ratatui-compare`): dashboard 200x60 54 → 24 calls and 27,664 →
+  984 requested bytes (ratatui 0.30.2: 79 / 8,445), 60 nested boxes 285 →
+  136 and 168,254 → 11,902 B (ratatui: 273 / 45,965), 10k `ui.list` 109 →
+  51, table 1000x6 129 → 61. Frame time drops 1–11% (dashboard 15.3 → 13.6
+  µs, table 177 → 169 µs, nested 182 → 180 µs; 5-round interleaved A/B
+  medians).
+- Each text node's display width (each segment, for rich text) is measured
+  once per frame, when the tree is built, and render and caret geometry
+  reuse it (#494); before, render measured each plain text twice more and
+  each segment once more. Layout's remaining per-grapheme measurements use
+  the shared printable-ASCII fast path.
 - Smaller release binaries (#491): `ContainerBuilder::col` / `row` / `line`,
   the `Context` row/col helpers, `line_wrap` and `button_colored` keep only a
   thin generic shim per closure or label type, the frame kernel takes the

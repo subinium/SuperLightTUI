@@ -112,8 +112,9 @@ fn framestate_reuse_steady_state_alloc_count_low() {
     // six FrameState fields" — pre-fix baseline was ~6 allocations per frame
     // (one per field). With the fix, those six are reused across frames so
     // the count is dominated by per-render content allocations (e.g.
-    // formatting). 1500 allocations across 100 frames = 15/frame ceiling,
-    // well below the pre-fix baseline.
+    // formatting). Since #488 the layout tree storage is recycled too: the
+    // frame measures 4 allocations (title, two texts, one boxed container
+    // command), down from 9 before #488.
     let (_, count) = measure_allocs("framestate_100_frames", || {
         for _ in 0..100 {
             tb.render(|ui| {
@@ -125,13 +126,12 @@ fn framestate_reuse_steady_state_alloc_count_low() {
         }
     });
 
-    // 100 frames with the six fields reused must stay under a tight budget.
-    // If we regressed back to per-frame `Vec::new` for the six fields, count
-    // would be at least 600 + format/string churn (typically 1500+).
-    // Tight budget: < 1500 allocations across 100 frames.
+    // 100 frames with the six fields and the layout tree reused must stay
+    // under a tight budget. Regressing either the six fields (+6/frame) or
+    // the tree storage (+5/frame) breaks it. Budget: 5 per frame.
     assert!(
-        count < 1500,
-        "framestate-reuse regression: 100 frames allocated {} times (budget 1500)",
+        count <= 500,
+        "framestate-reuse regression: 100 frames allocated {} times (budget 500)",
         count
     );
 }
@@ -732,12 +732,13 @@ fn list_and_table_allocations_scale_with_viewport_not_items() {
         "table allocations grow with item count: 1k={table_1k} 10k={table_10k}"
     );
     // About one row String per visible row per frame plus frame overhead.
+    // #488 recycled the layout tree storage: 109 -> 51 per frame.
     assert!(
-        list_10k < 20 * 120,
+        list_10k < 20 * 60,
         "list 10k: {list_10k} allocations / 20 frames"
     );
     assert!(
-        table_10k < 20 * 120,
+        table_10k < 20 * 60,
         "table 10k: {table_10k} allocations / 20 frames"
     );
 }
@@ -783,5 +784,95 @@ fn text_builder_chain_allocates_nothing_beyond_the_content() {
     assert!(
         chained_allocs <= plain_allocs,
         "Text builder chain allocated: plain = {plain_allocs}, chained = {chained_allocs}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #488: layout tree storage is reused across frames
+// ---------------------------------------------------------------------------
+
+/// The `bench/ratatui-compare` dashboard: header, separator, 20 formatted
+/// rows and a progress bar in one column (23 children).
+fn dashboard_frame(ui: &mut slt::Context, tick: u64) {
+    let _ = ui.col(|ui| {
+        ui.text("Header").bold();
+        let _ = ui.separator();
+        for i in 0..20 {
+            if i == 0 {
+                ui.text(format!("Row {i} [{}]", tick % 10));
+            } else {
+                ui.text(format!("Row {i}"));
+            }
+        }
+        let _ = ui.progress(0.75);
+    });
+}
+
+#[test]
+fn layout_tree_dashboard_steady_state_budget() {
+    let _guard = enter_perf_test();
+    use slt::TestBackend;
+
+    const FRAMES: usize = 100;
+    let mut tb = TestBackend::new(200, 60);
+    for tick in 0..50 {
+        tb.render(|ui| dashboard_frame(ui, tick));
+    }
+    let (_, count) = measure_allocs("dashboard_100_frames", || {
+        for tick in 0..FRAMES as u64 {
+            tb.render(|ui| dashboard_frame(ui, tick));
+        }
+    });
+    // Before #488 the tree cost 23 `TextNodeData` boxes, the root and column
+    // `children` vectors (regrowing 4 -> 8 -> 16 -> 32 for 23 children) and
+    // two flexbox scratch spills per frame on top of the ~23 content strings:
+    // about 54 allocations per frame. With the storage recycled only the
+    // content strings remain.
+    assert!(
+        count <= FRAMES * 25,
+        "dashboard steady state: {count} allocations over {FRAMES} frames (budget 25/frame)"
+    );
+}
+
+/// Steady-state allocations for 20 frames of `boxes` bordered containers,
+/// each holding one static-text label.
+fn bordered_boxes_allocs(boxes: usize) -> usize {
+    use slt::{Border, TestBackend};
+
+    let frame = |ui: &mut slt::Context| {
+        let _ = ui.col(|ui| {
+            for _ in 0..boxes {
+                let _ = ui.bordered(Border::Rounded).col(|ui| {
+                    ui.text("label");
+                });
+            }
+        });
+    };
+    let mut tb = TestBackend::new(40, 200);
+    for _ in 0..5 {
+        tb.render(frame);
+    }
+    let (_, count) = measure_allocs("bordered_boxes_20_frames", || {
+        for _ in 0..20 {
+            tb.render(frame);
+        }
+    });
+    count
+}
+
+#[test]
+fn layout_tree_allocations_do_not_scale_per_node() {
+    let _guard = enter_perf_test();
+    const FRAMES: usize = 20;
+    let small = bordered_boxes_allocs(10);
+    let large = bordered_boxes_allocs(40);
+    let extra = large.saturating_sub(small);
+    // Each extra box records one boxed `BeginContainerArgs` command and one
+    // label `String`; both belong to the command stream, not the tree. Before
+    // #488 the tree added a `children` vector and a `TextNodeData` box per
+    // box (4 allocations per box per frame).
+    assert!(
+        extra <= 30 * FRAMES * 2,
+        "30 extra boxes added {extra} allocations over {FRAMES} frames (budget 2 per box per frame)"
     );
 }

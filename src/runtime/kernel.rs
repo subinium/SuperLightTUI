@@ -382,7 +382,7 @@ pub(crate) fn run_frame_kernel(
     // pattern for the other six recycled buffers).
     // #443: scroll anchoring policies recorded by this frame's bindings.
     let scroll_policies = std::mem::take(&mut ctx.pointer.scroll_policies);
-    let mut tree = layout::build_tree(&mut ctx.commands);
+    let mut tree = layout::build_tree_in(&mut ctx.commands, &mut state.layout_arena);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
 
@@ -575,6 +575,8 @@ pub(crate) fn run_frame_kernel(
         };
         layout::render_inspector(&tree, buffer, &focus);
     }
+    // #488: return the tree's storage for the next frame's build.
+    state.layout_arena.recycle(tree);
 
     // The callback executed after layout, so no Context fallback can safely
     // run here. Restore every persistent frame field first, then preserve the

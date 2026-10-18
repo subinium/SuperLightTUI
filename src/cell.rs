@@ -63,6 +63,14 @@ pub(crate) fn is_printable_ascii(s: &str) -> bool {
     remainder.iter().all(|&byte| is_printable_ascii_byte(byte))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only count of [`display_width`] calls on this thread, so layout
+    /// tests can assert each text node is measured once per frame (#494).
+    pub(crate) static DISPLAY_WIDTH_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Display width of `s` in terminal columns.
 ///
 /// Equal to [`crate::width::str_width`] (which honours the frame's
@@ -70,6 +78,8 @@ pub(crate) fn is_printable_ascii(s: &str) -> bool {
 /// fast path for printable ASCII, which is never ambiguous.
 #[inline]
 pub(crate) fn display_width(s: &str) -> usize {
+    #[cfg(test)]
+    DISPLAY_WIDTH_CALLS.with(|calls| calls.set(calls.get() + 1));
     if is_printable_ascii(s) {
         s.len()
     } else {

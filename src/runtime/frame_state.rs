@@ -342,6 +342,9 @@ pub(crate) struct FrameState {
     /// new context (capacity preserved, len reset to 0). After `build_tree`
     /// drains the commands, the now-empty Vec is reclaimed back here.
     pub commands_buf: Vec<crate::layout::Command>,
+    /// Layout-tree storage reused across frames (issue #488): `build_tree_in`
+    /// borrows from it and the kernel recycles the tree into it after render.
+    pub layout_arena: crate::layout::LayoutArena,
     /// Recycled per-frame layout collection scratch (issue #155). Same
     /// pattern as `commands_buf`: clear before use, restore after.
     pub frame_data: crate::layout::FrameData,

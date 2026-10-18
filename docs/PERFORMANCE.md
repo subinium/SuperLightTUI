@@ -215,25 +215,41 @@ Do not infer retained-memory improvement from the lower per-frame requests.
 ### Steady-state allocations: target vs measured
 
 The goal is zero unnecessary heap allocations on the steady-state render
-path. **The goal is not met.** In the release-mode harness from
-[§5](#vs-ratatui-matched-harness) (counting global allocator, SLT `15fd63a`,
-counted after warm-up, per frame):
+path. **Status: not met.** Since v0.26 (#488) the framework's own per-frame
+storage (commands, collection buffers, the layout tree, flexbox scratch) is
+recycled, so what remains is content recorded into commands, not layout
+bookkeeping. Measured with the committed harness
+(`cd bench/ratatui-compare && cargo run --release --features count-alloc -- alloc`,
+ANSI-sink arm, 50 warm-up frames, mean of 200; Apple M3 Pro, rustc 1.98.0),
+allocation calls / requested bytes per frame:
 
-| Workload | SLT calls / requested bytes | ratatui 0.30.2 calls / requested bytes |
-|---|---|---|
-| Dashboard 200×60 (static, idle, or one changing cell) | 54 / 27.7 KB | 74 / 6.3 KB |
-| 10k-item `ui.list`, 100×50 | 20,018 / 13.8 MB | 20,056 / 4.16 MB |
-| 10k items via `ui.virtual_list`, 100×50 | 160 / 56 KB | — |
-| `ui.table` 1000×6, 200×60 | 9,038 / 1.15 MB | 13,082 / 2.60 MB |
-| `ui.table` 1000×6, `page_size = 57` | 551 / 71 KB | — |
-| 60 nested bordered boxes, 240×80 | 285 / 168 KB | 273 / 46 KB |
+| Workload | SLT before #488 (`f14fd80`) | SLT 0.26 | ratatui 0.30.2 |
+|---|---|---|---|
+| Dashboard 200×60 (static, idle, or one changing cell) | 54 / 27,664 B | **24 / 984 B** | 79 / 8,445 B |
+| 10k-item `ui.list`, 100×50 | 109 / 55,958 B | **51 / 2,054 B** | 20,056 / 4.16 MB |
+| 10k items via `ui.virtual_list`, 100×50 | 160 / 56,166 B | **102 / 2,262 B** | — |
+| `ui.table` 1000×6, 200×60 | 129 / 60,222 B | **61 / 4,958 B** | 25,104 / 5.95 MB |
+| `ui.table` 1000×6, `page_size = 57` | 131 / 60,156 B | **63 / 4,892 B** | — |
+| 60 nested bordered boxes, 240×80 | 285 / 168,254 B | **136 / 11,902 B** | 273 / 45,965 B |
 
 Calls include reallocations. Requested bytes are allocation sizes, not RSS.
-SLT makes fewer allocation calls than ratatui on the dashboard and the table,
-but it requests 3.3–4.4× more bytes per frame on the dashboard, the full
-list, and the nested layout. Full-collection widgets scale with item count, not
-with what is visible. The reuse below removes specific allocations; it does
-not make the frame allocation-free.
+SLT now makes fewer allocation calls and requests fewer bytes than ratatui on
+every workload. What is left:
+
+- **Content strings.** Each `ui.text(..)` / `format!` row owns its `String`
+  (the dashboard's 24 are its row, header and bar strings).
+- **Boxed container commands.** `Command::BeginContainer` /
+  `BeginScrollable` box their arguments (#64), one allocation per container
+  per frame: 76 of the nested workload's 136 (the other 60 are labels).
+  Recycling those payloads would take the command-recording side, which
+  #488 left out of scope.
+
+Before #488 the layout tree allocated one `children` vector per container
+(regrowing 4 → 8 → 16 → 32 for the dashboard's 23-row column, 368 B per
+node) and one 128 B `TextNodeData` box per text node, and flexbox spilled
+its scratch to the heap for containers over 16 children. `tests/alloc_budget.rs`
+pins the dashboard at ≤ 25 allocations per frame and the per-container cost
+at ≤ 2 (command box + label).
 
 What we reuse, and where:
 
@@ -241,7 +257,8 @@ What we reuse, and where:
 |---|---|---|
 | `commands` `Vec<Command>` | reused via `FrameState.commands_buf` | #143 / v0.19.1 |
 | `FrameData` (8 collection `Vec`s) | reused via `&mut FrameData` in `collect_all` | #155 / source |
-| `flexbox` row/column scratch | inline `U32Stack { [u32; 16] }` | #67 / v0.18.2 |
+| `flexbox` row/column scratch | inline `U32Stack { [u32; 16] }`; wider containers borrow a per-thread pooled `Vec<u32>` | #67 / v0.18.2, #488 / v0.26 |
+| Layout tree (`children` vectors, `TextNodeData` boxes, overlay list) | recycled via `FrameState.layout_arena` (`LayoutArena`), trimmed after sustained smaller frames | #488 / v0.26 |
 | Group name strings | `Arc<str>` (atomic ref-count, no heap) | #139, #145 / v0.19.1 |
 | `Style` commands | `Style` is `Copy` (no heap) | always |
 | `Color`, `Rect` | `Copy` (no heap) | always |
@@ -261,7 +278,8 @@ allocation in the PR description; reviewers should push back on
 `String::from`, `format!`, `Vec::new` inside the `frame()` body unless the
 allocation is one-shot or amortized.
 
-`FrameState` owns the reusable command and collection buffers. Allocation
+`FrameState` owns the reusable command and collection buffers and the
+layout arena. Allocation
 regression tests verify that these buffers are returned after normal, quit, and
 panic-recovery frames; changes to that handoff require a measured benchmark.
 
@@ -378,7 +396,8 @@ For collections that are almost always ≤ N items, use
   case allocation-free (#135).
 - `flexbox::U32Stack` in `src/layout/flexbox.rs` is a `[u32; 16]`
   inline buffer with a heap-`Vec` overflow path (#67). Child-counts ≤ 16
-  pay zero allocations per `layout_row` / `layout_column` call.
+  pay zero allocations per `layout_row` / `layout_column` call; wider
+  containers borrow the overflow `Vec` from a per-thread pool (#488).
 
 ### Pattern 3: Flatten heap structures
 
@@ -515,19 +534,17 @@ unchanged by the C++ query fix.
 
 | Framework | Render model | Per-frame allocations | Profiler |
 |---|---|---|---|
-| **SLT (TUI)** | Immediate-mode, `Buffer` diff vs prev frame | Reuses command/collection buffers, but still allocates every frame (54 calls / 27.7 KB on a 200×60 dashboard; scales with item count). Zero is a goal, not met | F12 overlay + `cargo bench` |
+| **SLT (TUI)** | Immediate-mode, `Buffer` diff vs prev frame | Reuses command, collection and layout-tree storage; what remains is content (24 calls / 984 B on a 200×60 dashboard; scales with visible text). Zero is a goal, not met | F12 overlay + `cargo bench` |
 | **React** | Virtual DOM diff, retained components | Many (props, vnodes, fibers) | React DevTools Profiler |
 | **Flutter** | Retained widget tree, RenderObject layout | Few (per-build only) | Flutter DevTools Timeline |
 | **iOS UIKit** | Retained view hierarchy, Auto Layout solver | Few (constraint solver only) | Instruments |
-| **ratatui** | Immediate-mode, `Buffer` diff vs prev frame | Per-widget value types (74 calls / 6.3 KB on the same dashboard; scales with item count) | manual `Instant::elapsed` |
+| **ratatui** | Immediate-mode, `Buffer` diff vs prev frame | Per-widget value types (79 calls / 8.4 KB on the same dashboard; scales with item count) | manual `Instant::elapsed` |
 
 SLT is closest to ratatui in render model. Both rebuild the UI every frame
 and diff the resulting `Buffer` against the previous one. SLT recycles
-`commands`, `FrameData`, flexbox scratch, and group names across frames,
-but that reuse does not give it a smaller allocation footprint: it makes
-fewer allocation calls than ratatui on the dashboard and table workloads,
-yet requests 3.3–4.4× more bytes per frame on the dashboard, full list,
-and nested workloads (see
+`commands`, `FrameData`, the layout tree, flexbox scratch, and group names
+across frames. Since #488 it makes fewer allocation calls and requests fewer
+bytes per frame than ratatui on every matched workload (see
 [§2](#steady-state-allocations-target-vs-measured)). Terminal write and
 emulator parse time were not measured here. At 60 FPS both frameworks use a
 small fraction of the 16.6 ms budget on these workloads.

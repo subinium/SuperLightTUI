@@ -1115,9 +1115,9 @@ fn raw_draw_constructor_matches_inline_literal_shape() {
     assert!(!node.is_scrollable);
     assert_eq!(node.scroll_offset, 0);
     assert_eq!(node.content_height, 0);
-    // The wrap caches and segments are inside `text_data`, which is
-    // `None` for `RawDraw` nodes.
-    assert!(node.link_url.is_none());
+    // The wrap caches, segments and link URL are inside `text_data`, which
+    // is `None` for `RawDraw` nodes (asserted above).
+    assert_eq!(node.arena_slot, super::tree::LayoutArena::NO_SLOT);
     assert!(node.group_name.is_none());
     assert!(node.overlays.is_empty());
 }
@@ -2867,4 +2867,326 @@ fn intrinsic_and_flex_arithmetic_saturates_extreme_constraints() {
             .iter()
             .all(|child| child.pos.0 == u32::MAX && child.size.0 == u32::MAX)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #488: layout tree storage reused across frames
+// ---------------------------------------------------------------------------
+
+fn push_text(commands: &mut Vec<Command>, content: &str, cursor: Option<usize>, wrap: bool) {
+    commands.push(Command::Text {
+        content: content.to_string(),
+        cursor_offset: cursor,
+        cursor_masked: cursor.is_some(),
+        style: Style::new(),
+        grow: 0,
+        align: Align::Start,
+        wrap,
+        truncate: false,
+        margin: Margin::default(),
+        constraints: Constraints::default(),
+    });
+}
+
+/// Compare every layout-visible property of two trees.
+fn assert_same_layout(a: &LayoutNode, b: &LayoutNode) {
+    assert_eq!(a.kind, b.kind);
+    assert_eq!((a.pos, a.size), (b.pos, b.size));
+    assert_eq!(
+        (a.content_height, a.content_width),
+        (b.content_height, b.content_width)
+    );
+    let text = |n: &LayoutNode| {
+        n.text_data().map(|t| {
+            (
+                t.content.clone(),
+                t.width,
+                t.cursor_offset,
+                t.cursor_masked,
+                t.link_url.clone(),
+                t.cached_wrapped.clone(),
+            )
+        })
+    };
+    assert_eq!(text(a), text(b));
+    assert_eq!(a.children.len(), b.children.len());
+    for (ca, cb) in a.children.iter().zip(&b.children) {
+        assert_same_layout(ca, cb);
+    }
+    assert_eq!(a.overlays.len(), b.overlays.len());
+    for (oa, ob) in a.overlays.iter().zip(&b.overlays) {
+        assert_eq!(oa.modal, ob.modal);
+        assert_same_layout(&oa.node, &ob.node);
+    }
+}
+
+#[test]
+fn issue_488_arena_returns_storage_to_the_same_containers() {
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    for _ in 0..20 {
+        push_textcol_20(&mut commands, false);
+    }
+    let tree = build_tree_in(&mut commands, &mut arena);
+    let root_buf = (tree.children.as_ptr(), tree.children.capacity());
+    let col_buf = tree.children[7].children.as_ptr();
+    let text_box: *const super::tree::TextNodeData =
+        tree.children[0].children[0].text_data().unwrap();
+    arena.recycle(tree);
+
+    for _ in 0..20 {
+        push_textcol_20(&mut commands, false);
+    }
+    let tree = build_tree_in(&mut commands, &mut arena);
+    assert_eq!(
+        (tree.children.as_ptr(), tree.children.capacity()),
+        root_buf,
+        "root must get its own children vector back"
+    );
+    assert_eq!(tree.children[7].children.as_ptr(), col_buf);
+    assert!(
+        tree.children
+            .iter()
+            .any(|col| std::ptr::eq(col.children[0].text_data().unwrap(), text_box)),
+        "text payload boxes must be recycled"
+    );
+}
+
+#[test]
+fn issue_488_recycled_tree_lays_out_like_a_fresh_one() {
+    // Frame 1 fills the payloads with cursor, link, wrap-cache and overlay
+    // state; frame 2 has a different shape. A recycled payload or vector
+    // must not leak any of it.
+    fn frame_one(commands: &mut Vec<Command>) {
+        push_text(commands, "cursor here", Some(3), false);
+        commands.push(Command::Link {
+            text: "docs".into(),
+            url: "https://example.com".into(),
+            style: Style::new(),
+            wrap: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        push_text(commands, "alpha beta gamma delta", None, true);
+        commands.push(Command::BeginOverlay { modal: true });
+        push_text(commands, "modal body", None, false);
+        commands.push(Command::EndOverlay);
+        for _ in 0..3 {
+            push_textcol_20(commands, true);
+        }
+    }
+    fn frame_two(commands: &mut Vec<Command>) {
+        push_textcol_20(commands, false);
+        push_text(commands, "plain", None, false);
+        push_text(commands, "wrapped words here", None, true);
+        push_text(commands, "tail", None, false);
+    }
+
+    let area = Rect::new(0, 0, 12, 20);
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    for round in 0..3 {
+        for (name, frame) in [
+            ("one", frame_one as fn(&mut Vec<Command>)),
+            ("two", frame_two),
+        ] {
+            frame(&mut commands);
+            let mut fresh_commands = commands.clone();
+            let mut recycled = build_tree_in(&mut commands, &mut arena);
+            let mut fresh = build_tree(&mut fresh_commands);
+            compute(&mut recycled, area);
+            compute(&mut fresh, area);
+            assert_same_layout(&recycled, &fresh);
+            let (mut a, mut b) = (Buffer::empty(area), Buffer::empty(area));
+            render(&recycled, &mut a);
+            render(&fresh, &mut b);
+            let cells = |buf: &Buffer| {
+                (0..area.height)
+                    .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+                    .map(|(x, y)| {
+                        let cell = buf.get(x, y);
+                        (cell.symbol.to_string(), cell.style, cell.hyperlink.clone())
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(cells(&a), cells(&b), "round {round} frame {name}");
+            assert_eq!(a.cursor_pos, b.cursor_pos, "round {round} frame {name}");
+            arena.recycle(recycled);
+        }
+    }
+}
+
+#[test]
+fn issue_488_arena_trims_after_sustained_smaller_frames() {
+    let mut arena = LayoutArena::default();
+    let mut commands = Vec::new();
+    let mut frame = |arena: &mut LayoutArena, columns: usize| {
+        for _ in 0..columns {
+            push_textcol_20(&mut commands, false);
+        }
+        let tree = build_tree_in(&mut commands, arena);
+        arena.recycle(tree);
+    };
+    frame(&mut arena, 500);
+    let big = arena.retained();
+    assert!(big.0 >= 501 && big.1 >= 500 && big.2 >= 1000, "{big:?}");
+
+    // Briefly smaller frames keep the storage: a workload that alternates
+    // sizes must not free and regrow every frame.
+    for _ in 0..LayoutArena::TRIM_AFTER_FRAMES - 1 {
+        frame(&mut arena, 2);
+    }
+    assert_eq!(arena.retained(), big);
+    frame(&mut arena, 500);
+    for _ in 0..LayoutArena::TRIM_AFTER_FRAMES - 1 {
+        frame(&mut arena, 2);
+    }
+    assert_eq!(arena.retained(), big, "a large frame resets the trim clock");
+
+    // A sustained smaller workload releases the excess.
+    for _ in 0..2 {
+        frame(&mut arena, 2);
+    }
+    let small = arena.retained();
+    assert!(
+        small.0 <= 8 && small.1 <= 8 && small.2 <= 64,
+        "retained storage must shrink: {big:?} -> {small:?}"
+    );
+    // And the trimmed arena still builds correct trees.
+    frame(&mut arena, 2);
+}
+
+#[test]
+fn issue_488_arena_build_keeps_depth_guard() {
+    // Unoptimized `build_children` frames are large, so 513 levels overflow
+    // the default 2 MB test-thread stack before the guard fires (true before
+    // #488 as well). Run on a roomy stack and check the diagnostic.
+    let result = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(build_past_depth_guard)
+        .unwrap()
+        .join();
+    let payload = result.expect_err("build must panic past MAX_LAYOUT_DEPTH");
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.starts_with("layout tree depth exceeds 512"),
+        "{message}"
+    );
+}
+
+fn build_past_depth_guard() {
+    let mut commands = Vec::new();
+    for _ in 0..=MAX_LAYOUT_DEPTH + 1 {
+        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            direction: Direction::Column,
+            gap: 0,
+            align: Align::Start,
+            align_self: None,
+            justify: Justify::Start,
+            border: None,
+            border_sides: BorderSides::all(),
+            border_style: Style::new(),
+            bg_color: None,
+            padding: Padding::default(),
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+            title: None,
+            grow: 0,
+            group_name: None,
+        })));
+    }
+    let _ = build_tree_in(&mut commands, &mut LayoutArena::default());
+}
+
+// ---------------------------------------------------------------------------
+// Issue #494: each text node's width is measured once per frame
+// ---------------------------------------------------------------------------
+
+#[test]
+fn issue_494_border_title_truncation_follows_ambiguous_width() {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::width::set_ambiguous_wide(false);
+        }
+    }
+    let _reset = Reset;
+    let render_title = |title: &str| {
+        let mut config = default_container_config();
+        config.border = Some(crate::style::Border::Single);
+        config.title = Some((title.to_string(), Style::new()));
+        let mut root = LayoutNode::container(Direction::Row, config);
+        let area = Rect::new(0, 0, 8, 3);
+        compute(&mut root, area);
+        let mut buf = Buffer::empty(area);
+        render(&root, &mut buf);
+        (0..8)
+            .map(|x| buf.get(x, 0).symbol.to_string())
+            .collect::<Vec<_>>()
+    };
+    // The title window is columns 2..=6 (five columns).
+    let narrow = render_title("→→→→→→");
+    assert_eq!(narrow[2..7], ["→", "→", "→", "→", "→"], "{narrow:?}");
+    crate::width::set_ambiguous_wide(true);
+    // Two columns per arrow: two arrows fit the five-column window, a third
+    // would write past it (box-drawing glyphs are ambiguous too, so the
+    // border itself is drawn two columns wide here).
+    let wide = render_title("→→→→→→");
+    assert_eq!(
+        wide.iter().filter(|s| s.as_str() == "→").count(),
+        2,
+        "{wide:?}"
+    );
+    assert_eq!(wide[2..6], ["→", "", "→", ""], "{wide:?}");
+    // A cluster is kept whole: "e" + combining acute is one column.
+    crate::width::set_ambiguous_wide(false);
+    let combined = render_title("e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}");
+    assert_eq!(combined[7], "┐", "{combined:?}");
+    assert!(
+        combined[2..7].iter().all(|s| s == "e\u{301}"),
+        "{combined:?}"
+    );
+}
+
+#[test]
+fn issue_494_text_width_measured_once_per_frame() {
+    const ROWS: usize = 12;
+    let calls = || crate::cell::DISPLAY_WIDTH_CALLS.with(std::cell::Cell::get);
+    let mut tb = crate::TestBackend::new(40, ROWS as u32 + 3);
+    let frame = |ui: &mut crate::Context| {
+        let _ = ui.col(|ui| {
+            // One rich-text node with two segments: measured per segment.
+            let _ = ui.line(|ui| {
+                ui.text("styled ");
+                let _ = ui.text("run").bold();
+            });
+            for i in 0..ROWS {
+                if i % 3 == 0 {
+                    let _ = ui.text("centered row").align(Align::Center);
+                } else if i % 3 == 1 {
+                    let _ = ui.text("right row").align(Align::End);
+                } else {
+                    ui.text("plain row");
+                }
+            }
+        });
+    };
+    tb.render(frame);
+    let before = calls();
+    tb.render(frame);
+    let measured = calls() - before;
+    // Build measures each plain node and each rich-text segment once;
+    // render reuses the stored widths for alignment and clipping (before
+    // #494 render measured every one of them again, plain text twice).
+    assert_eq!(
+        measured,
+        ROWS + 2,
+        "display_width calls for {ROWS} plain nodes + 2 segments"
+    );
+    tb.assert_contains("centered row");
+    tb.assert_contains("styled run");
 }

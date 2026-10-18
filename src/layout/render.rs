@@ -709,6 +709,21 @@ fn set_string_clipped_x(
     style: Style,
     link: Option<&str>,
 ) -> i64 {
+    let width = u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX);
+    set_measured_string_clipped_x(buf, screen_x, y, text, width, style, link)
+}
+
+/// [`set_string_clipped_x`] for a caller that already knows `text`'s display
+/// width (#494), e.g. from [`super::tree::TextNodeData::width`].
+fn set_measured_string_clipped_x(
+    buf: &mut Buffer,
+    screen_x: i64,
+    y: u32,
+    text: &str,
+    text_width: u32,
+    style: Style,
+    link: Option<&str>,
+) -> i64 {
     #[cfg(feature = "bidi")]
     if screen_x < i64::from(buf.area.x) && crate::buffer::needs_bidi_reorder(text) {
         let visual = crate::buffer::reorder_line_visual(text);
@@ -717,7 +732,7 @@ fn set_string_clipped_x(
             .map(compact_str::CompactString::new);
         let mut x = screen_x;
         for grapheme in visual.graphemes(true) {
-            let width = crate::width::str_width(grapheme) as i64;
+            let width = crate::cell::display_width(grapheme) as i64;
             if x >= i64::from(buf.area.x) && x < i64::from(buf.area.right()) {
                 buf.set_grapheme_visual(x as u32, y, grapheme, style, link.as_ref());
             }
@@ -725,7 +740,7 @@ fn set_string_clipped_x(
         }
         return x;
     }
-    let full_width = crate::cell::display_width(text) as i64;
+    let full_width = i64::from(text_width);
     let left = i64::from(buf.area.x);
     if screen_x >= left {
         let sx = screen_x as u32;
@@ -745,7 +760,7 @@ fn set_string_clipped_x(
             byte_start = idx;
             break;
         }
-        consumed += crate::width::str_width(g) as u32;
+        consumed += crate::cell::display_width(g) as u32;
     }
     if byte_start >= text.len() {
         // Entire run scrolled off the left edge.
@@ -766,6 +781,7 @@ fn set_styled_line_clipped_x(
     screen_x: i64,
     y: u32,
     segments: &[(String, Style)],
+    widths: Option<&[u32]>,
     parent_bg: Option<Color>,
 ) -> i64 {
     #[cfg(feature = "bidi")]
@@ -776,13 +792,19 @@ fn set_styled_line_clipped_x(
         return set_styled_bidi_line(buf, screen_x, y, segments, parent_bg);
     }
 
+    // `widths` (#494) are the build-time measurements of `segments`; they
+    // are only passed when they line up one-to-one.
+    let widths = widths.filter(|widths| widths.len() == segments.len());
     let mut x = screen_x;
-    for (text, style) in segments {
+    for (i, (text, style)) in segments.iter().enumerate() {
         let mut style = *style;
         if style.bg.is_none() {
             style.bg = parent_bg;
         }
-        x = set_string_clipped_x(buf, x, y, text, style, None);
+        x = match widths {
+            Some(widths) => set_measured_string_clipped_x(buf, x, y, text, widths[i], style, None),
+            None => set_string_clipped_x(buf, x, y, text, style, None),
+        };
     }
     x
 }
@@ -839,7 +861,7 @@ fn set_styled_bidi_line(
     for logical_index in visual_to_logical {
         let grapheme = graphemes[logical_index].1;
         let normalized = crate::cell::normalize_cell_symbol(grapheme);
-        let width = crate::width::str_width(normalized.as_str()) as i64;
+        let width = crate::cell::display_width(normalized.as_str()) as i64;
         let next_x = x.saturating_add(width);
         if x >= left && x < right {
             buf.set_grapheme_visual(x as u32, y, grapheme, atom_styles[logical_index], None);
@@ -970,13 +992,27 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        set_styled_line_clipped_x(buf, sx, line_y as u32, line_segs, parent_bg);
+                        set_styled_line_clipped_x(
+                            buf,
+                            sx,
+                            line_y as u32,
+                            line_segs,
+                            None,
+                            parent_bg,
+                        );
                     }
                 } else {
                     if sy < 0 {
                         return;
                     }
-                    set_styled_line_clipped_x(buf, sx, sy as u32, segs, parent_bg);
+                    set_styled_line_clipped_x(
+                        buf,
+                        sx,
+                        sy as u32,
+                        segs,
+                        Some(&td.segment_widths),
+                        parent_bg,
+                    );
                 }
             } else if let Some(ref text) = td.content {
                 let mut style = node.style;
@@ -996,33 +1032,37 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        let text_width = crate::cell::display_width(line) as u32;
-                        let x_align = if text_width < node.size.0 {
+                        let line_width =
+                            u32::try_from(crate::cell::display_width(line)).unwrap_or(u32::MAX);
+                        let x_align = if line_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
-                                Align::Center => (node.size.0 - text_width) / 2,
-                                Align::End => node.size.0 - text_width,
+                                Align::Center => (node.size.0 - line_width) / 2,
+                                Align::End => node.size.0 - line_width,
                             }
                         } else {
                             0
                         };
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             sx + i64::from(x_align),
                             line_y as u32,
                             line,
+                            line_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     }
                 } else {
                     if sy < 0 {
                         return;
                     }
-                    let text_width = crate::cell::display_width(text) as u32;
+                    // Measured once when the node was built (#494).
+                    let text_width = td.width;
                     if node.truncate && text_width > node.size.0 && node.size.0 > 1 {
                         let truncated = truncate_with_ellipsis(text, node.size.0 as usize);
-                        let trunc_width = crate::cell::display_width(&truncated) as u32;
+                        let trunc_width = u32::try_from(crate::cell::display_width(&truncated))
+                            .unwrap_or(u32::MAX);
                         let x_align = if trunc_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
@@ -1032,13 +1072,14 @@ fn render_inner(
                         } else {
                             0
                         };
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             sx + i64::from(x_align),
                             sy as u32,
                             &truncated,
+                            trunc_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     } else {
                         let x_align = if text_width < node.size.0 {
@@ -1056,7 +1097,7 @@ fn render_inner(
                                 .graphemes(true)
                                 .take(cursor_offset)
                                 .map(|grapheme| {
-                                    u32::try_from(crate::width::str_width(grapheme))
+                                    u32::try_from(crate::cell::display_width(grapheme))
                                         .unwrap_or(u32::MAX)
                                 })
                                 .fold(0u32, u32::saturating_add);
@@ -1065,13 +1106,14 @@ fn render_inner(
                                 buf.set_cursor_pos(cursor_screen_x, sy as u32, td.cursor_masked);
                             }
                         }
-                        set_string_clipped_x(
+                        set_measured_string_clipped_x(
                             buf,
                             draw_x,
                             sy as u32,
                             text,
+                            text_width,
                             style,
-                            node.link_url.as_deref(),
+                            td.link_url.as_deref(),
                         );
                     }
                 }
@@ -1296,17 +1338,28 @@ fn render_container_border(
             // (which may be negative when scrolled left); the clipped writer
             // trims any leading columns past the left edge (#247).
             let max_width = (title_right - title_x + 1).max(0) as usize;
-            let mut trimmed = String::new();
+            // Trim by grapheme cluster with the shared width policy (#494):
+            // ambiguous-width glyphs honour `RunConfig::ambiguous_wide`, and a
+            // cluster is never split. The kept prefix is a borrowed slice.
             let mut col_used = 0usize;
-            for ch in title.chars() {
-                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            let mut end = 0usize;
+            for (idx, grapheme) in title.grapheme_indices(true) {
+                let cw = crate::cell::display_width(grapheme);
                 if col_used + cw > max_width {
                     break;
                 }
-                trimmed.push(ch);
                 col_used += cw;
+                end = idx + grapheme.len();
             }
-            set_string_clipped_x(buf, title_x, y, &trimmed, ts, None);
+            set_measured_string_clipped_x(
+                buf,
+                title_x,
+                y,
+                &title[..end],
+                u32::try_from(col_used).unwrap_or(u32::MAX),
+                ts,
+                None,
+            );
         }
     }
 }
@@ -1359,7 +1412,7 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     // Indic / Thai syllable) that would overflow `target` is dropped whole
     // before the ellipsis, never half-emitted.
     for g in text.graphemes(true) {
-        let ch_width = crate::width::str_width(g);
+        let ch_width = crate::cell::display_width(g);
         if width + ch_width > target {
             break;
         }
