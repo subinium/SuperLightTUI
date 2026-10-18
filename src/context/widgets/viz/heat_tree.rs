@@ -329,7 +329,7 @@ impl Context {
                     let max_label_w = cell_w.saturating_sub(1);
                     let label_owned = crate::chart::truncate_label(&item.label, max_label_w);
                     let label = label_owned.as_str();
-                    let label_unicode_w = UnicodeWidthStr::width(label);
+                    let label_unicode_w = crate::width::unicode_width(label);
                     let label_y = y0 + cell_h / 2;
                     let label_x = x0 + (cell_w.saturating_sub(label_unicode_w)) / 2;
                     if label_y < y1.min(h) {
@@ -345,7 +345,7 @@ impl Context {
                     if cell_h >= 3 {
                         let value_str = format_compact_number(item.value);
                         let value_y = label_y + 1;
-                        let value_width = UnicodeWidthStr::width(value_str.as_str());
+                        let value_width = crate::width::unicode_width(value_str.as_str());
                         if value_y < y1.min(h) && value_width < cell_w {
                             let vx = x0 + (cell_w.saturating_sub(value_width)) / 2;
                             buf.set_string(

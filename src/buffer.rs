@@ -14,7 +14,7 @@ use crate::cell::{
 };
 use crate::rect::Rect;
 use crate::style::Style;
-use unicode_segmentation::UnicodeSegmentation;
+use crate::width::UnicodeSegmentation;
 
 /// Maximum cells allocated by one [`Buffer`].
 ///
@@ -940,6 +940,9 @@ impl Buffer {
     /// Scroll crop info is automatically applied from the top of the
     /// `kitty_clip_info_stack` (set via [`Buffer::push_kitty_clip`]).
     pub(crate) fn kitty_place(&mut self, mut p: KittyPlacement) {
+        // Issue #491: the terminal links its image passes only through here.
+        #[cfg(feature = "crossterm")]
+        crate::terminal::enable_graphics_passes();
         // Apply clip check
         if let Some(clip) = self.effective_clip()
             && (p.x >= clip.right()
@@ -989,6 +992,9 @@ impl Buffer {
     /// that build so a genuine dead-code signal still fires by default.
     #[cfg_attr(not(feature = "crossterm"), allow(dead_code))]
     pub(crate) fn sprixel_place(&mut self, p: SprixelPlacement) {
+        // Issue #491: see `kitty_place`.
+        #[cfg(feature = "crossterm")]
+        crate::terminal::enable_graphics_passes();
         if let Some(clip) = self.effective_clip()
             && (p.x >= clip.right()
                 || p.y >= clip.bottom()

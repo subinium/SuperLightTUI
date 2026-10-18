@@ -27,12 +27,128 @@ pub(crate) fn ambiguous_wide() -> bool {
 
 /// Display width of `text` in terminal columns under the current
 /// ambiguous-width setting.
+///
+/// Printable ASCII is one column per byte in both interpretations and takes
+/// part in no width sequence, so it is measured inline; everything else goes
+/// through one out-of-line copy of the `unicode-width` walk (issue #491:
+/// the walk is `#[inline]` upstream and was copied into every codegen unit
+/// that measured text).
 #[inline]
 pub(crate) fn str_width(text: &str) -> usize {
-    if text.is_ascii() || !ambiguous_wide() {
-        UnicodeWidthStr::width(text)
+    if crate::cell::is_printable_ascii(text) {
+        text.len()
     } else {
+        unicode_str_width(text, ambiguous_wide())
+    }
+}
+
+/// `UnicodeWidthStr::width`: the Unicode default width, regardless of the
+/// ambiguous-width setting, through the single out-of-line walk.
+#[inline]
+pub(crate) fn unicode_width(text: &str) -> usize {
+    unicode_str_width(text, false)
+}
+
+/// `unicode-width` string width, ambiguous-wide (`width_cjk`) when asked.
+/// ASCII text never measures differently under the CJK tables.
+#[inline(never)]
+pub(crate) fn unicode_str_width(text: &str, ambiguous_wide: bool) -> usize {
+    if ambiguous_wide && !text.is_ascii() {
         UnicodeWidthStr::width_cjk(text)
+    } else {
+        UnicodeWidthStr::width(text)
+    }
+}
+
+/// Grapheme segmentation with a single out-of-line copy of the segmenter
+/// (issue #491).
+///
+/// `unicode_segmentation::Graphemes::next` is `#[inline]`, so every codegen
+/// unit that iterates graphemes carried its own ~3.4 KiB copy (five in a
+/// hello-world, more in larger apps). The call was already out of line at
+/// those sites; these wrappers keep it out of line in exactly one place.
+/// Import this trait instead of `unicode_segmentation::UnicodeSegmentation`.
+pub(crate) trait UnicodeSegmentation {
+    /// Extended (or legacy) grapheme clusters of `self`.
+    fn graphemes(&self, is_extended: bool) -> Graphemes<'_>;
+    /// Grapheme clusters of `self` with their byte offsets.
+    fn grapheme_indices(&self, is_extended: bool) -> GraphemeIndices<'_>;
+}
+
+impl UnicodeSegmentation for str {
+    #[inline]
+    fn graphemes(&self, is_extended: bool) -> Graphemes<'_> {
+        Graphemes(unicode_segmentation::UnicodeSegmentation::graphemes(
+            self,
+            is_extended,
+        ))
+    }
+
+    #[inline]
+    fn grapheme_indices(&self, is_extended: bool) -> GraphemeIndices<'_> {
+        GraphemeIndices {
+            start: self.as_ptr() as usize,
+            inner: self.graphemes(is_extended),
+        }
+    }
+}
+
+/// See [`UnicodeSegmentation::graphemes`].
+#[derive(Clone)]
+pub(crate) struct Graphemes<'a>(unicode_segmentation::Graphemes<'a>);
+
+impl<'a> Iterator for Graphemes<'a> {
+    type Item = &'a str;
+
+    #[inline(never)]
+    fn next(&mut self) -> Option<&'a str> {
+        self.0.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for Graphemes<'_> {
+    #[inline(never)]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
+
+/// See [`UnicodeSegmentation::grapheme_indices`]. Built on [`Graphemes`]
+/// (the same pointer arithmetic as `unicode_segmentation::GraphemeIndices`)
+/// so it shares the single segmenter copy.
+#[derive(Clone)]
+pub(crate) struct GraphemeIndices<'a> {
+    start: usize,
+    inner: Graphemes<'a>,
+}
+
+impl<'a> Iterator for GraphemeIndices<'a> {
+    type Item = (usize, &'a str);
+
+    #[inline]
+    fn next(&mut self) -> Option<(usize, &'a str)> {
+        let start = self.start;
+        self.inner.next().map(|s| (s.as_ptr() as usize - start, s))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for GraphemeIndices<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let start = self.start;
+        self.inner
+            .next_back()
+            .map(|s| (s.as_ptr() as usize - start, s))
     }
 }
 
@@ -58,6 +174,55 @@ mod tests {
         assert_eq!(str_width("한글"), 4);
         set_ambiguous_wide(false);
         assert_eq!(str_width("→±①"), 3);
+    }
+
+    /// Issue #491: the inline printable-ASCII path and the out-of-line walk
+    /// agree with `unicode-width` on every ASCII pair (controls, CR LF) in
+    /// both interpretations, and graphemes match upstream segmentation.
+    #[test]
+    fn issue_491_shared_walks_match_upstream() {
+        let _reset = Reset;
+        for wide in [false, true] {
+            set_ambiguous_wide(wide);
+            for a in 0u8..0x80 {
+                for b in 0u8..0x80 {
+                    let s = String::from_utf8(vec![a, b]).unwrap();
+                    assert_eq!(str_width(&s), UnicodeWidthStr::width(s.as_str()), "{s:?}");
+                }
+            }
+            for s in [
+                "→±①",
+                "한글 ok",
+                "e\u{301}\u{1F469}\u{200D}\u{1F4BB}",
+                "a\r\nb",
+            ] {
+                let want = if wide {
+                    UnicodeWidthStr::width_cjk(s)
+                } else {
+                    UnicodeWidthStr::width(s)
+                };
+                assert_eq!(str_width(s), want, "{s:?}");
+                assert_eq!(unicode_width(s), UnicodeWidthStr::width(s), "{s:?}");
+            }
+        }
+        let text = "a\u{301}\r\n\u{1F1F0}\u{1F1F7}x\u{1F44D}\u{1F3FD}";
+        let ours: Vec<_> = UnicodeSegmentation::grapheme_indices(text, true).collect();
+        let upstream: Vec<_> =
+            unicode_segmentation::UnicodeSegmentation::grapheme_indices(text, true).collect();
+        assert_eq!(ours, upstream);
+        let ours: Vec<_> = UnicodeSegmentation::graphemes(text, true).rev().collect();
+        let upstream: Vec<_> = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+            .rev()
+            .collect();
+        assert_eq!(ours, upstream);
+        let ours: Vec<_> = UnicodeSegmentation::grapheme_indices(text, true)
+            .rev()
+            .collect();
+        let upstream: Vec<_> =
+            unicode_segmentation::UnicodeSegmentation::grapheme_indices(text, true)
+                .rev()
+                .collect();
+        assert_eq!(ours, upstream);
     }
 
     /// Minimal headless backend so the frame runs with a custom

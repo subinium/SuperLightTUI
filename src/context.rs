@@ -28,7 +28,7 @@ use crate::widgets::{
     TextareaState, ToastLevel, ToastState, ToolApprovalState, TreeState, ValidateTrigger,
     color_hex_label, parse_hex_color,
 };
-use unicode_segmentation::UnicodeSegmentation;
+use crate::width::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]

@@ -596,7 +596,7 @@ impl Context {
                 } else {
                     // Counter: left half -> prev, right half -> next.
                     let label = format!("{}/{}", state.page + 1, total_pages);
-                    let width = UnicodeWidthStr::width(label.as_str()) as u32;
+                    let width = crate::width::unicode_width(label.as_str()) as u32;
                     if rel_x < width {
                         if rel_x < width / 2 {
                             state.prev_page();

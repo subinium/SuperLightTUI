@@ -68,7 +68,7 @@ impl Context {
                 let mut x_offset = 0u32;
                 let rel_x = mouse.x.saturating_sub(rect.x);
                 for (idx, label) in state.labels.iter().enumerate() {
-                    let tab_width = UnicodeWidthStr::width(label.as_str()) as u32 + 4;
+                    let tab_width = crate::width::unicode_width(label.as_str()) as u32 + 4;
                     if rel_x >= x_offset && rel_x < x_offset + tab_width {
                         state.selected = idx;
                         consumed.push(i);
@@ -612,15 +612,16 @@ impl Context {
         let mut inner_width = trigger.width.saturating_sub(2);
         let mut rows = 0u32;
         if !state.filter.is_empty() {
-            inner_width = inner_width.max(1 + UnicodeWidthStr::width(state.filter.as_str()) as u32);
+            inner_width =
+                inner_width.max(1 + crate::width::unicode_width(state.filter.as_str()) as u32);
             rows += 1;
         }
         if filtered.is_empty() {
-            inner_width = inner_width.max(UnicodeWidthStr::width(NO_MATCHES) as u32);
+            inner_width = inner_width.max(crate::width::unicode_width(NO_MATCHES) as u32);
             rows += 1;
         }
         for &index in &filtered {
-            let width = UnicodeWidthStr::width(state.items()[index].as_str()) as u32 + 2;
+            let width = crate::width::unicode_width(state.items()[index].as_str()) as u32 + 2;
             inner_width = inner_width.max(width);
         }
         rows += filtered.len() as u32;

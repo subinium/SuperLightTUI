@@ -1924,7 +1924,7 @@ fn flex_basis_none_falls_back_to_min_width() {
 /// A regional indicator (U+1F1E6..=U+1F1FF) on its own — i.e. a flag emoji that
 /// was split in half. Its presence in a wrapped line is the failure signature.
 fn contains_lone_regional_indicator(s: &str) -> bool {
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     s.graphemes(true).any(|g| {
         let mut chars = g.chars();
         match (chars.next(), chars.next()) {
@@ -1980,7 +1980,7 @@ fn wrap_lines_family_emoji_at_boundary() {
 fn wrap_lines_devanagari_cluster() {
     // "क्षि" is base + virama + consonant + vowel sign: one (or few) clusters.
     // It must not be broken between a base and its combining marks.
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     let input = "क्षि";
     let lines = wrap_lines(input, 1);
     let input_clusters: Vec<&str> = input.graphemes(true).collect();
@@ -1998,7 +1998,7 @@ fn wrap_lines_devanagari_cluster() {
 #[test]
 fn wrap_lines_thai_cluster() {
     // "กำ" is a Thai consonant + sara am (one cluster). Must stay intact.
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::width::UnicodeSegmentation;
     let input = "กำ";
     let lines = wrap_lines(input, 1);
     let input_clusters: Vec<&str> = input.graphemes(true).collect();
@@ -2235,8 +2235,8 @@ fn gap_overlap_col_direction() {
 
 mod wrap_lines_grapheme_property {
     use super::wrap_lines;
+    use crate::width::UnicodeSegmentation;
     use proptest::prelude::*;
-    use unicode_segmentation::UnicodeSegmentation;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]

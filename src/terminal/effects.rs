@@ -504,7 +504,7 @@ pub(crate) fn width_probe_from_reports(reports: &[Option<(u32, u32)>]) -> WidthP
             .zip(reports.iter().chain(std::iter::repeat(&None)))
             .map(|(&(class, sample), report)| WidthSample {
                 class,
-                expected: UnicodeWidthStr::width(sample) as u32,
+                expected: crate::width::unicode_width(sample) as u32,
                 measured: report
                     .filter(|&(row, _)| row == WIDTH_PROBE_ROW)
                     .map(|(_, col)| col.saturating_sub(1)),

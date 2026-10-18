@@ -37,7 +37,7 @@ impl Context {
 
         let max_label_width = data
             .iter()
-            .map(|(label, _)| UnicodeWidthStr::width(*label))
+            .map(|(label, _)| crate::width::unicode_width(label))
             .max()
             .unwrap_or(0);
         let denom = positive_finite_max(data.iter().map(|(_, value)| *value));
@@ -63,7 +63,7 @@ impl Context {
             }));
 
         for (label, value) in data {
-            let label_width = UnicodeWidthStr::width(*label);
+            let label_width = crate::width::unicode_width(label);
             let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
             let value = finite_or_zero(*value);
             let normalized = unit_ratio(value, 0.0, denom);
@@ -174,7 +174,7 @@ impl Context {
     ) {
         let max_label_width = bars
             .iter()
-            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .map(|bar| crate::width::unicode_width(bar.label.as_str()))
             .max()
             .unwrap_or(0);
 
@@ -213,7 +213,7 @@ impl Context {
         max_width: u32,
         denom: f64,
     ) {
-        let label_width = UnicodeWidthStr::width(bar.label.as_str());
+        let label_width = crate::width::unicode_width(bar.label.as_str());
         let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
         let normalized = unit_ratio(finite_or_zero(bar.value), 0.0, denom);
         let bar_text = Self::horizontal_bar_text(normalized, max_width);
@@ -309,12 +309,12 @@ impl Context {
         let value_labels: Vec<String> = bars.iter().map(Self::bar_display_value).collect();
         let label_width = bars
             .iter()
-            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .map(|bar| crate::width::unicode_width(bar.label.as_str()))
             .max()
             .unwrap_or(1);
         let value_width = value_labels
             .iter()
-            .map(|value| UnicodeWidthStr::width(value.as_str()))
+            .map(|value| crate::width::unicode_width(value.as_str()))
             .max()
             .unwrap_or(1);
         let col_width = bar_width.max(label_width.max(value_width).max(1));
@@ -526,7 +526,7 @@ impl Context {
         let all_bars: Vec<&Bar> = groups.iter().flat_map(|group| group.bars.iter()).collect();
         let max_label_width = all_bars
             .iter()
-            .map(|bar| UnicodeWidthStr::width(bar.label.as_str()))
+            .map(|bar| crate::width::unicode_width(bar.label.as_str()))
             .max()
             .unwrap_or(0);
 
@@ -574,7 +574,7 @@ impl Context {
             self.styled(group.label.clone(), Style::new().bold().fg(self.theme.text));
 
             for bar in &group.bars {
-                let label_width = UnicodeWidthStr::width(bar.label.as_str());
+                let label_width = crate::width::unicode_width(bar.label.as_str());
                 let label_padding = " ".repeat(max_label_width.saturating_sub(label_width));
                 let normalized = unit_ratio(finite_or_zero(bar.value), 0.0, denom);
                 let bar_text = Self::horizontal_bar_text(normalized, max_width);

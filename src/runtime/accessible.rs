@@ -24,7 +24,7 @@
 
 use std::io;
 
-use unicode_segmentation::UnicodeSegmentation;
+use crate::width::UnicodeSegmentation;
 
 use super::FrameState;
 use crate::Context;

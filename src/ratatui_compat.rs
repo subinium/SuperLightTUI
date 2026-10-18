@@ -70,7 +70,6 @@ use ratatui_core::buffer::{Buffer as RatBuffer, Cell as RatCell, CellDiffOption}
 use ratatui_core::layout::Rect as RatRect;
 use ratatui_core::style::{Color as RatColor, Modifier as RatModifier, Style as RatStyle};
 use ratatui_core::widgets::Widget;
-use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::Buffer;
 use crate::cell::Cell;
@@ -298,7 +297,7 @@ fn copy_back(scratch: &RatBuffer, buf: &mut Buffer, rect: Rect, left: u16, top: 
 
 /// Display width of a ratatui cell's symbol, at least one column.
 fn symbol_width(cell: &RatCell) -> u16 {
-    u16::try_from(UnicodeWidthStr::width(cell.symbol()))
+    u16::try_from(crate::width::unicode_width(cell.symbol()))
         .unwrap_or(u16::MAX)
         .max(1)
 }

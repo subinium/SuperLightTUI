@@ -329,3 +329,59 @@ pub(super) fn flush_sprixels_inner(
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Image passes, installed on first use (issue #491)
+// ---------------------------------------------------------------------------
+
+/// Rows a frame repaints with text because a sprixel left them.
+pub(super) type RedrawnRows = smallvec::SmallVec<[u32; 8]>;
+
+/// The image passes of a terminal flush: the Kitty upload / placement pass
+/// and the Sixel / iTerm2 damage-tracked re-blit.
+///
+/// `Terminal::flush` and `InlineTerminal::flush` reach these only through
+/// [`graphics_passes`], and only [`Buffer::kitty_place`] and
+/// [`Buffer::sprixel_place`] install them, so a program that never draws an
+/// image does not link the Kitty encoder, the sprixel damage tracker or
+/// their hash tables. Until the first placement no buffer in the process
+/// holds one, and every pass is a no-op on empty placement lists (the Kitty
+/// pass returns at its unchanged fast path, the sprixel passes at their
+/// empty checks), so skipping them writes the same bytes.
+pub(crate) struct GraphicsPasses {
+    /// Rows previous-frame sprixels covered that this frame must repaint.
+    pub(super) redrawn_rows: fn(&Buffer, &Buffer, GraphicsEmissionSupport) -> RedrawnRows,
+    /// Kitty uploads, placements and deletes for `current`.
+    pub(super) kitty:
+        fn(&mut KittyImageManager, &mut Sink, &[KittyPlacement], u32) -> io::Result<()>,
+    /// Sixel / iTerm2 re-blit of damaged or moved graphics.
+    pub(super) sprixels: SprixelPass,
+}
+
+/// `(sink, current, previous, row_offset, support, redrawn_rows)`.
+type SprixelPass =
+    fn(&mut Sink, &Buffer, &Buffer, u32, GraphicsEmissionSupport, &[u32]) -> io::Result<()>;
+
+static GRAPHICS_PASSES: std::sync::OnceLock<GraphicsPasses> = std::sync::OnceLock::new();
+
+/// Install the image passes for every terminal in the process. Called by
+/// the placement methods; cheap after the first call.
+pub(crate) fn enable_graphics_passes() {
+    GRAPHICS_PASSES.get_or_init(|| GraphicsPasses {
+        redrawn_rows: |current, previous, support| {
+            previous_only_sprixel_rows(current, previous, |placement| {
+                support.should_emit_sprixel(sprixel_protocol(&placement.seq))
+            })
+        },
+        kitty: |manager, sink, placements, row_offset| manager.flush(sink, placements, row_offset),
+        sprixels: |sink, current, previous, row_offset, support, rows| {
+            flush_sprixels_checked_with_rows(sink, current, previous, row_offset, support, rows)
+        },
+    });
+}
+
+/// The installed image passes, or `None` while no image was placed.
+#[inline]
+pub(super) fn graphics_passes() -> Option<&'static GraphicsPasses> {
+    GRAPHICS_PASSES.get()
+}

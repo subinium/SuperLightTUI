@@ -656,3 +656,36 @@ fn bench_sprixel_fixture_steady_state_emits_nothing() {
         "steady-state bench fixture re-blits nothing"
     );
 }
+
+/// Issue #491: `Terminal::flush` skips the image passes until the first
+/// placement installs them. That is byte-identical only while every pass
+/// writes nothing (and repaints no rows) for empty placement lists, even
+/// on a terminal that supports and forces every protocol.
+#[test]
+fn issue_491_image_passes_write_nothing_without_placements() {
+    enable_graphics_passes();
+    let passes = graphics_passes().expect("installed above");
+    let (current, previous) = buffer_pair(Rect::new(0, 0, 8, 4));
+    let support = GraphicsEmissionSupport {
+        real_terminal: true,
+        capabilities: Capabilities {
+            kitty_graphics: true,
+            sixel: true,
+            iterm2: true,
+            ..Default::default()
+        },
+        force_kitty: true,
+        force_sixel: true,
+        force_iterm: true,
+    };
+    let rows = (passes.redrawn_rows)(&current, &previous, support);
+    assert!(rows.is_empty(), "{rows:?}");
+    let mut sink = Sink::Capture(Vec::new());
+    let mut manager = KittyImageManager::new();
+    (passes.kitty)(&mut manager, &mut sink, &current.kitty_placements, 0).unwrap();
+    (passes.sprixels)(&mut sink, &current, &previous, 0, support, &rows).unwrap();
+    let Sink::Capture(bytes) = sink else {
+        unreachable!("capture sink")
+    };
+    assert!(bytes.is_empty(), "{:?}", String::from_utf8_lossy(&bytes));
+}
