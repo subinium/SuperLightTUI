@@ -1487,28 +1487,39 @@ impl Buffer {
 
     /// Shared body of [`Self::reset`], [`Self::reset_with_bg`] and resize.
     ///
-    /// `verify` checks the written-span invariant in debug builds; resize
-    /// passes `false` because it has just re-laid out the cell vector.
-    fn reset_to(&mut self, bg: Option<crate::style::Color>, verify: bool) {
+    /// When the fill is unchanged and the cell layout is intact, only the
+    /// written spans are re-blanked: by the span invariant every other cell
+    /// already equals the fill (#485). A fill change, a resize
+    /// (`spans_trusted == false`) or a length mismatch refills everything.
+    fn reset_to(&mut self, bg: Option<crate::style::Color>, spans_trusted: bool) {
+        let width = self.area.width as usize;
+        let height = self.area.height as usize;
+        let layout_intact =
+            spans_trusted && self.content.len() == width * height && self.touched.len() == height;
         #[cfg(debug_assertions)]
-        if verify
-            && self.content.len() == self.area.area_u64() as usize
-            && self.touched.len() == self.area.height as usize
-            && let Some(violation) = self.fill_invariant_violation()
-        {
+        if layout_intact && let Some(violation) = self.fill_invariant_violation() {
             panic!(
                 "Buffer written-span invariant broken: {violation}. Code that writes \
                  `Buffer::content` directly must call `Buffer::mark_touched_rect`."
             );
         }
-        #[cfg(not(debug_assertions))]
-        let _ = verify;
-        self.fill_bg = bg;
-        let blank = self.fill_cell();
-        self.content.fill(blank);
-        let height = self.area.height as usize;
-        self.touched.clear();
-        self.touched.resize(height, RowSpan::EMPTY);
+        if layout_intact && bg == self.fill_bg {
+            let blank = self.fill_cell();
+            for (row, span) in self.touched.iter_mut().enumerate() {
+                if span.is_empty() {
+                    continue;
+                }
+                let base = row * width;
+                self.content[base + span.lo as usize..base + span.hi as usize].fill(blank.clone());
+                *span = RowSpan::EMPTY;
+            }
+        } else {
+            self.fill_bg = bg;
+            let blank = self.fill_cell();
+            self.content.fill(blank);
+            self.touched.clear();
+            self.touched.resize(height, RowSpan::EMPTY);
+        }
         self.clip_stack.clear();
         self.raw_sequences.clear();
         self.sprixels.clear();
