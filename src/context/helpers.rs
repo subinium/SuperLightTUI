@@ -240,7 +240,9 @@ pub(crate) fn push_table_cell(out: &mut String, cell: &str, width: u32) {
     if width == 0 {
         return;
     }
-    let cell_width = crate::width::str_width(cell);
+    // `display_width` equals `str_width` and skips the width tables for
+    // printable ASCII, the common table cell.
+    let cell_width = crate::cell::display_width(cell);
     if cell_width <= width {
         out.push_str(cell);
         out.extend(std::iter::repeat_n(' ', width - cell_width));

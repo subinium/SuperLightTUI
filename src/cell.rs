@@ -162,7 +162,18 @@ fn mixed_display_width(s: &str) -> usize {
             while i < bytes.len() && !interior(i) {
                 i += 1;
             }
-            width = width.saturating_add(crate::width::str_width(&s[start..i]));
+            let stretch = &s[start..i];
+            // Printable ASCII and standalone scalars take part in no width
+            // sequence, so such a stretch is the sum of its scalars.
+            let simple = stretch
+                .chars()
+                .all(|ch| ch.is_ascii_graphic() || ch == ' ' || standalone_scalar(ch));
+            let stretch_width = if simple {
+                stretch.chars().map(char_display_width).sum()
+            } else {
+                crate::width::str_width(stretch)
+            };
+            width = width.saturating_add(stretch_width);
         }
     }
     width

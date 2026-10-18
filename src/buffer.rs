@@ -1241,7 +1241,7 @@ impl Buffer {
             return x.saturating_add(1);
         }
         let symbol = normalize_grapheme(grapheme);
-        let width = display_width(&symbol) as u32;
+        let width = normalized_symbol_width(&symbol);
         if width == 1
             && let Some(idx) = self.narrow_cell_index(x, y, clip)
         {
@@ -2086,6 +2086,20 @@ fn blank_cells(cells: &mut [Cell], blank: &Cell) {
         cell.style = blank.style;
         cell.hyperlink = None;
     }
+}
+
+/// [`display_width`] of a symbol that is already normalized, measuring the
+/// one-byte and one-scalar forms without the string width walk.
+#[inline]
+fn normalized_symbol_width(symbol: &str) -> u32 {
+    if symbol.len() == 1 {
+        return 1;
+    }
+    let mut chars = symbol.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        return char_display_width(ch) as u32;
+    }
+    display_width(symbol) as u32
 }
 
 /// Display width of a stored cell symbol after defensive normalization.
