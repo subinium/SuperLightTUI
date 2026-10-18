@@ -180,20 +180,17 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         .map(|(i, _)| i)
         .collect();
 
-    if filtered.is_empty() {
-        state.pkg_list.selected = 0;
-    } else {
-        state.pkg_list.selected = state
-            .pkg_list
-            .selected
-            .min(filtered.len().saturating_sub(1));
-    }
+    // `pkg_list` holds the filtered names, so its view index indexes `filtered`.
+    let cursor = state
+        .pkg_list
+        .selected_view_index()
+        .min(filtered.len().saturating_sub(1));
 
     if state.installing {
         state.install_progress = (state.install_progress + 0.02).min(1.0);
         if state.install_progress >= 1.0 {
             state.installing = false;
-            if let Some(&pkg_idx) = filtered.get(state.pkg_list.selected) {
+            if let Some(&pkg_idx) = filtered.get(cursor) {
                 let pkg = &PACKAGES[pkg_idx];
                 state.output_lines.push((
                     Color::Green,
@@ -252,7 +249,10 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
                 // right: detail + output
                 let _ = ui.container().grow(1).col(|ui| {
-                    let sel = filtered.get(state.pkg_list.selected).copied().unwrap_or(0);
+                    let sel = filtered
+                        .get(state.pkg_list.selected_view_index())
+                        .copied()
+                        .unwrap_or(0);
                     let pkg = &PACKAGES[sel];
 
                     let _ = ui

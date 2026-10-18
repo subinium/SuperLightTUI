@@ -8,6 +8,17 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.25.x → v0.26.0
+
+- `ListState::selected` and `TableState::selected` are deprecated (#455). Reads
+  become `selected_view_index()` (or `selected_index()` for the data index);
+  writes become `set_selected_view_index(i)` / `set_selected_index(i)`. Replace
+  `list.remove_item(list.selected)` and `table.remove_row(table.selected)` with
+  `remove_selected()`, and `table.rows()[table.selected]` with
+  `selected_row()`; the old forms act on the wrong row under a filter or sort.
+
+---
+
 ## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain

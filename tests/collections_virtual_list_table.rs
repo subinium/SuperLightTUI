@@ -134,8 +134,8 @@ fn manual_list_and_table_clicks_are_blocked_by_modal() {
                 .build(),
             &mut scene,
         );
-        assert_eq!(list.selected, 0);
-        assert_eq!(table.selected, 0);
+        assert_eq!(list.selected_view_index(), 0);
+        assert_eq!(table.selected_view_index(), 0);
     }
 }
 
@@ -453,7 +453,7 @@ fn splitter_only_grabs_divider_and_uses_own_geometry() {
                 },
             );
             assert!(!state.dragging);
-            assert_eq!(list.selected, 1);
+            assert_eq!(list.selected_view_index(), 1);
             let (x, y) = if vertical {
                 (rect.x, rect.y + (rect.height - 1) / 2)
             } else {

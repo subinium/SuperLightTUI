@@ -14,15 +14,15 @@ impl Context {
     pub fn list_colored(&mut self, state: &mut ListState, colors: &WidgetColors) -> Response {
         let visible_len = state.visible_indices().len();
         if visible_len == 0 && state.is_empty() {
-            state.selected = 0;
+            *state.view_cursor_mut() = 0;
             return Response::none();
         }
 
         if visible_len > 0 {
-            state.selected = state.selected.min(visible_len.saturating_sub(1));
+            *state.view_cursor_mut() = state.view_cursor().min(visible_len.saturating_sub(1));
         }
 
-        let old_selected = state.selected;
+        let old_selected = state.view_cursor();
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
@@ -32,7 +32,7 @@ impl Context {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                         let _ = handle_vertical_nav(
-                            &mut state.selected,
+                            state.view_cursor_mut(),
                             visible_len.saturating_sub(1),
                             key.code.clone(),
                         );
@@ -49,7 +49,7 @@ impl Context {
             for (i, mouse) in clicks {
                 let clicked_idx = (mouse.y - rect.y) as usize;
                 if clicked_idx < visible_len {
-                    state.selected = clicked_idx;
+                    *state.view_cursor_mut() = clicked_idx;
                     consumed.push(i);
                 }
             }
@@ -77,7 +77,7 @@ impl Context {
 
         for (view_idx, &item_idx) in state.visible_indices().iter().enumerate() {
             let item = &state.items()[item_idx];
-            if view_idx == state.selected {
+            if view_idx == state.view_cursor() {
                 let mut selected_style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
@@ -99,7 +99,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = state.selected != old_selected;
+        response.changed = state.view_cursor() != old_selected;
         response
     }
 
@@ -151,15 +151,15 @@ impl Context {
     ) -> crate::widgets::ListResponse {
         let visible = state.visible_indices().to_vec();
         if visible.is_empty() && state.is_empty() {
-            state.selected = 0;
+            *state.view_cursor_mut() = 0;
             return crate::widgets::ListResponse::default();
         }
 
         if !visible.is_empty() {
-            state.selected = state.selected.min(visible.len().saturating_sub(1));
+            *state.view_cursor_mut() = state.view_cursor().min(visible.len().saturating_sub(1));
         }
 
-        let old_selected = state.selected;
+        let old_selected = state.view_cursor();
         let focused = self.register_focusable();
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
 
@@ -182,7 +182,7 @@ impl Context {
 
                 if modded {
                     if let Some(delta) = dir {
-                        let cur_view = state.selected;
+                        let cur_view = state.view_cursor();
                         let target_view = if delta < 0 {
                             cur_view.checked_sub(1)
                         } else {
@@ -207,7 +207,7 @@ impl Context {
 
                 if dir.is_some() {
                     let _ = handle_vertical_nav(
-                        &mut state.selected,
+                        state.view_cursor_mut(),
                         visible.len().saturating_sub(1),
                         key.code.clone(),
                     );
@@ -225,7 +225,7 @@ impl Context {
             for (i, mouse) in clicks {
                 let clicked_idx = (mouse.y - rect.y) as usize;
                 if clicked_idx < visible_len {
-                    state.selected = clicked_idx;
+                    *state.view_cursor_mut() = clicked_idx;
                     consumed.push(i);
                 }
             }
@@ -256,7 +256,7 @@ impl Context {
 
         for (view_idx, &item_idx) in visible.iter().enumerate() {
             let item = &state.items()[item_idx];
-            if view_idx == state.selected {
+            if view_idx == state.view_cursor() {
                 let mut selected_style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));
@@ -278,7 +278,7 @@ impl Context {
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
 
-        response.changed = state.selected != old_selected || reordered.is_some();
+        response.changed = state.view_cursor() != old_selected || reordered.is_some();
         crate::widgets::ListResponse {
             response,
             reordered,
@@ -361,11 +361,11 @@ impl Context {
         if total == 0 {
             return Response::none();
         }
-        state.selected = state.selected.min(total.saturating_sub(1));
+        *state.view_cursor_mut() = state.view_cursor().min(total.saturating_sub(1));
         let use_heights = variable && state.has_item_heights();
         let focused = self.register_focusable();
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
-        let old_selected = state.selected;
+        let old_selected = state.view_cursor();
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -373,32 +373,36 @@ impl Context {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
                         let max_index = total.saturating_sub(1);
-                        let _ =
-                            handle_vertical_nav(&mut state.selected, max_index, key.code.clone());
+                        let _ = handle_vertical_nav(
+                            state.view_cursor_mut(),
+                            max_index,
+                            key.code.clone(),
+                        );
                         consumed_indices.push(i);
                     }
                     KeyCode::PageUp => {
-                        state.selected = if use_heights {
-                            page_up_target(state, state.selected, visible_height)
+                        *state.view_cursor_mut() = if use_heights {
+                            page_up_target(state, state.view_cursor(), visible_height)
                         } else {
-                            state.selected.saturating_sub(visible_height as usize)
+                            state.view_cursor().saturating_sub(visible_height as usize)
                         };
                         consumed_indices.push(i);
                     }
                     KeyCode::PageDown => {
-                        state.selected = if use_heights {
-                            page_down_target(state, state.selected, visible_height)
+                        *state.view_cursor_mut() = if use_heights {
+                            page_down_target(state, state.view_cursor(), visible_height)
                         } else {
-                            (state.selected + visible_height as usize).min(total.saturating_sub(1))
+                            (state.view_cursor() + visible_height as usize)
+                                .min(total.saturating_sub(1))
                         };
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
-                        state.selected = 0;
+                        *state.view_cursor_mut() = 0;
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.selected = total.saturating_sub(1);
+                        *state.view_cursor_mut() = total.saturating_sub(1);
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -416,11 +420,11 @@ impl Context {
             //
             // Clamp viewport_offset so `selected` stays inside [offset, offset + vh)
             // without forcing the cursor onto the bottom row when scrolling down.
-            if state.selected < state.viewport_offset {
-                state.viewport_offset = state.selected;
+            if state.view_cursor() < state.viewport_offset {
+                state.viewport_offset = state.view_cursor();
             }
-            if vh > 0 && state.selected >= state.viewport_offset + vh {
-                state.viewport_offset = state.selected - vh + 1;
+            if vh > 0 && state.view_cursor() >= state.viewport_offset + vh {
+                state.viewport_offset = state.view_cursor() - vh + 1;
             }
             let start = state.viewport_offset;
             state.viewport_row_offset = start;
@@ -477,7 +481,7 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
-        response.changed = state.selected != old_selected;
+        response.changed = state.view_cursor() != old_selected;
         response
     }
 }
@@ -522,7 +526,7 @@ fn row_visible_range(state: &mut ListState, vh: usize) -> (usize, usize) {
     let vh_rows = vh as u32;
     let row_prefix = state.row_prefix();
     // `row_prefix[i]` is the top row of item `i`.
-    let sel = state.selected.min(n - 1);
+    let sel = state.view_cursor().min(n - 1);
     let sel_top = row_prefix[sel];
     let sel_bottom = row_prefix[sel + 1]; // exclusive bottom row of `selected`
 
@@ -607,7 +611,7 @@ mod list_reorder_render_tests {
     fn shift_down_reorders_selected_item() {
         let mut backend = TestBackend::new(20, 6);
         let mut state = ListState::new(vec!["alpha", "beta", "gamma"]);
-        state.selected = 0; // "alpha"
+        *state.view_cursor_mut() = 0; // "alpha"
 
         let events = EventBuilder::new()
             .key_with(KeyCode::Down, KeyModifiers::SHIFT)
@@ -623,7 +627,7 @@ mod list_reorder_render_tests {
         assert_eq!(reordered, Some((0, 1)));
         assert_eq!(state.items(), ["beta", "alpha", "gamma"]);
         // Selection follows the moved item to its new position.
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.view_cursor(), 1);
         assert_eq!(state.selected_item(), Some("alpha"));
     }
 
@@ -631,7 +635,7 @@ mod list_reorder_render_tests {
     fn alt_up_reorders_selected_item() {
         let mut backend = TestBackend::new(20, 6);
         let mut state = ListState::new(vec!["one", "two", "three"]);
-        state.selected = 2; // "three"
+        *state.view_cursor_mut() = 2; // "three"
 
         let events = EventBuilder::new()
             .key_with(KeyCode::Up, KeyModifiers::ALT)
@@ -644,14 +648,14 @@ mod list_reorder_render_tests {
 
         assert_eq!(reordered, Some((2, 1)));
         assert_eq!(state.items(), ["one", "three", "two"]);
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.view_cursor(), 1);
     }
 
     #[test]
     fn shift_up_at_top_is_a_noop() {
         let mut backend = TestBackend::new(20, 6);
         let mut state = ListState::new(vec!["a", "b", "c"]);
-        state.selected = 0;
+        *state.view_cursor_mut() = 0;
 
         let events = EventBuilder::new()
             .key_with(KeyCode::Up, KeyModifiers::SHIFT)
@@ -665,14 +669,14 @@ mod list_reorder_render_tests {
         // No room to move up from the top: nothing reordered.
         assert_eq!(reordered, None);
         assert_eq!(state.items(), ["a", "b", "c"]);
-        assert_eq!(state.selected, 0);
+        assert_eq!(state.view_cursor(), 0);
     }
 
     #[test]
     fn plain_down_navigates_without_reordering() {
         let mut backend = TestBackend::new(20, 6);
         let mut state = ListState::new(vec!["a", "b", "c"]);
-        state.selected = 0;
+        *state.view_cursor_mut() = 0;
 
         let events = EventBuilder::new().key_code(KeyCode::Down).build();
 
@@ -684,6 +688,6 @@ mod list_reorder_render_tests {
         // Without a modifier, Down moves the selection but never reorders.
         assert_eq!(reordered, None);
         assert_eq!(state.items(), ["a", "b", "c"]);
-        assert_eq!(state.selected, 1);
+        assert_eq!(state.view_cursor(), 1);
     }
 }

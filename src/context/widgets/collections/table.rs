@@ -104,7 +104,7 @@ impl Context {
             state.recompute_widths();
         }
 
-        let old_selected = state.selected;
+        let old_selected = state.view_cursor();
         let old_sort_column = state.sort_column;
         let old_sort_ascending = state.sort_ascending;
         let old_page = state.page;
@@ -125,7 +125,7 @@ impl Context {
 
         self.table_render(state, focused, colors, cell);
 
-        response.changed = state.selected != old_selected
+        response.changed = state.view_cursor() != old_selected
             || state.sort_column != old_sort_column
             || state.sort_ascending != old_sort_ascending
             || state.page != old_page
@@ -155,7 +155,7 @@ impl Context {
                     for (col_idx, width) in state.column_widths().iter().enumerate() {
                         if rel_x >= x_offset && rel_x < x_offset + *width {
                             state.toggle_sort(col_idx);
-                            state.selected = 0;
+                            *state.view_cursor_mut() = 0;
                             consumed.push(i);
                             break;
                         }
@@ -176,7 +176,7 @@ impl Context {
                 let clicked_idx = (mouse.y - rect.y - 2) as usize;
                 if clicked_idx < visible_len {
                     let clicked_idx = page_start + clicked_idx;
-                    state.selected = clicked_idx;
+                    *state.view_cursor_mut() = clicked_idx;
                     if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                         let anchor = state.selection_anchor.unwrap_or(clicked_idx);
                         state.select_range(anchor, clicked_idx);
@@ -215,9 +215,9 @@ impl Context {
         };
         let visible_len = page_end.saturating_sub(page_start);
         if visible_len == 0 {
-            state.selected = 0;
+            *state.view_cursor_mut() = 0;
         } else {
-            state.selected = state.selected.clamp(page_start, page_end - 1);
+            *state.view_cursor_mut() = state.view_cursor().clamp(page_start, page_end - 1);
         }
 
         self.commands
@@ -273,36 +273,36 @@ impl Context {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let (page_start, page_end) = table_page_bounds(state);
             if page_start < page_end {
-                state.selected = state.selected.clamp(page_start, page_end - 1);
+                *state.view_cursor_mut() = state.view_cursor().clamp(page_start, page_end - 1);
             }
             match key.code {
                 // Shift+Up/Down: extend a contiguous range from the anchor.
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if shift => {
-                    let anchor = *state.selection_anchor.get_or_insert(state.selected);
-                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
-                    state.select_range(anchor, state.selected);
+                    let anchor = *state.selection_anchor.get_or_insert(state.view_cursor());
+                    move_table_selection(state.view_cursor_mut(), page_start, page_end, &key.code);
+                    state.select_range(anchor, state.view_cursor());
                     consumed_indices.push(i);
                 }
                 // Plain Up/Down (or k/j): move the cursor only (back-compat).
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
-                    move_table_selection(&mut state.selected, page_start, page_end, &key.code);
+                    move_table_selection(state.view_cursor_mut(), page_start, page_end, &key.code);
                     consumed_indices.push(i);
                 }
                 // Ctrl+Space: toggle the focused row without clearing the set.
                 // Space: toggle the focused row (additive toggle).
                 KeyCode::Char(' ') if ctrl => {
-                    state.toggle_row(state.selected);
+                    state.toggle_row(state.view_cursor());
                     consumed_indices.push(i);
                 }
                 KeyCode::Char(' ') => {
-                    state.toggle_row(state.selected);
+                    state.toggle_row(state.view_cursor());
                     consumed_indices.push(i);
                 }
                 KeyCode::PageUp => {
                     let old_page = state.page;
                     state.prev_page();
                     if state.page != old_page {
-                        state.selected = table_page_bounds(state).0;
+                        *state.view_cursor_mut() = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -310,7 +310,7 @@ impl Context {
                     let old_page = state.page;
                     state.next_page();
                     if state.page != old_page {
-                        state.selected = table_page_bounds(state).0;
+                        *state.view_cursor_mut() = table_page_bounds(state).0;
                     }
                     consumed_indices.push(i);
                 }
@@ -381,7 +381,7 @@ impl Context {
             // per-column renderer overrides it. Priority: focused cursor row >
             // multi-selected row > zebra > plain. When `multi_selected` is empty
             // (the default), this collapses to the pre-v0.21 behavior verbatim.
-            let base = if view_idx == state.selected {
+            let base = if view_idx == state.view_cursor() {
                 let mut style = Style::new()
                     .bg(colors.accent.unwrap_or(self.theme.selected_bg))
                     .fg(colors.fg.unwrap_or(self.theme.selected_fg));

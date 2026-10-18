@@ -370,8 +370,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
 | `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |
 | `tabs` | `TabsState` | `.labels: Vec<String>`, `.selected: usize`, `::new(labels)` |
-| `list` | `ListState` | `.items()`, `.item(index)`, `.set_items(...)`, `.filter()`, `.set_filter(...)`, `.selected` |
-| `table` | `TableState` | `.headers()`, `.rows()`, `.set_headers(...)`, `.set_rows(...)`, `.filter()`, `.selected`, `.sort_column`, `.page`, `.page_size` |
+| `list` | `ListState` | `.items()`, `.item(index)`, `.set_items(...)`, `.filter()`, `.set_filter(...)`, `.selected_item()`, `.selected_index()`, `.set_selected_index(...)`, `.remove_selected()` |
+| `table` | `TableState` | `.headers()`, `.rows()`, `.set_headers(...)`, `.set_rows(...)`, `.filter()`, `.selected_row()`, `.selected_index()`, `.set_selected_index(...)`, `.remove_selected()`, `.sort_column`, `.page`, `.page_size` |
 | `tree` | `TreeState` | `.nodes`, `.selected`; each `TreeNode` owns `.expanded` |
 | `directory_tree` | `DirectoryTreeState` | `.tree`, `.show_icons`, `.selected_label()` |
 | `calendar` | `CalendarState` | `.year`, `.month`, `.selected_date()`, `.selected_range()`, `.selected_time()` |

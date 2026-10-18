@@ -2,7 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ListState` and `TableState` selection helpers that are correct under a
+  filter or sort (#455): `selected_index()` / `set_selected_index()` (data
+  index), `selected_view_index()` / `set_selected_view_index()` (view index)
+  and `remove_selected()`, which removes the item or row the user sees
+  highlighted. The table setters switch to the row's page when paged.
+
 ### Changed
+
+- **Deprecated:** the public `ListState::selected` and `TableState::selected`
+  fields (#455). They hold a view index, so `list.remove_item(list.selected)`
+  removed a different item while a filter (or, for tables, a sort) was active.
+  Use the accessors above; the fields become private in a later release.
 
 - **Breaking:** public dependencies upgraded to `crossterm` 0.29 and
   `compact_str` 0.10 (#475). The `slt::crossterm` re-export and
