@@ -14,7 +14,7 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
    slt::run_with(slt::RunConfig::default().mouse(true), |ui| { /* ... */ })
    ```
    Keyboard-only apps can keep `slt::run`. Headless `TestBackend` tests inject mouse events directly and do not need this flag.
-2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`), in any call order. Chords, Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
+2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`; also Tab, Shift+Tab, PageUp/PageDown for `code_editor`), in any call order. Chords, Esc, Tab (outside `code_editor`) and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
    ```rust
    if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
    let _ = ui.text_input(&mut search);                                   // typing 'q' inserts it
@@ -108,6 +108,7 @@ ui.select(&mut SelectState);          ui.radio(&mut RadioState);
 ui.multi_select(&mut MultiSelectState);
 ui.file_picker(&mut FilePickerState); ui.calendar(&mut CalendarState);
 ui.text_input(&mut TextInputState);   ui.textarea(&mut TextareaState, rows);  // textarea takes rows
+ui.code_editor(&mut CodeEditorState).show();                                  // builder; highlight needs syntax-*
 ui.rich_log(&mut RichLogState);       ui.command_palette(&mut CommandPaletteState);
 ui.toast(&mut ToastState);            ui.spinner(&SpinnerState);              // toast returns &mut Self; spinner is &, not &mut
 

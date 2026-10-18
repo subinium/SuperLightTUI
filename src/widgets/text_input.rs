@@ -7,6 +7,9 @@ use super::*;
 
 use unicode_segmentation::UnicodeSegmentation as _;
 
+mod code_editor;
+pub use code_editor::*;
+
 /// Locate the first complete grapheme boundary at or after an insertion edge.
 pub(crate) fn grapheme_cursor_after(text: &str, byte: usize) -> usize {
     text.grapheme_indices(true)

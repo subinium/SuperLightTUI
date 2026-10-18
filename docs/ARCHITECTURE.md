@@ -199,7 +199,7 @@ render method are always found under the same name:
 
 | Family | State (`src/widgets/<family>.rs`) | Methods (`src/context/widgets/<family>.rs` + dir) |
 |---|---|---|
-| `text_input` | `TextInputState`, `Validator`, `AsyncValidation`, `ValidateTrigger`, `FormField`, `FormState`, `FormFieldResponse`, `TextareaState`, `NumberInputState` (validators in `widgets/validators.rs`) | `text_input`, `textarea`, `number_input`, `form`, `form_field`, `form_field_response`, `form_submit` |
+| `text_input` | `TextInputState`, `Validator`, `AsyncValidation`, `ValidateTrigger`, `FormField`, `FormState`, `FormFieldResponse`, `TextareaState`, `NumberInputState`, `CodeEditorState` (validators in `widgets/validators.rs`, code editor state in `widgets/text_input/code_editor.rs`) | `text_input`, `textarea`, `number_input`, `form`, `form_field`, `form_field_response`, `form_submit`, `code_editor` |
 | `selection` | `SelectState`, `RadioState`, `MultiSelectState`, `TabsState`, `ButtonVariant`, `PickerMode`, `ColorPickerState` | `tabs`, `button`, `button_with`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
 | `collections` | `ListState`, `ListResponse`, `FilePickerState`, `FileEntry`, `TableState`, `TableColumn`, `PaginatorState`, `PaginatorStyle`, `TreeNode`, `TreeState`, `DirectoryTreeState`, `CalendarState`, `CalDate`, `CalendarSelect` | `list`, `list_reorderable`, `virtual_list`, `table`, `paginator`, `tree`, `directory_tree`, `calendar`, `file_picker` |
 | `feedback` | `ToastState`, `ToastMessage`, `ToastLevel`, `AlertLevel`, `SpinnerState`, `SpinnerPreset`, `SliderOpts`, `GaugeResponse` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar`, `gauge`, `line_gauge` |

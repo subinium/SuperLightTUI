@@ -9,8 +9,11 @@ use super::*;
 use crate::event::MouseEvent;
 use crate::widgets::word_range_at;
 
+mod code_editor;
 mod number_input;
 mod textarea;
+
+pub use code_editor::CodeEditor;
 
 #[cfg(test)]
 mod tests;

@@ -125,6 +125,64 @@ ui.textarea(&mut area, 8);
 if ui.button("Save").clicked { save(&area.value()); }
 ```
 
+## CodeEditorState
+
+Source: `src/widgets/text_input/code_editor.rs`.
+
+State for `Context::code_editor`: a `TextareaState` (text, cursor,
+selection, undo / redo) plus a highlight language, indentation settings and a
+per-chunk highlight cache. Highlighting needs the `syntax-*` feature for the
+language; without it the editor renders plain text and edits identically.
+
+### Fields
+
+All fields are private; use the accessors below. The wrapped
+`TextareaState` is reachable through `textarea()` / `textarea_mut()`.
+
+### Constructors
+
+- `CodeEditorState::new(source: impl Into<String>) -> Self` (cursor at the start)
+- `CodeEditorState::default() -> Self` (empty document)
+
+### Methods
+
+| Signature | Description |
+|-----------|-------------|
+| `lang(self, lang: impl Into<String>) -> Self` | Builder: highlight language (`"rust"`, `"py"`, `"json"`, ... as for `code_block`). |
+| `set_lang(&mut self, lang: Option<String>)` / `language(&self) -> Option<&str>` | Change / read the language (`None` = plain text). |
+| `tab_width(self, width: usize) -> Self` / `indent_width(&self) -> usize` | Spaces per indent level and tab-stop spacing for `\t` (default 4). |
+| `hard_tabs(self, on: bool) -> Self` | Builder: Tab inserts `\t` instead of spaces. |
+| `tab_indents(self, on: bool) -> Self` / `tabs_indent(&self) -> bool` | Builder: Tab / Shift+Tab indent while focused (default `true`); `false` keeps them for focus traversal. |
+| `auto_indent(self, on: bool) -> Self` | Builder: Enter copies the line's indentation (default `true`). |
+| `value(&self) -> String` / `set_value(&mut self, s)` | Read / replace the document (`set_value` resets cursor and history). |
+| `lines(&self) -> &[String]` / `line_count(&self) -> usize` | Document lines. |
+| `cursor(&self) -> (usize, usize)` / `set_cursor(&mut self, row, col)` | Cursor `(row, column)` in grapheme clusters. |
+| `textarea(&self) -> &TextareaState` / `textarea_mut(&mut self)` | The editing core (selection, history, `scroll_offset`). |
+
+### Highlighting cost
+
+The document is highlighted in chunks that end before an unindented line that
+follows a blank line (top-level items), capped at 128 lines. Only chunks that
+intersect the viewport are highlighted, and each is cached by its exact text,
+so a keystroke re-highlights one chunk. A block comment or string that
+contains a blank line followed by an unindented line is highlighted as if a
+new chunk started there.
+
+Measured with `cargo bench --bench code_editor --features syntax-rust`
+(2,000-line Rust file, 120x40 `TestBackend`, release build, Apple Silicon,
+machine under load): a frame carrying one keystroke in the middle of the file
+took 0.31 ms median and 0.37 ms p99, including input handling, highlighting,
+layout and rendering. Re-highlighting the whole document took 9.8 ms per
+call. Numbers vary with hardware; rerun the bench on yours.
+
+### Minimal example
+
+```rust
+let mut editor = CodeEditorState::new(source).lang("rust").tab_width(4);
+let r = ui.code_editor(&mut editor).line_numbers(true).h(20).show();
+if r.changed { save(&editor.value()); }
+```
+
 ## FormField
 
 Source: `src/widgets/text_input.rs`.

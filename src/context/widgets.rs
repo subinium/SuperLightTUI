@@ -34,4 +34,5 @@ pub use layout::GutterOpts;
 pub use overlay::Anchor;
 pub(super) use overlay::wrap_tooltip_text;
 pub use rich::{CodeBlock, DiffView};
+pub use text_input::CodeEditor;
 pub use viz::TreemapItem;

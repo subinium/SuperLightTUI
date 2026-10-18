@@ -1,5 +1,5 @@
 use super::*;
-use crate::event::MouseEvent;
+use crate::event::{KeyEvent, MouseEvent};
 use crate::widgets::{TextareaNavigation, grapheme_cursor_after, word_range_at};
 
 /// Issue #465: text position under a mouse cell, using the previous frame's
@@ -58,6 +58,32 @@ fn textarea_pos_at(
     (row, start + col)
 }
 
+/// Issue #466: maps a mouse cell to a text position (see [`textarea_pos_at`]).
+pub(super) type TextareaPosAt<'a> =
+    &'a dyn Fn(&TextareaState, Option<&[TextareaVLine]>, Rect, u32, u32) -> (usize, usize);
+
+/// Issue #466: customization points of [`Context::textarea_input`] used by
+/// the code editor. `textarea` passes no-op / default hooks.
+pub(super) struct TextareaInputHooks<'a> {
+    /// Runs first for each unconsumed key press; `true` means the key was
+    /// handled (and is consumed).
+    pub(super) key: &'a mut dyn FnMut(&mut TextareaState, &KeyEvent) -> bool,
+    /// Soft-wrap layout used for Up/Down and mouse mapping.
+    pub(super) visual_lines: &'a dyn Fn(&[String]) -> Vec<TextareaVLine>,
+    /// Mouse cell → text position.
+    pub(super) pos_at: TextareaPosAt<'a>,
+    /// Whether Tab / Shift+Tab edit (for the `changed` baseline).
+    pub(super) edits_tab: bool,
+}
+
+/// Issue #466: what [`Context::textarea_input`] hands back to the renderer.
+pub(super) struct TextareaInput {
+    /// Lines before the batch, when the batch contained edits.
+    pub(super) pre_lines: Option<Vec<String>>,
+    /// Soft-wrap layout built while handling input, if any.
+    pub(super) vlines: Option<Vec<TextareaVLine>>,
+}
+
 /// Issue #465: mouse selection for a focused `textarea`. Returns `true` when
 /// the event belongs to the text area.
 fn textarea_pointer(
@@ -65,6 +91,7 @@ fn textarea_pointer(
     mouse: &MouseEvent,
     rect: Rect,
     vlines: Option<&[TextareaVLine]>,
+    pos_at: TextareaPosAt<'_>,
     now: crate::clock::Instant,
 ) -> bool {
     match mouse.kind {
@@ -73,7 +100,7 @@ fn textarea_pointer(
                 state.pointer.dragging = false;
                 return false;
             }
-            let pos = textarea_pos_at(state, vlines, rect, mouse.x, mouse.y);
+            let pos = pos_at(state, vlines, rect, mouse.x, mouse.y);
             match state.pointer.register_click(now, (mouse.x, mouse.y)) {
                 1 => {
                     let cursor = (state.cursor_row, state.cursor_col);
@@ -100,7 +127,7 @@ fn textarea_pointer(
             true
         }
         MouseKind::Drag(MouseButton::Left) if state.pointer.dragging => {
-            let pos = textarea_pos_at(state, vlines, rect, mouse.x, mouse.y);
+            let pos = pos_at(state, vlines, rect, mouse.x, mouse.y);
             let anchor = state.anchor.unwrap_or((state.cursor_row, state.cursor_col));
             state.set_selection(anchor, pos);
             true
@@ -141,7 +168,7 @@ fn current_navigation(state: &TextareaState) -> Option<TextareaNavigation> {
     })
 }
 
-fn visual_cursor(state: &TextareaState, vlines: &[TextareaVLine]) -> (usize, usize) {
+pub(super) fn visual_cursor(state: &TextareaState, vlines: &[TextareaVLine]) -> (usize, usize) {
     if current_navigation(state).is_some_and(|nav| nav.upstream)
         && let Some((index, line)) = vlines.iter().enumerate().find(|(index, line)| {
             line.logical_row == state.cursor_row
@@ -244,42 +271,25 @@ pub(super) fn next_word_col(line: &str, col: usize) -> usize {
 }
 
 impl Context {
-    ///
-    /// When focused, handles character input, Enter (new line), Backspace,
-    /// arrow keys, Home, and End. The cursor is rendered as a block character.
-    ///
-    /// Set [`TextareaState::word_wrap`] to enable soft-wrapping at a given
-    /// display-column width. Up/Down then navigate visual lines.
-    ///
-    /// Editing shortcuts: `Ctrl+K` deletes from the cursor to the end of the
-    /// current line. `Ctrl+Left` / `Alt+Left` jumps to the previous word
-    /// boundary; `Ctrl+Right` / `Alt+Right` jumps past the next word end.
-    /// `Ctrl+Z` undoes the last edit and `Ctrl+Y` redoes it — see the
-    /// [`TextareaState`] docs for the snapshot policy.
-    pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
-        if state.lines.is_empty() {
-            state.lines.push(String::new());
-        }
-        state.cursor_row = state.cursor_row.min(state.lines.len().saturating_sub(1));
-        state.cursor_col = state
-            .cursor_col
-            .min(grapheme_count(&state.lines[state.cursor_row]));
-
-        let focused = self.register_text_entry_focusable(
-            crate::runtime::TextEntryKind::MultiLine,
-            state.focus_key(),
-        );
-        let focus_slot = self.rollback.last_focusable_id;
-        let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
+    /// Shared input loop of `textarea` and `code_editor` (issue #466):
+    /// keyboard editing, paste, mouse selection and clipboard for a
+    /// [`TextareaState`]. `hooks` lets the code editor run its own key
+    /// handling first and supply its own visual layout and mouse mapping.
+    pub(super) fn textarea_input(
+        &mut self,
+        state: &mut TextareaState,
+        focused: bool,
+        focus_slot: Option<usize>,
+        box_rect: Option<Rect>,
+        hooks: TextareaInputHooks<'_>,
+    ) -> TextareaInput {
+        let TextareaInputHooks {
+            key: key_hook,
+            visual_lines: build_vlines,
+            pos_at,
+            edits_tab,
+        } = hooks;
         let wrapping = state.wrap_width.is_some();
-        // Issue #465: `begin_widget_interaction` below takes the next
-        // interaction slot; its previous-frame rect locates the rows.
-        let box_rect = self
-            .prev_hit_map
-            .get(self.rollback.interaction_count)
-            .copied()
-            .filter(|rect| !rect.is_empty());
-
         if state.navigation.is_some_and(|nav| {
             nav.row != state.cursor_row
                 || nav.col != state.cursor_col
@@ -294,13 +304,15 @@ impl Context {
                 !self.consumed[i]
                     && match event {
                         Event::Paste(text) => !text.is_empty(),
-                        Event::Key(key) if key.kind == KeyEventKind::Press => matches!(
-                            key.code,
-                            KeyCode::Char(_)
-                                | KeyCode::Enter
-                                | KeyCode::Backspace
-                                | KeyCode::Delete
-                        ),
+                        Event::Key(key) if key.kind == KeyEventKind::Press => {
+                            matches!(
+                                key.code,
+                                KeyCode::Char(_)
+                                    | KeyCode::Enter
+                                    | KeyCode::Backspace
+                                    | KeyCode::Delete
+                            ) || (edits_tab && matches!(key.code, KeyCode::Tab | KeyCode::BackTab))
+                        }
                         _ => false,
                     }
             }))
@@ -331,12 +343,10 @@ impl Context {
                     if let Some(rect) = box_rect {
                         let map = wrapping.then(|| {
                             vlines
-                                .get_or_insert_with(|| {
-                                    textarea_build_visual_lines(&state.lines, wrap_w)
-                                })
+                                .get_or_insert_with(|| build_vlines(&state.lines))
                                 .as_slice()
                         });
-                        if textarea_pointer(state, mouse, rect, map, self.frame_instant) {
+                        if textarea_pointer(state, mouse, rect, map, pos_at, self.frame_instant) {
                             consumed_indices.push(i);
                             pointer_captured = true;
                         }
@@ -354,6 +364,14 @@ impl Context {
                     KeyCode::Char(_) | KeyCode::Enter | KeyCode::Backspace | KeyCode::Delete
                 ) {
                     vlines = None;
+                }
+                // Issue #466: the code editor's own keys (Tab, Enter
+                // auto-indent, ...) run before the built-in ones.
+                if key_hook(state, key) {
+                    vlines = None;
+                    state.navigation = None;
+                    consumed_indices.push(i);
+                    continue;
                 }
                 let shift = key.modifiers.contains(KeyModifiers::SHIFT);
                 let command = key.modifiers.contains(KeyModifiers::CONTROL)
@@ -534,9 +552,7 @@ impl Context {
                     }
                     KeyCode::Up => {
                         if wrapping {
-                            let map = vlines.get_or_insert_with(|| {
-                                textarea_build_visual_lines(&state.lines, wrap_w)
-                            });
+                            let map = vlines.get_or_insert_with(|| build_vlines(&state.lines));
                             navigate_visual(state, map, false);
                         } else if state.cursor_row > 0 {
                             state.cursor_row -= 1;
@@ -549,9 +565,7 @@ impl Context {
                     }
                     KeyCode::Down => {
                         if wrapping {
-                            let map = vlines.get_or_insert_with(|| {
-                                textarea_build_visual_lines(&state.lines, wrap_w)
-                            });
+                            let map = vlines.get_or_insert_with(|| build_vlines(&state.lines));
                             navigate_visual(state, map, true);
                         } else if state.cursor_row + 1 < state.lines.len() {
                             state.cursor_row += 1;
@@ -637,6 +651,59 @@ impl Context {
             chords |= crate::runtime::CHORD_COPY_CUT;
         }
         self.set_focus_slot_chords(focus_slot, chords);
+        TextareaInput { pre_lines, vlines }
+    }
+
+    ///
+    /// When focused, handles character input, Enter (new line), Backspace,
+    /// arrow keys, Home, and End. The cursor is rendered as a block character.
+    ///
+    /// Set [`TextareaState::word_wrap`] to enable soft-wrapping at a given
+    /// display-column width. Up/Down then navigate visual lines.
+    ///
+    /// Editing shortcuts: `Ctrl+K` deletes from the cursor to the end of the
+    /// current line. `Ctrl+Left` / `Alt+Left` jumps to the previous word
+    /// boundary; `Ctrl+Right` / `Alt+Right` jumps past the next word end.
+    /// `Ctrl+Z` undoes the last edit and `Ctrl+Y` redoes it — see the
+    /// [`TextareaState`] docs for the snapshot policy.
+    pub fn textarea(&mut self, state: &mut TextareaState, visible_rows: u32) -> Response {
+        if state.lines.is_empty() {
+            state.lines.push(String::new());
+        }
+        state.cursor_row = state.cursor_row.min(state.lines.len().saturating_sub(1));
+        state.cursor_col = state
+            .cursor_col
+            .min(grapheme_count(&state.lines[state.cursor_row]));
+
+        let focused = self.register_text_entry_focusable(
+            crate::runtime::TextEntryKind::MultiLine,
+            state.focus_key(),
+        );
+        let focus_slot = self.rollback.last_focusable_id;
+        let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
+        let wrapping = state.wrap_width.is_some();
+        // Issue #465: `begin_widget_interaction` below takes the next
+        // interaction slot; its previous-frame rect locates the rows.
+        let box_rect = self
+            .prev_hit_map
+            .get(self.rollback.interaction_count)
+            .copied()
+            .filter(|rect| !rect.is_empty());
+
+        let mut no_key_hook = |_: &mut TextareaState, _: &KeyEvent| false;
+        let build_vlines = |lines: &[String]| textarea_build_visual_lines(lines, wrap_w);
+        let TextareaInput { pre_lines, vlines } = self.textarea_input(
+            state,
+            focused,
+            focus_slot,
+            box_rect,
+            TextareaInputHooks {
+                key: &mut no_key_hook,
+                visual_lines: &build_vlines,
+                pos_at: &textarea_pos_at,
+                edits_tab: false,
+            },
+        );
 
         let vlines = wrapping
             .then(|| vlines.unwrap_or_else(|| textarea_build_visual_lines(&state.lines, wrap_w)));
