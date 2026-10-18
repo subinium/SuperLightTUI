@@ -67,7 +67,7 @@ Rules you will use every file:
 
 | Call | Purpose |
 |---|---|
-| `slt::run(|ui| { ... })` | Full-screen alternate-screen runtime. Default 60 FPS. Needs `crossterm` (default feature). |
+| `slt::run(|ui| { ... })` | Full-screen alternate-screen runtime. Default 60 FPS. Needs `crossterm` (default feature). Uses `RunConfig::default()`, so **mouse capture is off** — use `run_with(RunConfig::default().mouse(true), f)` for clicks, hover, and wheel. |
 | `slt::run_with(config, |ui| { ... })` | Same plus a `RunConfig`. |
 | `slt::run_inline(height, |ui| { ... })` | Render a fixed `height` below the current cursor. No alt-screen. |
 | `slt::run_inline_with(height, config, f)` | Inline + config. |
@@ -1093,7 +1093,7 @@ tb.render_with_events(
 8. **`*State` must outlive the closure.** Create `TextInputState`, `ListState`, etc. **outside** `slt::run(...)` (or use hooks). Creating them fresh inside the closure throws away the state every frame.
 9. **`TextInputState` vs `TextareaState`.** Single-line vs multi-line. They are not interchangeable.
 10. **`consume_key` vs `key`.** `consume_key(c)` marks the event consumed so other widgets ignore it. Use this in custom widgets or global shortcuts that should not bubble.
-11. **Animations are *not* on `Context`.** `Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger` are plain structs. Construct outside the closure, mutate/sample inside using `ui.tick()`.
+11. **Two animation layers.** `ui.animate_bool(id, on)` / `ui.animate_value(id, target, ticks)` are `Context` methods with built-in state (linear, CSS-transition-like). `Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger` are plain structs: construct outside the closure, mutate/sample inside using `ui.tick()`.
 12. **Button color overrides.** `button_with(label, ButtonVariant::Danger)` picks a theme-aware variant; `button_colored(label, &WidgetColors::new().accent(c))` is a literal override.
 13. **Inline mode does not own the screen.** `run_inline(height, f)` reserves `height` rows below the cursor; other output still scrolls. No alt-screen, no F12 overlay in some terminals.
 14. **`cargo add superlighttui`** pulls in the `crossterm` default feature. Without it you lose `run()` / `run_inline()` / clipboard; keep `Backend`, `AppState`, `frame()`.
@@ -1101,6 +1101,8 @@ tb.render_with_events(
 16. **`ui.screen` isolates hooks.** `use_state` inside one `screen(...)` does not share state with another. Use plain app state if you need cross-screen values.
 17. **Modal traps focus.** Tab and Shift+Tab cycle only within the current modal; outside widgets are not reachable while the modal is open.
 18. **Breakpoint method naming.** `xs_w`, `sm_w`, `md_w`, `lg_w`, `xl_w`, `w_at(bp, v)` — the breakpoint is a **prefix** on the base name (not `w_xs`).
+19. **Mouse capture is opt-in.** `RunConfig::default().mouse` is `false`; without `.mouse(true)` no click, hover, or wheel event reaches the app. Focused buttons still activate with Enter / Space.
+20. **Check global shortcuts after widgets.** `ui.key('q')` sees any event not consumed *so far*; called before a focused `text_input`, typing `q` both inserts it and fires the shortcut. Put global shortcut checks at the end of the closure.
 
 ---
 
@@ -1712,6 +1714,9 @@ Diagnostics: F12 toggles an overlay showing container bounds and FPS. `ui.debug_
 
 ## 20. See also
 
-- Runnable examples in `examples/`:
-  - `hello`, `counter`, `demo`, `demo_dashboard`, `demo_cli`, `demo_infoviz`, `demo_table`, `demo_design_system`, `demo_spreadsheet`, `demo_game`, `demo_trading`, `demo_website`, `demo_wiki`, `demo_raw_draw`, `demo_pretext`, `demo_fire`, `demo_kitty_image`, `demo_ime`, `inline`, `async_demo`, `anim`, `error_boundary_demo`, `perf_interactive`, `perf_regression`, `test_mouse`, `demo_key_test`, `debug_selection`.
-- Per-topic guides: `QUICK_START.md`, `WIDGETS.md`, `PATTERNS.md`, `AI_GUIDE.md`, `DESIGN_PRINCIPLES.md`, `ARCHITECTURE.md`, `THEMING.md`, `ANIMATION.md`, `BACKENDS.md`, `TESTING.md`, `DEBUGGING.md`, `FEATURES.md`, `EXAMPLES.md`.
+- Runnable example targets (`cargo run --example <name>`; `Cargo.toml` sets `autoexamples = false`, so only these 20 names work):
+  - Entry: `hello`, `counter`, `demo`, `color_picker`.
+  - Tours: `cookbook_tour`, `showcase_tour`, `text_tour`, `canvas_tour`, `system_tour` (needs `--features async`), `v020_tour`, `v0211_tour`, `v0210_widgets`.
+  - Tools and reports: `debug_selection`, `demo_key_test`, `test_mouse`, `theme_hot_reload` (needs `--features theme-watch`), `perf_interactive`, `perf_regression`, `v020_perf_audit`, `v020_test_utils`.
+  - Other files in `examples/` (`demo_dashboard`, `demo_cli`, `demo_fire`, `inline`, `async_demo`, ...) are source modules shown inside a tour, or source-only. See `EXAMPLES.md` for the mapping.
+- Per-topic guides: `QUICK_START.md`, `INTERACTION.md`, `WIDGETS.md`, `PATTERNS.md`, `AI_GUIDE.md`, `DESIGN_PRINCIPLES.md`, `ARCHITECTURE.md`, `THEMING.md`, `ANIMATION.md`, `BACKENDS.md`, `TESTING.md`, `DEBUGGING.md`, `FEATURES.md`, `EXAMPLES.md`.

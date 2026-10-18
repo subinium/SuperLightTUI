@@ -34,7 +34,7 @@ specific sections on later visits.
 3. Concrete Rules (R1–R10)                 ← what the choices have settled into
 4. The 4-Tier Convention Stack             ← where rules live
 5. Audit Matrix (v0.20)                    ← historical design baseline
-6. Roadmap (v0.20 → v1.0)                  ← planned stabilization sequence
+6. Roadmap (v0.20 → v1.0)                  ← shipped phases + remaining work
 7. Failure Mode Catalog                    ← real bugs, classified
 8. How to Use This Document                ← reviewer / contributor workflow
 ```
@@ -85,8 +85,8 @@ results are codified in §3 [Concrete Rules](#3-concrete-rules-r1r10).
 **Rule**: choose the boring shape that matches existing widgets, even if a
 clever shorthand exists.
 
-**Why**: every clever shorthand is a memory tax. SLT has 70+ public
-methods; users remember patterns, not individual calls.
+**Why**: every clever shorthand is a memory tax. `Context` alone has
+roughly 290 public methods; users remember patterns, not individual calls.
 
 **Apply when**: introducing a new widget, alias, shortcut, or convenience.
 
@@ -262,10 +262,17 @@ pub fn widget_name(&mut self, state: &mut WidgetState) -> Response
 #### Display widgets
 
 ```rust
-pub fn text(&mut self, content: impl Into<String>) -> &mut Self
+pub fn text(&mut self, s: impl Into<String>) -> &mut Self   // text chain
+pub fn badge(&mut self, label: &str) -> Response            // most widgets
 ```
 
-- Return `&mut Self` for chaining (`.bold().fg(Color::Cyan)`).
+- Only the inline-text chain returns `&mut Self`: `text`, `link`, `styled`,
+  `line`, and the style mutators that follow them (`.bold().fg(Color::Cyan)`).
+- Other display widgets (`badge`, `stat`, `alert`, `separator`, `markdown`,
+  `big_text`, `empty_state`, …) return a `#[must_use]` `Response` so hover,
+  right-click, and `on_hover` tooltips work. Builder widgets (`gauge`,
+  `breadcrumb`, `code_block`) return a consuming builder that renders on
+  `Drop`; `.show()` returns its response.
 - No focusable registration.
 - No event consumption.
 
@@ -295,14 +302,18 @@ in [API_DESIGN.md](./API_DESIGN.md).)
 Layout uses flexbox semantics: `row()`, `col()`, `gap()`, `grow()`,
 `spacer()`. Styling uses Tailwind-inspired shorthand:
 
-| Full name | Shorthand |
-|-----------|-----------|
-| `.padding(2)` | `.p(2)` |
-| `.margin(1)` | `.m(1)` |
-| `.width(20)` | `.w(20)` |
-| `.height(10)` | `.h(10)` |
+| Shorthand | Meaning | Explicit form |
+|-----------|---------|---------------|
+| `.p(2)` / `.px(2)` / `.py(1)` / `.pt(1)` | padding (all / x / y / top) | `.padding(Padding::all(2))` |
+| `.m(1)` / `.mx(1)` / `.my(1)` | margin | `.margin(Margin::all(1))` |
+| `.w(20)` / `.min_w(10)` / `.max_w(40)` | width constraints | `.w_pct(50)` |
+| `.h(10)` / `.min_h(5)` / `.max_h(20)` | height constraints | `.h_pct(50)` |
 
-Both forms are always available. Shorthand is preferred in examples.
+The explicit `padding` / `margin` forms take `Padding` / `Margin` values (for
+per-side control); there is no `.width()` / `.height()` on `ContainerBuilder`.
+The v0.19 long names `pad`, `min_width`, `max_width`, `min_height`, and
+`max_height` remain only as deprecated aliases. Shorthand is preferred in
+examples.
 
 #### Responsive breakpoints
 
@@ -494,7 +505,7 @@ that grid explicit.
 
 This matrix is preserved as the v0.20 design baseline. Current enforcement and
 exceptions live in `scripts/api_audit.sh --strict`; current delivery status lives
-in the roadmap below. Historical action notes are not claims about v0.23 coverage.
+in the roadmap below. Historical action notes are not claims about current (v0.25) coverage.
 
 Status legend: ✅ enforced & green, ⚠️ documented & ad-hoc, ❌ known gap.
 
@@ -527,9 +538,10 @@ sweep target.
 [`ARCHITECTURE.md`](./ARCHITECTURE.md). The v0.23 strict V1 audit now rejects
 unapproved overlaps and records reviewed exceptions in an explicit allowlist.
 
-**P2 × Meso (⚠️)**: `Context::text` and `ContainerBuilder::text` both
-exist. The latter is the inner-of-builder form, the former is the
-unbordered shortcut. Layer rule (P2) doesn't formalize the
+**P2 × Meso (⚠️)**: shortcut and explicit forms coexist for the same
+container shape — `ui.bordered(Border::Rounded)` vs
+`ui.container().border(Border::Rounded)`, `ui.col(f)` vs
+`ui.container().col(f)`. Layer rule (P2) doesn't formalize the
 shortcut/explicit split.
 
 **P3 × Micro (⚠️ mixed)**: `register_focusable_named` (long verb)
@@ -563,19 +575,22 @@ a review concern rather than a claimed complete sweep.
 
 ---
 
-## 6. Roadmap: v0.23 → v1.0
+## 6. Roadmap: v0.20 → v1.0
 
 | Version | Phase | Deliverable | Status |
 |---------|-------|-------------|--------|
-| v0.20 | **Define** | Design, architecture, naming, and rustdoc guides | complete |
-| v0.21 | **Automate** | Compiler lints, test utilities, and API-shape conventions | complete |
-| v0.22 | **Refine** | Edition 2024, f64 surface, terminal/release hardening | complete |
-| v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | complete |
-| v0.24–0.30 | **Stabilize** | Deprecate-and-remove sweep per principle | planned |
-| v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | planned |
+| v0.20 | **Define** | Design, architecture, naming, and rustdoc guides | shipped |
+| v0.21 | **Automate** | Compiler lints, test utilities, and API-shape conventions | shipped |
+| v0.22 | **Refine** | Edition 2024, f64 surface, terminal/release hardening | shipped |
+| v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | shipped |
+| v0.24 | **Harden runtime** | Owned native input source, recoverable panics, canvas budgets, owned browser (WASM) runtime | shipped |
+| v0.25 | **Harden focus & scroll** | Focus-following scroll containers, unique initial focus, modal focus stability, `form_field_response`, layout-rect queries | shipped (current) |
+| pre-1.0 | **Stabilize** | Remove deprecated aliases (e.g. `pad`, `min_width`, `use_state_named_with`, `code_block_*`, f32 color methods) | not yet scheduled |
+| v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | not yet scheduled |
 
-Each stabilization increment should have a reviewable issue scope and explicit
-verification. Deprecated API removals follow the schedule in
+Remaining rows are direction, not dated commitments; deprecated aliases listed
+above still compile in v0.25. Each stabilization increment should have a
+reviewable issue scope and explicit verification. Deprecated API removals follow the schedule in
 [R8 — API Stability](#r8--api-stability); invariant-sensitive field changes
 follow the pre-1.0 migration exception documented there.
 

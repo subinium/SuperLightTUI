@@ -323,16 +323,25 @@ impl<T: 'static> Memo<T> {
 #[derive(Debug, Clone, Default)]
 #[must_use = "Response contains interaction state — check .clicked, .hovered, or .changed"]
 pub struct Response {
-    /// Whether the widget was left-clicked this frame.
+    /// Whether the widget was left-clicked (or activated) this frame.
+    ///
+    /// Mouse clicks require mouse capture (`RunConfig::default().mouse(true)`;
+    /// off by default). Keyboard-activatable widgets such as
+    /// [`button`](Context::button) also set `clicked` on Enter / Space while
+    /// focused, regardless of mouse capture.
     pub clicked: bool,
     /// Whether the widget was right-clicked this frame.
     ///
     /// Detected when a `MouseButton::Right` `Down` event lands inside the
     /// widget's `rect`. Suppressed for non-overlay widgets while a modal is
     /// active (consistent with the existing modal-suppression behavior of
-    /// `clicked` / `hovered`). Available since v0.20.0.
+    /// `clicked` / `hovered`). Requires mouse capture
+    /// (`RunConfig::default().mouse(true)`). Available since v0.20.0.
     pub right_clicked: bool,
     /// Whether the mouse is hovering over the widget.
+    ///
+    /// Requires mouse capture (`RunConfig::default().mouse(true)`); always
+    /// `false` otherwise.
     pub hovered: bool,
     /// Whether the widget's value changed this frame.
     pub changed: bool,
@@ -358,7 +367,8 @@ pub struct Response {
     /// `clicked` is also `true` for the same frame (the second click is still a
     /// click). This is the standard open/activate gesture for file pickers,
     /// lists, tables, and trees. Suppressed for non-overlay widgets while a
-    /// modal is active, consistent with `clicked`. Available since v0.21.1.
+    /// modal is active, consistent with `clicked`. Requires mouse capture
+    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
     pub double_clicked: bool,
     /// Whether the widget submitted its value this frame.
     ///
@@ -373,7 +383,8 @@ pub struct Response {
     /// not move while the cursor was over the widget's `rect`. Hover-gated, so
     /// each widget consumes only the wheel motion that occurred above it — a
     /// chart, canvas, or custom viewport can scroll/zoom locally without a
-    /// frame-global scroll handler. Available since v0.21.1.
+    /// frame-global scroll handler. Requires mouse capture
+    /// (`RunConfig::default().mouse(true)`). Available since v0.21.1.
     pub scroll_delta: i32,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,

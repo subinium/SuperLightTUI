@@ -223,10 +223,35 @@ Selectable list.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `selected` | `usize` | Current selection. |
+| `selected` | `usize` | Current selection, as a **view index** (position in the filtered view). |
 
 Items and filter state are private because they are coupled to search and
 viewport caches. Read or mutate them through the methods below.
+
+### Two index spaces: view vs data
+
+`ListState` uses two different indices, and they only coincide while no filter
+is active:
+
+- **View index** — position in the filtered list the user sees. `selected` is a
+  view index.
+- **Data index** — position in the underlying `items()`. `item`, `insert_item`,
+  `remove_item`, and `move_item` take data indices.
+
+`visible_indices()` maps one to the other: `visible_indices()[view] == data`.
+To delete the selected item correctly while a filter is active:
+
+```rust
+// Wrong with a filter active: `selected` is a view index.
+// list.remove_item(list.selected);
+
+// Right: map the view index to the data index first.
+if let Some(&data_idx) = list.visible_indices().get(list.selected) {
+    let removed = list.remove_item(data_idx);
+}
+```
+
+`selected_item()` already performs this mapping when you only need the text.
 
 ### Constructors
 
@@ -368,8 +393,8 @@ Sortable, filterable, paginated table.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `selected` | `usize` | Selected row index (within the visible view). |
-| `multi_selected` | `HashSet<usize>` | Multi-selected visible row indices. |
+| `selected` | `usize` | Selected row, as a **view index** (position after filter + sort). |
+| `multi_selected` | `HashSet<usize>` | Multi-selected rows, as view indices. |
 | `sort_column` | `Option<usize>` | Active sort column. |
 | `sort_ascending` | `bool` | Sort direction. |
 | `page` | `usize` | Current page (0-based). |
@@ -378,6 +403,20 @@ Sortable, filterable, paginated table.
 
 Headers, rows, filter text, and width caches are private. Use the methods below
 so filtering, sorting, selection, and width caches stay synchronized.
+
+Like `ListState`, `TableState` has two index spaces. `selected` and
+`multi_selected` are **view** indices (after filter and sort);
+`row`, `insert_row`, and `remove_row` take **data** indices into `rows()`.
+They differ as soon as a filter or sort is active. Map through
+`visible_indices()` before mutating:
+
+```rust
+if let Some(&data_idx) = table.visible_indices().get(table.selected) {
+    let removed = table.remove_row(data_idx);
+}
+```
+
+`selected_row()` and `selected_rows()` already perform this mapping for reads.
 
 ### Constructors
 

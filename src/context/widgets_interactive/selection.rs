@@ -68,20 +68,22 @@ impl Context {
     ///
     /// ```no_run
     /// use slt::{Color, Style, widgets::TableState};
-    /// # slt::run(|ui: &mut slt::Context| {
+    ///
     /// let mut table = TableState::new(
     ///     vec!["Service", "Status"],
     ///     vec![vec!["api", "OK"], vec!["db", "DOWN"]],
     /// );
-    /// ui.table_with(&mut table, |_row, col, raw| {
-    ///     if col == 1 {
-    ///         let color = if raw == "OK" { Color::Green } else { Color::Red };
-    ///         (raw.to_string(), Style::new().fg(color).bold())
-    ///     } else {
-    ///         (raw.to_string(), Style::default())
-    ///     }
-    /// });
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.table_with(&mut table, |_row, col, raw| {
+    ///         if col == 1 {
+    ///             let color = if raw == "OK" { Color::Green } else { Color::Red };
+    ///             (raw.to_string(), Style::new().fg(color).bold())
+    ///         } else {
+    ///             (raw.to_string(), Style::default())
+    ///         }
+    ///     });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn table_with(
         &mut self,
@@ -714,7 +716,9 @@ impl Context {
     ///
     /// The returned [`Response::clicked`] flag is set on activation. The button
     /// is styled with the theme's primary color when focused and the accent
-    /// color when hovered.
+    /// color when hovered. Mouse click and hover require mouse capture
+    /// (`RunConfig::default().mouse(true)`, off by default); keyboard
+    /// activation works without it.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         let colors = self.widget_theme.button;
         self.button_colored(label, &colors)

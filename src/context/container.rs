@@ -1782,9 +1782,9 @@ impl<'a> ContainerBuilder<'a> {
     /// leave the stream itself uncached — it changes every token:
     ///
     /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
     /// # let history_version = 3u64;
     /// # let mut stream = slt::StreamingTextState::new();
+    /// # slt::run(|ui: &mut slt::Context| {
     /// ui.container().cached(history_version, |ui| {
     ///     ui.text("…long chat transcript…"); // unchanged this token
     /// });

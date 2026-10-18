@@ -104,7 +104,7 @@ ui.gauge_label_color(0.5, "CPU", Color::Green);    // n^2 explosion as opts grow
 pub fn gauge(&mut self, ratio: f64) -> Gauge<'_>;
 pub fn slider(&mut self, label: &str, value: &mut f64, range: RangeInclusive<f64>) -> Response;
 pub fn progress(&mut self, ratio: f64) -> Response; // immediate; `gauge` is the builder form
-pub fn chart(&mut self) -> ChartBuilder<'_>; // datasets are [(f64, f64)]
+pub fn chart(&mut self, configure: impl FnOnce(&mut ChartBuilder), width: u32, height: u32) -> Response; // datasets are [(f64, f64)]
 ```
 
 **Why**:
@@ -129,7 +129,8 @@ ui.gauge(cpu as f32 / 100.0, &format!("{cpu:.1}%"));
 
 **Exception**: explicit graphics math where `f32` dominates (color blending in `style/color.rs`,
 GPU-style normalized math) may use `f32` internally. Public API still takes/returns `f64` and converts at
-the boundary — `f32` does not appear in any `pub fn` on `Context`.
+the boundary. Known exceptions (tracked for cleanup): `Context::gradient_stops` and
+`Context::bg_gradient_stops` take `&[(f32, Color)]`, and `ScrollState::progress()` returns `f32`.
 
 ---
 
@@ -178,7 +179,7 @@ pub fn scrollable_with_gutter<G, F>(
 pub struct GutterOpts<G> {
     pub total_lines: usize,
     pub viewport_height: u32,
-    pub gutter: G,
+    pub gutter_fn: G,
 }
 
 pub fn scrollable_with_gutter<G, F>(
@@ -192,16 +193,32 @@ pub fn scrollable_with_gutter<G, F>(
 The arity boundary is intentionally low: 3 positional args is the comfort threshold for most readers.
 If you hit 4, add an opts struct or convert the leaf args to a builder. Do not "just live with" 5 positionals.
 
+**Known exceptions (tracked for cleanup)** — existing public methods that predate or slipped past
+this rule. Do not use them as precedent for new APIs:
+
+| Method | Positional args (excluding `self`) |
+|---|---|
+| `kitty_image(rgba, pixel_width, pixel_height, cols, rows)` | 5 |
+| `sixel_image(rgba, pixel_width, pixel_height, cols, rows)` | 5 |
+| `heatmap(data, width, height, low_color, high_color)` | 5 |
+| `heatmap_halfblock(data, width, height, low_color, high_color)` | 5 |
+| `overlay_at_offset(anchor, dx, dy, f)` | 4 |
+| `modal_at_offset(anchor, dx, dy, f)` | 4 |
+| `line_chart_colored(data, width, height, color)` | 4 |
+| `area_chart_colored(data, width, height, color)` | 4 |
+| `kitty_image_fit(rgba, src_width, src_height, cols)` | 4 |
+| `histogram_with(data, configure, width, height)` | 4 |
+
 ---
 
 ### Rule 4: Stateful widgets take `&mut StateType`, not `&mut String` / `&mut bool`
 
 ```rust
-ui.text_input(&mut TextInputState);   // not &mut String
-ui.scrollable(&mut ScrollState, ...); // not &mut usize
-ui.tabs(&mut TabsState, &[…]);        // not &mut usize
-ui.list(&mut ListState, &[…]);
-ui.tree(&mut TreeState, …);
+ui.text_input(&mut TextInputState);         // not &mut String
+ui.scrollable(&mut ScrollState).col(|ui| …); // not &mut usize; returns a ContainerBuilder
+ui.tabs(&mut TabsState);                    // not &mut usize; labels live in the state
+ui.list(&mut ListState);                    // items live in the state
+ui.tree(&mut TreeState);
 ui.calendar(&mut CalendarState);
 ```
 
@@ -234,8 +251,8 @@ pub fn text_input(&mut self, state: &mut TextInputState) -> Response;
 
 ```rust
 // One rect, one set of interactions
-pub fn button(&mut self, label: &str) -> Response;
-pub fn checkbox(&mut self, label: &str, value: &mut bool) -> Response;
+pub fn button(&mut self, label: impl Into<String>) -> Response;
+pub fn checkbox(&mut self, label: impl Into<String>, checked: &mut bool) -> Response;
 
 // Compound: extra data alongside the standard interaction set
 #[must_use = "BreadcrumbResponse contains interaction state — check .clicked_segment, .hovered, or .rect"]
@@ -259,7 +276,7 @@ both DOM ref and instance handle.
 **Example** (good):
 
 ```rust
-let r = ui.breadcrumb(&["Home", "Settings", "Profile"]);
+let r = ui.breadcrumb(&["Home", "Settings", "Profile"]).show(); // builder → BreadcrumbResponse
 if r.hovered { /* via Deref */ }
 if let Some(idx) = r.clicked_segment { /* compound-specific */ }
 ```
@@ -314,7 +331,8 @@ Copy-paste this checklist into any PR that adds or changes a public widget:
 - [ ] `*Response` struct has `#[must_use = "..."]` attribute
 - [ ] Doctest shows idiomatic one-line happy path
 - [ ] Naming matches existing widgets (`fn gauge` returns `Gauge<'_>`, not `GaugeBuilder`; opts struct is
-      `GaugeOpts`, not `GaugeConfig` or `GaugeParams`)
+      `GaugeOpts`, not `GaugeConfig` or `GaugeParams`). Known exceptions that predate this rule and are
+      tracked for cleanup: `ModalOptions`, `RunConfig`, `ChartConfig`, `BarChartConfig` — do not copy them
 - [ ] No `_w` / `_with_label` / `_numbered` combinatoric suffix variants — fold into builder methods instead
 - [ ] Color customization uses the blessed `_colored` suffix (see [NAMING.md](NAMING.md) suffix table) — the canonical color-override variant for immediate widgets that take a `Color` or `&WidgetColors`; do **not** invent `_w`/`_with_label` cross-products on top of it
 ```

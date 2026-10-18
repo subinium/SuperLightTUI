@@ -1434,15 +1434,18 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::ScrollState;
+    ///
+    /// // Create state once, outside the frame closure, so the offset persists.
     /// let mut scroll = ScrollState::new();
-    /// ui.scrollable(&mut scroll).col(|ui| {
-    ///     for i in 0..100 {
-    ///         ui.text(format!("Line {i}"));
-    ///     }
-    /// });
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.scrollable(&mut scroll).col(|ui| {
+    ///         for i in 0..100 {
+    ///             ui.text(format!("Line {i}"));
+    ///         }
+    ///     });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn scrollable(&mut self, state: &mut ScrollState) -> ContainerBuilder<'_> {
         self.rollback.scroll_count += 1;
@@ -1508,15 +1511,18 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::ScrollState;
+    ///
+    /// // Create state once, outside the frame closure, so the offset persists.
     /// let mut scroll = ScrollState::new();
-    /// ui.scroll_col(&mut scroll, |ui| {
-    ///     for i in 0..100 {
-    ///         ui.text(format!("Line {i}"));
-    ///     }
-    /// });
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.scroll_col(&mut scroll, |ui| {
+    ///         for i in 0..100 {
+    ///             ui.text(format!("Line {i}"));
+    ///         }
+    ///     });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn scroll_col(
         &mut self,
@@ -1540,15 +1546,18 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::ScrollState;
+    ///
+    /// // Create state once, outside the frame closure, so the offset persists.
     /// let mut scroll = ScrollState::new();
-    /// ui.scroll_row(&mut scroll, |ui| {
-    ///     for i in 0..40 {
-    ///         ui.text(format!("col-{i:02}  "));
-    ///     }
-    /// });
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.scroll_row(&mut scroll, |ui| {
+    ///         for i in 0..40 {
+    ///             ui.text(format!("col-{i:02}  "));
+    ///         }
+    ///     });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn scroll_row(
         &mut self,
@@ -1566,16 +1575,19 @@ impl Context {
     ///
     /// Typically placed beside a `scrollable()` container in a `row()`:
     /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::ScrollState;
+    ///
+    /// // Create state once, outside the frame closure, so the offset persists.
     /// let mut scroll = ScrollState::new();
-    /// ui.row(|ui| {
-    ///     ui.scrollable(&mut scroll).grow(1).col(|ui| {
-    ///         for i in 0..100 { ui.text(format!("Line {i}")); }
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.row(|ui| {
+    ///         ui.scrollable(&mut scroll).grow(1).col(|ui| {
+    ///             for i in 0..100 { ui.text(format!("Line {i}")); }
+    ///         });
+    ///         ui.scrollbar(&mut scroll);
     ///     });
-    ///     ui.scrollbar(&mut scroll);
-    /// });
-    /// # });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     ///
     /// # Interaction (since 0.21.0)

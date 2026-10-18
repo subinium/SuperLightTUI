@@ -1,6 +1,6 @@
 # SLT Cookbook
 
-Copy-paste recipes for common TUI apps. Each recipe is also shipped as a standalone runnable example at `examples/cookbook_<name>.rs`, so you can run and tweak it directly.
+Copy-paste recipes for common TUI apps. The source for each of the first five recipes lives at `examples/cookbook_<name>.rs`. Those files are not standalone Cargo targets (`Cargo.toml` sets `autoexamples = false`); they are compiled into one tabbed binary — run them all with `cargo run --example cookbook_tour`.
 
 Recipes assume familiarity with the core mental model from [QUICK_START.md](QUICK_START.md). If a widget surprises you, cross-check [WIDGETS.md](WIDGETS.md) for the full API table and [PATTERNS.md](PATTERNS.md) for composition advice.
 
@@ -21,7 +21,7 @@ Add SLT to a fresh project:
 ```toml
 # Cargo.toml
 [dependencies]
-superlighttui = "0.23.0"
+superlighttui = "0.25"
 ```
 
 Every recipe follows the same outer shape:
@@ -31,8 +31,11 @@ fn main() -> std::io::Result<()> {
     // 1. Create state once, outside the closure.
     let mut state = /* ... */;
 
-    // 2. Your closure runs each frame.
-    slt::run(|ui: &mut slt::Context| {
+    // 2. Your closure runs each frame. Mouse capture is opt-in: without
+    //    `.mouse(true)`, clicks, hover, and the scroll wheel never reach SLT
+    //    (keyboard focus + Enter/Space still activate buttons). Use plain
+    //    `slt::run(|ui| ...)` for keyboard-only apps.
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut slt::Context| {
         // Global shortcuts first.
         if ui.key('q') || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
@@ -43,6 +46,8 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+Recipes below that use buttons, clickable rows, or scroll regions start with `slt::run_with(slt::RunConfig::default().mouse(true), ...)` for that reason.
 
 The closure is the whole app. Plain Rust variables hold state; `slt::Context` mutates on interaction. No framework object, no stores.
 
@@ -86,7 +91,7 @@ fn main() -> std::io::Result<()> {
 
     let mut submitted: Option<String> = None;
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
@@ -104,7 +109,7 @@ fn main() -> std::io::Result<()> {
             .col(|ui| {
                 ui.text("Welcome back").bold().fg(Color::Cyan);
                 ui.text("Use Tab / Shift+Tab to move between fields.").dim();
-                ui.separator();
+                let _ = ui.separator();
 
                 ui.text("Email").bold();
                 let _ = ui.text_input(&mut email);
@@ -118,7 +123,7 @@ fn main() -> std::io::Result<()> {
                     ui.text(format!("  {err}")).fg(Color::Red);
                 }
 
-                ui.separator();
+                let _ = ui.separator();
                 let _ = ui.row(|ui| {
                     // Disable the button when invalid by swapping the label.
                     let label = if valid { "Submit" } else { "Submit (fix errors)" };
@@ -153,7 +158,7 @@ fn main() -> std::io::Result<()> {
 
 - `TableState` with built-in search, pagination, and column sort.
 - A `TextInputState` driving the filter each frame.
-- Header-click sort (`toggle_sort`) via keyboard shortcuts `H` / `L`.
+- Column sort (`toggle_sort`) via keyboard shortcuts `1` / `2` / `3`.
 - Zebra rows + row-size footer with live row count.
 
 ### Full code
@@ -182,7 +187,7 @@ fn main() -> std::io::Result<()> {
 
     let mut filter = TextInputState::with_placeholder("Filter across all columns...");
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
@@ -237,7 +242,7 @@ fn main() -> std::io::Result<()> {
                 });
 
                 if let Some(row) = table.selected_row() {
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.text(format!("Selected: {}", row.join(" | "))).bold();
                 }
             });
@@ -274,7 +279,7 @@ fn main() -> std::io::Result<()> {
     let mut show_modal = false;
     let mut toasts = ToastState::new();
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         let tick = ui.tick();
 
         if !show_modal && ui.key('q') {
@@ -300,7 +305,7 @@ fn main() -> std::io::Result<()> {
                     ui.text(format!("{prefix}{name}")).fg(color);
                 }
 
-                ui.separator();
+                let _ = ui.separator();
                 let _ = ui.row(|ui| {
                     if ui.button("Refresh").clicked {
                         toasts.info("List refreshed", tick);
@@ -420,7 +425,7 @@ fn main() -> std::io::Result<()> {
             .grow(1)
             .col(|ui| {
                 let _ = ui.row(|ui| {
-                    ui.spinner(&spinner);
+                    let _ = ui.spinner(&spinner);
                     ui.text(" LIVE").bold().fg(Color::Green);
                     ui.spacer();
                     ui.text(format!("tick {tick:.0}")).dim();
@@ -452,9 +457,15 @@ fn main() -> std::io::Result<()> {
                     .title("Requests / min")
                     .p(1)
                     .col(|ui| {
+                        // Chart datasets are `(x, y)` points; index the history.
+                        let req_points: Vec<(f64, f64)> = req_hist
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &y)| (i as f64, y))
+                            .collect();
                         let _ = ui.chart(
                             |c| {
-                                c.area(&req_hist).label("rpm").color(Color::Cyan);
+                                c.area(&req_points).label("rpm").color(Color::Cyan);
                                 c.grid(true);
                             },
                             60,
@@ -520,7 +531,7 @@ fn main() -> std::io::Result<()> {
     let mut preview_scroll = ScrollState::new();
     let mut toasts = ToastState::new();
 
-    slt::run(|ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         let tick = ui.tick();
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
@@ -538,7 +549,7 @@ fn main() -> std::io::Result<()> {
                     .wrap();
                 ui.text("Enter opens, Backspace goes up, filter: .rs .toml .md .txt .json")
                     .dim();
-                ui.separator();
+                let _ = ui.separator();
 
                 let _ = ui.row(|ui| {
                     // Left pane: picker.
@@ -549,7 +560,7 @@ fn main() -> std::io::Result<()> {
                         .grow(1)
                         .col(|ui| {
                             if ui.file_picker(&mut picker).changed {
-                                if let Some(path) = picker.selected().cloned() {
+                                if let Some(path) = picker.selected_file().cloned() {
                                     match read_preview(&path) {
                                         Ok(content) => {
                                             preview = Some((path.clone(), content));
@@ -580,7 +591,7 @@ fn main() -> std::io::Result<()> {
                             }
                             Some((path, content)) => {
                                 ui.text(path.display().to_string()).fg(Color::Cyan).wrap();
-                                ui.separator();
+                                let _ = ui.separator();
                                 let _ = ui.scrollable(&mut preview_scroll).grow(1).col(|ui| {
                                     for line in content.lines() {
                                         ui.text(line);
@@ -612,7 +623,7 @@ fn read_preview(path: &std::path::Path) -> Result<String, String> {
 ### Key patterns
 
 - `FilePickerState` owns the directory listing. `.extensions(&[...])` filters non-directory entries; directories are always shown so you can navigate in.
-- `picker.selected()` returns `Option<&PathBuf>` only when the user picks a file with Enter — directories set `current_dir` instead and emit `changed = true` but no selection.
+- `picker.selected_file()` returns `Option<&PathBuf>` only when the user picks a file with Enter — directories set `current_dir` instead and emit `changed = true` but no selection.
 - Always gate `std::fs::read_to_string` behind a size check. A runaway file read blocks the thread and the UI stops responding.
 - Pair a `ScrollState` with every long content region. Reset `offset = 0` when you swap the content — otherwise the previous file's scroll position leaks into the new file.
 
@@ -717,6 +728,24 @@ let mut log = slt::RichLogState::new();
 // Unbounded — grows until the process dies. Use only when you control the input rate.
 let mut log = slt::RichLogState::new_unbounded();
 ```
+
+### `ListState.selected` / `TableState.selected` are view indices
+
+`selected` is a position in the **filtered** (and, for tables, sorted) view,
+but `remove_item` / `remove_row` take a **data** index into the underlying
+items. With a filter active, `list.remove_item(list.selected)` deletes the
+wrong item. Map through `visible_indices()` first:
+
+```rust
+if let Some(&data_idx) = list.visible_indices().get(list.selected) {
+    let _ = list.remove_item(data_idx);
+}
+if let Some(&data_idx) = table.visible_indices().get(table.selected) {
+    let _ = table.remove_row(data_idx);
+}
+```
+
+See [STATE_APIS.md](STATE_APIS.md#two-index-spaces-view-vs-data) for the full view-vs-data rule.
 
 ---
 

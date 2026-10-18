@@ -651,15 +651,17 @@ impl FilePickerState {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::FilePickerState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::FilePickerState;
+    ///
     /// let mut state = FilePickerState::new(".");
-    /// if ui.file_picker(&mut state).changed {
-    ///     if let Some(path) = state.selected_file() {
-    ///         println!("picked: {}", path.display());
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     if ui.file_picker(&mut state).changed {
+    ///         if let Some(path) = state.selected_file() {
+    ///             println!("picked: {}", path.display());
+    ///         }
     ///     }
-    /// }
-    /// # });
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn selected_file(&self) -> Option<&PathBuf> {
         self.selected_file.as_ref()
@@ -886,15 +888,17 @@ impl TabsState {
 ///
 /// ```no_run
 /// use slt::{TableColumn, widgets::TableState};
-/// # slt::run(|ui: &mut slt::Context| {
+///
 /// let mut table = TableState::new(
 ///     vec!["Name", "Status"],
 ///     vec![vec!["build", "ok"]],
 /// );
 /// // Pin the status column to 6 cells, leave the name column automatic.
 /// table.column_widths_spec(&[TableColumn::Auto, TableColumn::Fixed(6)]);
-/// ui.table(&mut table);
-/// # });
+/// slt::run(|ui: &mut slt::Context| {
+///     ui.table(&mut table);
+/// })?;
+/// # Ok::<_, std::io::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TableColumn {
@@ -1237,14 +1241,16 @@ impl TableState {
     ///
     /// ```no_run
     /// use slt::{TableColumn, widgets::TableState};
-    /// # slt::run(|ui: &mut slt::Context| {
+    ///
     /// let mut table = TableState::new(
     ///     vec!["Name", "Note"],
     ///     vec![vec!["a", "a very long note that should be capped"]],
     /// );
     /// table.column_widths_spec(&[TableColumn::Fixed(6), TableColumn::Max(10)]);
-    /// ui.table(&mut table);
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.table(&mut table);
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn column_widths_spec(&mut self, specs: &[TableColumn]) {
         self.column_specs = specs.to_vec();
@@ -1263,16 +1269,18 @@ impl TableState {
     ///
     /// ```no_run
     /// use slt::widgets::TableState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    ///
     /// let mut table = TableState::new(
     ///     vec!["Name"],
     ///     vec![vec!["a"], vec!["b"]],
     /// );
-    /// ui.table(&mut table);
-    /// for row in table.selected_rows() {
-    ///     let _ = row;
-    /// }
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.table(&mut table);
+    ///     for row in table.selected_rows() {
+    ///         let _ = row;
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn selected_rows(&self) -> Vec<&[String]> {
         let mut indices: Vec<usize> = self.multi_selected.iter().copied().collect();
@@ -1292,11 +1300,13 @@ impl TableState {
     ///
     /// ```no_run
     /// use slt::widgets::TableState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    ///
     /// let mut table = TableState::new(vec!["Name"], vec![vec!["a"]]);
-    /// ui.table(&mut table);
-    /// let _ = table.is_row_selected(0);
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.table(&mut table);
+    ///     let _ = table.is_row_selected(0);
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn is_row_selected(&self, view_idx: usize) -> bool {
         self.multi_selected.contains(&view_idx)
@@ -1312,11 +1322,13 @@ impl TableState {
     ///
     /// ```no_run
     /// use slt::widgets::TableState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    ///
     /// let mut table = TableState::new(vec!["Name"], vec![vec!["a"]]);
-    /// ui.table(&mut table);
-    /// table.clear_selection();
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.table(&mut table);
+    ///     table.clear_selection();
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn clear_selection(&mut self) {
         self.multi_selected.clear();

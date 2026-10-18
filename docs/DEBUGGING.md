@@ -71,6 +71,7 @@ overlays entirely.
 
 Check:
 
+- is mouse capture on at all? (see failure mode 6)
 - was the widget laid out in the previous frame?
 - are you reading a child response when the container owns the interaction area?
 - are you conditionally rendering the widget in a way that changes call order?
@@ -117,6 +118,30 @@ Verify:
 - scrollable viewport
 - draw rect size
 - child margin/padding
+
+### 6. Clicks, hover, or scrolling do nothing
+
+Mouse capture is opt-in. `slt::run(...)` uses `RunConfig::default()`, where
+`mouse` is `false`, so the terminal never sends mouse events. Start the app with:
+
+```rust
+slt::run_with(slt::RunConfig::default().mouse(true), |ui| {
+    // ...
+})
+```
+
+Buttons still work from the keyboard without it (Tab to focus, Enter / Space to
+activate), which can make the missing flag easy to overlook. `TestBackend`
+tests inject mouse events directly, so they pass either way. Run
+`cargo run --example test_mouse` to check whether your terminal delivers mouse
+events at all.
+
+### 7. A shortcut fires while typing into an input
+
+`ui.key('q')` returns `true` for any matching event not consumed *so far in
+the frame*. If the check runs before a focused `text_input`, it sees the
+keystroke before the input consumes it, so typing `q` quits the app. Move
+global shortcut checks after the widgets that render in the same frame.
 
 ## Layout debugging checklist
 

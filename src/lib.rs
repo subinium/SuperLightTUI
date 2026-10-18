@@ -1,15 +1,14 @@
-//! SuperLightTUI — an immediate-mode flexbox-layout terminal UI library.
+//! SuperLightTUI (SLT) — an immediate-mode, flexbox-layout terminal UI
+//! library. Small core. Zero `unsafe`.
 //!
 //! Build a TUI as easily as a web page: write a closure, SLT calls it
 //! every frame. State lives in your code; layout is described every
-//! frame; styling uses Tailwind-inspired shorthand; focus and events are
-//! threaded through a single [`Context`] parameter.
+//! frame with `row()` / `col()` / `container()`; styling uses
+//! Tailwind-inspired method chaining; focus and events are threaded
+//! through a single [`Context`] parameter. SLT handles layout, diffing,
+//! and rendering.
 //!
-//! See `docs/QUICK_START.md` for a 5-minute introduction and
-//! `docs/DESIGN_PRINCIPLES.md` for the principles every public API
-//! follows.
-//!
-//! # Example
+//! # Quick Start
 //!
 //! ```no_run
 //! fn main() -> std::io::Result<()> {
@@ -18,6 +17,49 @@
 //!     })
 //! }
 //! ```
+//!
+//! `slt::run` uses [`RunConfig::default()`], which leaves mouse capture **off**
+//! and exits on Ctrl+C. Keyboard focus (Tab / Shift+Tab) and Enter/Space
+//! activation work out of the box; for click, hover, wheel scroll, and
+//! drag, opt in with `slt::run_with(RunConfig::default().mouse(true), |ui| { ... })`.
+//!
+//! # Features
+//!
+//! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
+//! - **50+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, slider, separator, help bar, scrollable, chart, bar chart, stacked bar chart, sparkline, histogram, heatmap, treemap, candlestick, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown, alert, badge, stat, breadcrumb, accordion, code block, big text, image, modal, tooltip, form, calendar, file picker, qr code
+//! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
+//! - **Mouse** — click, hover, drag-to-scroll (opt-in via [`RunConfig::mouse()`])
+//! - **Focus** — automatic Tab/Shift+Tab cycling
+//! - **Theming** — 11 color presets, semantic tokens (`ThemeColor`), spacing scale, contrast helpers
+//! - **Animation** — tween and spring primitives with 9 easing functions
+//! - **Inline mode** — render below your prompt, no alternate screen
+//! - **Async** — optional tokio integration via `async` feature
+//! - **Layout debugger** — F12 to visualize container bounds
+//!
+//! # Feature Flags
+//!
+//! | Flag | Description |
+//! |------|-------------|
+//! | `crossterm` | Built-in terminal runtime (`run`, `run_inline`, clipboard query helpers). Enabled by default. |
+//! | `bidi` | Reorder right-to-left text (Hebrew, Arabic, …) to visual order per UAX #9 before rendering. Enabled by default; pure-LTR text takes a zero-cost fast path. Since 0.21.0. |
+//! | `async` | Enable `run_async()` with tokio channel-based message passing (implies `crossterm`) |
+//! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
+//! | `theme-watch` | TOML theme hot reload via `ThemeWatcher` (implies `serde`, adds a filesystem watcher) |
+//! | `image` | Enable image-loading helpers for terminal image widgets |
+//! | `qrcode` | Enable `ui.qr_code(...)` |
+//! | `kitty-compress` | zlib-compress Kitty graphics protocol payloads |
+//! | `syntax` / `syntax-*` | Enable tree-sitter syntax highlighting (all bundled grammars, or one language) |
+//! | `full` | `crossterm`, `async`, `serde`, `theme-watch`, `image`, `qrcode`, `kitty-compress`, `bidi`. Does **not** include `syntax` or `pty-test`. |
+//! | `pty-test` | Dev-only test harness: exposes `PtyBackend` / `PtyFrame`, which drive the real terminal flush pipeline into an in-process byte sink for escape-code assertions. Not for application use. |
+//!
+//! # Learn More
+//!
+//! - Guides index: <https://github.com/subinium/SuperLightTUI/blob/main/docs/README.md>
+//! - Quick start: <https://github.com/subinium/SuperLightTUI/blob/main/docs/QUICK_START.md>
+//! - Design principles: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DESIGN_PRINCIPLES.md>
+//! - Backends and run loops: <https://github.com/subinium/SuperLightTUI/blob/main/docs/BACKENDS.md>
+//! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/TESTING.md>
+//! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DEBUGGING.md>
 
 // Safety: the shipping library is 100% safe. Unit tests are excused only
 // because edition 2024 made `std::env::set_var`/`remove_var` `unsafe`, and a
@@ -40,56 +82,6 @@
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-
-//! # SLT — Super Light TUI
-//!
-//! Immediate-mode terminal UI for Rust. Small core. Zero `unsafe`.
-//!
-//! SLT gives you an egui-style API for terminals: your closure runs each frame,
-//! you describe your UI, and SLT handles layout, diffing, and rendering.
-//!
-//! ## Quick Start
-//!
-//! ```no_run
-//! fn main() -> std::io::Result<()> {
-//!     slt::run(|ui| {
-//!         ui.text("hello, world");
-//!     })
-//! }
-//! ```
-//!
-//! ## Features
-//!
-//! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
-//! - **50+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, slider, separator, help bar, scrollable, chart, bar chart, stacked bar chart, sparkline, histogram, heatmap, treemap, candlestick, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown, alert, badge, stat, breadcrumb, accordion, code block, big text, image, modal, tooltip, form, calendar, file picker, qr code
-//! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
-//! - **Mouse** — click, hover, drag-to-scroll
-//! - **Focus** — automatic Tab/Shift+Tab cycling
-//! - **Theming** — 10 presets, semantic tokens (`ThemeColor`), spacing scale, contrast helpers
-//! - **Animation** — tween and spring primitives with 9 easing functions
-//! - **Inline mode** — render below your prompt, no alternate screen
-//! - **Async** — optional tokio integration via `async` feature
-//! - **Layout debugger** — F12 to visualize container bounds
-//!
-//! ## Feature Flags
-//!
-//! | Flag | Description |
-//! |------|-------------|
-//! | `crossterm` | Built-in terminal runtime (`run`, `run_inline`, clipboard query helpers). Enabled by default. |
-//! | `bidi` | Reorder right-to-left text (Hebrew, Arabic, …) to visual order per UAX #9 before rendering. Enabled by default; pure-LTR text takes a zero-cost fast path. Since 0.21.0. |
-//! | `async` | Enable `run_async()` with tokio channel-based message passing |
-//! | `serde` | Enable Serialize/Deserialize for Style, Color, Theme, and layout types |
-//! | `image` | Enable image-loading helpers for terminal image widgets |
-//! | `qrcode` | Enable `ui.qr_code(...)` |
-//! | `syntax` / `syntax-*` | Enable tree-sitter syntax highlighting |
-//!
-//! ## Learn More
-//!
-//! - Guides index: <https://github.com/subinium/SuperLightTUI/blob/main/docs/README.md>
-//! - Quick start: <https://github.com/subinium/SuperLightTUI/blob/main/docs/QUICK_START.md>
-//! - Backends and run loops: <https://github.com/subinium/SuperLightTUI/blob/main/docs/BACKENDS.md>
-//! - Testing: <https://github.com/subinium/SuperLightTUI/blob/main/docs/TESTING.md>
-//! - Debugging: <https://github.com/subinium/SuperLightTUI/blob/main/docs/DEBUGGING.md>
 
 /// Animation primitives: tween, spring, keyframes, sequence, stagger.
 pub mod anim;

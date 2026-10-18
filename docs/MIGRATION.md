@@ -8,7 +8,7 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
-## v0.24.x to v0.25.0
+## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain
 available. Both packages are versioned at `0.25.0`.
@@ -55,7 +55,9 @@ available. Both packages are versioned at `0.25.0`.
 These behavior changes are shared by the frame kernel, native run loops, and
 WASM backend. They do not add new terminal-protocol or physical IME guarantees.
 
-## v0.23.x to v0.24.0
+---
+
+## 2. v0.23.x → v0.24.0
 
 Existing native run and widget signatures remain available. Review these
 intentional behavior changes:
@@ -111,7 +113,9 @@ can inspect `Buffer::cursor_is_masked()` to suppress plaintext preview for a
 masked input. The flag follows the actual rendered caret and resets with the
 buffer; it is not inferred from bullet glyphs or styling.
 
-## 1. v0.22.x → v0.23.0
+---
+
+## 3. v0.22.x → v0.23.0
 
 v0.23 is a correctness-focused minor release. It intentionally makes breaking
 changes where public mutable fields could invalidate private caches or where a
@@ -131,7 +135,8 @@ return type could not expose runtime failure safely.
 The exact method names above are compile-tested in the v0.23 rustdoc and examples.
 Run this upgrade sequence:
 
-1. Set `superlighttui = "0.23.0"`.
+1. Set `superlighttui = "0.25"` (or `"0.23"` to stop at this step); when going
+   straight to current, also apply sections 1 and 2.
 2. Run `cargo check` and replace direct state-field mutation first.
 3. Update async ownership and slider call sites reported by the compiler.
 4. Run interaction tests for tables, selects, text input, and raw drawing.
@@ -139,10 +144,74 @@ Run this upgrade sequence:
 
 ---
 
-## 2. v0.19.x → v0.19.3 (deprecations only — no code break)
+## 4. v0.21.x → v0.22.x (toolchain + f64 float surface)
 
-These compiled fine in v0.19.x but now produce deprecation warnings. They will be
-**removed in v0.20**:
+v0.22.0 changed no public signatures; the break is the toolchain.
+
+| Change | Migration |
+|---|---|
+| Edition 2024, MSRV 1.85 → 1.88 (0.22.0) | Build with Rust 1.88 or newer. Your own crate may stay on an older edition. |
+| `f32` float APIs deprecated in favor of `*_f64` (0.22.2) | `Color::{luminance, blend, lighten, darken, from_hsl, from_hsv, rotate_hue}` → the same name with `_f64`; `Color::contrast_ratio` → `Color::contrast_ratio_f64`; `Theme::overlay` → `overlay_f64`; `ui.gradient_stops` / `ui.bg_gradient_stops` → `gradient_stops_f64` / `bg_gradient_stops_f64`; `AppState::fps` → `fps_f64`. The `f32` forms still compile with a warning. |
+
+---
+
+## 5. v0.20.x → v0.21.0
+
+v0.21.0 is a breaking hook/API cleanup. Replacements listed below exist in v0.25;
+the deprecated forms still compile with a warning.
+
+| Change | Migration |
+|---|---|
+| `use_memo` returns a `Memo<T>` handle instead of `&T` | `let x = *ui.use_memo(&deps, f);` → `let x = ui.use_memo(&deps, f).copied(ui);` (or `.get(ui)` for `&T`). `use_memo_ref` keeps the old shape (deprecated). |
+| `_named` hook family renamed to match `use_state(init)` | `use_state_named::<T>("id")` → `use_state_named_default::<T>("id")`; `use_state_named_with("id", init)` → `use_state_named("id", init)`. |
+| `scrollbar` takes `&mut ScrollState`; `separator` / `separator_colored` return `Response` | Pass `&mut scroll`. Drop any `.separator().bold()`-style chains (they were no-ops). Statement-form `ui.separator();` still compiles but triggers the `must_use` warning; write `let _ = ui.separator();`. |
+| Status widgets (`badge`, `key_hint`, `stat*`, `empty_state*`) return a populated `Response` | No code change; `hovered` / `right_clicked` / focus fields now carry real state. |
+| `code_block` returns a `CodeBlock<'_>` builder (renders on `Drop`) | `code_block_numbered` / `code_block_lang` / `code_block_numbered_lang` → `ui.code_block(code).lang(l).numbered()`. |
+| `ScrollState::progress() -> f32` deprecated | `scroll.progress_ratio()` (`f64`). |
+| `key_seq` deprecated | `ui.key_chord(seq)` / `ui.key_chord_timeout(seq, ticks)` (matches across frames). |
+| `FormState::validate(&[..])` deprecated | Attach `FormField::validate(...)` per field, then call `FormState::validate_all()`. |
+| `ui.col_gap(n, f)` / `ui.row_gap(n, f)` deprecated (0.20.1) | `ui.container().gap(n).col(f)` / `.row(f)`. |
+
+---
+
+## 6. v0.19.3 → v0.20.0
+
+v0.20.0 unified the new-widget surface. These names are **removed** (not deprecated):
+
+| Removed | Replacement |
+|---|---|
+| `gauge_w(r, w)` | `ui.gauge(r).width(w)` |
+| `gauge_colored(r, c)` | `ui.gauge(r).color(c)` |
+| `line_gauge_with(r, opts)` / `LineGaugeOpts` | `ui.line_gauge(r).label(..).width(..)` (`LineGauge<'_>` builder) |
+| `breadcrumb_sep(b, s)` / `breadcrumb_with(b, s)` | `ui.breadcrumb(b).separator(s)` |
+| `breadcrumb_response(b)` | `ui.breadcrumb(b).show()` → `BreadcrumbResponse` (`clicked_segment`) |
+| `HighlightRange::single(i)` | `HighlightRange::line(i)` |
+| `label_owned(s)` | `label(s)` (accepts `impl Into<String>`) |
+
+Other breaking changes:
+
+| Change | Migration |
+|---|---|
+| `gauge` / `line_gauge` / `breadcrumb` are consuming builders (render on `Drop`) | `ui.gauge(0.42).label("CPU");` as a statement; call `.show()` to capture the response. |
+| `scrollable_with_gutter(state, opts, body)` takes `GutterOpts<G>` | `GutterOpts::line_numbers(total, viewport)` for line numbers, `GutterOpts::new(total, viewport, gutter_fn)` for custom labels. |
+| `Constraints` fields replaced by `WidthSpec` / `HeightSpec` | Struct literals → builders (`Constraints::default().min_w(10).max_w(40)` or `.w_minmax(10, 40)`); field reads → accessors (`c.min_width()`); writes → setters (`c.set_min_width(Some(v))`). Persisted serde `Constraints` from v0.19 does not deserialize. |
+| Ratio APIs widened `f32` → `f64` (`gauge`, `line_gauge`, `SplitPaneState`, responses) | Remove `as f32` casts; use `f64`. |
+| `State<T>` is no longer `Copy` | Call `.clone()` where a handle was implicitly copied. |
+| `spinner` / `progress` / `progress_bar` / `progress_bar_colored` return `Response` | Use `let _ = ui.progress(0.5);`; split former `.fg(...)` chains into separate statements. |
+| Built-in widgets derive padding/gap from `theme.spacing` | Default spacing is unchanged; custom `Spacing` values now take effect. |
+| `FilePickerState::selected()` deprecated | `selected_file()`. |
+| `Cargo.toml` uses `autoexamples = false` | Only listed `[[example]]` targets run; see [EXAMPLES.md](EXAMPLES.md). |
+
+The long container names from section 7 (`pad`, `min_width`, …) were deprecated in
+v0.20.0 and still compile with a warning in v0.25.
+
+---
+
+## 7. v0.19.x → v0.19.3 (deprecations only — no code break)
+
+These compiled fine in v0.19.x and now produce deprecation warnings
+(`#[deprecated(since = "0.20.0")]`). They are still present as aliases in v0.25
+and will be removed in a future minor release:
 
 | Old | New |
 |---|---|
@@ -152,8 +221,9 @@ These compiled fine in v0.19.x but now produce deprecation warnings. They will b
 | `min_height(n)` | `min_h(n)` |
 | `max_height(n)` | `max_h(n)` |
 
-Source-of-truth: `src/context/container.rs` lines ~1050–1069 carry the
-`#[deprecated(since = "0.20.0", ...)]` attributes; `pad` is at ~835.
+Source-of-truth: the `#[deprecated(since = "0.20.0", ...)]` attributes on
+`ContainerBuilder::{pad, min_width, max_width, min_height, max_height}` in
+`src/context/container.rs`.
 
 ### Codemod (sed-based)
 
@@ -179,11 +249,11 @@ find src/ -name "*.rs.bak" -delete
 ```
 
 For comparison, React migrations use `npx jscodeshift` (AST-aware). The Rust ecosystem
-doesn't have an equivalent for SLT yet — see section 5.
+doesn't have an equivalent for SLT yet — see section 10.
 
 ---
 
-## 3. v0.18.x → v0.19.0 (additive, no break)
+## 8. v0.18.x → v0.19.0 (additive, no break)
 
 v0.19.0 added component DX APIs in `src/context/runtime.rs` (`provide`, `use_context`,
 `use_state_named`, `with_if`). All existing code keeps compiling. Adopt incrementally:
@@ -192,13 +262,13 @@ v0.19.0 added component DX APIs in `src/context/runtime.rs` (`provide`, `use_con
 |---|---|
 | Threading `&theme, &tick, &mut state` parameters through every render fn | `ui.provide(value, \|ui\| ...)` once, then `ui.use_context::<T>()` in nested fns |
 | `use_state` inside `if`/`match` (panics on hook-order mismatch) | `use_state_named(id)` (id-keyed, safe in conditionals) |
-| `if cond { t.bold(); t.fg(Color::Red); }` | `t.with_if(cond, \|t\| t.bold().fg(Color::Red))` |
+| `if cond { t.bold(); t.fg(Color::Red); }` | `t.with_if(cond, \|t\| { t.bold().fg(Color::Red); })` |
 
 See `docs/PATTERNS.md` for the full set of composition patterns.
 
 ---
 
-## 4. v0.17.x → v0.18.x
+## 9. v0.17.x → v0.18.x
 
 Major architecture refactor — most user-facing APIs unchanged but internal modules split:
 
@@ -222,7 +292,7 @@ the `Command` box pattern, and a flexbox scratch buffer (perf only).
 
 ---
 
-## 5. Comparison: how other UI libraries handle migrations
+## 10. Comparison: how other UI libraries handle migrations
 
 | Framework | Tooling | Convention |
 |---|---|---|
@@ -233,12 +303,12 @@ the `Command` box pattern, and a flexbox scratch buffer (perf only).
 | **SLT** | sed-based codemods (no AST tool yet) + this guide + deprecation warnings | Patch releases stay compatible; callable APIs warn ≥1 minor before removal, while invariant-sensitive field encapsulation is documented in minor migrations |
 
 SLT does **not** yet have an AST-aware codemod tool. PRs welcome — `cargo-slt-migrate`
-would be a high-impact contribution. Until then, the sed snippets in section 2 plus
+would be a high-impact contribution. Until then, the sed snippets in section 7 plus
 `cargo build` errors are the migration toolchain.
 
 ---
 
-## 6. Pre-1.0 versioning policy
+## 11. Pre-1.0 versioning policy
 
 - **Pre-1.0 (current)**: minor versions (`0.X.0`) MAY contain breaking changes; patch
   versions (`0.X.Y`) MUST NOT.
@@ -257,7 +327,7 @@ breakage, so always read the migration section before a `0.X.0` upgrade.
 
 ---
 
-## 7. Reporting migration issues
+## 12. Reporting migration issues
 
 If you find a migration step that doesn't work, errors out, or is missing from this
 guide:
@@ -274,7 +344,7 @@ the tables above.
 
 ---
 
-## 8. Cross-references
+## 13. Cross-references
 
 - `CHANGELOG.md` — full per-release notes with every commit
 - `docs/COOKBOOK.md` — recipes using current APIs

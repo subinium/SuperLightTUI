@@ -244,13 +244,15 @@ fn bench_animation_churn(c: &mut Criterion) {
 }
 
 /// SLT dashboard render baseline (bold header + separator + 20 rows +
-/// progress/gauge) into the in-memory `TestBackend` at 200x60 — the
-/// framework's build → layout → render → diff cost only, no terminal I/O
-/// (issue #270). The qualitative comparison vs ratatui's equivalent
-/// `Terminal::draw` path is documented in `docs/PERFORMANCE.md`; ratatui is
-/// intentionally NOT linked as a dev-dependency because it pulls a
-/// transitively-advisory `lru 0.12` (RUSTSEC-2026-0002) that would fail the
-/// release audit gate for a benchmark-only comparison.
+/// progress/gauge) into the in-memory `TestBackend` at 200x60 (issue #270).
+/// `TestBackend::render` runs `Buffer::reset` + the frame kernel (build →
+/// layout → collect → render) only: it does NOT diff against the previous
+/// frame, refresh row hashes, or emit ANSI, so this excludes the diff/flush
+/// cost a real frame pays. Do not compare it with ratatui's `Terminal::draw`,
+/// which does diff; the matched-harness comparison is in
+/// `docs/PERFORMANCE.md` §5. ratatui is not linked as a dev-dependency:
+/// ratatui 0.29 pulled the advisory `lru 0.12` (RUSTSEC-2026-0002), which
+/// would fail the release audit gate for a benchmark-only comparison.
 fn bench_headtohead(c: &mut Criterion) {
     let mut group = c.benchmark_group("dashboard_200x60");
 

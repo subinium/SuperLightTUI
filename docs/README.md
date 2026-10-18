@@ -7,6 +7,22 @@ The idea is simple:
 - this directory tells you where to go next
 - docs.rs is the API signature source of truth
 
+## Learning path
+
+Read these in order. Each guide assumes the ones before it.
+
+1. [QUICK_START.md](QUICK_START.md) - install, first app, counter, layout, input
+2. [WEB_DEVELOPERS.md](WEB_DEVELOPERS.md) - HTML/CSS, React and DOM concepts mapped to SLT
+3. [WIDGETS.md](WIDGETS.md) - categorized widget map
+4. [PATTERNS.md](PATTERNS.md) - common composition patterns
+5. [INTERACTION.md](INTERACTION.md) - mouse (opt-in), keyboard, focus, scrolling and shortcut ordering
+6. [STATE_APIS.md](STATE_APIS.md) - public state fields, accessors, and mutation APIs
+7. [THEMING.md](THEMING.md) - theme struct, presets, ThemeBuilder, custom themes
+8. [ANIMATION.md](ANIMATION.md) - tween, spring, keyframes, sequence, stagger
+9. [TESTING.md](TESTING.md) - `TestBackend`, `EventBuilder`, input simulation, snapshots
+10. [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md) - terminal emulator, multiplexer and protocol support
+11. [BACKENDS.md](BACKENDS.md) - custom backends, inline mode, static output, `frame()`
+
 ## Start here
 
 - [QUICK_START.md](QUICK_START.md) - install, first app, counter, layout, input
@@ -47,6 +63,7 @@ The idea is simple:
 - [DEBUGGING.md](DEBUGGING.md) - F12 overlay, clipping, focus, previous-frame behavior
 - [FEATURES.md](FEATURES.md) - feature flags and runtime capability matrix
 - [MIGRATION.md](MIGRATION.md) - version-by-version upgrade notes and replacements
+- [POSITIONING.md](POSITIONING.md) - overlay & anchor positioning (CSS position/Flutter Align → SLT)
 - [PREVIOUS_FRAME_GUIDE.md](PREVIOUS_FRAME_GUIDE.md) - response geometry and previous-frame timing
 - [STATE_APIS.md](STATE_APIS.md) - public state fields, accessors, and mutation APIs
 - [TESTING.md](TESTING.md) - `TestBackend`, `EventBuilder`, input simulation, snapshots
@@ -62,12 +79,11 @@ The idea is simple:
 - [DEMO_GUIDE.md](DEMO_GUIDE.md) - demo authoring and gallery workflow
 - [NAMING.md](NAMING.md) - public API naming conventions
 - [PERFORMANCE.md](PERFORMANCE.md) - frame budgets, benchmarks, and regression checks
-- [POSITIONING.md](POSITIONING.md) - product scope and audience
 - [RUSTDOC_GUIDE.md](RUSTDOC_GUIDE.md) - public documentation standards
 
 ## Historical snapshots
 
-- [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) - v0.19.2 competitive and roadmap snapshot; refreshed dependency counts are labeled in place
+- [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) - dated competitive snapshot (2026-10-18, SLT v0.25.0) against ratatui, Textual, Bubble Tea, Ink, OpenTUI and others
 
 ## Translations
 

@@ -148,12 +148,15 @@ impl StaticOutput {
 /// # Example
 ///
 /// ```no_run
-/// # use slt::widgets::TextInputState;
-/// # slt::run(|ui: &mut slt::Context| {
+/// use slt::widgets::TextInputState;
+///
+/// // Create state once, outside the frame closure, so typed text persists.
 /// let mut input = TextInputState::with_placeholder("Type here...");
-/// ui.text_input(&mut input);
-/// println!("{}", input.value);
-/// # });
+/// slt::run(|ui: &mut slt::Context| {
+///     ui.text_input(&mut input);
+///     // input.value holds the current text
+/// })?;
+/// # Ok::<_, std::io::Error>(())
 /// ```
 pub struct TextInputState {
     /// The current input text.
@@ -1044,12 +1047,14 @@ pub(crate) struct TextareaNavigation {
 /// # Example
 ///
 /// ```no_run
-/// # use slt::widgets::TextareaState;
-/// # slt::run(|ui: &mut slt::Context| {
+/// use slt::widgets::TextareaState;
+///
 /// let mut state = TextareaState::new();
-/// // Type, then press Ctrl+Z to undo or Ctrl+Y to redo.
-/// ui.textarea(&mut state, 5);
-/// # });
+/// slt::run(|ui: &mut slt::Context| {
+///     // Type, then press Ctrl+Z to undo or Ctrl+Y to redo.
+///     ui.textarea(&mut state, 5);
+/// })?;
+/// # Ok::<_, std::io::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct TextareaState {

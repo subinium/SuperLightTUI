@@ -67,7 +67,11 @@ The original `use_state` / `use_memo` order rule still holds — only the id-key
 
 ### "How do I handle keyboard shortcuts?"
 
-Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity. (`key_seq` is a deprecated alias that now delegates to `key_chord`.)
+Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. Check global shortcuts **after** rendering widgets: `key*` only sees events no widget has consumed yet, so a `ui.key('q')` check placed before a focused `text_input` fires even while the user types `q` into the field. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity. (`key_seq` is a deprecated alias that now delegates to `key_chord`.)
+
+### "Why don't clicks, hover, or the scroll wheel do anything?"
+
+Mouse capture is opt-in: `RunConfig::default()` has `mouse: false`, and `slt::run` uses the default. Generate `slt::run_with(slt::RunConfig::default().mouse(true), |ui| { ... })` for any app that relies on `.clicked`, `.hovered`, `on_hover`, or wheel scrolling. Buttons still activate from the keyboard (focus + Enter/Space) without it.
 
 ### "How do I make a custom widget?"
 
@@ -154,7 +158,7 @@ Reserve explicit parameters for **writes** (e.g. `&mut MyDocState`) — those sh
 
 ### Conditional styling without re-chaining
 
-`with_if(cond, modifier)` and `with(modifier)` (v0.19.0) let you fold conditional styling into a single fluent chain on text and `ContainerBuilder`. Replace `if cond { t.bold(); t.fg(Color::Red); }` style branching with `ui.text(...).with_if(is_error, |t| t.bold().fg(Color::Red))`. Cleaner diffs, no broken chains.
+`with_if(cond, modifier)` and `with(modifier)` (v0.19.0) let you fold conditional styling into a single fluent chain on text and `ContainerBuilder`. Replace `if cond { t.bold(); t.fg(Color::Red); }` style branching with `ui.text(...).with_if(is_error, |t| { t.bold().fg(Color::Red); })` — the text closure receives `&mut Context` and returns `()`, so wrap the chain in a block. On `ContainerBuilder` the builder is by value and the closure must return it: `.with_if(focused, |c| c.title("(focused)").p(2))`. Cleaner diffs, no broken chains.
 
 ## Internal widget rules for agents
 

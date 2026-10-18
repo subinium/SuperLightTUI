@@ -73,7 +73,7 @@ Methods on `ContainerBuilder` (Layer 2) that configure the container.
 **Examples**:
 ```rust
 ui.container()
-  .bordered(Border::Single)
+  .border(Border::Single)
   .p(2)
   .gap(1)
   .grow(1)
@@ -90,7 +90,7 @@ ui.container()
 
 ```rust
 .apply_padding(2)    // bad — too long, verb-shape
-.with_padding(2)     // ok if `with_` prefix is the family convention
+.with_padding(2)     // hypothetical — not an SLT API; acceptable only if `with_` were the family convention
 .p(2)                // good — terse, adjective-shape
 .padding(Padding::all(2)) // also good — explicit full-value form
 ```
@@ -109,7 +109,7 @@ Functions that create instances.
 TextInputState::default();
 TextInputState::with_placeholder("Search...");
 SplitPaneState::new(0.5);
-TabsState::new(["Files", "Settings"]);
+TabsState::new(vec!["Files", "Settings"]);
 ```
 
 ---
@@ -121,7 +121,7 @@ TabsState::new(["Files", "Settings"]);
 | `_named` | name-keyed variant | `register_focusable_named` |
 | `_keyed` | runtime-key variant | `use_state_keyed` |
 | `_colored` | color-customized variant (canonical color-override for immediate widgets returning `Response`; blessed in [API_DESIGN.md](API_DESIGN.md) Rule 1) | `text_input_colored` |
-| `_lang` | language-aware variant | `code_block_lang` |
+| `_lang` | language-aware variant (historical; `code_block_lang` is deprecated in favor of `code_block(c).lang(l)`) | `code_block_lang` |
 | `_styled` | explicit-`Style`/`Color` override variant | `sparkline_styled` |
 | `_hd` | high-density / braille-cell rendering variant | `candlestick_hd` |
 | `_halfblock` | half-block (▀ / ▄) pixel-doubling render variant | `heatmap_halfblock` |
@@ -129,11 +129,18 @@ TabsState::new(["Files", "Settings"]);
 | `_ratio` | ratio variant | `w_ratio(1, 3)` |
 | `_minmax` | min/max bounds variant | `w_minmax(10, 30)` |
 | `_gap` | gap-supplied variant | `row_gap(g, ...)` |
-| `_with` | callback-ish variant | `with_if(cond, f)` |
+| `_with` | variant taking an extra closure or options value | `run_with(config, f)`, `error_boundary_with(f, fallback)`, `modal_with(opts, f)` |
 | `State` | Layer 4 state type | `TextInputState` |
 | `Response` | Layer 5 response type | `BreadcrumbResponse` |
 | `Opts` | options struct (4+ fields) | `GutterOpts` |
 | `Builder` | builder type (rare; usually anon `<Widget><Lifetime>`) | — |
+
+**Known `_with` inconsistencies** (existing API, not a pattern to copy): the
+suffix carries a non-callback value in `button_with(label, ButtonVariant)`,
+`slider_with(value, SliderOpts)`, `grid_with(&[GridColumn], f)` (columns) and
+`canvas_with(&mut CanvasContext, f)` (reused storage). `modal_with` takes an
+options struct plus the body closure. New APIs should prefer a builder or a
+descriptive suffix.
 
 ---
 
@@ -141,13 +148,12 @@ TabsState::new(["Files", "Settings"]);
 
 | Prefix | Meaning | Example |
 |--------|---------|---------|
-| `with_` | builder-style override / conditional | `with_if`, `with_padding` |
+| `with_` | builder-style override / conditional | `with_if`, `with`, `TextInputState::with_placeholder`, `SplitPaneState::with_min_ratio` |
 | `use_` | hook (state-bound across frames) | `use_state`, `use_effect`, `use_state_keyed` |
 | `register_` | frame-level registration | `register_focusable`, `register_focusable_named` |
 | `consume_` | mark an event as handled | `consume_event` |
-| `is_` | boolean getter | `is_quit_requested` |
-| `has_` | possession boolean getter | `has_focus` (use sparingly — prefer noun like `focused`) |
-| `slt_` | macro/function from SLT internals | `slt_warn!`, `slt_assert!` |
+| `is_` | boolean getter | `is_dark_mode` |
+| `has_` | possession boolean getter | `has_pending_input` (use sparingly — prefer a noun/adjective like `Response.focused`) |
 
 ---
 
@@ -157,7 +163,7 @@ Length should match category:
 
 - **Adjectives** (Layer 2 modifiers): ≤ 2 syllables typical.
   - ✅ `bg`, `fg`, `p`, `w`, `h`, `gap`, `grow`, `fill`, `border`, `bold`, `dim`
-  - ✅ `bordered`, `padding`, `italic`, `inverted`
+  - ✅ `bordered`, `padding`, `italic`, `reversed`
   - ❌ `with_padding_all_sides` — too long
 - **Nouns** (Layer 1/2 getters): full word.
   - ✅ `theme`, `spacing`, `width`, `events`
@@ -193,7 +199,7 @@ hide their family from new readers:
 
 | Forbidden | Use instead |
 |-----------|-------------|
-| `ctx` | `context` (in private code only — public API uses `ui`) |
+| `ctx` | `context` (in private code only — public API uses `ui`; see the `Response::on_*` exception below) |
 | `btn` | `button` |
 | `lbl` | `label` |
 | `dbg` | `debug` |
@@ -241,6 +247,10 @@ function context.
 - **Always `ui`** in public closures (`|ui| { ui.text("hi") }`).
 - **`ctx`** allowed only in private internals.
 - **`self`** when defining a method on `Context`.
+- **Known exception**: the `Response` chain helpers (`on_hover`, `on_hover_ui`,
+  `on_click`, `on_changed`, `on_focus`, `on_submit`, `on_double_click` in
+  `src/context/state.rs`) name their `&mut Context` parameter `ctx`. The
+  rustdoc shows `ctx`; callers still pass `ui`. Do not copy this into new APIs.
 
 ```rust
 // good — public closure
@@ -299,15 +309,16 @@ impl Deref for BreadcrumbResponse {
 
 ### Options structs
 
-`<Widget>Opts`. Used when ≥ 4 optional fields would otherwise inflate
-the function signature.
+`<Widget>Opts`. Used when ≥ 4 positional parameters would otherwise inflate
+the function signature (`GutterOpts` replaces three positional arguments plus a closure).
+Known naming exceptions: `ModalOptions`, `RunConfig`, `ChartConfig`, `BarChartConfig`
+(see [API_DESIGN.md](API_DESIGN.md)).
 
 ```rust
 pub struct GutterOpts<G> {
-    pub width: u32,
-    pub bg: Color,
-    pub label_fn: G,
-    pub highlights: Vec<HighlightRange>,
+    pub total_lines: usize,
+    pub viewport_height: u32,
+    pub gutter_fn: G,
 }
 ```
 
@@ -322,7 +333,7 @@ pub enum BarDirection {
 }
 
 pub enum Border {
-    None, Single, Double, Rounded, Thick,       // good
+    Single, Double, Rounded, Thick, Dashed, DashedThick,   // good
 }
 
 // bad
@@ -391,10 +402,10 @@ only place they ever existed.
 
 ### Deprecations (v0.21.0)
 
-Unlike the v0.20 renames above, these names **still exist** as
-`#[deprecated(since = "0.21.0")]` forwarding aliases for the whole v0.21.x
-line. Prefer the new form; the old names compile (with a warning) and are
-scheduled for removal in the next major.
+Unlike the v0.20 renames above, these names **still exist** (as of v0.25.0) as
+`#[deprecated(since = "0.21.0")]` forwarding aliases. Prefer the new form;
+the old names compile with a warning and are scheduled for removal in a
+future breaking release.
 
 | Deprecated | New | Reason |
 |------------|-----|--------|
@@ -445,7 +456,7 @@ ui.container().border(Border::Single).p(2)
 fn dbg_print_state(...)
 
 // correct
-fn debug_print_state(...) // or, better: slt_debug!(...)
+fn debug_print_state(...)
 ```
 
 ### Type abbreviation

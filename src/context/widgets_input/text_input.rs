@@ -10,12 +10,15 @@ impl Context {
     /// # Example
     ///
     /// ```no_run
-    /// # use slt::widgets::TextInputState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::TextInputState;
+    ///
+    /// // Create state once, outside the frame closure, so typed text persists.
     /// let mut input = TextInputState::with_placeholder("Search...");
-    /// ui.text_input(&mut input);
-    /// // input.value holds the current text
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.text_input(&mut input);
+    ///     // input.value holds the current text
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn text_input(&mut self, state: &mut TextInputState) -> Response {
         let colors = self.widget_theme.text_input;

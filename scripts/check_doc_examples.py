@@ -12,6 +12,15 @@ import subprocess
 import tempfile
 
 
+# Docs whose Rust fences are all classified and compiled by default (CI).
+MAINTAINED_DOCS = (
+    "COMPLETE_REFERENCE",
+    "WEB_DEVELOPERS",
+    "INTERACTION",
+    "TERMINAL_COMPATIBILITY",
+)
+
+
 @dataclasses.dataclass
 class Example:
     name: str
@@ -89,7 +98,7 @@ def extract(path):
 
 def check(args):
     root = Path(__file__).resolve().parents[1]
-    paths = args.docs or [root / "docs/COMPLETE_REFERENCE.md"]
+    paths = args.docs or [root / f"docs/{name}.md" for name in MAINTAINED_DOCS]
     groups = collections.defaultdict(list)
     total = 0
     for path in paths:

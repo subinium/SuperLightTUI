@@ -1,6 +1,59 @@
 # Animation
 
-SLT animations are standalone structs, not Context methods. Each animation computes an `f64` value from tick counts. You pass the computed value to style or layout methods yourself.
+SLT has two layers of animation:
+
+1. **Quick transitions** — `ui.animate_bool(...)` and `ui.animate_value(...)`
+   are `Context` methods that keep their own state. Use them like a CSS
+   `transition`: hand in the target, get back the current in-between value.
+2. **Animation structs** — `Tween`, `Spring`, `Keyframes`, `Sequence`, and
+   `Stagger` are standalone structs you own. Use them for custom easing,
+   physics, multi-stop timelines, or looping.
+
+Both compute an `f64` from frame ticks. You pass the computed value to style or
+layout methods yourself.
+
+## Quick transitions (CSS-transition-like)
+
+```rust
+use slt::{Color, Context};
+
+fn sidebar(ui: &mut Context, open: bool, progress: f64) {
+    // 0.0..=1.0, tweens toward 1.0 while `open` is true and back to 0.0 when
+    // false. Default duration: `slt::anim::DEFAULT_ANIMATE_TICKS` (12 ticks,
+    // ~200 ms at the default 16 ms tick rate).
+    let t = ui.animate_bool("sidebar.open", open);
+    ui.text("Sidebar").ml((t * 20.0) as u32);
+
+    // Any f64 target with an explicit duration in ticks (linear easing).
+    // Changing `progress` mid-flight retargets from the current value — no jump.
+    let width = ui.animate_value("loading.bar", progress * 40.0, 30);
+    let filled = "#".repeat(width as usize);
+    ui.text(filled).fg(Color::Green);
+}
+```
+
+Signatures:
+
+- `ui.animate_bool(id: &'static str, value: bool) -> f64`
+- `ui.animate_value(id: &'static str, target: f64, duration_ticks: u64) -> f64`
+
+Rules:
+
+- **`id` is the state key.** Like `use_state_named`, it is a single global
+  namespace per context — use a unique id per call site. Reusing an id that
+  `use_state_named` already holds with a different type panics.
+- **First call snaps.** On the first frame the value starts at the target, so
+  widgets that mount in their final state don't animate in. To animate on
+  mount, start with the "off" target and flip it on a later frame.
+- **`duration_ticks == 0`** snaps immediately.
+- Easing is linear. Reach for `Tween` (custom easing) or `Spring` (frequently
+  changing targets) below when that is not enough.
+
+## Animation structs
+
+The rest of this page covers the struct-based API. These are standalone
+structs, not Context methods: you create them once outside the frame closure
+and sample them each frame.
 
 ```rust
 let mut fade = Tween::new(0.0, 1.0, 30).easing(ease_out_quad);
@@ -37,7 +90,7 @@ slt::run(|ui: &mut Context| {
     if ui.tick() == 0 {
         tween.reset(ui.tick());
     }
-    let x = tween.value(ui.tick()) as u16;
+    let x = tween.value(ui.tick()) as u32;
     ui.text("sliding").ml(x);
 });
 ```
@@ -59,12 +112,13 @@ use slt::{Spring, Context};
 
 let mut spring = Spring::new(0.0, 0.2, 0.85);
 
-slt::run(|ui: &mut Context| {
+// Hover needs mouse capture, which is off by default.
+slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
     let hovered = ui.button("Hover me").hovered;
     spring.set_target(if hovered { 10.0 } else { 0.0 });
     spring.tick();
 
-    let offset = spring.value() as u16;
+    let offset = spring.value() as u32;
     ui.text("bouncy").ml(offset);
 });
 ```
@@ -236,12 +290,13 @@ slt::run(|ui: &mut Context| {
 ```rust
 let mut spring = Spring::new(0.0, 0.3, 0.8);
 
-slt::run(|ui: &mut Context| {
+// Hover needs mouse capture, which is off by default.
+slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
     let btn = ui.button("Click me");
     spring.set_target(if btn.hovered { 2.0 } else { 0.0 });
     spring.tick();
 
-    let pad = spring.value() as u16;
+    let pad = spring.value() as u32;
     ui.text(">>").ml(pad);
 });
 ```
@@ -296,7 +351,7 @@ let mut chain = Sequence::new()
     .then(50.0, 100.0, 20, ease_in_cubic); // move to end
 
 chain.reset(ui.tick());
-let pos = chain.value(ui.tick()) as u16;
+let pos = chain.value(ui.tick()) as u32;
 ui.text("->").ml(pos);
 ```
 
