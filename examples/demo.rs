@@ -339,7 +339,9 @@ impl Default for DemoState {
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
     slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
+        RunConfig::default()
+            .mouse_mode(slt::MouseMode::Hover)
+            .kitty_keyboard(true),
         move |ui| render(ui, &mut state),
     )
 }

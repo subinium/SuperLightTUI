@@ -1025,9 +1025,7 @@ fn main() -> std::io::Result<()> {
     let mut mines = MinesweeperGame::new(3);
 
     slt::run_with(
-        slt::RunConfig::default()
-            .mouse(true)
-            .tick_rate(Duration::from_millis(50)),
+        slt::RunConfig::default().tick_rate(Duration::from_millis(50)),
         |ui: &mut Context| {
             if ui.key('q') {
                 ui.quit();

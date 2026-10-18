@@ -332,8 +332,15 @@ impl Context {
     /// ```
     pub fn confirm(&mut self, question: &str, result: &mut bool) -> Response {
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let mut is_yes = *result;
         let mut clicked = false;
+        // Issue #469: an accessible-mode y/n answer is a keyboard answer.
+        if let Some(value) = crate::runtime::A11yBegin::take_bool(a11y.as_mut()) {
+            is_yes = value;
+            *result = value;
+            clicked = true;
+        }
 
         // 1) Keyboard hit-test runs first so it can mutate `is_yes`.
         if focused {
@@ -376,7 +383,7 @@ impl Context {
         // no entry yet, so we fall back to assuming the row starts at (0,0)
         // — same behaviour as the prior implementation.
         let q_width = UnicodeWidthStr::width(question) as u32;
-        if !clicked && let Some((mx, my)) = self.click_pos {
+        if !clicked && let Some((mx, my)) = self.last_left_press_pos() {
             let next_id = self.rollback.interaction_count;
             let prev_rect = self.prev_hit_map.get(next_id).copied();
             let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
@@ -430,6 +437,14 @@ impl Context {
             ui.styled("[No]", no_style);
         });
 
+        if let Some(begin) = a11y {
+            self.a11y_end_labelled(
+                begin,
+                crate::runtime::A11yRole::Confirm,
+                question,
+                Some(is_yes),
+            );
+        }
         response.focused = focused;
         response.clicked = clicked;
         response.changed = clicked;

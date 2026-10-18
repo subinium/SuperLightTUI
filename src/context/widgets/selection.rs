@@ -7,6 +7,7 @@
 //! ...) live in `src/widgets/selection.rs`.
 
 use super::*;
+use crate::runtime::{A11yBegin, A11yRole};
 
 impl Context {
     /// Render a horizontal tab bar. Handles Left/Right navigation when focused.
@@ -117,8 +118,8 @@ impl Context {
     ///
     /// The returned [`Response::clicked`] flag is set on activation. The button
     /// is styled with the theme's primary color when focused and the accent
-    /// color when hovered. Mouse click and hover require mouse capture
-    /// (`RunConfig::default().mouse(true)`, off by default); keyboard
+    /// color when hovered. Mouse clicks work with the default mouse mode;
+    /// hover styling needs [`MouseMode::Hover`](crate::MouseMode::Hover); keyboard
     /// activation works without it.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         let colors = self.widget_theme.button;
@@ -127,10 +128,18 @@ impl Context {
 
     /// Render a clickable button with custom widget colors.
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
+        // Non-generic body (#491): one copy instead of one per label type.
+        self.button_colored_string(label.into(), colors)
+    }
+
+    fn button_colored_string(&mut self, label: String, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        let activated = response.clicked || self.consume_activation_keys(focused);
+        let activated = response.clicked
+            || self.consume_activation_keys(focused)
+            || A11yBegin::take_activate(a11y.as_mut());
 
         let hovered = response.hovered;
         let base_fg = colors.fg.unwrap_or(self.theme.text);
@@ -168,7 +177,7 @@ impl Context {
                 grow: 0,
                 group_name: None,
             })));
-        let raw_label = label.into();
+        let raw_label = label;
         let mut label_text = String::with_capacity(raw_label.len() + 4);
         label_text.push_str("[ ");
         label_text.push_str(&raw_label);
@@ -176,6 +185,9 @@ impl Context {
         self.styled(label_text, style);
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let Some(begin) = a11y {
+            self.a11y_end_labelled(begin, A11yRole::Button, &raw_label, None);
+        }
 
         response.clicked = activated;
         response
@@ -187,9 +199,12 @@ impl Context {
     /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
     pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> Response {
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
 
-        let activated = response.clicked || self.consume_activation_keys(focused);
+        let activated = response.clicked
+            || self.consume_activation_keys(focused)
+            || A11yBegin::take_activate(a11y.as_mut());
 
         let label = label.into();
         let hover_bg = if response.hovered || focused {
@@ -296,6 +311,9 @@ impl Context {
         self.styled(text, style);
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let Some(begin) = a11y {
+            self.a11y_end_labelled(begin, A11yRole::Button, &label, None);
+        }
 
         response.clicked = activated;
         response
@@ -319,11 +337,13 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut should_toggle = response.clicked;
         let old_checked = *checked;
 
         should_toggle |= self.consume_activation_keys(focused);
+        should_toggle |= A11yBegin::take_bool(a11y.as_mut()).is_some_and(|value| value != *checked);
 
         if should_toggle {
             *checked = !*checked;
@@ -360,6 +380,7 @@ impl Context {
         };
         let marker = if *checked { "[x]" } else { "[ ]" };
         let label_text = label.into();
+        let a11y_name = a11y.as_ref().map(|_| label_text.clone());
         if focused {
             let mut marker_text = String::with_capacity(2 + marker.len());
             marker_text.push_str("▸ ");
@@ -378,6 +399,9 @@ impl Context {
         }
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let (Some(begin), Some(name)) = (a11y, a11y_name) {
+            self.a11y_end_labelled(begin, A11yRole::CheckBox, &name, Some(*checked));
+        }
 
         response.changed = *checked != old_checked;
         response
@@ -402,11 +426,13 @@ impl Context {
         colors: &WidgetColors,
     ) -> Response {
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
         let mut should_toggle = response.clicked;
         let old_on = *on;
 
         should_toggle |= self.consume_activation_keys(focused);
+        should_toggle |= A11yBegin::take_bool(a11y.as_mut()).is_some_and(|value| value != *on);
 
         if should_toggle {
             *on = !*on;
@@ -437,6 +463,7 @@ impl Context {
                 group_name: None,
             })));
         let label_text = label.into();
+        let a11y_name = a11y.as_ref().map(|_| label_text.clone());
         let switch = if *on { "●━━ ON" } else { "━━● OFF" };
         let switch_style = if *on {
             Style::new().fg(colors.accent.unwrap_or(self.theme.success))
@@ -461,6 +488,9 @@ impl Context {
         }
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let (Some(begin), Some(name)) = (a11y, a11y_name) {
+            self.a11y_end_labelled(begin, A11yRole::Switch, &name, Some(*on));
+        }
 
         response.changed = *on != old_on;
         response
@@ -484,10 +514,18 @@ impl Context {
         }
 
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let (interaction_id, mut response) = self.begin_widget_interaction(focused);
         let old_selected = state.selected;
 
         self.select_handle_events(state, focused, interaction_id);
+        if let Some(choice) = A11yBegin::take_choice(a11y.as_mut())
+            && choice < state.len()
+        {
+            state.selected = choice;
+            state.open = false;
+            state.filter.clear();
+        }
         // Keep the cursor within the filtered subset before rendering.
         if state.open {
             let flen = state.filtered_indices().len();
@@ -499,6 +537,16 @@ impl Context {
             }
         }
         self.select_render(state, focused, colors);
+        if let Some(begin) = a11y {
+            let selected = vec![state.selected];
+            self.a11y_end_choice(
+                begin,
+                A11yRole::Select,
+                state.items(),
+                selected,
+                &state.placeholder,
+            );
+        }
         response.changed = state.selected != old_selected;
         response
     }
@@ -769,7 +817,13 @@ impl Context {
         }
         state.selected = state.selected.min(state.items.len().saturating_sub(1));
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let old_selected = state.selected;
+        if let Some(choice) = A11yBegin::take_choice(a11y.as_mut())
+            && choice < state.items.len()
+        {
+            state.selected = choice;
+        }
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -854,6 +908,10 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let Some(begin) = a11y {
+            let selected = vec![state.selected];
+            self.a11y_end_choice(begin, A11yRole::Radio, &state.items, selected, "");
+        }
         response.changed = state.selected != old_selected;
         response
     }
@@ -867,7 +925,14 @@ impl Context {
         }
         state.cursor = state.cursor.min(state.len().saturating_sub(1));
         let focused = self.register_focusable();
+        let mut a11y = self.a11y_begin(focused);
         let old_selected = state.selected.clone();
+        if let Some(index) = A11yBegin::take_toggle(a11y.as_mut())
+            && index < state.len()
+        {
+            state.toggle(index);
+            state.cursor = index;
+        }
 
         if focused {
             let mut consumed_indices = Vec::new();
@@ -944,6 +1009,11 @@ impl Context {
 
         self.commands.push(Command::EndContainer);
         self.rollback.last_text_idx = None;
+        if let Some(begin) = a11y {
+            let mut selected: Vec<usize> = state.selected.iter().copied().collect();
+            selected.sort_unstable();
+            self.a11y_end_choice(begin, A11yRole::MultiSelect, state.items(), selected, "");
+        }
         response.changed = state.selected != old_selected;
         response
     }

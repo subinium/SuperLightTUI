@@ -166,7 +166,7 @@ fn main() -> std::io::Result<()> {
     // Opt out of the default ctrl-c-quits behaviour so the loop can decide
     // when (and after how many strikes) to exit. Mouse on so the
     // "Send Ctrl+C" button can be clicked.
-    let config = RunConfig::default().handle_ctrl_c(false).mouse(true);
+    let config = RunConfig::default().handle_ctrl_c(false);
 
     slt::run_with(config, move |ui: &mut Context| {
         render(ui, &mut state);

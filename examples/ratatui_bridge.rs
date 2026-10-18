@@ -19,7 +19,7 @@ const LOG_LINES: usize = 40;
 
 fn main() -> std::io::Result<()> {
     let mut scroll = ScrollState::new();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
             return;

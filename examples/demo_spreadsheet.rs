@@ -483,17 +483,14 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL)
-                || (ui.key_code(slt::KeyCode::Esc) && !state.editing)
-            {
-                ui.quit();
-            }
-            render(ui, &mut state);
-        },
-    )
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL)
+            || (ui.key_code(slt::KeyCode::Esc) && !state.editing)
+        {
+            ui.quit();
+        }
+        render(ui, &mut state);
+    })
 }
 
 fn is_numeric(s: &str) -> bool {

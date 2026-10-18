@@ -32,7 +32,7 @@ fn main() -> std::io::Result<()> {
     let mut toasts = ToastState::new();
     let logs = make_logs();
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default(), |ui: &mut Context| {
         render_frame(
             ui,
             &spinner,

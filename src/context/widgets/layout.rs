@@ -209,6 +209,11 @@ impl Context {
     pub fn line_wrap(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
         let start = self.commands.len();
         f(self);
+        // Non-generic tail (#491): one copy instead of one per closure.
+        self.line_wrap_finish(start)
+    }
+
+    fn line_wrap_finish(&mut self, start: usize) -> &mut Self {
         let has_link = self.commands[start..]
             .iter()
             .any(|cmd| matches!(cmd, Command::Link { .. }));
@@ -348,6 +353,8 @@ impl Context {
             scroll_follow_focus: None,
             scroll_state_id: 0,
             theme_override: None,
+            pointer_flags: 0,
+            pointer_shape: None,
         }
     }
 
@@ -509,9 +516,12 @@ impl Context {
     ///
     /// Pass a [`ScrollState`] to persist scroll position across frames. The state
     /// is updated in-place with the current scroll offset and bounds.
-    /// Wheel events target the last-painted containing region with overflow
-    /// on the requested axis. That region owns the event even at its offset
-    /// limit; events do not bubble to an ancestor at a scroll boundary.
+    /// Wheel events go to the innermost region under the pointer that can
+    /// still move on the requested axis. When a nested scrollable reaches its
+    /// end, further wheel motion chains to the enclosing scrollable (the
+    /// browser default). Call [`ContainerBuilder::overscroll_contain`] on a
+    /// region that should keep the wheel at its limit instead, such as a popup
+    /// list.
     ///
     /// # Example
     ///
@@ -570,6 +580,28 @@ impl Context {
         if let Some(index) = index {
             self.auto_scroll_nested(index, state, is_horizontal);
         }
+        // #445: a text-selection drag held on this region's top or bottom row
+        // scrolls it one step per frame so the selection can extend.
+        if !is_horizontal
+            && let Some((region, direction)) = self.pointer.selection_autoscroll
+            && region == id
+        {
+            let step = self.scroll_lines_per_event as usize;
+            if direction < 0 {
+                state.scroll_up(step);
+            } else {
+                state.scroll_down(step);
+            }
+        }
+        // #443: hand this binding's anchoring policy to the layout pass.
+        self.pointer
+            .scroll_policies
+            .push(crate::layout::ScrollPolicy {
+                state_id: id,
+                anchor: state.anchor,
+                stick_to_bottom: state.stick_to_bottom,
+                dragging: state.dragging,
+            });
 
         // Carry both axis offsets; the tree builder applies the one matching
         // the finalizing `.row()` / `.col()` direction (#247).
@@ -720,7 +752,7 @@ impl Context {
         let thumb_pos =
             Self::scrollbar_thumb_pos(state.offset, max_offset, track_height, thumb_height);
         let changed = if let Some(rect) = self.prev_hit_map.get(track_id).copied() {
-            self.handle_scrollbar_drag(rect, state, thumb_pos, thumb_height, max_offset)
+            self.handle_scrollbar_drag(rect, track_id, state, thumb_pos, thumb_height, max_offset)
         } else {
             false
         };
@@ -803,6 +835,7 @@ impl Context {
     fn handle_scrollbar_drag(
         &mut self,
         rect: Rect,
+        track_id: usize,
         state: &mut ScrollState,
         thumb_pos: u32,
         thumb_height: u32,
@@ -820,12 +853,15 @@ impl Context {
 
         // Snapshot so `consume_indices` (mutable borrow) can run after the loop.
         // `MouseKind` is not `Copy`, so clone it (mirrors `consume_split_pane_drag`).
-        let events: Vec<(usize, MouseKind, u32, u32)> = self
+        // #442: focus loss and resize end a thumb drag (its release will
+        // never arrive); they are replayed in order as `None` kinds.
+        let events: Vec<(usize, Option<MouseKind>, u32, u32)> = self
             .events
             .iter()
             .enumerate()
             .filter_map(|(i, e)| match e {
-                Event::Mouse(m) if !self.consumed[i] => Some((i, m.kind.clone(), m.x, m.y)),
+                Event::Mouse(m) if !self.consumed[i] => Some((i, Some(m.kind.clone()), m.x, m.y)),
+                Event::FocusLost | Event::Resize(_, _) => Some((i, None, 0, 0)),
                 _ => None,
             })
             .collect();
@@ -838,9 +874,15 @@ impl Context {
         let mut consumed: Vec<usize> = Vec::new();
         let mut changed = false;
         for (i, kind, mx, my) in events {
+            let Some(kind) = kind else {
+                state.dragging = false;
+                continue;
+            };
             let in_track = mx >= rect.x && mx < rect.right() && my >= track_y && my < rect.bottom();
             match kind {
-                MouseKind::Down(MouseButton::Left) if in_track => {
+                MouseKind::Down(MouseButton::Left)
+                    if in_track && self.press_reaches_slot(i, track_id) =>
+                {
                     let on_thumb = my >= thumb_top && my < thumb_bottom;
                     if on_thumb {
                         // Grab the thumb; offset only moves on subsequent drags.
@@ -876,11 +918,105 @@ impl Context {
                     state.dragging = false;
                     consumed.push(i);
                 }
+                // A press outside the track, or motion without a held button,
+                // means the drag's release was lost.
+                MouseKind::Down(MouseButton::Left) | MouseKind::Moved if state.dragging => {
+                    state.dragging = false;
+                }
                 _ => {}
             }
         }
         self.consume_indices(consumed);
         changed
+    }
+
+    /// Assign every unconsumed wheel event of this frame to one scroll region
+    /// (#440): the innermost region under the pointer, on the event's axis,
+    /// that can still move in the event's direction.
+    ///
+    /// `scrollable()` binds before its children run, so the chain is resolved
+    /// up front from the previous frame's rendered offsets and limits. A
+    /// simulated offset per region advances with each event, so a burst fills
+    /// the inner region to its end and spills the rest to the enclosing one,
+    /// like the browser default `overscroll-behavior: auto`. A region marked
+    /// with [`ContainerBuilder::overscroll_contain`] stops the chain even at
+    /// its limit. An event no region can absorb stays unconsumed.
+    fn resolve_wheel_chain(&self) -> Vec<Option<usize>> {
+        let delta = self.scroll_lines_per_event.max(1);
+        let contained = |region: usize| {
+            self.prev_geometry
+                .scrolls
+                .get(region)
+                .is_some_and(|scroll| self.overscroll_contained(scroll.state_id))
+        };
+        // Simulated `(offset, max_offset)` per region; `None` when the
+        // previous frame recorded no geometry for it (it then always absorbs,
+        // the pre-chaining behavior).
+        let mut simulated: Vec<Option<(u32, u32)>> = (0..self.prev_scroll_rects.len())
+            .map(|region| {
+                self.prev_geometry.scrolls.get(region).map(|scroll| {
+                    let max = scroll.max_offset();
+                    (scroll.offset.min(max), max)
+                })
+            })
+            .collect();
+        self.events
+            .iter()
+            .enumerate()
+            .map(|(i, event)| {
+                let Event::Mouse(mouse) = event else {
+                    return None;
+                };
+                if self.consumed[i] {
+                    return None;
+                }
+                let (horizontal, backwards) = match mouse.kind {
+                    MouseKind::ScrollLeft => (true, true),
+                    MouseKind::ScrollRight => (true, false),
+                    MouseKind::ScrollUp => (mouse.modifiers.contains(KeyModifiers::SHIFT), true),
+                    MouseKind::ScrollDown => (mouse.modifiers.contains(KeyModifiers::SHIFT), false),
+                    _ => return None,
+                };
+                // Innermost first: later-collected regions are nested inside
+                // or painted above earlier ones.
+                for (region, (rect, &(content, viewport, axis))) in self
+                    .prev_scroll_rects
+                    .iter()
+                    .zip(&self.prev_scroll_infos)
+                    .enumerate()
+                    .rev()
+                {
+                    if axis != horizontal || content <= viewport || !rect.contains(mouse.x, mouse.y)
+                    {
+                        continue;
+                    }
+                    match simulated.get_mut(region).and_then(Option::as_mut) {
+                        None => return Some(region),
+                        Some((offset, max)) => {
+                            let can_move = if backwards {
+                                *offset > 0
+                            } else {
+                                *offset < *max
+                            };
+                            if can_move {
+                                *offset = if backwards {
+                                    offset.saturating_sub(delta)
+                                } else {
+                                    offset.saturating_add(delta).min(*max)
+                                };
+                                return Some(region);
+                            }
+                            if contained(region) {
+                                // `overscroll-behavior: contain`: swallow the
+                                // event at the limit instead of chaining.
+                                return Some(region);
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .collect()
     }
 
     fn auto_scroll_nested(&mut self, index: usize, state: &mut ScrollState, is_horizontal: bool) {
@@ -889,38 +1025,7 @@ impl Context {
         }
         if self.scroll_wheel_targets.is_none() {
             // One O(events * regions) pass, never a region discovery on idle frames.
-            self.scroll_wheel_targets = Some(
-                self.events
-                    .iter()
-                    .enumerate()
-                    .map(|(i, event)| {
-                        let Event::Mouse(mouse) = event else {
-                            return None;
-                        };
-                        if self.consumed[i] {
-                            return None;
-                        }
-                        let horizontal = match mouse.kind {
-                            MouseKind::ScrollLeft | MouseKind::ScrollRight => true,
-                            MouseKind::ScrollUp | MouseKind::ScrollDown => {
-                                mouse.modifiers.contains(KeyModifiers::SHIFT)
-                            }
-                            _ => return None,
-                        };
-                        self.prev_scroll_rects
-                            .iter()
-                            .zip(&self.prev_scroll_infos)
-                            .enumerate()
-                            .rev()
-                            .find_map(|(candidate, (rect, &(content, viewport, axis)))| {
-                                (axis == horizontal
-                                    && content > viewport
-                                    && rect.contains(mouse.x, mouse.y))
-                                .then_some(candidate)
-                            })
-                    })
-                    .collect(),
-            );
+            self.scroll_wheel_targets = Some(self.resolve_wheel_chain());
         }
         let targets = self
             .scroll_wheel_targets
@@ -959,6 +1064,22 @@ impl Context {
         direction: Direction,
         gap: u32,
         f: impl FnOnce(&mut Context),
+    ) -> Response {
+        // Binary size (#491): keep the per-closure copy to this shim, like
+        // `ContainerBuilder::finish`.
+        let mut f = Some(f);
+        self.push_container_dyn(direction, gap, &mut |ui: &mut Context| {
+            if let Some(f) = f.take() {
+                f(ui);
+            }
+        })
+    }
+
+    fn push_container_dyn(
+        &mut self,
+        direction: Direction,
+        gap: u32,
+        f: &mut dyn FnMut(&mut Context),
     ) -> Response {
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;
@@ -1002,62 +1123,10 @@ impl Context {
         {
             return Response::none();
         }
-        if let Some(rect) = self.prev_hit_map.get(interaction_id) {
-            let clicked = self
-                .click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // Issue #208: right-click hit-test uses the same rect as the
-            // existing left-click logic. Keeps modal suppression (the early
-            // return above) consistent for both buttons.
-            let right_clicked = self
-                .right_click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // v0.21.1: double-click hit-test mirrors the left-click logic. The
-            // second click of a double also reports `clicked`, so callers that
-            // only check `clicked` are unaffected.
-            let double_clicked = self
-                .double_click_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            let hovered = self
-                .mouse_pos
-                .map(|(mx, my)| {
-                    mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom()
-                })
-                .unwrap_or(false);
-            // v0.21.1: per-widget wheel delta is hover-gated — only the widget
-            // under the cursor when the wheel moved sees a non-zero delta.
-            let scroll_delta = self
-                .scroll_pos
-                .map(|(mx, my)| {
-                    if mx >= rect.x && mx < rect.right() && my >= rect.y && my < rect.bottom() {
-                        self.scroll_delta_frame
-                    } else {
-                        0
-                    }
-                })
-                .unwrap_or(0);
-            Response {
-                clicked,
-                right_clicked,
-                double_clicked,
-                hovered,
-                changed: false,
-                focused: false,
-                gained_focus: false,
-                lost_focus: false,
-                submitted: false,
-                scroll_delta,
-                rect: *rect,
-            }
+        if let Some(rect) = self.prev_hit_map.get(interaction_id).copied() {
+            // Issue #439: each press activates only its topmost, innermost
+            // slot; see `Context::pointer_response`.
+            self.pointer_response(interaction_id, rect)
         } else {
             Response::none()
         }

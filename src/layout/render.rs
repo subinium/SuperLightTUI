@@ -248,19 +248,56 @@ fn render_debug_status_bar(node: &LayoutNode, buf: &mut Buffer, frame_time_us: u
         String::new()
     };
 
+    let (ms_whole, ms_tenth) = debug_ms_tenths(frame_time_us);
     let status = format!(
-        "[SLT Debug] {}x{} | {} widgets{} | {:.1}ms | {:.0}fps",
+        "[SLT Debug] {}x{} | {} widgets{} | {}.{}ms | {}fps",
         width,
         height,
         widgets,
         breakdown,
-        frame_time_us as f64 / 1_000.0,
-        fps.max(0.0)
+        ms_whole,
+        ms_tenth,
+        debug_fps_whole(fps)
     );
 
     let row_fill = " ".repeat(width as usize);
     buf.set_string(buf.area.x, y, &row_fill, style);
     buf.set_string(buf.area.x, y, &status, style);
+}
+
+/// `frame_time_us` in milliseconds rounded to one decimal, as `(whole, tenth)`.
+///
+/// Matches `format!("{:.1}", frame_time_us as f64 / 1_000.0)` digit for digit
+/// (round half to even on the exact binary value) but uses integer formatting
+/// only. The debug bar was the sole `f32`/`f64` `Display` user in a default
+/// build, so this keeps the float-formatting machinery (~15 KB) out of
+/// binaries that never format a float themselves (#491).
+fn debug_ms_tenths(frame_time_us: u64) -> (u64, u64) {
+    let tenths = frame_time_us / 100;
+    let round_up = match (frame_time_us % 100).cmp(&50) {
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => {
+            // A decimal tie: the nearest `f64` to `us / 1000` decides. The
+            // fused multiply-add yields the exact sign of `x * 1000 - us`.
+            let x = frame_time_us as f64 / 1_000.0;
+            let residual = x.mul_add(1_000.0, -(frame_time_us as f64));
+            if residual == 0.0 {
+                tenths % 2 == 1
+            } else {
+                residual > 0.0
+            }
+        }
+    };
+    let tenths = tenths + u64::from(round_up);
+    (tenths / 10, tenths % 10)
+}
+
+/// `fps` rounded to a whole number; matches `format!("{:.0}", fps.max(0.0))`
+/// for every finite rate (see [`debug_ms_tenths`] for why it avoids floats).
+fn debug_fps_whole(fps: f32) -> u64 {
+    // `as` saturates; a frame interval is at least 1 ns, so fps <= 1e9.
+    fps.max(0.0).round_ties_even() as u64
 }
 
 /// Count leaf widgets per layer category, walking nested overlays.
@@ -1338,6 +1375,38 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::tree::default_container_config;
     use super::*;
+
+    /// #491: the integer debug-bar formatting must print exactly what the
+    /// float `{:.1}` / `{:.0}` formatting printed, including decimal ties.
+    #[test]
+    fn issue_491_debug_bar_numbers_match_float_formatting() {
+        let check_ms = |us: u64| {
+            let (whole, tenth) = debug_ms_tenths(us);
+            assert_eq!(
+                format!("{whole}.{tenth}"),
+                format!("{:.1}", us as f64 / 1_000.0),
+                "frame_time_us = {us}"
+            );
+        };
+        (0..2_000_000).for_each(check_ms);
+        for base in [u64::from(u32::MAX), 1 << 40, 1 << 48] {
+            (base..base + 20_000).for_each(check_ms);
+        }
+        let check_fps = |fps: f32| {
+            assert_eq!(
+                debug_fps_whole(fps).to_string(),
+                format!("{:.0}", fps.max(0.0)),
+                "fps = {fps}"
+            );
+        };
+        for i in 0..200_000u32 {
+            check_fps(i as f32 * 0.25);
+            check_fps(i as f32 * 0.01);
+        }
+        for fps in [-3.0, f32::NAN, 0.5, 1.5, 2.5, 59.999, 1e9, 16_777_217.0] {
+            check_fps(fps);
+        }
+    }
 
     #[test]
     fn v024_clipped_text_matches_visual_source_cell_positions() {

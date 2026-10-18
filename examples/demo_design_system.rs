@@ -236,7 +236,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let widget_theme = WidgetTheme::new().button(WidgetColors::new().accent(Color::Cyan));
-    let config = RunConfig::default().mouse(true).widget_theme(widget_theme);
+    let config = RunConfig::default().widget_theme(widget_theme);
 
     let mut state = DemoState::new();
     slt::run_with(config, move |ui: &mut Context| {

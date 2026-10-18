@@ -13,10 +13,11 @@ For composition advice, see [PATTERNS.md](PATTERNS.md).
 For animation, see [ANIMATION.md](ANIMATION.md) (`animate_bool` / `animate_value` quick transitions and the `anim` module structs).
 
 **Interaction:** focus, keyboard routing, mouse, and how `Response` signals are
-produced are covered in [INTERACTION.md](INTERACTION.md). Mouse capture is
-opt-in — without `slt::run_with(RunConfig::default().mouse(true), ...)`,
-`clicked` only fires from the keyboard (focus + Enter / Space) and `hovered`
-never fires.
+produced are covered in [INTERACTION.md](INTERACTION.md). The mouse is on by
+default, so `clicked` fires from a mouse click as well as the keyboard (focus +
+Enter / Space). Pointer hover is only reported with
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`; without
+it `hovered` changes only on clicks and drags.
 
 ## If you only learn a small core first
 
@@ -41,7 +42,7 @@ Every widget method on `Context` follows one of these return patterns:
 | `&mut Self` | Style-chainable display element | `text`, `styled`, `link`, `spacer`, `timer_display`, `toast` |
 | `Response` (`#[must_use]`) | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
-| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff` |
+| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff`, `code_editor` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
 
 **`Response` fields:**
@@ -74,7 +75,7 @@ let _ = ui
 ```
 
 Related: `on_changed(ui, f)`, `on_hover_ui(ui, |ui| ...)` for a custom tooltip
-body. Hover-based callbacks need mouse capture enabled.
+body. Hover-based callbacks need `MouseMode::Hover`.
 
 ---
 
@@ -186,6 +187,7 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `number_input(state)` | `NumberInputState` | Editable integer or floating-point stepper |
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
+| `code_editor(state)` | `CodeEditorState` | Builder (renders on Drop, `.show()` returns `Response`; `changed` when the text changed). Editable code field on a `TextareaState` (same keys, selection, clipboard and undo / redo) with a right-aligned line-number gutter (`.line_numbers(false)` hides it), syntax highlighting from `CodeEditorState::lang("rust")` (needs the `syntax-*` feature; plain text otherwise, same editing), current-line tint (`.current_line(false)`), bracket-match highlight (`.bracket_match(false)`), horizontal scrolling or `.wrap(true)`, `.h(rows)`, `.w(cols)`. Tab inserts spaces to the next tab stop (`CodeEditorState::tab_width`, `hard_tabs`), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (one level more after `{`, `(`, `[`), PageUp / PageDown page. While focused it owns Tab (`tab_indents(false)` gives it back to focus traversal). Only visible rows render and only the highlight chunk containing an edit is re-highlighted |
 | `select(state)` | `SelectState` | Dropdown select. Variant: `select_colored(...)` |
 | `radio(state)` | `RadioState` | Radio button group. Variant: `radio_colored(...)` |
 | `multi_select(state)` | `MultiSelectState` | Multi-select checkbox list |
@@ -373,6 +375,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 |---|---|---|
 | `text_input` | `TextInputState` | `.value: String`, `.cursor: usize`, `.placeholder`, `::with_placeholder(s)`, `::password()`, `.clear()`, `.set_value(s)`, `.selection()`, `.selected_text()`, `.select_all()`, `.suggestions: Vec<String>`, `.matched_suggestions()` |
 | `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length`, `.selection()`, `.selected_text()`, `.select_all()` |
+| `code_editor` | `CodeEditorState` | `::new(source)`, `.lang("rust")`, `.tab_width(n)`, `.hard_tabs(bool)`, `.tab_indents(bool)`, `.auto_indent(bool)`, `.value()`, `.set_value(s)`, `.lines()`, `.cursor()`, `.set_cursor(row, col)`, `.textarea()` / `.textarea_mut()` |
 | `select` | `SelectState` | `.items()`, `.set_items(...)`, `.selected`, `.open`, `.filter` |
 | `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
 | `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |
@@ -516,7 +519,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `separator`, `separator_colored` (+ `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
 | `src/context/widgets/overlay.rs` | `modal`, `overlay`, `overlay_at`, `modal_at`, `tooltip`, `Anchor` |
 | `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord`, `key_seq` |
-| `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`) |
+| `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`, `text_input/code_editor.rs` (`code_editor`)) |
 | `src/context/widgets/feedback.rs` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar` (+ `feedback/gauge.rs`) |
 | `src/context/widgets/selection.rs` | `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
 | `src/context/widgets/collections/` | `list.rs` (`list`, `virtual_list`), `table.rs` (`table`, `paginator`), `tree.rs` (`tree`, `directory_tree`), `calendar.rs`, `file_picker.rs` |

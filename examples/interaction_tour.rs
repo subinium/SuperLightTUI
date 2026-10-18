@@ -157,9 +157,7 @@ pub fn render(ui: &mut Context, state: &mut TourState) {
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
     slt::run_with(
-        RunConfig::default()
-            .mouse(true)
-            .tick_rate(std::time::Duration::from_millis(80)),
+        RunConfig::default().tick_rate(std::time::Duration::from_millis(80)),
         move |ui: &mut Context| {
             if ui.key_mod('q', KeyModifiers::CONTROL) {
                 ui.quit();

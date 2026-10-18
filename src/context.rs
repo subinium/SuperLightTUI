@@ -49,6 +49,7 @@ fn slt_warn(msg: &str) {
 fn slt_warn(_msg: &str) {}
 
 mod widgets;
+pub use widgets::CodeEditor;
 pub use widgets::{
     Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, TreemapItem,
 };
@@ -69,6 +70,12 @@ mod container;
 pub use container::*;
 
 mod runtime;
+
+mod pointer;
+pub(crate) use pointer::*;
+
+mod pointer_shape;
+pub use pointer_shape::PointerShape;
 
 /// Issue #234: in-frame async task API (`spawn`/`poll`), gated behind `async`.
 #[cfg(feature = "async")]

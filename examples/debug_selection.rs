@@ -1,7 +1,7 @@
 use slt::{Border, Color, Context, RunConfig};
 
 fn main() -> std::io::Result<()> {
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), |ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }

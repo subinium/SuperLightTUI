@@ -110,9 +110,7 @@ impl Default for DemoState {
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
     slt::run_with(
-        RunConfig::default()
-            .mouse(true)
-            .tick_rate(Duration::from_millis(100)),
+        RunConfig::default().tick_rate(Duration::from_millis(100)),
         move |ui: &mut Context| {
             // Ctrl-Q always quits, even with a focused text_input. Plain 'q'
             // and Esc are checked at the end so the search box can consume them.

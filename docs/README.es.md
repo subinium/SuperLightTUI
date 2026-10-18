@@ -44,17 +44,17 @@ fn main() -> std::io::Result<()> {
 Cinco líneas y ya arranca. Sin trait `App`. Sin `Model`/`Update`/`View`. Sin bucle de eventos manual.
 Ctrl+C cierra el bucle limpiamente por defecto (se desactiva con `RunConfig::handle_ctrl_c(false)`).
 
-La captura del ratón es **opcional (opt-in)**. `slt::run` funciona con teclado: Tab/Shift+Tab mueven el foco
-y Enter/Space activan el botón enfocado. Para clic, hover, scroll con la rueda y arrastre,
-inicia el bucle con `RunConfig::default().mouse(true)`:
+El ratón está **activado por defecto**. `slt::run` ya reporta clics, scroll con la rueda y arrastres
+(divisores, barras de scroll, selección de texto); por SSH se limita a clics y rueda.
+Tab/Shift+Tab mueven el foco y Enter/Space activan el botón enfocado en cualquier caso:
 
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut clicks = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         ui.text(format!("clicked {clicks} times")).bold();
         if ui.button("Click me").clicked {
             clicks += 1;
@@ -62,6 +62,11 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+El hover y los tooltips necesitan cada movimiento del puntero, así que se activan aparte:
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`.
+Mientras el ratón está capturado, la mayoría de terminales siguen permitiendo la selección nativa con
+Shift+arrastre; `MouseMode::Off` desactiva el ratón por completo.
 
 MSRV: Rust 1.88. Las características por defecto activan el backend `crossterm` y `bidi`.
 
@@ -107,7 +112,7 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 Ese es el mental model central. Lo demás es profundidad, no un segundo framework.
-`clicked` se activa con Enter/Space cuando el botón tiene el foco, y también con el clic del ratón si el bucle se inicia con `RunConfig::default().mouse(true)`.
+`clicked` se activa con Enter/Space cuando el botón tiene el foco, y también con el clic del ratón (activado por defecto).
 
 ## Una aplicación real
 
@@ -147,13 +152,13 @@ El mismo closure funciona en varios puntos de entrada. Elige según la forma de 
 
 | Modo | API | Cuándo usarlo |
 |------|-----|---------------|
-| Pantalla completa | `slt::run` / `slt::run_with` | App TUI estándar en la pantalla alternativa. La captura del ratón solo se activa pasando `RunConfig::mouse(true)` a `run_with`. |
+| Pantalla completa | `slt::run` / `slt::run_with` | App TUI estándar en la pantalla alternativa. Clic, rueda y arrastre del ratón activados por defecto; el hover requiere `RunConfig::mouse_mode(MouseMode::Hover)`. |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | Widget de altura fija bajo el prompt, sin pantalla alternativa. |
 | Static + inline | `slt::run_static` | Las líneas de log van al scrollback mientras una UI inline sigue viva debajo. |
 | Mensajes async | `slt::run_async` *(feature: `async`)* | Las tareas en segundo plano usan el `AsyncSender` con wake; guarda el `AsyncRunHandle` devuelto para hacer join o cancelar. |
 | Backend propio | `slt::frame` + `Backend` + `AppState` | Controla tú el renderizado: tests, embebido en GUI, WASM, harness de snapshots. |
 
-`RunConfig` ajusta la captura del ratón (por defecto: desactivada), kitty keyboard, profundidad de color, FPS máximos, velocidad de scroll, tema, título y manejo de Ctrl+C en todos los modos.
+`RunConfig` ajusta el modo del ratón (por defecto: `Drag` en local, `Click` por SSH; `Hover` u `Off` a petición), kitty keyboard, profundidad de color, FPS máximos, velocidad de scroll, tema, título y manejo de Ctrl+C en todos los modos.
 
 ## Foco y scroll
 
@@ -188,7 +193,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **Gramática pública pequeña**. Muchas pantallas arrancan con estado normal de Rust, `row()` / `col()` / `container()`, method chaining y `Response`.
 - **Menos ceremonia de framework**. En muchas apps no hace falta un app trait, un árbol retained ni un enum de mensajes solo para empezar.
-- **Baterías incluidas, backend serio**. Los widgets comunes ya resuelven foco, hover, clic y scroll (eventos de ratón con `RunConfig::mouse(true)`), mientras el runtime mantiene una ruta low-level conservadora a través de `Backend`, `AppState` y `frame()`.
+- **Baterías incluidas, backend serio**. Los widgets comunes ya resuelven foco, hover, clic y scroll (clic, rueda y arrastre por defecto; hover con `MouseMode::Hover`), mientras el runtime mantiene una ruta low-level conservadora a través de `Backend`, `AppState` y `frame()`.
 - **Internals conservadores**. SLT mantiene la superficie pública pequeña, pero asegura el interior con shared frame kernel, pruebas explícitas de contrato para backends, cero `unsafe`, rutas runtime detrás de feature flags y validación en `all-features`, `no-default-features`, WASM, clippy, ejemplos, cargo-hack, semver y deny.
 
 Para usuarios de Rust, eso normalmente significa menos configuración inicial que en frameworks TUI retained-mode.
@@ -222,7 +227,7 @@ Esta arquitectura es lo que hace posible la gramática simple:
 - **Sin ceremonia.** Immediate-mode significa que no hay trait `App`, ni `Model`/`Message`/`Update`/`View`. Tu closure es toda la UI. El estado son variables normales de Rust. El flujo de control es `if`/`for`.
 - **Layout invisible.** `ui.col(|ui| { ... })` registra un comando "abrir columna". El motor construye el árbol y ejecuta flexbox — nunca ves `LayoutNode`.
 - **Rendimiento automático.** El doble buffer compara celdas entre frames y solo emite los atributos ANSI que cambiaron. Redibujas todo cada frame; el motor lo hace rápido. Sin dirty tracking manual.
-- **Interacción auto-cableada.** `ui.button("Save")` te da foco de teclado y activación con Enter/Space gratis; con `RunConfig::mouse(true)` también reporta hover y clic. No tienes que escribir código de hit-testing.
+- **Interacción auto-cableada.** `ui.button("Save")` te da foco de teclado y activación con Enter/Space gratis; el clic del ratón funciona desde el inicio y el hover con `MouseMode::Hover`. No tienes que escribir código de hit-testing.
 - **Feedback síncrono.** La interacción usa las posiciones de layout del frame anterior (imperceptible a 60 FPS). Sin callbacks, sin queries de layout async — tu código se mantiene lineal.
 
 Para el ciclo de vida completo de ocho etapas, consulta la [Arquitectura].

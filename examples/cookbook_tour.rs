@@ -80,7 +80,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q always, plain `q` after demos render
         // (so a focused text_input on Login/Table consumes it as text
         // first). We intentionally do NOT consume Esc here — the

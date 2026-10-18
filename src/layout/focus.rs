@@ -129,7 +129,13 @@ impl GeometryFeedback {
         if node.is_scrollable {
             let horizontal = matches!(node.kind, NodeKind::Container(Direction::Row));
             let index = self.scrolls.len();
+            let anchor = if horizontal || node.scroll_state_id == 0 {
+                None
+            } else {
+                anchor_sample(node, viewport.y, node.scroll_offset)
+            };
             self.scrolls.push(ScrollGeometry {
+                anchor,
                 state_id: node.scroll_state_id,
                 parent: parent_scroll,
                 viewport,
@@ -175,6 +181,10 @@ pub(crate) struct FocusGeometry {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ScrollGeometry {
+    /// Scroll-anchoring sample: the first child at or below the viewport top
+    /// (#443). `None` at offset 0, for horizontal scrollers and raw offset
+    /// containers.
+    pub anchor: Option<AnchorSample>,
     pub state_id: u64,
     pub parent: Option<usize>,
     pub viewport: Rect,
@@ -256,6 +266,185 @@ pub(crate) struct FocusScrollState {
     scratch_path: Vec<ScrollAnchor>,
     /// Keyed by ScrollState identity, consumed by its next binding.
     pub pending: std::collections::HashMap<u64, ScrollAdjustment>,
+    /// Whether the last `prepare` revealed a newly focused target; the
+    /// scrollers on its path then skip anchoring for that frame (#443).
+    revealed: bool,
+    /// Per-scroller samples from the previous frame (#443).
+    anchors_prev: Vec<PreviousScroll>,
+}
+
+/// Per-frame scroll policy recorded when a `ScrollState` binds (#443).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScrollPolicy {
+    pub state_id: u64,
+    /// `ScrollState::anchor`.
+    pub anchor: bool,
+    /// `ScrollState::stick_to_bottom`.
+    pub stick_to_bottom: bool,
+    /// The scrollbar thumb is being dragged: leave the offset alone.
+    pub dragging: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PreviousScroll {
+    state_id: u64,
+    offset: u32,
+    max: u32,
+    anchor: Option<AnchorSample>,
+}
+
+/// Deepest descent below a scroller when picking an anchor child.
+const ANCHOR_DEPTH: usize = 4;
+/// How far from its old index an anchor child is searched for after
+/// insertions or removals above it.
+const ANCHOR_SEARCH: usize = 64;
+/// Text nodes folded into a child's fingerprint.
+const ANCHOR_PRINT_TEXTS: usize = 4;
+
+/// Identity and content-space position of a scroll anchor child.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AnchorSample {
+    len: u8,
+    /// Child index at each level below the scroller.
+    path: [u32; ANCHOR_DEPTH],
+    /// Fingerprint (group name, else leading text) at each level.
+    prints: [u64; ANCHOR_DEPTH],
+    /// Structure (kind, child count, height, group name) at each level, the
+    /// fallback when the text changed in place (spinners, timers).
+    shapes: [u64; ANCHOR_DEPTH],
+    /// Top edge relative to the scroller's content origin.
+    top: u32,
+}
+
+fn node_structure(node: &LayoutNode) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::mem::discriminant(&node.kind).hash(&mut hasher);
+    node.children.len().hash(&mut hasher);
+    node.size.1.hash(&mut hasher);
+    node.group_name.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn node_fingerprint(node: &LayoutNode) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn texts(node: &LayoutNode, hasher: &mut impl Hasher, budget: &mut usize, depth: usize) {
+        if *budget == 0 || depth > ANCHOR_DEPTH * 2 {
+            return;
+        }
+        if let Some(content) = node.text_data.as_deref().and_then(|t| t.content.as_deref()) {
+            content.hash(hasher);
+            *budget -= 1;
+        }
+        for child in &node.children {
+            texts(child, hasher, budget, depth + 1);
+        }
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if let Some(name) = &node.group_name {
+        1u8.hash(&mut hasher);
+        name.hash(&mut hasher);
+    } else {
+        std::mem::discriminant(&node.kind).hash(&mut hasher);
+        let mut budget = ANCHOR_PRINT_TEXTS;
+        texts(node, &mut hasher, &mut budget, 0);
+    }
+    hasher.finish()
+}
+
+fn content_top(node: &LayoutNode, origin_y: u32) -> u32 {
+    node.pos.1.saturating_sub(origin_y)
+}
+
+/// Pick the first child (descending into a child that straddles the viewport
+/// top) whose top edge is at or below `offset`.
+fn anchor_sample(scroller: &LayoutNode, origin_y: u32, offset: u32) -> Option<AnchorSample> {
+    if offset == 0 {
+        return None;
+    }
+    let mut sample = AnchorSample::default();
+    let mut parent = scroller;
+    loop {
+        let mut next = None;
+        for (index, child) in parent.children.iter().enumerate() {
+            let top = content_top(child, origin_y);
+            let bottom = top.saturating_add(child.size.1);
+            if top >= offset {
+                next = Some((index, child, false));
+                break;
+            }
+            if bottom > offset {
+                let descend = matches!(child.kind, NodeKind::Container(_))
+                    && !child.is_scrollable
+                    && !child.children.is_empty();
+                next = Some((index, child, descend));
+                break;
+            }
+        }
+        let Some((index, child, descend)) = next else {
+            // Nothing below the viewport top at this level: anchor on the
+            // straddling parent itself, if we descended into one.
+            if sample.len == 0 {
+                return None;
+            }
+            return Some(sample);
+        };
+        let level = usize::from(sample.len);
+        sample.path[level] = u32::try_from(index).unwrap_or(u32::MAX);
+        sample.prints[level] = node_fingerprint(child);
+        sample.shapes[level] = node_structure(child);
+        sample.len += 1;
+        sample.top = content_top(child, origin_y);
+        if !descend || usize::from(sample.len) == ANCHOR_DEPTH {
+            return Some(sample);
+        }
+        parent = child;
+    }
+}
+
+/// Find `sample` again in `scroller`'s new children and return its new top.
+fn locate_anchor(scroller: &LayoutNode, origin_y: u32, sample: &AnchorSample) -> Option<u32> {
+    let mut parent = scroller;
+    for level in 0..usize::from(sample.len) {
+        let want = sample.path[level] as usize;
+        let print = sample.prints[level];
+        let children = &parent.children;
+        let matches = |index: usize| {
+            children
+                .get(index)
+                .is_some_and(|child| node_fingerprint(child) == print)
+        };
+        let same_structure = |index: usize| {
+            children
+                .get(index)
+                .is_some_and(|child| node_structure(child) == sample.shapes[level])
+        };
+        // Same index and content, else the same content nearby (inserted or
+        // removed siblings), else the same index and structure (text that
+        // changes in place, like a spinner or a timer).
+        let index = if matches(want) {
+            want
+        } else if let Some(index) = (1..=ANCHOR_SEARCH)
+            .flat_map(|distance| [want.checked_sub(distance), want.checked_add(distance)])
+            .flatten()
+            .find(|&index| matches(index))
+        {
+            index
+        } else if same_structure(want) {
+            want
+        } else {
+            return None;
+        };
+        parent = &children[index];
+    }
+    Some(content_top(parent, origin_y))
+}
+
+fn scroll_origin_y(node: &LayoutNode) -> u32 {
+    node.pos
+        .1
+        .saturating_add(node.border_top_inset())
+        .saturating_add(node.padding.top)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -271,10 +460,117 @@ impl FocusScrollState {
         self.anchor = None;
         self.path.clear();
         self.pending.clear();
+        self.revealed = false;
+        self.anchors_prev.clear();
+    }
+
+    /// Keep the content under the viewport stable when content above it
+    /// changes height, and keep `stick_to_bottom` scrollers pinned to the end
+    /// (#443). Runs after `prepare` on the freshly laid-out tree; adjustments
+    /// join `pending` so they render this frame and sync into the
+    /// `ScrollState` on its next binding. Returns whether any were added.
+    pub(crate) fn anchor(
+        &mut self,
+        tree: &LayoutNode,
+        geometry: &GeometryFeedback,
+        policies: &[ScrollPolicy],
+    ) -> bool {
+        if self.anchors_prev.is_empty() || policies.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        let mut visit = |node: &LayoutNode, this: &mut Self| {
+            let id = node.scroll_state_id;
+            let Some(previous) = this.anchors_prev.iter().find(|p| p.state_id == id).copied()
+            else {
+                return;
+            };
+            let Some(policy) = policies.iter().rev().find(|p| p.state_id == id) else {
+                return;
+            };
+            let Some(current) = geometry
+                .scroll_by_id
+                .get(&id)
+                .and_then(|&index| geometry.scrolls.get(index))
+                .copied()
+            else {
+                return;
+            };
+            if this.revealed && this.path.iter().any(|scroll| scroll.state_id == id) {
+                // Focus reveal wins on the frame focus moved.
+                return;
+            }
+            let max = current.max_offset();
+            let base = this.pending.get(&id).map_or(current.offset, |a| a.to);
+            // Stick only while the view was at the end last frame and nothing
+            // scrolled it back up this frame (a wheel-up disengages at once).
+            let target = if policy.stick_to_bottom
+                && previous.offset >= previous.max
+                && current.offset >= previous.offset
+            {
+                max
+            } else if policy.anchor
+                && !policy.dragging
+                && previous.offset > 0
+                && let Some(sample) = previous.anchor
+                && let Some(top) = locate_anchor(node, scroll_origin_y(node), &sample)
+            {
+                let delta = i64::from(top) - i64::from(sample.top);
+                (i64::from(base) + delta).clamp(0, i64::from(max)) as u32
+            } else {
+                return;
+            };
+            if target != base {
+                this.pending.insert(
+                    id,
+                    ScrollAdjustment {
+                        from: current.offset,
+                        to: target,
+                        horizontal: false,
+                    },
+                );
+                changed = true;
+            }
+        };
+        fn walk(
+            node: &LayoutNode,
+            this: &mut FocusScrollState,
+            visit: &mut impl FnMut(&LayoutNode, &mut FocusScrollState),
+        ) {
+            if node.is_scrollable && node.scroll_state_id != 0 {
+                visit(node, this);
+            }
+            for child in &node.children {
+                walk(child, this, visit);
+            }
+            for overlay in &node.overlays {
+                walk(&overlay.node, this, visit);
+            }
+        }
+        walk(tree, self, &mut visit);
+        changed
+    }
+
+    /// Remember this frame's final offsets, limits and anchor samples for the
+    /// next frame's `anchor` pass.
+    pub(crate) fn record_anchors(&mut self, geometry: &GeometryFeedback) {
+        self.anchors_prev.clear();
+        for scroll in &geometry.scrolls {
+            if scroll.state_id == 0 || scroll.horizontal {
+                continue;
+            }
+            self.anchors_prev.push(PreviousScroll {
+                state_id: scroll.state_id,
+                offset: scroll.offset,
+                max: scroll.max_offset(),
+                anchor: scroll.anchor,
+            });
+        }
     }
 
     pub(crate) fn prepare(&mut self, focused: Option<usize>, geometry: &GeometryFeedback) -> bool {
         self.pending.clear();
+        self.revealed = false;
         // Current layout bounds can shrink before the next state-binding pass.
         for &scroll in &geometry.scrolls {
             if scroll.follow_focus.is_some() {
@@ -312,6 +608,7 @@ impl FocusScrollState {
             return !self.pending.is_empty();
         }
         self.anchor = Some(anchor);
+        self.revealed = true;
         std::mem::swap(&mut self.path, &mut self.scratch_path);
 
         // Walk from inner to outer: each ancestor sees the already-scrolled

@@ -19,15 +19,17 @@ mod focus;
 mod render;
 mod tree;
 
-pub(crate) use collect::{FrameData, collect_all};
+pub(crate) use collect::{FrameData, HitMeta, NO_HIT_PARENT, collect_all};
 pub use command::Direction;
 pub(crate) use command::{BeginContainerArgs, BeginScrollableArgs, Command};
 pub(crate) use flexbox::compute;
 pub(crate) use focus::{
-    FocusScrollState, GeometryFeedback, ScrollAdjustment, apply_scroll_adjustments,
+    FocusScrollState, GeometryFeedback, ScrollAdjustment, ScrollPolicy, apply_scroll_adjustments,
 };
 pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
-pub(crate) use tree::{LayoutNode, NodeKind, build_tree, wrap_lines, wrap_segments};
+pub(crate) use tree::{
+    LayoutNode, MAX_LAYOUT_DEPTH, NodeKind, build_tree, wrap_lines, wrap_segments,
+};
 
 /// Test-only entry point exposing `wrap_segments` for allocation-budget tests.
 ///

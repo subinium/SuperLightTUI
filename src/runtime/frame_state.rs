@@ -47,6 +47,9 @@ pub(crate) enum TextEntryKind {
     /// Multi-line editor: everything `SingleLine` owns plus Enter, Up and
     /// Down.
     MultiLine,
+    /// Issue #466: code editor: everything `MultiLine` owns plus Tab,
+    /// Shift+Tab (indent / dedent), PageUp and PageDown.
+    Code,
 }
 
 /// Per-frame metadata recorded for every focus slot, indexed by slot id.
@@ -197,6 +200,8 @@ pub(crate) struct LayoutFeedbackState {
     pub prev_scroll_infos: Vec<(u32, u32, bool)>,
     pub prev_scroll_rects: Vec<rect::Rect>,
     pub prev_hit_map: Vec<rect::Rect>,
+    /// Z-order metadata parallel to `prev_hit_map` (#439).
+    pub prev_hit_meta: Vec<layout::HitMeta>,
     pub prev_allocated_areas: Vec<rect::Rect>,
     pub prev_group_rects: Vec<(std::sync::Arc<str>, rect::Rect)>,
     pub prev_content_map: Vec<(rect::Rect, rect::Rect)>,
@@ -293,6 +298,9 @@ pub(crate) type FrameDeferredDrawSlot =
 
 #[derive(Default)]
 pub(crate) struct FrameState {
+    /// Issue #469: frames run under the accessible linear runtime. Copied
+    /// into `Context::accessible`; `false` for every other run mode.
+    pub accessible: bool,
     pub consumed_buf: Vec<bool>,
     pub events_buf: Vec<Event>,
     pub pending_input: std::collections::VecDeque<Event>,
@@ -363,6 +371,9 @@ pub(crate) struct FrameState {
     /// before reuse; swapped into `region_versions` at frame end so the keys
     /// recorded this frame become next frame's comparison baseline.
     pub region_versions_buf: Vec<u64>,
+    /// Persistent pointer bookkeeping (#439/#442): previous-frame slot flags,
+    /// the active pointer capture and hover timing.
+    pub pointer: context::PointerState,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
 }

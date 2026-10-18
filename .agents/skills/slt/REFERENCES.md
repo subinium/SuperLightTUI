@@ -8,7 +8,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
-| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse capture is off unless `RunConfig::default().mouse(true)` |
+| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse on by default (`MouseMode::Drag`, `Click` over SSH/mosh); hover needs `RunConfig::default().mouse_mode(MouseMode::Hover)` |
 | `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
@@ -23,7 +23,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 ## Runtime defaults that change behavior
 
-- **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
+- **Mouse is on by default, hover is opt-in.** `RunConfig::default()` resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `clicked` / `right_clicked` / `double_clicked` / `scroll_delta` and (locally) scrollbar and split-pane drags fire with plain `slt::run`. `hovered`, group hover and tooltips need `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. `MouseMode::Off` keeps native terminal selection.
 - **Focused inputs own their keys.** `ui.key('q')` / `ui.shortcut(..)` skip the keys a focused `text_input` / `textarea` edits with, in any call order; use `ui.raw_key(c)` to see every press.
 - **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
 - **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
@@ -97,6 +97,11 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `Context::keymap_help_overlay(open: bool)` — auto-rendered overlay
 - `RunConfig::handle_ctrl_c(bool)` — opt-out of auto Ctrl-C quit
 
+### Accessibility (v0.26)
+- `RunConfig::accessible(bool)` / `SLT_ACCESSIBLE=1` — linear prompt mode for screen readers (no screen takeover; widgets become sequential prompts). Explicit call wins over the env var
+- `ui.a11y_label("Email")` — accessible name of the next widget; `ui.is_accessible()` — hide visual-only hints
+- Details: `docs/TERMINAL_COMPATIBILITY.md#accessibility`
+
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
 - `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure
@@ -145,7 +150,7 @@ These docs are maintained for the current release, but source and compile-tested
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets/` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
-## Examples (`examples/` — 65 Rust files, 31 Cargo-listed targets)
+## Examples (`examples/` — 66 Rust files, 32 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
 - **Feature demos**: `widgets_tour.rs` (target `widgets_tour`, tabbed over every single-feature demo such as `gauge.rs`, `modal_trap.rs`, `named_focus.rs`), `dx_shortcuts.rs` (on_hover/animate_bool/fill), `feature_showcase.rs` (target `feature_showcase`, the same features on one screen).

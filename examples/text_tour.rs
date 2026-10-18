@@ -74,7 +74,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q always, Esc ONLY at the top of the
         // frame. We intentionally do NOT consume `q` here — the IME and
         // CLI tabs both host text inputs that need to receive `q` as

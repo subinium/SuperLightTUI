@@ -15,7 +15,7 @@
 
 ## Core concepts
 
-- Mouse capture is opt-in: `RunConfig::default().mouse` is `false` and `slt::run` uses the default. Use `slt::run_with(slt::RunConfig::default().mouse(true), |ui| { ... })` whenever the app relies on `.clicked`, `.hovered`, `on_hover`, or wheel scrolling. Focused buttons still activate with Enter / Space without it.
+- The mouse is on by default in fullscreen runs: `MouseMode::Drag` locally (clicks, wheel, drags), `MouseMode::Click` over SSH/mosh; inline/static runs default to `MouseMode::Off`. Hover, tooltips and `group_hover_*` need `slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { ... })`. Focused buttons also activate with Enter / Space.
 - Check global shortcuts (`ui.key('q')`) after rendering widgets: `key*` sees events not consumed so far, so a check placed before a focused `text_input` fires while the user types into it.
 
 - [Run loop](ARCHITECTURE.md#frame-lifecycle): 8-stage per-frame pipeline

@@ -4,10 +4,87 @@ use std::time::Duration;
 
 use crate::{ColorDepth, Theme, style};
 
+/// How much pointer activity the terminal reports to the app.
+///
+/// Each mode asks the terminal for a different DEC mouse-tracking level, so
+/// apps only pay for the pointer traffic they use. SGR encoding (`?1006`) is
+/// always requested; the legacy urxvt encoding (`?1015`) is never used.
+///
+/// | Mode | DEC modes | Delivers |
+/// |---|---|---|
+/// | `Off` | none | nothing; the terminal's native selection keeps working |
+/// | `Click` | `?1000h ?1006h` | presses, releases and the wheel |
+/// | `Drag` | `?1000h ?1002h ?1006h` | plus motion while a button is held |
+/// | `Hover` | `?1000h ?1003h ?1006h` | plus all motion (hover, tooltips) |
+///
+/// The default ([`RunConfig::default`]) is `Drag` locally and `Click` in an
+/// SSH or mosh session; see [`RunConfig::mouse_mode`]. While any mode other
+/// than `Off` is active the terminal's own text selection is replaced by
+/// SLT's built-in selection; most emulators bypass mouse capture while Shift
+/// is held (Shift-drag selects natively).
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{MouseMode, RunConfig};
+/// // Hover styling and tooltips need every pointer move.
+/// let config = RunConfig::default().mouse_mode(MouseMode::Hover);
+/// assert_eq!(config.effective_mouse_mode(), MouseMode::Hover);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseMode {
+    /// No mouse reporting.
+    Off,
+    /// Button presses, releases and wheel events.
+    Click,
+    /// `Click` plus motion while a button is held: drags, split handles,
+    /// scrollbar thumbs and the built-in text selection.
+    Drag,
+    /// `Drag` plus every pointer move: hover styling and tooltips. Every
+    /// move produces an event and a frame, which costs the most over SSH.
+    Hover,
+}
+
+impl From<bool> for MouseMode {
+    /// `true` maps to [`MouseMode::Hover`] (the pre-0.26 `mouse(true)`
+    /// behavior), `false` to [`MouseMode::Off`].
+    fn from(enabled: bool) -> Self {
+        if enabled { Self::Hover } else { Self::Off }
+    }
+}
+
+impl MouseMode {
+    /// Whether this mode delivers `event`. Used as an input filter on
+    /// platforms where the terminal cannot be asked for a reporting level.
+    pub(crate) fn admits(self, event: &crate::Event) -> bool {
+        use crate::event::MouseKind;
+        let crate::Event::Mouse(mouse) = event else {
+            return true;
+        };
+        match self {
+            Self::Off => false,
+            Self::Click => !matches!(mouse.kind, MouseKind::Moved | MouseKind::Drag(_)),
+            Self::Drag => !matches!(mouse.kind, MouseKind::Moved),
+            Self::Hover => true,
+        }
+    }
+}
+
+/// Resolve the fullscreen reporting mode: an explicit mode always wins; the
+/// default is `Drag` locally and `Click` in a remote (SSH/mosh) session.
+pub(crate) fn resolve_mouse_mode(explicit: Option<MouseMode>, remote: bool) -> MouseMode {
+    match explicit {
+        Some(mode) => mode,
+        None if remote => MouseMode::Click,
+        None => MouseMode::Drag,
+    }
+}
+
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`](crate::run_with) or [`run_inline_with`](crate::run_inline_with) to customize behavior.
-/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, no mouse, dark theme).
+/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, mouse
+/// clicks and drags on, dark theme).
 /// This type is `#[non_exhaustive]`, so prefer builder methods instead of struct literals.
 ///
 /// # Example
@@ -18,7 +95,7 @@ use crate::{ColorDepth, Theme, style};
 ///
 /// let config = RunConfig::default()
 ///     .tick_rate(Duration::from_millis(50))
-///     .mouse(true)
+///     .mouse_mode(slt::MouseMode::Hover)
 ///     .theme(Theme::light())
 ///     .max_fps(60);
 /// ```
@@ -30,11 +107,28 @@ pub struct RunConfig {
     /// Lower values give smoother animations at the cost of more CPU usage.
     /// Defaults to 16ms (60fps).
     pub tick_rate: Duration,
-    /// Whether to enable mouse event reporting.
+    /// Mouse reporting mode, or `None` for the automatic default.
     ///
-    /// When `true`, the terminal captures mouse clicks, scrolls, and movement.
-    /// Defaults to `false`.
-    pub mouse: bool,
+    /// `None` (the default) depends on the run mode:
+    ///
+    /// - Fullscreen ([`run`](crate::run), [`run_with`](crate::run_with), the
+    ///   async variants): [`MouseMode::Drag`] locally and [`MouseMode::Click`]
+    ///   when an SSH or mosh session is detected, so clicks, the wheel, drag
+    ///   handles and text selection work out of the box without flooding a
+    ///   remote link with motion events.
+    /// - Inline and static output ([`run_inline`](crate::run_inline),
+    ///   [`run_inline_with`](crate::run_inline_with),
+    ///   [`run_static`](crate::run_static),
+    ///   [`run_static_with`](crate::run_static_with)): [`MouseMode::Off`]. These
+    ///   CLI-style apps live in the normal screen, where mouse tracking would
+    ///   take the wheel away from the terminal's scrollback and replace its
+    ///   native selection.
+    ///
+    /// Set an explicit mode with [`mouse_mode`](Self::mouse_mode) (or the [`mouse`](Self::mouse)
+    /// shorthand); an explicit mode is never overridden. Hover styling and
+    /// tooltips need [`MouseMode::Hover`]. Since 0.26.0 (replaces the
+    /// `mouse: bool` field).
+    pub mouse_mode: Option<MouseMode>,
     /// Whether to enable the Kitty keyboard protocol for enhanced input.
     ///
     /// When `true`, enables disambiguated key events, key release events,
@@ -143,6 +237,58 @@ pub struct RunConfig {
     /// Messages beyond this count remain queued in FIFO order for later
     /// frames. Defaults to the async channel capacity (100).
     pub async_message_budget: usize,
+    /// Whether [`Response::clicked`](crate::Response::clicked) fires on the
+    /// mouse release instead of the press.
+    ///
+    /// `false` (the default) activates on the press, matching SLT before
+    /// v0.26. `true` activates on the frame the left button is released inside
+    /// the same slot that was pressed, so dragging off a button before letting
+    /// go cancels the click, like the browser `click` event. Keyboard
+    /// activation is unaffected. Since 0.26.0.
+    pub click_on_release: bool,
+    /// Whether SLT's built-in text selection is active while the mouse is
+    /// captured.
+    ///
+    /// When `true` (the default), dragging across text highlights it and the
+    /// release copies it to the clipboard over OSC 52. Drags that a widget
+    /// handles (split handles, scrollbar thumbs, anything that consumes the
+    /// press) never start a selection. Set to `false` for apps with their own
+    /// drag or selection model; nothing is highlighted or copied then. The
+    /// terminal's native selection is still reachable with the emulator's
+    /// bypass modifier (usually Shift-drag). Since 0.26.0.
+    ///
+    /// Any rendered text is selectable, including text outside containers. A
+    /// selection that starts inside a [`scrollable`](crate::Context::scrollable)
+    /// stays attached to its text while the region scrolls, and holding the
+    /// pointer on or beyond the region's top or bottom row scrolls it one step
+    /// per frame. Only the part of the selection that is visible when the
+    /// button is released is copied; rows scrolled out of view are not
+    /// retained.
+    pub text_selection: bool,
+    /// How long the pointer must rest on a widget before its hover tooltip
+    /// ([`Context::tooltip`](crate::Context::tooltip),
+    /// [`Response::on_hover`](crate::Response::on_hover)) appears.
+    ///
+    /// Defaults to 500 ms, like desktop and browser tooltips; moving to
+    /// another widget restarts the wait. `Duration::ZERO` shows tooltips on
+    /// the first hovered frame (the pre-0.26 behavior). The tooltip appears on
+    /// the first frame after the delay, without further input. Since 0.26.0.
+    pub tooltip_delay: Duration,
+    /// Clear the hover state after the pointer has not moved for this long.
+    ///
+    /// Terminals report no "pointer left the window" event, so the last
+    /// hovered widget would otherwise stay highlighted (and its tooltip open)
+    /// until the next mouse event, focus loss, or resize. `None` (the default)
+    /// keeps hover until then. Since 0.26.0.
+    pub hover_timeout: Option<Duration>,
+    /// Whether [`ContainerBuilder::pointer_shape`](crate::ContainerBuilder::pointer_shape)
+    /// requests are written as OSC 22 pointer-shape escapes.
+    ///
+    /// Defaults to `false` because terminals without OSC 22 support may print
+    /// the payload. Enable it for terminals known to support it (kitty, foot,
+    /// Ghostty, recent xterm). The default pointer is restored on exit, in the
+    /// panic hook and on suspend. Since 0.26.0.
+    pub pointer_shapes: bool,
     /// Wrap `OSC 52` clipboard writes for tmux / GNU screen passthrough.
     ///
     /// See [`clipboard_passthrough`](Self::clipboard_passthrough). Defaults to
@@ -166,13 +312,18 @@ pub struct RunConfig {
     /// Measure representative emoji clusters with a startup cursor-position
     /// probe. See [`width_probe`](Self::width_probe). Defaults to `false`.
     pub width_probe: bool,
+    /// Accessible linear output mode for screen readers and pipelines.
+    ///
+    /// See [`accessible`](Self::accessible). Defaults to `true` when the
+    /// `SLT_ACCESSIBLE` environment variable is truthy, otherwise `false`.
+    pub accessible: bool,
 }
 
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
             tick_rate: Duration::from_millis(16),
-            mouse: false,
+            mouse_mode: None,
             kitty_keyboard: false,
             report_all_keys: false,
             theme: Theme::dark(),
@@ -184,11 +335,17 @@ impl Default for RunConfig {
             handle_ctrl_c: true,
             handle_suspend: true,
             async_message_budget: 100,
+            click_on_release: false,
+            text_selection: true,
+            tooltip_delay: Duration::from_millis(500),
+            hover_timeout: None,
+            pointer_shapes: false,
             clipboard_passthrough: false,
             clipboard_max_bytes: Self::DEFAULT_CLIPBOARD_MAX_BYTES,
             ambiguous_wide: false,
             width_conservative: None,
             width_probe: false,
+            accessible: super::accessible::accessible_from_env(),
         }
     }
 }
@@ -205,10 +362,61 @@ impl RunConfig {
         self
     }
 
-    /// Enable or disable mouse event reporting.
+    /// Shorthand for [`mouse_mode`](Self::mouse_mode): `true` selects
+    /// [`MouseMode::Hover`] (every pointer move, as before 0.26) and `false`
+    /// selects [`MouseMode::Off`].
+    ///
+    /// Mouse reporting is on by default since 0.26 ([`MouseMode::Drag`]
+    /// locally), so `mouse(true)` is only needed for hover, and `mouse(false)`
+    /// restores the terminal's native selection.
     pub fn mouse(mut self, enabled: bool) -> Self {
-        self.mouse = enabled;
+        self.mouse_mode = Some(MouseMode::from(enabled));
         self
+    }
+
+    /// Choose the mouse reporting mode explicitly. See [`MouseMode`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{MouseMode, RunConfig};
+    /// // Clicks and the wheel only, the cheapest mode over SSH.
+    /// let config = RunConfig::default().mouse_mode(MouseMode::Click);
+    /// assert_eq!(config.mouse_mode, Some(MouseMode::Click));
+    /// ```
+    pub fn mouse_mode(mut self, mode: MouseMode) -> Self {
+        self.mouse_mode = Some(mode);
+        self
+    }
+
+    /// The mode a fullscreen run loop will request: the explicit
+    /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Drag`] locally and
+    /// [`MouseMode::Click`] in an SSH or mosh session. Inline and static runs
+    /// use the explicit mode or [`MouseMode::Off`]; see
+    /// [`effective_inline_mouse_mode`](Self::effective_inline_mouse_mode).
+    pub fn effective_mouse_mode(&self) -> MouseMode {
+        // The run loops ask on every input poll; the environment is read once.
+        static REMOTE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        resolve_mouse_mode(
+            self.mouse_mode,
+            *REMOTE.get_or_init(crate::context::session_is_remote),
+        )
+    }
+
+    /// The mode an inline or static run loop will request: the explicit
+    /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Off`] so the
+    /// terminal keeps its scrollback wheel and native selection. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{MouseMode, RunConfig};
+    /// assert_eq!(RunConfig::default().effective_inline_mouse_mode(), MouseMode::Off);
+    /// let opted_in = RunConfig::default().mouse_mode(MouseMode::Click);
+    /// assert_eq!(opted_in.effective_inline_mouse_mode(), MouseMode::Click);
+    /// ```
+    pub fn effective_inline_mouse_mode(&self) -> MouseMode {
+        self.mouse_mode.unwrap_or(MouseMode::Off)
     }
 
     /// Enable or disable Kitty keyboard protocol.
@@ -340,6 +548,89 @@ impl RunConfig {
         self
     }
 
+    /// Choose whether mouse clicks activate on release instead of press.
+    ///
+    /// See [`RunConfig::click_on_release`]. With `true`, a press on a button
+    /// followed by a release outside it does not report `clicked`; a press and
+    /// release inside reports `clicked` on the release frame. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().click_on_release(true);
+    /// assert!(cfg.click_on_release);
+    /// ```
+    pub fn click_on_release(mut self, enabled: bool) -> Self {
+        self.click_on_release = enabled;
+        self
+    }
+
+    /// Enable or disable SLT's built-in text selection and copy-on-release.
+    ///
+    /// See [`RunConfig::text_selection`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().text_selection(false);
+    /// assert!(!cfg.text_selection);
+    /// ```
+    pub fn text_selection(mut self, enabled: bool) -> Self {
+        self.text_selection = enabled;
+        self
+    }
+
+    /// Set how long the pointer must rest before a hover tooltip appears.
+    ///
+    /// See [`RunConfig::tooltip_delay`]; `Duration::ZERO` shows tooltips
+    /// immediately. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// use std::time::Duration;
+    /// let cfg = RunConfig::default().tooltip_delay(Duration::from_millis(250));
+    /// assert_eq!(cfg.tooltip_delay, Duration::from_millis(250));
+    /// ```
+    pub fn tooltip_delay(mut self, delay: Duration) -> Self {
+        self.tooltip_delay = delay;
+        self
+    }
+
+    /// Clear the hover state after `timeout` without pointer motion, or never
+    /// with `None`. See [`RunConfig::hover_timeout`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// use std::time::Duration;
+    /// let cfg = RunConfig::default().hover_timeout(Some(Duration::from_secs(3)));
+    /// assert_eq!(cfg.hover_timeout, Some(Duration::from_secs(3)));
+    /// ```
+    pub fn hover_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.hover_timeout = timeout;
+        self
+    }
+
+    /// Opt in to OSC 22 pointer-shape escapes. See
+    /// [`RunConfig::pointer_shapes`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().pointer_shapes(true);
+    /// assert!(cfg.pointer_shapes);
+    /// ```
+    pub fn pointer_shapes(mut self, enabled: bool) -> Self {
+        self.pointer_shapes = enabled;
+        self
+    }
+
     /// Wrap `OSC 52` clipboard writes so they pass through a multiplexer.
     ///
     /// Inside tmux the sequence is sent as `ESC P tmux; … ESC \` with every
@@ -431,6 +722,40 @@ impl RunConfig {
     /// ```
     pub fn width_probe(mut self, enabled: bool) -> Self {
         self.width_probe = enabled;
+        self
+    }
+
+    /// Run in accessible linear output mode (issue #469).
+    ///
+    /// The runtime does not take over the screen: no alternate screen, no
+    /// raw mode outside masked input, no mouse capture, no colors and no
+    /// cursor-positioning repaint. The same frame closure runs, but each
+    /// frame is turned into plain lines: display text is printed once when
+    /// it appears or changes, focus moves are announced as
+    /// `Focused: <name>, <role>`, and the focused widget is asked for as a
+    /// one-line prompt (text fields read a line, selects and radios read a
+    /// number, checkboxes, toggles and `confirm` read `y`/`n`, buttons
+    /// activate on Enter). Answers are applied to the widget state and focus
+    /// moves to the next answerable widget, so a form is completed field by
+    /// field. stdin and stdout do not need to be terminals.
+    ///
+    /// [`RunConfig::default`] enables it when `SLT_ACCESSIBLE` is `1`,
+    /// `true`, `yes` or `on`. An explicit call wins over the variable:
+    /// `accessible(false)` keeps the visual renderer even when
+    /// `SLT_ACCESSIBLE=1`, so apps that pass it take on the duty of offering
+    /// their own opt-in. Use [`Context::is_accessible`](crate::Context::is_accessible)
+    /// to adapt hints, and [`Context::a11y_label`](crate::Context::a11y_label)
+    /// to name a widget. Not supported by `run_async` yet, which keeps the
+    /// visual renderer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().accessible(true);
+    /// assert!(cfg.accessible);
+    /// ```
+    pub fn accessible(mut self, enabled: bool) -> Self {
+        self.accessible = enabled;
         self
     }
 }

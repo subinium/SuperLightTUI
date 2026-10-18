@@ -222,6 +222,9 @@ pub(crate) struct TerminalMeta {
     pub(crate) progress: Option<Progress>,
     pub(crate) status: Option<ProgramStatus>,
     pub(crate) cursor_shape: CursorShape,
+    /// OSC 22 pointer shape for this frame, `None` for the default pointer
+    /// (#452). Derived from the hovered slot, not a sticky setter.
+    pub(crate) pointer_shape: Option<crate::PointerShape>,
 }
 
 type NamedStates = std::collections::HashMap<&'static str, Box<dyn std::any::Any>>;

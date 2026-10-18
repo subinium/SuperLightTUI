@@ -138,11 +138,12 @@ pub(crate) struct MetaRestore {
     pub(crate) progress: bool,
     pub(crate) status: bool,
     pub(crate) cursor_shape: bool,
+    pub(crate) pointer_shape: bool,
 }
 
 impl MetaRestore {
     fn any(self) -> bool {
-        self.title_pushed || self.progress || self.status || self.cursor_shape
+        self.title_pushed || self.progress || self.status || self.cursor_shape || self.pointer_shape
     }
 }
 
@@ -161,6 +162,7 @@ static GLOBAL_RESTORE: std::sync::Mutex<GlobalRestore> = std::sync::Mutex::new(G
         progress: false,
         status: false,
         cursor_shape: false,
+        pointer_shape: false,
     },
     epoch: 0,
 });
@@ -176,6 +178,9 @@ fn global_restore() -> std::sync::MutexGuard<'static, GlobalRestore> {
 pub(crate) fn write_meta_restore(w: &mut impl Write, restore: MetaRestore) -> io::Result<()> {
     if restore.cursor_shape {
         w.write_all(b"\x1b[0 q")?;
+    }
+    if restore.pointer_shape {
+        w.write_all(b"\x1b]22;default\x1b\\")?;
     }
     if restore.progress {
         w.write_all(b"\x1b]9;4;0\x07")?;
@@ -249,6 +254,7 @@ pub(crate) struct MetaEmitter {
     progress: Option<(u8, u8)>,
     status: Option<ProgramStatus>,
     cursor_shape: CursorShape,
+    pointer_shape: Option<crate::PointerShape>,
     restore: MetaRestore,
     /// Production emitters mirror `restore` into [`GLOBAL_RESTORE`] so the
     /// session exit writer can undo it; harness emitters keep it local.
@@ -331,6 +337,17 @@ impl MetaEmitter {
             write!(w, "\x1b[{} q", desired.cursor_shape.decscusr())?;
             self.cursor_shape = desired.cursor_shape;
             self.restore.cursor_shape = desired.cursor_shape != CursorShape::Default;
+        }
+
+        // #452: shape escapes share the cursor-shape policy (off for non-TTY
+        // output and `TERM=dumb`); the app opts in per run.
+        if policy.cursor_shape && desired.pointer_shape != self.pointer_shape {
+            let name = desired
+                .pointer_shape
+                .map_or("default", crate::PointerShape::css_name);
+            write!(w, "\x1b]22;{name}\x1b\\")?;
+            self.pointer_shape = desired.pointer_shape;
+            self.restore.pointer_shape = desired.pointer_shape.is_some();
         }
 
         if self.global && self.restore != before {
@@ -628,6 +645,46 @@ mod tests {
     }
 
     #[test]
+    fn issue_452_pointer_shape_emits_on_change_and_restores() {
+        let mut emitter = MetaEmitter::new(false);
+        let mut meta = TerminalMeta::default();
+        assert!(
+            emit_all(&mut emitter, &meta).is_empty(),
+            "default: no bytes"
+        );
+
+        meta.pointer_shape = Some(crate::PointerShape::Pointer);
+        let out = emit_all(&mut emitter, &meta);
+        assert_eq!(out, b"\x1b]22;pointer\x1b\\");
+        assert!(emitter.restore_flags().pointer_shape);
+        assert!(
+            emit_all(&mut emitter, &meta).is_empty(),
+            "unchanged: no bytes"
+        );
+
+        meta.pointer_shape = Some(crate::PointerShape::ColResize);
+        assert_eq!(emit_all(&mut emitter, &meta), b"\x1b]22;col-resize\x1b\\");
+
+        meta.pointer_shape = None;
+        assert_eq!(emit_all(&mut emitter, &meta), b"\x1b]22;default\x1b\\");
+        assert!(
+            !emitter.restore_flags().pointer_shape,
+            "default needs no restore"
+        );
+
+        let mut restore = Vec::new();
+        write_meta_restore(
+            &mut restore,
+            MetaRestore {
+                pointer_shape: true,
+                ..MetaRestore::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(restore, b"\x1b]22;default\x1b\\");
+    }
+
+    #[test]
     fn issue_468_title_emits_once_until_changed() {
         let mut emitter = MetaEmitter::new(false);
         let mut meta = TerminalMeta {
@@ -728,6 +785,7 @@ mod tests {
             progress: Some(Progress::Normal(0.1)),
             status: Some(ProgramStatus::new(ProgramState::Working)),
             cursor_shape: CursorShape::SteadyBar,
+            pointer_shape: Some(crate::PointerShape::Pointer),
         };
         for env in [
             MetaEnv {

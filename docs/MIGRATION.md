@@ -10,6 +10,13 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ## v0.25.x → v0.26.0
 
+- **Accessible mode (#469).** `SLT_ACCESSIBLE=1` now switches
+  `RunConfig::default()` (and so `slt::run`) to a line-oriented prompt mode
+  for screen readers; nothing changes unless a user sets it. If your app must
+  always render visually (for example a full-screen game), pass
+  `RunConfig::default().accessible(false)`, which wins over the variable.
+  Consider `ui.a11y_label("...")` for inputs without a visible label and
+  `ui.is_accessible()` to hide key legends.
 - **Shortcuts vs focused text fields (#453).** While `text_input`, `textarea`,
   a form field or an open command palette has focus, `ui.key(c)`,
   `ui.key_code(..)`, `ui.key_mod(..)` and `ui.consume_key*(..)` skip the keys
@@ -71,6 +78,52 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   If you wrapped a long `ui.list` in a `scrollable` to make it scroll, you can
   drop the wrapper. To keep a footer visible under a long list, put the list
   in `ui.container().grow(1).col(...)` (or give it `.h(n)` / `.max_h(n)`).
+- **One press, one target (#439).** A press activates only the topmost,
+  innermost interactive slot: overlay content blocks what is drawn under it,
+  and a child container wins over its parent. If an outer container relied on
+  firing together with an inner widget, switch it to
+  `ui.container().bubble_clicks()` (the ancestor also receives descendant
+  clicks) or read `Response::clicked_any` (any press inside the rect). Layout
+  wrappers count as slots: a plain `ui.row(..)` inside a clickable card now
+  takes clicks that land on it, so either add `.bubble_clicks()` to the card or
+  check `clicked_any`. `hovered` is unchanged; `hovered_top` is the new
+  winner-only variant.
+- **Pointer events (#442).** `clicked` still fires on press; opt into
+  release-to-click with `RunConfig::default().click_on_release(true)`.
+  `Response` has new public fields (`clicked_any`, `hovered_top`, `pressed`,
+  `released`, `drag_started`, `dragging`, `drag_delta`, `middle_clicked`,
+  `modifiers`): code that builds a `Response { .. }` literal must add
+  `..Response::default()`. Several presses in one input batch are no longer
+  collapsed into the last one: they are dispatched one per frame, so custom
+  `slt::frame` loops must keep rendering while `AppState::has_pending_input()`
+  is true (as they already must for queued Tab navigation).
+- **Wheel chaining (#440).** A nested scrollable at its end now passes the
+  wheel to the enclosing scrollable. Add `.overscroll_contain()` to an inner
+  region (popups, pickers) that must keep the wheel. A wheel event that no
+  region can move is left unconsumed, so `ui.scroll_up()` / `ui.scroll_down()`
+  may now see it where the innermost region used to swallow it.
+- **Mouse on by default (#444).** Plain `slt::run` now captures the mouse in
+  `MouseMode::Drag` (or `Click` over SSH/mosh). Inline and static runs
+  (`run_inline*`, `run_static*`) keep the mouse off unless you pass a mode, so
+  their wheel still scrolls the terminal; an inline app that already called
+  `.mouse(true)` is unchanged. Apps that relied on the
+  terminal's native selection by default should set
+  `RunConfig::default().mouse_mode(MouseMode::Off)` (or `.mouse(false)`);
+  users can also Shift-drag to select natively on most emulators. Hover
+  styling and tooltips need `.mouse_mode(MouseMode::Hover)`; the existing
+  `.mouse(true)` still means Hover. Code that read or wrote the
+  `RunConfig::mouse` field must use `mouse_mode` (`Option<MouseMode>`) or
+  `effective_mouse_mode()`.
+- **Tooltip delay (#452).** Tooltips now appear after the pointer rests for
+  500 ms. Tests that assert a tooltip on the first hovered frame should
+  either advance the clock (`TestBackend::advance_time`) or set
+  `RunConfig::default().tooltip_delay(Duration::ZERO)` (with
+  `TestBackend::with_run_config`).
+- **Scroll anchoring (#443).** `ScrollState::anchor` defaults to `true`, so the
+  offset moves when content above the viewport changes height. Apps that do
+  their own offset math for that case should set `scroll.anchor = false` (or
+  drop the manual correction). Use `ScrollState::new().stick_to_bottom(true)`
+  instead of hand-rolled "follow the tail" logic.
 
 ---
 

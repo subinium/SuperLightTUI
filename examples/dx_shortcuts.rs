@@ -53,7 +53,7 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
 
     slt::run_with(
-        slt::RunConfig::default().mouse(true),
+        slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover),
         move |ui: &mut Context| {
             // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
             // intentionally NOT bound — many terminals (e.g. macOS Terminal,

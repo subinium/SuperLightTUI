@@ -80,7 +80,7 @@ fn review_resize_clears_old_owned_rows_but_preserves_unrelated_text() {
 fn review_abort_cleanup_includes_other_thread_sessions() {
     let id = register_active_session(SessionSnapshot {
         mode: TerminalSessionMode::Inline,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: false,
@@ -90,7 +90,7 @@ fn review_abort_cleanup_includes_other_thread_sessions() {
     let worker = std::thread::spawn(move || {
         let id = register_active_session(SessionSnapshot {
             mode: TerminalSessionMode::Fullscreen,
-            mouse_enabled: true,
+            mouse_mode: crate::MouseMode::Hover,
             kitty_keyboard: true,
             report_all_keys: true,
             raw_mode_owned: true,
@@ -280,7 +280,7 @@ fn v024_same_size_redraw_reuses_buffer_pair_but_invalidates_graphics() {
 fn v024_session_registry_is_owner_thread_local() {
     let id = register_active_session(SessionSnapshot {
         mode: TerminalSessionMode::Inline,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: false,
@@ -326,7 +326,7 @@ fn raw_mode_ownership_only_tracks_state_acquired_by_slt() {
 
     let inherited = SessionSnapshot {
         mode: TerminalSessionMode::Fullscreen,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: false,
@@ -384,7 +384,7 @@ fn inline_scrollback_moves_region_and_invalidates_previous_frame() {
 fn fullscreen_session_enter_writes_alt_screen_sequence() {
     let session = TerminalSessionGuard {
         mode: TerminalSessionMode::Fullscreen,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: false,
@@ -404,7 +404,7 @@ fn fullscreen_session_enter_writes_alt_screen_sequence() {
 fn inline_session_enter_skips_alt_screen_sequence() {
     let session = TerminalSessionGuard {
         mode: TerminalSessionMode::Inline,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: false,
@@ -424,7 +424,7 @@ fn inline_session_enter_skips_alt_screen_sequence() {
 fn session_enter_writes_kitty_keyboard_flags_portably() {
     let session = TerminalSessionGuard {
         mode: TerminalSessionMode::Fullscreen,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: true,
         report_all_keys: true,
         raw_mode_owned: false,
@@ -463,7 +463,14 @@ fn inline_session_cleanup_keeps_normal_screen() {
 #[test]
 fn session_exit_disables_focus_mouse_and_kitty_keyboard() {
     let mut out = Vec::new();
-    write_session_exit(&mut out, TerminalSessionMode::Fullscreen, false, true, true).unwrap();
+    write_session_exit(
+        &mut out,
+        TerminalSessionMode::Fullscreen,
+        false,
+        crate::MouseMode::Hover,
+        true,
+    )
+    .unwrap();
     let output = String::from_utf8(out).unwrap();
     // Crossterm manages mouse/focus through the Windows console API rather
     // than writing those escape sequences to the supplied writer.
@@ -534,7 +541,7 @@ fn resume_sequence_fullscreen_round_trips_enter_and_flags_redraw() {
     // The resume path re-enters the same byte state as the initial enter.
     let guard = TerminalSessionGuard {
         mode: snapshot.mode,
-        mouse_enabled: snapshot.mouse_enabled,
+        mouse_mode: snapshot.mouse_mode,
         kitty_keyboard: snapshot.kitty_keyboard,
         report_all_keys: snapshot.report_all_keys,
         raw_mode_owned: snapshot.raw_mode_owned,
@@ -589,4 +596,106 @@ fn kitty_flags_report_all_keys_sets_flag() {
     assert!(flags.contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
     assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
     assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+}
+
+// ── Mouse reporting modes (issue #444) ────────────────────────────────
+
+/// Every DEC mouse mode SLT could emit, enabled (`h`) or disabled (`l`).
+#[cfg(not(windows))]
+fn mouse_sequences(output: &str, suffix: char) -> Vec<u16> {
+    let mut found = Vec::new();
+    let mut rest = output;
+    while let Some(start) = rest.find("\u{1b}[?") {
+        rest = &rest[start + 3..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(code) = digits.parse::<u16>()
+            && matches!(code, 1000 | 1002 | 1003 | 1005 | 1006 | 1015)
+            && rest[digits.len()..].starts_with(suffix)
+        {
+            found.push(code);
+        }
+    }
+    found
+}
+
+#[cfg(not(windows))]
+fn guard_with_mouse(mode: crate::MouseMode) -> TerminalSessionGuard {
+    TerminalSessionGuard {
+        mode: TerminalSessionMode::Fullscreen,
+        mouse_mode: mode,
+        kitty_keyboard: false,
+        report_all_keys: false,
+        raw_mode_owned: false,
+        registry_id: None,
+        restored: std::sync::atomic::AtomicBool::new(false),
+        harness: true,
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn each_mouse_mode_writes_exactly_its_dec_modes_on_enter_and_exit() {
+    use crate::MouseMode;
+    let cases: [(MouseMode, &[u16]); 4] = [
+        (MouseMode::Off, &[]),
+        (MouseMode::Click, &[1000, 1006]),
+        (MouseMode::Drag, &[1000, 1002, 1006]),
+        (MouseMode::Hover, &[1000, 1003, 1006]),
+    ];
+    for (mode, expected) in cases {
+        let mut enter = Vec::new();
+        write_session_enter(&mut enter, &guard_with_mouse(mode)).unwrap();
+        let enter = String::from_utf8(enter).unwrap();
+        assert_eq!(mouse_sequences(&enter, 'h'), expected, "{mode:?} enter");
+        assert!(
+            mouse_sequences(&enter, 'l').is_empty(),
+            "{mode:?} enter disables nothing"
+        );
+
+        let reversed: Vec<u16> = expected.iter().rev().copied().collect();
+        let mut exit = Vec::new();
+        write_session_exit(
+            &mut exit,
+            TerminalSessionMode::Fullscreen,
+            false,
+            mode,
+            false,
+        )
+        .unwrap();
+        let exit = String::from_utf8(exit).unwrap();
+        assert_eq!(mouse_sequences(&exit, 'l'), reversed, "{mode:?} exit");
+        assert!(
+            mouse_sequences(&exit, 'h').is_empty(),
+            "{mode:?} exit enables nothing"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn panic_and_suspend_restore_disable_the_active_mouse_mode_only() {
+    use crate::MouseMode;
+    for (mode, expected) in [
+        (MouseMode::Off, &[][..]),
+        (MouseMode::Click, &[1006, 1000][..]),
+        (MouseMode::Drag, &[1006, 1002, 1000][..]),
+        (MouseMode::Hover, &[1006, 1003, 1000][..]),
+    ] {
+        let mut snapshot = test_snapshot(TerminalSessionMode::Fullscreen, false, false);
+        snapshot.mouse_mode = mode;
+        // The panic hook and the SIGTSTP handler both restore through the
+        // snapshot-driven exit writer.
+        let mut out = Vec::new();
+        write_suspend_sequence(&mut out, &snapshot).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        assert_eq!(mouse_sequences(&output, 'l'), expected, "{mode:?}");
+        assert!(
+            !output.contains("\u{1b}[?1015"),
+            "urxvt encoding is never used"
+        );
+    }
+    let mut out = Vec::new();
+    write_panic_cleanup(&mut out).unwrap();
+    let output = String::from_utf8(out).unwrap();
+    assert_eq!(mouse_sequences(&output, 'l'), [1006, 1003, 1000]);
 }

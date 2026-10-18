@@ -5,19 +5,26 @@ SLT, how to test them, and where the current limits are.
 
 <!-- slt-check-default: illustrative fragments require application context -->
 
-## Enable the mouse first
+## The mouse is on by default
 
-Mouse capture is **off by default**. `slt::run` uses `RunConfig::default()`,
-which has `mouse: false`, so clicks, hover, drag, and the wheel never reach
-your closure until you opt in:
+Since v0.26, `slt::run` turns mouse reporting **on**. `RunConfig::default()`
+leaves `mouse_mode` at `None`, which resolves to `MouseMode::Drag` locally and
+to `MouseMode::Click` when an SSH or mosh session is detected (`SSH_CONNECTION`,
+`SSH_TTY` or `MOSH_IP` set). Clicks, the wheel, split handles, scrollbar thumbs
+and the built-in text selection work with no configuration. Inline and static
+runs (`run_inline`, `run_inline_with`, `run_static`, `run_static_with`) default
+to `MouseMode::Off` instead: those CLI-style apps share the normal screen with
+the shell, where mouse tracking would take the wheel away from the terminal's
+scrollback and replace its native selection. Pass a mode to opt in. An
+explicit mode is never overridden:
 
 <!-- slt-check: {"name":"ix_enable_mouse","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Context, KeyCode, RunConfig};
+use slt::{Context, KeyCode, MouseMode, RunConfig};
 
 fn main() -> std::io::Result<()> {
     let config = RunConfig::default()
-        .mouse(true)
+        .mouse_mode(MouseMode::Hover) // hover styling and tooltips
         .scroll_speed(3); // rows per wheel notch (default 1)
 
     slt::run_with(config, |ui: &mut Context| {
@@ -31,14 +38,41 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-What changes when you turn it on:
+| `MouseMode` | Terminal modes enabled | Delivers |
+|-------------|------------------------|----------|
+| `Off` | none | Nothing; the terminal's native selection keeps working |
+| `Click` | `?1000h ?1006h` | Presses, releases, wheel |
+| `Drag` | `?1000h ?1002h ?1006h` | Plus motion while a button is held: drags, split handles, scrollbar thumbs, built-in text selection |
+| `Hover` | `?1000h ?1003h ?1006h` | Plus every pointer move: hover styling and tooltips |
 
-- SLT enables all-motion reporting, so **every pointer move is an event**. That
-  is what makes hover work, and it is also more traffic over a slow SSH link.
-- The terminal's own text selection stops working while the pointer is over
-  the app. SLT draws its own selection overlay: drag across text and it is
-  copied (OSC 52) on release. Most terminals also let you hold a modifier
-  (often Shift, or Option on macOS) to bypass capture and select natively.
+`config.effective_mouse_mode()` returns the mode a config resolves to.
+
+What this means in practice:
+
+- **Hover needs `MouseMode::Hover`.** `hovered` still updates on clicks and
+  drags in `Drag` mode, but a pointer that moves with no button held is only
+  reported in `Hover` mode. Every move is then an event and a frame, which is
+  the most traffic over a slow SSH link.
+- **Over SSH the default is `Click`**, so drag gestures (split handles,
+  scrollbar thumbs, the built-in selection) do not fire there. Opt in with
+  `.mouse_mode(MouseMode::Drag)` or `Hover` if the link can take it.
+- **Native selection is replaced while the mouse is captured.** SLT draws its
+  own selection overlay: drag across any text and it is copied (OSC 52) on
+  release. Drags a widget handles never select. A selection inside a
+  scrollable stays on its text while the region scrolls, and holding the
+  pointer on the region's top or bottom row scrolls it so the selection can
+  grow. Only the part visible at release is copied. Edge auto-scroll starts once the pointer leaves the
+region (or, for a region flush with the top or bottom of the screen, reaches
+that row while extending the selection), so selecting a word on a region's
+first line never scrolls it.
+  `RunConfig::text_selection(false)` disables the built-in selection.
+- **To select natively anyway**, most terminals bypass mouse capture while
+  Shift is held (Shift-drag). The modifier differs on some macOS terminals;
+  check your terminal's settings. `.mouse_mode(MouseMode::Off)` (or
+  `.mouse(false)`) keeps native selection entirely.
+- `RunConfig::mouse(bool)` is a compatibility shorthand: `mouse(true)` is
+  `mouse_mode(MouseMode::Hover)` (the pre-0.26 all-motion behavior) and
+  `mouse(false)` is `mouse_mode(MouseMode::Off)`.
 - Without the mouse, the app is still fully usable from the keyboard: Tab and
   Shift+Tab move focus, Enter or Space activate the focused widget.
 
@@ -48,16 +82,38 @@ Most widgets and every container return a `#[must_use]` `Response`:
 
 | Field | Meaning | Needs mouse? |
 |-------|---------|--------------|
-| `clicked` | Left-clicked this frame, or activated with Enter/Space on keyboard-activatable widgets | Click: yes. Keyboard activation: no |
+| `clicked` | Left-clicked this frame (topmost, innermost target only), or activated with Enter/Space on keyboard-activatable widgets | Click: yes. Keyboard activation: no |
+| `clicked_any` | A left press landed anywhere in the rect, even if a nested or overlaying slot won it | Yes |
 | `double_clicked` | Two left presses on the same cell within ~400 ms (`clicked` is also `true`) | Yes |
 | `right_clicked` | Right button pressed inside the widget | Yes |
-| `hovered` | Pointer is over the widget | Yes |
+| `hovered` | Pointer is over the widget's rect (an outer card and the button in it are both hovered) | Yes |
+| `hovered_top` | This widget is the one a press at the pointer would hit | Yes |
+| `pressed` | A left press landed on this widget this frame (never waits for release) | Yes |
+| `drag_started` / `dragging` | The pointer started moving / is moving with the button held after pressing this widget | Yes |
+| `drag_delta` | Cells `(dx, dy)` the pointer moved this frame while this widget holds the press | Yes |
+| `released` | The button that pressed this widget was released this frame, wherever the pointer is | Yes |
+| `middle_clicked` | Middle button pressed on this widget | Yes |
+| `modifiers` | Shift/Ctrl/Alt held during the press that targeted this widget | Yes |
 | `scroll_delta` | Net wheel motion over the widget this frame (positive = up) | Yes |
 | `focused` | Widget currently has keyboard focus | No |
 | `gained_focus` / `lost_focus` | Focus arrived / left this frame | No |
 | `changed` | The widget's value changed this frame | No |
 | `submitted` | Explicit submit gesture, such as Enter in a single-line `text_input` | No |
 | `rect` | Where the widget was laid out **last frame** (all zeros on frame 1) | No |
+
+**Press or release?** `clicked` fires on the mouse *press* by default, which
+keeps toggles and selection immediate. `RunConfig::default().click_on_release(true)`
+switches to browser-style clicks: `clicked` fires on the frame the button is
+released inside the same widget that was pressed, and dragging off the widget
+before letting go cancels the click. Keyboard activation is the same in both
+modes. No press is dropped: when several presses arrive in one input batch
+(a slow frame, an SSH burst) SLT dispatches them one per frame, the way a
+browser dispatches events one after another, so each press is hit-tested
+against the layout the previous one produced. Two quick clicks on two headers
+toggle both, and if the first click expands a block above the second header,
+the second click lands on whatever is under the pointer after that change.
+Custom `slt::frame` loops must render again while `AppState::has_pending_input()`
+is true; the built-in run loops do this immediately.
 
 Callback-style chaining is available when it reads better:
 
@@ -94,6 +150,31 @@ for (i, item) in items.iter().enumerate() {
 }
 ```
 
+A press goes to **one** target: the topmost, innermost interactive slot under
+the pointer. A button inside a clickable row sets `clicked` on the button
+only, and a click on overlay content does not reach the widget drawn under it.
+Every container counts as a slot, so a plain `ui.row(..)` inside a clickable
+card takes the clicks that land on it. When the outer container should react
+too, opt in with `.bubble_clicks()`:
+
+<!-- slt-check: {"name":"ix_bubble_clicks","features":[],"context":"ui"} -->
+```rust
+let mut opened = 0;
+let card = ui.bordered(Border::Rounded).bubble_clicks().col(|ui| {
+    let _ = ui.row(|ui| {
+        ui.text("Title").bold();
+    });
+    ui.text("body");
+});
+if card.clicked {
+    // fires for clicks on the title row and the body
+    opened += 1;
+}
+```
+
+`Response::clicked_any` is the raw "a press landed inside my rect" check, for
+logic that must not depend on which descendant won.
+
 For custom content where a container is not the right shape, call
 `ui.interaction()` **immediately before** the text, link, or container that
 should own the hit area. It reserves a hit-test slot, so its call order must be
@@ -108,7 +189,9 @@ use a widget that already does this (`button`, `accordion`, `list`, ...).
 Use `ui.group(name)` for CSS-`:hover`-like styling. The group's own
 `group_hover_bg` / `group_hover_border_style`, and those of containers nested
 inside it, apply while the pointer is over the group or while a focusable
-child of the group has focus.
+child of the group has focus. Pointer hover needs
+`RunConfig::default().mouse_mode(MouseMode::Hover)`; in the default `Drag`
+mode only the focus half works without a button held.
 
 <!-- slt-check: {"name":"ix_group_hover","features":[],"context":"ui"} -->
 ```rust
@@ -141,8 +224,42 @@ ui.tooltip("Restore the last good build");
 ```
 
 Tooltips appear under the widget (or above it when there is no room), wrap at
-38 columns, and need mouse capture because they follow `hovered`. Text-only;
+38 columns, and need `MouseMode::Hover` because they follow `hovered` (see
+[The mouse is on by default](#the-mouse-is-on-by-default)). Text-only;
 use `on_hover_ui` plus an overlay for richer content.
+
+A tooltip waits until the pointer has rested on the same target for
+`RunConfig::tooltip_delay` (500 ms by default), so sweeping across a toolbar
+does not flash one tooltip per button; it then appears on the next frame
+without further input. `RunConfig::default().tooltip_delay(Duration::ZERO)`
+shows tooltips immediately. Tooltip panels never take clicks.
+
+Terminals send no "pointer left the window" event, so the last hovered widget
+stays hovered until the next mouse event, terminal focus loss, or a resize.
+`RunConfig::default().hover_timeout(Some(Duration::from_secs(3)))` also clears
+hover after that long without motion.
+
+### Cursor and pointer shapes
+
+`ui.set_cursor_shape(CursorShape::SteadyBar)` sets the text cursor shape
+(DECSCUSR); it persists until changed and is reset on exit. Pointer shapes
+follow CSS `cursor` and are opt-in because terminals without OSC 22 support
+may print the payload:
+
+<!-- slt-check: {"name":"ix_pointer_shape","features":[],"context":"ui"} -->
+```rust
+let _ = ui
+    .bordered(Border::Rounded)
+    .pointer_shape(PointerShape::Pointer)
+    .col(|ui| {
+        ui.text("Open the file");
+    });
+// In main: RunConfig::default().mouse_mode(MouseMode::Hover).pointer_shapes(true)
+```
+
+The shape follows the innermost hovered slot (descendants inherit it), is
+written only when it changes, and both shapes are restored on exit, in the
+panic hook, and on Ctrl+Z.
 
 ## Drag and splitters
 
@@ -169,8 +286,30 @@ let _ = ui.split_pane(
 In real apps keep the `SplitPaneState` in your app struct and pass `&mut`
 directly; the hook round-trip above only keeps the snippet self-contained.
 
-For custom drag gestures, read the raw pointer events. Each returns the cell
-position of an unconsumed event this frame:
+For custom drag gestures, read the gesture fields of the widget's own
+`Response`. A press *captures* the pointer for the widget it hit, so the drag
+keeps reporting even after the pointer leaves the widget's rect, and the
+capture ends on release, when the terminal loses focus, on resize, or when
+motion arrives without a held button (a release the terminal never sent):
+
+<!-- slt-check: {"name":"ix_drag_response","features":[],"context":"ui"} -->
+```rust
+let pos = ui.use_state(|| (0i32, 0i32));
+let (x, y) = *pos.get(ui);
+let knob = ui.container().ml(x.max(0) as u32).mt(y.max(0) as u32).row(|ui| {
+    ui.text("[drag me]");
+});
+if knob.dragging {
+    let (dx, dy) = knob.drag_delta;
+    *pos.get_mut(ui) = (x + dx, y + dy);
+}
+if knob.released {
+    ui.notify("dropped", slt::ToastLevel::Info);
+}
+```
+
+The raw pointer events are still available. Each returns the cell position
+of an unconsumed event this frame:
 
 <!-- slt-check: {"name":"ix_drag","features":[],"context":"ui"} -->
 ```rust
@@ -189,8 +328,24 @@ if ui.mouse_up().is_some() {
 // Last known pointer position: ui.mouse_pos().
 ```
 
+Drags a widget handles never start a text selection: a press consumed by a
+split handle, a scrollbar thumb, or any other widget keeps SLT's selection
+overlay idle until the release, so dragging a control never highlights text
+or overwrites the clipboard. For your own drags built on `Response::dragging`
+and `drag_delta`, give the handle a stable identity
+(`ui.register_focusable_keyed(id)` just before it, or `ui.group("name")`) so
+UI that appears before it mid-drag (a "Dragging..." status line) cannot move
+the capture to a neighbour, and mark the handle `.draggable()` (HTML `draggable`, CSS
+`user-select: none`) so pressing it does not also select text. Drags inside
+a `text_input` / `textarea` select text in the field instead and never start
+the overlay. Apps with their own drag or selection model can
+turn the built-in selection off entirely with
+`RunConfig::default().text_selection(false)`.
+
 `SplitPaneState::dragging` and `ScrollState::dragging` tell you when a
-built-in handle or scrollbar thumb is being held.
+built-in handle or scrollbar thumb is being held. Both end on release, on
+terminal focus loss, on resize, and on button-less motion, so a release lost
+outside the window cannot leave a divider stuck to the pointer.
 
 ## Wheel and scrollbars
 
@@ -222,6 +377,54 @@ if chart.scroll_delta > 0 {
 
 // Frame-global wheel checks also exist: ui.scroll_up(), ui.scroll_down(),
 // ui.scroll_left(), ui.scroll_right().
+```
+
+Nested scrollables chain the wheel like a browser: wheel motion over an inner
+scrollable moves it until it reaches its end, and further motion scrolls the
+enclosing one, with no dead zones over expanded blocks. A burst that crosses
+the limit splits, so the inner region takes what it can absorb and the outer
+region takes the rest. Call `.overscroll_contain()` on a region that should
+keep the wheel at its limit instead (CSS `overscroll-behavior: contain`), for
+example a popup list over a scrolling page:
+
+<!-- slt-check: {"name":"ix_overscroll_contain","features":[],"context":"ui"} -->
+```rust
+let mut page = ScrollState::new();
+let mut picker = ScrollState::new();
+let _ = ui.scrollable(&mut page).grow(1).col(|ui| {
+    let _ = ui
+        .scrollable(&mut picker)
+        .max_h(5)
+        .border(Border::Single)
+        .overscroll_contain()
+        .col(|ui| {
+            for i in 0..30 {
+                ui.text(format!("option {i}"));
+            }
+        });
+    ui.text("page content");
+});
+```
+
+Scrollables keep what you are reading in place. When content above the
+viewport changes height (a block collapses, a streamed message finishes),
+`ScrollState::anchor` (on by default) shifts the offset by the same amount, like
+the browser's `overflow-anchor`. Children are matched by `group` name when they
+have one, else by position and leading text, so give repeated look-alike
+children a group name. Set `scroll.anchor = false` to keep raw offsets. For
+logs and chat transcripts, `ScrollState::new().stick_to_bottom(true)` follows
+new content while the view is at the end; scrolling up disengages it and
+scrolling back to the end re-engages it:
+
+<!-- slt-check: {"name":"ix_stick_to_bottom","features":[],"context":"ui"} -->
+```rust
+let mut log = ScrollState::new().stick_to_bottom(true);
+let lines = ["build started", "compiling", "done"];
+let _ = ui.scrollable(&mut log).grow(1).col(|ui| {
+    for line in lines {
+        ui.text(line);
+    }
+});
 ```
 
 `ScrollState::follow_focus` (on by default) scrolls a newly focused child into
@@ -264,7 +467,7 @@ view.
 
 <!-- slt-check: {"name":"ix_tool_log","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Border, Color, Context, KeyCode, RunConfig, ScrollState};
+use slt::{Border, Color, Context, KeyCode, ScrollState};
 
 struct ToolCall {
     name: &'static str,
@@ -326,7 +529,7 @@ fn main() -> std::io::Result<()> {
         .collect();
     let mut scroll = ScrollState::new();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         tool_log(ui, &mut calls, &mut scroll);
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
@@ -335,10 +538,10 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Two details matter here. The header is clickable *and* focusable, but nothing
-inside it is clickable, so a click is never reported twice (see Known
-limitations). And collapsing a block above the viewport shifts everything
-below it up, because SLT has no scroll anchoring.
+Two details matter here. The header is clickable *and* focusable, and a click
+goes only to the innermost slot under the pointer, so it is never reported
+twice. And collapsing a block above the viewport does not move what you are
+reading: scroll anchoring adjusts the offset by the rows that disappeared.
 
 ## Selecting and copying text in fields
 
@@ -361,7 +564,9 @@ redo. Read or set it from code with `state.selection()`,
 
 ## Keyboard focus and shortcuts
 
-- Tab / Shift+Tab cycle focus through focusable widgets in render order.
+- Tab / Shift+Tab cycle focus through focusable widgets in render order. A
+  focused `code_editor` uses them to indent and dedent instead; build its
+  state with `CodeEditorState::tab_indents(false)` to keep Tab for focus.
 - Enter / Space activate a focused button, checkbox, accordion, and similar.
 - `ui.register_focusable_named("search")` + `ui.focus_by_name("search")` move
   focus programmatically.
@@ -434,9 +639,11 @@ edge cases.
 
 `ui.modal(..)`, `ui.modal_at(..)`, and `ui.modal_at_offset(..)` dim the screen
 and suppress clicks, hover, and keys for everything outside the modal.
-`ui.overlay(..)` and `ui.overlay_at(..)` do **not**: a click inside a non-modal
-overlay also reaches the widget drawn underneath it. Use a modal for anything
-that must block input, such as confirmation dialogs and pickers.
+`ui.overlay(..)` and `ui.overlay_at(..)` block clicks only where their content
+is: a press on a popup button does not reach the widget drawn underneath, but a
+press beside the popup does, and keys still reach the background. Use a modal
+for anything that must block all input, such as confirmation dialogs and
+pickers.
 
 <!-- slt-check: {"name":"ix_modal","features":[],"context":"ui"} -->
 ```rust
@@ -517,43 +724,28 @@ Notes:
   focused widget, or `tb.sequence()` to chain steps (for example
   `.key(KeyCode::Tab, ..)` then `.key(KeyCode::Enter, ..)`) with focus carried
   between them.
-- `TestBackend` injects mouse events directly, so a click test passes even if
-  your real `main` forgot `.mouse(true)`.
+- `TestBackend` injects mouse events directly, regardless of `MouseMode`, so
+  a hover test passes even if your real `main` runs in the default `Drag`
+  mode, where plain pointer moves are never reported. Check the mode your
+  app needs separately.
 
 [TESTING.md](TESTING.md) covers snapshots, style assertions, and sequences.
 
-## Known limitations (v0.25)
+## Known limitations (v0.26)
 
 These are current behaviors, not misuse. Design around them for now.
 
-1. **Nested scrollables do not hand off the wheel.** When an inner scrollable
-   reaches its end, further wheel motion over it does not scroll the outer
-   one. Avoid nesting vertical scrollables, or give the inner one a fixed
-   height and keep it short.
-2. **Clicks fire on press and propagate.** `clicked` is set on mouse *down*,
-   not release, and is not stopped at the innermost target: a button inside a
-   clickable row reports `clicked` on both, and a click inside a non-modal
-   overlay also hits what is underneath. Do not make a parent and a child
-   clickable at the same time; use `modal` for popups that must block input.
-3. **Only the last click per frame is kept.** Several clicks arriving in one
-   frame collapse into one.
-4. **Text selection can start during handle drags.** Dragging a scrollbar
-   thumb or a split handle may also activate the built-in selection overlay
-   and copy text on release. (Drags inside a `text_input` / `textarea` select
-   text in the field instead and never start the overlay.)
-5. **No scroll anchoring.** Collapsing or inserting content above the
-   viewport shifts the visible content, and there is no stick-to-bottom mode
-   for logs. Adjust `ScrollState::offset` yourself when you need either.
-6. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
+1. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row. `RunConfig::width_conservative` /
    `width_probe` resolve which clusters are uncertain, but the explicit cursor
    reposition in the diff flush lands with #441. For CJK terminals set to wide
    ambiguous characters, `RunConfig::ambiguous_wide(true)` already matches
    `→±①` widths.
-7. **Missing primitives.** No disabled or active (pressed) widget states and
-   no context-menu widget (use `right_clicked` plus your own overlay). The
-   hardware cursor shape is available through `ui.set_cursor_shape(..)`.
+2. **Missing primitives.** No disabled or active (pressed) widget states and
+   no context-menu widget (use `right_clicked` plus your own overlay).
+3. **Off-screen selection text is not copied.** A selection that extends past
+   a scrollable's viewport copies only the part visible at release.
 
 ## Related docs
 

@@ -9,12 +9,12 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
 
 ## Two runtime rules agents get wrong
 
-1. **Mouse capture is opt-in.** `RunConfig::default()` sets `mouse: false` (`src/lib.rs`), so `slt::run(...)` delivers no mouse events: `Response.clicked`, `hovered`, `right_clicked`, `double_clicked`, `scroll_delta`, scrollbar drag and split-pane drag all stay inert. Any app that relies on clicks, hover or wheel must start with
+1. **The mouse is on by default; hover is opt-in.** Since v0.26, `RunConfig::default()` leaves `mouse_mode: None`, which resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh (`src/runtime/config.rs`). Plain `slt::run(...)` therefore delivers `Response.clicked`, `right_clicked`, `double_clicked`, `scroll_delta`, scrollbar and split-pane drags, and the built-in text selection. Pointer moves without a button held are only reported in `MouseMode::Hover`, so any app that relies on `hovered`, `group_hover_*`, `on_hover` or `ui.tooltip` must start with
    ```rust
-   slt::run_with(slt::RunConfig::default().mouse(true), |ui| { /* ... */ })
+   slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { /* ... */ })
    ```
-   Keyboard-only apps can keep `slt::run`. Headless `TestBackend` tests inject mouse events directly and do not need this flag.
-2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`), in any call order. Chords, Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
+   `MouseMode::Off` (or `.mouse(false)`) disables the mouse and keeps the terminal's native selection; `.mouse(true)` is a shorthand for `Hover`. Headless `TestBackend` tests inject mouse events directly regardless of the mode.
+2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`; also Tab, Shift+Tab, PageUp/PageDown for `code_editor`), in any call order. Chords, Esc, Tab (outside `code_editor`) and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
    ```rust
    if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
    let _ = ui.text_input(&mut search);                                   // typing 'q' inserts it
@@ -108,6 +108,7 @@ ui.select(&mut SelectState);          ui.radio(&mut RadioState);
 ui.multi_select(&mut MultiSelectState);
 ui.file_picker(&mut FilePickerState); ui.calendar(&mut CalendarState);
 ui.text_input(&mut TextInputState);   ui.textarea(&mut TextareaState, rows);  // textarea takes rows
+ui.code_editor(&mut CodeEditorState).show();                                  // builder; highlight needs syntax-*
 ui.rich_log(&mut RichLogState);       ui.command_palette(&mut CommandPaletteState);
 ui.toast(&mut ToastState);            ui.spinner(&SpinnerState);              // toast returns &mut Self; spinner is &, not &mut
 
@@ -273,7 +274,7 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 ## Common pitfalls (AI-generated SLT code)
 
 - **Inventing method names.** Always grep `src/context/` and `src/widgets/` first.
-- **Expecting clicks without `.mouse(true)`.** Mouse capture is off by default; see "Two runtime rules" above.
+- **Expecting hover without `MouseMode::Hover`.** Clicks, wheel and drags work by default, but plain pointer moves are not reported; see "Two runtime rules" above. Do not add `.mouse(true)` just to "turn the mouse on".
 - **Shortcut checked before a text input renders.** Typing `q` quits the app. Render inputs first, then check `ui.key(...)`.
 - **Assuming `ui.modal` traps focus.** Plain `modal()` keeps legacy `tab_trap: false`. Use `ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| ...)` (also `ModalOptions::default()`).
 - **Calling `ui.interaction(rect)` or `available_key_presses()`.** `interaction()` takes no arguments; `available_key_presses` is crate-private. Use `key_presses_when(focused)` + `consume_event(i)`.

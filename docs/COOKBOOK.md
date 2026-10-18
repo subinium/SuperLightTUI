@@ -31,11 +31,11 @@ fn main() -> std::io::Result<()> {
     // 1. Create state once, outside the closure.
     let mut state = /* ... */;
 
-    // 2. Your closure runs each frame. Mouse capture is opt-in: without
-    //    `.mouse(true)`, clicks, hover, and the scroll wheel never reach SLT
-    //    (keyboard focus + Enter/Space still activate buttons). Use plain
-    //    `slt::run(|ui| ...)` for keyboard-only apps.
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut slt::Context| {
+    // 2. Your closure runs each frame. The mouse is on by default: clicks,
+    //    the scroll wheel, and drags reach SLT, and keyboard focus +
+    //    Enter/Space activate buttons too. Hover styling and tooltips need
+    //    `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ..)`.
+    slt::run(|ui: &mut slt::Context| {
         // Global shortcuts first.
         if ui.key('q') || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
@@ -47,7 +47,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Recipes below that use buttons, clickable rows, or scroll regions start with `slt::run_with(slt::RunConfig::default().mouse(true), ...)` for that reason.
+None of the recipes below rely on hover, so they all start with plain `slt::run(...)`; clicks, clickable rows, and scroll regions work with the default mouse mode.
 
 The closure is the whole app. Plain Rust variables hold state; `slt::Context` mutates on interaction. No framework object, no stores.
 
@@ -91,7 +91,7 @@ fn main() -> std::io::Result<()> {
 
     let mut submitted: Option<String> = None;
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
@@ -187,7 +187,7 @@ fn main() -> std::io::Result<()> {
 
     let mut filter = TextInputState::with_placeholder("Filter across all columns...");
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
@@ -279,7 +279,7 @@ fn main() -> std::io::Result<()> {
     let mut show_modal = false;
     let mut toasts = ToastState::new();
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         let tick = ui.tick();
 
         if !show_modal && ui.key('q') {
@@ -531,7 +531,7 @@ fn main() -> std::io::Result<()> {
     let mut preview_scroll = ScrollState::new();
     let mut toasts = ToastState::new();
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         let tick = ui.tick();
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
             ui.quit();

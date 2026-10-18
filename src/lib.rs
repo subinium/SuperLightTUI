@@ -18,17 +18,23 @@
 //! }
 //! ```
 //!
-//! `slt::run` uses [`RunConfig::default()`], which leaves mouse capture **off**
-//! and exits on Ctrl+C. Keyboard focus (Tab / Shift+Tab) and Enter/Space
-//! activation work out of the box; for click, hover, wheel scroll, and
-//! drag, opt in with `slt::run_with(RunConfig::default().mouse(true), |ui| { ... })`.
+//! `slt::run` uses [`RunConfig::default()`], which turns the mouse **on** in
+//! [`MouseMode::Drag`] (clicks, wheel, drag handles, text selection) — or
+//! [`MouseMode::Click`] in an SSH/mosh session — and exits on Ctrl+C.
+//! Keyboard focus (Tab / Shift+Tab) and Enter/Space activation always work.
+//! Hover styling and tooltips need every pointer move:
+//! `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`.
+//! While the mouse is captured, most terminals still select natively with
+//! Shift-drag; `RunConfig::default().mouse_mode(MouseMode::Off)` turns the
+//! mouse off entirely.
 //!
 //! # Features
 //!
 //! - **Flexbox layout** — `row()`, `col()`, `gap()`, `grow()`
 //! - **50+ built-in widgets** — input, textarea, table, list, tabs, button, checkbox, toggle, spinner, progress, toast, slider, separator, help bar, scrollable, chart, bar chart, stacked bar chart, sparkline, histogram, heatmap, treemap, candlestick, canvas, grid, select, radio, multi-select, tree, virtual list, command palette, markdown, alert, badge, stat, breadcrumb, accordion, code block, big text, image, modal, tooltip, form, calendar, file picker, qr code
 //! - **Styling** — bold, italic, dim, underline, 256 colors, RGB
-//! - **Mouse** — click, hover, drag-to-scroll (opt-in via [`RunConfig::mouse()`])
+//! - **Mouse** — click, wheel, drag and text selection on by default; hover
+//!   with [`MouseMode::Hover`] (see [`RunConfig::mouse_mode()`])
 //! - **Focus** — automatic Tab/Shift+Tab cycling
 //! - **Theming** — 11 color presets, semantic tokens (`ThemeColor`), spacing scale, contrast helpers
 //! - **Animation** — tween and spring primitives with 9 easing functions
@@ -131,10 +137,11 @@ use std::time::Duration;
 mod clock;
 mod runtime;
 
+pub use context::PointerShape;
 #[cfg(all(feature = "crossterm", feature = "async"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "crossterm", feature = "async"))))]
 pub use runtime::{AsyncRunError, AsyncRunHandle, AsyncSender, run_async, run_async_with};
-pub use runtime::{DebugLayer, RunConfig};
+pub use runtime::{DebugLayer, MouseMode, RunConfig};
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub use runtime::{run, run_inline, run_inline_with, run_static, run_static_with, run_with};
@@ -222,6 +229,9 @@ pub use context::{
     CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
     State, TreemapItem, Widget,
 };
+// Issue #466: code editor builder and state.
+pub use context::CodeEditor;
+pub use widgets::CodeEditorState;
 // Issues #446 / #468: terminal metadata and clipboard outcome types.
 pub use context::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.

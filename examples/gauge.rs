@@ -19,7 +19,7 @@ use slt::{Border, Color, Context, KeyCode, KeyModifiers, RunConfig};
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), |ui: &mut Context| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }

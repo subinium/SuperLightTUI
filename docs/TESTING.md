@@ -57,10 +57,12 @@ tb.run_with_events(events, |ui| {
 
 Use `EventBuilder` when the widget logic depends on keyboard, mouse, paste, or resize events.
 
-> `TestBackend` injects mouse events directly, bypassing terminal mouse
-> capture. A click test can therefore pass even if the real app forgot
-> `RunConfig::default().mouse(true)` (mouse capture is off by default), so
-> keep that call in your `main` and cover it in a manual smoke run.
+> `TestBackend` injects mouse events directly, regardless of `MouseMode`.
+> A hover test can therefore pass even if the real app runs in the default
+> `MouseMode::Drag` (or `Click` over SSH), where pointer moves without a
+> button are never reported. Keep
+> `RunConfig::default().mouse_mode(MouseMode::Hover)` in your `main` when the
+> app relies on hover or tooltips, and cover it in a manual smoke run.
 
 ### Mouse and key chain wrappers (v0.19.1+)
 

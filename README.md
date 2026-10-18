@@ -40,17 +40,18 @@ fn main() -> std::io::Result<()> {
 5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop.
 Ctrl+C exits cleanly by default (opt out with `RunConfig::handle_ctrl_c(false)`).
 
-Mouse capture is **opt-in**. Plain `slt::run` is keyboard-driven: Tab/Shift+Tab move
-focus and Enter/Space activate the focused button. For click, hover, wheel scroll,
-and drag, start the loop with `RunConfig::default().mouse(true)`:
+The mouse is **on by default**. Plain `slt::run` reports clicks, wheel scroll, and
+drags (split handles, scrollbar thumbs, text selection); over SSH it falls back to
+clicks and the wheel only. Tab/Shift+Tab move focus and Enter/Space activate the
+focused button either way:
 
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut clicks = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         ui.text(format!("clicked {clicks} times")).bold();
         if ui.button("Click me").clicked {
             clicks += 1;
@@ -58,6 +59,11 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+Hover styling and tooltips need every pointer move, so they are opt-in:
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`.
+While the mouse is captured, most terminals still select text natively with
+Shift-drag; `MouseMode::Off` turns the mouse off entirely.
 
 MSRV: Rust 1.88. Default features enable the `crossterm` backend and `bidi`.
 
@@ -103,8 +109,8 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 That is the core mental model. Everything else is depth, not a second framework.
-`clicked` fires on Enter/Space when the button is focused, and on mouse click when
-the loop runs with `RunConfig::default().mouse(true)`.
+`clicked` fires on Enter/Space when the button is focused, and on mouse click (the
+mouse is on by default).
 
 ## A Real App
 
@@ -144,13 +150,13 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 | Mode | API | When to use |
 |------|-----|-------------|
-| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app on the alternate screen. Mouse capture is off unless `RunConfig::mouse(true)` is passed to `run_with`. |
+| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app on the alternate screen. Mouse clicks, wheel, and drags are on by default; hover needs `RunConfig::mouse_mode(MouseMode::Hover)`. |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | Fixed-height widget below the prompt — no alternate screen. |
 | Static + inline | `slt::run_static` | Log lines stream into scrollback while an inline UI stays live below. |
 | Async messages | `slt::run_async` *(feature: `async`)* | Background tasks use the wake-aware `AsyncSender`; retain the returned `AsyncRunHandle` to join or cancel the loop. |
 | Custom backend | `slt::frame` + `Backend` + `AppState` | Drive rendering yourself — tests, GUI embeds, WASM, snapshot harnesses. |
 
-`RunConfig` tunes mouse capture (default: off), kitty keyboard, color depth, max FPS, scroll speed, theme, title, and Ctrl+C handling across every mode.
+`RunConfig` tunes the mouse mode (default: `Drag` locally, `Click` over SSH; `Hover` or `Off` on request), kitty keyboard, color depth, max FPS, scroll speed, theme, title, and Ctrl+C handling across every mode.
 
 ## Focus and Scrolling
 
@@ -189,7 +195,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **Small public grammar**. Most screens start with normal Rust state, `row()` / `col()` / `container()`, method chaining, and `Response`.
 - **Less framework ceremony**. Many apps do not need an app trait, retained tree, or message enum just to get moving.
-- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (mouse events once `RunConfig::mouse(true)` is set), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
+- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (clicks, wheel, and drags by default; hover with `MouseMode::Hover`), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
 - **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, WASM, clippy, examples, cargo-hack, semver, and deny checks.
 
 For Rust users, that usually means less setup than retained-mode TUI frameworks.
@@ -223,7 +229,7 @@ This architecture is what makes the simple grammar possible:
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
 - **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. Per-frame cost is currently higher than ratatui's on matched workloads; see the [Performance Guide](docs/PERFORMANCE.md) for measurements.
-- **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free; with `RunConfig::mouse(true)` it also reports hover and click. No hit-testing code on your side.
+- **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free, reports mouse clicks out of the box, and reports hover under `MouseMode::Hover`. No hit-testing code on your side.
 - **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
 For the full eight-stage lifecycle, see [Architecture Guide].
@@ -244,7 +250,7 @@ ui.row(|ui| {
 
 // Inputs and actions
 ui.text_input(&mut input);          // input: TextInputState
-if ui.button("Save").clicked {}   // Enter/Space; mouse click needs mouse(true)
+if ui.button("Save").clicked {}   // Enter/Space or mouse click
 ui.checkbox("Dark mode", &mut dark);
 
 // Data and navigation

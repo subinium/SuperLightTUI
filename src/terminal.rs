@@ -4,9 +4,11 @@ use std::io::{self, BufWriter, IsTerminal, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture,
+    DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
 };
+// #444: other platforms write the DEC mouse modes for the chosen level.
+#[cfg(windows)]
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crossterm::{cursor, execute, queue, terminal};
@@ -192,8 +194,11 @@ impl Terminal {
     /// alternate screen and optionally enables mouse capture and the
     /// kitty keyboard protocol. When `report_all_keys` is set (and
     /// `kitty_keyboard` is too), bare modifier presses are reported.
+    ///
+    /// `mouse` takes a [`MouseMode`](crate::MouseMode) or a `bool` (`true` is
+    /// `MouseMode::Hover`, `false` is `MouseMode::Off`).
     pub fn new(
-        mouse: bool,
+        mouse: impl Into<crate::MouseMode>,
         kitty_keyboard: bool,
         report_all_keys: bool,
         color_depth: ColorDepth,
@@ -206,7 +211,7 @@ impl Terminal {
         let session = TerminalSessionGuard::enter(
             TerminalSessionMode::Fullscreen,
             &mut raw,
-            mouse,
+            mouse.into(),
             kitty_keyboard,
             report_all_keys,
         )?;
@@ -386,7 +391,7 @@ impl Terminal {
             cursor_visible: false,
             session: TerminalSessionGuard {
                 mode: TerminalSessionMode::Fullscreen,
-                mouse_enabled: false,
+                mouse_mode: crate::MouseMode::Off,
                 kitty_keyboard: false,
                 report_all_keys: false,
                 raw_mode_owned: false,
@@ -457,9 +462,12 @@ impl InlineTerminal {
     /// Optionally enables mouse capture and the kitty keyboard protocol.
     /// When `report_all_keys` is set (and `kitty_keyboard` is too), bare
     /// modifier presses are reported.
+    ///
+    /// `mouse` takes a [`MouseMode`](crate::MouseMode) or a `bool` (`true` is
+    /// `MouseMode::Hover`, `false` is `MouseMode::Off`).
     pub fn new(
         height: u32,
-        mouse: bool,
+        mouse: impl Into<crate::MouseMode>,
         kitty_keyboard: bool,
         report_all_keys: bool,
         color_depth: ColorDepth,
@@ -472,7 +480,7 @@ impl InlineTerminal {
         let session = TerminalSessionGuard::enter(
             TerminalSessionMode::Inline,
             &mut raw,
-            mouse,
+            mouse.into(),
             kitty_keyboard,
             report_all_keys,
         )?;
@@ -753,7 +761,7 @@ impl InlineTerminal {
             cursor_visible: false,
             session: TerminalSessionGuard {
                 mode: TerminalSessionMode::Inline,
-                mouse_enabled: false,
+                mouse_mode: crate::MouseMode::Off,
                 kitty_keyboard: false,
                 report_all_keys: false,
                 raw_mode_owned: false,
@@ -830,7 +838,12 @@ impl Drop for InlineTerminal {
 }
 
 mod selection;
-pub(crate) use selection::{SelectionState, apply_selection_overlay, extract_selection_text};
+pub(crate) use selection::{
+    ScrollView, SelectionState, apply_selection_overlay_in, extract_selection_text_in,
+    track_selection,
+};
+#[cfg(test)]
+pub(crate) use selection::{apply_selection_overlay, extract_selection_text};
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 

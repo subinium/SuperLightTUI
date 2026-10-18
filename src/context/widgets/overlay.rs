@@ -205,6 +205,8 @@ impl Context {
     /// ```
     pub fn modal_with(&mut self, opts: ModalOptions, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
+        // #439: the full-screen modal root never wins hit-testing itself.
+        self.mark_hit_flags(interaction_id, HIT_PASSTHROUGH);
         // Modal ownership must not shift when unrelated widgets reserve hit IDs.
         let modal_id = self.rollback.modal_count;
         self.rollback.modal_count += 1;
@@ -292,6 +294,10 @@ impl Context {
     /// Render floating content without dimming the background.
     pub fn overlay(&mut self, f: impl FnOnce(&mut Context)) -> Response {
         let interaction_id = self.next_interaction_id();
+        // #439: the overlay root spans the whole area. It is transparent to
+        // hit-testing so only the overlay's actual content blocks the widgets
+        // underneath (CSS `pointer-events: none` on the positioning layer).
+        self.mark_hit_flags(interaction_id, HIT_PASSTHROUGH);
         self.commands.push(Command::BeginOverlay { modal: false });
         self.rollback.overlay_depth += 1;
         f(self);
@@ -319,7 +325,13 @@ impl Context {
     pub fn overlay_at(&mut self, anchor: Anchor, f: impl FnOnce(&mut Context)) -> Response {
         self.overlay(|ui| {
             let (align, justify) = anchor_to_align_justify(anchor);
-            let _ = ui.container().grow(1).align(align).justify(justify).col(f);
+            let _ = ui
+                .container()
+                .grow(1)
+                .align(align)
+                .justify(justify)
+                .hit_passthrough()
+                .col(f);
         })
     }
 
@@ -330,7 +342,13 @@ impl Context {
     pub fn modal_at(&mut self, anchor: Anchor, f: impl FnOnce(&mut Context)) -> Response {
         self.modal(|ui| {
             let (align, justify) = anchor_to_align_justify(anchor);
-            let _ = ui.container().grow(1).align(align).justify(justify).col(f);
+            let _ = ui
+                .container()
+                .grow(1)
+                .align(align)
+                .justify(justify)
+                .hit_passthrough()
+                .col(f);
         })
     }
 
@@ -390,6 +408,7 @@ impl Context {
                 .align(align)
                 .justify(justify)
                 .margin(margin)
+                .hit_passthrough()
                 .col(f);
         })
     }
@@ -431,11 +450,17 @@ impl Context {
                 .align(align)
                 .justify(justify)
                 .margin(margin)
+                .hit_passthrough()
                 .col(f);
         })
     }
 
     /// Render a hover tooltip for the previously rendered interactive widget.
+    ///
+    /// The tooltip appears once the pointer has rested on the same target for
+    /// [`RunConfig::tooltip_delay`](crate::RunConfig::tooltip_delay) (500 ms by
+    /// default), so sweeping across a toolbar does not flash one tooltip per
+    /// button. Hover needs [`MouseMode::Hover`](crate::MouseMode::Hover).
     ///
     /// Call this right after a widget or container response:
     /// ```ignore
@@ -449,7 +474,10 @@ impl Context {
         }
         let last_interaction_id = self.rollback.interaction_count.saturating_sub(1);
         let last_response = self.response_for(last_interaction_id);
-        if !last_response.hovered || last_response.rect.width == 0 || last_response.rect.height == 0
+        if !last_response.hovered
+            || last_response.rect.width == 0
+            || last_response.rect.height == 0
+            || !self.tooltip_ready()
         {
             return;
         }
@@ -471,6 +499,9 @@ impl Context {
         let border_color = self.theme.border;
         let text_color = self.theme.surface_text;
 
+        // #439: tooltips are informational; they never take clicks from the
+        // widget they describe or from anything else underneath.
+        self.pointer.passthrough_depth += 1;
         for tooltip in tooltips {
             let content_w = tooltip
                 .lines
@@ -510,5 +541,6 @@ impl Context {
                 });
             });
         }
+        self.pointer.passthrough_depth = self.pointer.passthrough_depth.saturating_sub(1);
     }
 }

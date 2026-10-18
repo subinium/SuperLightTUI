@@ -69,9 +69,9 @@ The original `use_state` / `use_memo` order rule still holds — only the id-key
 
 Use `key(c)`, `key_code(code)`, or `key_mod(c, mods)`. For modal-aware shortcuts use the regular versions. For global shortcuts that bypass modals, use `raw_key_code()` or `raw_key_mod()`. Check global shortcuts **after** rendering widgets: `key*` only sees events no widget has consumed yet, so a `ui.key('q')` check placed before a focused `text_input` fires even while the user types `q` into the field. For multi-key chords that span frames (vi `gg`, leader keys like `<space>ff`) use `key_chord("gg")` — it buffers partial input across frames and times out on inactivity. (`key_seq` is a deprecated alias that now delegates to `key_chord`.)
 
-### "Why don't clicks, hover, or the scroll wheel do anything?"
+### "Why doesn't hover (or a tooltip) do anything?"
 
-Mouse capture is opt-in: `RunConfig::default()` has `mouse: false`, and `slt::run` uses the default. Generate `slt::run_with(slt::RunConfig::default().mouse(true), |ui| { ... })` for any app that relies on `.clicked`, `.hovered`, `on_hover`, or wheel scrolling. Buttons still activate from the keyboard (focus + Enter/Space) without it.
+The mouse is on by default since v0.26: `RunConfig::default()` resolves to `MouseMode::Drag` locally (`MouseMode::Click` over SSH/mosh), so `.clicked`, wheel scrolling, scrollbar and split-pane drags, and text selection work with plain `slt::run`. Pointer moves without a button held are only reported in `MouseMode::Hover`, so generate `slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { ... })` for any app that relies on `.hovered`, `group_hover_*`, `on_hover`, or `ui.tooltip`. If clicks do nothing either, look for `.mouse(false)` / `MouseMode::Off`. Buttons always activate from the keyboard (focus + Enter/Space).
 
 ### "How do I make a custom widget?"
 
