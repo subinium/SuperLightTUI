@@ -1,4 +1,4 @@
-//! v0.26 widget builders (#460) and API consolidation (#463).
+//! Widget builders (#460) and API consolidation (#463).
 //!
 //! * `button(..).variant(..).colors(..)` composes (impossible before 0.26).
 //! * Every deprecated `_with` / `_colored` forward renders a buffer identical

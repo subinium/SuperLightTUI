@@ -1,3 +1,5 @@
+//! Unit tests for the visualization widget family.
+
 use super::*;
 
 #[cfg(all(test, feature = "qrcode"))]

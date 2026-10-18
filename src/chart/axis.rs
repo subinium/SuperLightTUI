@@ -1,5 +1,5 @@
-#[allow(unused_imports)]
-use super::*;
+//! Axis tick selection, "nice number" rounding, tick label formatting and
+//! bounds normalization for chart axes.
 
 #[derive(Debug, Clone)]
 pub(crate) struct TickSpec {

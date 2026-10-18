@@ -322,7 +322,7 @@ impl Context {
 
         let (cell_width, cell_height) = crate::terminal::cell_pixel_size();
         // Issue #265: route through the sprixel damage matrix instead of a flat
-        // `raw_sequence`, so a text edit adjacent to the image no longer forces
+        // `raw_sequence`, so a text edit adjacent to the image does not force
         // a full re-blit. The footprint is recorded as fully `Opaque`; the flush
         // layer flips cells to `Annihilated` only where text overwrites ink.
         let response = self.interaction();
@@ -644,7 +644,7 @@ mod media_response_tests {
 
     #[cfg(feature = "crossterm")]
     #[test]
-    fn v024_clipped_sixel_falls_back_and_preserves_source_offset() {
+    fn clipped_sixel_falls_back_and_preserves_source_offset() {
         let rgba = [
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
         ];
@@ -663,7 +663,7 @@ mod media_response_tests {
 
     #[cfg(feature = "crossterm")]
     #[test]
-    fn v024_unclipped_sixel_payload_matches_final_cell_footprint() {
+    fn unclipped_sixel_payload_matches_final_cell_footprint() {
         let rgba = [255, 0, 0, 255].repeat(4);
         let mut backend = TestBackend::new(4, 2);
         backend.render(|ui| {
@@ -678,7 +678,7 @@ mod media_response_tests {
 
     #[cfg(feature = "crossterm")]
     #[test]
-    fn v024_iterm_partial_viewport_never_emits_full_payload() {
+    fn iterm_partial_viewport_never_emits_full_payload() {
         let mut png = vec![0u8; 24];
         png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
         png[12..16].copy_from_slice(b"IHDR");

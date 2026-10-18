@@ -1,3 +1,5 @@
+//! Unit and property tests for the diff view widget.
+
 use super::*;
 use crate::test_utils::{EventBuilder, TestBackend};
 use crate::widgets::HunkId;

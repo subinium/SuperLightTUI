@@ -16,7 +16,7 @@
 //!   4. Pretext  — mouse-reactive text reflow (raw `draw` API)
 //!   5. CLI      — cargo-style package manager UI
 //!
-//! Note on §7 of `docs/DEMO_GUIDE.md` (BMP ASCII titles): the audit V7
+//! Note on §7 of `docs/internals/demo-guide.md` (BMP ASCII titles): the audit V7
 //! rule only scans the `widgets_tour` demos, not this file, so the embedded
 //! demos may legitimately use wide-character titles to exercise CJK
 //! rendering. The tour's *own* wrapper title stays BMP ASCII so the outer

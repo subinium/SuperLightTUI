@@ -1,3 +1,5 @@
+//! Unit tests for `line_wrap` compaction and hyperlink preservation.
+
 use super::*;
 use crate::FrameState;
 use crate::event::Event;

@@ -1,3 +1,5 @@
+//! Unit tests for the media widget family and its headless fallbacks.
+
 use super::*;
 use crate::TestBackend;
 

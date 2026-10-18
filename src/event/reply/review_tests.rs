@@ -1,3 +1,6 @@
+//! Regression tests for terminal-reply parsing interleaved with paste and
+//! key input.
+
 use super::*;
 
 #[test]

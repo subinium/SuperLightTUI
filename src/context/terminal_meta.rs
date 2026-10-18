@@ -180,12 +180,14 @@ impl ProgramStatus {
     }
 
     /// Attach a progress percentage (clamped to `100`).
+    #[must_use]
     pub fn progress(mut self, percent: u8) -> Self {
         self.progress = Some(percent.min(100));
         self
     }
 
     /// Attach a one-line message.
+    #[must_use]
     pub fn message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
         self

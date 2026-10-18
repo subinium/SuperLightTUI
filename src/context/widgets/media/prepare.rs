@@ -433,7 +433,7 @@ mod media_preparation_tests {
 
     #[cfg(feature = "crossterm")]
     #[test]
-    fn v024_sixel_preparation_shares_payload_and_keys_final_geometry() {
+    fn sixel_preparation_shares_payload_and_keys_final_geometry() {
         let rgba = [255, 0, 0, 255].repeat(4);
         let (_, first) = prepare_sixel(&rgba, 2, 2, 256, 8, 16).unwrap();
         let (_, second) = prepare_sixel(&rgba, 2, 2, 256, 8, 16).unwrap();

@@ -5,7 +5,7 @@
 //! `widgets/selection.rs`, `context/widgets/collections.rs` renders the types
 //! in `widgets/collections.rs`, and so on. Families without persistent state
 //! (`media`, `viz`, `events`) have no state file. See
-//! `docs/ARCHITECTURE.md` for the full family table.
+//! `docs/internals/architecture.md` for the full family table.
 
 use super::*;
 
@@ -31,7 +31,10 @@ mod viz;
 pub use display::{Badge, Breadcrumb, Help, Stat, Text};
 pub use feedback::{Gauge, LineGauge, ProgressBar, Slider};
 pub use layout::{GutterOpts, Separator};
-#[allow(deprecated)]
+#[expect(
+    deprecated,
+    reason = "re-exports the deprecated ModalOptions alias for one release (#462)"
+)]
 pub use overlay::ModalOptions;
 pub(super) use overlay::wrap_tooltip_text;
 pub use overlay::{Anchor, ModalOpts, Placement};

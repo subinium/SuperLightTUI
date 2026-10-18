@@ -1,3 +1,6 @@
+//! The [`Command`] stream that `Context` records each frame and the layout
+//! tree is built from.
+
 use super::*;
 
 /// Main axis direction for a container's children.
@@ -12,8 +15,8 @@ pub enum Direction {
 
 /// Arguments for [`Command::BeginContainer`].
 ///
-/// Stored inline in the variant. Until v0.26 the payload was boxed (#64),
-/// which cost one heap allocation per container per frame; inlining it and
+/// Stored inline in the variant so a container costs no heap allocation
+/// per frame (it was boxed under #64); inlining it and
 /// boxing only the rare `title` keeps `Command` at 136 bytes with no
 /// per-container allocation.
 #[derive(Debug, Clone)]
@@ -171,7 +174,7 @@ mod size_tests {
     ///
     /// A frame may push hundreds of `Command` values into a single `Vec`,
     /// so every byte in the enum variant-union multiplies across the frame.
-    /// The container variants are inline since v0.26 (no allocation per
+    /// The container variants are inline (no allocation per
     /// container per frame); the widest one, `BeginScrollable`, sets the
     /// size. In the matched harness the larger copy costs less than the
     /// malloc/free pair it replaces (every workload equal or faster within

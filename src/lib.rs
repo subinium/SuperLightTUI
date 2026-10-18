@@ -88,6 +88,8 @@
 #![warn(clippy::dbg_macro)]
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
+#![warn(clippy::return_self_not_must_use)]
+#![warn(clippy::missing_panics_doc)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Animation primitives: tween, spring, keyframes, sequence, stagger.
@@ -232,7 +234,10 @@ pub use context::{
 };
 // Issue #462: modal options at the crate root; `ModalOptions` is the
 // deprecated former name, kept for one release.
-#[allow(deprecated)]
+#[expect(
+    deprecated,
+    reason = "re-exports the deprecated ModalOptions alias for one release (#462)"
+)]
 pub use context::ModalOptions;
 pub use context::ModalOpts;
 // Issue #459: element-anchored popovers and menus.

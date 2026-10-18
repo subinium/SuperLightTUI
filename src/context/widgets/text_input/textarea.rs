@@ -1,3 +1,6 @@
+//! The `textarea` widget: multi-line editing, soft wrap, visual cursor
+//! movement, selection and pointer hit-testing.
+
 use super::*;
 use crate::event::{KeyEvent, MouseEvent};
 use crate::widgets::{TextareaNavigation, grapheme_cursor_after, word_range_at};

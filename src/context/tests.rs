@@ -1,3 +1,5 @@
+//! Unit tests for [`Context`] hooks, focus, interaction slots and rollback.
+
 use super::*;
 use crate::EventBuilder;
 use crate::test_utils::TestBackend;

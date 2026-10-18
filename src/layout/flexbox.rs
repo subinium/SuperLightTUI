@@ -1,3 +1,6 @@
+//! Flexbox layout: main-axis sizing with grow / shrink / basis, gaps, wrap,
+//! justify and align for rows and columns.
+
 use super::*;
 
 /// Inline capacity for per-call layout scratch buffers.
@@ -158,8 +161,7 @@ impl Iterator for U32StackIter<'_> {
 /// Resolve `Pct` and `Ratio` width/height variants against a parent area
 /// into concrete `Fixed` widths/heights.
 ///
-/// Single match per axis (the v0.20 successor to the previous three
-/// `if let Some(pct)` blocks). [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
+/// Single match per axis. [`WidthSpec::Auto`] / [`WidthSpec::Fixed`] /
 /// [`WidthSpec::MinMax`] pass through unchanged. A `Ratio` with `den == 0`
 /// is treated as no constraint (`Auto`).
 #[inline]
@@ -297,13 +299,13 @@ fn compute_body(node: &mut LayoutNode, area: Rect, depth: usize) {
         // (or sets explicit `.w(area_w).h(area_h)` via constraints producing a
         // child whose min size already equals the area), the wrapper must
         // take the full area so flexbox `justify` / `align` inside the inner
-        // container has space to push against. Previously the wrapper was
-        // always shrunk to content min-size and centered, so:
+        // container has space to push against. A wrapper shrunk to content
+        // min-size and centered would break both of these:
         //   - `overlay(|ui| ui.container().grow(1).align(End).justify(End)…)`
-        //     never reached the bottom-right (no slack to push into).
-        //   - `overlay(|ui| ui.container().grow(1).draw(…))` rendered nothing
-        //     (raw_draw with no constraints had min-size 0×0, so the wrapper
-        //     became 0×0 and `lib.rs` skipped the empty-rect callback).
+        //     would never reach the bottom-right (no slack to push into).
+        //   - `overlay(|ui| ui.container().grow(1).draw(…))` would render
+        //     nothing (raw_draw with no constraints has min-size 0×0, so the
+        //     wrapper would be 0×0 and the empty-rect callback skipped).
         //
         // Heuristic: if any direct child requests grow, fill the full area.
         // Otherwise preserve the historic shrink-and-center behavior so plain

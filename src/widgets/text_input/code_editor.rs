@@ -112,6 +112,7 @@ impl CodeEditorState {
 
     /// Builder: highlight language, such as `"rust"`, `"py"` or `"json"`
     /// (the names [`code_block`](crate::Context::code_block) accepts).
+    #[must_use]
     pub fn lang(mut self, lang: impl Into<String>) -> Self {
         self.set_lang(Some(lang.into()));
         self
@@ -130,6 +131,7 @@ impl CodeEditorState {
 
     /// Builder: spaces per indentation level and tab-stop spacing used to
     /// display `\t` (default 4; `0` is treated as 1).
+    #[must_use]
     pub fn tab_width(mut self, width: usize) -> Self {
         self.tab_width = width.max(1);
         self
@@ -142,6 +144,7 @@ impl CodeEditorState {
 
     /// Builder: `Tab` inserts a `\t` character instead of spaces (default
     /// `false`).
+    #[must_use]
     pub fn hard_tabs(mut self, on: bool) -> Self {
         self.hard_tabs = on;
         self
@@ -150,6 +153,7 @@ impl CodeEditorState {
     /// Builder: whether `Tab` / `Shift+Tab` indent and dedent while the
     /// editor is focused (default `true`). With `false` they move focus like
     /// in any other widget.
+    #[must_use]
     pub fn tab_indents(mut self, on: bool) -> Self {
         self.tab_indents = on;
         self
@@ -162,6 +166,7 @@ impl CodeEditorState {
 
     /// Builder: whether `Enter` copies the current line's indentation
     /// (default `true`).
+    #[must_use]
     pub fn auto_indent(mut self, on: bool) -> Self {
         self.auto_indent = on;
         self

@@ -1,3 +1,5 @@
+//! Eleven-shade color palettes ([`Palette`]) and the Tailwind presets.
+
 use crate::Color;
 
 /// A color palette with 11 shades from lightest (c50) to darkest (c950).

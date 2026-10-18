@@ -1,3 +1,5 @@
+//! [`State<T>`] hook handles and the [`Response`] returned by every widget.
+
 use super::*;
 
 /// Internal discriminator for [`State<T>`] handles.
@@ -18,12 +20,12 @@ pub(crate) enum StateKey {
 ///
 /// # Note on `Copy`
 ///
-/// As of v0.20.0, `State<T>` is no longer `Copy`. The internal key may hold an
+/// `State<T>` is not `Copy`. The internal key may hold an
 /// owned `String` (for [`Context::use_state_keyed`]), which prevents trivial
 /// duplication. Existing call sites that use the handle locally (`let s =
 /// ui.use_state(...); s.get(ui);`) are unaffected — the handle is moved into
-/// closures or borrowed by reference. If you previously relied on implicit
-/// copy semantics, call `.clone()` explicitly.
+/// closures or borrowed by reference. Call `.clone()` where a second handle
+/// is needed.
 pub struct State<T> {
     key: StateKey,
     _marker: std::marker::PhantomData<T>,
@@ -309,7 +311,7 @@ impl<T: 'static> Memo<T> {
 ///
 /// # Ignoring a response
 ///
-/// Since v0.26 `Response` is not `#[must_use]` as a type: layout and display
+/// `Response` is not `#[must_use]` as a type: layout and display
 /// calls (`ui.col(..)`, `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, ...)
 /// are plain statements, with no `let _ =`. The warning is kept only where
 /// dropping the result is almost always a bug: the stateless clickable
@@ -360,7 +362,7 @@ pub struct Response {
     /// Whether the widget was left-clicked (or activated) this frame.
     ///
     /// A left press activates only the **topmost, innermost** interactive
-    /// slot under the pointer (since v0.26): a button in an overlay does not
+    /// slot under the pointer: a button in an overlay does not
     /// also click the container drawn behind it, and a clickable row inside a
     /// clickable card sets `clicked` on the row only. An ancestor opts back in
     /// with [`ContainerBuilder::bubble_clicks`]; [`clicked_any`](Self::clicked_any)
@@ -523,6 +525,10 @@ impl Response {
     /// Unlike [`Context::tooltip`], the binding is not order-sensitive:
     /// the tooltip is attached to *this* response specifically, so
     /// chaining further widgets afterward does not strip it.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_hover(self, ctx: &mut Context, text: impl Into<String>) -> Self {
         if !self.hovered || self.rect.width == 0 || self.rect.height == 0 || !ctx.tooltip_ready() {
             return self;
@@ -558,6 +564,10 @@ impl Response {
     ///     });
     /// });
     /// ```
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_hover_ui(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.hovered && self.rect.width > 0 && self.rect.height > 0 {
             f(ctx);
@@ -575,6 +585,10 @@ impl Response {
     /// ```ignore
     /// ui.button("Save").on_click(ui, |_| save());
     /// ```
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.clicked {
             f(ctx);
@@ -585,6 +599,10 @@ impl Response {
     /// Run `f` if the widget's value changed this frame, then return the
     /// Response for chaining. See [`on_click`](Self::on_click) for the closure
     /// argument convention. Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_changed(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.changed {
             f(ctx);
@@ -595,6 +613,10 @@ impl Response {
     /// Run `f` on the frame the widget *gained* keyboard focus, then return the
     /// Response for chaining. Fires once per focus acquisition (mirrors
     /// [`gained_focus`](Self::gained_focus)). Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_focus(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.gained_focus {
             f(ctx);
@@ -605,6 +627,10 @@ impl Response {
     /// Run `f` if the widget submitted this frame (e.g. `Enter` in a focused
     /// single-line text input), then return the Response for chaining. Mirrors
     /// [`submitted`](Self::submitted). Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_submit(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.submitted {
             f(ctx);
@@ -615,6 +641,10 @@ impl Response {
     /// Run `f` if the widget was double-clicked this frame, then return the
     /// Response for chaining. Mirrors [`double_clicked`](Self::double_clicked).
     /// Available since v0.21.1.
+    #[expect(
+        clippy::return_self_not_must_use,
+        reason = "runs the callback now; the returned Response only enables chaining"
+    )]
     pub fn on_double_click(self, ctx: &mut Context, f: impl FnOnce(&mut Context)) -> Self {
         if self.double_clicked {
             f(ctx);

@@ -266,6 +266,7 @@ impl PaletteCommand {
     }
 
     /// Set a shortcut hint displayed alongside the command.
+    #[must_use]
     pub fn shortcut(mut self, s: impl Into<String>) -> Self {
         self.shortcut = Some(s.into());
         self
@@ -359,6 +360,10 @@ impl ScreenState {
     }
 
     /// Return the current screen name (top of the stack).
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: a [`ScreenState`] always holds at least one screen.
     pub fn current(&self) -> &str {
         self.stack
             .last()
@@ -583,6 +588,10 @@ impl ModeState {
     ///
     /// Panics if the mode does not exist. For a non-panicking variant that
     /// reports success, use [`Self::try_switch_mode`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mode` was never registered with [`ModeState::add_mode`].
     pub fn switch_mode(&mut self, mode: impl Into<String>) {
         let mode = mode.into();
         assert!(self.modes.contains_key(&mode), "mode '{mode}' not found");
@@ -611,6 +620,10 @@ impl ModeState {
     }
 
     /// Get a reference to the active mode's screen state.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the active mode is always registered.
     pub fn screens(&self) -> &ScreenState {
         self.modes
             .get(&self.active)
@@ -618,6 +631,10 @@ impl ModeState {
     }
 
     /// Get a mutable reference to the active mode's screen state.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal invariant is broken: the active mode is always registered.
     pub fn screens_mut(&mut self) -> &mut ScreenState {
         self.modes
             .get_mut(&self.active)

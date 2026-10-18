@@ -130,7 +130,7 @@ fn review_failed_resize_metric_refresh_keeps_last_known_size() {
 }
 
 #[test]
-fn v024_failed_cell_size_queries_are_backed_off_and_resettable() {
+fn failed_cell_size_queries_are_backed_off_and_resettable() {
     let mut cache = CellPixelCache::default();
     let now = Instant::now();
     let mut queries = 0;
@@ -164,7 +164,7 @@ fn v024_failed_cell_size_queries_are_backed_off_and_resettable() {
 
 #[test]
 #[ignore = "release-mode allocation and payload-sharing experiment"]
-fn v024_terminal_preparation_benchmark() {
+fn terminal_preparation_benchmark() {
     use std::hint::black_box;
     let area = Rect::new(0, 0, 200, 60);
     let rounds = 1000;
@@ -225,7 +225,7 @@ fn deferred_inline_mouse_keeps_physical_position_after_scroll_and_resize() {
 }
 
 #[test]
-fn v024_inline_mouse_coordinates_and_pixels_after_scrollback() {
+fn inline_mouse_coordinates_and_pixels_after_scrollback() {
     let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
     term.reserved = true;
     let event = crate::Event::mouse_click(2, 10)
@@ -251,7 +251,7 @@ fn v024_inline_mouse_coordinates_and_pixels_after_scrollback() {
 }
 
 #[test]
-fn v024_scrollback_wraps_physical_rows_without_empty_exact_width_row() {
+fn scrollback_wraps_physical_rows_without_empty_exact_width_row() {
     assert_eq!(scrollback_rows("abcdefgh", 4), ["abcd", "efgh"]);
     assert_eq!(scrollback_rows("abcde", 4), ["abcd", "e"]);
     assert_eq!(scrollback_rows("a\u{754c}b", 2), ["a", "\u{754c}", "b"]);
@@ -264,7 +264,7 @@ fn v024_scrollback_wraps_physical_rows_without_empty_exact_width_row() {
 }
 
 #[test]
-fn v024_same_size_redraw_reuses_buffer_pair_but_invalidates_graphics() {
+fn same_size_redraw_reuses_buffer_pair_but_invalidates_graphics() {
     let mut term = InlineTerminal::with_sink(40, 24, 3, 10);
     let current = term.current.content.as_ptr();
     let previous = term.previous.content.as_ptr();
@@ -277,7 +277,7 @@ fn v024_same_size_redraw_reuses_buffer_pair_but_invalidates_graphics() {
 }
 
 #[test]
-fn v024_session_registry_is_owner_thread_local() {
+fn session_registry_is_owner_thread_local() {
     let id = register_active_session(SessionSnapshot {
         mode: TerminalSessionMode::Inline,
         mouse_mode: crate::MouseMode::Off,

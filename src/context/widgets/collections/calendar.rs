@@ -1,3 +1,6 @@
+//! The `calendar` date-picker widget: month grid, keyboard day navigation
+//! and month paging.
+
 use super::*;
 
 impl Context {

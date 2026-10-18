@@ -64,7 +64,10 @@ pub struct ListState {
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
     // The struct literal initialises the deprecated `selected` storage (#455).
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
         let item_search_cache: Vec<String> = items.iter().map(|s| s.to_lowercase()).collect();
@@ -212,6 +215,7 @@ impl ListState {
     /// ```
     ///
     /// Available since `0.21.0`.
+    #[must_use]
     pub fn with_item_heights(mut self, heights: Vec<u32>) -> Self {
         self.set_item_heights(heights);
         self
@@ -449,13 +453,19 @@ impl ListState {
     /// Storage accessors for the deprecated public `selected` field (#455):
     /// crate code reads and writes the view cursor through these so the
     /// deprecation only reaches downstream direct field access.
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor(&self) -> usize {
         self.selected
     }
 
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
         &mut self.selected
@@ -745,6 +755,7 @@ impl FilePickerState {
     }
 
     /// Configure whether hidden files should be shown.
+    #[must_use]
     pub fn show_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
         self.invalidate_scan();
@@ -752,6 +763,7 @@ impl FilePickerState {
     }
 
     /// Restrict visible files to the provided extensions.
+    #[must_use]
     pub fn extensions(mut self, exts: &[&str]) -> Self {
         self.extensions = exts
             .iter()
@@ -1111,7 +1123,10 @@ pub struct TableState {
 
 impl Default for TableState {
     // The struct literal initialises the deprecated `selected` storage (#455).
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     fn default() -> Self {
         Self {
             headers: Vec::new(),
@@ -1478,13 +1493,19 @@ impl TableState {
 
     /// Storage accessors for the deprecated public `selected` field (#455);
     /// see [`ListState::view_cursor`].
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor(&self) -> usize {
         self.selected
     }
 
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
         &mut self.selected
@@ -1758,7 +1779,7 @@ impl TableState {
         }
         // Default resolved widths to the content widths; `resolve_column_widths`
         // overlays the per-column specs each frame once the available width is
-        // known. When no spec is set this is the pre-v0.21 behavior verbatim.
+        // known. With no spec set the columns keep their content widths.
         self.column_widths = self.content_widths.clone();
         self.widths_dirty = false;
     }
@@ -2023,12 +2044,14 @@ impl TreeNode {
     }
 
     /// Mark this node as expanded.
+    #[must_use]
     pub fn expanded(mut self) -> Self {
         self.expanded = true;
         self
     }
 
     /// Set child nodes for this node.
+    #[must_use]
     pub fn children(mut self, children: Vec<TreeNode>) -> Self {
         self.children = children;
         self
@@ -2540,7 +2563,7 @@ impl Default for CalendarState {
 }
 
 #[cfg(test)]
-mod table_v021_width_tests {
+mod table_column_width_tests {
     use super::TableColumn;
     use super::TableState;
 
@@ -2827,7 +2850,7 @@ mod list_state_reorder_tests {
 }
 
 #[cfg(test)]
-mod v024_collection_state_tests {
+mod list_height_metadata_tests {
     use super::*;
 
     fn heights(state: &ListState) -> Vec<u32> {
@@ -2919,7 +2942,7 @@ mod v024_collection_state_tests {
 }
 
 #[cfg(test)]
-mod v026_selection_index_tests {
+mod selection_index_tests {
     //! Issue #455: selected-item reads and removal use the data index of the
     //! row the user sees highlighted, with or without a filter or sort.
     use super::*;

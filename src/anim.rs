@@ -115,6 +115,7 @@ pub fn ease_out_bounce(t: f64) -> f64 {
 /// let v = tween.value(10); // roughly halfway, eased
 /// assert!(v > 50.0);       // ease-out is faster at the start
 /// ```
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct Tween {
     from: f64,
     to: f64,
@@ -297,6 +298,7 @@ struct KeyframeStop {
 /// keyframes.reset(10);
 /// let _ = keyframes.value(40);
 /// ```
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct Keyframes {
     duration_ticks: u64,
     start_tick: u64,
@@ -501,6 +503,7 @@ struct SequenceSegment {
 /// seq.reset(0);
 /// let _ = seq.value(25);
 /// ```
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct Sequence {
     segments: Vec<SequenceSegment>,
     total_duration: u64,
@@ -646,6 +649,7 @@ impl Sequence {
 /// stagger.reset(100);
 /// let _ = stagger.value(120, 3);
 /// ```
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct Stagger {
     from: f64,
     to: f64,
@@ -918,6 +922,7 @@ fn map_loop_tick(
 ///
 /// assert!((spring.value() - 100.0).abs() < 0.01);
 /// ```
+#[must_use = "builder methods return a new value; bind or pass it"]
 pub struct Spring {
     value: f64,
     target: f64,

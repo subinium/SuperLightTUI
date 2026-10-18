@@ -318,7 +318,7 @@ pub(crate) fn run_frame_kernel(
         // too. Real TUI exits ignore this, but TestBackend reuses the same
         // FrameState across `render()` calls — without the reclaim the next
         // frame's `Context::new` `mem::take`s an empty Vec and silently
-        // reverts to v0.19 per-frame allocation.
+        // allocates per frame again.
         ctx.deferred_draws.clear();
         state.context_stack_buf = std::mem::take(&mut ctx.context_stack);
         state.deferred_draws_buf = std::mem::take(&mut ctx.deferred_draws);

@@ -215,7 +215,14 @@ mod old_writer {
 /// emoji-cluster repositioning plus #449 conservative repositioning. It still
 /// writes through crossterm `queue!` and the [`old_writer`] SGR encoder, so the
 /// differential test also proves the #495 hand-rolled writer byte-identical.
-#[allow(unused_assignments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors the production flush_buffer_diff_rows signature"
+)]
+#[expect(
+    unused_assignments,
+    reason = "mirrors the production flush_run! cursor bookkeeping"
+)]
 fn reference_flush_rows(
     stdout: &mut impl Write,
     current: &Buffer,
