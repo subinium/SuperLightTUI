@@ -602,3 +602,130 @@ fn osc8_hyperlink_emitted_verbatim_after_write_rewrite() {
         String::from_utf8_lossy(&out)
     );
 }
+
+/// Minimal terminal emulator for flush tests: applies cursor moves
+/// (`CSI row;col H`) and printable text to a symbol grid, ignoring SGR, OSC
+/// and mode sequences. A grapheme of display width `w` occupies `w` cells;
+/// the trailing cells become empty continuation markers.
+pub(super) fn apply_ansi_to_screen(screen: &mut [Vec<String>], bytes: &[u8]) {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    fn put_text(screen: &mut [Vec<String>], text: &str, row: usize, col: &mut usize) {
+        for grapheme in text.graphemes(true) {
+            let width = UnicodeWidthStr::width(grapheme).max(1);
+            if let Some(line) = screen.get_mut(row) {
+                if let Some(cell) = line.get_mut(*col) {
+                    *cell = grapheme.to_string();
+                }
+                for offset in 1..width {
+                    if let Some(cell) = line.get_mut(*col + offset) {
+                        cell.clear();
+                    }
+                }
+            }
+            *col += width;
+        }
+    }
+
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let mut i = 0usize;
+    let mut text_start = None;
+    while i < bytes.len() {
+        if bytes[i] != 0x1b {
+            text_start.get_or_insert(i);
+            i += 1;
+            continue;
+        }
+        if let Some(start) = text_start.take() {
+            let text = std::str::from_utf8(&bytes[start..i]).expect("utf-8 text run");
+            put_text(screen, text, row, &mut col);
+        }
+        match bytes.get(i + 1) {
+            Some(b'[') => {
+                let mut j = i + 2;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'H') {
+                    let params = std::str::from_utf8(&bytes[i + 2..j]).expect("ascii params");
+                    let mut parts = params.split(';');
+                    let r: usize = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+                    let c: usize = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+                    row = r.saturating_sub(1);
+                    col = c.saturating_sub(1);
+                }
+                i = j + 1;
+            }
+            Some(b']') => {
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j] != 0x07 {
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            _ => i += 2,
+        }
+    }
+    if let Some(start) = text_start {
+        let text = std::str::from_utf8(&bytes[start..]).expect("utf-8 text run");
+        put_text(screen, text, row, &mut col);
+    }
+}
+
+/// Visible symbols of `buffer` in the same shape as [`apply_ansi_to_screen`].
+pub(super) fn buffer_symbols(buffer: &Buffer) -> Vec<Vec<String>> {
+    (buffer.area.y..buffer.area.bottom())
+        .map(|y| {
+            (buffer.area.x..buffer.area.right())
+                .map(|x| buffer.get(x, y).symbol.to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// Issue #484: `"\r\n"` is one extended grapheme. It used to normalize to
+/// two `U+FFFD` (width 2, reserving a continuation cell) and then be stored
+/// as one, so the flush skipped the orphan continuation and left the previous
+/// frame's glyph on screen.
+#[test]
+fn crlf_write_leaves_no_stale_glyph_after_flush() {
+    let area = Rect::new(0, 0, 6, 1);
+    let mut screen = vec![vec![" ".to_string(); 6]];
+    let mut previous = Buffer::empty(area);
+    previous.set_string(0, 0, "aXYb", Style::new());
+    let mut out = Vec::new();
+    let mut blank = Buffer::empty(area);
+    __bench_flush_buffer_diff_mut_with_buf(
+        &mut out,
+        &mut previous,
+        &mut blank,
+        ColorDepth::TrueColor,
+        &mut String::new(),
+    )
+    .unwrap();
+    apply_ansi_to_screen(&mut screen, &out);
+    assert_eq!(screen, buffer_symbols(&previous));
+
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "a\r\nb", Style::new());
+    assert_eq!(current.get(1, 0).symbol, "\u{FFFD}");
+    assert!(!current.get(2, 0).is_continuation());
+    assert_eq!(current.get(2, 0).symbol, "b");
+
+    out.clear();
+    __bench_flush_buffer_diff_mut_with_buf(
+        &mut out,
+        &mut current,
+        &mut previous,
+        ColorDepth::TrueColor,
+        &mut String::new(),
+    )
+    .unwrap();
+    apply_ansi_to_screen(&mut screen, &out);
+    assert_eq!(
+        screen,
+        buffer_symbols(&current),
+        "stale glyph left on screen"
+    );
+}

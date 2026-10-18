@@ -2370,6 +2370,18 @@ mod tests {
         assert_eq!(assert_no_orphan_continuations(&buf), Ok(()));
     }
 
+    #[test]
+    fn crlf_grapheme_occupies_exactly_one_cell() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        buf.set_string(0, 0, "aXYb", Style::new());
+        buf.set_string(0, 0, "a\r\nb", Style::new());
+        assert_eq!(buf.get(0, 0).symbol, "a");
+        assert_eq!(buf.get(1, 0).symbol, "\u{FFFD}");
+        assert_eq!(buf.get(2, 0).symbol, "b");
+        assert_eq!(buf.get(3, 0).symbol, "b");
+        assert!((0..6).all(|x| !buf.get(x, 0).is_continuation()));
+    }
+
     /// Every continuation cell must be covered by the display width of the
     /// leading cell before it (no orphan continuation).
     fn assert_no_orphan_continuations(buf: &Buffer) -> Result<(), String> {
@@ -2388,6 +2400,33 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    mod normalization_proptest {
+        use super::*;
+        use crate::cell::test_strategies::cell_text;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(512))]
+
+            #[test]
+            fn writes_never_leave_orphan_continuations(
+                writes in prop::collection::vec((0u32..12, 0u32..3, cell_text()), 1..8),
+            ) {
+                let mut buf = Buffer::empty(Rect::new(0, 0, 12, 3));
+                for (x, y, text) in &writes {
+                    buf.set_string(*x, *y, text, Style::new());
+                    if let Some(ch) = text.chars().next() {
+                        buf.set_char(x.saturating_add(1), *y, ch, Style::new());
+                    }
+                }
+                prop_assert_eq!(assert_no_orphan_continuations(&buf), Ok(()));
+                for cell in &buf.content {
+                    prop_assert_eq!(crate::cell::normalize_cell_symbol(&cell.symbol), cell.symbol.clone());
+                }
+            }
+        }
     }
 
     mod geometry_proptest {

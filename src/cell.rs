@@ -22,16 +22,53 @@ pub(crate) fn sanitize_cell_char(ch: char) -> char {
     }
 }
 
+/// Return whether `ch` is a terminal control code point (C0, DEL or C1).
+#[inline]
+pub(crate) fn is_control_char(ch: char) -> bool {
+    sanitize_cell_char(ch) != ch
+}
+
 /// Normalize an arbitrary string into one bounded, terminal-safe grapheme.
 ///
 /// An empty result is reserved for continuation cells. Additional graphemes
 /// are discarded because a `Cell` represents exactly one display atom.
+///
+/// The result is idempotent: `normalize_cell_symbol(&normalize_cell_symbol(s))
+/// == normalize_cell_symbol(s)`. A grapheme that starts with a control code
+/// point (a lone C0/DEL/C1 control, or the two-scalar `"\r\n"` cluster)
+/// becomes exactly one `U+FFFD`, so the stored symbol always re-segments to
+/// itself and its display width equals the cells reserved for it (#484).
 pub(crate) fn normalize_cell_symbol(symbol: &str) -> CompactString {
     let Some(grapheme) = symbol.graphemes(true).next() else {
-        return CompactString::new("");
+        return CompactString::const_new("");
     };
+    normalize_grapheme(grapheme)
+}
 
-    let mut normalized = CompactString::new("");
+/// Normalize one already-segmented extended grapheme cluster.
+///
+/// Callers must pass a single grapheme (for example one item of
+/// `str::graphemes(true)`); see [`normalize_cell_symbol`] for the contract.
+pub(crate) fn normalize_grapheme(grapheme: &str) -> CompactString {
+    let mut chars = grapheme.chars();
+    let Some(first) = chars.next() else {
+        return CompactString::const_new("");
+    };
+    // UAX #29 GB4/GB5 break before and after every control except inside
+    // CR LF, so a control can only start a cluster. Collapse the whole
+    // cluster to one replacement glyph instead of one per scalar: `"\r\n"`
+    // previously became two `U+FFFD` (width 2) that re-normalized to one.
+    if is_control_char(first) {
+        return CompactString::const_new("\u{FFFD}");
+    }
+    if grapheme.len() <= MAX_CELL_SYMBOL_BYTES && !chars.any(is_control_char) {
+        return CompactString::new(grapheme);
+    }
+
+    // Defensive slow path: over-long clusters are truncated at a scalar
+    // boundary (a prefix of a cluster is still one cluster), and any control
+    // that is not at the start is replaced.
+    let mut normalized = CompactString::const_new("");
     for ch in grapheme.chars() {
         let ch = sanitize_cell_char(ch);
         if normalized.len().saturating_add(ch.len_utf8()) > MAX_CELL_SYMBOL_BYTES {
@@ -144,9 +181,80 @@ impl Cell {
     }
 }
 
+/// Proptest strategies shared by the cell, buffer and flush test suites.
+#[cfg(test)]
+pub(crate) mod test_strategies {
+    use proptest::prelude::*;
+
+    /// One text fragment drawn from the classes that stress grapheme,
+    /// width, sanitization and bidi handling.
+    pub(crate) fn fragment() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[ -~]{1,6}",
+            1 => Just("\r\n".to_string()),
+            1 => prop::sample::select(vec![
+                "\r", "\n", "\t", "\x1b", "\x07", "\x00", "\x7f", "\u{85}", "\u{9b}",
+                "\x1b[31m", "\x1b]52;c;x\x07",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "\u{301}", "\u{200D}", "\u{FE0F}", "\u{FE0E}", "\u{200B}", "\u{0903}",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "世", "界", "한", "ｱ", "👩\u{200D}💻", "❤\u{FE0F}", "🇰🇷", "\u{1100}\u{1161}\u{11A8}",
+                "e\u{301}", "क\u{094D}\u{0937}",
+            ])
+            .prop_map(str::to_string),
+            1 => prop::sample::select(vec![
+                "\u{05E9}\u{05DC}", "\u{0627}\u{0644}", "\u{202E}", "\u{200F}", "\u{2067}",
+            ])
+            .prop_map(str::to_string),
+            1 => (1usize..24).prop_map(|n| format!("a{}", "\u{301}".repeat(n))),
+            1 => any::<char>().prop_map(String::from),
+        ]
+    }
+
+    /// A string assembled from [`fragment`]s.
+    pub(crate) fn cell_text() -> impl Strategy<Value = String> {
+        prop::collection::vec(fragment(), 0..10).prop_map(|parts| parts.concat())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use unicode_width::UnicodeWidthStr;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        #[test]
+        fn normalize_cell_symbol_is_idempotent(s in test_strategies::cell_text()) {
+            let once = normalize_cell_symbol(&s);
+            prop_assert_eq!(normalize_cell_symbol(&once), once.clone());
+            prop_assert!(once.len() <= MAX_CELL_SYMBOL_BYTES);
+            prop_assert!(!once.chars().any(is_control_char));
+        }
+
+        #[test]
+        fn normalize_cell_symbol_is_idempotent_for_arbitrary_text(s in ".{0,16}") {
+            let once = normalize_cell_symbol(&s);
+            prop_assert_eq!(normalize_cell_symbol(&once), once);
+        }
+    }
+
+    #[test]
+    fn control_led_graphemes_collapse_to_one_replacement() {
+        for input in [
+            "\r\n", "\r\nb", "\r", "\n", "\x1b", "\x7f", "\u{85}", "\u{9f}",
+        ] {
+            let normalized = normalize_cell_symbol(input);
+            assert_eq!(normalized, "\u{FFFD}", "input {input:?}");
+            assert_eq!(UnicodeWidthStr::width(normalized.as_str()), 1);
+        }
+    }
 
     #[test]
     fn cell_size_within_cache_line() {
