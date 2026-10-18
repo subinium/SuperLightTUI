@@ -272,6 +272,11 @@ pub(crate) struct ContextRollbackState {
     pub(crate) scroll_count: usize,
     pub(crate) group_count: usize,
     pub(crate) group_stack: Vec<std::sync::Arc<str>>,
+    /// Issue #458: hover state of each open `group()` instance, innermost
+    /// last, so rows sharing a group name style independently.
+    pub(crate) group_hover_stack: smallvec::SmallVec<[bool; 8]>,
+    /// Issue #458: nesting depth of `Context::disabled(true, ..)` scopes.
+    pub(crate) disabled_depth: u32,
     pub(crate) overlay_depth: usize,
     pub(crate) modal_active: bool,
     pub(crate) modal_focus_start: usize,

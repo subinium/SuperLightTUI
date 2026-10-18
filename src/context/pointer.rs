@@ -291,6 +291,84 @@ fn rect_contains(rect: &Rect, (x, y): (u32, u32)) -> bool {
     x >= rect.x && x < rect.right() && y >= rect.y && y < rect.bottom()
 }
 
+/// Rect of the overlay panel under `pos`: the hit winner when it lies in an
+/// overlay layer, widened to its outermost same-layer ancestor that is
+/// smaller than the whole `area` (a full-screen light-dismiss backdrop or
+/// modal root is not a panel). `None` when `pos` hits the base layer (#459).
+pub(crate) fn overlay_panel_at(
+    hit_map: &[Rect],
+    hit_meta: &[HitMeta],
+    hit_flags: &[u8],
+    pos: (u32, u32),
+    area: (u32, u32),
+) -> Option<Rect> {
+    let winner = hit_test_slots(hit_map, hit_meta, hit_flags, pos)?;
+    if hit_meta.get(winner).is_none_or(|meta| meta.layer == 0) {
+        return None;
+    }
+    let full = |rect: &Rect| rect.width >= area.0 && rect.height >= area.1;
+    let mut cover = *hit_map.get(winner)?;
+    if full(&cover) {
+        // A press on a full-screen backdrop focuses nothing.
+        return Some(Rect::default());
+    }
+    let mut current = winner;
+    for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
+        let parent = hit_meta
+            .get(current)
+            .map_or(NO_HIT_PARENT, |meta| meta.parent);
+        if parent == NO_HIT_PARENT {
+            break;
+        }
+        current = parent as usize;
+        match hit_map.get(current) {
+            Some(rect) if !full(rect) && rect.width > 0 && rect.height > 0 => cover = *rect,
+            Some(_) => {}
+            None => break,
+        }
+    }
+    Some(cover)
+}
+
+/// Topmost, innermost non-transparent slot under `pos` in a previous-frame
+/// hit map. Shared by [`Context::hit_test`] and click-to-focus, which runs
+/// before the `Context` exists.
+pub(crate) fn hit_test_slots(
+    hit_map: &[Rect],
+    hit_meta: &[HitMeta],
+    hit_flags: &[u8],
+    pos: (u32, u32),
+) -> Option<usize> {
+    let mut best: Option<(usize, HitRank)> = None;
+    for (id, rect) in hit_map.iter().enumerate() {
+        if rect.width == 0 || rect.height == 0 || !rect_contains(rect, pos) {
+            continue;
+        }
+        if hit_flags
+            .get(id)
+            .is_some_and(|flags| flags & HIT_PASSTHROUGH != 0)
+        {
+            continue;
+        }
+        let meta = hit_meta.get(id).copied().unwrap_or_default();
+        let order = if meta.live {
+            meta.order
+        } else {
+            u32::try_from(id).unwrap_or(u32::MAX)
+        };
+        let key = (
+            meta.layer,
+            meta.depth,
+            std::cmp::Reverse(rect.area_u64()),
+            order,
+        );
+        if best.as_ref().is_none_or(|(_, best_key)| key > *best_key) {
+            best = Some((id, key));
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
 impl Context {
     /// Hand the persistent pointer pieces back to `state` at frame end. This
     /// frame's flags become the next frame's `hit_flags_prev`, and the
@@ -456,36 +534,12 @@ impl Context {
     /// Ranking: higher overlay layer, then deeper tree depth, then smaller
     /// area (matching click-to-focus), then later paint order.
     pub(crate) fn hit_test(&self, pos: (u32, u32)) -> Option<usize> {
-        let mut best: Option<(usize, HitRank)> = None;
-        for (id, rect) in self.prev_hit_map.iter().enumerate() {
-            if rect.width == 0 || rect.height == 0 || !rect_contains(rect, pos) {
-                continue;
-            }
-            if self
-                .pointer
-                .hit_flags_prev
-                .get(id)
-                .is_some_and(|flags| flags & HIT_PASSTHROUGH != 0)
-            {
-                continue;
-            }
-            let meta = self.pointer.hit_meta.get(id).copied().unwrap_or_default();
-            let order = if meta.live {
-                meta.order
-            } else {
-                u32::try_from(id).unwrap_or(u32::MAX)
-            };
-            let key = (
-                meta.layer,
-                meta.depth,
-                std::cmp::Reverse(rect.area_u64()),
-                order,
-            );
-            if best.as_ref().is_none_or(|(_, best_key)| key > *best_key) {
-                best = Some((id, key));
-            }
-        }
-        best.map(|(id, _)| id)
+        hit_test_slots(
+            &self.prev_hit_map,
+            &self.pointer.hit_meta,
+            &self.pointer.hit_flags_prev,
+            pos,
+        )
     }
 
     /// Winner slot of each press this frame, resolved once on first use.
@@ -581,6 +635,20 @@ impl Context {
                 }
                 None => self.slot_receives(id, Some(target)),
             })
+    }
+
+    /// Whether slot `id` holds a left-button capture at the end of this
+    /// frame: pressed and not yet released (CSS `:active`, #458).
+    pub(crate) fn slot_held(&self, id: usize) -> bool {
+        let key = self.slot_key(id);
+        self.gestures().capture_out.is_some_and(|capture| {
+            capture.button == MouseButton::Left
+                && match (key, capture.key) {
+                    (Some(key), Some(owner)) => key == owner,
+                    (_, Some(_)) => false,
+                    (_, None) => capture.target == Some(id),
+                }
+        })
     }
 
     /// Whether any left press this frame lands inside `rect`, ignoring the

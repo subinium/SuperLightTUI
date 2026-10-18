@@ -30,7 +30,7 @@ mod named_focus_demo;
 #[allow(dead_code)]
 mod modal_trap_demo;
 
-use slt::{Border, ButtonVariant, Context, EventBuilder, TestBackend, context::ModalOptions};
+use slt::{Border, ButtonVariant, Context, EventBuilder, ModalOpts, TestBackend};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -237,7 +237,7 @@ fn render_modal_body(ui: &mut Context, state: &mut modal_trap_demo::State) {
         });
 
     if state.show_modal {
-        let _ = ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        let _ = ui.modal_with(ModalOpts::new(), |ui| {
             let _ = ui
                 .bordered(Border::Rounded)
                 .title("Confirm")

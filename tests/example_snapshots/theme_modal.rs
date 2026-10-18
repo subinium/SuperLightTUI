@@ -9,7 +9,7 @@
 
 #![allow(unused_must_use)]
 
-use slt::{Border, ButtonVariant, Context, TestBackend, Theme, context::ModalOptions};
+use slt::{Border, ButtonVariant, Context, ModalOpts, TestBackend, Theme};
 
 // ── theme_subtree demo ──────────────────────────────────────────
 
@@ -64,7 +64,7 @@ fn render_modal_trap(ui: &mut Context, show: bool) {
         });
 
     if show {
-        let _ = ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+        let _ = ui.modal_with(ModalOpts::new(), |ui| {
             let _ = ui.bordered(Border::Rounded).p(1).col(|ui| {
                 ui.text("Confirm").bold();
                 let _ = ui.button_with("Yes", ButtonVariant::Primary);

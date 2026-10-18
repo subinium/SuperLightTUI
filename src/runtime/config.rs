@@ -783,7 +783,8 @@ impl RunConfig {
     /// Built-in time-based features request their own frames: tween, spring,
     /// keyframe, sequence and stagger animations while running,
     /// [`animate_bool`](crate::Context::animate_bool) /
-    /// [`animate_value`](crate::Context::animate_value), spinners, toasts and
+    /// [`animate_value`](crate::Context::animate_value) and their `_keyed`
+    /// forms, spinners, toasts and
     /// notifications, streaming-text cursors, `schedule` / `every` /
     /// `debounce` timers and [`elapsed`](crate::Context::elapsed), the tooltip delay,
     /// the hover timeout, key-chord timeouts and selection auto-scroll. A

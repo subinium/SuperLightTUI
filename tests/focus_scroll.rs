@@ -3,7 +3,7 @@
 //! opt-out, nested reveal, screen-scoped focus history, and saturating
 //! scroll arithmetic.
 
-use slt::context::ModalOptions;
+use slt::ModalOpts;
 use slt::{
     AppState, Backend, Buffer, Context, Event, FormField, FormFieldResponse, FormState, KeyCode,
     Rect, Response, RunConfig, ScreenState, ScrollState, TextInputState,
@@ -125,7 +125,7 @@ fn draw_form(
         });
     };
     if modal {
-        let _ = ui.modal_with(ModalOptions { tab_trap: true }, body);
+        let _ = ui.modal_with(ModalOpts::new(), body);
     } else {
         body(ui);
     }
@@ -608,7 +608,7 @@ fn modal_focus_does_not_jump_when_background_slots_are_suppressed() {
             let _ = ui.button("background A");
             let _ = ui.button("background B");
             if modal {
-                let _ = ui.modal_with(ModalOptions { tab_trap: true }, |ui| {
+                let _ = ui.modal_with(ModalOpts::new(), |ui| {
                     responses = (0..4).map(|i| ui.button(format!("modal {i}"))).collect();
                 });
             }

@@ -492,6 +492,10 @@ pub struct Response {
     pub scroll_delta: i32,
     /// The rectangle the widget occupies after layout.
     pub rect: Rect,
+    /// Whether the widget rendered inside [`Context::disabled`]`(true, ..)`.
+    /// A disabled widget reports no clicks, hover, focus or changes; only
+    /// `rect` is filled in. Available since v0.26.0.
+    pub disabled: bool,
 }
 
 impl Response {

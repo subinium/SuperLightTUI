@@ -20,11 +20,6 @@
 //! When nothing is pending the loop keeps polling input at `tick_rate`, which
 //! costs one `poll(2)` per tick, but builds no frame and writes no bytes.
 
-#[cfg(feature = "crossterm")]
-use std::hash::{Hash, Hasher};
-
-#[cfg(feature = "crossterm")]
-use crate::Buffer;
 use crate::clock::Instant;
 
 use super::FrameState;
@@ -48,8 +43,6 @@ pub(crate) struct IdleState {
     next_tick: bool,
     /// Earliest future instant the last frame asked to be redrawn at.
     deadline: Option<Instant>,
-    /// Output fingerprint of the last rendered frame.
-    fingerprint: Option<u64>,
     /// Start of the last rendered frame; the `max_fps` cap measures from it.
     last_render: Option<Instant>,
 }
@@ -238,22 +231,16 @@ fn scheduler_deadline(slot: &crate::widgets::SchedulerSlot) -> Option<Instant> {
     }
 }
 
-/// Fingerprint the frame about to be flushed and decide whether the next
-/// iteration renders a follow-up (frame kernel, before the backend flush).
-///
-/// Refreshing the row hashes here is the same work the terminal flush does
-/// first; the flush then finds every row already hashed.
+/// Decide whether the next iteration renders a follow-up, after the backend
+/// flushed a frame. `changed` is what the flush reported: whether it wrote
+/// any cell, cursor, raw-sequence or image change. The flush's span-based
+/// diff already computes this, so the check costs nothing extra.
 #[cfg(feature = "crossterm")]
-pub(crate) fn record_output(state: &mut FrameState, buffer: &mut Buffer) {
-    buffer.recompute_line_hashes();
-    let mut hasher = crate::buffer::Fnv1a::default();
-    buffer.area.hash(&mut hasher);
-    buffer.cursor_pos().hash(&mut hasher);
-    buffer.line_hashes.hash(&mut hasher);
-    let fingerprint = hasher.finish();
+pub(crate) fn record_frame_change(state: &mut FrameState, config: &RunConfig, changed: bool) {
+    if config.idle_redraw {
+        return;
+    }
     let idle = &mut state.idle;
-    let changed = idle.fingerprint != Some(fingerprint);
-    idle.fingerprint = Some(fingerprint);
     idle.follow_up = idle.signalled || changed;
 }
 
@@ -262,7 +249,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::{Context, Rect, SpinnerState, Tween};
+    use crate::{Buffer, Context, Rect, SpinnerState, Tween};
 
     fn skip_config() -> RunConfig {
         RunConfig::default().idle_redraw(false)
@@ -321,6 +308,17 @@ mod tests {
         });
         assert!(!state.idle.next_tick, "finished tween");
 
+        // #458 keyed animations sample the same tween state.
+        let mut state = FrameState::default();
+        frame(&mut state, &config, now, |ui| {
+            let _ = ui.animate_bool_keyed("row-1", false);
+        });
+        assert!(!state.idle.next_tick, "settled keyed animation");
+        frame(&mut state, &config, now, |ui| {
+            let _ = ui.animate_bool_keyed("row-1", true);
+        });
+        assert!(state.idle.next_tick, "running keyed animation");
+
         let mut state = FrameState::default();
         frame(&mut state, &config, now, |ui| {
             ui.notify("saved", crate::ToastLevel::Info);
@@ -360,25 +358,36 @@ mod tests {
         ));
     }
 
+    /// Render one frame through a real `Terminal` flush into a byte sink and
+    /// feed the flush's change report to the idle bookkeeping.
+    fn flushed_frame(
+        term: &mut crate::Terminal,
+        state: &mut FrameState,
+        config: &RunConfig,
+        text: &'static str,
+    ) -> bool {
+        let mut f = |ui: &mut Context| {
+            ui.text(text);
+        };
+        assert!(super::super::run_frame(term, state, config, Vec::new(), false, &mut f).unwrap());
+        record_frame_change(state, config, term.last_flush_changed());
+        term.last_flush_changed()
+    }
+
     #[test]
     fn loop_renders_for_signals_and_follow_ups_only() {
         let config = skip_config();
         let size = (40, 5);
         let now = Instant::now();
+        let mut term = crate::Terminal::with_sink(40, 5, crate::ColorDepth::TrueColor);
         let mut state = FrameState::default();
         let idle = LoopSignals::default();
 
         // First frame always renders; it is signalled, so one follow-up runs.
         assert!(should_render(&mut state, &config, size, idle, now));
-        let mut buffer = frame(&mut state, &config, now, |ui| {
-            ui.text("same");
-        });
-        record_output(&mut state, &mut buffer);
+        assert!(flushed_frame(&mut term, &mut state, &config, "same"));
         assert!(should_render(&mut state, &config, size, idle, now));
-        let mut buffer = frame(&mut state, &config, now, |ui| {
-            ui.text("same");
-        });
-        record_output(&mut state, &mut buffer);
+        assert!(!flushed_frame(&mut term, &mut state, &config, "same"));
         // Unchanged follow-up: the loop goes idle.
         assert!(!should_render(&mut state, &config, size, idle, now));
 
@@ -399,21 +408,18 @@ mod tests {
     fn changed_output_keeps_follow_ups_running() {
         let config = skip_config();
         let now = Instant::now();
+        let mut term = crate::Terminal::with_sink(40, 5, crate::ColorDepth::TrueColor);
         let mut state = FrameState::default();
         let idle = LoopSignals::default();
         assert!(should_render(&mut state, &config, (40, 5), idle, now));
-        let mut buffer = frame(&mut state, &config, now, |ui| {
-            ui.text("one");
-        });
-        record_output(&mut state, &mut buffer);
+        flushed_frame(&mut term, &mut state, &config, "one");
         assert!(should_render(&mut state, &config, (40, 5), idle, now));
-        let mut buffer = frame(&mut state, &config, now, |ui| {
-            ui.text("two");
-        });
-        record_output(&mut state, &mut buffer);
+        assert!(flushed_frame(&mut term, &mut state, &config, "two"));
         assert!(
             should_render(&mut state, &config, (40, 5), idle, now),
             "output changed on a follow-up frame"
         );
+        assert!(!flushed_frame(&mut term, &mut state, &config, "two"));
+        assert!(!should_render(&mut state, &config, (40, 5), idle, now));
     }
 }

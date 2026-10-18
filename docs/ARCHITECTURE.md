@@ -207,7 +207,7 @@ render method are always found under the same name:
 | `commanding` | `ChordState`, `CommandPaletteState`, `PaletteCommand`, `ScreenState`, `ModeState` | `screen`, `push_screen` / `pop_screen` / `reset_screen`, `command_palette`, `key_chord`, `key_seq` |
 | `layout` | `ScrollState`, `HighlightRange`, `SplitPaneState`, `GridColumn`, `SplitPaneResponse`, `GutterResponse` | `col` / `row` / `line`, `separator`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `grid`, `split_pane`, `scrollable_with_gutter` |
 | `display` | `Trend`, `BreadcrumbResponse` | `text` and style chains, `link`, `timer_display`, `help`, `badge`, `key_hint`, `stat`, `breadcrumb`, `accordion`, `definition_list`, `divider_text`, `empty_state` |
-| `overlay` | — | `modal`, `overlay`, `overlay_at(_offset)`, `modal_at(_offset)`, `tooltip`, `Anchor` |
+| `overlay` | `MenuState`, `MenuItem`, `MenuBarState`, `PopoverResponse` | `modal`, `modal_with` / `ModalOpts`, `overlay`, `overlay_at(_offset)`, `modal_at(_offset)` (deprecated), `popover` / `Placement`, `context_menu`, `menu_bar`, `tooltip`, `Anchor` |
 | `media` | — | `big_text`, `image`, `kitty_image(_fit)`, `sixel_image`, `iterm_image(_fit)` |
 | `viz` | — (bar data types in `context/bars.rs`, chart config in `crate::chart`) | `viz/bars.rs`, `viz/charts.rs`, `viz/heat_tree.rs`, `viz/canvas.rs`, `viz/qr.rs` |
 | `events` | — | keyboard / mouse / paste / scroll queries, theme, size, tick, quit, debug toggles |
@@ -260,8 +260,10 @@ src/
 │       │   ├── gutter.rs       # scrollable_with_gutter, GutterOpts
 │       │   ├── split.rs        # split_pane / vsplit_pane
 │       │   └── line_wrap_tests.rs
-│       ├── overlay.rs          # Anchor, modal*, overlay*, tooltip
+│       ├── overlay.rs          # Anchor, ModalOpts, modal*, overlay*, tooltip
 │       ├── overlay/
+│       │   ├── popover.rs      # Placement, flip/clamp placement, popover, floating panels
+│       │   ├── menu.rs         # context_menu, menu_bar
 │       │   └── tooltip_wrap.rs # tooltip word wrapping
 │       ├── commanding.rs       # screen stack, command_palette, key_chord / key_seq
 │       ├── text_input.rs       # text_input, form / form_field / form_submit
@@ -309,6 +311,7 @@ src/
 ├── widgets/
 │   ├── display.rs              # Trend, BreadcrumbResponse
 │   ├── layout.rs               # ScrollState, HighlightRange, SplitPaneState, GridColumn, SplitPaneResponse, GutterResponse
+│   ├── overlay.rs              # MenuItem, MenuState, MenuBarState, PopoverResponse
 │   ├── commanding.rs           # ChordState, CommandPaletteState, PaletteCommand, ScreenState, ModeState
 │   ├── text_input.rs           # TextInputState, Validator, AsyncValidation, ValidateTrigger, FormField, FormState, FormFieldResponse, TextareaState, NumberInputState
 │   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TabsState, ButtonVariant, PickerMode, ColorPickerState

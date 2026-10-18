@@ -31,3 +31,11 @@ count-alloc = []
 [profile.release]
 # Symbols for `sample` / `perf` / Instruments profiles of the release binary.
 debug = 1
+
+# Opt-in fat-LTO build for comparison runs:
+# `cargo run --profile release-lto -- time`. This crate is outside the
+# workspace, so the profile never applies to superlighttui or its users.
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

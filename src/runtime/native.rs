@@ -203,6 +203,8 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
             )? {
                 break;
             }
+            // #490: an unchanged frame lets an idle-skipping loop go quiet.
+            record_frame_change(&mut state, &config, term.last_flush_changed());
             // Issue #233: full-screen mode has no scrollback channel — warn and
             // drop any `ui.static_log(...)` lines so they do not leak into the
             // next frame's named_states.
@@ -399,6 +401,8 @@ fn run_inline_with_inner(
             )? {
                 break;
             }
+            // #490: an unchanged frame lets an idle-skipping loop go quiet.
+            record_frame_change(&mut state, &config, term.last_flush_changed());
             // Issue #233: inline mode without `StaticOutput` has no scrollback
             // channel either — warn and drop any pending lines.
             discard_static_log(&mut state, "run_inline()");
@@ -533,6 +537,10 @@ fn run_static_with_inner(
                 true,
                 &mut f,
             )?;
+            // #490: an unchanged frame lets an idle-skipping loop go quiet.
+            if keep_running {
+                record_frame_change(&mut state, &config, term.last_flush_changed());
+            }
             // Issue #233: drain any `ui.static_log(...)` lines queued during the
             // frame closure into `output`, then flush them before any exit path.
             for line in drain_static_log(&mut state) {

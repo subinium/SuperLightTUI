@@ -125,6 +125,13 @@ cargo test --release --all-features --test pty_idle idle_cpu_report -- --ignored
 | `run_async_with`, default, 16 ms tick | 4.8% | 1,698 | ~900 B/s |
 | `run_async_with`, `idle_redraw(false)`, 16 ms tick | 1.0% | 6 | 0 B/s |
 
+After the frame-kernel and flush work (#483–#489, `f14fd80`) merged, one
+15 s re-run on the same host (load ~8) measured: default 16 ms 1.03% of a
+core (832 frames), `idle_redraw(false)` 0.12% (3 frames, 0 B/s); 1 s tick
+0.07% vs 0.04%; `run_async_with` 16 ms 2.66% vs 0.91%. Cheaper frames
+narrow the gap, but an idle opted-in loop still does no frame work and
+writes nothing.
+
 "Idle output" counts bytes from 1 s after start to 0.5 s before the quit
 timer. With the default config every tick runs the closure, layout, render
 and diff and writes a synchronized-output pair (16 bytes) although nothing

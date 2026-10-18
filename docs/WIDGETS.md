@@ -148,10 +148,15 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 | `split_pane(state, left, right)` | `SplitPaneResponse` | Draggable horizontal split. `SplitPaneState` |
 | `vsplit_pane(state, top, bottom)` | `SplitPaneResponse` | Draggable vertical split. `SplitPaneState` |
 | `bordered(border)` | `ContainerBuilder` | Shorthand for `container().border(border)` |
-| `modal(f)` | `Response` | Modal overlay with dimmed background |
+| `modal(f)` | `Response` | Modal overlay with dimmed background; traps Tab and restores focus on close. Same as `modal_with(ModalOpts::default(), f)` |
+| `modal_with(opts, f)` | `Response` | Modal with `ModalOpts::new().tab_trap(bool).anchor(Anchor).offset(dx, dy)` (`modal_at` / `modal_at_offset` are deprecated wrappers) |
 | `overlay(f)` | `Response` | Floating overlay (no dimming) |
+| `popover(anchor_rect, placement, f)` | `PopoverResponse` | Bordered panel next to an element (`Placement::{Below, BelowEnd, Above, AboveEnd, Right, Left}`), flips at screen edges, clamped inside; `.dismissed` on `Esc` / outside press, `.placement` after flipping |
+| `context_menu(&mut MenuState, &response)` | `Option<String>` | Right-click / `Shift+F10` / `Menu`-key menu; keyboard navigation, submenus, outside click closes without clicking through, focus returns to the trigger |
+| `menu_bar(&mut MenuBarState)` | `Option<String>` | Application menu bar: click, `F10`, `Alt+letter`; Left/Right switch menus |
 | `tooltip(text)` | `()` | Hover tooltip near cursor |
-| `group(name)` | `ContainerBuilder` | Named group for shared hover/focus styling |
+| `group(name)` | `ContainerBuilder` | Named group whose `group_hover_*` styles follow that group instance's hover |
+| `disabled(cond, f)` | `R` | Disable every widget in `f`: no focus, clicks or keys, dim style, `Response::disabled`; Tab skips them without renumbering later widgets |
 | `screen(name, &mut screens, f)` | `()` | Conditional rendering when named screen is active. Hook-isolated. `ScreenState` |
 | `form(state, f)` | `&mut Self` | Form container. `FormState` |
 | `form_field(field)` | `&mut Self` | Single form field. `FormField` |
@@ -189,7 +194,7 @@ All return `Response`. Most have a `_colored(&WidgetColors)` variant.
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
 | `code_editor(state)` | `CodeEditorState` | Builder (renders on Drop, `.show()` returns `Response`; `changed` when the text changed). Editable code field on a `TextareaState` (same keys, selection, clipboard and undo / redo) with a right-aligned line-number gutter (`.line_numbers(false)` hides it), syntax highlighting from `CodeEditorState::lang("rust")` (needs the `syntax-*` feature; plain text otherwise, same editing), current-line tint (`.current_line(false)`), bracket-match highlight (`.bracket_match(false)`), horizontal scrolling or `.wrap(true)`, `.h(rows)`, `.w(cols)`. Tab inserts spaces to the next tab stop (`CodeEditorState::tab_width`, `hard_tabs`), Tab / Shift+Tab indent / dedent a multi-line selection, Enter keeps the indentation (one level more after `{`, `(`, `[`), PageUp / PageDown page. While focused it owns Tab (`tab_indents(false)` gives it back to focus traversal). Only visible rows render and only the highlight chunk containing an edit is re-highlighted |
-| `select(state)` | `SelectState` | Dropdown select. Variant: `select_colored(...)` |
+| `select(state)` | `SelectState` | Dropdown select; the open list floats over the content below (above near the bottom edge). Variant: `select_colored(...)` |
 | `radio(state)` | `RadioState` | Radio button group. Variant: `radio_colored(...)` |
 | `multi_select(state)` | `MultiSelectState` | Multi-select checkbox list |
 | `tabs(state)` | `TabsState` | Tab bar. Variant: `tabs_colored(...)` |
@@ -309,6 +314,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 |---|---|---|
 | `register_focusable()` | `bool` | Register current widget as focusable, returns whether it has focus |
 | `interaction()` | `Response` | Get click/hover Response for current interaction slot |
+| `disabled(cond, f)` / `is_disabled()` | `R` / `bool` | Disabled scope for built-in and custom widgets |
 | `widget(w)` | `W::Response` | Render a custom `Widget` trait implementor |
 | `error_boundary(f)` | — | Catch panics in closure, render error message. Variant: `error_boundary_with(f, fallback)` |
 | `focus_index()` | `usize` | Current focus index |
@@ -378,6 +384,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `textarea` | `TextareaState` | `.lines: Vec<String>`, `.cursor_row`, `.cursor_col`, `.wrap_width: Option<u32>`, `.max_length`, `.selection()`, `.selected_text()`, `.select_all()` |
 | `code_editor` | `CodeEditorState` | `::new(source)`, `.lang("rust")`, `.tab_width(n)`, `.hard_tabs(bool)`, `.tab_indents(bool)`, `.auto_indent(bool)`, `.value()`, `.set_value(s)`, `.lines()`, `.cursor()`, `.set_cursor(row, col)`, `.textarea()` / `.textarea_mut()` |
 | `select` | `SelectState` | `.items()`, `.set_items(...)`, `.selected`, `.open`, `.filter` |
+| `context_menu` | `MenuState` | `::new(items)`, `.items: Vec<MenuItem>`, `.is_open()`, `.open_at(rect)`, `.close()`, `.cursor()`; `MenuItem::new(id, label)`, `::separator()`, `::submenu(id, label, children)`, `.shortcut(hint)`, `.disabled(bool)` |
+| `menu_bar` | `MenuBarState` | `::new([(title, items)])`, `.menus`, `.is_active()`, `.is_open()`, `.selected()`, `.close()` |
 | `radio` | `RadioState` | `.items: Vec<String>`, `.selected: usize` |
 | `multi_select` | `MultiSelectState` | `.items()`, `.set_items(...)`, `.cursor`, `.selected` |
 | `tabs` | `TabsState` | `.labels: Vec<String>`, `.selected: usize`, `::new(labels)` |
@@ -427,8 +435,12 @@ Finalize with `.col(f)`, `.row(f)`, or `.draw(f)`.
 | `.dark_border_style(style)` | Border style override in dark mode |
 | `.bg(color)` / `.dark_bg(color)` | Background color (with dark mode variant) |
 | `.text_color(color)` | Default text color for children |
-| `.group_hover_bg(color)` | Background on group hover |
-| `.group_hover_border_style(style)` | Border style on group hover |
+| `.hover_bg(color)` / `.hover_fg(color)` / `.hover_border_fg(color)` | `:hover`: this container's own rect is under the pointer |
+| `.focus_bg(color)` / `.focus_fg(color)` / `.focus_border_fg(color)` | `:focus`: the focusable registered right before the container holds focus |
+| `.focus_within_bg(color)` / `.focus_within_border_fg(color)` | `:focus-within`: a widget inside holds focus |
+| `.active_bg(color)` / `.active_fg(color)` / `.active_border_fg(color)` | `:active`: left button held after pressing the container |
+| `.group_hover_bg(color)` | Background while the enclosing group instance is hovered (not on focus) |
+| `.group_hover_border_style(style)` | Border style while the enclosing group instance is hovered |
 | `.title(text)` / `.title_styled(text, style)` | Title displayed in border |
 
 ### Spacing
@@ -518,7 +530,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets/display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
 | `src/context/widgets/display/status.rs` | `help`, `help_colored`, `badge`, `stat`, `breadcrumb`, `accordion`, `divider_text`, `definition_list`, `empty_state`, `key_hint` |
 | `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `separator`, `separator_colored` (+ `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
-| `src/context/widgets/overlay.rs` | `modal`, `overlay`, `overlay_at`, `modal_at`, `tooltip`, `Anchor` |
+| `src/context/widgets/overlay.rs` | `modal`, `modal_with`, `ModalOpts`, `overlay`, `overlay_at`, `tooltip`, `Anchor` (+ `overlay/popover.rs` (`popover`, `Placement`), `overlay/menu.rs` (`context_menu`, `menu_bar`)) |
 | `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord`, `key_seq` |
 | `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`, `text_input/code_editor.rs` (`code_editor`)) |
 | `src/context/widgets/feedback.rs` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar` (+ `feedback/gauge.rs`) |

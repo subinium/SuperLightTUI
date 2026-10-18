@@ -255,7 +255,7 @@ impl LayoutNode {
         constraints: Constraints,
     ) -> Self {
         let (cursor_offset, wrap, truncate) = text_meta;
-        let width = crate::width::str_width(content.as_str()) as u32;
+        let width = crate::cell::display_width(&content) as u32;
         Self {
             kind: NodeKind::Text,
             text_data: Some(Box::new(TextNodeData {
@@ -312,9 +312,8 @@ impl LayoutNode {
         constraints: Constraints,
     ) -> Self {
         let width = segments.iter().fold(0u32, |total, (text, _)| {
-            total.saturating_add(
-                u32::try_from(crate::width::str_width(text.as_str())).unwrap_or(u32::MAX),
-            )
+            total
+                .saturating_add(u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX))
         });
         Self {
             kind: NodeKind::Text,
@@ -1572,11 +1571,16 @@ fn build_children(
                 let mut overlay_node =
                     LayoutNode::container(Direction::Column, default_container_config());
                 overlay_node.interaction_id = pending_interaction_id.take();
-                build_children(&mut overlay_node, commands, overlays, true, depth + 1);
+                // #459: reserve this layer's paint slot before its children,
+                // so an overlay opened inside it (a select dropdown or menu in
+                // a modal) paints and hit-tests above it, not below.
+                let slot = overlays.len();
                 overlays.push(OverlayLayer {
-                    node: overlay_node,
+                    node: LayoutNode::container(Direction::Column, default_container_config()),
                     modal,
                 });
+                build_children(&mut overlay_node, commands, overlays, true, depth + 1);
+                overlays[slot].node = overlay_node;
             }
             Command::Spacer { grow } => parent.children.push(LayoutNode::spacer(grow)),
             Command::RawDraw {

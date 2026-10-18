@@ -175,13 +175,11 @@ fn sprixel_intersects_rows(placement: &crate::buffer::SprixelPlacement, rows: &[
 /// A pure text edit landing on a [`SprixelCell::Transparent`] cell never marks
 /// damage, so the graphic is not re-emitted.
 ///
-/// The footprint scan short-circuits an entire footprint row when that row was
-/// untouched this frame *and* hashes identically to the previous frame
-/// (`current.row_clean(y) && current.row_hash(y) == previous.row_hash(y)`):
-/// no cell in such a row can have changed, so no ink can have been annihilated.
-/// On the headless / direct-call path (where `recompute_line_hashes` was not
-/// run) every row reports dirty, so the shortcut never fires and the per-cell
-/// scan runs exactly as before — preserving correctness.
+/// The footprint scan short-circuits an entire footprint row when the
+/// written-span comparison proves it identical to the previous frame
+/// ([`crate::buffer::row_diff_range`] returns `None`): no cell in such a row can
+/// have changed, so no ink can have been annihilated. Buffers without a shared
+/// layout always take the per-cell scan.
 fn sprixel_needs_reblit(
     placement: &crate::buffer::SprixelPlacement,
     current: &Buffer,
@@ -208,12 +206,18 @@ fn sprixel_needs_reblit(
     // Annihilation scan: a covered text cell that changed since last frame and
     // now shows ink forces a re-blit. `Transparent` cells are skipped so free
     // text edits in graphic gaps emit zero sprixel bytes.
+    let layout_shared = crate::buffer::same_layout(current, previous);
     for row in 0..placement.rows {
         let y = placement.y + row;
-        // Per-row shortcut: a row that was not touched this frame and whose
-        // cached digest matches the previous frame's cannot contain a changed
-        // cell, so the whole footprint row is skipped without per-cell work.
-        if current.row_clean(y) && current.row_hash(y) == previous.row_hash(y) {
+        // Per-row shortcut: a row the written spans prove identical to the
+        // previous frame cannot contain a changed cell, so the whole
+        // footprint row is skipped without per-cell work.
+        if layout_shared
+            && y >= current.area.y
+            && y < current.area.bottom()
+            && crate::buffer::row_diff_range(current, previous, (y - current.area.y) as usize)
+                .is_none()
+        {
             continue;
         }
         for col in 0..placement.cols {

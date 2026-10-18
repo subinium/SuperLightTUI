@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 766f859ef9cde08c34165edf7417c393b3af16e39ee268e19ac5223de6aad7cd # shrinks to origin = (2, 1), width = 12, height = 1, ops = [Text { x: 3, y: 1, text: "a\u{301}a AAaa\u{301}a世", style: 0, linked: false }, Text { x: 1, y: 1, text: "a 0 \u{202b}0  0世a\u{301}", style: 0, linked: false }]
+cc cd8237622275b6a075ad59838361f6b63060d876b58f82d22c2cc074504d6555 # shrinks to writes = [(0, 0, "a0世ः\u{202e}")]

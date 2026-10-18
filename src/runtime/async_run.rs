@@ -444,6 +444,8 @@ fn run_async_loop_inner<M: Send + 'static>(
                 )? {
                     break;
                 }
+                // #490: an unchanged frame lets an idle-skipping loop go quiet.
+                record_frame_change(&mut state, &config, term.last_flush_changed());
                 // Issue #233: full-screen async mode has no scrollback channel —
                 // warn and drop any pending static_log lines.
                 discard_static_log(&mut state, "run_async()");

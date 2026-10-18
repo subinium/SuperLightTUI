@@ -617,6 +617,105 @@ let mut dropdown = SelectState::new(vec!["Low", "Medium", "High"])
 ui.select(&mut dropdown);
 ```
 
+Since 0.26 the open list floats in an overlay below the trigger (above it near
+the bottom edge) instead of pushing the following widgets down. A click
+outside closes it and does not reach the widget underneath.
+
+## MenuState
+
+Source: `src/widgets/overlay.rs`.
+
+Context menu for `ui.context_menu(&mut menu, &trigger_response)`.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `items` | `Vec<MenuItem>` | Menu entries. Edit while the menu is closed. |
+
+Open state, anchor and keyboard cursor are private.
+
+### Constructors
+
+- `MenuState::new(items: Vec<MenuItem>) -> Self`
+- `MenuState::default() -> Self`
+
+### Methods
+
+| Signature | Description |
+|-----------|-------------|
+| `is_open(&self) -> bool` | Whether the menu is open. |
+| `open_at(&mut self, anchor: Rect)` | Open programmatically below `anchor` (a zero-size rect opens at that cell). |
+| `close(&mut self)` | Close the menu and any submenu. |
+| `cursor(&self) -> Option<usize>` | Highlighted entry in the innermost open level. |
+
+### MenuItem
+
+`MenuItem::new(id, label)` is an action; `MenuItem::separator()` a rule;
+`MenuItem::submenu(id, label, children)` opens a nested menu. Chain
+`.shortcut("Ctrl+S")` (display-only hint) and `.disabled(bool)`. Public
+fields: `id`, `label`, `shortcut`, `disabled`, `children`; `is_separator()`
+and `has_submenu()` inspect the kind.
+
+### Minimal example
+
+```rust
+let mut menu = MenuState::new(vec![
+    MenuItem::new("copy", "Copy").shortcut("Ctrl+C"),
+    MenuItem::separator(),
+    MenuItem::new("delete", "Delete").disabled(true),
+]);
+let row = ui.button("notes.md");
+if let Some(id) = ui.context_menu(&mut menu, &row) {
+    // run the command named `id`
+}
+```
+
+One `MenuState` can serve every row of a list: the open menu is handled once
+per frame, and the row whose call turned `is_open()` from `false` to `true`
+is the one that opened it.
+
+## MenuBarState
+
+Source: `src/widgets/overlay.rs`.
+
+Application menu bar for `ui.menu_bar(&mut bar)`.
+
+### Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `menus` | `Vec<(String, Vec<MenuItem>)>` | `(title, entries)` per menu, in display order. |
+
+Active / open state, the selected title and the dropdown cursor are private.
+
+### Constructors
+
+- `MenuBarState::new(menus: impl IntoIterator<Item = (impl Into<String>, Vec<MenuItem>)>) -> Self`
+- `MenuBarState::default() -> Self`
+
+### Methods
+
+| Signature | Description |
+|-----------|-------------|
+| `titles(&self) -> impl Iterator<Item = &str>` | Menu titles in order. |
+| `is_active(&self) -> bool` | Whether the bar holds the keyboard (after `F10`, `Alt+letter` or a title click). |
+| `is_open(&self) -> bool` | Whether a dropdown is open. |
+| `selected(&self) -> usize` | Highlighted title. |
+| `close(&mut self)` | Deactivate the bar and close its dropdown. |
+
+### Minimal example
+
+```rust
+let mut bar = MenuBarState::new(vec![
+    ("File", vec![MenuItem::new("open", "Open"), MenuItem::new("quit", "Quit")]),
+    ("Help", vec![MenuItem::new("about", "About")]),
+]);
+if let Some(id) = ui.menu_bar(&mut bar) {
+    // run the command named `id`
+}
+```
+
 ## RadioState
 
 Source: `src/widgets/selection.rs`.
