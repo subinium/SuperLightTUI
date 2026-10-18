@@ -165,6 +165,143 @@ fn textarea_memory() {
     }
 }
 
+/// Like [`measure`], but every sample runs `operation` on a fresh value from
+/// `setup`; setup and drop are neither timed nor counted. Prints the same CSV
+/// columns. Used where an operation mutates its input (a paste grows the
+/// document), so repeated samples would otherwise measure different inputs.
+fn measure_fresh<T>(
+    name: &str,
+    samples: usize,
+    mut setup: impl FnMut() -> T,
+    mut operation: impl FnMut(&mut T),
+) {
+    for _ in 0..3 {
+        let mut value = setup();
+        operation(&mut value);
+    }
+    let mut times = Vec::with_capacity(samples);
+    let (mut calls, mut bytes, mut peak) = (0usize, 0usize, 0usize);
+    for _ in 0..samples {
+        let mut value = setup();
+        let start_live = LIVE.load(Relaxed);
+        CALLS.store(0, Relaxed);
+        BYTES.store(0, Relaxed);
+        PEAK.store(start_live, Relaxed);
+        COUNTING.store(true, Relaxed);
+        let start = Instant::now();
+        operation(&mut value);
+        times.push(start.elapsed().as_nanos() as f64);
+        COUNTING.store(false, Relaxed);
+        calls += CALLS.load(Relaxed);
+        bytes += BYTES.load(Relaxed);
+        peak = peak.max(PEAK.load(Relaxed).saturating_sub(start_live));
+        drop(value);
+    }
+    times.sort_by(f64::total_cmp);
+    let p95 = (samples * 95).div_ceil(100) - 1;
+    println!(
+        "{name},{:.1},{:.1},{:.2},{:.2},n/a,{peak}",
+        times[samples / 2],
+        times[p95],
+        calls as f64 / samples as f64,
+        bytes as f64 / samples as f64
+    );
+}
+
+/// Issue #415: one paste of a 100 KB / 1 MB payload at the end or in the
+/// middle of a 1 KB / 100 KB / 1 MB document, per alphabet. Each sample is a
+/// full 80x24 frame (input handling, undo recording, `changed` detection and
+/// rendering) on a fresh clone of a document whose history already holds one
+/// edit, so undo recording is measured in its steady state rather than as the
+/// first snapshot. Opt-in because the 1 MB rows are slow.
+fn textarea_paste() {
+    if std::env::var("SLT_AUDIT_FILTER").ok().as_deref() != Some("textarea_paste") {
+        return;
+    }
+    let block = |glyph: &str, bytes: usize| {
+        let row = format!("{}\n", glyph.repeat(40));
+        let mut text = row.repeat((bytes / row.len()).max(1));
+        text.pop();
+        text
+    };
+    for (alphabet, glyph) in [
+        ("ascii", "a"),
+        ("cjk", "\u{d55c}"),
+        ("zwj", "\u{1f469}\u{200d}\u{1f4bb}"),
+    ] {
+        for doc in [1_000, 100_000, 1_000_000] {
+            let mut base = slt::TextareaState::new();
+            base.set_value(block(glyph, doc));
+            let mut backend = TestBackend::new(80, 24);
+            // Seed the history with one edit so the measured paste records a
+            // steady-state undo step.
+            backend.render_with_events(slt::EventBuilder::new().key('x').build(), 0, 1, |ui| {
+                let _ = ui.textarea(&mut base, 23);
+            });
+            for payload_bytes in [100_000, 1_000_000] {
+                let payload = block(glyph, payload_bytes);
+                for position in ["end", "middle"] {
+                    let mut seeded = base.clone();
+                    if position == "end" {
+                        seeded.cursor_row = seeded.lines.len() - 1;
+                        seeded.cursor_col = 40;
+                    } else {
+                        seeded.cursor_row = seeded.lines.len() / 2;
+                        seeded.cursor_col = 20;
+                    }
+                    let samples = if doc + payload_bytes > 1_000_000 {
+                        21
+                    } else {
+                        41
+                    };
+                    measure_fresh(
+                        &format!(
+                            "textarea_paste/{alphabet}/doc={doc}/paste={payload_bytes}/{position}"
+                        ),
+                        samples,
+                        || seeded.clone(),
+                        |state| {
+                            backend.render_with_events(
+                                slt::EventBuilder::new().paste(&payload).build(),
+                                0,
+                                1,
+                                |ui| {
+                                    let _ = ui.textarea(state, 23);
+                                },
+                            );
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Issue #415: idle frames of a soft-wrapped 1 MB textarea (no edits).
+fn textarea_wrapped_idle() {
+    if std::env::var("SLT_AUDIT_FILTER").ok().as_deref() != Some("textarea_wrapped_idle") {
+        return;
+    }
+    for (alphabet, glyph) in [("ascii", "a"), ("cjk", "\u{d55c}")] {
+        let row = format!("{}\n", glyph.repeat(40));
+        let mut text = row.repeat(1_000_000 / row.len());
+        text.pop();
+        let mut input = slt::TextareaState::new().word_wrap(60);
+        input.set_value(text);
+        input.cursor_row = input.lines.len() - 1;
+        let mut backend = TestBackend::new(80, 24);
+        measure(
+            &format!("textarea_wrapped_idle/{alphabet}/1000000/wrap=60"),
+            1,
+            || {
+                backend.render(|ui| {
+                    let _ = ui.textarea(&mut input, 23);
+                });
+            },
+        );
+    }
+}
+
 fn main() {
     println!(
         "# alloc_diagnostics; release={}; arch={}; os={}; warmup=32; samples=101; p95=sorted[95]; timings=instrumented kernel wall ns; bytes=allocator requests, not RSS; retained/peak=sample-window requested live bytes; no terminal flush/idle CPU",
@@ -176,6 +313,8 @@ fn main() {
         "workload,p50_ns,p95_ns,alloc_calls,requested_bytes,retained_delta_bytes,peak_extra_bytes"
     );
     textarea_memory();
+    textarea_paste();
+    textarea_wrapped_idle();
     for (width, height) in [(80, 24), (120, 40), (240, 80)] {
         let mut backend = TestBackend::new(width, height);
         measure(&format!("idle_kernel/{width}x{height}"), 1, || {
