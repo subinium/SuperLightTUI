@@ -293,8 +293,10 @@ pub fn breadcrumb(&mut self, segments: &[&str]) -> (Response, Option<usize>);
 //   .0 / .1 access, no `.hovered` shortcut, no `#[must_use]` enforcement
 ```
 
-The `#[must_use]` attribute on every `*Response` is mandatory — it catches the common bug of dropping
-a meaningful response without checking it.
+The `#[must_use]` attribute on every compound `*Response` is mandatory — it catches the common bug of dropping
+a meaningful response without checking it. The plain `Response` is the exception (since v0.26): it is
+returned by nearly every layout and display call, so the attribute sits on the individual methods whose
+result is their only output (`button`, `button_colored`, `button_with`) instead of on the type.
 
 ---
 

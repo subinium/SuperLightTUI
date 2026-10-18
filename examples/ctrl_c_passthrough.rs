@@ -85,7 +85,7 @@ pub struct DemoState {
 /// Ctrl+C / Ctrl+G presses advance.
 fn body(ui: &mut Context, ctrl_c_count: u32) -> bool {
     let mut button_clicked = false;
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         ui.styled(
             "Ctrl+C passthrough demo (issue #238)",
             Style::new().bold().fg(Color::Cyan),

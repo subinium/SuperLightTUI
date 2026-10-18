@@ -165,6 +165,14 @@ impl EventBuilder {
         self
     }
 
+    /// Append a hover at `(x, y)`: pointer motion with no button held.
+    ///
+    /// Alias of [`mouse_move`](EventBuilder::mouse_move), named after what
+    /// the test usually checks (`hovered`, `group_hover_*`). Since 0.26.0.
+    pub fn hover(self, x: u32, y: u32) -> Self {
+        self.mouse_move(x, y)
+    }
+
     /// Append a mouse drag (movement with the left button held) at `(x, y)`.
     pub fn drag(mut self, x: u32, y: u32) -> Self {
         self.events.push(Event::mouse_drag(x, y));
@@ -494,7 +502,13 @@ impl TestBackend {
         Ok(())
     }
 
-    /// Render with injected events and focus state for interaction testing.
+    /// Render with injected events and an explicit focus state.
+    ///
+    /// Overwrites the carried focus slot (`focus_index`) and the previous
+    /// frame's focusable count before the frame. Use it to force focus, for
+    /// example `render_with_events(events, 0, 0, f)` to start from slot 0;
+    /// [`step`](Self::step) and [`run_with_events`](Self::run_with_events)
+    /// keep the focus state instead.
     pub fn render_with_events(
         &mut self,
         events: Vec<Event>,
@@ -512,9 +526,63 @@ impl TestBackend {
         );
     }
 
-    /// Convenience wrapper: render with events using default focus state.
+    /// Render one frame with `events`, keeping the focus, hover and hook
+    /// state carried from the previous frame.
+    ///
+    /// Since v0.26 this no longer resets focus to slot 0 before the frame, so
+    /// "press Tab, then type" reaches the widget a user would see focused.
+    /// It is [`step`](Self::step) for a one-off `FnOnce` closure. To force a
+    /// focus slot (the pre-0.26 behaviour), call
+    /// [`render_with_events(events, 0, 0, f)`](Self::render_with_events).
     pub fn run_with_events(&mut self, events: Vec<Event>, f: impl FnOnce(&mut crate::Context)) {
-        self.render_with_events(events, 0, 0, f);
+        self.render_frame(events, |_| {}, f);
+    }
+
+    /// Render one frame with `events`, keeping focus, hover and hook state
+    /// from the previous frame, and return `self` for chaining.
+    ///
+    /// `f` is borrowed rather than consumed, so a whole interaction sequence
+    /// runs one render closure over plain `&mut` state, with no `RefCell`:
+    ///
+    /// ```
+    /// use slt::{KeyCode, TestBackend, TextInputState};
+    ///
+    /// let mut tb = TestBackend::new(30, 4);
+    /// let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
+    /// let mut app = |ui: &mut slt::Context| {
+    ///     ui.text_input(&mut a);
+    ///     ui.text_input(&mut b);
+    /// };
+    /// tb.step(vec![], &mut app)
+    ///     .press(KeyCode::Tab, &mut app)
+    ///     .type_text("x", &mut app);
+    /// // `app` borrows `a` and `b` until its last use above.
+    /// assert_eq!(a.value, "");
+    /// assert_eq!(b.value, "x");
+    /// ```
+    ///
+    /// Since 0.26.0.
+    pub fn step(&mut self, events: Vec<Event>, f: &mut impl FnMut(&mut Context)) -> &mut Self {
+        self.render_frame(events, |_| {}, &mut *f);
+        self
+    }
+
+    /// [`step`](Self::step) with a single key press (no modifiers).
+    ///
+    /// Since 0.26.0.
+    pub fn press(&mut self, code: KeyCode, f: &mut impl FnMut(&mut Context)) -> &mut Self {
+        self.step(vec![Event::key(code)], f)
+    }
+
+    /// Type `s` one character per frame through [`step`](Self::step),
+    /// keeping focus between characters.
+    ///
+    /// Since 0.26.0.
+    pub fn type_text(&mut self, s: &str, f: &mut impl FnMut(&mut Context)) -> &mut Self {
+        for ch in s.chars() {
+            self.step(vec![Event::key(KeyCode::Char(ch))], f);
+        }
+        self
     }
 
     /// Number of live frame-clock scheduler timer slots persisted after the

@@ -344,12 +344,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
         let th = ui.height();
         let grid_dim = slt::Style::new().fg(Color::Indexed(237));
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("SLT Infoviz")
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(tabs);
+                ui.tabs(tabs);
 
                 match tabs.selected {
                     // ── Tab 0: Overview ──────────────────────────────────
@@ -361,13 +360,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let ch1 = r1h.saturating_sub(2).max(4);
                         let ch23 = r23h.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(2).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(2).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Multi-Series")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.line(&cpu_data).label("CPU").color(Color::Cyan);
                                             c.scatter(&mem_data)
@@ -381,8 +379,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch1,
                                     );
                                 });
-                            let _ = ui.bordered(Border::Single).title("P&L").grow(1).col(|ui| {
-                                let _ = ui.chart(
+                            ui.bordered(Border::Single).title("P&L").grow(1).col(|ui| {
+                                ui.chart(
                                     |c| {
                                         c.line(&profit_data).label("P&L").color(Color::Green);
                                         c.axhline(0.0, slt::Style::new().fg(Color::Red).dim());
@@ -393,8 +391,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     ch1,
                                 );
                             });
-                            let _ = ui.bordered(Border::Single).title("Area").grow(1).col(|ui| {
-                                let _ = ui.chart(
+                            ui.bordered(Border::Single).title("Area").grow(1).col(|ui| {
+                                ui.chart(
                                     |c| {
                                         c.area(&area_data).label("Growth").color(Color::Cyan);
                                         c.grid(true);
@@ -409,7 +407,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     .title("Direction")
                                     .grow(1)
                                     .col(|ui| {
-                                        let _ = ui.chart(
+                                        ui.chart(
                                             |c| {
                                                 c.line(&direction_data)
                                                     .label("Price")
@@ -425,55 +423,56 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         );
                                     });
                         });
-                        let _ =
-                            ui.container().grow(1).row(|ui| {
-                                let _ = ui.bordered(Border::Single).title("Bar Chart").grow(1).col(
-                                    |ui| {
-                                        let _ = ui.bar_chart_with(
-                                            &bars,
-                                            |c| {
-                                                c.direction(BarDirection::Horizontal);
-                                            },
-                                            cols4.saturating_sub(14),
-                                        );
-                                    },
-                                );
-                                let _ = ui
-                                    .bordered(Border::Single)
-                                    .title("Candlestick HD")
+                        let _ = ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
+                                .title("Bar Chart")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.bar_chart_with(
+                                        &bars,
+                                        |c| {
+                                            c.direction(BarDirection::Horizontal);
+                                        },
+                                        cols4.saturating_sub(14),
+                                    );
+                                });
+                            ui.bordered(Border::Single)
+                                .title("Candlestick HD")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.candlestick_hd(
+                                        &candles,
+                                        Color::Rgb(38, 166, 91),
+                                        Color::Rgb(234, 57, 67),
+                                    );
+                                });
+                            let _ =
+                                ui.bordered(Border::Single)
+                                    .title("Heatmap HD")
                                     .grow(1)
                                     .col(|ui| {
-                                        let _ = ui.candlestick_hd(
-                                            &candles,
-                                            Color::Rgb(38, 166, 91),
-                                            Color::Rgb(234, 57, 67),
+                                        let heat: Vec<Vec<f64>> = (0..ch23 as usize * 2)
+                                            .map(|r| {
+                                                (0..cols4 as usize)
+                                                    .map(|c| ((r * 3 + c * 7) % 20) as f64)
+                                                    .collect()
+                                            })
+                                            .collect();
+                                        ui.heatmap_halfblock(
+                                            &heat,
+                                            cols4,
+                                            ch23,
+                                            Color::Rgb(20, 20, 60),
+                                            Color::Rgb(255, 100, 50),
                                         );
                                     });
-                                let _ =
-                                    ui.bordered(Border::Single).title("Heatmap HD").grow(1).col(
-                                        |ui| {
-                                            let heat: Vec<Vec<f64>> = (0..ch23 as usize * 2)
-                                                .map(|r| {
-                                                    (0..cols4 as usize)
-                                                        .map(|c| ((r * 3 + c * 7) % 20) as f64)
-                                                        .collect()
-                                                })
-                                                .collect();
-                                            let _ = ui.heatmap_halfblock(
-                                                &heat,
-                                                cols4,
-                                                ch23,
-                                                Color::Rgb(20, 20, 60),
-                                                Color::Rgb(255, 100, 50),
-                                            );
-                                        },
-                                    );
-                                let _ = ui.bordered(Border::Single).title("Treemap").grow(1).col(
-                                    |ui| {
-                                        let _ = ui.treemap(&treemap_items);
-                                    },
-                                );
-                            });
+                            ui.bordered(Border::Single)
+                                .title("Treemap")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.treemap(&treemap_items);
+                                });
+                        });
                     }
 
                     // ── Tab 1: Lines & Areas ─────────────────────────────
@@ -483,13 +482,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Sine + Cosine (60 pts)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.line(&sine_data).label("sin").color(Color::Cyan);
                                             c.line(&cosine_data).label("cos").color(Color::Yellow);
@@ -502,12 +500,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("P&L + Reference Lines")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.line(&profit_data).label("P&L").color(Color::Green);
                                             c.axhline(0.0, slt::Style::new().fg(Color::Red).dim());
@@ -528,68 +525,64 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     );
                                 });
                         });
-                        let _ =
-                            ui.container().grow(1).row(|ui| {
-                                let _ = ui.bordered(Border::Single).title("Area Fill").grow(1).col(
-                                    |ui| {
-                                        let _ = ui.chart(
-                                            |c| {
-                                                c.area(&area_data)
-                                                    .label("Growth")
-                                                    .color(Color::Cyan);
-                                                c.xlabel("Week");
-                                                c.grid(true);
-                                                c.grid_style(grid_dim);
-                                            },
-                                            cols3,
-                                            ch_tall,
-                                        );
-                                    },
-                                );
-                                let _ = ui
-                                    .bordered(Border::Single)
-                                    .title("Direction Coloring")
-                                    .grow(1)
-                                    .col(|ui| {
-                                        let _ = ui.chart(
-                                            |c| {
-                                                c.line(&direction_data)
-                                                    .label("Price")
-                                                    .color_by_direction(
-                                                        Color::Rgb(38, 166, 91),
-                                                        Color::Rgb(234, 57, 67),
-                                                    );
-                                                c.xlabel("Day");
-                                                c.grid(true);
-                                                c.grid_style(grid_dim);
-                                            },
-                                            cols3,
-                                            ch_tall,
-                                        );
-                                    });
-                                let _ = ui
-                                    .bordered(Border::Single)
-                                    .title("Custom Ticks")
-                                    .grow(1)
-                                    .col(|ui| {
-                                        let _ = ui.chart(
-                                            |c| {
-                                                c.area(&cpu_data).color(Color::Cyan);
-                                                c.line(&cpu_data).color(Color::White);
-                                                c.xtick_labels(
-                                                    &[0.0, 3.0, 6.0, 9.0, 11.0],
-                                                    &["Jan", "Apr", "Jul", "Oct", "Dec"],
+                        let _ = ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
+                                .title("Area Fill")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.chart(
+                                        |c| {
+                                            c.area(&area_data).label("Growth").color(Color::Cyan);
+                                            c.xlabel("Week");
+                                            c.grid(true);
+                                            c.grid_style(grid_dim);
+                                        },
+                                        cols3,
+                                        ch_tall,
+                                    );
+                                });
+                            ui.bordered(Border::Single)
+                                .title("Direction Coloring")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.chart(
+                                        |c| {
+                                            c.line(&direction_data)
+                                                .label("Price")
+                                                .color_by_direction(
+                                                    Color::Rgb(38, 166, 91),
+                                                    Color::Rgb(234, 57, 67),
                                                 );
-                                                c.yticks(&[0.0, 25.0, 50.0, 75.0, 100.0]);
-                                                c.xlabel("Month");
-                                                c.grid_style(grid_dim);
-                                                c.legend(LegendPosition::None);
-                                            },
-                                            cols3,
-                                            ch_tall,
-                                        );
-                                    });
-                            });
+                                            c.xlabel("Day");
+                                            c.grid(true);
+                                            c.grid_style(grid_dim);
+                                        },
+                                        cols3,
+                                        ch_tall,
+                                    );
+                                });
+                            ui.bordered(Border::Single)
+                                .title("Custom Ticks")
+                                .grow(1)
+                                .col(|ui| {
+                                    ui.chart(
+                                        |c| {
+                                            c.area(&cpu_data).color(Color::Cyan);
+                                            c.line(&cpu_data).color(Color::White);
+                                            c.xtick_labels(
+                                                &[0.0, 3.0, 6.0, 9.0, 11.0],
+                                                &["Jan", "Apr", "Jul", "Oct", "Dec"],
+                                            );
+                                            c.yticks(&[0.0, 25.0, 50.0, 75.0, 100.0]);
+                                            c.xlabel("Month");
+                                            c.grid_style(grid_dim);
+                                            c.legend(LegendPosition::None);
+                                        },
+                                        cols3,
+                                        ch_tall,
+                                    );
+                                });
+                        });
                     }
 
                     // ── Tab 2: Scatter ────────────────────────────────────
@@ -599,13 +592,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Scatter + Trend (Braille)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.scatter(&scatter_points)
                                                 .label("Data")
@@ -623,12 +615,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Scatter (Dot marker)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.scatter(&scatter_points)
                                                 .label("Data")
@@ -644,13 +635,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     );
                                 });
                         });
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Scatter (Cross)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.scatter(&scatter_points)
                                                 .label("Data")
@@ -663,12 +653,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Scatter (Circle)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.scatter(&scatter_points)
                                                 .label("Data")
@@ -681,8 +670,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Multi-Series Scatter")
                                 .grow(1)
                                 .col(|ui| {
@@ -693,7 +681,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                             (x, x * 0.8 + noise + 25.0)
                                         })
                                         .collect();
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.scatter(&scatter_points)
                                                 .label("Series A")
@@ -718,13 +706,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Horizontal (gap=0)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_with(
+                                    ui.bar_chart_with(
                                         &bars,
                                         |config| {
                                             config.direction(BarDirection::Horizontal);
@@ -732,12 +719,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Horizontal (gap=1)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_with(
+                                    ui.bar_chart_with(
                                         &bars,
                                         |config| {
                                             config.direction(BarDirection::Horizontal).bar_gap(1);
@@ -745,12 +731,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Vertical (w=1)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_with(
+                                    ui.bar_chart_with(
                                         &bars,
                                         |config| {
                                             config.direction(BarDirection::Vertical).bar_width(1);
@@ -758,12 +743,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         ch_tall,
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Vertical (w=3)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_with(
+                                    ui.bar_chart_with(
                                         &bars,
                                         |config| {
                                             config.direction(BarDirection::Vertical).bar_width(3);
@@ -772,13 +756,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     );
                                 });
                         });
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Vertical (w=5)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_with(
+                                    ui.bar_chart_with(
                                         &bars,
                                         |config| {
                                             config.direction(BarDirection::Vertical).bar_width(5);
@@ -791,7 +774,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     .title("Grouped")
                                     .grow(1)
                                     .col(|ui| {
-                                        let _ = ui.bar_chart_grouped_with(
+                                        ui.bar_chart_grouped_with(
                                             &groups,
                                             |config| {
                                                 config.group_gap(2);
@@ -799,12 +782,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                             ch_tall,
                                         );
                                     });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Stacked (w=5)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.bar_chart_stacked_with(
+                                    ui.bar_chart_stacked_with(
                                         &stacked_groups,
                                         |c| {
                                             c.bar_width(5).bar_gap(2);
@@ -821,9 +803,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Standard Heatmap")
                                 .grow(1)
                                 .col(|ui| {
@@ -838,7 +819,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                                 .collect()
                                         })
                                         .collect();
-                                    let _ = ui.heatmap(
+                                    ui.heatmap(
                                         &heat,
                                         cols2,
                                         ch_tall,
@@ -846,8 +827,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         Color::Rgb(255, 80, 30),
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Half-Block HD (2x res)")
                                 .grow(1)
                                 .col(|ui| {
@@ -863,7 +843,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                                 .collect()
                                         })
                                         .collect();
-                                    let _ = ui.heatmap_halfblock(
+                                    ui.heatmap_halfblock(
                                         &heat,
                                         cols2,
                                         ch_tall,
@@ -872,9 +852,8 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     );
                                 });
                         });
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Cool Gradient")
                                 .grow(1)
                                 .col(|ui| {
@@ -890,7 +869,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                                 .collect()
                                         })
                                         .collect();
-                                    let _ = ui.heatmap_halfblock(
+                                    ui.heatmap_halfblock(
                                         &heat,
                                         cols2,
                                         ch_tall,
@@ -898,8 +877,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         Color::Rgb(0, 255, 200),
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Warm Gradient")
                                 .grow(1)
                                 .col(|ui| {
@@ -917,7 +895,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                                 .collect()
                                         })
                                         .collect();
-                                    let _ = ui.heatmap_halfblock(
+                                    ui.heatmap_halfblock(
                                         &heat,
                                         cols2,
                                         ch_tall,
@@ -934,37 +912,34 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Candlestick (Standard)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.candlestick(
+                                    ui.candlestick(
                                         &candles,
                                         Color::Rgb(38, 166, 91),
                                         Color::Rgb(234, 57, 67),
                                     );
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Candlestick HD (Heavy + Halfblock)")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.candlestick_hd(
+                                    ui.candlestick_hd(
                                         &candles,
                                         Color::Rgb(38, 166, 91),
                                         Color::Rgb(234, 57, 67),
                                     );
                                 });
                         });
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Direction Line")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.chart(
+                                    ui.chart(
                                         |c| {
                                             c.line(&direction_data)
                                                 .label("Price")
@@ -989,28 +964,27 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     .grow(1)
                                     .col(|ui| {
                                         ui.text("Market Trend").dim();
-                                        let _ = ui.sparkline(&spark_data, cols2);
+                                        ui.sparkline(&spark_data, cols2);
                                         ui.text("").dim();
                                         ui.text("Per-asset Colors").dim();
-                                        let _ = ui.sparkline_styled(&colored_spark, cols2);
+                                        ui.sparkline_styled(&colored_spark, cols2);
                                         ui.text("").dim();
                                         ui.text("Inverted").dim();
                                         let rev: Vec<f64> =
                                             spark_data.iter().rev().copied().collect();
-                                        let _ = ui.sparkline(&rev, cols2);
+                                        ui.sparkline(&rev, cols2);
                                     });
                         });
                     }
 
                     // ── Tab 6: Treemap ────────────────────────────────────
                     6 => {
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Language Popularity")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.treemap(&treemap_items);
+                                    ui.treemap(&treemap_items);
                                 });
                             let _ =
                                 ui.bordered(Border::Single)
@@ -1055,12 +1029,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                             ),
                                             TreemapItem::new("BRK", 80.0, Color::Rgb(160, 80, 160)),
                                         ];
-                                        let _ = ui.treemap(&market);
+                                        ui.treemap(&market);
                                     });
                         });
 
-                        let _ = ui
-                            .bordered(Border::Single)
+                        ui.bordered(Border::Single)
                             .title("Disk Usage")
                             .grow(1)
                             .col(|ui| {
@@ -1080,7 +1053,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     TreemapItem::new("config", 25.0, Color::Rgb(120, 160, 80)),
                                     TreemapItem::new("scripts", 15.0, Color::Rgb(200, 180, 100)),
                                 ];
-                                let _ = ui.treemap(&disk);
+                                ui.treemap(&disk);
                             });
                     }
 
@@ -1090,13 +1063,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                         let half = th.saturating_sub(4) / 2;
                         let ch_tall = half.saturating_sub(2).max(4);
 
-                        let _ = ui.container().grow(1).row(|ui| {
-                            let _ = ui
-                                .bordered(Border::Single)
+                        ui.container().grow(1).row(|ui| {
+                            ui.bordered(Border::Single)
                                 .title("Shapes")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.canvas(cols2, ch_tall, |cv| {
+                                    ui.canvas(cols2, ch_tall, |cv| {
                                         cv.set_color(Color::Indexed(236));
                                         cv.filled_rect(0, 0, cv.width(), cv.height());
                                         cv.layer();
@@ -1129,12 +1101,11 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                         cv.print(2, 2, "SLT Canvas");
                                     });
                                 });
-                            let _ = ui
-                                .bordered(Border::Single)
+                            ui.bordered(Border::Single)
                                 .title("Lines & Circles")
                                 .grow(1)
                                 .col(|ui| {
-                                    let _ = ui.canvas(cols2, ch_tall, |cv| {
+                                    ui.canvas(cols2, ch_tall, |cv| {
                                         cv.set_color(Color::Indexed(236));
                                         cv.filled_rect(0, 0, cv.width(), cv.height());
                                         cv.layer();
@@ -1167,13 +1138,12 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                                     });
                                 });
                         });
-                        let _ = ui
-                            .bordered(Border::Single)
+                        ui.bordered(Border::Single)
                             .title("Braille Drawing")
                             .grow(1)
                             .col(|ui| {
                                 let cw = tw.saturating_sub(6);
-                                let _ = ui.canvas(cw, ch_tall, |cv| {
+                                ui.canvas(cw, ch_tall, |cv| {
                                     cv.set_color(Color::Cyan);
                                     // Draw a wave pattern
                                     let w = cv.width();
@@ -1205,7 +1175,7 @@ pub fn render_frame(ui: &mut Context, tabs: &mut TabsState) {
                     }
                 }
 
-                let _ = ui.help(&[("q", "quit"), ("\u{2190}/\u{2192}", "tab"), ("Esc", "quit")]);
+                ui.help(&[("q", "quit"), ("\u{2190}/\u{2192}", "tab"), ("Esc", "quit")]);
             });
     }
 }

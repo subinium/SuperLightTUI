@@ -71,28 +71,27 @@ const PRESETS: &[(&str, SpinnerPreset)] = &[
 
 pub fn render(ui: &mut Context, state: &mut TourState) {
     // ── Title: a multi-stop foreground gradient + a background-gradient banner.
-    let _ = ui
-        .text("SuperLightTUI · v0.21.1 tour")
+    ui.text("SuperLightTUI · v0.21.1 tour")
         .bold()
         .gradient_stops_f64(&[
             (0.0, Color::from_hsl_f64(200.0, 0.9, 0.6)),
             (0.5, Color::from_hsl_f64(280.0, 0.9, 0.65)),
             (1.0, Color::from_hsl_f64(330.0, 0.9, 0.6)),
         ]);
-    let _ = ui.text(" additive APIs, no breaking changes ").bg_gradient(
+    ui.text(" additive APIs, no breaking changes ").bg_gradient(
         Color::from_hsl_f64(210.0, 0.7, 0.35),
         Color::from_hsl_f64(330.0, 0.7, 0.35),
     );
 
     // ── Color ergonomics: HSL swatch row, a parsed hex, and rotate_hue.
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text("Color:").dim();
         for i in 0..12 {
             let hue = f64::from(i) / 12.0 * 360.0;
             ui.text("██").fg(Color::from_hsl_f64(hue, 0.85, 0.6));
         }
     });
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         let parsed: Color = "#ff6b6b".parse().unwrap_or(Color::Reset);
         ui.text("\"#ff6b6b\".parse()").dim();
         ui.text("██").fg(parsed);
@@ -101,11 +100,11 @@ pub fn render(ui: &mut Context, state: &mut TourState) {
     });
 
     // ── Spinner presets.
-    let _ = ui.container().gap(2).row(|ui| {
+    ui.container().gap(2).row(|ui| {
         ui.text("Spinners:").dim();
         for (name, preset) in PRESETS {
-            let _ = ui.container().gap(0).row(|ui| {
-                let _ = ui.spinner(&SpinnerState::preset(*preset));
+            ui.container().gap(0).row(|ui| {
+                ui.spinner(&SpinnerState::preset(*preset));
                 ui.text(*name).dim();
             });
         }

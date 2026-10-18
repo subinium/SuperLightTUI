@@ -23,11 +23,11 @@ Quick-start for AI coding agents working with SLT.
 
 ### "What's the difference between text().bold() and styled()?"
 
-`text().bold()` chains after the last text command. `styled()` applies a pre-built `Style` in one call. Use `styled()` when reusing styles across widgets.
+`text()` returns a `Text` builder, so `.bold()` styles exactly that element. `styled()` applies a pre-built `Style` in one call and returns the same builder. Use `styled()` when reusing styles across widgets.
 
 ### "I called ui.bg() but the container background didn't change"
 
-`ui.bg()` modifies the LAST TEXT element, not the container. For container background, use `container().bg(color).col(...)`.
+`ui.bg()` is a deprecated (v0.26) modifier of the LAST TEXT element, not the container. Chain on the text instead (`ui.text("x").bg(color)`); for a container background, use `container().bg(color).col(...)`.
 
 ### "How do I animate something?"
 
@@ -158,7 +158,7 @@ Reserve explicit parameters for **writes** (e.g. `&mut MyDocState`) — those sh
 
 ### Conditional styling without re-chaining
 
-`with_if(cond, modifier)` and `with(modifier)` (v0.19.0) let you fold conditional styling into a single fluent chain on text and `ContainerBuilder`. Replace `if cond { t.bold(); t.fg(Color::Red); }` style branching with `ui.text(...).with_if(is_error, |t| { t.bold().fg(Color::Red); })` — the text closure receives `&mut Context` and returns `()`, so wrap the chain in a block. On `ContainerBuilder` the builder is by value and the closure must return it: `.with_if(focused, |c| c.title("(focused)").p(2))`. Cleaner diffs, no broken chains.
+`with_if(cond, modifier)` and `with(modifier)` (v0.19.0) let you fold conditional styling into a single fluent chain on text and `ContainerBuilder`. Replace `if cond { t.bold(); t.fg(Color::Red); }` style branching with `ui.text(...).with_if(is_error, |t| { t.bold().fg(Color::Red); })` — the text closure receives a `Text` builder for the same element and returns `()`, so wrap the chain in a block. On `ContainerBuilder` the builder is by value and the closure must return it: `.with_if(focused, |c| c.title("(focused)").p(2))`. Cleaner diffs, no broken chains.
 
 ## Internal widget rules for agents
 

@@ -12,6 +12,7 @@ mod status;
 mod text;
 
 pub use status::Breadcrumb;
+pub use text::Text;
 
 #[cfg(test)]
 mod tests;

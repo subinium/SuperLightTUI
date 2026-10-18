@@ -49,8 +49,7 @@ impl Default for DemoState {
 /// typed text and `logged_in` flag persist across frames.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
     if state.logged_in {
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Cookbook: Login")
             .p(2)
             .grow(1)
@@ -67,8 +66,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let submitted = ui.key_code(KeyCode::Enter);
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Cookbook: Login")
         .p(2)
         .gap(1)
@@ -77,14 +75,14 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Sign in").bold().fg(Color::Cyan);
             ui.text("Tab to switch fields. Enter to submit.").dim();
 
-            let _ = ui.col(|ui| {
+            ui.col(|ui| {
                 ui.text("Username").dim();
-                let _ = ui.text_input(&mut state.username);
+                ui.text_input(&mut state.username);
             });
 
-            let _ = ui.col(|ui| {
+            ui.col(|ui| {
                 ui.text("Password").dim();
-                let _ = ui.text_input(&mut state.password);
+                ui.text_input(&mut state.password);
             });
 
             let clicked_login = ui.button("Login").clicked;

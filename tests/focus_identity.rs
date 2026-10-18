@@ -6,11 +6,6 @@ use std::cell::{Cell, RefCell};
 use slt::widgets::{TextInputState, TextareaState};
 use slt::{Context, EventBuilder, KeyCode, TestBackend};
 
-/// Feed one event batch, keeping the carried focus state.
-fn step(tb: &mut TestBackend, events: Vec<slt::Event>, f: impl FnOnce(&mut Context)) {
-    tb.sequence().events(events, f).run();
-}
-
 #[test]
 fn inserting_a_focusable_before_the_focused_input_keeps_focus_on_it() {
     let mut tb = TestBackend::new(40, 12);
@@ -260,18 +255,18 @@ fn state_rebuilt_every_frame_keeps_positional_focus() {
 #[test]
 fn click_focus_maps_through_identity() {
     let mut tb = TestBackend::new(40, 12);
-    let a = RefCell::new(TextInputState::new());
-    let b = RefCell::new(TextInputState::new());
-    b.borrow_mut().placeholder = "second".into();
-    let r = |ui: &mut Context| {
-        let _ = ui.text_input(&mut a.borrow_mut());
-        let _ = ui.text_input(&mut b.borrow_mut());
+    // Issue #464: one FnMut over plain state, driven by `step` / `type_text`.
+    let mut a = TextInputState::new();
+    let mut b = TextInputState::new();
+    b.placeholder = "second".into();
+    let mut r = |ui: &mut Context| {
+        ui.text_input(&mut a);
+        ui.text_input(&mut b);
     };
-    tb.render(r);
-    tb.render(r);
+    tb.step(vec![], &mut r).step(vec![], &mut r);
     let (x, y) = tb.find_text("second").expect("placeholder rendered");
-    step(&mut tb, EventBuilder::new().click(x, y).build(), r);
-    tb.type_string("q", r);
-    assert_eq!(a.borrow().value, "");
-    assert_eq!(b.borrow().value, "q");
+    tb.step(EventBuilder::new().click(x, y).build(), &mut r)
+        .type_text("q", &mut r);
+    assert_eq!(a.value, "");
+    assert_eq!(b.value, "q");
 }

@@ -17,7 +17,7 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
 2. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)`, `ui.key_mod(..)` and `ui.shortcut(..)` skip the keys it edits with (printable keys without Ctrl/Super/Meta, Backspace, Delete, arrows, Home, End; Enter/Up/Down for `textarea`; also Tab, Shift+Tab, PageUp/PageDown for `code_editor`), in any call order. Chords, Esc, Tab (outside `code_editor`) and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
    ```rust
    if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) { ui.quit(); } // safe before the input
-   let _ = ui.text_input(&mut search);                                   // typing 'q' inserts it
+   ui.text_input(&mut search);                                   // typing 'q' inserts it
    ```
 
 ## Mental model
@@ -59,15 +59,16 @@ These are non-negotiable since v0.20. When generating new code, every public wid
    if let Some(i) = ui.breadcrumb(&segs).show().clicked_segment { ... }          // BreadcrumbResponse
    ```
 
-6. **Return-type pattern.** Methods on `Context` return one of two types — picking the wrong one is the most common AI-generated compile error.
-   - `&mut Self` — *chainable mutators of the last rendered element.* Use for: `text`, `link`, `styled`, `timer_display`, and the style chain (`bold`, `dim`, `italic`, `fg`, `bg`, `wrap`, `truncate`, `align`, `text_center`, `m`, `mx`, `w`, `h`, `grow`, `spacer`, `with_if`, `with`).
+6. **Return-type pattern.** Methods on `Context` return one of three shapes — picking the wrong one is the most common AI-generated compile error.
+   - `Text<'_>` — *scoped builder for one text element* (v0.26). Returned by `text`, `link`, `styled`, `timer_display`. Chain: `bold`, `dim`, `italic`, `fg`, `bg`, `gradient`, `wrap`, `truncate`, `align`, `text_center`, `m`, `mx`, `w`, `h`, `grow`, `with_if`, `with`; `.show()` returns its `Response`. Only text options follow, so `ui.text("x").bold().button("y")` does not compile — start a new statement. The `Context`-level `ui.bold()` / `ui.fg(..)` "last text" modifiers are deprecated.
+   - `&mut Self` — `spacer`, `line`, `line_wrap`, `toast`, `form_field`.
    - `Response` — *interaction result of an independently-rendered widget.* Use for every stateful interactive widget (`button`, `checkbox`, `toggle`, `table`, `tabs`, `select`, `radio`, `multi_select`, `text_input`, `list`, `tree`, `file_picker`, `slider`, `calendar`, `command_palette`, `rich_log`), plus `separator()`.
    - Container helpers split: `col` / `row` / `modal` → `Response`. `line` / `line_wrap` → `&mut Self` (these continue an inline-text chain). `screen(name, &mut ScreenState, f)` returns `()`.
 
    ```rust
    ui.button("Save").bold();           // ❌ Response has no .bold() — compile error
    if ui.button("Save").clicked { … }  // ✅ Response field
-   ui.text("Saved").bold().fg(green);  // ✅ &mut Self chain on display element
+   ui.text("Saved").bold().fg(green);  // ✅ Text builder chain
    ```
 
 ## Naming categories (NAMING.md micro tier)
@@ -184,10 +185,10 @@ Reserve explicit parameters for **writes** (`&mut MyDocState`). Bound is `T: 'st
 
 ## Conditional styling (`with_if` / `with`)
 
-`with_if(cond, modifier)` and `with(modifier)` collapse conditional branches into a single chain. Available on text and `ContainerBuilder`. Beware: text uses `&mut self -> &mut Self`, ContainerBuilder uses consuming `Self -> Self`.
+`with_if(cond, modifier)` and `with(modifier)` collapse conditional branches into a single chain. Available on `Text` and `ContainerBuilder`. Beware: the `Text` closure receives a builder for the same element and returns `()`, ContainerBuilder's closure maps `Self -> Self`.
 
 ```rust
-// text — closure receives &mut Self
+// Text — closure receives a Text for the same element
 ui.text("Status").with_if(is_error, |t| { t.bold().fg(Color::Red); });
 
 // ContainerBuilder — closure receives Self by value
@@ -349,14 +350,16 @@ fn click_triggers() {
         |ui| { if ui.button("Save").clicked { /* assert */ } });
 }
 
-// Sequence builder (most readable): each step takes the render closure
-tb.sequence()
-    .tick(|ui| { ui.text("ready"); })
-    .key(KeyCode::Esc, |ui| { ui.text("after esc"); })
-    .run();
-tb.assert_contains("after esc");
-// Steps are FnOnce closures held together; for shared mutable state use
-// tb.type_string("hello", |ui| { ... }) or successive tb.render(...) calls.
+// Multi-step (default, v0.26): one FnMut over plain &mut state, no RefCell.
+// step/press/type_text/run_with_events all keep focus between frames.
+let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
+let mut app = |ui: &mut Context| { ui.text_input(&mut a); ui.text_input(&mut b); };
+tb.step(vec![], &mut app)
+    .press(KeyCode::Tab, &mut app)
+    .type_text("x", &mut app);
+assert_eq!(b.value, "x"); // after the closure's last use
+// Hover: EventBuilder::new().hover(x, y). Force a focus slot:
+// tb.render_with_events(events, 0, 0, |ui| ..).
 ```
 
 See `tests/example_snapshots/testing_report.rs` for `record_frames`, `assert_not_contains`, `assert_style_at`.

@@ -124,6 +124,42 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   their own offset math for that case should set `scroll.anchor = false` (or
   drop the manual correction). Use `ScrollState::new().stick_to_bottom(true)`
   instead of hand-rolled "follow the tail" logic.
+- **No more `let _ =` on layout and display calls (#456).** `Response` is no
+  longer `#[must_use]` as a type, so `let _ = ui.row(..)` /
+  `let _ = ui.separator()` can become plain statements. Nothing breaks:
+  existing `let _ =` keeps compiling. A bare `ui.button(..)` (and
+  `button_colored` / `button_with`) still warns; check `.clicked` or chain
+  `.on_click(ui, ..)`. Crates with `#![deny(unused_must_use)]` only lose
+  warnings.
+- **Scoped `Text` builder (#457).** `ui.text(..)`, `ui.styled(..)`,
+  `ui.link(..)` and `ui.timer_display(..)` return `slt::Text<'_>` instead of
+  `&mut Context`. Its chain options edit that one element, so
+  `ui.text("a").bold().fg(c);` compiles and renders as before, while a
+  modifier can no longer land on the wrong widget. `Text::show()` returns the
+  element's `Response` (hover / click; for `link`, `clicked` is the
+  activation). The `Context` "modify the last text" modifiers are deprecated
+  and keep their 0.25 behaviour for this release:
+
+  | 0.25 | 0.26 |
+  |---|---|
+  | `ui.text(s).bold().fg(c);` | unchanged |
+  | `ui.text(s); ui.bold();` | `ui.text(s).bold();` |
+  | `ui.text("a").text("b");` (chaining another Context call) | two statements: `ui.text("a"); ui.text("b");` |
+  | `ui.text(s).with_if(c, \|t\| { t.bold(); });` | unchanged; `t` is a `Text` |
+  | `fn dim(ui: &mut Context) { ui.dim(); }` used as `.with(dim)` | `fn dim(t: Text<'_>) { t.dim(); }` |
+  | `ui.text(s).gradient_stops(&[(0.0f32, c)])` | `.gradient_stops_f64(&[(0.0, c)])` (the `f32` forms stay only on `Context`, deprecated) |
+  | `ui.separator(); ui.fg(c);` | `ui.separator_colored(c);` |
+  | `ui.with_if(..)` / `ui.with(..)` / `ui.w(..)` / `ui.m(..)` / `ui.grow(..)` / `ui.align(..)` / `ui.wrap()` / `ui.truncate()` / `ui.text_center()` | same names on `Text` |
+
+  Code that kept the `&mut Context` returned by `text()` (for example
+  `let ui = ui.text("x");`) should keep using the original `ui`.
+- **`TestBackend::run_with_events` keeps focus (#464).** It no longer resets
+  focus to slot 0 before each call. A test that pressed Tab in one call and
+  typed in the next now types into the newly focused widget (as a user
+  would). Tests that relied on the reset should call
+  `render_with_events(events, 0, 0, f)`. For new multi-step tests prefer
+  `tb.step(events, &mut f).press(KeyCode::Tab, &mut f).type_text("x", &mut f)`,
+  which drives one `FnMut` over plain state instead of `RefCell` + `sequence()`.
 
 ---
 

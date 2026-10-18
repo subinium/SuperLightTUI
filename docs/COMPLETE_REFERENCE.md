@@ -523,7 +523,7 @@ let filtered = ui.use_memo(&(query.clone(), items.len()), |(q, _)| {
 When a builder chain repeats, extract a helper:
 ```rust
 fn panel(ui: &mut Context, title: &str, f: impl FnOnce(&mut Context)) {
-    let _ = ui.bordered(Border::Rounded).title(title).p(1).grow(1).col(f);
+    ui.bordered(Border::Rounded).title(title).p(1).grow(1).col(f);
 }
 ```
 
@@ -583,7 +583,7 @@ fn scrollable_form() -> std::io::Result<()> {
     let mut scroll = slt::ScrollState::new();
     let mut focused_label = String::new();
     slt::run(|ui| {
-        let _ = ui.scrollable(&mut scroll).h(6).col(|ui| {
+        ui.scrollable(&mut scroll).h(6).col(|ui| {
             for field in &mut form.fields {
                 let response = ui.form_field_response(field);
                 if response.gained_focus { focused_label.clone_from(&field.label); }
@@ -606,7 +606,7 @@ let mut form = FormState::new()
 
 slt::run(move |ui| {
     ui.form(&mut form, |ui, form| {
-        for field in &mut form.fields { let _ = ui.form_field(field); }
+        for field in &mut form.fields { ui.form_field(field); }
         if ui.form_submit("Submit").clicked {
             let ok = form.validate(&[
                 |v| if v.contains('@') { Ok(()) } else { Err("Invalid email".into()) },
@@ -747,7 +747,7 @@ impl Widget for Rating {
 }
 // usage
 let mut rating = Rating { value: 3, max: 5 };
-let _ = ui.widget(&mut rating);
+ui.widget(&mut rating);
 ```
 
 ### 6.16 Responsive layout

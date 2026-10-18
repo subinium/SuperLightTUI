@@ -14,8 +14,7 @@ fn main() {
 
             let tick_offset = ui.tick();
 
-            let _ = ui
-                .bordered(Border::Rounded)
+            ui.bordered(Border::Rounded)
                 .title("draw_raw demo")
                 .p(1)
                 .gap(1)
@@ -24,7 +23,7 @@ fn main() {
                         .bold();
                     ui.text("Press q to quit").dim();
 
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         ui.bordered(Border::Single)
                             .title("Gradient")
                             .w(34)
@@ -118,7 +117,7 @@ fn main() {
                             });
                     });
 
-                    let _ = ui.help(&[("q", "quit")]);
+                    ui.help(&[("q", "quit")]);
                 });
         },
     );

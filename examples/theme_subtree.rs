@@ -55,8 +55,7 @@ pub fn render(ui: &mut Context) {
     let pad = ui.spacing().xs();
     let panel_gap = ui.spacing().sm();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("SLT v0.20: Per-subtree theme override")
         .p(pad)
         .grow(1)
@@ -66,7 +65,7 @@ pub fn render(ui: &mut Context) {
             ui.text("Outer scope keeps its parent theme — nothing leaks across panels.")
                 .dim();
 
-            let _ = ui.container().gap(panel_gap).row(|ui| {
+            ui.container().gap(panel_gap).row(|ui| {
                 for (label, theme) in theme_bench() {
                     panel(ui, label, theme);
                 }
@@ -79,8 +78,7 @@ pub fn render(ui: &mut Context) {
 /// invariant #226 added to `ContainerBuilder`.
 fn panel(ui: &mut Context, label: &str, theme: Theme) {
     let pad = ui.spacing().xs();
-    let _ = ui
-        .container()
+    ui.container()
         .theme(theme)
         .border(Border::Rounded)
         .p(pad)
@@ -90,8 +88,8 @@ fn panel(ui: &mut Context, label: &str, theme: Theme) {
             ui.text("body text").dim();
             let _ = ui.button("Press me");
             // Two alert levels exercise distinct theme tokens (info vs warning).
-            let _ = ui.alert("info banner", AlertLevel::Info);
-            let _ = ui.alert("warning", AlertLevel::Warning);
-            let _ = ui.code_block("let x = 1;");
+            ui.alert("info banner", AlertLevel::Info);
+            ui.alert("warning", AlertLevel::Warning);
+            ui.code_block("let x = 1;");
         });
 }

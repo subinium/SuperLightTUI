@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
         password.run_validators();
         let valid = email.errors().is_empty() && password.errors().is_empty();
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("Sign In")
             .p(2)
@@ -109,22 +109,22 @@ fn main() -> std::io::Result<()> {
             .col(|ui| {
                 ui.text("Welcome back").bold().fg(Color::Cyan);
                 ui.text("Use Tab / Shift+Tab to move between fields.").dim();
-                let _ = ui.separator();
+                ui.separator();
 
                 ui.text("Email").bold();
-                let _ = ui.text_input(&mut email);
+                ui.text_input(&mut email);
                 for err in email.errors() {
                     ui.text(format!("  {err}")).fg(Color::Red);
                 }
 
                 ui.text("Password").bold();
-                let _ = ui.text_input(&mut password);
+                ui.text_input(&mut password);
                 for err in password.errors() {
                     ui.text(format!("  {err}")).fg(Color::Red);
                 }
 
-                let _ = ui.separator();
-                let _ = ui.row(|ui| {
+                ui.separator();
+                ui.row(|ui| {
                     // Disable the button when invalid by swapping the label.
                     let label = if valid { "Submit" } else { "Submit (fix errors)" };
                     if ui.button(label).clicked && valid {
@@ -132,7 +132,7 @@ fn main() -> std::io::Result<()> {
                     }
                     ui.spacer();
                     if let Some(ref user) = submitted {
-                        let _ = ui.alert(
+                        ui.alert(
                             &format!("Signed in as {user}"),
                             AlertLevel::Success,
                         );
@@ -204,20 +204,20 @@ fn main() -> std::io::Result<()> {
             table.prev_page();
         }
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("Projects")
             .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("Press 1/2/3 to sort, Left/Right to page").dim();
-                let _ = ui.text_input(&mut filter);
+                ui.text_input(&mut filter);
                 // Pipe the text input straight into the table filter each frame.
                 table.set_filter(&filter.value);
 
-                let _ = ui.table(&mut table);
+                ui.table(&mut table);
 
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text(format!(
                         "Showing {}/{} rows",
                         table.visible_indices().len(),
@@ -242,7 +242,7 @@ fn main() -> std::io::Result<()> {
                 });
 
                 if let Some(row) = table.selected_row() {
-                    let _ = ui.separator();
+                    ui.separator();
                     ui.text(format!("Selected: {}", row.join(" | "))).bold();
                 }
             });
@@ -292,7 +292,7 @@ fn main() -> std::io::Result<()> {
             selected += 1;
         }
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("Files")
             .p(1)
@@ -305,8 +305,8 @@ fn main() -> std::io::Result<()> {
                     ui.text(format!("{prefix}{name}")).fg(color);
                 }
 
-                let _ = ui.separator();
-                let _ = ui.row(|ui| {
+                ui.separator();
+                ui.row(|ui| {
                     if ui.button("Refresh").clicked {
                         toasts.info("List refreshed", tick);
                     }
@@ -325,8 +325,8 @@ fn main() -> std::io::Result<()> {
                 show_modal = false;
             }
 
-            let _ = ui.modal(|ui| {
-                let _ = ui
+            ui.modal(|ui| {
+                ui
                     .bordered(Border::Double)
                     .title("Confirm delete")
                     .p(2)
@@ -340,7 +340,7 @@ fn main() -> std::io::Result<()> {
                         ui.text(format!("  {target}")).fg(Color::Yellow);
                         ui.text("This cannot be undone.").dim();
 
-                        let _ = ui.row(|ui| {
+                        ui.row(|ui| {
                             if ui.button("Cancel").clicked {
                                 show_modal = false;
                                 toasts.info("Canceled", tick);
@@ -417,42 +417,42 @@ fn main() -> std::io::Result<()> {
             *last = reqs;
         }
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("Live Dashboard")
             .p(1)
             .gap(1)
             .grow(1)
             .col(|ui| {
-                let _ = ui.row(|ui| {
-                    let _ = ui.spinner(&spinner);
+                ui.row(|ui| {
+                    ui.spinner(&spinner);
                     ui.text(" LIVE").bold().fg(Color::Green);
                     ui.spacer();
                     ui.text(format!("tick {tick:.0}")).dim();
                 });
 
-                let _ = ui.row(|ui| {
-                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                        let _ = ui.stat_trend("Requests / min", &format!("{reqs:.0}"), Trend::Up);
+                ui.row(|ui| {
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                        ui.stat_trend("Requests / min", &format!("{reqs:.0}"), Trend::Up);
                     });
-                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let color = if cpu > 80.0 { Color::Red } else { Color::Cyan };
-                        let _ = ui.stat_colored("CPU", &format!("{cpu:.1}%"), color);
+                        ui.stat_colored("CPU", &format!("{cpu:.1}%"), color);
                     });
-                    let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                        let _ = ui.stat_colored("P99", "42ms", Color::Yellow);
+                    ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                        ui.stat_colored("P99", "42ms", Color::Yellow);
                     });
                 });
 
-                let _ = ui
+                ui
                     .bordered(Border::Single)
                     .title("CPU (last 60 ticks)")
                     .p(1)
                     .col(|ui| {
-                        let _ = ui.sparkline(&cpu_hist, 60);
+                        ui.sparkline(&cpu_hist, 60);
                     });
 
-                let _ = ui
+                ui
                     .bordered(Border::Single)
                     .title("Requests / min")
                     .p(1)
@@ -463,7 +463,7 @@ fn main() -> std::io::Result<()> {
                             .enumerate()
                             .map(|(i, &y)| (i as f64, y))
                             .collect();
-                        let _ = ui.chart(
+                        ui.chart(
                             |c| {
                                 c.area(&req_points).label("rpm").color(Color::Cyan);
                                 c.grid(true);
@@ -480,15 +480,15 @@ fn main() -> std::io::Result<()> {
                     ("/health", 95.0),
                     ("/metrics", 60.0),
                 ];
-                let _ = ui
+                ui
                     .bordered(Border::Single)
                     .title("Top Routes")
                     .p(1)
                     .col(|ui| {
-                        let _ = ui.bar_chart(&top_routes, 30);
+                        ui.bar_chart(&top_routes, 30);
                     });
 
-                let _ = ui.help(&[("Ctrl+Q", "quit"), ("Esc", "quit")]);
+                ui.help(&[("Ctrl+Q", "quit"), ("Esc", "quit")]);
             });
     })
 }
@@ -537,7 +537,7 @@ fn main() -> std::io::Result<()> {
             ui.quit();
         }
 
-        let _ = ui
+        ui
             .bordered(Border::Rounded)
             .title("File Picker")
             .p(1)
@@ -549,11 +549,11 @@ fn main() -> std::io::Result<()> {
                     .wrap();
                 ui.text("Enter opens, Backspace goes up, filter: .rs .toml .md .txt .json")
                     .dim();
-                let _ = ui.separator();
+                ui.separator();
 
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     // Left pane: picker.
-                    let _ = ui
+                    ui
                         .bordered(Border::Single)
                         .title("Browse")
                         .p(1)
@@ -580,7 +580,7 @@ fn main() -> std::io::Result<()> {
                         });
 
                     // Right pane: preview.
-                    let _ = ui
+                    ui
                         .bordered(Border::Single)
                         .title("Preview")
                         .p(1)
@@ -591,8 +591,8 @@ fn main() -> std::io::Result<()> {
                             }
                             Some((path, content)) => {
                                 ui.text(path.display().to_string()).fg(Color::Cyan).wrap();
-                                let _ = ui.separator();
-                                let _ = ui.scrollable(&mut preview_scroll).grow(1).col(|ui| {
+                                ui.separator();
+                                ui.scrollable(&mut preview_scroll).grow(1).col(|ui| {
                                     for line in content.lines() {
                                         ui.text(line);
                                     }
@@ -674,7 +674,7 @@ fn main() -> std::io::Result<()> {
         };
 
         ui.provide(ctx, |ui| {
-            let _ = ui
+            ui
                 .bordered(Border::Rounded)
                 .title("Shared context demo")
                 .p(1)

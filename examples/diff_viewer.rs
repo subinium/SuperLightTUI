@@ -70,8 +70,7 @@ fn main() -> std::io::Result<()> {
             };
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Review patch")
             .p(1)
             .grow(1)

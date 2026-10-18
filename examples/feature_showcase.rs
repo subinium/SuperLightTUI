@@ -124,8 +124,7 @@ pub fn render(
     let pad = theme.spacing.xs();
     let panel_alpha = ui.animate_bool("showcase::panel", panel_open);
 
-    let _ = ui
-        .bordered(slt::Border::Rounded)
+    ui.bordered(slt::Border::Rounded)
         .title("v0.20 Showcase")
         .p(pad)
         .gap(pad)
@@ -144,8 +143,8 @@ pub fn render(
             }
 
             // Row 2 — WidthSpec sampler (#237) | theme subtree (#226).
-            let _ = ui.row(|ui| {
-                let _ = ui.container().fill().gap(pad).col(|ui| {
+            ui.row(|ui| {
+                ui.container().fill().gap(pad).col(|ui| {
                     ui.text("WidthSpec sampler (#237)").bold();
                     spec_row(ui, "Fixed(20)", Constraints::default().w(20));
                     spec_row(ui, "Pct(40)", Constraints::default().w_pct(40));
@@ -161,8 +160,7 @@ pub fn render(
                 // Theme subtree (#226). Switching theme on the builder
                 // affects every widget rendered inside; the original theme
                 // is restored automatically on exit (panic-safe).
-                let _ = ui
-                    .container()
+                ui.container()
                     .w(28)
                     .theme(Theme::dracula())
                     .border(slt::Border::Single)
@@ -170,8 +168,7 @@ pub fn render(
                     .gap(pad)
                     .col(|ui| {
                         ui.text("Theme: Dracula (#226)").bold();
-                        let _ = ui
-                            .button("Hover me")
+                        ui.button("Hover me")
                             .on_hover(ui, "on_hover tooltip — chained Response (#209)");
                         ui.text(format!("animate_bool α = {panel_alpha:.2}")).dim();
                         if panel_alpha > 0.0 {
@@ -189,7 +186,7 @@ pub fn render(
             // Row 3 — gauges (#224, builder API).
             // Chainable: `ui.gauge(ratio).label(...).width(...)`,
             // `ui.line_gauge(ratio).label(...).width(...).filled(...)`.
-            let _ = ui.bordered(slt::Border::Single).p(pad).gap(pad).col(|ui| {
+            ui.bordered(slt::Border::Single).p(pad).gap(pad).col(|ui| {
                 ui.text("Gauges (#224 — color tiers green / yellow / red)")
                     .bold();
                 gauge_row(ui, "CPU   ", 0.42);
@@ -198,26 +195,26 @@ pub fn render(
             });
 
             // Row 4 — named_focus (#217) | gutter highlights (#235).
-            let _ = ui.row(|ui| {
-                let _ = ui.container().fill().gap(pad).col(|ui| {
+            ui.row(|ui| {
+                ui.container().fill().gap(pad).col(|ui| {
                     ui.text("named_focus + on_hover (#217 + #209)").bold();
                     ui.register_focusable_named("name");
-                    let _ = ui.text_input(name);
+                    ui.text_input(name);
                     ui.register_focusable_named("email");
-                    let _ = ui.text_input(email);
-                    let _ = ui.row(|ui| {
+                    ui.text_input(email);
+                    ui.row(|ui| {
                         let save = ui.button("Save").on_hover(ui, "save form (Enter on Save)");
                         if save.clicked {
                             ui.notify("saved", ToastLevel::Success);
                         }
-                        let _ = ui.button("Cancel").on_hover(ui, "discard changes");
+                        ui.button("Cancel").on_hover(ui, "discard changes");
                     });
                     if let Some(name) = ui.focused_name() {
                         ui.text(format!("focused: {name}")).dim();
                     }
                 });
 
-                let _ = ui.container().w(34).gap(pad).col(|ui| {
+                ui.container().w(34).gap(pad).col(|ui| {
                     ui.text("Gutter highlights (#235)  n/p navigates").bold();
                     // GutterOpts::new takes the labeling closure; for the
                     // 90% line-number case use `GutterOpts::line_numbers`.
@@ -252,12 +249,11 @@ pub fn render(
 }
 
 fn spec_row(ui: &mut Context, label: &str, constraints: Constraints) {
-    let _ = ui.row(|ui| {
-        let _ = ui.container().w(14).col(|ui| {
+    ui.row(|ui| {
+        ui.container().w(14).col(|ui| {
             ui.text(label);
         });
-        let _ = ui
-            .bordered(slt::Border::Single)
+        ui.bordered(slt::Border::Single)
             .constraints(constraints)
             .h(3)
             .col(|ui| {
@@ -268,8 +264,8 @@ fn spec_row(ui: &mut Context, label: &str, constraints: Constraints) {
 }
 
 fn gauge_row(ui: &mut Context, label: &str, ratio: f64) {
-    let _ = ui.row(|ui| {
-        let _ = ui.container().w(8).col(|ui| {
+    ui.row(|ui| {
+        ui.container().w(8).col(|ui| {
             ui.text(label);
         });
         // Builder API: chained `.label().width().filled()`.
