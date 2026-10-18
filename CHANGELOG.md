@@ -548,13 +548,13 @@
   measured inline), and the Kitty / Sixel / iTerm2 flush passes are linked
   only by programs that draw an image. Output is byte-identical. Stripped
   release sizes, aarch64 macOS, default features: hello-world 1,232,400 →
-  1,149,200 B (−6.8%), a list / table / gauge dashboard 1,367,208 →
-  1,250,904 B (−8.5%; ratatui 0.30.2 equivalent: 759,976 B),
+  1,165,744 B (−5.4%), a list / table / gauge dashboard 1,367,208 →
+  1,267,480 B (−7.3%; ratatui 0.30.2 equivalent: 759,976 B),
   `examples/demo` −7.7%, `examples/widgets_tour` −9.4%. Frame time is
-  unchanged (−2.9% to +0.5% per workload). `bench/ratatui-compare/size.sh`
+  unchanged (−1.1% to +1.0% per workload). `bench/ratatui-compare/size.sh`
   now also measures the dashboard and a size profile (`opt-level = "z"`,
   fat LTO, one codegen unit, `panic = "abort"`, `strip`), which takes the
-  hello-world to 688,304 B; the recipe and its trade-offs are in
+  hello-world to 688,320 B; the recipe and its trade-offs are in
   docs/internals/performance.md "Binary size".
 - `list` and unpaged `table` per-frame work is proportional to the visible
   rows instead of the item count (#487): a 10k-item list at 100x50 drops

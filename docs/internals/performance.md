@@ -833,7 +833,7 @@ Other comparisons:
   normal dependencies against 67 for ratatui 0.30.2 + crossterm. Binary
   size and build time do **not** follow: the stripped release hello-world
   is about 2.1× larger (1.6× with the size profile; a dashboard-class app
-  1.6× and 1.5×, see [Binary size](#binary-size)) and a cold release build
+  1.7× and 1.5×, see [Binary size](#binary-size)) and a cold release build
   is about 1.6× slower.
 
 **Where the remaining time goes (macOS `sample`, 0.26):**
@@ -881,19 +881,19 @@ default `[profile.release]` (no LTO, `opt-level = 3`, 16 codegen units,
 Apple M3 Pro, aarch64 macOS, rustc 1.98.0, ratatui 0.30.2 with default
 features. Stripped bytes:
 
-| Program | Library | release, 0.26 base `1a6569a` | release, 0.26 | size profile, base | size profile, 0.26 |
+| Program | Library | release, 0.26 base `4ef8ae2` | release, 0.26 | size profile, base | size profile, 0.26 |
 |---|---|---|---|---|---|
-| hello | SLT default (`crossterm`, `bidi`) | 1,232,400 | **1,149,200** | 704,960 | **688,304** |
-| hello | SLT `crossterm` only | 1,164,696 | **1,097,864** | 671,784 | **655,144** |
+| hello | SLT default (`crossterm`, `bidi`) | 1,232,400 | **1,165,744** | 704,976 | **688,320** |
+| hello | SLT `crossterm` only | 1,164,744 | **1,097,880** | 671,800 | **655,160** |
 | hello | ratatui | 553,384 | 553,384 | 421,568 | 421,568 |
-| dashboard | SLT default | 1,367,208 | **1,250,904** | 754,784 | **738,144** |
-| dashboard | SLT `crossterm` only | 1,299,488 | **1,216,128** | 721,632 | **704,992** |
+| dashboard | SLT default | 1,367,208 | **1,267,480** | 754,800 | **738,160** |
+| dashboard | SLT `crossterm` only | 1,299,520 | **1,216,144** | 721,648 | **704,992** |
 | dashboard | ratatui | 759,976 | 759,976 | 504,824 | 504,824 |
 
 | SLT default / ratatui | release, base | release, 0.26 | size profile, base | size profile, 0.26 |
 |---|---|---|---|---|
-| hello | 2.22x | **2.07x** | 1.67x | **1.63x** |
-| dashboard | 1.79x | **1.64x** | 1.49x | **1.46x** |
+| hello | 2.22x | **2.11x** | 1.67x | **1.63x** |
+| dashboard | 1.79x | **1.67x** | 1.50x | **1.46x** |
 
 The hello-world measures SLT's fixed cost, the runtime that every `slt::run`
 program links (see "Why SLT stays larger" below). Widgets add less in SLT
@@ -918,17 +918,17 @@ panic = "abort"     # no unwind tables or landing pads
 strip = true        # drop symbols
 ```
 
-On the hello-world it removes 40% (1,149,200 → 688,304 B), on the dashboard
-41% (1,250,904 → 738,144 B). Trade-offs: `opt-level = "z"` is slower code (measure your own frame
+On the hello-world it removes 41% (1,165,744 → 688,320 B), on the dashboard
+42% (1,267,480 → 738,160 B). Trade-offs: `opt-level = "z"` is slower code (measure your own frame
 times; `opt-level = "s"` is a middle ground), fat LTO and one codegen unit
 make release builds slower, and `panic = "abort"` turns every panic into
 process exit: SLT's panic hook still restores the terminal first (it is
 abort-aware), but `ui.error_boundary` can no longer recover a panicking
 subtree. Disabling the `bidi` default feature
 (`default-features = false, features = ["crossterm"]`) saves another
-~33-51 KB, and SLT then does not reorder right-to-left text.
+~33-68 KB, and SLT then does not reorder right-to-left text.
 
-**Composition** (default hello after this change; `cargo bloat --release
+**Composition** (default hello after round 2, on `1a6569a`; `cargo bloat --release
 --crates` and per symbol, `size -m` for sections; cargo-bloat attribution is
 approximate):
 
@@ -967,9 +967,12 @@ everything that is reachable, so these stay in every binary; removing them
 would remove default behaviour. What #491 changed is code that was
 duplicated, or reachable only through an API the program may never call.
 
-**Reductions in #491, round 2** (stripped bytes, default hello, release
-profile, each step on top of the previous one; examples are built from this
-repository, `cargo build --release --example ...`):
+**Reductions in #491, round 2** (stripped bytes, default features, release
+profile; steps measured on `1a6569a`, each on top of the previous one;
+totals against the final base `4ef8ae2`, whose other changes since
+`1a6569a` add ~6 KiB of code and one 16 KiB page to the reduced
+hello-world; examples are built from this repository,
+`cargo build --release --example ...`):
 
 | Change | hello | dashboard | `examples/demo` | `examples/widgets_tour` |
 |---|---|---|---|---|
@@ -977,7 +980,9 @@ repository, `cargo build --release --example ...`):
 | One out-of-line `Graphemes::next` (`crate::width::UnicodeSegmentation`) | −49,568 | | | |
 | Image passes installed by the first placement | −17,184 | | | |
 | One out-of-line `unicode-width` walk (`str_width`, `unicode_width`) | −16,448 | | | |
-| **Total** | **−83,200 (−6.8%)** | **−116,304 (−8.5%)** | **−182,280 (−7.7%)** | **−149,336 (−9.4%)** |
+| Subtotal on `1a6569a` | 1,149,200 (−6.8%) | 1,250,904 (−8.5%) | 2,172,408 (−7.7%) | 1,435,888 (−9.4%) |
+| Final base `4ef8ae2` | 1,232,400 | 1,367,208 | 2,354,720 | 1,585,240 |
+| **Final** | **1,165,744 (−5.4%)** | **1,267,480 (−7.3%)** | **2,172,384 (−7.7%)** | **1,435,864 (−9.4%)** |
 
 - `unicode_segmentation::Graphemes::next` and the `unicode-width` string
   walk are `#[inline]` upstream, so every codegen unit that segmented or
@@ -1000,9 +1005,10 @@ repository, `cargo build --release --example ...`):
   call several `run*` entry points.
 
 Frame time (`bench/ratatui-compare`, `time slt`, six interleaved runs of
-the base and the round-2 binary, median of medians): every workload is
-between −2.9% and +0.5% of the base (dashboard sink 10.2 → 10.2 µs, list
-23.0 → 22.8, table 56.4 → 55.5, nested 159.7 → 156.6, idle 10.3 → 10.1).
+the base and the round-2 binary, median of medians): on `1a6569a` every
+workload is between −2.9% and +0.5% of the base; against the final base
+`4ef8ae2` between −1.1% and +1.0% (dashboard sink 10.5 → 10.4 µs, list
+23.6 → 23.6, table 57.2 → 57.2, nested 161.9 → 161.2, idle 10.5 → 10.4).
 
 **Target (set from the round-2 profile): met.** The profile showed about
 45 KiB of standalone duplicate or image-only functions in the default
@@ -1011,10 +1017,12 @@ passes and their hash tables), plus copies inlined into callers that
 cargo-bloat does not separate. Target: at least 5% off the 0.26 base on the same toolchain
 for both the hello-world (≤ 1,170,780 B) and the dashboard
 (≤ 1,298,848 B) in the default release profile, with no feature or API
-removed and no workload slower by more than 2%. Result: hello −6.8%,
-dashboard −8.5%, frame time unchanged. The round-1 absolute number
-(1,140,000 B) is still 9,200 B (one 16 KiB page) away; the base grew by
-68 KB between the rounds with the v0.26 frame-path work.
+removed and no workload slower by more than 2%. Result against the final
+base: hello −5.4% (1,165,744 B), dashboard −7.3% (1,267,480 B), frame time
+within ±1.1%. The hello margin is one page: a few KiB of new runtime code
+can cross it. The round-1 absolute number (1,140,000 B) is not met
+(25,744 B away); the base grew by 34 KB between the rounds with the v0.26
+frame-path work.
 
 **Round 1** (on `0a8cf43`, same toolchain):
 

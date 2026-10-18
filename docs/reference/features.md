@@ -15,12 +15,12 @@ For the canonical API surface, also check docs.rs and `src/lib.rs`.
   26 with default features, 63 with `--features full` — versus 69 for a
   ratatui + crossterm app. "Light" refers to this dependency footprint and the
   small public API, not stripped binary size or build speed.
-- Binary size: a stripped release hello-world is ~1.15 MB with default
-  features (~0.69 MB with a size-optimized profile), about 2x / 1.6x
-  ratatui; a list / table / gauge dashboard is ~1.25 MB (1.6x). The size
+- Binary size: a stripped release hello-world is ~1.17 MB with default
+  features (~0.69 MB with a size-optimized profile), about 2.1x / 1.6x
+  ratatui; a list / table / gauge dashboard is ~1.27 MB (1.7x / 1.5x). The size
   profile recipe, its trade-offs and the breakdown are in
   [docs/internals/performance.md](../internals/performance.md#binary-size).
-  Turning off `bidi` saves another ~33-51 KB.
+  Turning off `bidi` saves another ~33-68 KB.
 - The low-level core (`Backend`, `AppState`, `frame()`, widgets, events, style/layout types) works without terminal I/O.
 
 ## Main flags
