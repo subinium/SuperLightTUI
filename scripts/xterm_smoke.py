@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Smoke-test the SLT probe inside a real xterm on a headless X server (#450).
 
-Run under `xvfb-run`; needs `xterm` and `xdotool`. Pixels are never compared.
+Run with `DISPLAY` on an X server (Xvfb, or `xvfb-run`); needs `xterm` and
+`xdotool`. Pixels are never compared.
 Instead the probe reports what it received:
 
 * `probe --measure` prints each grapheme of the view in raw mode and reads the
@@ -245,7 +246,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     if not os.environ.get("DISPLAY"):
-        log("FAIL  DISPLAY is not set; run under xvfb-run")
+        log("FAIL  DISPLAY is not set; start Xvfb (or use xvfb-run) first")
         return 1
     smoke = XtermSmoke(args)
     try:
