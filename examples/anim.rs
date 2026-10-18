@@ -33,7 +33,7 @@ fn main() -> std::io::Result<()> {
     let mut cb_tween = Tween::new(0.0, 100.0, 120);
     let mut cb_fired = false;
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(slt::RunConfig::default(), |ui: &mut Context| {
         if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(slt::KeyCode::Esc) {
             ui.quit();
         }

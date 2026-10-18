@@ -21,7 +21,7 @@ fn main() -> std::io::Result<()> {
     let long_text = "SuperLightTUI focuses on immediate-mode ergonomics while still needing the hot path to stay lean under repeated wrapped layout work. ".repeat(6);
 
     slt::run_with(
-        RunConfig::default().mouse(true).kitty_keyboard(true),
+        RunConfig::default().kitty_keyboard(true),
         |ui: &mut Context| {
             if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
                 ui.quit();

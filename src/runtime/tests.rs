@@ -525,3 +525,82 @@ fn suspend_handler_installs_delivers_and_tears_down() {
     // the test times out — a real regression signal.
     drop(guard);
 }
+
+// ── Mouse reporting mode (issue #444) ──────────────────────────────────
+
+#[test]
+fn mouse_bool_shim_maps_to_hover_and_off() {
+    use crate::MouseMode;
+    let on = RunConfig::default().mouse(true);
+    assert_eq!(on.mouse_mode, Some(MouseMode::Hover));
+    assert_eq!(on.effective_mouse_mode(), MouseMode::Hover);
+    let off = RunConfig::default().mouse(false);
+    assert_eq!(off.mouse_mode, Some(MouseMode::Off));
+    assert_eq!(off.effective_mouse_mode(), MouseMode::Off);
+    assert_eq!(MouseMode::from(true), MouseMode::Hover);
+    assert_eq!(MouseMode::from(false), MouseMode::Off);
+}
+
+#[test]
+fn remote_fallback_applies_only_to_the_default() {
+    use super::config::resolve_mouse_mode;
+    use crate::MouseMode;
+    assert_eq!(
+        RunConfig::default().mouse_mode,
+        None,
+        "automatic by default"
+    );
+    assert_eq!(resolve_mouse_mode(None, false), MouseMode::Drag);
+    assert_eq!(resolve_mouse_mode(None, true), MouseMode::Click);
+    for mode in [
+        MouseMode::Off,
+        MouseMode::Click,
+        MouseMode::Drag,
+        MouseMode::Hover,
+    ] {
+        assert_eq!(
+            resolve_mouse_mode(Some(mode), true),
+            mode,
+            "never overridden"
+        );
+        assert_eq!(resolve_mouse_mode(Some(mode), false), mode);
+    }
+}
+
+#[test]
+fn inline_and_static_runs_default_to_mouse_off() {
+    use crate::MouseMode;
+    assert_eq!(
+        RunConfig::default().effective_inline_mouse_mode(),
+        MouseMode::Off
+    );
+    for mode in [MouseMode::Click, MouseMode::Drag, MouseMode::Hover] {
+        assert_eq!(
+            RunConfig::default()
+                .mouse_mode(mode)
+                .effective_inline_mouse_mode(),
+            mode,
+            "an explicit mode is honored inline too"
+        );
+    }
+    assert_eq!(
+        RunConfig::default()
+            .mouse(true)
+            .effective_inline_mouse_mode(),
+        MouseMode::Hover
+    );
+}
+
+#[test]
+fn mouse_mode_filter_matches_the_reporting_level() {
+    use crate::MouseMode;
+    let moved = Event::mouse_move(1, 1);
+    let drag = Event::mouse_drag(1, 1);
+    let click = Event::mouse_click(1, 1);
+    let key = Event::key_char('a');
+    assert!(!MouseMode::Off.admits(&click) && MouseMode::Off.admits(&key));
+    assert!(MouseMode::Click.admits(&click) && !MouseMode::Click.admits(&drag));
+    assert!(!MouseMode::Click.admits(&moved));
+    assert!(MouseMode::Drag.admits(&drag) && !MouseMode::Drag.admits(&moved));
+    assert!(MouseMode::Hover.admits(&moved));
+}

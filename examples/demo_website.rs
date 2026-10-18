@@ -238,15 +238,12 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
-                ui.quit();
-            }
-            render(ui, &mut state);
-        },
-    )
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
+        render(ui, &mut state);
+    })
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1225,7 +1222,7 @@ fn render_post_dashboard_tutorial(ui: &mut Context) {
          \x20   let mut scroll = ScrollState::new();\n\
          \n\
          \x20   slt::run_with(\n\
-         \x20       RunConfig::default().mouse(true),\n\
+         \x20       RunConfig::default(),\n\
          \x20       |ui: &mut Context| {\n\
          \x20           if ui.key('q') { ui.quit(); }\n\
          \x20           // ... UI goes here\n\

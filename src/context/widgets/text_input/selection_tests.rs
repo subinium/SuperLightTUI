@@ -29,6 +29,16 @@ fn drive(
             clip = ui.clipboard_text.clone();
         })
         .run();
+    // Presses after the first one in a batch run on the following frames
+    // (one press per frame); render them like a run loop would.
+    while tb.has_pending_input() {
+        tb.run_with_events(Vec::new(), |ui| {
+            f(ui);
+            if let Some(text) = ui.clipboard_text.clone() {
+                clip = Some(text);
+            }
+        });
+    }
     clip
 }
 

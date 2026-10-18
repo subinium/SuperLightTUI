@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
     let mut layout = DiffLayout::Unified;
     let mut last_event = String::from("No decisions yet");
 
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }

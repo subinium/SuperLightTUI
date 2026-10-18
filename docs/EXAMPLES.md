@@ -11,9 +11,10 @@ tour part or test fixture included through `#[path = "..."]`, so every
 `examples/*.rs` source is compiled by some target;
 `tests/docs_contract.rs` fails if one is not.
 
-Interactive examples that react to clicks, hover, or the scroll wheel start
-with `slt::run_with(RunConfig::default().mouse(true), ...)`. Mouse capture is
-off by default in your own apps too — see [QUICK_START.md](QUICK_START.md).
+The mouse is on by default (clicks, the scroll wheel, and drags), in the
+examples and in your own apps. Examples that show hover effects or tooltips
+opt into every pointer move with `MouseMode::Hover` (or the `mouse(true)`
+shorthand) — see [QUICK_START.md](QUICK_START.md).
 
 ## Recommended learning order
 

@@ -354,26 +354,23 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
     let mut dark_mode = true;
 
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            if ui.key_mod('q', slt::KeyModifiers::CONTROL) {
-                ui.quit();
-            }
-            if ui.key_code(slt::KeyCode::Esc) {
-                state.installing = false;
-                state.install_progress = 0.0;
-            }
-            if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
-                dark_mode = !dark_mode;
-            }
-            ui.set_theme(if dark_mode {
-                Theme::dark()
-            } else {
-                Theme::light()
-            });
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        if ui.key_mod('q', slt::KeyModifiers::CONTROL) {
+            ui.quit();
+        }
+        if ui.key_code(slt::KeyCode::Esc) {
+            state.installing = false;
+            state.install_progress = 0.0;
+        }
+        if ui.key_mod('t', slt::KeyModifiers::CONTROL) {
+            dark_mode = !dark_mode;
+        }
+        ui.set_theme(if dark_mode {
+            Theme::dark()
+        } else {
+            Theme::light()
+        });
 
-            render(ui, &mut state);
-        },
-    )
+        render(ui, &mut state);
+    })
 }

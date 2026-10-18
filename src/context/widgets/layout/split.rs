@@ -310,20 +310,28 @@ impl Context {
         }
 
         let mut consumed: Vec<usize> = Vec::new();
-        let events: Vec<(usize, crate::event::MouseEvent)> = self
+        // #442: focus loss and resize end the drag (the release will never
+        // arrive), so they are replayed in order with the mouse events.
+        let events: Vec<(usize, Option<crate::event::MouseEvent>)> = self
             .events
             .iter()
             .enumerate()
             .filter_map(|(i, e)| match e {
-                Event::Mouse(m) if !self.consumed[i] => Some((i, m.clone())),
+                Event::Mouse(m) if !self.consumed[i] => Some((i, Some(m.clone()))),
+                Event::FocusLost | Event::Resize(_, _) => Some((i, None)),
                 _ => None,
             })
             .collect();
 
         for (i, mouse) in events {
+            let Some(mouse) = mouse else {
+                state.dragging = false;
+                continue;
+            };
             match mouse.kind {
                 MouseKind::Down(MouseButton::Left) => {
                     if let Some(rect) = handle_rect
+                        && self.press_reaches_slot(i, handle_interaction_id)
                         && rect.width > 0
                         && mouse.x >= rect.x
                         && mouse.x < rect.right()
@@ -332,6 +340,10 @@ impl Context {
                     {
                         state.dragging = true;
                         consumed.push(i);
+                    } else {
+                        // A new press elsewhere: any previous drag lost its
+                        // release.
+                        state.dragging = false;
                     }
                 }
                 MouseKind::Drag(MouseButton::Left) if state.dragging => {
@@ -364,6 +376,8 @@ impl Context {
                     state.dragging = false;
                     consumed.push(i);
                 }
+                // Motion without a held button: the release was lost.
+                MouseKind::Moved if state.dragging => state.dragging = false,
                 _ => {}
             }
         }

@@ -28,8 +28,8 @@ version, and the output of the diagnostics below is very welcome.
 | 256 colors | `TERM` containing `256color` | Environment, when none of the 24-bit signals above apply | Downsampled to the 16 ANSI colors |
 | No color | `NO_COLOR` set to any non-empty value, or `TERM=dumb` | Environment; wins over every detected signal. Only an explicit `RunConfig::color_depth` overrides it | n/a: no color codes are emitted |
 | Screen readers (accessible mode) | Nothing from the terminal; stdin / stdout may be pipes | Opt-in: `RunConfig::default().accessible(true)` or `SLT_ACCESSIBLE=1`. See [Accessibility](#accessibility) | n/a |
-| Mouse (click, hover, wheel, drag) | SGR mouse reporting | Opt-in: `RunConfig::default().mouse(true)`. Enables all-motion tracking | Keyboard focus (Tab) and activation (Enter/Space) still work |
-| Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release | Native terminal selection (mouse off, or the terminal's bypass modifier) |
+| Mouse (click, wheel, drag, hover) | SGR mouse reporting (`?1006`) | On by default in fullscreen runs: `MouseMode::Drag` locally (`?1000h ?1002h ?1006h`), `MouseMode::Click` over SSH/mosh (`?1000h ?1006h`). Hover is opt-in with `RunConfig::mouse_mode(MouseMode::Hover)` (`?1000h ?1003h ?1006h`); `MouseMode::Off` disables it. Inline and static runs default to `MouseMode::Off` so the terminal keeps its scrollback wheel and native selection. An explicit mode is never overridden | Keyboard focus (Tab) and activation (Enter/Space) still work |
+| Text selection + copy | `MouseMode::Drag` or `Hover`, OSC 52 | Built in while the mouse is captured; copies on release. Widget drags (split handles, scrollbar thumbs) never select. `RunConfig::text_selection(false)` turns it off | Native terminal selection (`MouseMode::Off`, or the terminal's bypass modifier, usually Shift) |
 | Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` (and Ctrl+C / Ctrl+X on a selection in a focused `text_input` / `textarea`) writes it after the frame. Inside tmux / screen it is wrapped for passthrough only with `RunConfig::clipboard_passthrough(true)`. Payloads over `RunConfig::clipboard_max_bytes` (default 74,994 bytes) are not sent. `ui.clipboard_status()` reports `Sent`, `TooLarge`, or `WriteFailed` for one frame | Ignored by the terminal; `Sent` only means "written", OSC 52 has no acknowledgement |
 | Hyperlinks | OSC 8 | `ui.link(..)` always emits it, and also opens the URL with the local system opener on click or Enter | Plain styled text; the local opener still runs |
 | Bracketed paste | Bracketed paste mode | Always requested | Pasted text arrives as individual key presses |
@@ -42,6 +42,7 @@ version, and the output of the diagnostics below is very welcome.
 | Taskbar / tab progress | OSC 9;4 | `ui.set_progress(Some(Progress::Normal(0.4)))`, written on change. Sent only to known hosts (Windows Terminal via `WT_SESSION`, Ghostty, ConEmu with `ConEmuANSI=ON`, iTerm2 3.6+) or with `SLT_FORCE_PROGRESS`; never inside tmux / screen / Zellij. Cleared on exit | Not sent: older terminals treat OSC 9 as a desktop notification |
 | Program status | OSC 7501 | `ui.set_status(Some(ProgramStatus::new(ProgramState::Working)))`, written on change, direct terminals only (`SLT_FORCE_PROGRAM_STATUS` / `SLT_DISABLE_PROGRAM_STATUS`). On exit, `idle` / `working` / `blocked` records are cleared; `done` / `error` are left for the terminal to keep | Ignored by the terminal |
 | Cursor shape | DECSCUSR (`CSI n SP q`) | `ui.set_cursor_shape(CursorShape::SteadyBar)`, written on change; reset to the terminal default on exit | Ignored |
+| Pointer shape | OSC 22 | Opt-in: `RunConfig::pointer_shapes(true)` plus `ContainerBuilder::pointer_shape(..)`; follows the hovered slot, written on change, reset to the default pointer on exit, panic and suspend. Needs `MouseMode::Hover` to follow plain moves | Off by default because unsupported terminals may print the payload |
 | East Asian Ambiguous width | Terminal configured for wide ambiguous characters | Opt-in: `RunConfig::ambiguous_wide(true)` measures `→±①` as two columns each in the buffer, wrapping, and truncation | One column (the Unicode default) |
 | Emoji clusters measured differently | n/a | `RunConfig::width_conservative(..)`: on by default under tmux / screen / Zellij; `RunConfig::width_probe(true)` measures VS16, ZWJ, skin-tone, and flag samples with `CSI 6 n` at startup (fullscreen, direct terminals only) and enables it on a mismatch. The policy is resolved today; the explicit cursor reposition in the diff flush lands with #441 | Rows after a wrongly measured cluster can shift on incremental updates |
 | Clean Ctrl+Z | Unix job control | `RunConfig::handle_suspend` (default on, Unix only) | Ctrl+Z arrives as a key event (Windows) |
@@ -146,8 +147,12 @@ Practical consequences:
   reply to XTGETTCAP selects 24-bit color. Otherwise add `SendEnv COLORTERM`
   on the client and `AcceptEnv COLORTERM` on the server, export
   `COLORTERM=truecolor` remotely, or set `RunConfig::color_depth`.
-- With the mouse on, every pointer move is sent over the connection. On slow
-  links, consider leaving the mouse off.
+- The default mouse mode falls back to `MouseMode::Click` when `SSH_CONNECTION`,
+  `SSH_TTY` or `MOSH_IP` is set: presses, releases and the wheel only, so no
+  motion events cross the link. Drag gestures (split handles, scrollbar
+  thumbs, built-in selection) need an explicit
+  `RunConfig::mouse_mode(MouseMode::Drag)`. `MouseMode::Hover` sends every
+  pointer move over the connection; avoid it on slow links.
 - OSC 52 copy goes to the **local** terminal's clipboard, which is usually
   what you want over SSH (if the terminal allows OSC 52).
 - `ui.link(..)` activation runs the system opener on the **remote** host. Over
@@ -356,8 +361,11 @@ this section can move them to "verified manually".
   colors; set `RunConfig::color_depth` to pin a depth either way.
 - Windows Terminal (`WT_SESSION`) receives OSC 9;4 taskbar progress.
 - Ctrl+Z suspend handling is Unix-only; on Windows it is a normal key event.
-- Mouse and focus work through crossterm's console input. They are
-  **expected** to work but are not verified beyond `cargo test` in CI.
+- Mouse and focus work through crossterm's console input. The console API
+  cannot be asked for a reporting level, so SLT captures the mouse and drops
+  events above the configured `MouseMode` (for example, plain moves outside
+  `Hover`). They are **expected** to work but are not verified beyond
+  `cargo test` in CI.
 
 ## Troubleshooting
 
@@ -374,11 +382,14 @@ For any other key, log every event SLT receives:
 
 <!-- slt-check: {"name":"tc_event_log","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Context, KeyCode, RunConfig};
+use slt::{Context, KeyCode, MouseMode, RunConfig};
 
 fn main() -> std::io::Result<()> {
     let mut log: Vec<String> = Vec::new();
-    let config = RunConfig::default().mouse(true).kitty_keyboard(true);
+    // Hover mode logs every pointer move, not only presses and drags.
+    let config = RunConfig::default()
+        .mouse_mode(MouseMode::Hover)
+        .kitty_keyboard(true);
 
     slt::run_with(config, |ui: &mut Context| {
         let batch: Vec<String> = ui.raw_events().map(|e| format!("{e:?}")).collect();
@@ -414,8 +425,11 @@ ui.text(format!(
 
 ### The mouse does nothing
 
-1. Did you enable it? `RunConfig::default().mouse(true)`. It is off by
-   default.
+1. Is it turned off? The mouse is on by default (`MouseMode::Drag` locally,
+   `MouseMode::Click` over SSH/mosh), so check for `.mouse(false)` or
+   `.mouse_mode(MouseMode::Off)`. `config.effective_mouse_mode()` shows the
+   resolved mode. Hover styling and tooltips need `MouseMode::Hover`; drags
+   need `Drag` or `Hover`, which is not the default over SSH.
 2. Run `mouse_probe`. If it prints no mouse events, the terminal or
    multiplexer is not reporting them: check multiplexer mouse mode
    (`set -g mouse on` in tmux). If `mouse_probe` works but your app does not,
@@ -493,9 +507,13 @@ ui.text(format!(
 3. Inside tmux, set `set -g set-clipboard on`, or use
    `RunConfig::clipboard_passthrough(true)` with `set -g allow-passthrough on`
    (see the tmux table above).
-4. With the mouse on, native selection is replaced by SLT's selection
-   overlay. Hold the terminal's bypass modifier (often Shift, Option on macOS)
-   to select natively, or turn the mouse off.
+4. While the mouse is captured (the default), native selection is replaced
+   by SLT's selection overlay, which copies through OSC 52 on release. Most
+   terminals bypass mouse capture while Shift is held (Shift-drag); the
+   modifier differs on some macOS terminals, so check your terminal's
+   settings. `RunConfig::mouse_mode(MouseMode::Off)` (or `.mouse(false)`)
+   keeps native selection entirely, and `RunConfig::text_selection(false)`
+   turns off only SLT's overlay.
 
 ## Related docs
 

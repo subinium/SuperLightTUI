@@ -443,7 +443,6 @@ fn main() {
     let mut state = DemoState::default();
     let _ = slt::run_with(
         RunConfig::default()
-            .mouse(true)
             .tick_rate(Duration::from_millis(16))
             .max_fps(60),
         move |ui: &mut Context| {

@@ -20,6 +20,53 @@
   visual renderer for now. Screen-reader walkthroughs (VoiceOver, Orca) are
   not yet recorded; see docs/TERMINAL_COMPATIBILITY.md#accessibility.
 
+- `Response::clicked_any` (raw "a press landed in my rect"), `Response::hovered_top`
+  (the single slot a press at the pointer would hit) and
+  `ContainerBuilder::bubble_clicks()` to let an ancestor also receive clicks
+  from its descendants (#439).
+- Pointer event model (#442): no press is dropped any more. Presses that
+  arrive in one input batch are dispatched one per frame, like sequential DOM
+  events, so each is hit-tested against the layout the previous press
+  produced (two clicks in one batch activate two widgets). `Response` gains
+  `pressed`, `released`,
+  `drag_started`, `dragging`, `drag_delta`, `middle_clicked` and `modifiers`.
+  A press captures the pointer for its target until the release. Capture
+  follows the widget's stable key (keyed or named focusable, text widgets,
+  `ui.group`) through slots inserted or removed before it; anonymous
+  containers are captured by slot position.
+  `RunConfig::click_on_release(bool)` (default `false`) makes `clicked` fire
+  on a release inside the pressed widget, so dragging off cancels.
+  `TestBackend::with_run_config` renders headless frames with a custom
+  `RunConfig`.
+- `ContainerBuilder::overscroll_contain()` keeps wheel events inside a
+  scrollable at its limit, like CSS `overscroll-behavior: contain` (#440).
+- Scroll anchoring and stick-to-bottom for every `scrollable` (#443).
+  `ScrollState::anchor` (default `true`) keeps the visible content in place
+  when content above the viewport changes height; `ScrollState::stick_to_bottom`
+  (field, plus the `stick_to_bottom(bool)` builder) follows appended content
+  while the view is at the end. Focus reveal wins on the frame focus moves.
+- `MouseMode::{Off, Click, Drag, Hover}` and `RunConfig::mouse_mode(..)` /
+  `RunConfig::effective_mouse_mode()` choose how much pointer activity the
+  terminal reports (#444). Each mode writes only its DEC modes (`?1000h ?1006h`
+  for Click, plus `?1002h` for Drag or `?1003h` for Hover) and restores them in
+  reverse order on exit, panic and suspend; the urxvt `?1015` encoding is no
+  longer requested. `Terminal::new` / `InlineTerminal::new` accept a
+  `MouseMode` (a `bool` still works).
+- Tooltip dwell delay, hover timeout and pointer shapes (#452):
+  `RunConfig::tooltip_delay(Duration)` (default 500 ms),
+  `RunConfig::hover_timeout(Option<Duration>)` (default `None`) and
+  `ContainerBuilder::pointer_shape(PointerShape)` (OSC 22, opt-in via
+  `RunConfig::pointer_shapes(true)`, follows the hovered slot with CSS
+  `cursor` inheritance). The pointer shape travels with the terminal
+  metadata (#468): written only on change and reset to the default pointer
+  on exit, panic and suspend. The text cursor shape is the #468
+  `set_cursor_shape(CursorShape)` setter. `EventBuilder::mouse_move` and
+  `PtyBackend::with_run_config` support testing them.
+- `ContainerBuilder::draggable()` marks a custom drag handle so pressing it
+  never starts the built-in text selection (#438).
+- `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
+  text selection and copy-on-release off for apps with their own drag or
+  selection model (#438).
 - `ListState` and `TableState` selection helpers that are correct under a
   filter or sort (#455): `selected_index()` / `set_selected_index()` (data
   index), `selected_view_index()` / `set_selected_view_index()` (view index)
@@ -41,6 +88,41 @@
   Tab / Shift+Tab (`CodeEditorState::tab_indents(false)` opts out).
 
 ### Changed
+
+- Hover tooltips wait for `RunConfig::tooltip_delay` (500 ms by default) while
+  the pointer rests on the same target, instead of appearing on the first
+  hovered frame (#452). `tooltip_delay(Duration::ZERO)` restores the old
+  behavior. Tooltip panels are transparent to clicks (#439).
+
+- **Breaking:** the mouse is on by default (#444, owner decision).
+  `RunConfig::default()` resolves to `MouseMode::Drag` locally (clicks,
+  wheel, drag handles, scrollbar thumbs and the built-in text selection) and
+  to `MouseMode::Click` when an SSH or mosh session is detected, so plain
+  `slt::run` apps react to the mouse out of the box without a motion flood.
+  Inline and static runs (`run_inline*`, `run_static*`) default to
+  `MouseMode::Off` so CLI-style apps keep the terminal's scrollback wheel and
+  native selection (`RunConfig::effective_inline_mouse_mode()`).
+  Hover styling and tooltips need `MouseMode::Hover`. The `RunConfig::mouse`
+  field is replaced by `mouse_mode: Option<MouseMode>` (`None` = automatic);
+  `RunConfig::mouse(true)` is kept and maps to `Hover` (the previous
+  any-motion behavior), `mouse(false)` to `Off`. While the mouse is captured
+  the terminal's native selection is replaced by SLT's; most emulators still
+  select natively with Shift-drag, or use `MouseMode::Off`.
+
+- Scrollables anchor by default (#443): collapsing or growing content above
+  the viewport now adjusts `ScrollState::offset` by the height change instead
+  of letting the visible text jump. Set `ScrollState::anchor = false` for the
+  previous raw-offset behavior.
+
+- **Breaking:** each mouse press now activates only the topmost, innermost
+  interactive slot under the pointer (#439). A button in a non-modal
+  `overlay` no longer also clicks the container behind it, and a clickable row
+  inside a clickable card sets `clicked` on the row only. `right_clicked` and
+  `double_clicked` follow the same rule; `hovered` keeps its containment
+  meaning. Overlay roots, `overlay_at`/`modal_at` positioning wrappers and
+  tooltips are transparent to hit-testing, so only overlay content blocks the
+  widgets underneath. Migration: read `Response::clicked_any` for the old
+  containment check, or call `.bubble_clicks()` on the outer container.
 
 - **Behaviour:** `list`, `list_colored`, `list_reorderable*` and unpaged
   `table` / `table_colored` / `table_with` now scroll themselves (#487). They
@@ -236,6 +318,31 @@
   text-focus rule above, and `Context::raw_key(c)`, which ignores both the
   modal guard and text-focus ownership (#453). `raw_key_code` / `raw_key_mod`
   now also document that they ignore text-focus ownership.
+
+### Fixed
+
+- The built-in text selection works on any text, including top-level
+  `ui.text` outside containers (#445). A selection that starts inside a
+  `scrollable` is kept in content coordinates, so the highlight stays on its
+  text while the region scrolls (rows scrolled out of view stay selected but
+  are not drawn), and dragging onto or past the region's top or bottom row
+  auto-scrolls it one step per frame. Copying still reads the visible part of
+  the selection only.
+- Dragging a split handle, a scrollbar thumb, or any widget that consumes the
+  press no longer highlights text or overwrites the clipboard over OSC 52
+  (#438). The selection tracker skips consumed events, and a consumed press
+  keeps it idle until the release even when later drags leave the widget.
+  Clipboard writes now go through the terminal backend's own output stream,
+  ordered with the frame bytes.
+- Nested scrollables chain the wheel (#440): once an inner scrollable reaches
+  its end, further wheel events over it scroll the enclosing scrollable
+  instead of being swallowed. Each event goes to the innermost region on its
+  axis that can still move, so a burst fills the inner region and spills the
+  rest outward. Events no region can absorb stay unconsumed for frame-global
+  wheel helpers.
+- Split-pane and scrollbar drags no longer stick to the pointer when the
+  release is lost: they end on terminal focus loss, on resize, on a press
+  elsewhere and on motion reported without a held button (#442).
 
 ### Security
 

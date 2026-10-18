@@ -112,8 +112,8 @@ use slt::{Spring, Context};
 
 let mut spring = Spring::new(0.0, 0.2, 0.85);
 
-// Hover needs mouse capture, which is off by default.
-slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+// Hover needs every pointer move: MouseMode::Hover (clicks work by default).
+slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui: &mut Context| {
     let hovered = ui.button("Hover me").hovered;
     spring.set_target(if hovered { 10.0 } else { 0.0 });
     spring.tick();
@@ -290,8 +290,8 @@ slt::run(|ui: &mut Context| {
 ```rust
 let mut spring = Spring::new(0.0, 0.3, 0.8);
 
-// Hover needs mouse capture, which is off by default.
-slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+// Hover needs every pointer move: MouseMode::Hover (clicks work by default).
+slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui: &mut Context| {
     let btn = ui.button("Click me");
     spring.set_target(if btn.hovered { 2.0 } else { 0.0 });
     spring.tick();

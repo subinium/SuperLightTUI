@@ -104,21 +104,33 @@ pub(crate) fn input_frame(state: &mut FrameState, mut events: Vec<Event>) -> Vec
         matches!(event, Event::Key(key) if key.kind == event::KeyEventKind::Press
             && matches!(key.code, event::KeyCode::Tab | event::KeyCode::BackTab))
     }
+    // #442: at most one mouse press per frame. A press can change what
+    // renders (a header click inserts a body), which shifts the positional
+    // interaction slots the next press would be hit-tested against. Later
+    // presses, and everything after them, are carried to the following
+    // frame so each one meets geometry that reflects the previous press.
+    fn press(event: &Event) -> bool {
+        matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, event::MouseKind::Down(_)))
+    }
     if !state.pending_input.is_empty() {
         state.pending_input.extend(events.drain(..));
         let mut navigated = false;
+        let mut pressed = false;
         while let Some(event) = state.pending_input.front() {
             let is_navigation = navigation(event);
-            if navigated && !is_navigation {
+            let is_press = press(event);
+            if (navigated && !is_navigation) || (pressed && is_press) {
                 break;
             }
             navigated |= is_navigation;
+            pressed |= is_press;
             if let Some(event) = state.pending_input.pop_front() {
                 events.push(event);
             }
         }
         return events;
     }
+    let mut split = events.len();
     if let Some(first) = events.iter().position(navigation) {
         let end = first
             + events[first..]
@@ -127,8 +139,16 @@ pub(crate) fn input_frame(state: &mut FrameState, mut events: Vec<Event>) -> Vec
                 .count();
         // Keep consecutive navigation keys together, but do not let a later
         // character/activation edit the widget that is about to lose focus.
+        split = end;
+    }
+    if let Some(first) = events.iter().position(press)
+        && let Some(second) = events[first + 1..].iter().position(press)
+    {
+        split = split.min(first + 1 + second);
+    }
+    if split < events.len() {
         // Moving events preserves large paste payloads without cloning them.
-        state.pending_input.extend(events.drain(end..));
+        state.pending_input.extend(events.drain(split..));
     }
     events
 }
@@ -179,6 +199,7 @@ pub(crate) fn run_frame_kernel(
     // entries; entries from the previous frame must not leak through
     // `named_states` persistence.
     clear_keymap_registry(state);
+    state.pointer.configure(config);
     // Issue #273: invalidate every `cached` region's persisted version key on a
     // resize. The real run loop also clears region keys via
     // `clear_frame_layout_cache` (driven by its `has_resize` flag), but the
@@ -326,39 +347,25 @@ pub(crate) fn run_frame_kernel(
     #[cfg(not(feature = "crossterm"))]
     let _clipboard_text = ctx.clipboard_text.take();
 
+    // #438: widget-consumed presses and drags never start a text selection;
+    // presses on a `draggable()` slot are claimed for their widget first.
+    ctx.claim_draggable_presses();
     #[cfg(feature = "crossterm")]
-    let mut should_copy_selection = false;
-    // Issue #465: a text widget owns this pointer gesture for its own
-    // selection; keep the screen-level overlay out of it.
-    #[cfg(feature = "crossterm")]
-    if ctx.text_pointer_capture {
-        state.selection.clear();
-    }
-    #[cfg(feature = "crossterm")]
-    for ev in ctx.events.iter().filter(|_| !ctx.text_pointer_capture) {
-        if let Event::Mouse(mouse) = ev {
-            match mouse.kind {
-                event::MouseKind::Down(event::MouseButton::Left) => {
-                    state.selection.mouse_down(
-                        mouse.x,
-                        mouse.y,
-                        &state.layout_feedback.prev_content_map,
-                    );
-                }
-                event::MouseKind::Drag(event::MouseButton::Left) => {
-                    state.selection.mouse_drag(
-                        mouse.x,
-                        mouse.y,
-                        &state.layout_feedback.prev_content_map,
-                    );
-                }
-                event::MouseKind::Up(event::MouseButton::Left) => {
-                    should_copy_selection = state.selection.active;
-                }
-                _ => {}
-            }
-        }
-    }
+    let should_copy_selection = {
+        // Issue #465: a text widget that owns this pointer gesture keeps the
+        // screen-level overlay out of it (the disabled tracker clears it).
+        let selection = terminal::track_selection(
+            &mut state.selection,
+            &ctx.events,
+            &ctx.consumed,
+            &state.layout_feedback.prev_content_map,
+            terminal::ScrollView::new(&ctx.prev_geometry, &ctx.prev_scroll_rects, size.1),
+            config.text_selection && !ctx.text_pointer_capture,
+        );
+        // #445: edge auto-scroll applies at the region's next binding.
+        state.pointer.selection_autoscroll = selection.autoscroll;
+        selection.should_copy
+    };
 
     state.focus.focus_index = ctx.focus_index;
     state.focus.prev_focus_count = ctx.rollback.focus_count;
@@ -371,6 +378,8 @@ pub(crate) fn run_frame_kernel(
     // that Vec into `state.commands_buf` after the frame so the next call
     // to `Context::new` can pick it up via `mem::take` (matches the #204
     // pattern for the other six recycled buffers).
+    // #443: scroll anchoring policies recorded by this frame's bindings.
+    let scroll_policies = std::mem::take(&mut ctx.pointer.scroll_policies);
     let mut tree = layout::build_tree(&mut ctx.commands);
     let area = crate::rect::Rect::new(0, 0, w, h);
     layout::compute(&mut tree, area);
@@ -383,16 +392,22 @@ pub(crate) fn run_frame_kernel(
     let mut fd = std::mem::take(&mut state.frame_data);
     fd.swap_feedback(&mut state.layout_feedback);
     layout::collect_all(&tree, &mut fd);
-    if state
+    let mut adjusted = state
         .focus
         .scroll
-        .prepare(ctx.rollback.focused_widget_id, &fd.geometry)
-    {
+        .prepare(ctx.rollback.focused_widget_id, &fd.geometry);
+    adjusted |= state
+        .focus
+        .scroll
+        .anchor(&tree, &fd.geometry, &scroll_policies);
+    if adjusted {
         layout::apply_scroll_adjustments(&mut tree, &state.focus.scroll.pending);
         // Recollect only when a focus transition or fresh bounds moved a
         // viewport, so rendering and mouse feedback share the adjusted tree.
         layout::collect_all(&tree, &mut fd);
     }
+    state.focus.scroll.record_anchors(&fd.geometry);
+    state.pointer.scroll_policy_buf = scroll_policies;
     debug_assert_eq!(
         fd.scroll_infos.len(),
         fd.scroll_rects.len(),
@@ -572,6 +587,7 @@ pub(crate) fn run_frame_kernel(
 }
 
 fn reclaim_feedback(ctx: &mut Context, state: &mut FrameState) {
+    ctx.reclaim_pointer(state);
     state.layout_feedback.geometry = std::mem::take(&mut ctx.prev_geometry);
     state.focus.scroll.pending = std::mem::take(&mut ctx.pending_scroll);
     state.layout_feedback.prev_scroll_infos = std::mem::take(&mut ctx.prev_scroll_infos);
@@ -619,10 +635,15 @@ pub(crate) fn run_frame(
 
     #[cfg(feature = "crossterm")]
     if state.selection.active {
-        terminal::apply_selection_overlay(
+        terminal::apply_selection_overlay_in(
             term.buffer_mut(),
             &state.selection,
             &state.layout_feedback.prev_content_map,
+            terminal::ScrollView::new(
+                &state.layout_feedback.geometry,
+                &state.layout_feedback.prev_scroll_rects,
+                size.1,
+            ),
         );
     }
     // Issues #446 / #468: clipboard writes and terminal metadata are staged
@@ -632,10 +653,15 @@ pub(crate) fn run_frame(
     if terminal_side_effects {
         let mut effects = terminal::FrameEffects::default();
         if kernel.should_copy_selection {
-            let text = terminal::extract_selection_text(
+            let text = terminal::extract_selection_text_in(
                 term.buffer_mut(),
                 &state.selection,
                 &state.layout_feedback.prev_content_map,
+                terminal::ScrollView::new(
+                    &state.layout_feedback.geometry,
+                    &state.layout_feedback.prev_scroll_rects,
+                    size.1,
+                ),
             );
             if !text.is_empty() {
                 effects.clipboard.push(text);
@@ -649,6 +675,15 @@ pub(crate) fn run_frame(
         if effects.meta.title.is_none() {
             effects.meta.title.clone_from(&config.title);
         }
+        // #452: OSC 22 pointer shape under the hover winner (opt-in).
+        effects.meta.pointer_shape = if config.pointer_shapes {
+            state
+                .pointer
+                .pointer_wanted
+                .filter(|shape| *shape != crate::PointerShape::Default)
+        } else {
+            None
+        };
         effects.clipboard_options = terminal::ClipboardOptions {
             passthrough: config.clipboard_passthrough,
             max_bytes: config.clipboard_max_bytes,
@@ -674,6 +709,8 @@ pub(crate) fn clear_frame_layout_cache(state: &mut FrameState) {
     state.layout_feedback.geometry.clear();
     state.focus.scroll.invalidate();
     state.layout_feedback.prev_hit_map.clear();
+    state.layout_feedback.prev_hit_meta.clear();
+    state.pointer.reset_capture();
     state.layout_feedback.prev_allocated_areas.clear();
     state.layout_feedback.prev_group_rects.clear();
     state.layout_feedback.prev_content_map.clear();

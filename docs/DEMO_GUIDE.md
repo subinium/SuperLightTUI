@@ -329,7 +329,8 @@ pub fn render_snapshot(ui: &mut Context) {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui| {
+    // Hover polish needs every pointer move; clicks and wheel work by default.
+    slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), move |ui| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }
@@ -349,12 +350,16 @@ binary uses `render`.
 - **Ctrl-C**: delivered as ETX and handled by the runtime as exit by
   default (`RunConfig::handle_ctrl_c`). Some terminal profiles remap it,
   so don't rely on it as a demo key. See §4.
-- **Mouse capture is opt-in on every platform**, not a macOS quirk:
-  `RunConfig::default()` has `mouse: false`, and `slt::run` uses that
-  default. Every interactive demo therefore uses
-  `slt::run_with(RunConfig::default().mouse(true), …)`. Without it,
-  click, hover, and wheel events never reach the app and demos appear
-  "broken" (keyboard focus + Enter still works).
+- **The mouse is on by default, hover is not**: `RunConfig::default()`
+  resolves to `MouseMode::Drag` locally and `MouseMode::Click` over
+  SSH/mosh, so clicks and the wheel always work. Demos with hover
+  effects or tooltips use
+  `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), …)`;
+  without it hover styling looks "broken". When recording over SSH, set
+  the mode explicitly, since the SSH default does not report drags.
+- **Native text selection** is replaced by SLT's selection while the
+  mouse is captured. Most terminals select natively with Shift-drag (the
+  modifier differs on some macOS terminals); `MouseMode::Off` keeps it.
 - **Scrollback in alternate screen**: full-screen demos (default
   `slt::run`) use the alternate screen, where scrollback is isolated
   from the user's shell. `static_log` only makes sense in inline mode

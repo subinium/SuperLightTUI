@@ -122,7 +122,7 @@ impl Default for TourState {
 
 fn main() -> std::io::Result<()> {
     let mut state = TourState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Tour-level quit: Ctrl-Q only at the top of the frame. We
         // intentionally do NOT consume Esc here — embedded demos like
         // `modal_trap` rely on Esc to dismiss their own modals, and any

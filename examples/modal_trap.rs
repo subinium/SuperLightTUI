@@ -152,7 +152,7 @@ pub fn render_snapshot(ui: &mut Context) {
 fn main() -> std::io::Result<()> {
     let mut state = State::new();
 
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         // Quit keys only fire when no modal is open. macOS Ctrl-C is bound to
         // copy in many terminals — bind quit to plain `q`, Esc, and Ctrl-Q so
         // the demo is escape-able under every common setup.

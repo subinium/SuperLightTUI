@@ -229,7 +229,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
     slt::run_with(
-        RunConfig::default().mouse(true).theme(Theme::dark()),
+        RunConfig::default().theme(Theme::dark()),
         move |ui: &mut Context| {
             if ui.key('q') || ui.key_code(KeyCode::Esc) {
                 ui.quit();

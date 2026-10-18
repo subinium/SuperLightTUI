@@ -184,12 +184,12 @@ Since v0.26 the session guard runs the capability probe before pushing the proto
 `RunConfig` is the runtime policy object for all built-in loops.
 
 ```rust
-use slt::{RunConfig, Theme};
+use slt::{MouseMode, RunConfig, Theme};
 use std::time::Duration;
 
 let config = RunConfig::default()
     .tick_rate(Duration::from_millis(16))
-    .mouse(true)
+    .mouse_mode(MouseMode::Hover)
     .theme(Theme::light())
     .max_fps(60)
     .scroll_speed(2)
@@ -200,7 +200,7 @@ Important details:
 
 - `tick_rate` controls how often the loop wakes up even if no input arrives
 - `max_fps` caps the render rate after work is done
-- `mouse(true)` enables clicks, hovers, and wheel input; it is `false` by default, so `slt::run` apps receive no mouse events
+- `mouse_mode(..)` picks the mouse reporting level; the default (`None`) is `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `slt::run` apps get clicks, wheel, and drags out of the box. `MouseMode::Hover` adds every pointer move (hover, tooltips); `MouseMode::Off` disables the mouse. `mouse(true)` / `mouse(false)` are shorthands for `Hover` / `Off`
 - `kitty_keyboard(true)` requests richer key events on supported terminals
 - `title(..)` is the initial window title; `ui.set_title(..)` replaces it at runtime, and the previous title is restored on exit
 - `color_depth(..)` pins the depth; without it, the built-in loops resolve it from the environment plus the startup probe (`ColorDepth::resolve`)

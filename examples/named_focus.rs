@@ -48,7 +48,7 @@ pub struct DemoState {
 
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
-    slt::run_with(RunConfig::default().mouse(true), move |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), move |ui: &mut Context| {
         render(ui, &mut state)
     })
 }

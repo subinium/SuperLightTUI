@@ -37,7 +37,7 @@ const MINMAX_LO: u32 = 10;
 const MINMAX_HI: u32 = 30;
 
 fn main() -> std::io::Result<()> {
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run_with(RunConfig::default(), |ui: &mut Context| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
             ui.quit();
         }

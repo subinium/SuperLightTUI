@@ -19,12 +19,12 @@ variables, or inside it in hooks (`ui.use_state`), which play the role of
 
 <!-- slt-check: {"name":"web_counter","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut count = 0; // state lives outside the render function
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         // This whole closure is your component's render body.
         ui.text(format!("count: {count}"));
         if ui.button("+1").clicked {
@@ -168,18 +168,28 @@ helper.
 
 ## Events (DOM to SLT)
 
-Mouse input is **off by default**. Enable it with
-`RunConfig::default().mouse(true)`. Keyboard focus (Tab / Shift+Tab) and
-activation (Enter / Space) work either way.
+Mouse input is **on by default**: clicks, the wheel, and drags reach your
+closure with plain `slt::run` (over SSH the default drops to clicks and the
+wheel only). `:hover`, `onMouseEnter`, and tooltips need every pointer move,
+so opt in with `RunConfig::default().mouse_mode(MouseMode::Hover)`; see
+[INTERACTION.md](INTERACTION.md#the-mouse-is-on-by-default). Keyboard focus
+(Tab / Shift+Tab) and activation (Enter / Space) work either way.
 
 | DOM | SLT |
 |-----|-----|
 | `onClick` | `if ui.button("..").clicked { .. }` or `.on_click(ui, \|ui\| ..)` |
 | click on any `<div>` | the container's `Response`: `ui.container().col(..).clicked` |
 | `onDoubleClick` | `response.double_clicked` |
+| `onMouseDown` / `onMouseUp` | `response.pressed` / `response.released` |
+| `click` fires on release (drag-off cancels) | `RunConfig::default().click_on_release(true)`; the default fires `clicked` on press |
+| pointer capture + `pointermove` while dragging | `response.dragging` + `response.drag_delta` (the press captures the pointer until release) |
+| `onAuxClick` (middle button) | `response.middle_clicked` |
+| `event.shiftKey` / `ctrlKey` / `altKey` on a click | `response.modifiers.contains(KeyModifiers::SHIFT)` |
 | `onContextMenu` | `response.right_clicked` (no menu widget; render your own overlay) |
-| `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below) |
-| `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")` |
+| `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below); needs `MouseMode::Hover` |
+| `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")`; needs `MouseMode::Hover`, shows after `RunConfig::tooltip_delay` (500 ms) |
+| `cursor: pointer` / `text` / `grab` ... | `ui.container().pointer_shape(PointerShape::Pointer)` with `RunConfig::pointer_shapes(true)` (OSC 22) |
+| `caret-shape` | `ui.set_cursor_shape(CursorShape::SteadyBar)` (DECSCUSR) |
 | `onChange` | `response.changed` |
 | `onSubmit` / Enter in an input | `response.submitted` |
 | `onFocus` / `onBlur` | `response.gained_focus` / `response.lost_focus`; `response.focused` while focused |
@@ -198,20 +208,27 @@ Two rules do not exist on the web:
    call order, and chords such as Ctrl+S still reach `ui.shortcut(..)`.
    `ui.raw_key('q')` is the "listen on `window` in the capture phase" escape
    hatch.
-2. **Clicks are not bubbled and stopped.** A click on a button inside a
-   clickable container reports `clicked` on both. Avoid making a parent and a
-   child clickable at the same time. [INTERACTION.md](INTERACTION.md) covers
-   this and the other hit-testing rules.
+2. **Clicks stop at the innermost target unless the parent opts in.** A press
+   sets `clicked` only on the topmost, innermost slot under the pointer, as if
+   every handler called `stopPropagation()`. Overlay content blocks what is
+   drawn under it. Add `.bubble_clicks()` to a container that should also
+   react to clicks on its descendants, or read `Response::clicked_any` for
+   plain containment. [INTERACTION.md](INTERACTION.md) covers this and the
+   other hit-testing rules.
 
 ## Positioning and overflow
 
 | CSS | SLT | Notes |
 |-----|-----|-------|
 | `overflow: auto` / `scroll` | `ui.scrollable(&mut ScrollState).col(..)` | Wheel, keyboard focus, and `ui.scrollbar(&mut state)`. `scroll_col` / `scroll_row` are shorthands. |
+| `overscroll-behavior: auto` (scroll chaining) | the default: an inner scrollable at its end hands the wheel to the enclosing one | |
+| `overscroll-behavior: contain` | `ui.scrollable(&mut s).overscroll_contain()` | Keeps the wheel inside the region at its limit. |
+| `overflow-anchor: auto` | the default: `ScrollState::anchor` keeps the visible content in place when content above changes height | `scroll.anchor = false` opts out. |
+| chat "stick to bottom" | `ScrollState::new().stick_to_bottom(true)` | Follows new content while at the end; scrolling up disengages it. |
 | `scrollIntoView()` on focus | automatic: `ScrollState::follow_focus` (on by default) | Set `follow_focus = false` for app-controlled scrolling. |
 | `overflow: hidden` | the default: children clip to their container | |
 | `position: fixed` / `absolute` | `ui.overlay_at(Anchor::TopRight, \|ui\| ..)`, `ui.overlay_at_offset(anchor, dx, dy, ..)` | Positioned against the whole screen, not a parent element. |
-| `<dialog>` / modal | `ui.modal(..)`, `ui.modal_at(anchor, ..)`, `ui.modal_at_offset(..)` | Dims the background and blocks clicks and keys underneath. |
+| `<dialog>` / modal | `ui.modal(..)`, `ui.modal_at(anchor, ..)`, `ui.modal_at_offset(..)` | Dims the background and blocks clicks and keys underneath. Non-modal overlays block clicks only where their content is. |
 | `z-index` | none: overlays stack in call order | Later overlays draw on top. |
 | element-anchored popover | only tooltips (`on_hover`, `ui.tooltip`) | For other popovers, position an overlay from a previous-frame `Response.rect`. |
 | `position: sticky` | none | Render the header outside the scrollable instead. |
@@ -308,16 +325,19 @@ Be honest with yourself about these before porting a design:
 - **No `:disabled` or `:active` states.** Render a dimmed, non-interactive
   variant yourself and skip handling its `clicked`.
 - **No element-anchored popovers or context menus**, apart from tooltips.
-- **No pointer-cursor API** (`cursor: pointer`). The terminal owns the mouse
-  pointer. The text cursor's shape is settable with `ui.set_cursor_shape(..)`
-  (block, underline, bar).
+- **`cursor:` is best effort.** `ContainerBuilder::pointer_shape(..)` maps to
+  OSC 22 and is opt-in (`RunConfig::pointer_shapes(true)`) because many
+  terminals ignore or print it. The text cursor's shape is settable with
+  `ui.set_cursor_shape(..)` (block, underline, bar).
 - **No sub-cell positioning, fonts, or font sizes.** One character per cell.
-- **No scroll anchoring or stick-to-bottom.** Collapsing content above the
-  viewport shifts what is visible.
-- **No free text selection while mouse capture is on**, the way a browser page
-  has it. SLT draws its own selection overlay and copies on release; most
-  terminals also let you hold a modifier (often Shift, Option on macOS) to
-  bypass capture. With the mouse off, native terminal selection works as usual.
+- **No native text selection while the mouse is captured** (the default),
+  the way a browser page has it. SLT draws its own selection overlay and
+  copies on release; widget drags never select, the way `user-select: none`
+  keeps a slider drag from selecting. `RunConfig::text_selection(false)` turns
+  the overlay off app-wide. Most terminals bypass mouse capture while Shift is
+  held (Shift-drag selects natively); the modifier differs on some macOS
+  terminals. `RunConfig::default().mouse_mode(MouseMode::Off)` restores native
+  selection entirely.
 - **No guaranteed capabilities.** Colors, images, hyperlinks, clipboard, and
   extra key events depend on the user's terminal and multiplexer. Design for a
   graceful fallback; see [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
@@ -329,7 +349,7 @@ expands it, and the wheel scrolls the list.
 
 <!-- slt-check: {"name":"web_card_list","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Border, Color, Context, KeyCode, RunConfig, ScrollState, Style};
+use slt::{Border, Color, Context, KeyCode, MouseMode, RunConfig, ScrollState, Style};
 
 struct Card {
     title: String,
@@ -374,8 +394,10 @@ fn main() -> std::io::Result<()> {
         .collect();
     let mut scroll = ScrollState::new();
 
-    // Mouse capture is opt-in: without it there is no hover, click, or wheel.
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    // Click and wheel work by default; hover highlighting needs every
+    // pointer move, which is MouseMode::Hover.
+    let config = RunConfig::default().mouse_mode(MouseMode::Hover);
+    slt::run_with(config, |ui: &mut Context| {
         card_list(ui, &mut cards, &mut scroll);
 
         // Global shortcuts; a focused text field keeps the keys it edits with.
@@ -390,11 +412,12 @@ What to notice:
 
 - `ui.group(name)` is a container that also tracks hover. Its own
   `group_hover_*` styles, and those of containers directly inside it, switch on
-  while the pointer is over the group. Reusing the same name for every card
-  would highlight them all together.
+  while the pointer is over the group (hence `MouseMode::Hover` above).
+  Reusing the same name for every card would highlight them all together.
 - The card container's `Response` is clickable. Clicks register on mouse
-  press, and hit-testing uses last frame's layout, so a card that just
-  expanded has its new size from the next frame on.
+  press (or on release with `RunConfig::click_on_release(true)`), and
+  hit-testing uses last frame's layout, so a card that just expanded has its
+  new size from the next frame on.
 - These cards are mouse-only, like a `<div onClick>` without `tabindex`. To
   make them keyboard-reachable, use `ui.accordion(..)` per card, or register a
   focus slot yourself as shown in the expandable tool-call log in

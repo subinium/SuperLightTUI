@@ -31,24 +31,27 @@ const MANUAL_STEP: f64 = 0.05;
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
-            ui.quit();
-        }
-        if ui.key(' ') {
-            state.paused = !state.paused;
-        }
-        if ui.key_code(KeyCode::Left) {
-            state.nudge(-MANUAL_STEP);
-        }
-        if ui.key_code(KeyCode::Right) {
-            state.nudge(MANUAL_STEP);
-        }
-        if !state.paused {
-            state.advance();
-        }
-        render(ui, &mut state);
-    })
+    slt::run_with(
+        RunConfig::default().mouse_mode(slt::MouseMode::Hover),
+        |ui: &mut Context| {
+            if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
+                ui.quit();
+            }
+            if ui.key(' ') {
+                state.paused = !state.paused;
+            }
+            if ui.key_code(KeyCode::Left) {
+                state.nudge(-MANUAL_STEP);
+            }
+            if ui.key_code(KeyCode::Right) {
+                state.nudge(MANUAL_STEP);
+            }
+            if !state.paused {
+                state.advance();
+            }
+            render(ui, &mut state);
+        },
+    )
 }
 
 /// Demo state — animated progress ratio plus the spinner glyph cycle.

@@ -32,9 +32,9 @@ fn main() -> std::io::Result<()> {
         dark: false,
     };
 
-    // `.mouse(true)` so the button and checkbox react to clicks; without it
-    // they still work from the keyboard (Tab to focus, Enter/Space to press).
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
+    // The mouse is on by default, so the button and checkbox react to clicks;
+    // they also work from the keyboard (Tab to focus, Enter/Space to press).
+    slt::run(|ui: &mut Context| {
         if ui.button("+1").clicked {
             app.count += 1;
         }

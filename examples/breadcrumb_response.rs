@@ -28,15 +28,18 @@ const SEGMENTS: &[&str] = &["Home", "Projects", "SuperLightTUI", "v0.20.0"];
 fn main() -> std::io::Result<()> {
     let mut state = DemoState::default();
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
-        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
-            ui.quit();
-        }
-        if ui.key('r') {
-            state.current = SEGMENTS.len() - 1;
-        }
-        render(ui, &mut state);
-    })
+    slt::run_with(
+        RunConfig::default().mouse_mode(slt::MouseMode::Hover),
+        |ui: &mut Context| {
+            if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
+                ui.quit();
+            }
+            if ui.key('r') {
+                state.current = SEGMENTS.len() - 1;
+            }
+            render(ui, &mut state);
+        },
+    )
 }
 
 /// Demo state — the index of the currently selected segment.

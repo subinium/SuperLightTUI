@@ -22,7 +22,7 @@ mod tests;
 
 #[cfg(all(feature = "crossterm", feature = "async"))]
 pub use async_run::{AsyncRunError, AsyncRunHandle, AsyncSender, run_async, run_async_with};
-pub use config::RunConfig;
+pub use config::{MouseMode, RunConfig};
 pub use frame_state::DebugLayer;
 #[cfg(feature = "crossterm")]
 pub use native::{run, run_inline, run_inline_with, run_static, run_static_with, run_with};

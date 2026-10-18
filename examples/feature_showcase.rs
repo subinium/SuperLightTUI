@@ -83,30 +83,33 @@ fn main() -> std::io::Result<()> {
     let hl = highlights();
     scroll.set_highlights(&hl);
 
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
-        // Render FIRST so the focused text_input can claim keys (q, space,
-        // n, p, etc.) before our global handlers see them. text_input
-        // consumes character keys when focused; this ordering means the
-        // global `key('q')` quit can never strand the user mid-typing.
-        render(ui, &mut name, &mut email, panel_open, &mut scroll);
+    slt::run_with(
+        slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover),
+        |ui: &mut Context| {
+            // Render FIRST so the focused text_input can claim keys (q, space,
+            // n, p, etc.) before our global handlers see them. text_input
+            // consumes character keys when focused; this ordering means the
+            // global `key('q')` quit can never strand the user mid-typing.
+            render(ui, &mut name, &mut email, panel_open, &mut scroll);
 
-        // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
-        // intentionally NOT bound — many terminals (e.g. macOS Terminal,
-        // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
-        // reaches the app.
-        if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
-            ui.quit();
-        }
-        if ui.key(' ') {
-            panel_open = !panel_open;
-        }
-        if ui.key('n') {
-            scroll.highlight_next();
-        }
-        if ui.key('p') {
-            scroll.highlight_previous();
-        }
-    })
+            // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+            // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+            // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
+            // reaches the app.
+            if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
+                ui.quit();
+            }
+            if ui.key(' ') {
+                panel_open = !panel_open;
+            }
+            if ui.key('n') {
+                scroll.highlight_next();
+            }
+            if ui.key('p') {
+                scroll.highlight_previous();
+            }
+        },
+    )
 }
 
 /// Render one full showcase frame. Public so the snapshot test can pin it.

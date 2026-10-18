@@ -255,55 +255,50 @@ fn main() -> std::io::Result<()> {
     let mut state = DemoState::new();
 
     // publish keymap so keymap_help_overlay has something to show
-    slt::run_with(
-        slt::RunConfig::default().mouse(true),
-        move |ui: &mut Context| {
-            // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
-            // intentionally NOT bound — many terminals (e.g. macOS Terminal,
-            // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
-            // reaches the app. Quit only when no overlay/modal is intercepting
-            // input — Esc inside the modal/help-overlay must dismiss it
-            // first.
-            let any_overlay = state.modal_open || state.help_open;
-            if !any_overlay
-                && (ui.key('q')
-                    || ui.key_code(KeyCode::Esc)
-                    || ui.key_mod('q', KeyModifiers::CONTROL))
-            {
-                ui.quit();
-            }
-            // M toggles the modal. When the modal is already open, the modal
-            // guard inside `key()` blocks us — fall back to `raw_key_code`
-            // so the same key still closes the modal.
-            if !any_overlay && (ui.key('m') || ui.key('M')) {
-                state.modal_open = true;
-            } else if state.modal_open && ui.raw_key_code(KeyCode::Char('m')) {
-                state.modal_open = false;
-            }
-            // `?` toggles the key-help overlay. Same `raw_*` fallback as M:
-            // once the overlay is open it counts as a modal, so the plain
-            // `key('?')` check is blocked by the overlay guard.
-            if !any_overlay && ui.key('?') {
-                state.help_open = true;
-            } else if state.help_open && ui.raw_key_code(KeyCode::Char('?')) {
-                state.help_open = false;
-            }
-            // Esc dismisses any open overlay (modal first, then help). Both
-            // need raw_key_code because plain `key_code(Esc)` is blocked
-            // while a modal is active.
-            if state.modal_open && ui.raw_key_code(KeyCode::Esc) {
-                state.modal_open = false;
-            } else if state.help_open && ui.raw_key_code(KeyCode::Esc) {
-                state.help_open = false;
-            }
-            if !any_overlay && ui.key('n') {
-                state.scroll.highlight_next();
-            }
-            if !any_overlay && ui.key('p') {
-                state.scroll.highlight_previous();
-            }
+    slt::run_with(slt::RunConfig::default(), move |ui: &mut Context| {
+        // Standard exit-key policy: bare `q`, Esc, and Ctrl-Q. Ctrl-C is
+        // intentionally NOT bound — many terminals (e.g. macOS Terminal,
+        // iTerm2 with default copy-shortcut) intercept Ctrl-C before it
+        // reaches the app. Quit only when no overlay/modal is intercepting
+        // input — Esc inside the modal/help-overlay must dismiss it
+        // first.
+        let any_overlay = state.modal_open || state.help_open;
+        if !any_overlay
+            && (ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL))
+        {
+            ui.quit();
+        }
+        // M toggles the modal. When the modal is already open, the modal
+        // guard inside `key()` blocks us — fall back to `raw_key_code`
+        // so the same key still closes the modal.
+        if !any_overlay && (ui.key('m') || ui.key('M')) {
+            state.modal_open = true;
+        } else if state.modal_open && ui.raw_key_code(KeyCode::Char('m')) {
+            state.modal_open = false;
+        }
+        // `?` toggles the key-help overlay. Same `raw_*` fallback as M:
+        // once the overlay is open it counts as a modal, so the plain
+        // `key('?')` check is blocked by the overlay guard.
+        if !any_overlay && ui.key('?') {
+            state.help_open = true;
+        } else if state.help_open && ui.raw_key_code(KeyCode::Char('?')) {
+            state.help_open = false;
+        }
+        // Esc dismisses any open overlay (modal first, then help). Both
+        // need raw_key_code because plain `key_code(Esc)` is blocked
+        // while a modal is active.
+        if state.modal_open && ui.raw_key_code(KeyCode::Esc) {
+            state.modal_open = false;
+        } else if state.help_open && ui.raw_key_code(KeyCode::Esc) {
+            state.help_open = false;
+        }
+        if !any_overlay && ui.key('n') {
+            state.scroll.highlight_next();
+        }
+        if !any_overlay && ui.key('p') {
+            state.scroll.highlight_previous();
+        }
 
-            render(ui, &mut state);
-        },
-    )
+        render(ui, &mut state);
+    })
 }

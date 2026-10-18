@@ -74,6 +74,29 @@ pub struct ScrollState {
     /// are rendered immediately and synchronized into this state on its next
     /// `Context::scrollable` binding unless the application changed the offset.
     pub follow_focus: bool,
+    /// Keep the visible content in place when content above the viewport
+    /// changes height. Defaults to `true` (since 0.26).
+    ///
+    /// After layout, SLT finds the child that was at the top of the viewport
+    /// on the previous frame and shifts `offset` by however far that child
+    /// moved, like the browser's `overflow-anchor: auto`. Collapsing or
+    /// growing a block above the viewport therefore no longer moves the text
+    /// under the user's eyes. Children are matched by their
+    /// [`group`](crate::Context::group) name when they have one, otherwise by
+    /// position plus their leading text, so give repeated, identical-looking
+    /// children a group name for reliable anchoring. Anchoring is skipped at
+    /// offset 0, while the scrollbar thumb is dragged, on the frame a focused
+    /// child is revealed, and while [`stick_to_bottom`](Self::stick_to_bottom)
+    /// applies. Set to `false` to keep raw offsets exactly as before.
+    pub anchor: bool,
+    /// Follow the end of the content while the view is at the bottom.
+    /// Defaults to `false`; see [`ScrollState::stick_to_bottom`] (the method).
+    ///
+    /// While the offset is at its maximum at the end of a frame, content that
+    /// grows keeps the view pinned to the new maximum. Scrolling away from the
+    /// bottom disengages it; scrolling back to the end re-engages it. Mirrors
+    /// `RichLogState::auto_scroll` for any `scrollable`.
+    pub stick_to_bottom: bool,
     /// Current vertical scroll offset in rows.
     pub offset: usize,
     /// Current horizontal scroll offset in columns (#247).
@@ -108,6 +131,8 @@ impl Clone for ScrollState {
         Self {
             id: next_scroll_state_id(),
             follow_focus: self.follow_focus,
+            anchor: self.anchor,
+            stick_to_bottom: self.stick_to_bottom,
             offset: self.offset,
             offset_x: self.offset_x,
             dragging: self.dragging,
@@ -129,6 +154,8 @@ impl ScrollState {
         Self {
             id: next_scroll_state_id(),
             follow_focus: true,
+            anchor: true,
+            stick_to_bottom: false,
             offset: 0,
             offset_x: 0,
             dragging: false,
@@ -145,6 +172,25 @@ impl ScrollState {
 
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Builder: follow the end of the content while scrolled to the bottom,
+    /// for logs, chat transcripts and streaming output.
+    ///
+    /// Sets the [`stick_to_bottom`](ScrollState#structfield.stick_to_bottom)
+    /// field. A wheel-up or any other scroll away from the end disengages it;
+    /// returning to the end re-engages it. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::ScrollState;
+    /// let log = ScrollState::new().stick_to_bottom(true);
+    /// assert!(log.stick_to_bottom);
+    /// ```
+    pub fn stick_to_bottom(mut self, enabled: bool) -> Self {
+        self.stick_to_bottom = enabled;
+        self
     }
 
     /// Check if scrolling upward is possible (offset is greater than 0).
