@@ -57,7 +57,7 @@ impl Context {
 
             self.skip_interaction_slot();
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -73,7 +73,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
 
             let mut segment = String::new();
             let mut segment_color: Option<Color> = None;

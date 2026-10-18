@@ -1269,6 +1269,9 @@ pub(crate) struct LayoutArena {
     used_text: usize,
     /// Recycled root overlay list.
     overlays: Vec<OverlayLayer>,
+    /// Cleared text buffers of recycled trees, lent to the next frame's
+    /// `Context` for widgets to format into (see [`StringPool`]).
+    strings: StringPool,
     /// Consecutive recycles whose tree used much less than the arena holds.
     oversized_frames: u32,
 }
@@ -1302,6 +1305,18 @@ impl LayoutArena {
     }
 
     /// A reset text payload box, recycled when one is available.
+    /// Lend the pooled text buffers to a frame's `Context`; hand them back
+    /// with [`restore_strings`](Self::restore_strings) before
+    /// [`recycle`](Self::recycle).
+    pub(crate) fn take_strings(&mut self) -> StringPool {
+        std::mem::take(&mut self.strings)
+    }
+
+    /// Return the buffers lent by [`take_strings`](Self::take_strings).
+    pub(crate) fn restore_strings(&mut self, strings: StringPool) {
+        self.strings = strings;
+    }
+
     fn take_text(&mut self) -> Box<TextNodeData> {
         self.used_text += 1;
         self.text_pool.pop().unwrap_or_default()
@@ -1359,7 +1374,21 @@ impl LayoutArena {
 
     /// Recycle `node`'s subtree storage; returns the subtree's child count.
     fn harvest(&mut self, node: &mut LayoutNode, trim: bool) -> usize {
+        if let Some((title, _)) = node.title.take() {
+            self.strings.put(title);
+        }
         if let Some(mut data) = node.text_data.take() {
+            if let Some(content) = data.content.take() {
+                self.strings.put(content);
+            }
+            if let Some(url) = data.link_url.take() {
+                self.strings.put(url);
+            }
+            if let Some(segments) = data.segments.take() {
+                for (text, _) in segments {
+                    self.strings.put(text);
+                }
+            }
             let mut segment_widths = std::mem::take(&mut data.segment_widths);
             segment_widths.clear();
             if trim && segment_widths.capacity() > Self::SLACK {
@@ -1554,7 +1583,7 @@ fn build_children(
                     title,
                     grow,
                     group_name,
-                } = *args;
+                } = args;
                 let mut node = LayoutNode::container(
                     direction,
                     ContainerConfig {
@@ -1569,7 +1598,7 @@ fn build_children(
                         padding,
                         margin,
                         constraints,
-                        title,
+                        title: title.map(|title| *title),
                         grow,
                     },
                 );
@@ -1612,7 +1641,7 @@ fn build_children(
                     scroll_follow_focus,
                     scroll_state_id,
                     group_name,
-                } = *args;
+                } = args;
                 // #247: honor the caller's `.row()` / `.col()` direction instead
                 // of hardcoding `Direction::Column`. A `Row` scrollable scrolls
                 // horizontally; a `Column` scrollable scrolls vertically. The
@@ -1632,7 +1661,7 @@ fn build_children(
                         padding,
                         margin,
                         constraints,
-                        title,
+                        title: title.map(|title| *title),
                         grow,
                     },
                 );

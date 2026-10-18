@@ -270,6 +270,12 @@ pub(crate) fn run_frame_kernel(
         "pending tooltips must be emitted before layout"
     );
 
+    // Hand the lent text buffers back; the tree's strings join them when it
+    // is recycled at frame end.
+    state
+        .layout_arena
+        .restore_strings(std::mem::take(&mut ctx.string_pool));
+
     if ctx.should_quit {
         state.pending_input.clear();
         reclaim_feedback(&mut ctx, state);

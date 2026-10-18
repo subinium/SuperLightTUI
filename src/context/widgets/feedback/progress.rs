@@ -44,7 +44,7 @@ impl Context {
         let clamped = ratio.clamp(0.0, 1.0);
         let filled = (clamped * width as f64).round() as u32;
         let empty = width.saturating_sub(filled);
-        let mut bar = String::with_capacity(width as usize * 3);
+        let mut bar = self.pooled_string(width as usize * 3);
         for _ in 0..filled {
             bar.push('█');
         }

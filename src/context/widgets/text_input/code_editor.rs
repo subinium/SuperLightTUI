@@ -497,7 +497,7 @@ fn push_rich(ctx: &mut Context, segments: Vec<(String, Style)>) {
 
 fn begin_box(ctx: &mut Context, direction: Direction, constraints: Constraints) {
     ctx.commands
-        .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        .push(Command::BeginContainer(BeginContainerArgs {
             direction,
             gap: 0,
             align: Align::Start,
@@ -513,7 +513,7 @@ fn begin_box(ctx: &mut Context, direction: Direction, constraints: Constraints) 
             title: None,
             grow: 0,
             group_name: None,
-        })));
+        }));
 }
 
 /// Emit one row. The cursor row puts the cursor cell in its own text

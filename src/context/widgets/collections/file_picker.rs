@@ -101,7 +101,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -117,7 +117,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let dir_text = {
             let dir = state.current_dir.display().to_string();

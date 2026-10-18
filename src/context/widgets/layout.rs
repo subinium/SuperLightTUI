@@ -130,7 +130,7 @@ impl Context {
             self.commands.insert(start, Command::WrapMarker(0));
             self.commands.insert(
                 start + 1,
-                Command::BeginContainer(Box::new(BeginContainerArgs {
+                Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -146,7 +146,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })),
+                }),
             );
             self.commands.push(Command::EndContainer);
             self.rollback.last_text_idx = None;
@@ -986,7 +986,7 @@ impl Context {
         let border = self.theme.border;
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction,
                 // `BeginContainerArgs::gap` is signed since #222; this helper's
                 // public `u32` callers (`row`/`col_gap`/…) never overlap.
@@ -1004,7 +1004,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.rollback.text_color_stack.push(None);
         f(self);
         self.rollback.text_color_stack.pop();

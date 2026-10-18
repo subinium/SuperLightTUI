@@ -176,7 +176,7 @@ impl Context {
         };
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -192,11 +192,11 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let cal_gap = self.theme.spacing.xs();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: cal_gap as i32,
                 align: Align::Start,
@@ -212,14 +212,14 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.styled("◀", Style::new().fg(self.theme.text));
         self.styled(title, Style::new().bold().fg(self.theme.text));
         self.styled("▶", Style::new().fg(self.theme.text));
         self.commands.push(Command::EndContainer);
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -235,7 +235,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         for wd in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
             self.styled(
                 format!("{wd:>2} "),
@@ -248,7 +248,7 @@ impl Context {
         let days = CalendarState::days_in_month(state.year, state.month);
         for week in 0..6_u32 {
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -264,7 +264,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
 
             for col in 0..7_u32 {
                 let idx = week * 7 + col;

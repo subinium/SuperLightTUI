@@ -38,7 +38,7 @@ impl Context {
         self.skip_interaction_slot();
         let help_gap = self.theme.spacing.sm();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: help_gap as i32,
                 align: Align::Start,
@@ -54,7 +54,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         let first = self.commands.len();
         let key_style = Style::new().bold().fg(self.theme.primary);
         let text_style = Style::new().fg(self.theme.text_dim);

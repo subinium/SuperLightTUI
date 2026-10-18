@@ -24,7 +24,7 @@ impl Context {
     /// OSC 8 hyperlink is still emitted for the local terminal).
     pub fn markdown(&mut self, text: &str) -> Response {
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -40,7 +40,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
         self.skip_interaction_slot();
 
         let text_style = Style::new().fg(self.theme.text);

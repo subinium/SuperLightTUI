@@ -547,7 +547,7 @@ fn focus_marker_tags_container() {
 
     let mut commands = vec![
         Command::FocusMarker(0),
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -563,7 +563,7 @@ fn focus_marker_tags_container() {
             title: None,
             grow: 0,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "inside".into(),
             cursor_offset: None,
@@ -682,7 +682,7 @@ fn group_names_share_arc_across_focus_descendants() {
     let mut commands: Vec<Command> = Vec::new();
     let mut focus_id = 0usize;
     for i in 0..N_GROUPS {
-        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -698,7 +698,7 @@ fn group_names_share_arc_across_focus_descendants() {
             title: None,
             grow: 0,
             group_name: Some(Arc::from(format!("group-{i}").as_str())),
-        })));
+        }));
         for _ in 0..FOCUSES_PER_GROUP {
             commands.push(Command::FocusMarker(focus_id));
             commands.push(Command::Text {
@@ -766,7 +766,7 @@ fn flexbox_row_many_children_overflow_scratch() {
     // check: positions are strictly increasing and non-overlapping.
     const N: usize = 32;
     let mut commands: Vec<Command> = Vec::new();
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap: 0,
         align: Align::Start,
@@ -782,7 +782,7 @@ fn flexbox_row_many_children_overflow_scratch() {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     for i in 0..N {
         commands.push(Command::Text {
             content: format!("c{i}"),
@@ -819,7 +819,7 @@ fn flexbox_column_many_children_overflow_scratch() {
     // path in the U32Stack scratch (> INLINE_CAP=16).
     const N: usize = 20;
     let mut commands: Vec<Command> = Vec::new();
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -835,7 +835,7 @@ fn flexbox_column_many_children_overflow_scratch() {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     for i in 0..N {
         commands.push(Command::Text {
             content: format!("row{i}"),
@@ -876,7 +876,7 @@ fn flexbox_grow_with_max_width_no_gap() {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
     let mut commands = vec![
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Row,
             gap: 0,
             align: Align::Start,
@@ -892,7 +892,7 @@ fn flexbox_grow_with_max_width_no_gap() {
             title: None,
             grow: 0,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
@@ -954,7 +954,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
     let mut commands = vec![
-        Command::BeginContainer(Box::new(BeginContainerArgs {
+        Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -970,7 +970,7 @@ fn flexbox_column_grow_with_max_height_no_gap() {
             title: None,
             grow: 1,
             group_name: None,
-        })),
+        }),
         Command::Text {
             content: "A".into(),
             cursor_offset: None,
@@ -1510,7 +1510,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
     if shrink {
         commands.push(Command::ShrinkMarker);
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -1526,7 +1526,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     commands.push(Command::Text {
         content: "x".repeat(20),
         cursor_offset: None,
@@ -1543,7 +1543,7 @@ fn push_textcol_20(commands: &mut Vec<Command>, shrink: bool) {
 }
 
 fn open_row(commands: &mut Vec<Command>) {
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap: 0,
         align: Align::Start,
@@ -1559,7 +1559,7 @@ fn open_row(commands: &mut Vec<Command>) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
 }
 
 #[test]
@@ -1640,7 +1640,7 @@ fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: 
     if let Some(b) = basis {
         commands.push(Command::BasisMarker(b));
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Column,
         gap: 0,
         align: Align::Start,
@@ -1656,7 +1656,7 @@ fn push_textcol(commands: &mut Vec<Command>, width: usize, shrink: bool, basis: 
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
     commands.push(Command::Text {
         content: "x".repeat(width),
         cursor_offset: None,
@@ -1678,7 +1678,7 @@ fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
     if let Some(cross_gap) = wrap {
         commands.push(Command::WrapMarker(cross_gap));
     }
-    commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+    commands.push(Command::BeginContainer(BeginContainerArgs {
         direction: Direction::Row,
         gap,
         align: Align::Start,
@@ -1694,7 +1694,7 @@ fn open_row_cfg(commands: &mut Vec<Command>, gap: i32, wrap: Option<i32>) {
         title: None,
         grow: 0,
         group_name: None,
-    })));
+    }));
 }
 
 #[test]
@@ -1826,7 +1826,7 @@ fn flex_basis_feeds_grow() {
     // Use grow on the wrapper containers — push them manually with basis+grow.
     for _ in 0..2 {
         commands.push(Command::BasisMarker(10));
-        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -1842,7 +1842,7 @@ fn flex_basis_feeds_grow() {
             title: None,
             grow: 1,
             group_name: None,
-        })));
+        }));
         commands.push(Command::Text {
             content: "x".to_string(),
             cursor_offset: None,
@@ -2091,7 +2091,7 @@ fn gap_overlap_tree(
 ) -> LayoutNode {
     use crate::style::{Align, Constraints, Justify, Margin, Padding};
 
-    let mut commands = vec![Command::BeginContainer(Box::new(BeginContainerArgs {
+    let mut commands = vec![Command::BeginContainer(BeginContainerArgs {
         direction,
         gap,
         align: Align::Start,
@@ -2107,7 +2107,7 @@ fn gap_overlap_tree(
         title: None,
         grow: 0,
         group_name: None,
-    }))];
+    })];
     for _ in 0..n {
         commands.push(Command::Text {
             content: "x".into(),
@@ -3081,7 +3081,7 @@ fn issue_488_arena_build_keeps_depth_guard() {
 fn build_past_depth_guard() {
     let mut commands = Vec::new();
     for _ in 0..=MAX_LAYOUT_DEPTH + 1 {
-        commands.push(Command::BeginContainer(Box::new(BeginContainerArgs {
+        commands.push(Command::BeginContainer(BeginContainerArgs {
             direction: Direction::Column,
             gap: 0,
             align: Align::Start,
@@ -3097,7 +3097,7 @@ fn build_past_depth_guard() {
             title: None,
             grow: 0,
             group_name: None,
-        })));
+        }));
     }
     let _ = build_tree_in(&mut commands, &mut LayoutArena::default());
 }

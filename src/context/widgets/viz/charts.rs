@@ -171,7 +171,7 @@ impl Context {
         let response = self.begin_sized_viz_root(width, 1);
         self.skip_interaction_slot();
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -187,7 +187,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         if cells.is_empty() {
             self.commands.push(Command::EndContainer);
@@ -460,7 +460,7 @@ impl Context {
         for row in rows {
             self.skip_interaction_slot();
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -476,7 +476,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
             for (text, style) in row.segments {
                 self.styled(text, style);
             }
@@ -529,7 +529,7 @@ impl Context {
         for row in rows {
             self.skip_interaction_slot();
             self.commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction: Direction::Row,
                     gap: 0,
                     align: Align::Start,
@@ -545,7 +545,7 @@ impl Context {
                     title: None,
                     grow: 0,
                     group_name: None,
-                })));
+                }));
             for (text, style) in row.segments {
                 self.styled(text, style);
             }

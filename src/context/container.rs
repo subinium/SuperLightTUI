@@ -2330,7 +2330,7 @@ impl<'a> ContainerBuilder<'a> {
             // scroller (the common case).
             self.ctx
                 .commands
-                .push(Command::BeginScrollable(Box::new(BeginScrollableArgs {
+                .push(Command::BeginScrollable(BeginScrollableArgs {
                     grow: self.grow,
                     direction,
                     border: self.border,
@@ -2344,17 +2344,17 @@ impl<'a> ContainerBuilder<'a> {
                     padding: self.padding,
                     margin: self.margin,
                     constraints: self.constraints,
-                    title: self.title,
+                    title: self.title.map(Box::new),
                     scroll_offset,
                     scroll_offset_x: self.scroll_offset_x.unwrap_or(0),
                     scroll_follow_focus: self.scroll_follow_focus,
                     scroll_state_id: self.scroll_state_id,
                     group_name,
-                })));
+                }));
         } else {
             self.ctx
                 .commands
-                .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                .push(Command::BeginContainer(BeginContainerArgs {
                     direction,
                     gap: resolved_gap,
                     align: self.align,
@@ -2367,10 +2367,10 @@ impl<'a> ContainerBuilder<'a> {
                     padding: self.padding,
                     margin: self.margin,
                     constraints: self.constraints,
-                    title: self.title,
+                    title: self.title.map(Box::new),
                     grow: self.grow,
                     group_name,
-                })));
+                }));
         }
         self.ctx.rollback.text_color_stack.push(self.text_color);
         // Swap active theme if a per-subtree override was requested.

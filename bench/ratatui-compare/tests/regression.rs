@@ -38,58 +38,62 @@ struct AllocCeiling {
     bytes: f64,
 }
 
-/// Baseline at v0.25.0 (2eb49b6), SLT sink harness, in parentheses; the
-/// ceilings sit roughly 25-50% above it.
+/// SLT sink harness baselines in parentheses: v0.25.0 (2eb49b6) first, then
+/// v0.26 (inline container commands, widget rows formatted into strings
+/// recycled from the previous frame). What v0.26 still allocates is text the
+/// workload hands to `ui.text` (`format!` rows, `&str` labels), so those
+/// ceilings sit ~10% above the baseline; the widgets that format their own
+/// rows must stay at zero.
 const ALLOC_CEILINGS: &[AllocCeiling] = &[
-    // (54 / 27_664)
+    // (54 / 27_664 -> 21 / 172): 20 `format!` rows and the `"Header"` `&str`.
     AllocCeiling {
         workload: Workload::Dashboard,
-        allocs: 80.0,
-        bytes: 40_000.0,
+        allocs: 23.0,
+        bytes: 260.0,
     },
-    // (109 / 55_958) after #487 windowed the list to visible rows; was
-    // 20_018 / 13_798_852 when every row was built each frame.
+    // (109 / 55_958 after #487 -> 0 / 0); was 20_018 / 13_798_852 when every
+    // row was built each frame.
     AllocCeiling {
         workload: Workload::List,
-        allocs: 160.0,
-        bytes: 80_000.0,
+        allocs: 0.0,
+        bytes: 0.0,
     },
-    // (160 / 56_166)
+    // (160 / 56_166 -> 98 / 2_064): two `format!` growths per visible row in
+    // the workload's own row closure.
     AllocCeiling {
         workload: Workload::VirtualList,
-        allocs: 240.0,
-        bytes: 80_000.0,
+        allocs: 108.0,
+        bytes: 2_400.0,
     },
-    // (129 / 60_222) after T10 (one String per row) and #487 (visible rows
-    // only); was 9_038 / 1_148_024.
+    // (129 / 60_222 after T10 and #487 -> 0 / 0); was 9_038 / 1_148_024.
     AllocCeiling {
         workload: Workload::Table,
-        allocs: 190.0,
-        bytes: 85_000.0,
+        allocs: 0.0,
+        bytes: 0.0,
     },
-    // (131 / 60_156) after T10; was 551 / 71_013.
+    // (131 / 60_156 after T10 -> 0 / 0); was 551 / 71_013.
     AllocCeiling {
         workload: Workload::TablePaged,
-        allocs: 190.0,
-        bytes: 85_000.0,
+        allocs: 0.0,
+        bytes: 0.0,
     },
-    // (285 / 168_254)
+    // (285 / 168_254 -> 60 / 350): one `String` per `&str` label.
     AllocCeiling {
         workload: Workload::Nested,
-        allocs: 400.0,
-        bytes: 220_000.0,
+        allocs: 66.0,
+        bytes: 420.0,
     },
-    // (56 / 27_674)
+    // (56 / 27_674 -> 21 / 172)
     AllocCeiling {
         workload: Workload::OneCell,
-        allocs: 80.0,
-        bytes: 40_000.0,
+        allocs: 23.0,
+        bytes: 260.0,
     },
-    // (54 / 27_664)
+    // (54 / 27_664 -> 21 / 172)
     AllocCeiling {
         workload: Workload::Idle,
-        allocs: 80.0,
-        bytes: 40_000.0,
+        allocs: 23.0,
+        bytes: 260.0,
     },
 ];
 

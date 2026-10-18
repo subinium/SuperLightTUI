@@ -28,8 +28,11 @@ impl Context {
         // layout doesn't stretch the separator vertically, and `truncate =
         // false` avoids the ellipsis fallback which would otherwise replace
         // the last cell with `…`.
+        let line = sep_line();
+        let mut content = self.pooled_string(line.len());
+        content.push_str(line);
         self.commands.push(Command::Text {
-            content: sep_line().to_owned(),
+            content,
             cursor_offset: None,
             cursor_masked: false,
             style: Style::new().fg(self.theme.border).dim(),

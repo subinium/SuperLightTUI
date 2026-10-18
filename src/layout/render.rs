@@ -1238,9 +1238,8 @@ fn render_container_border(
         && top_i < i64::from(buf.area.bottom())
     {
         let y = top_i as u32;
-        for xx in h_start as u32..=h_end as u32 {
-            buf.set_char(xx, y, chars.h, style);
-        }
+        let count = (h_end - h_start + 1) as u32;
+        buf.set_char_row(h_start as u32, y, count, chars.h, style);
     }
     if sides.bottom
         && horizontal_visible
@@ -1248,22 +1247,26 @@ fn render_container_border(
         && bottom_i < i64::from(buf.area.bottom())
     {
         let y = bottom_i as u32;
-        for xx in h_start as u32..=h_end as u32 {
-            buf.set_char(xx, y, chars.h, style);
-        }
+        let count = (h_end - h_start + 1) as u32;
+        buf.set_char_row(h_start as u32, y, count, chars.h, style);
     }
     let vert_start = top_i.max(i64::from(buf.area.y));
     let vert_end = bottom_i.min(i64::from(buf.area.bottom()).saturating_sub(1));
     let vertical_visible = vert_start <= vert_end;
-    if sides.left && vertical_visible {
-        for yy in vert_start as u32..=vert_end as u32 {
-            set_char_at(buf, left_i, yy, chars.v);
-        }
+    let vert_count = (vert_end - vert_start + 1) as u32;
+    let area = buf.area;
+    let in_columns = |col: i64| col >= i64::from(area.x) && col < i64::from(area.right());
+    if sides.left && vertical_visible && in_columns(left_i) {
+        buf.set_char_column(left_i as u32, vert_start as u32, vert_count, chars.v, style);
     }
-    if sides.right && vertical_visible {
-        for yy in vert_start as u32..=vert_end as u32 {
-            set_char_at(buf, right_i, yy, chars.v);
-        }
+    if sides.right && vertical_visible && in_columns(right_i) {
+        buf.set_char_column(
+            right_i as u32,
+            vert_start as u32,
+            vert_count,
+            chars.v,
+            style,
+        );
     }
 
     if top_i >= i64::from(buf.area.y) && top_i < i64::from(buf.area.bottom()) {

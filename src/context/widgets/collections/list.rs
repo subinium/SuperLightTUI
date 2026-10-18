@@ -102,7 +102,7 @@ impl Context {
         let end = start.saturating_add(rows).min(total);
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -118,7 +118,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         let selected = state.view_cursor();
         let mut selected_style = Style::new()
@@ -135,7 +135,7 @@ impl Context {
             } else {
                 ("  ", item_style)
             };
-            let mut row = String::with_capacity(marker.len() + item.len());
+            let mut row = self.pooled_string(marker.len() + item.len());
             row.push_str(marker);
             row.push_str(item);
             self.styled(row, style);
@@ -419,7 +419,7 @@ impl Context {
         };
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -435,13 +435,12 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         if start > 0 {
-            let hidden = start.to_string();
-            let mut line = String::with_capacity(hidden.len() + 10);
+            let mut line = self.pooled_string(32);
             line.push_str("  ↑ ");
-            line.push_str(&hidden);
+            push_usize(&mut line, start);
             line.push_str(" more");
             self.styled(line, Style::new().fg(self.theme.text_dim).dim());
         }
@@ -458,10 +457,9 @@ impl Context {
 
         let remaining = total.saturating_sub(end);
         if remaining > 0 {
-            let hidden = remaining.to_string();
-            let mut line = String::with_capacity(hidden.len() + 10);
+            let mut line = self.pooled_string(32);
             line.push_str("  ↓ ");
-            line.push_str(&hidden);
+            push_usize(&mut line, remaining);
             line.push_str(" more");
             self.styled(line, Style::new().fg(self.theme.text_dim).dim());
         }

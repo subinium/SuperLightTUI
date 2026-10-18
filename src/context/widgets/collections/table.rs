@@ -253,7 +253,7 @@ impl Context {
         };
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Column,
                 gap: 0,
                 align: Align::Start,
@@ -269,7 +269,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         self.render_table_header(state, colors);
         self.render_table_rows(
@@ -281,13 +281,11 @@ impl Context {
         );
 
         if state.page_size > 0 && state.total_pages() > 1 {
-            let current_page = (state.page + 1).to_string();
-            let total_pages = state.total_pages().to_string();
-            let mut page_text = String::with_capacity(current_page.len() + total_pages.len() + 6);
+            let mut page_text = self.pooled_string(32);
             page_text.push_str("Page ");
-            page_text.push_str(&current_page);
+            push_usize(&mut page_text, state.page + 1);
             page_text.push('/');
-            page_text.push_str(&total_pages);
+            push_usize(&mut page_text, state.total_pages());
             self.styled(
                 page_text,
                 Style::new()
@@ -379,9 +377,18 @@ impl Context {
                         }
                     })
                     .collect();
-                format_table_row(&cells, state.column_widths(), " │ ")
+                let mut line =
+                    self.pooled_string(table_row_capacity(&cells, state.column_widths(), " │ "));
+                push_table_row(&mut line, &cells, state.column_widths(), " │ ");
+                line
             }
-            _ => format_table_row(state.headers(), state.column_widths(), " │ "),
+            _ => {
+                let widths = state.column_widths();
+                let mut line =
+                    self.pooled_string(table_row_capacity(state.headers(), widths, " │ "));
+                push_table_row(&mut line, state.headers(), widths, " │ ");
+                line
+            }
         };
         self.styled(
             header_line,
@@ -394,7 +401,7 @@ impl Context {
             .map(|w| *w as usize * '─'.len_utf8())
             .sum::<usize>()
             + widths.len().saturating_sub(1) * "─┼─".len();
-        let mut separator = String::with_capacity(rule_bytes);
+        let mut separator = self.pooled_string(rule_bytes);
         push_table_separator(&mut separator, widths);
         self.text(separator);
     }
@@ -452,7 +459,9 @@ impl Context {
 
             match &cell {
                 None => {
-                    let line = format_table_row(row, state.column_widths(), " │ ");
+                    let widths = state.column_widths();
+                    let mut line = self.pooled_string(table_row_capacity(row, widths, " │ "));
+                    push_table_row(&mut line, row, widths, " │ ");
                     self.styled(line, base);
                 }
                 Some(render) => {
@@ -602,7 +611,7 @@ impl Context {
         }
 
         self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+            .push(Command::BeginContainer(BeginContainerArgs {
                 direction: Direction::Row,
                 gap: 0,
                 align: Align::Start,
@@ -618,7 +627,7 @@ impl Context {
                 title: None,
                 grow: 0,
                 group_name: None,
-            })));
+            }));
 
         if use_dots {
             let active_color = colors.accent.unwrap_or(self.theme.primary);
