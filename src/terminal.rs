@@ -25,6 +25,7 @@ fn sat_u16(v: u32) -> u16 {
 mod bench_hooks;
 mod capabilities;
 mod cell_pixel;
+mod effects;
 mod flush;
 mod kitty;
 mod osc;
@@ -42,6 +43,7 @@ pub use osc::{ColorScheme, detect_color_scheme, read_clipboard};
 
 use capabilities::*;
 pub(crate) use cell_pixel::*;
+pub(crate) use effects::*;
 use flush::*;
 pub(crate) use kitty::*;
 pub(crate) use osc::*;
@@ -148,6 +150,9 @@ pub struct Terminal {
     /// capacity persists across frames so the hot flush loop never allocates a
     /// fresh `String` per call.
     run_buf: String,
+    /// Title / progress / status / cursor-shape emitter, clipboard delivery
+    /// and cluster-width policy (issues #446, #449, #468).
+    effects: TerminalEffects,
 }
 
 /// Inline crossterm terminal backend: renders into a fixed-height region
@@ -173,6 +178,8 @@ pub struct InlineTerminal {
     graphics_support: GraphicsEmissionSupport,
     /// Reused run-coalescing scratch for `flush_buffer_diff` (issue #269).
     run_buf: String,
+    /// See [`Terminal`]'s field of the same name.
+    effects: TerminalEffects,
 }
 
 /// Initial capacity for the reused per-frame run-coalescing buffer. Sized to
@@ -228,6 +235,7 @@ impl Terminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            effects: TerminalEffects::detect(),
         })
     }
 
@@ -301,8 +309,12 @@ impl Terminal {
             0,
             None,
         )?;
+        let staged = self.effects.emit_meta(&mut self.stdout)?;
 
         self.stdout.flush()?;
+        if let Some(staged) = staged {
+            self.effects.deliver_clipboard(&mut self.stdout, &staged);
+        }
 
         std::mem::swap(&mut self.current, &mut self.previous);
         if let Some(bg) = self.theme_bg {
@@ -311,6 +323,22 @@ impl Terminal {
             self.current.reset();
         }
         Ok(())
+    }
+
+    /// Apply run-loop configuration that depends on the startup probe:
+    /// color depth resolution (issue #447) and the cluster-width policy,
+    /// including the optional width probe (issue #449).
+    pub(crate) fn apply_run_config(&mut self, config: &crate::RunConfig) {
+        self.color_depth = crate::style::effective_color_depth(config.color_depth, || {
+            ColorDepth::resolve(&capabilities())
+        });
+        self.effects.configure_width(config, true);
+    }
+
+    /// Cluster-width policy for the diff flush (issue #449).
+    #[allow(dead_code)]
+    pub(crate) fn width_policy(&self) -> WidthPolicy {
+        self.effects.width
     }
 
     /// Re-query the terminal size and resize the front and back buffers
@@ -371,6 +399,7 @@ impl Terminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support: GraphicsEmissionSupport::capture(),
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            effects: TerminalEffects::capture(),
         }
     }
 
@@ -486,7 +515,24 @@ impl InlineTerminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            effects: TerminalEffects::detect(),
         })
+    }
+
+    /// Apply probe-dependent run configuration; see
+    /// [`Terminal::apply_run_config`]. Inline sessions never run the width
+    /// probe (it would print on the user's scrollback row).
+    pub(crate) fn apply_run_config(&mut self, config: &crate::RunConfig) {
+        self.color_depth = crate::style::effective_color_depth(config.color_depth, || {
+            ColorDepth::resolve(&capabilities())
+        });
+        self.effects.configure_width(config, false);
+    }
+
+    /// Cluster-width policy for the diff flush (issue #449).
+    #[allow(dead_code)]
+    pub(crate) fn width_policy(&self) -> WidthPolicy {
+        self.effects.width
     }
 
     /// Return the inline terminal's current `(cols, rows)`.
@@ -577,8 +623,12 @@ impl InlineTerminal {
             row_offset,
             Some(fallback_row),
         )?;
+        let staged = self.effects.emit_meta(&mut self.stdout)?;
 
         self.stdout.flush()?;
+        if let Some(staged) = staged {
+            self.effects.deliver_clipboard(&mut self.stdout, &staged);
+        }
 
         std::mem::swap(&mut self.current, &mut self.previous);
         reset_current_buffer(&mut self.current, self.theme_bg);
@@ -726,6 +776,7 @@ impl InlineTerminal {
                 force_iterm: false,
             },
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            effects: TerminalEffects::capture(),
         }
     }
 

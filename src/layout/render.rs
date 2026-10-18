@@ -680,7 +680,7 @@ fn set_string_clipped_x(
             .map(compact_str::CompactString::new);
         let mut x = screen_x;
         for grapheme in visual.graphemes(true) {
-            let width = UnicodeWidthStr::width(grapheme) as i64;
+            let width = crate::width::str_width(grapheme) as i64;
             if x >= i64::from(buf.area.x) && x < i64::from(buf.area.right()) {
                 buf.set_grapheme_visual(x as u32, y, grapheme, style, link.as_ref());
             }
@@ -708,7 +708,7 @@ fn set_string_clipped_x(
             byte_start = idx;
             break;
         }
-        consumed += UnicodeWidthStr::width(g) as u32;
+        consumed += crate::width::str_width(g) as u32;
     }
     if byte_start >= text.len() {
         // Entire run scrolled off the left edge.
@@ -802,7 +802,7 @@ fn set_styled_bidi_line(
     for logical_index in visual_to_logical {
         let grapheme = graphemes[logical_index].1;
         let normalized = crate::cell::normalize_cell_symbol(grapheme);
-        let width = UnicodeWidthStr::width(normalized.as_str()) as i64;
+        let width = crate::width::str_width(normalized.as_str()) as i64;
         let next_x = x.saturating_add(width);
         if x >= left && x < right {
             buf.set_grapheme_visual(x as u32, y, grapheme, atom_styles[logical_index], None);
@@ -1019,7 +1019,7 @@ fn render_inner(
                                 .graphemes(true)
                                 .take(cursor_offset)
                                 .map(|grapheme| {
-                                    u32::try_from(UnicodeWidthStr::width(grapheme))
+                                    u32::try_from(crate::width::str_width(grapheme))
                                         .unwrap_or(u32::MAX)
                                 })
                                 .fold(0u32, u32::saturating_add);
@@ -1322,7 +1322,7 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     // Indic / Thai syllable) that would overflow `target` is dropped whole
     // before the ellipsis, never half-emitted.
     for g in text.graphemes(true) {
-        let ch_width = UnicodeWidthStr::width(g);
+        let ch_width = crate::width::str_width(g);
         if width + ch_width > target {
             break;
         }

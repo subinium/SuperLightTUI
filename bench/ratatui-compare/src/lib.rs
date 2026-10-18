@@ -217,10 +217,10 @@ pub mod slt_w {
 
     /// Same rows through `virtual_list`, styled like `ui.list`.
     pub fn virtual_list(ui: &mut Context, st: &mut slt::ListState, items: &[String]) {
-        let sel = st.selected;
+        let sel = st.selected_index();
         let _ = ui.virtual_list(st, super::VIRTUAL_LIST_ROWS, |ui, idx| {
             let item = &items[idx];
-            if idx == sel {
+            if Some(idx) == sel {
                 ui.styled(format!("▸ {item}"), Style::new().bold().reversed());
             } else {
                 ui.text(format!("  {item}"));
@@ -440,12 +440,12 @@ impl<'a> SltWorkload<'a> {
     pub fn new(kind: Workload, fx: &'a Fixtures) -> Self {
         let list = matches!(kind, Workload::List | Workload::VirtualList).then(|| {
             let mut st = slt::ListState::new(fx.list_items.clone());
-            st.selected = LIST_SELECTED;
+            st.set_selected_index(LIST_SELECTED);
             st
         });
         let table = matches!(kind, Workload::Table | Workload::TablePaged).then(|| {
             let mut st = slt::TableState::new(fx.table_headers.clone(), fx.table_rows.clone());
-            st.selected = TABLE_SELECTED;
+            st.set_selected_index(TABLE_SELECTED);
             if kind == Workload::TablePaged {
                 st.page_size = TABLE_PAGE_SIZE;
             }

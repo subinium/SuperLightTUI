@@ -142,6 +142,9 @@ pub(crate) fn run_frame_kernel(
     is_real_terminal: bool,
     f: &mut impl FnMut(&mut context::Context),
 ) -> FrameKernelResult {
+    // Issue #449: every width measurement in this frame (buffer, layout,
+    // wrapping, truncation) follows the configured ambiguous-width rule.
+    crate::width::set_ambiguous_wide(config.ambiguous_wide);
     let events = input_frame(state, events);
     let frame_start = Instant::now();
     let now = state.diagnostics.clock_override.unwrap_or(frame_start);
@@ -212,6 +215,7 @@ pub(crate) fn run_frame_kernel(
     }
     ctx.process_focus_keys();
     ctx.finish_screen_focus();
+    ctx.finish_focus_identity(&mut state.focus);
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 
@@ -324,8 +328,14 @@ pub(crate) fn run_frame_kernel(
 
     #[cfg(feature = "crossterm")]
     let mut should_copy_selection = false;
+    // Issue #465: a text widget owns this pointer gesture for its own
+    // selection; keep the screen-level overlay out of it.
     #[cfg(feature = "crossterm")]
-    for ev in &ctx.events {
+    if ctx.text_pointer_capture {
+        state.selection.clear();
+    }
+    #[cfg(feature = "crossterm")]
+    for ev in ctx.events.iter().filter(|_| !ctx.text_pointer_capture) {
         if let Event::Mouse(mouse) = ev {
             match mouse.kind {
                 event::MouseKind::Down(event::MouseButton::Left) => {
@@ -619,28 +629,45 @@ pub(crate) fn run_frame(
             &state.layout_feedback.prev_content_map,
         );
     }
+    // Issues #446 / #468: clipboard writes and terminal metadata are staged
+    // for the backend flush, which writes them into its own sink and records
+    // the clipboard outcome instead of printing over the UI.
     #[cfg(feature = "crossterm")]
-    if terminal_side_effects && kernel.should_copy_selection {
-        let text = terminal::extract_selection_text(
-            term.buffer_mut(),
-            &state.selection,
-            &state.layout_feedback.prev_content_map,
-        );
-        if !text.is_empty() {
-            terminal::copy_to_clipboard(&mut io::stdout(), &text)?;
+    if terminal_side_effects {
+        let mut effects = terminal::FrameEffects::default();
+        if kernel.should_copy_selection {
+            let text = terminal::extract_selection_text(
+                term.buffer_mut(),
+                &state.selection,
+                &state.layout_feedback.prev_content_map,
+            );
+            if !text.is_empty() {
+                effects.clipboard.push(text);
+            }
+            state.selection.clear();
         }
-        state.selection.clear();
+        effects.clipboard.extend(kernel.clipboard_text);
+        effects.meta = context::terminal_meta(&state.named_states)
+            .cloned()
+            .unwrap_or_default();
+        if effects.meta.title.is_none() {
+            effects.meta.title.clone_from(&config.title);
+        }
+        effects.clipboard_options = terminal::ClipboardOptions {
+            passthrough: config.clipboard_passthrough,
+            max_bytes: config.clipboard_max_bytes,
+        };
+        terminal::stage_frame_effects(effects);
     }
+    // A clipboard status is visible to exactly one frame.
+    context::store_clipboard_status(&mut state.named_states, None);
 
     let flush_start = Instant::now();
     term.flush()?;
     state.diagnostics.flush_duration = flush_start.elapsed();
     #[cfg(feature = "crossterm")]
-    if terminal_side_effects && let Some(text) = kernel.clipboard_text {
-        #[allow(clippy::print_stderr)]
-        if let Err(e) = terminal::copy_to_clipboard(&mut io::stdout(), &text) {
-            eprintln!("[slt] failed to copy to clipboard: {e}");
-        }
+    if terminal_side_effects && let Some(status) = terminal::take_clipboard_status() {
+        context::store_clipboard_status(&mut state.named_states, Some(status));
     }
     state.diagnostics.tick = state.diagnostics.tick.wrapping_add(1);
 

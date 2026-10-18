@@ -6,13 +6,149 @@
 //! [`crate::widgets::FormState`], ...) live in `src/widgets/text_input.rs`.
 
 use super::*;
-use crate::widgets::{grapheme_cursor_after, prepare_text_insert};
+use crate::event::MouseEvent;
+use crate::widgets::word_range_at;
 
 mod number_input;
 mod textarea;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod selection_tests;
+
+/// Issue #465: map a cell column back to a grapheme index using the
+/// previous frame's rendered layout (`TextInputEditing::visual`).
+fn text_input_index_at(state: &TextInputState, x: u32, text_x: u32) -> usize {
+    let len = grapheme_count(&state.value);
+    let visual = &state.editing.visual;
+    if x < text_x {
+        return visual.first().map_or(0, |&(_, idx)| idx).min(len);
+    }
+    let cell = x - text_x;
+    visual
+        .iter()
+        .rev()
+        .find(|&&(start, _)| start <= cell)
+        .map_or(len, |&(_, idx)| idx)
+        .min(len)
+}
+
+/// Issue #465: press / drag / release handling for mouse selection in a
+/// focused `text_input`. Returns `true` when the event belongs to the input.
+fn text_input_pointer(
+    state: &mut TextInputState,
+    mouse: &MouseEvent,
+    rect: Rect,
+    text_x: u32,
+    now: crate::clock::Instant,
+) -> bool {
+    match mouse.kind {
+        MouseKind::Down(MouseButton::Left) => {
+            if !rect.contains(mouse.x, mouse.y) {
+                state.editing.pointer.dragging = false;
+                return false;
+            }
+            let index = text_input_index_at(state, mouse.x, text_x);
+            match state
+                .editing
+                .pointer
+                .register_click(now, (mouse.x, mouse.y))
+            {
+                1 => {
+                    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                        state.move_cursor(index, true);
+                    } else {
+                        state.set_selection(index, index);
+                        state.editing.last_typing = false;
+                    }
+                    state.editing.pointer.dragging = true;
+                }
+                // Word boundaries would reveal the structure of a masked
+                // value, so a double-click there selects everything.
+                2 if !state.masked => {
+                    let word = word_range_at(&state.value, index);
+                    state.set_selection(word.start, word.end);
+                    state.editing.pointer.dragging = false;
+                }
+                _ => {
+                    state.select_all();
+                    state.editing.pointer.dragging = false;
+                }
+            }
+            true
+        }
+        MouseKind::Drag(MouseButton::Left) if state.editing.pointer.dragging => {
+            let index = text_input_index_at(state, mouse.x, text_x);
+            state.editing.anchor.get_or_insert(state.cursor);
+            state.cursor = index;
+            true
+        }
+        MouseKind::Up(MouseButton::Left) if state.editing.pointer.dragging => {
+            state.editing.pointer.dragging = false;
+            true
+        }
+        _ => false,
+    }
+}
+
+impl Context {
+    /// Issue #465: render text runs (`(text, selected)`) as one line. A
+    /// single run renders exactly like `styled_with_cursor_privacy`; several
+    /// runs render in a gap-less row so selected runs can carry the
+    /// selection style. `cursor` is `(run, grapheme offset)` of the caret.
+    pub(super) fn text_runs_with_cursor(
+        &mut self,
+        runs: &[(String, bool)],
+        style: Style,
+        selected_style: Style,
+        cursor: Option<(usize, usize)>,
+        cursor_masked: bool,
+    ) {
+        let style_for = |selected: bool| if selected { selected_style } else { style };
+        if let [(text, selected)] = runs {
+            self.styled_with_cursor_privacy(
+                text.clone(),
+                style_for(*selected),
+                cursor.map(|(_, offset)| offset),
+                cursor_masked,
+            );
+            return;
+        }
+        self.commands
+            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
+                direction: Direction::Row,
+                gap: 0,
+                align: Align::Start,
+                align_self: None,
+                justify: Justify::Start,
+                border: None,
+                border_sides: BorderSides::all(),
+                border_style: Style::new(),
+                bg_color: None,
+                padding: Padding::default(),
+                margin: Margin::default(),
+                constraints: Constraints::default(),
+                title: None,
+                grow: 0,
+                group_name: None,
+            })));
+        for (index, (text, selected)) in runs.iter().enumerate() {
+            let offset = cursor
+                .filter(|&(run, _)| run == index)
+                .map(|(_, offset)| offset);
+            self.styled_with_cursor_privacy(
+                text.clone(),
+                style_for(*selected),
+                offset,
+                cursor_masked,
+            );
+        }
+        self.commands.push(Command::EndContainer);
+        self.rollback.last_text_idx = None;
+    }
+}
 
 impl Context {
     /// Render a single-line text input. Auto-handles cursor, typing, and backspace.
@@ -48,7 +184,11 @@ impl Context {
             !state.value.contains('\n'),
             "text_input got a newline — use textarea instead",
         );
-        let focused = self.register_focusable();
+        let focused = self.register_text_entry_focusable(
+            crate::runtime::TextEntryKind::SingleLine,
+            state.focus_key(),
+        );
+        let focus_slot = self.rollback.last_focusable_id;
         // v0.21.1: capture the focus-edge flags immediately — this consumes the
         // `register_focusable` marker, so the result is correct regardless of
         // the child containers rendered below. Issue #208 left text_input never
@@ -58,9 +198,19 @@ impl Context {
         let mut submitted = false;
         let old_value = state.value.clone();
         state.cursor = state.cursor.min(grapheme_count(&state.value));
+        let input_padx = self.theme.spacing.xs();
+        // Issue #465: the bordered box below takes the next interaction slot;
+        // its previous-frame rect locates the text for mouse selection.
+        let box_rect = self
+            .prev_hit_map
+            .get(self.rollback.interaction_count)
+            .copied()
+            .filter(|rect| !rect.is_empty());
 
         if focused {
             let mut consumed_indices = Vec::new();
+            let mut clipboard: Option<String> = None;
+            let mut pointer_captured = false;
             // Hoist matched_suggestions out of the loop and recompute only
             // after a mutation key (Char/Backspace/Delete) sets the dirty flag.
             // A 10-key burst with one mutation: 10 calls -> 2 calls.
@@ -73,6 +223,12 @@ impl Context {
                         .collect()
                 } else {
                     Vec::new()
+                }
+            };
+            let reopen_suggestions = |state: &mut TextInputState| {
+                if !state.suggestions.is_empty() {
+                    state.show_suggestions = true;
+                    state.suggestion_index = 0;
                 }
             };
             let mut matched_suggestions = compute_matched(state);
@@ -92,19 +248,26 @@ impl Context {
                                 .all(|ch| (ch as u32) >= 0x20 && ch != '\u{7f}')
                         })
                         .collect();
-                    let index = byte_index_for_grapheme(&state.value, state.cursor);
-                    if let Some((value, end)) =
-                        prepare_text_insert(&state.value, index, &inserted, state.max_length)
-                    {
-                        state.cursor = grapheme_cursor_after(&value, end);
-                        state.value = value;
-                        if !state.suggestions.is_empty() {
-                            state.show_suggestions = true;
-                            state.suggestion_index = 0;
-                        }
+                    if !inserted.is_empty() && state.insert_text(&inserted) {
+                        reopen_suggestions(state);
                         suggestions_dirty = true;
                     }
                     consumed_indices.push(i);
+                    continue;
+                }
+                if let Event::Mouse(mouse) = event {
+                    if let Some(rect) = box_rect
+                        && text_input_pointer(
+                            state,
+                            mouse,
+                            rect,
+                            rect.x.saturating_add(1).saturating_add(input_padx),
+                            self.frame_instant,
+                        )
+                    {
+                        consumed_indices.push(i);
+                        pointer_captured = true;
+                    }
                     continue;
                 }
                 let Event::Key(key) = event else {
@@ -123,6 +286,11 @@ impl Context {
                         .suggestion_index
                         .min(matched_suggestions.len().saturating_sub(1));
                 }
+                let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                let command = key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::SUPER);
+                let word = key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT);
                 match key.code {
                     KeyCode::Up if suggestions_visible => {
                         state.suggestion_index = state.suggestion_index.saturating_sub(1);
@@ -146,78 +314,104 @@ impl Context {
                             .get(state.suggestion_index)
                             .or_else(|| matched_suggestions.first())
                         {
+                            state.push_undo();
                             state.value = selected.clone();
                             state.cursor = grapheme_count(&state.value);
+                            state.clear_selection();
                             state.show_suggestions = false;
                             state.suggestion_index = 0;
                             suggestions_dirty = true;
                         }
                         consumed_indices.push(i);
                     }
-                    KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
-                        let index = byte_index_for_grapheme(&state.value, state.cursor);
-                        let mut encoded = [0; 4];
-                        let Some((value, end)) = prepare_text_insert(
-                            &state.value,
-                            index,
-                            ch.encode_utf8(&mut encoded),
-                            state.max_length,
-                        ) else {
+                    // Issue #465: selection / clipboard / history chords.
+                    KeyCode::Char('a' | 'A') if command && state.ctrl_a_selects_all() => {
+                        state.select_all();
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('c' | 'C') if command && !shift => {
+                        // Without a selection Ctrl+C stays an app shortcut.
+                        if let Some(text) = state.selected_text() {
+                            if !state.masked {
+                                clipboard = Some(text.to_string());
+                            }
                             consumed_indices.push(i);
-                            continue;
-                        };
-                        state.cursor = grapheme_cursor_after(&value, end);
-                        state.value = value;
-                        if !state.suggestions.is_empty() {
-                            state.show_suggestions = true;
-                            state.suggestion_index = 0;
                         }
-                        suggestions_dirty = true;
+                    }
+                    KeyCode::Char('x' | 'X') if command && !shift => {
+                        if let Some(text) = state.selected_text() {
+                            if !state.masked {
+                                clipboard = Some(text.to_string());
+                            }
+                            state.delete_selection();
+                            reopen_suggestions(state);
+                            suggestions_dirty = true;
+                            consumed_indices.push(i);
+                        }
+                    }
+                    KeyCode::Char('z' | 'Z') if command && !shift => {
+                        if state.undo() {
+                            suggestions_dirty = true;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('y' | 'Y') if command => {
+                        if state.redo() {
+                            suggestions_dirty = true;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char('z' | 'Z') if command && shift => {
+                        if state.redo() {
+                            suggestions_dirty = true;
+                        }
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Char(ch) if !has_global_shortcut_modifier(key.modifiers) => {
+                        let mut encoded = [0; 4];
+                        if state.type_text(ch.encode_utf8(&mut encoded)) {
+                            reopen_suggestions(state);
+                            suggestions_dirty = true;
+                        }
                         consumed_indices.push(i);
                     }
                     KeyCode::Backspace => {
-                        if state.cursor > 0 {
-                            let start = byte_index_for_grapheme(&state.value, state.cursor - 1);
-                            let end = byte_index_for_grapheme(&state.value, state.cursor);
-                            state.value.replace_range(start..end, "");
-                            state.cursor = grapheme_cursor_after(&state.value, start);
-                        }
-                        if !state.suggestions.is_empty() {
-                            state.show_suggestions = true;
-                            state.suggestion_index = 0;
-                        }
+                        state.delete_backward();
+                        reopen_suggestions(state);
+                        suggestions_dirty = true;
+                        consumed_indices.push(i);
+                    }
+                    KeyCode::Delete => {
+                        state.delete_forward();
+                        reopen_suggestions(state);
                         suggestions_dirty = true;
                         consumed_indices.push(i);
                     }
                     KeyCode::Left => {
-                        state.cursor = state.cursor.saturating_sub(1);
+                        let target = match state.selection() {
+                            Some(range) if !shift && !word => range.start,
+                            _ if word => textarea::prev_word_col(&state.value, state.cursor),
+                            _ => state.cursor.saturating_sub(1),
+                        };
+                        state.move_cursor(target, shift);
                         consumed_indices.push(i);
                     }
                     KeyCode::Right => {
-                        state.cursor = (state.cursor + 1).min(grapheme_count(&state.value));
+                        let len = grapheme_count(&state.value);
+                        let target = match state.selection() {
+                            Some(range) if !shift && !word => range.end,
+                            _ if word => textarea::next_word_col(&state.value, state.cursor),
+                            _ => (state.cursor + 1).min(len),
+                        };
+                        state.move_cursor(target, shift);
                         consumed_indices.push(i);
                     }
                     KeyCode::Home => {
-                        state.cursor = 0;
-                        consumed_indices.push(i);
-                    }
-                    KeyCode::Delete => {
-                        let len = grapheme_count(&state.value);
-                        if state.cursor < len {
-                            let start = byte_index_for_grapheme(&state.value, state.cursor);
-                            let end = byte_index_for_grapheme(&state.value, state.cursor + 1);
-                            state.value.replace_range(start..end, "");
-                            state.cursor = grapheme_cursor_after(&state.value, start);
-                        }
-                        if !state.suggestions.is_empty() {
-                            state.show_suggestions = true;
-                            state.suggestion_index = 0;
-                        }
-                        suggestions_dirty = true;
+                        state.move_cursor(0, shift);
                         consumed_indices.push(i);
                     }
                     KeyCode::End => {
-                        state.cursor = grapheme_count(&state.value);
+                        state.move_cursor(grapheme_count(&state.value), shift);
                         consumed_indices.push(i);
                     }
                     KeyCode::Enter => {
@@ -230,8 +424,10 @@ impl Context {
                                 .get(state.suggestion_index)
                                 .or_else(|| matched_suggestions.first())
                             {
+                                state.push_undo();
                                 state.value = selected.clone();
                                 state.cursor = grapheme_count(&state.value);
+                                state.clear_selection();
                                 state.show_suggestions = false;
                                 state.suggestion_index = 0;
                                 suggestions_dirty = true;
@@ -245,7 +441,23 @@ impl Context {
                 }
             }
             self.consume_indices(consumed_indices);
+            if let Some(text) = clipboard {
+                self.copy_to_clipboard(text);
+            }
+            if pointer_captured {
+                self.text_pointer_capture = true;
+            }
+        } else {
+            state.editing.pointer.dragging = false;
         }
+        let mut chords = crate::runtime::CHORD_HISTORY;
+        if state.ctrl_a_selects_all() {
+            chords |= crate::runtime::CHORD_SELECT_ALL;
+        }
+        if state.selection().is_some() {
+            chords |= crate::runtime::CHORD_COPY_CUT;
+        }
+        self.set_focus_slot_chords(focus_slot, chords);
 
         if state.value.is_empty() {
             state.show_suggestions = false;
@@ -268,7 +480,14 @@ impl Context {
         }
 
         let visible_width = self.area_width.saturating_sub(4) as usize;
-        let (input_text, cursor_offset) = if state.value.is_empty() {
+        let selection = state.selection();
+        let mut visual = std::mem::take(&mut state.editing.visual);
+        visual.clear();
+        // Runs of `(text, selected)`; one unselected run unless a selection
+        // is visible. `cursor` is `(run, grapheme offset)` of the caret glyph.
+        let mut runs: Vec<(String, bool)> = Vec::with_capacity(3);
+        let mut cursor: Option<(usize, usize)> = None;
+        if state.value.is_empty() {
             if state.placeholder.len() > 100 {
                 slt_warn(
                     "text_input placeholder is very long (>100 chars) — consider shortening it",
@@ -277,10 +496,10 @@ impl Context {
             let mut ph = state.placeholder.clone();
             if focused {
                 ph.insert(0, '▎');
-                (ph, Some(0))
-            } else {
-                (ph, None)
+                cursor = Some((0, 0));
             }
+            visual.push((0, 0));
+            runs.push((ph, false));
         } else {
             // Display units are grapheme clusters: `state.cursor` is a cluster
             // index, so each rendered unit (one source cluster, or one mask
@@ -303,8 +522,18 @@ impl Context {
                 0
             };
 
-            let mut rendered = String::new();
-            let mut cursor_offset = None;
+            let mut out_cells: u32 = 0;
+            let push = |runs: &mut Vec<(String, bool)>, text: &str, selected: bool| match runs
+                .last_mut()
+            {
+                Some((run, sel)) if *sel == selected => run.push_str(text),
+                _ => runs.push((text.to_string(), selected)),
+            };
+            let caret = |runs: &[(String, bool)]| {
+                let run = runs.len().saturating_sub(1);
+                let offset = runs.last().map_or(0, |(text, _)| grapheme_count(text));
+                (run, offset)
+            };
             let mut current_width: usize = 0;
             for (idx, g) in display_units.iter().enumerate() {
                 let cw = cluster_width(g).max(1) as usize;
@@ -318,30 +547,42 @@ impl Context {
                 // Preserve the cells occupied by a cluster crossing the left
                 // edge, without emitting a partial wide grapheme.
                 if current_width < scroll_offset {
-                    rendered.extend(std::iter::repeat_n(
-                        ' ',
-                        (current_width + cw - scroll_offset).min(visible_width),
-                    ));
+                    let pad = (current_width + cw - scroll_offset).min(visible_width);
+                    push(&mut runs, &" ".repeat(pad), false);
+                    out_cells += pad as u32;
                     current_width += cw;
                     continue;
                 }
                 if focused && idx == state.cursor {
-                    cursor_offset = Some(grapheme_count(&rendered));
-                    rendered.push('▎');
+                    push(&mut runs, "", false);
+                    cursor = Some(caret(&runs));
+                    push(&mut runs, "▎", false);
+                    // A click on the caret glyph keeps the cursor there.
+                    visual.push((out_cells, idx));
+                    out_cells += 1;
                 }
-                let cursor_cells = usize::from(cursor_offset.is_some());
+                let cursor_cells = usize::from(cursor.is_some());
                 if current_width - scroll_offset + cw + cursor_cells > visible_width {
                     break;
                 }
-                rendered.push_str(g);
+                let selected = selection.as_ref().is_some_and(|range| range.contains(&idx));
+                visual.push((out_cells, idx));
+                push(&mut runs, g, selected);
+                out_cells += cw as u32;
                 current_width += cw;
             }
+            let end = visual.last().map_or(0, |&(_, idx)| idx + 1);
             if focused && visible_width > 0 && state.cursor >= display_units.len() {
-                cursor_offset = Some(grapheme_count(&rendered));
-                rendered.push('▎');
+                push(&mut runs, "", false);
+                cursor = Some(caret(&runs));
+                push(&mut runs, "▎", false);
             }
-            (rendered, cursor_offset)
-        };
+            visual.push((out_cells, end));
+        }
+        state.editing.visual = visual;
+        if runs.is_empty() {
+            runs.push((String::new(), false));
+        }
         let input_style = if state.value.is_empty() && !focused {
             Style::new()
                 .dim()
@@ -349,6 +590,7 @@ impl Context {
         } else {
             Style::new().fg(colors.fg.unwrap_or(self.theme.text))
         };
+        let selected_style = self.theme.text_selection_style();
 
         let border_color = if focused {
             colors.accent.unwrap_or(self.theme.primary)
@@ -358,13 +600,13 @@ impl Context {
             colors.border.unwrap_or(self.theme.border)
         };
 
-        let input_padx = self.theme.spacing.xs();
+        let masked = state.masked;
         let mut response = self
             .bordered(Border::Rounded)
             .border_style(Style::new().fg(border_color))
             .px(input_padx)
             .col(|ui| {
-                ui.styled_with_cursor_privacy(input_text, input_style, cursor_offset, state.masked);
+                ui.text_runs_with_cursor(&runs, input_style, selected_style, cursor, masked);
             });
         response.focused = focused;
         response.changed = state.value != old_value;
@@ -499,7 +741,10 @@ impl Context {
         // Bind the input's single focus slot to the entire field so keyboard
         // reveal includes its label/error, while a tiny viewport prefers the
         // actual input caret. Named reservations remain attached to this slot.
-        self.register_focusable();
+        self.register_text_entry_focusable(
+            crate::runtime::TextEntryKind::SingleLine,
+            field.input.focus_key(),
+        );
         self.rollback.pending_focusable_id = self.rollback.last_focusable_id;
         let layout_rect = if self.rollback.new_focus_slot {
             None

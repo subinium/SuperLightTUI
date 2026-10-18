@@ -2,7 +2,7 @@
 
 use compact_str::CompactString;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use crate::style::Style;
 
@@ -65,29 +65,35 @@ pub(crate) fn is_printable_ascii(s: &str) -> bool {
 
 /// Display width of `s` in terminal columns.
 ///
-/// Equal to [`UnicodeWidthStr::width`] for every input, with an O(len)
-/// byte-check fast path for printable ASCII.
+/// Equal to [`crate::width::str_width`] (which honours the frame's
+/// ambiguous-width setting, #449) for every input, with an O(len) byte-check
+/// fast path for printable ASCII, which is never ambiguous.
 #[inline]
 pub(crate) fn display_width(s: &str) -> usize {
     if is_printable_ascii(s) {
         s.len()
     } else {
-        UnicodeWidthStr::width(s)
+        crate::width::str_width(s)
     }
 }
 
-/// Display width of a single-scalar symbol, as [`UnicodeWidthStr::width`]
+/// Display width of a single-scalar symbol, as [`crate::width::str_width`]
 /// would measure the one-char string.
 ///
 /// `UnicodeWidthChar` reports `None` for C0/DEL/C1 controls, which the
-/// string measure counts as width 1; every other scalar agrees (verified
-/// exhaustively in the tests).
+/// string measure counts as width 1; every other scalar agrees in both the
+/// default and the ambiguous-wide interpretation (verified exhaustively in
+/// the tests).
 #[inline]
 pub(crate) fn char_display_width(ch: char) -> usize {
     if ch.is_ascii() {
         return 1;
     }
-    UnicodeWidthChar::width(ch).unwrap_or(1)
+    if crate::width::ambiguous_wide() {
+        UnicodeWidthChar::width_cjk(ch).unwrap_or(1)
+    } else {
+        UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
 }
 
 /// Normalize an arbitrary string into one bounded, terminal-safe grapheme.
@@ -402,18 +408,37 @@ mod tests {
 
     #[test]
     fn char_display_width_matches_string_width_for_every_scalar() {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::width::set_ambiguous_wide(false);
+            }
+        }
+        let _reset = Reset;
         let mut encoded = [0u8; 4];
         let mut mismatches = Vec::new();
-        for ch in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
-            let s = ch.encode_utf8(&mut encoded);
-            let expected = UnicodeWidthStr::width(&*s);
-            if char_display_width(ch) != expected || display_width(s) != expected {
-                mismatches.push((u32::from(ch), char_display_width(ch), expected));
+        for ambiguous_wide in [false, true] {
+            crate::width::set_ambiguous_wide(ambiguous_wide);
+            for ch in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+                let s = ch.encode_utf8(&mut encoded);
+                let expected = if ambiguous_wide {
+                    UnicodeWidthStr::width_cjk(&*s)
+                } else {
+                    UnicodeWidthStr::width(&*s)
+                };
+                if char_display_width(ch) != expected || display_width(s) != expected {
+                    mismatches.push((
+                        ambiguous_wide,
+                        u32::from(ch),
+                        char_display_width(ch),
+                        expected,
+                    ));
+                }
             }
         }
         assert!(
             mismatches.is_empty(),
-            "{} mismatches (scalar, char path, str width): {:x?}",
+            "{} mismatches (ambiguous_wide, scalar, char path, str width): {:x?}",
             mismatches.len(),
             &mismatches[..mismatches.len().min(64)]
         );

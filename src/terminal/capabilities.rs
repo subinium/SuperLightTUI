@@ -93,7 +93,11 @@ pub struct Capabilities {
     /// multiplexer / remote-session gating; `SLT_FORCE_KITTY` forces it on and
     /// `SLT_DISABLE_KITTY` always clears it.
     pub kitty_graphics: bool,
-    /// Kitty keyboard protocol confirmed.
+    /// Kitty keyboard protocol confirmed: the terminal answered the startup
+    /// progressive-enhancement query (`CSI ? u`) with `CSI ? <flags> u`
+    /// (issue #448). `false` when the terminal stayed silent, when startup
+    /// queries are skipped (Windows, multiplexers, unidentified PTYs), or when
+    /// `SLT_DISABLE_KITTY_KEYBOARD=1` is set.
     pub kitty_keyboard: bool,
     /// Synchronized output (DECSET 2026) confirmed.
     pub sync_output: bool,
@@ -157,8 +161,9 @@ impl Capabilities {
 /// Return the process-global negotiated [`Capabilities`], probing the terminal
 /// exactly once on first call and caching the result.
 ///
-/// On an identified direct terminal, the probe issues DA1 (`CSI c`), DA2
-/// (`CSI > c`), and XTGETTCAP for the truecolor capname, reading replies
+/// On an identified direct terminal, the probe issues the Kitty keyboard
+/// query (`CSI ? u`), DA1 (`CSI c`), DA2 (`CSI > c`), the Kitty graphics
+/// query, XTGETTCAP for the truecolor capname, and DECRQM 2026, reading replies
 /// through the existing OSC round-trip infrastructure with a bounded total
 /// timeout (≤180ms). Generic PTY wrappers, `TERM=dumb`, and tmux/screen skip
 /// automatic queries to avoid leaking control bytes or racing user input;
@@ -192,9 +197,12 @@ pub(super) fn probe_capabilities() -> Capabilities {
         // 10ms per query, so the common path adds negligible latency.
         // DA1 then DA2 in one write — both terminate with `c`, so a single
         // DA-aware read drains both replies (in order) when supported.
+        // The Kitty keyboard query `CSI ? u` is sent in the same write, ahead
+        // of DA1, so the DA1 reply doubles as its "unsupported" sentinel.
         if let Some(resp) = read_da_response(Duration::from_millis(90)) {
             parse_da1(&resp, &mut caps);
             parse_da2(&resp, &mut caps);
+            caps.kitty_keyboard = parse_kitty_keyboard_reply(&resp).is_some();
         }
 
         // Kitty graphics query: APC G a=q (query) with a 1×1 RGB direct
@@ -267,8 +275,33 @@ pub(super) fn probe_capabilities() -> Capabilities {
     if force_env_enabled("SLT_DISABLE_ITERM") {
         caps.iterm2 = false;
     }
+    if force_env_enabled("SLT_DISABLE_KITTY_KEYBOARD") {
+        caps.kitty_keyboard = false;
+    }
 
     caps
+}
+
+/// Whether to push the Kitty keyboard protocol at session enter (issue #448).
+///
+/// * `requested`: [`crate::RunConfig::kitty_keyboard`].
+/// * `policy_allowed`: multiplexer / env policy
+///   ([`kitty_keyboard_allowed_env`]); already folds in the force and disable
+///   flags.
+/// * `probe_ran`: startup queries ran, so `confirmed` is meaningful.
+/// * `confirmed`: the terminal answered `CSI ? u`.
+/// * `forced`: `SLT_FORCE_KITTY_KEYBOARD`.
+///
+/// Where queries cannot run (zellij, Windows, unidentified PTYs) the decision
+/// falls back to policy alone so allowlisted hosts keep working.
+pub(super) fn kitty_keyboard_push_decision(
+    requested: bool,
+    policy_allowed: bool,
+    probe_ran: bool,
+    confirmed: bool,
+    forced: bool,
+) -> bool {
+    requested && policy_allowed && (forced || confirmed || !probe_ran)
 }
 
 /// Heuristic env-detection for iTerm2 OSC 1337 inline-image hosts (issue #265).
@@ -401,6 +434,10 @@ pub(super) enum TerminalProtocol {
     Sixel,
     Iterm2,
     KittyKeyboard,
+    /// Taskbar progress (`OSC 9;4`, issue #468).
+    Progress,
+    /// Program status (`OSC 7501`, issue #468).
+    ProgramStatus,
 }
 
 pub(super) fn terminal_protocol_allowed(
@@ -452,7 +489,14 @@ pub(super) fn terminal_multiplexer_env(
     if term.starts_with("tmux") {
         Some(MultiplexerKind::Tmux)
     } else if term.starts_with("screen") {
-        Some(MultiplexerKind::Screen)
+        // tmux's long-standing `default-terminal "screen-256color"` sets a
+        // screen TERM; without `STY` the innermost multiplexer is tmux.
+        // Passthrough wrapping (issue #446) depends on telling them apart.
+        if has_tmux && !has_sty {
+            Some(MultiplexerKind::Tmux)
+        } else {
+            Some(MultiplexerKind::Screen)
+        }
     } else if has_zellij || has_zellij_session {
         Some(MultiplexerKind::Zellij)
     } else if has_tmux {
@@ -583,4 +627,41 @@ pub(super) fn terminal_query_allowed(
     }
     terminal_protocol_allowed(multiplexer, TerminalProtocol::Queries, forced, disabled)
         && (forced || (!term.is_empty() && !term.eq_ignore_ascii_case("dumb")))
+}
+
+/// Terminal identities known to render `OSC 9;4` progress instead of
+/// treating `OSC 9` as a desktop notification (issue #468).
+pub(super) fn progress_host_env(
+    term_program: &str,
+    term_program_version: &str,
+    has_wt_session: bool,
+    conemu_ansi: bool,
+) -> bool {
+    if has_wt_session || conemu_ansi {
+        return true;
+    }
+    match term_program.to_ascii_lowercase().as_str() {
+        "ghostty" => true,
+        // iTerm2 3.6 added OSC 9;4; older versions post a notification.
+        "iterm.app" => {
+            let mut parts = term_program_version
+                .split('.')
+                .map(|part| part.parse::<u32>().unwrap_or(0));
+            let major = parts.next().unwrap_or(0);
+            let minor = parts.next().unwrap_or(0);
+            (major, minor) >= (3, 6)
+        }
+        _ => false,
+    }
+}
+
+#[cfg(feature = "crossterm")]
+pub(super) fn terminal_progress_host() -> bool {
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    progress_host_env(
+        &var("TERM_PROGRAM"),
+        &var("TERM_PROGRAM_VERSION"),
+        std::env::var_os("WT_SESSION").is_some(),
+        var("ConEmuANSI").eq_ignore_ascii_case("on"),
+    )
 }

@@ -8,6 +8,72 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.25.x → v0.26.0
+
+- **Shortcuts vs focused text fields (#453).** While `text_input`, `textarea`,
+  a form field or an open command palette has focus, `ui.key(c)`,
+  `ui.key_code(..)`, `ui.key_mod(..)` and `ui.consume_key*(..)` skip the keys
+  it edits with, in any call order. Shortcut checks no longer need to sit after
+  the widgets. If your app read typed characters through `ui.key(..)` on
+  purpose (for example a vim-style mode that also feeds an input), switch those
+  reads to `ui.raw_key(c)` / `ui.raw_key_code(..)`. New `ui.shortcut(code,
+  modifiers)` matches modifiers exactly.
+- **Focus identity (#454).** Focus now stays on the same `text_input` /
+  `textarea` / form field / named slot when focusables appear or disappear
+  before it, instead of staying on the same slot number. Keep each widget's
+  state alive across frames (create it outside the closure) to benefit;
+  custom focusable widgets can opt in with `ui.register_focusable_keyed(id)`.
+  `focus_index()` / `set_focus_index()` remain positional. Tests that assumed
+  focus stays on slot N after inserting a focusable before it must follow the
+  widget instead.
+- **`TextInputState::validate` → `validate_now` (#461).** Same behaviour, new
+  name; the old one is deprecated. Replace `s.value.clear(); s.cursor = 0;`
+  with `s.clear()`, `s.masked = true` with `TextInputState::password()` /
+  `.masked(true)`, and positional `form.value(i)` with `form.get("key")`
+  (set keys with `FormField::key`, otherwise the label is used).
+- **Text selection (#465).** Focused `text_input` / `textarea` now handle
+  Ctrl+A, Ctrl+Z / Ctrl+Y and, with a selection, Ctrl+C / Ctrl+X. If your app
+  binds those chords globally, they no longer fire while a text field has
+  focus; opt out of select-all with `.ctrl_a_select_all(false)`, or check
+  them with `ui.raw_key_mod(..)`. To let Ctrl+C copy, run with
+  `RunConfig::default().handle_ctrl_c(false)` and quit on your own key.
+- Color depth auto-detection now also uses terminal identity, a
+  probe-confirmed XTGETTCAP `Tc` reply, and VT-enabled Windows consoles, so
+  Kitty, Ghostty, WezTerm, iTerm2, VS Code, and Windows Terminal may get 24-bit
+  color where 0.25 picked 16 or 256. `TERM=dumb` now resolves to
+  `ColorDepth::NoColor`. Set `RunConfig::color_depth(..)` to pin a depth; an
+  explicit depth still wins over everything, including `NO_COLOR` (#447).
+- `RunConfig::kitty_keyboard(true)` no longer pushes the protocol on a direct
+  terminal that answers startup queries but not `CSI ? u`.
+  `ui.capabilities().kitty_keyboard` now reports the probe result instead of
+  always `false`. Set `SLT_FORCE_KITTY_KEYBOARD=1` to push regardless (#448).
+- `ui.copy_to_clipboard` payloads over 74,994 bytes are no longer sent; raise
+  `RunConfig::clipboard_max_bytes(..)` if your terminal accepts more. Write
+  failures are reported through `ui.clipboard_status()` instead of
+  `eprintln!`, and a failed selection copy no longer aborts the frame (#446).
+- The window title from `RunConfig::title` is now written through the frame
+  flush and restored on exit (XTWINOPS title stack) instead of staying set
+  after the app quits (#468).
+- `RunConfig` gained `clipboard_passthrough`, `clipboard_max_bytes`,
+  `ambiguous_wide`, `width_conservative`, and `width_probe`. `RunConfig` is
+  `#[non_exhaustive]`; keep using the builder methods.
+- Inside tmux with `default-terminal "screen-256color"`, SLT now identifies the
+  multiplexer as tmux (it was GNU screen). Protocol policy for the two is the
+  same; only OSC 52 passthrough wrapping differs.
+- `ListState::selected` and `TableState::selected` are deprecated (#455). Reads
+  become `selected_view_index()` (or `selected_index()` for the data index);
+  writes become `set_selected_view_index(i)` / `set_selected_index(i)`. Replace
+  `list.remove_item(list.selected)` and `table.remove_row(table.selected)` with
+  `remove_selected()`, and `table.rows()[table.selected]` with
+  `selected_row()`; the old forms act on the wrong row under a filter or sort.
+- `list` and unpaged `table` scroll themselves (#487) and are at most as tall
+  as the space their parent leaves below them. Lists that fit are unchanged.
+  If you wrapped a long `ui.list` in a `scrollable` to make it scroll, you can
+  drop the wrapper. To keep a footer visible under a long list, put the list
+  in `ui.container().grow(1).col(...)` (or give it `.h(n)` / `.max_h(n)`).
+
+---
+
 ## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain

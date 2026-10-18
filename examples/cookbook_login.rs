@@ -29,11 +29,9 @@ pub struct DemoState {
 
 impl DemoState {
     pub fn new() -> Self {
-        let mut password = TextInputState::with_placeholder("at least 6 chars");
-        password.masked = true;
         Self {
             username: TextInputState::with_placeholder("your name"),
-            password,
+            password: TextInputState::with_placeholder("at least 6 chars").masked(true),
             error: None,
             logged_in: false,
             current_user: String::new(),

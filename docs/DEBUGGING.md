@@ -138,10 +138,12 @@ events at all.
 
 ### 7. A shortcut fires while typing into an input
 
-`ui.key('q')` returns `true` for any matching event not consumed *so far in
-the frame*. If the check runs before a focused `text_input`, it sees the
-keystroke before the input consumes it, so typing `q` quits the app. Move
-global shortcut checks after the widgets that render in the same frame.
+Since 0.26 a focused `text_input` / `textarea` / form field keeps the keys it
+edits with, so `ui.key('q')` stays `false` while the user types into it, in
+either call order. If a shortcut still fires, check that it is not
+`ui.raw_key(..)` / `raw_events()` (those ignore text focus), and that the input
+actually had focus when the frame started: on an app's very first frame
+nothing has registered focus yet.
 
 ## Layout debugging checklist
 
@@ -164,8 +166,10 @@ If a custom widget behaves strangely in overlays, inspect both `focused` and whe
 ## Clipboard and terminal caveats
 
 - `read_clipboard()` depends on OSC 52 support in the terminal.
-- `copy_to_clipboard(...)` writes OSC 52 escape sequences through the active terminal backend.
-- Kitty keyboard support is best-effort: unsupported terminals silently ignore it.
+- `copy_to_clipboard(...)` writes OSC 52 through the built-in terminal backend after the frame. It never prints to stderr or fails the frame; check `ui.clipboard_status()` on the next frame: `Sent` (written, not necessarily received: OSC 52 has no acknowledgement), `TooLarge { bytes, max }` (over `RunConfig::clipboard_max_bytes`, default 74,994 bytes, nothing written), or `WriteFailed(kind)`.
+- Inside tmux, the default `set-clipboard external` drops OSC 52. Use `set -g set-clipboard on`, or `RunConfig::clipboard_passthrough(true)` with `set -g allow-passthrough on` (GNU screen gets DCS-chunked passthrough). Measured results for tmux 3.5a are in [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
+- Kitty keyboard: on a direct terminal that answers startup queries, the protocol is pushed only after a `CSI ? u` reply; `ui.capabilities().kitty_keyboard` reports it. Elsewhere it is best-effort and unsupported terminals ignore it. `SLT_FORCE_KITTY_KEYBOARD=1` skips the confirmation.
+- Title, progress, program status, and cursor-shape sequences are suppressed for `TERM=dumb`; `SLT_FORCE_PROGRESS=1` sends OSC 9;4 to terminals SLT does not recognize as progress hosts.
 
 ## Hot reload (experimental)
 

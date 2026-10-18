@@ -2752,7 +2752,7 @@ mod tests {
             clip: Option<Rect>,
         ) -> u32 {
             let symbol = normalize_cell_symbol(grapheme);
-            let width = UnicodeWidthStr::width(symbol.as_str()) as u32;
+            let width = crate::width::str_width(symbol.as_str()) as u32;
             if width == 0 {
                 append_zero_width(buf, x, y, &symbol, clip);
                 return 0;
@@ -2809,7 +2809,7 @@ mod tests {
                 left -= 1;
             }
             let symbol = buf.content[buf.index_of(left, y)].normalized_symbol();
-            let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
+            let width = (crate::width::str_width(symbol.as_str()) as u32).max(1);
             (left, left.saturating_add(width).min(buf.area.right()))
         }
 

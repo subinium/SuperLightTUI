@@ -523,7 +523,7 @@ fn render_home(
             );
             let _ = ui.row(|ui| {
                 let _ = ui.text_input(email);
-                email.validate(|v| {
+                email.validate_now(|v| {
                     if v.is_empty() || (v.contains('@') && v.contains('.')) {
                         Ok(())
                     } else {

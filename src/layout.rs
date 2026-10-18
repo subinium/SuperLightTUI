@@ -9,6 +9,7 @@ use crate::style::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
+#[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
 mod collect;

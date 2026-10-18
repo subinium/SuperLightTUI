@@ -38,7 +38,8 @@ fn main() -> std::io::Result<()> {
 
         ui.text(format!("count: {count}"));
 
-        // Global shortcuts go last — see step 6.
+        // Shortcuts are safe anywhere in the closure: a focused text input
+        // keeps the keys it edits with (see step 6).
         if ui.key('q') {
             ui.quit();
         }
@@ -77,48 +78,60 @@ use slt::{Context, TextInputState};
 fn main() -> std::io::Result<()> {
     let mut name = TextInputState::with_placeholder("Type here...");
 
+    let mut names: Vec<String> = Vec::new();
+
     slt::run(|ui: &mut Context| {
         let _ = ui.col(|ui| {
             ui.text("Name").bold();
-            let _ = ui.text_input(&mut name);
-            ui.text(format!("Value: {}", name.value));
+            if ui.text_input(&mut name).submitted && !name.value.is_empty() {
+                names.push(name.value.clone());
+                name.clear(); // empty the field after Enter
+            }
+            ui.text(format!("Saved: {}", names.join(", ")));
         });
     })
 }
 ```
 
 Interactive widgets usually own a `*State` type that you create once and pass every frame.
+For a password field use `TextInputState::password()` (or `.masked(true)` on any input).
 
-## 6. Check global shortcuts after your widgets
+## 6. Global shortcuts and focused text fields
 
-Widgets consume the keys they handle while they render. `ui.key(...)` only
-sees events nobody has consumed *yet*, so the order of calls inside the
-closure matters:
+While a text field (`text_input`, `textarea`, a form field, an open command
+palette) has keyboard focus, it owns the keys it edits with: printable
+characters without Ctrl / Super / Meta, Backspace, Delete, the arrow keys,
+Home and End (plus Enter, Up and Down for `textarea`). `ui.key('q')`,
+`ui.key_code(...)` and `ui.shortcut(...)` do not report those keys, whether the
+check runs before or after the field, so typing `q` into a search box never
+quits the app:
 
 ```rust
-use slt::{Context, KeyCode, TextInputState};
+use slt::{Context, KeyCode, KeyModifiers, TextInputState};
 
 fn main() -> std::io::Result<()> {
     let mut name = TextInputState::with_placeholder("Type here...");
 
     slt::run(|ui: &mut Context| {
-        // 1. Render widgets first: a focused text input consumes the
-        //    characters typed into it, including 'q'.
-        let _ = ui.text_input(&mut name);
-
-        // 2. Then check global shortcuts. Only unconsumed keys reach here.
-        if ui.key('q') || ui.key_code(KeyCode::Esc) {
+        // Order does not matter: while the input is focused, 'q' is text.
+        if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
+        // Chords always reach shortcuts, even while typing.
+        if ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL) {
+            // save
+        }
+        let _ = ui.text_input(&mut name);
     })
 }
 ```
 
-If the `ui.key('q')` check ran *before* `ui.text_input(...)`, typing `q`
-into the focused field would insert the letter **and** quit the app. Keys a
-text input does not consume (such as Esc and Ctrl+Q) still reach a check placed
-after it. Ctrl+C quits by default without any check
-(`RunConfig::handle_ctrl_c(false)` hands it to your closure instead).
+Keys the field never edits with (Esc, Tab, F-keys, Ctrl/Super/Meta chords)
+still reach shortcuts. `ui.raw_key('q')` sees every press, ignoring both text
+focus and the modal guard. Focus is decided as the frame starts, so after Tab
+or a click moves focus to a button, `q` is a shortcut again. Ctrl+C quits by
+default without any check (`RunConfig::handle_ctrl_c(false)` hands it to your
+closure instead).
 
 ## 7. Turn on the mouse when you need clicks, hover, or scrolling
 

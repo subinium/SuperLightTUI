@@ -220,6 +220,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `ModeState` | Multi-mode wrapper; each mode owns its own `ScreenState` |
 | `StreamingTextState`, `StreamingMarkdownState` | `streaming_text`, `streaming_markdown` |
 | `ToolApprovalState`, `ApprovalAction` | `tool_approval` |
+| `DiffState`, `DiffResponse`, `HunkId`, `HunkAction`, `HunkDecision`, `DiffLayout`, `DiffKeys`, `DiffColors`, `DiffParseError` (model: `slt::widgets::{DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffFileStatus}`) | `diff` |
 | `ContextItem` | `context_bar(items)` |
 | `RichLogState`, `RichLogEntry` | `rich_log` |
 | `GridColumn` | Per-column spec for `grid_with` |
@@ -407,6 +408,7 @@ Finalization:
 | `ui.streaming_text(&mut state)` | `StreamingTextState` | Incrementally rendered text. `state.push(chunk)`, `.clear()`. |
 | `ui.streaming_markdown(&mut state)` | `StreamingMarkdownState` | Markdown stream. Same `.push()`/`.clear()`. |
 | `ui.tool_approval(&mut state)` | `ToolApprovalState` | Tool call dialog. `ApprovalAction`: `Pending`, `Approved`, `Rejected`. |
+| `ui.diff(&mut state)` | `DiffState` | Builder; returns `DiffResponse` from `.show()` (Deref to `Response`). Patch review viewer: `DiffState::from_unified(patch)?` parses multi-file unified / `git diff` output (renames, binary markers, no-newline markers; malformed input → `DiffParseError`, never a panic). `.layout(DiffLayout::Split)` (default `Unified`), `.split_min_width(80)`, `.h(rows)`, `.w(cols)`, `.lang("rust")` (else file extension; needs the `syntax-*` feature, plain fallback), `.tab_width(4)`, `.line_numbers(bool)`, `.colors(DiffColors { added_bg, removed_bg, hunk_fg })`. Keys while focused: Up/Down `j`/`k`, `]`/`n` / `[`/`p` hunks, Enter/Space collapse, `a`/`r` accept/reject, PageUp/PageDown/Home/End; click a hunk header to collapse. `r.hunk_actions: Vec<(HunkId, HunkAction)>` reports each decision once; `r.toggled`, `r.focused_hunk`; decisions persist in `state.decision(id)`. Only visible rows are rendered. |
 | `ui.context_bar(&[ContextItem])` | — | Context display with token counts. `ContextItem::new(label, tokens)`. |
 | `ui.rich_log(&mut state)` | `RichLogState` | Styled log viewer; `state.push(text, style)`, `.push_plain(t)`, `.push_segments(segs)`, `.clear()`, `.auto_scroll` bool. |
 
@@ -574,7 +576,7 @@ fn scrollable_form() -> std::io::Result<()> {
         .field(slt::FormField::new("Email").validate(|value| {
             if value.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
         }))
-        .field(slt::FormField::new("Password"));
+        .field(slt::FormField::new("Password").masked(true));
     let mut scroll = slt::ScrollState::new();
     let mut focused_label = String::new();
     slt::run(|ui| {
@@ -617,7 +619,7 @@ For single inputs without `FormState`:
 ```rust
 let mut email = TextInputState::with_placeholder("you@example.com");
 ui.text_input(&mut email);
-email.validate(|v| if v.contains('@') { Ok(()) } else { Err("Invalid".into()) });
+email.validate_now(|v| if v.contains('@') { Ok(()) } else { Err("Invalid".into()) });
 if let Some(err) = &email.validation_error { ui.alert(err, AlertLevel::Error); }
 ```
 
@@ -1102,7 +1104,7 @@ tb.render_with_events(
 17. **Modal traps focus.** Tab and Shift+Tab cycle only within the current modal; outside widgets are not reachable while the modal is open.
 18. **Breakpoint method naming.** `xs_w`, `sm_w`, `md_w`, `lg_w`, `xl_w`, `w_at(bp, v)` — the breakpoint is a **prefix** on the base name (not `w_xs`).
 19. **Mouse capture is opt-in.** `RunConfig::default().mouse` is `false`; without `.mouse(true)` no click, hover, or wheel event reaches the app. Focused buttons still activate with Enter / Space.
-20. **Check global shortcuts after widgets.** `ui.key('q')` sees any event not consumed *so far*; called before a focused `text_input`, typing `q` both inserts it and fires the shortcut. Put global shortcut checks at the end of the closure.
+20. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)` and `ui.shortcut(..)` skip the keys the field edits with, in any call order. Chords (Ctrl/Super/Meta), Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
 
 ---
 
@@ -1322,9 +1324,9 @@ suggestion_index: usize            // (pub)
 show_suggestions: bool            // (pub)
 // (private) validators + validation_errors read via errors()
 ```
-Constructors: `TextInputState::new()`, `TextInputState::with_placeholder("...")`.
-Builders: `.max_length(n)`.
-Methods: `.validate(|v| -> Result<(),String>)`, `.add_validator(f)`, `.run_validators()`, `.errors() -> &[String]`, `.set_suggestions(Vec<String>)`, `.matched_suggestions() -> Vec<&str>`.
+Constructors: `TextInputState::new()`, `TextInputState::with_placeholder("...")`, `TextInputState::password()`.
+Builders: `.max_length(n)`, `.masked(bool)`.
+Methods: `.clear()`, `.set_value(s)`, `.validate_now(|v| -> Result<(),String>)` (runs once; `.validate` is its deprecated name), `.add_validator(f)` + `.run_validators()` (re-runnable), `.errors() -> &[String]`, `.set_suggestions(Vec<String>)`, `.matched_suggestions() -> Vec<&str>`, `.focus_key()`.
 
 ### TextareaState (multi-line)
 ```text
@@ -1546,7 +1548,7 @@ error: Option<String>
 fields: Vec<FormField>
 submitted: bool
 ```
-Builders: `FormState::new().field(FormField::new("Email").placeholder("..."))`. `.validate(&[FormValidator]) -> bool` returns whether every field validated. `.value(i) -> &str`.
+Builders: `FormState::new().field(FormField::new("Email").key("email").placeholder("..."))`; `FormField` also has `.masked(bool)` / `.password()` and `.validate(f)` (attaches a validator). Read values with `.get("email") -> Option<&str>` (by key, then label) and `.field_mut("email")`; positional `.value(i) -> &str` breaks when fields are reordered. `.validate_all() -> bool` runs every field's validators; `.validate(&[FormValidator])` is deprecated.
 
 ### ScreenState / ModeState
 ```text

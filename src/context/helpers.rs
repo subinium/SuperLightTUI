@@ -135,7 +135,7 @@ pub(crate) fn byte_index_for_grapheme(s: &str, cluster_index: usize) -> usize {
 /// glyph, not the per-scalar sum.
 #[inline]
 pub(crate) fn cluster_width(cluster: &str) -> u32 {
-    UnicodeWidthStr::width(cluster) as u32
+    crate::width::str_width(cluster) as u32
 }
 
 pub(crate) fn format_token_count(count: usize) -> String {
@@ -148,20 +148,37 @@ pub(crate) fn format_token_count(count: usize) -> String {
     }
 }
 
-pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str) -> String {
-    let sep_width = UnicodeWidthStr::width(separator);
-    let total_cells_width: usize = widths.iter().map(|w| *w as usize).sum();
-    let mut row = String::with_capacity(
-        total_cells_width + sep_width.saturating_mul(widths.len().saturating_sub(1)),
-    );
+/// Build one table row (cells padded/truncated to `widths`, joined by
+/// `separator`) into a single `String`.
+///
+/// Every cell is written straight into the row buffer through
+/// [`push_table_cell`], so a row costs exactly one allocation regardless of
+/// the column count (no per-cell `String`). Missing cells render as blanks.
+pub(crate) fn format_table_row<S: AsRef<str>>(
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) -> String {
+    // Byte capacity: a padded cell needs `len + (width - display_width)`
+    // bytes, bounded by `max(width, len)` for ASCII content. Multi-byte
+    // padding may grow the buffer once; ASCII rows never reallocate.
+    let mut capacity = separator
+        .len()
+        .saturating_mul(widths.len().saturating_sub(1));
+    for (i, width) in widths.iter().enumerate() {
+        let len = cells.get(i).map_or(0, |cell| cell.as_ref().len());
+        capacity = capacity.saturating_add((*width as usize).max(len));
+    }
+    let mut row = String::with_capacity(capacity);
     for (i, width) in widths.iter().enumerate() {
         if i > 0 {
             row.push_str(separator);
         }
-        row.push_str(&clamp_table_cell(
-            cells.get(i).map(String::as_str).unwrap_or(""),
+        push_table_cell(
+            &mut row,
+            cells.get(i).map(AsRef::as_ref).unwrap_or(""),
             *width,
-        ));
+        );
     }
     row
 }
@@ -173,25 +190,33 @@ pub(crate) fn format_table_row(cells: &[String], widths: &[u32], separator: &str
 /// resolved width already equals the content width, so this is a pure pad —
 /// preserving the pre-v0.21 string-grid output byte-for-byte.
 pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
+    let mut out = String::with_capacity((width as usize).max(cell.len()));
+    push_table_cell(&mut out, cell, width);
+    out
+}
+
+/// Append `cell`, padded or truncated to exactly `width` display cells, to
+/// `out`. Same output as [`clamp_table_cell`] without allocating.
+pub(crate) fn push_table_cell(out: &mut String, cell: &str, width: u32) {
     let width = width as usize;
     if width == 0 {
-        return String::new();
+        return;
     }
-    let cell_width = UnicodeWidthStr::width(cell);
+    let cell_width = crate::width::str_width(cell);
     if cell_width <= width {
-        let mut out = String::with_capacity(width);
         out.push_str(cell);
         out.extend(std::iter::repeat_n(' ', width - cell_width));
-        return out;
+        return;
     }
     if width == 1 {
-        return "\u{2026}".to_string();
+        out.push('\u{2026}');
+        return;
     }
+    let start = out.len();
     let target = width - 1;
-    let mut out = String::with_capacity(width);
     let mut acc = 0usize;
     for grapheme in cell.graphemes(true) {
-        let ch_width = UnicodeWidthStr::width(grapheme);
+        let ch_width = crate::width::str_width(grapheme);
         if acc + ch_width > target {
             break;
         }
@@ -200,9 +225,34 @@ pub(crate) fn clamp_table_cell(cell: &str, width: u32) -> String {
     }
     out.push('\u{2026}');
     // Pad in case the last char was wide and left a one-cell gap before `…`.
-    let out_width = UnicodeWidthStr::width(out.as_str());
+    let out_width = crate::width::str_width(&out[start..]);
     out.extend(std::iter::repeat_n(' ', width.saturating_sub(out_width)));
-    out
+}
+
+/// [`clamp_table_cell`] for an owned cell: pads in place when the content
+/// fits, so a renderer-produced `String` is reused instead of copied.
+pub(crate) fn fit_table_cell_owned(mut cell: String, width: u32) -> String {
+    let width_usize = width as usize;
+    if width_usize == 0 {
+        cell.clear();
+        return cell;
+    }
+    let cell_width = crate::width::str_width(cell.as_str());
+    if cell_width <= width_usize {
+        cell.extend(std::iter::repeat_n(' ', width_usize - cell_width));
+        return cell;
+    }
+    clamp_table_cell(&cell, width)
+}
+
+/// Append the table header rule (`─` per column joined by `─┼─`) to `out`.
+pub(crate) fn push_table_separator(out: &mut String, widths: &[u32]) {
+    for (i, width) in widths.iter().enumerate() {
+        if i > 0 {
+            out.push_str("─┼─");
+        }
+        out.extend(std::iter::repeat_n('─', *width as usize));
+    }
 }
 
 #[cfg(test)]
@@ -221,7 +271,7 @@ mod v024_table_tests {
             for width in 0..=10 {
                 let rendered = clamp_table_cell(&source, width);
                 assert_eq!(
-                    UnicodeWidthStr::width(rendered.as_str()),
+                    crate::width::str_width(rendered.as_str()),
                     width as usize,
                     "{source:?} width={width}"
                 );
@@ -240,12 +290,47 @@ mod v024_table_tests {
         assert_eq!(clamp_table_cell("\u{301}", 0), "");
         assert_eq!(
             format_table_row(
-                &["\u{1f469}\u{200d}\u{1f4bb}abcd".into(), "Z".into()],
+                &[
+                    String::from("\u{1f469}\u{200d}\u{1f4bb}abcd"),
+                    String::from("Z")
+                ],
                 &[4, 2],
                 "|"
             ),
             "\u{1f469}\u{200d}\u{1f4bb}a\u{2026}|Z "
         );
+    }
+
+    #[test]
+    fn in_place_row_builders_match_per_cell_clamp() {
+        let cells = [
+            "abc",
+            "\u{1f469}\u{200d}\u{1f4bb}wide",
+            "",
+            "e\u{301}e\u{301}e\u{301}",
+            "日本語テキスト",
+        ];
+        for width in 0..=9u32 {
+            let widths = vec![width; cells.len()];
+            let expected = cells
+                .iter()
+                .map(|cell| clamp_table_cell(cell, width))
+                .collect::<Vec<_>>()
+                .join(" │ ");
+            assert_eq!(format_table_row(&cells, &widths, " │ "), expected);
+            for cell in cells {
+                assert_eq!(
+                    fit_table_cell_owned(cell.to_string(), width),
+                    clamp_table_cell(cell, width),
+                    "{cell:?} width={width}"
+                );
+            }
+        }
+        // Missing trailing cells render as blanks.
+        assert_eq!(format_table_row(&["x"], &[2, 3], "|"), "x |   ");
+        let mut rule = String::new();
+        push_table_separator(&mut rule, &[2, 1]);
+        assert_eq!(rule, "───┼──");
     }
 }
 
@@ -297,7 +382,7 @@ pub(crate) fn format_compact_number(value: f64) -> String {
 }
 
 pub(crate) fn center_text(text: &str, width: usize) -> String {
-    let text_width = UnicodeWidthStr::width(text);
+    let text_width = crate::width::str_width(text);
     if text_width >= width {
         return text.to_string();
     }
@@ -458,7 +543,7 @@ impl Context {
         let height = lines.len().max(1);
         let width = lines
             .iter()
-            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .map(|line| crate::width::str_width(line.as_str()))
             .max()
             .unwrap_or(0);
 

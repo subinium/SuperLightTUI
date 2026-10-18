@@ -154,6 +154,14 @@ pub struct Context {
     /// start of the next frame. Outlives a single frame so the resolution
     /// happens against `focus_name_map_prev`.
     pub(crate) pending_focus_name: Option<String>,
+    /// Issues #453 / #454: per-slot focus metadata for this and the previous
+    /// frame. Moved in from `FrameState` at frame start, handed back by
+    /// [`Context::finish_focus_identity`] at frame end.
+    pub(crate) focus_identity: crate::runtime::FocusIdentity,
+    /// Issue #465: a text widget handled a mouse press / drag / release this
+    /// frame for its own selection, so the screen-level selection overlay
+    /// must not start or copy.
+    pub(crate) text_pointer_capture: bool,
     /// Issue #248: wall-clock instant sampled once at frame start. All
     /// frame-clock timer deadlines (`schedule`/`every`/`debounce`) compare
     /// against this single instant so every timer sampled in the same frame
@@ -220,6 +228,12 @@ pub(crate) struct ContextRollbackState {
     pub(crate) modal_restore_index: Option<usize>,
     pub(crate) last_text_idx: Option<usize>,
     pub(crate) focus_count: usize,
+    /// Issue #453: text-entry ownership claimed this frame by a widget that
+    /// takes keys without a focus slot (an open command palette).
+    pub(crate) text_entry_claim: Option<crate::runtime::TextEntryKind>,
+    /// Issue #454: slot that took focus through the key rule this frame.
+    /// Once set, no other slot reports focus while the key rule applies.
+    pub(crate) focus_key_match: Option<usize>,
     /// Issue #208: id assigned by the most recent `register_focusable()` /
     /// `register_focusable_named(...)` call. `begin_widget_interaction`
     /// reads this to compute `Response::gained_focus` / `lost_focus`

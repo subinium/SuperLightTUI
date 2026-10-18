@@ -39,9 +39,11 @@ Three consequences worth internalizing early:
 - **No event listeners.** A widget returns a `Response` describing what
   happened to it this frame (`clicked`, `hovered`, `changed`, ...). You branch
   on it right where you rendered it.
-- **No virtual DOM keys.** Identity comes from call order (hooks, focus) or
-  from state you pass in (`&mut ScrollState`). Keep call order stable, and use
-  `use_state_keyed` when items move around.
+- **No virtual DOM keys.** Identity comes from call order (hooks, button
+  focus) or from state you pass in (`&mut ScrollState`, `&mut TextInputState`:
+  a focused input keeps focus when widgets before it come and go). Keep call
+  order stable, and use `use_state_keyed` / `register_focusable_keyed` when
+  items move around.
 - **Layout is one frame behind.** Hit-testing and `Response.rect` use the
   previous frame's layout, the way `getBoundingClientRect()` would if you could
   only call it before the browser reflowed. See
@@ -184,16 +186,18 @@ activation (Enter / Space) work either way.
 | `element.focus()` | `ui.register_focusable_named("name")` + `ui.focus_by_name("name")` |
 | `onWheel` | `response.scroll_delta`, `ui.scroll_up()` / `ui.scroll_down()` |
 | `onMouseDown` / `onMouseMove` / `onMouseUp` | `ui.mouse_down()`, `ui.mouse_drag()`, `ui.mouse_up()`, `ui.mouse_pos()` |
-| `keydown` listener on `window` | `ui.key('k')`, `ui.key_code(KeyCode::Up)`, `ui.key_mod('s', KeyModifiers::CONTROL)` |
+| `keydown` listener on `window` | `ui.key('k')`, `ui.key_code(KeyCode::Up)`, `ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL)` |
 | `event.stopPropagation()` for keys | `ui.consume_key(c)` / `ui.consume_key_code(code)` |
 | `onPaste` | `ui.paste()` |
 
 Two rules do not exist on the web:
 
-1. **Order matters for keys.** `ui.key('q')` sees keys nobody has consumed
-   *yet*. A focused `text_input` consumes the characters typed into it while it
-   renders, so check global shortcuts **after** rendering widgets. Checked
-   before, `q` would both type a letter and quit.
+1. **Keys are polled, not dispatched.** `ui.key('q')` sees presses nobody has
+   consumed. Like a browser, a focused text field keeps the keys it edits
+   with: while a `text_input` has focus, `ui.key('q')` stays `false` in any
+   call order, and chords such as Ctrl+S still reach `ui.shortcut(..)`.
+   `ui.raw_key('q')` is the "listen on `window` in the capture phase" escape
+   hatch.
 2. **Clicks are not bubbled and stopped.** A click on a button inside a
    clickable container reports `clicked` on both. Avoid making a parent and a
    child clickable at the same time. [INTERACTION.md](INTERACTION.md) covers
@@ -261,13 +265,13 @@ value may look different on a 256-color or 16-color terminal. See
 | Browser | SLT |
 |---------|-----|
 | `<a href>` / `window.open` | `ui.link(text, url)`: focusable; click or Enter opens the URL with the system opener (`open` / `xdg-open` / `start`) on the machine running the app, and OSC 8 is emitted for terminals with native hyperlinks |
-| `navigator.clipboard.writeText` | `ui.copy_to_clipboard(text)` (OSC 52; the terminal must allow it) |
+| `navigator.clipboard.writeText` | `ui.copy_to_clipboard(text)` (OSC 52; the terminal must allow it). The promise result maps to `ui.clipboard_status()` on the next frame: `Sent`, `TooLarge`, or `WriteFailed` |
 | `fetch` + `await` | `ui.spawn(async { .. })` + `ui.poll(&handle)` (`async` feature), or `slt::run_async` with a message channel |
 | `setTimeout` | `ui.schedule("id", duration)` returns `true` once when the delay has passed |
 | `setInterval` | `ui.every("id", duration)` returns how many intervals elapsed |
 | `requestAnimationFrame` | the closure already runs every frame; `RunConfig::tick_rate` / `max_fps` set the cadence |
 | `localStorage` | none built in: read and write files yourself (`serde` feature helps) |
-| `document.title` | `RunConfig::title` |
+| `document.title` | `RunConfig::title` for the initial value, `ui.set_title(..)` at runtime (restored on exit) |
 | `console.log` | not while the UI owns the terminal: log to a file or a `rich_log` panel |
 
 <!-- slt-check: {"name":"web_timers","features":[],"context":"ui"} -->
@@ -304,7 +308,9 @@ Be honest with yourself about these before porting a design:
 - **No `:disabled` or `:active` states.** Render a dimmed, non-interactive
   variant yourself and skip handling its `clicked`.
 - **No element-anchored popovers or context menus**, apart from tooltips.
-- **No cursor-shape API** (`cursor: pointer`). The terminal owns the pointer.
+- **No pointer-cursor API** (`cursor: pointer`). The terminal owns the mouse
+  pointer. The text cursor's shape is settable with `ui.set_cursor_shape(..)`
+  (block, underline, bar).
 - **No sub-cell positioning, fonts, or font sizes.** One character per cell.
 - **No scroll anchoring or stick-to-bottom.** Collapsing content above the
   viewport shifts what is visible.
@@ -372,7 +378,7 @@ fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         card_list(ui, &mut cards, &mut scroll);
 
-        // Global shortcuts after the widgets.
+        // Global shortcuts; a focused text field keeps the keys it edits with.
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }

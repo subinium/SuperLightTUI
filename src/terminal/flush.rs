@@ -211,7 +211,13 @@ pub(super) fn flush_buffer_diff_rows(
             // carries combining marks). Wide chars advance by their column
             // width so subsequent cells line up.
             run_buf.push_str(&symbol);
-            let char_width = crate::cell::display_width(&symbol).max(1) as u32;
+            // The terminal's Unicode advance (not the ambiguous-wide layout
+            // width); a mismatch only costs an extra cursor move.
+            let char_width = if symbol.len() == 1 {
+                1
+            } else {
+                UnicodeWidthStr::width(&*symbol).max(1) as u32
+            };
             if char_width > 1 && symbol.chars().any(|c| c == '\u{FE0F}') {
                 // Emoji variation selector — terminal renders 2 cols but the
                 // glyph often measures as 1; pad so the cursor ends up where
