@@ -7,7 +7,8 @@ use super::*;
 /// Reference copy of `flush_buffer_diff_rows` before #486, minus its row
 /// hash skip: every cell of every row is compared and normalized. It shares
 /// one rule added with #486: a leading cell whose continuation cells changed
-/// is redrawn, and the single SGR reset per frame site from #489.
+/// is redrawn, the single SGR reset per frame site from #489, and the #441
+/// emoji-cluster repositioning plus #449 conservative repositioning.
 #[allow(unused_assignments)]
 fn reference_flush_rows(
     stdout: &mut impl Write,
@@ -17,6 +18,7 @@ fn reference_flush_rows(
     row_offset: u32,
     run_buf: &mut String,
     forced_rows: &[u32],
+    width_policy: WidthPolicy,
 ) -> io::Result<()> {
     // Run-coalescing: consecutive changed cells in the same row that share
     // `Style` + `hyperlink` + contiguous x-coordinates are emitted as a single
@@ -96,8 +98,12 @@ fn reference_flush_rows(
                 .as_deref()
                 .filter(|u| crate::buffer::is_valid_osc8_url(u));
 
+            let char_width = UnicodeWidthStr::width(symbol.as_str()).max(1) as u32;
+            let uncertain = char_width > 1 && width_uncertain_cluster(&symbol);
+
             // Decide whether this cell extends the open run or starts a new one.
-            let extends = run_open
+            let extends = !uncertain
+                && run_open
                 && run_abs_y == abs_y
                 && run_next_col == x
                 && run_style == cell.style
@@ -111,9 +117,10 @@ fn reference_flush_rows(
                 // SGR sequence exactly matching the per-cell flush.
                 has_updates = true;
 
-                let need_move = last_cursor.is_none_or(|(lx, ly)| lx != x || ly != abs_y);
+                let start_x = if uncertain { x.saturating_add(1) } else { x };
+                let need_move = last_cursor.is_none_or(|(lx, ly)| lx != start_x || ly != abs_y);
                 if need_move {
-                    queue!(stdout, cursor::MoveTo(sat_u16(x), sat_u16(abs_y)))?;
+                    queue!(stdout, cursor::MoveTo(sat_u16(start_x), sat_u16(abs_y)))?;
                 }
 
                 if cell.style != last_style {
@@ -142,6 +149,19 @@ fn reference_flush_rows(
                     active_link = cell_link;
                 }
 
+                if uncertain {
+                    for _ in 1..char_width {
+                        queue!(stdout, Print(" "))?;
+                    }
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(sat_u16(x), sat_u16(abs_y)),
+                        Print(&symbol)
+                    )?;
+                    last_cursor = None;
+                    continue;
+                }
+
                 run_open = true;
                 run_abs_y = abs_y;
                 run_style = cell.style;
@@ -152,14 +172,11 @@ fn reference_flush_rows(
             // carries combining marks). Wide chars advance by their column
             // width so subsequent cells line up.
             run_buf.push_str(&symbol);
-            let char_width = UnicodeWidthStr::width(symbol.as_str()).max(1) as u32;
-            if char_width > 1 && symbol.chars().any(|c| c == '\u{FE0F}') {
-                // Emoji variation selector — terminal renders 2 cols but the
-                // glyph often measures as 1; pad so the cursor ends up where
-                // the next cell is drawn.
-                run_buf.push(' ');
-            }
             run_next_col = x + char_width;
+            if width_policy.reposition_after(&symbol) {
+                flush_run!(stdout);
+                last_cursor = None;
+            }
         }
 
         // End of row: flush whatever is buffered before moving to the next row.
@@ -310,12 +327,12 @@ mod differential {
             let mut fast = Vec::new();
             flush_buffer_diff_rows(
                 &mut fast, &current, &previous, ColorDepth::TrueColor, row_offset,
-                &mut String::new(), &forced,
+                &mut String::new(), &forced, WidthPolicy::default(),
             ).unwrap();
             let mut reference = Vec::new();
             reference_flush_rows(
                 &mut reference, &current, &previous, ColorDepth::TrueColor, row_offset,
-                &mut String::new(), &forced,
+                &mut String::new(), &forced, WidthPolicy::default(),
             ).unwrap();
             prop_assert_eq!(
                 String::from_utf8_lossy(&fast),
@@ -355,6 +372,7 @@ mod differential {
             0,
             &mut String::new(),
             &[],
+            WidthPolicy::default(),
         )
         .unwrap();
         let text = String::from_utf8_lossy(&fast);
@@ -375,6 +393,7 @@ mod differential {
             0,
             &mut String::new(),
             &[],
+            WidthPolicy::default(),
         )
         .unwrap();
         assert!(same.is_empty());
@@ -387,6 +406,7 @@ mod differential {
             0,
             &mut String::new(),
             &[1],
+            WidthPolicy::default(),
         )
         .unwrap();
         let text = String::from_utf8_lossy(&forced);

@@ -205,6 +205,7 @@ fn previous_only_sprixel_repaints_footprint_and_restores_overlap() {
         0,
         &mut String::new(),
         &rows,
+        WidthPolicy::default(),
     )
     .unwrap();
     assert!(!text.is_empty(), "removed footprint rows must be repainted");

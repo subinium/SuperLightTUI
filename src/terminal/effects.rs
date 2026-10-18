@@ -345,9 +345,6 @@ impl MetaEmitter {
 // ---------------------------------------------------------------------------
 
 /// Bit set of width-uncertain grapheme cluster classes.
-// Consumed by the diff flush through `WidthPolicy::reposition_after` once the
-// #441 reposition primitive lands in `flush.rs`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ClusterClasses(u8);
 
@@ -384,7 +381,6 @@ impl ClusterClasses {
 /// Classify a grapheme cluster by the features terminals and multiplexers
 /// are known to measure inconsistently. Plain ASCII, CJK and BMP symbols are
 /// never width-uncertain.
-#[allow(dead_code)]
 pub(crate) fn classify_cluster(cluster: &str) -> ClusterClasses {
     let mut classes = ClusterClasses::default();
     if cluster.is_ascii() {
@@ -430,7 +426,6 @@ impl WidthPolicy {
 
     /// Whether the flush must position the cursor explicitly for the cell
     /// after `cluster` instead of trusting the terminal's advance.
-    #[allow(dead_code)]
     pub(crate) fn reposition_after(&self, cluster: &str) -> bool {
         self.conservative && !classify_cluster(cluster).is_empty()
     }

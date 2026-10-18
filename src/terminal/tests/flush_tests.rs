@@ -603,11 +603,21 @@ fn osc8_hyperlink_emitted_verbatim_after_write_rewrite() {
 /// and mode sequences. A grapheme of display width `w` occupies `w` cells;
 /// the trailing cells become empty continuation markers.
 pub(super) fn apply_ansi_to_screen(screen: &mut [Vec<String>], bytes: &[u8]) {
+    apply_ansi_to_screen_with(screen, bytes, &|grapheme| UnicodeWidthStr::width(grapheme));
+}
+
+/// [`apply_ansi_to_screen`] for a terminal that advances `width_of(cluster)`
+/// columns per grapheme (for example one column for VS16 emoji).
+pub(super) fn apply_ansi_to_screen_with(
+    screen: &mut [Vec<String>],
+    bytes: &[u8],
+    width_of: &dyn Fn(&str) -> usize,
+) {
     use unicode_segmentation::UnicodeSegmentation;
 
-    fn put_text(screen: &mut [Vec<String>], text: &str, row: usize, col: &mut usize) {
+    let put_text = |screen: &mut [Vec<String>], text: &str, row: usize, col: &mut usize| {
         for grapheme in text.graphemes(true) {
-            let width = UnicodeWidthStr::width(grapheme).max(1);
+            let width = width_of(grapheme).max(1);
             if let Some(line) = screen.get_mut(row) {
                 if let Some(cell) = line.get_mut(*col) {
                     *cell = grapheme.to_string();
@@ -620,7 +630,7 @@ pub(super) fn apply_ansi_to_screen(screen: &mut [Vec<String>], bytes: &[u8]) {
             }
             *col += width;
         }
-    }
+    };
 
     let mut row = 0usize;
     let mut col = 0usize;
@@ -722,5 +732,132 @@ fn crlf_write_leaves_no_stale_glyph_after_flush() {
         screen,
         buffer_symbols(&current),
         "stale glyph left on screen"
+    );
+}
+
+/// Issue #441: a VS16 emoji is drawn two columns wide by conformant
+/// terminals and one column by others. The flush must not pad it with a
+/// literal space (which shifts the rest of the row on two-column terminals)
+/// and must position the next cell explicitly.
+#[test]
+fn vs16_cluster_is_repositioned_not_padded() {
+    let area = Rect::new(0, 0, 8, 1);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "A\u{2764}\u{FE0F}BC", Style::new());
+    let mut out = Vec::new();
+    flush_buffer_diff(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+    )
+    .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(
+        text,
+        "\x1b[1;1HA\x1b[1;3H \x1b[1;2H\u{2764}\u{FE0F}\x1b[1;4HBC\x1b[0m"
+    );
+    assert!(
+        !text.contains("\u{FE0F} "),
+        "no padding space after the cluster"
+    );
+}
+
+/// Issue #441: after frames that change only the trailing cell, the screen
+/// equals the buffer on both one- and two-column VS16 terminals.
+#[test]
+fn vs16_row_stays_in_sync_on_one_and_two_column_terminals() {
+    for vs16_columns in [1usize, 2] {
+        let width_of = |grapheme: &str| {
+            if grapheme.contains('\u{FE0F}') {
+                vs16_columns
+            } else {
+                UnicodeWidthStr::width(grapheme)
+            }
+        };
+        let area = Rect::new(0, 0, 8, 1);
+        let mut screen = vec![vec![" ".to_string(); 8]];
+        let mut previous = Buffer::empty(area);
+        for tail in ["x", "y", "x"] {
+            let mut current = Buffer::empty(area);
+            current.set_string(0, 0, &format!("|A\u{2764}\u{FE0F}B{tail}|"), Style::new());
+            let mut out = Vec::new();
+            flush_buffer_diff(
+                &mut out,
+                &current,
+                &previous,
+                ColorDepth::TrueColor,
+                0,
+                &mut String::new(),
+            )
+            .unwrap();
+            apply_ansi_to_screen_with(&mut screen, &out, &width_of);
+            let mut expected = buffer_symbols(&current);
+            if vs16_columns == 1 {
+                // The terminal shows the blank fill where the buffer keeps
+                // the cluster's continuation cell.
+                expected[0][3] = " ".to_string();
+            }
+            assert_eq!(
+                screen, expected,
+                "{vs16_columns}-column terminal, tail {tail}"
+            );
+            previous = current;
+        }
+    }
+}
+
+/// Issue #441: ASCII and CJK rows keep their pre-#441 bytes (only the #489
+/// single reset differs from v0.25.0).
+#[test]
+fn ascii_and_cjk_rows_keep_golden_bytes() {
+    let area = Rect::new(0, 0, 10, 2);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "AB\u{4E16}C", Style::new());
+    current.set_string(2, 1, "hi \u{D55C}\u{AE00}", Style::new().fg(Color::Red));
+    let mut out = Vec::new();
+    flush_buffer_diff(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "\x1b[1;1HAB\u{4E16}C\x1b[2;3H\x1b[0m\x1b[31mhi \u{D55C}\u{AE00}\x1b[0m"
+    );
+}
+
+/// #449 conservative width mode repositions after every width-uncertain
+/// cluster, including plain non-BMP emoji.
+#[test]
+fn conservative_width_policy_repositions_after_emoji() {
+    let area = Rect::new(0, 0, 8, 1);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "\u{1F600}ab", Style::new());
+    let policy = WidthPolicy {
+        conservative: true,
+        ..WidthPolicy::default()
+    };
+    let mut out = Vec::new();
+    flush_buffer_diff_rows(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+        &[],
+        policy,
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "\x1b[1;1H\u{1F600}\x1b[1;3Hab\x1b[0m"
     );
 }

@@ -269,6 +269,7 @@ impl Terminal {
                 self.graphics_support
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
+        let width_policy = self.width_policy();
         flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
@@ -277,6 +278,7 @@ impl Terminal {
             0,
             &mut self.run_buf,
             &redrawn_sprixel_rows,
+            width_policy,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -336,7 +338,6 @@ impl Terminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
-    #[allow(dead_code)]
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -530,7 +531,6 @@ impl InlineTerminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
-    #[allow(dead_code)]
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -579,6 +579,7 @@ impl InlineTerminal {
                 self.graphics_support
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
+        let width_policy = self.width_policy();
         flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
@@ -587,6 +588,7 @@ impl InlineTerminal {
             row_offset,
             &mut self.run_buf,
             &redrawn_sprixel_rows,
+            width_policy,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.

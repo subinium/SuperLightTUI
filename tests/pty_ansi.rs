@@ -84,6 +84,18 @@ fn styled_frame_emits_one_sgr_reset_per_site() {
     assert!(first_run < end);
 }
 
+/// Issue #441: a VS16 emoji is not followed by a padding space, and the next
+/// cell (`B`, column 3) is positioned explicitly.
+#[test]
+fn vs16_emoji_is_repositioned_without_padding() {
+    let mut pb = PtyBackend::new(20, 2);
+    pb.render(|ui| {
+        ui.text("A\u{2764}\u{FE0F}BC");
+    });
+    pb.assert_not_emits("\u{FE0F} ");
+    pb.assert_emits("\u{2764}\u{FE0F}\u{1b}[1;4HBC");
+}
+
 /// A `sixel_image` call emits a `\x1bPq`-wrapped Sixel payload terminated by
 /// the String Terminator. Sixel support is normally terminal-detected; force
 /// it on so the headless harness exercises the real encode + flush path.
