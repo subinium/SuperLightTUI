@@ -1,243 +1,305 @@
-# SLT Competitive Analysis & Roadmap
+# SLT Competitive Analysis
 
-**Date**: 2026-04-27 (v0.19.2)
-**Scope**: Feature-level comparison against ratatui, Textual, Ink, Bubbletea + prioritized development roadmap
+**Snapshot**: as of 2026-10-18, SLT v0.25.0
+**Scope**: SLT against ratatui, Textual, Bubble Tea, Ink, and OpenTUI, with short
+notes on other TUI frameworks. This is a dated snapshot, not a living spec:
+competitor versions, star counts, and download figures go stale quickly.
 
-> Competitive observations and ecosystem figures are preserved as the v0.19.2
-> snapshot. Dependency-tree counts were refreshed on 2026-08-24 for SLT v0.23.0
-> and ratatui 0.30 using unique package/version pairs from normal `cargo tree`
-> edges, excluding each root package.
+> **How this was checked.** SLT rows were verified against `src/` at v0.25.0.
+> Competitor facts come from the release notes and repositories listed under
+> [Sources](#sources), gathered for this audit. Cells marked "n/v" were not
+> verified for this snapshot; do not read them as "no".
 
 ---
 
-## Framework Overview
+## TL;DR
 
-| | **SLT** | **Ratatui** | **Textual** | **Ink** | **Bubbletea** |
+- **Where SLT is strong**: one Rust crate ships the interaction layer that
+  ratatui leaves to apps or ecosystem crates: hit-tested `Response` on any
+  container, a focus manager with modal trap and follow-focus scrolling, scroll
+  containers with a draggable scrollbar, forms with sync/async validation, a
+  command palette, an F12 layout inspector, and headless snapshot testing. The
+  default dependency tree is small (26 crates vs 67 for ratatui + crossterm).
+- **Where SLT loses**: adoption and ecosystem, by orders of magnitude. ratatui
+  has 23.0K stars and 6,469 reverse dependencies; SLT has 193 and 5. SLT also
+  lacks several features that competitors ship today: text selection inside
+  inputs, an editable syntax-highlighted textarea, anchored popovers and
+  menus, a diff viewer, hover/focus state styles on containers, accessibility
+  mode, terminal title/progress/cursor-shape APIs, and SSH serving.
+- **Performance is not an SLT advantage.** As of v0.25.0 SLT is slower per
+  frame than ratatui 0.30 (2–3.5x on matched workloads); optimization is
+  tracked. Its stripped hello-world binary is 1.92x larger and its cold release
+  build ~1.6x slower. SLT does emit 20–40% fewer bytes on a full redraw (see
+  [Performance and footprint](#performance-and-footprint)).
+
+---
+
+## Framework overview
+
+| | **SLT** | **ratatui** | **Textual** | **Bubble Tea** | **Ink** | **OpenTUI** |
+|---|---|---|---|---|---|---|
+| Version (2026-10) | 0.25.0 | 0.30.2 | 8.2.8 | v2.1.0 | 8.0.0 | v0.6.6 |
+| Language | Rust | Rust | Python | Go | JS/TS (React) | Zig core + TS (React/Solid) |
+| GitHub stars | 193 | 23.0K | 37.5K | 45.4K | 40.1K | 13.6K |
+| Model | Immediate (closure + hooks) | Immediate (widgets render to a buffer) | Retained (DOM + TCSS) | Elm (MVU) | React components | React/Solid components |
+| Layout | Flexbox + grid | Constraint splits | TCSS (dock, grid) | Lip Gloss joins/layers | Yoga flexbox | Yoga flexbox |
+| Notable users | n/v | Large crate ecosystem | n/v | Charm tooling | Claude Code, Gemini CLI | opencode |
+
+crates.io (2026-10): ratatui 60.96M total downloads and 6,469 reverse
+dependencies; SLT 4,993 downloads and 5 reverse dependencies.
+
+State notes:
+
+- **ratatui 0.30** split into `ratatui-core` and `ratatui-widgets`. It still has
+  no built-in focus, hover, or scroll containers; apps hand-roll them or use
+  ecosystem crates (`ratatui-textarea` 0.9.3, `tachyonfx` 0.25, `ratatui-image`,
+  `tui-scrollview`, `tui-tree-widget`, `tui-logger`).
+- **Textual**: the Textualize company wound down in 2025; the open-source
+  project continues to ship releases.
+- **Bubble Tea v2** moved to a declarative `View` that carries window title,
+  cursor shape, and progress state. **Lip Gloss v2** added layers and
+  hyperlinks; **Huh v2** has an accessible mode.
+- **OpenTUI** (`anomalyco/opentui`) is the newest serious entrant, with a Zig
+  rendering core and React/Solid bindings.
+
+---
+
+## Where SLT leads
+
+Calibrated: "leads" means SLT ships it in-crate with less glue, not that nobody
+else has it.
+
+| Strength | SLT (verified in `src/`) | Comparison |
+|---|---|---|
+| Interaction on any container | `Response { clicked, right_clicked, double_clicked, hovered, scroll_delta, rect, .. }` from rows, columns, and widgets | ratatui: manual `Rect` hit-testing. Textual/Ink/OpenTUI have component events; Ink has no mouse API |
+| Focus management | Tab/Shift+Tab focus manager, named focus, modal focus trap (`ModalOptions { tab_trap }`), follow-focus scroll (`ScrollState::follow_focus`, v0.25) | ratatui: none built-in. Textual has a full focus system |
+| Scrolling | `scrollable` containers, `scrollbar` with click-to-jump and thumb drag, `virtual_list`, `scrollable_with_gutter` | ratatui: `tui-scrollview` (ecosystem). Ink 8: `contentOffset` scroll views. OpenTUI: `ScrollBox` |
+| Forms | `FormState`/`FormField` with sync validators and async validation, `FormFieldResponse` (v0.25) | ratatui: app-built. Bubble Tea: Huh |
+| Built-in catalog | accordion, tree, draggable `split_pane`, command palette, table with sort/filter/paging, file picker, calendar, toasts | ratatui: ~15 core widgets plus crates |
+| Editing | `TextareaState` undo/redo (Ctrl+Z / Ctrl+Y) | `ratatui-textarea`, Textual `TextArea`, OpenTUI `Textarea` also have editing |
+| Devtools and testing | F12 layout inspector, `TestBackend`, `EventBuilder`, `snapshot()` / `assert_snapshot_eq` | Textual: devtools + Pilot + SVG snapshots (stronger). OpenTUI: snapshot renderer |
+| Animation | `Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger` | Not unique: tachyonfx (ratatui), Textual animations, OpenTUI `Timeline`, FTXUI |
+| Images | 4 protocols: half-block, Kitty, Sixel, iTerm2 (`src/halfblock.rs`, `src/sixel.rs`, `src/iterm.rs`) | ratatui: `ratatui-image` (ecosystem) |
+| Text | UAX #9 bidi on by default (`bidi` default feature); tree-sitter highlighted code blocks (15 opt-in grammars) | Textual TextArea and OpenTUI `Code` also use tree-sitter |
+| Run modes | full-screen, `run_inline`, `run_static`, `run_async` (tokio), WASM browser backend | ratatui inline viewport with `insert_before`; Ink `<Static>` |
+| Resilience | `error_boundary` rolls back a panicking subtree, including focus metadata (v0.25) | Ink: React error boundaries |
+| Theming | 11 color presets, `ThemeBuilder`, semantic `ThemeColor`, per-subtree `.theme()`, breakpoints (xs–xl) | Textual TCSS is more expressive; ratatui has no theme concept |
+| AI-agent UI pieces | `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar` | OpenTUI ships `Markdown`, `Code`, `Diff` for the same space; Ink powers the largest agent CLIs |
+
+---
+
+## Where SLT lags
+
+### Adoption and ecosystem (biggest gap)
+
+| Metric (2026-10) | SLT | ratatui |
+|---|---|---|
+| GitHub stars | 193 | 23.0K |
+| crates.io total downloads | 4,993 | 60.96M |
+| Reverse dependencies | 5 | 6,469 |
+
+With 5 reverse dependencies there is effectively no third-party SLT widget
+ecosystem yet. Every competitor here has a flagship app or a large dependent
+base that SLT does not.
+
+### Missing features (verified absent in `src/`)
+
+| Feature | Who has it |
+|---|---|
+| Text selection inside text inputs | Textual (cross-container selection), FTXUI 7 (selection) |
+| Syntax-highlighted **editable** textarea | Textual `TextArea` (tree-sitter), OpenTUI `Textarea` + `Code` |
+| Anchored popover / context menu / menubar | n/v per framework; SLT only has `tooltip` and anchored overlays |
+| Diff viewer | OpenTUI `Diff` |
+| Hover/focus/active state styles on containers | Textual TCSS `:hover`, `:focus`, `:focus-within`. SLT has `Response.hovered` and `group_hover_*` only |
+| Mouse cursor shape | Textual `pointer` rule, Bubble Tea v2 `View` cursor shape |
+| Accessibility mode | Ink (screen reader / ARIA since 6.2), Huh v2 accessible mode |
+| Window title / progress (OSC 9;4) / status APIs | Bubble Tea v2 declarative `View` (title, progress) |
+| SSH serving | Bubble Tea via Wish, OpenTUI `@opentui/ssh` |
+| Live style reload of layout/styling code | Textual `--dev` live CSS. SLT only hot-reloads TOML themes (`theme-watch`) |
+
+### Structural
+
+| Gap | Impact | Reference |
+|---|---|---|
+| No declarative style sheets | Style reuse is code-level only | Textual TCSS |
+| No event bubbling | Composite widgets forward events manually | Textual message propagation, Ink/OpenTUI React events |
+
+---
+
+## Feature matrix
+
+Legend: ✅ built-in · 🧩 ecosystem crate/package · ◐ partial · ❌ absent ·
+n/v not verified for this snapshot.
+
+### Layout and interaction
+
+| Feature | SLT | ratatui | Textual | Bubble Tea | Ink | OpenTUI |
+|---|---|---|---|---|---|---|
+| Flexbox | ✅ | ◐ constraints | ✅ | ◐ Lip Gloss | ✅ Yoga | ✅ Yoga |
+| Grid | ✅ | n/v | ✅ | n/v | n/v | n/v |
+| Absolute positioning | ◐ anchored overlays (`overlay_at_offset`, `modal_at_offset`) | n/v | ✅ dock/offset | ◐ Lip Gloss layers | n/v | n/v |
+| Hover/focus state styles | ◐ `Response.hovered`, `group_hover_*` | ❌ | ✅ TCSS pseudo-classes | n/v | n/v | n/v |
+| Built-in focus manager | ✅ incl. modal trap | ❌ | ✅ | n/v | ✅ `useFocus` | n/v |
+| Scroll containers | ✅ + draggable scrollbar | 🧩 tui-scrollview | ✅ | 🧩 Bubbles viewport | ✅ v8 `contentOffset` | ✅ ScrollBox |
+| Mouse API | ✅ | ✅ (raw events) | ✅ | ✅ | ❌ | n/v |
+| Text selection in inputs | ❌ | n/v | ✅ | n/v | n/v | n/v |
+
+### Widgets
+
+| Feature | SLT | ratatui | Textual | Bubble Tea | Ink | OpenTUI |
+|---|---|---|---|---|---|---|
+| Editable textarea | ✅ (undo/redo, no highlighting) | 🧩 ratatui-textarea | ✅ tree-sitter | 🧩 Bubbles | n/v | ✅ |
+| Highlighted code (display) | ✅ 15 grammars, opt-in | n/v | ✅ | n/v | n/v | ✅ Code |
+| Markdown | ✅ incl. streaming | n/v | ✅ | 🧩 Glamour | n/v | ✅ |
+| Diff viewer | ❌ | n/v | n/v | n/v | n/v | ✅ |
+| Tree | ✅ | 🧩 tui-tree-widget | ✅ | n/v | n/v | n/v |
+| Split pane (draggable) | ✅ | n/v | n/v | n/v | n/v | n/v |
+| Forms + validation | ✅ sync + async | n/v | ✅ | 🧩 Huh | n/v | n/v |
+| Images | ✅ half-block, Kitty, Sixel, iTerm2 | 🧩 ratatui-image | n/v | n/v | n/v | n/v |
+| Animation | ✅ | 🧩 tachyonfx | ✅ | n/v | n/v | ✅ Timeline |
+
+### Runtime, tooling, deployment
+
+| Feature | SLT | ratatui | Textual | Bubble Tea | Ink | OpenTUI |
+|---|---|---|---|---|---|---|
+| Inline mode | ✅ `run_inline` | ✅ inline viewport + `insert_before` | n/v | ✅ | ✅ | n/v |
+| Static/scrollback output | ✅ `run_static` | ✅ `insert_before` | n/v | n/v | ✅ `<Static>` | n/v |
+| Browser/WASM | ✅ `slt-wasm` (see [WASM.md](WASM.md)) | 🧩 ratzilla | ✅ textual-serve (web, not SSH) | n/v | n/v | n/v |
+| SSH serving | ❌ | n/v | ❌ (textual-serve is web) | 🧩 Wish | n/v | ✅ `@opentui/ssh` |
+| Devtools / inspector | ✅ F12 overlay | n/v | ✅ devtools + `--dev` live CSS | n/v | n/v | n/v |
+| Headless snapshot tests | ✅ `TestBackend` | ✅ `TestBackend` | ✅ Pilot + SVG snapshots | n/v | 🧩 ink-testing-library | ✅ snapshot renderer |
+| Accessibility mode | ❌ | n/v | n/v | 🧩 Huh accessible mode | ✅ ARIA / screen reader | n/v |
+| Background workers | ✅ `run_async` (tokio) | n/v (app-owned loop) | ✅ workers | ✅ commands | ✅ (JS async) | ✅ (JS async) |
+
+### Terminal protocols
+
+| Protocol | SLT | ratatui | Textual | Bubble Tea v2 | Ink 8 |
 |---|---|---|---|---|---|
-| Language | Rust | Rust | Python | JS (React) | Go |
-| GitHub Stars | New | 19K | 34K | 14K | 40K |
-| Rendering Model | Immediate (closure) | Immediate (Widget trait) | Retained (Event + CSS) | Component (React) | Elm (MVU) |
-| Built-in Widgets | Broad built-in catalog | ~15 | **60+** | 6 (+12 @inkjs/ui) | ~12 (Bubbles) |
-| Ecosystem | Small | **2,928 deps, 50+ widget crates** | Moderate | **3.9K deps** | **25K deps** |
-| Dependencies | 4 direct required, 26 resolved (default features) | 69 resolved (crossterm) | Many (Rich, etc.) | Many (React, Yoga) | 0 (pure Go) |
+| Synchronized output | ✅ | ✅ | ✅ | ✅ default | ✅ since 6.7 |
+| Kitty keyboard | ✅ | ✅ | n/v | ✅ | ✅ since 6.7 |
+| OSC 8 hyperlinks | ✅ | ✅ | ✅ | ✅ Lip Gloss v2 | ✅ |
+| OSC 52 clipboard | ✅ read + write | n/v | n/v | ✅ | n/v |
+| OSC 11 color-scheme query | ✅ | n/v | n/v | ✅ | n/v |
+| Window title / progress (OSC 9;4) | ❌ | n/v | n/v | ✅ declarative `View` | n/v |
+| Mouse cursor shape | ❌ | n/v | ✅ `pointer` | ✅ | n/v |
 
 ---
 
-Widget counts are not perfectly apples-to-apples across frameworks, so this document avoids treating every public helper method or specialized primitive as a separate widget type.
+## Other frameworks (2026-10)
 
-**On "light"**: SLT's lightness is its dependency footprint and small public API, not binary size or build speed. The four direct required deps are `unicode-width`, `unicode-segmentation`, `smallvec`, and `compact_str`; `crossterm` is a default feature, not a hard requirement. Counting unique package/version pairs from normal `cargo tree` edges and excluding the root package, the resolved tree is 10 crates with `default-features = false`, 26 with default features, and 63 with `--features full` — versus 69 for a ratatui + crossterm app. SLT does **not** claim a smaller stripped binary or faster cold build: on a minimal hello-world (ratatui 0.30, stripped, macOS arm64) SLT default features is ~905 KiB vs ratatui's ~624 KiB (~1.45× larger), and SLT's cold release build is slightly slower. The win is the dependency tree (26 vs 69) and API surface, not the artifact.
+| Framework | State |
+|---|---|
+| iocraft (Rust) | 0.9.3; React-like declarative components |
+| tui-realm (Rust) | 4.1; component framework on top of ratatui |
+| rxtui (Rust) | archived |
+| Cursive (Rust) | 0.21.1; no release since 2024 |
+| FTXUI (C++) | 7.0; added `Collapsible`, `ResizableSplit`, and text selection |
 
----
-
-## Where SLT Leads
-
-| Strength | Detail | Competitors |
-|---|---|---|
-| **AI-Native Widgets** | StreamingText, ToolApproval, ContextBar, StreamingMarkdown | None — SLT is the only TUI framework with built-in AI workflow widgets |
-| **Animation System** | 5 types (Tween/Spring/Keyframes/Sequence/Stagger) + 9 easings + 3 loop modes | No other TUI framework has a dedicated animation system |
-| **Responsive Breakpoints** | 5 tiers (xs/sm/md/lg/xl) × 35 properties | None — equivalent to CSS media queries for TUI |
-| **3-Line Start** | `slt::run(\|ui\| { ui.text("hello"); })` | Ratatui: ~20 lines, Textual: ~10 lines |
-| **Error Boundaries** | `error_boundary()` catches panics, app continues | Only React (Ink) has this; no other Rust TUI does |
-| **Theme Presets** | 10 built-in + builder + runtime switching + semantic tokens (ThemeColor) + contrast helpers | Ratatui: no theme concept, manual styling only |
-| **Chart Widgets** | 10+ types (bar, stacked bar, line, area, scatter, histogram, candlestick, heatmap, sparkline, treemap) | Ratatui: 3 types, others: 0-1 |
-| **Image Protocols** | 3 built-in (HalfBlock, Kitty, Sixel) | Ratatui: via ratatui-image (3rd party) |
-| **Syntax Highlighting** | Tree-sitter AST-accurate, 15 languages built-in | Textual: tree-sitter. Ratatui/Ink/Bubbletea: none built-in |
-| **Testing Suite** | TestBackend + EventBuilder + proptest + criterion + insta | Most comprehensive among all TUI frameworks |
-| **Widget Surface** | Broad built-in catalog spanning text, forms, overlays, charts, AI widgets, and terminal-specific primitives | Ratatui: ~15, Ink: ~18, Bubbletea: ~12, Textual: ~60 |
+More: [awesome-tuis](https://github.com/rothgar/awesome-tuis).
 
 ---
 
-## Where SLT Lags
+## Performance and footprint
 
-### Structural Gaps (Architecture Level)
+As of v0.25.0 SLT is slower per frame than ratatui 0.30 (2–3.5x on matched
+workloads); optimization is tracked.
 
-| Gap | Impact | Competitor Reference |
-|---|---|---|
-| **No plugin system** | Cannot grow a 3rd-party widget ecosystem | Ratatui: Widget trait enables 50+ community crates |
-| **No event bubbling** | Complex widget composition requires manual event forwarding | Textual: DOM-like message propagation |
-| **No CSS/declarative styling** | Style reuse limited to code-level composition | Textual: `.tcss` files with hot-reload |
+**Method**: release builds on an Apple M3 Pro, rustc 1.98.0, SLT at commit
+`15fd63a` (v0.25.0) versus ratatui 0.30.2 + crossterm 0.29, both rendering into a
+matched ANSI-sink harness (bytes are written to a sink instead of a terminal).
+The harness lives outside this repository.
 
-### Missing Features (Implementable)
+### Frame time (median, µs; lower is better)
 
-| Feature | Source | Difficulty | Notes |
+| Workload | SLT | ratatui | SLT / ratatui |
 |---|---|---|---|
-| TextArea + syntax highlight | Textual (tree-sitter) | Hard | `highlight_code()` exists (v0.14.1), needs TextareaState integration with incremental parsing |
-| Accessibility (screen reader) | **Nobody has this** | Hard | First-mover opportunity, terminal accessibility protocol absent |
-| SSH server mode | Bubbletea (Wish) | Hard | Backend trait ready, needs `russh` companion crate |
+| Dashboard, 200x60 | 215 | 107 | 2.0x |
+| 10k-item list, `ui.list` | 1832 | 648 | 2.8x |
+| 10k-item list, SLT `virtual_list` | 258 | — | — |
+| Table 1000x6 | 1032 | 591 | 1.7x |
+| Table 1000x6, SLT paged | 643 | — | — |
+| 60 nested bordered boxes, 240x80 | 1255 | 358 | 3.5x |
+| Idle frame | 219 | 108 | 2.0x |
+
+Profiling puts the cost in buffer cell writes (grapheme normalization) and
+flush row hashing, not in layout. For large collections, `virtual_list` and
+paged tables close most of the gap; that is a workaround, not parity.
+
+### Output bytes
+
+SLT emits 20–40% fewer bytes than ratatui on a full redraw, and 16 vs 25 bytes
+on an idle frame. This matters over slow links (SSH, tmux), but it does not
+offset the CPU cost per frame.
+
+### Build and dependencies
+
+| Measurement | SLT | ratatui + crossterm |
+|---|---|---|
+| Unique normal dependencies | **26** | 67 |
+| Stripped hello-world binary | 1,063,952 B (1039 KiB) | 553,384 B (540 KiB) — SLT 1.92x larger |
+| Cold `cargo build --release` (two runs) | ~11.0 s / 9.9 s | ~7.1 s / 6.2 s — SLT ~1.6x slower |
+
+The SLT dependency count was re-run for this snapshot with
+`cargo tree -p superlighttui -e normal --prefix none` (unique package/version
+lines, excluding the root, default features `crossterm` + `bidi`).
+
+SLT's "light" claim is about the dependency tree and the size of the public
+grammar. Do not cite frame time, binary size, or build speed as SLT
+advantages.
 
 ---
 
-## Feature Comparison Matrix
+## Corrections to the v0.19.2 snapshot
 
-### Layout
+The previous version of this document (2026-04-27, v0.19.2) contained claims
+that are now false or were overstated:
 
-| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| Flexbox (Row/Col) | ✅ | ✅ Constraint | ✅ | ✅ Yoga | ❌ |
-| Grid | ✅ | ❌ | ✅ CSS Grid | ❌ | ❌ |
-| Responsive breakpoints | ✅ 5 tiers | ❌ | ❌ | ❌ | ❌ |
-| Percentage sizing | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Absolute positioning | ❌ | ❌ | ✅ CSS dock | ❌ | ❌ |
-| CSS file styling | ❌ | ❌ | ✅ TCSS + hot-reload | ❌ | ❌ |
-
-### State & Architecture
-
-| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| State model | Closure + hooks | Manual struct | Reactive attrs | React hooks | Elm MVU |
-| Hooks | ✅ use_state, use_memo, use_state_named (id-keyed; safe in conditionals), provide / use_context (scoped state injection) | ❌ | ❌ | ✅ Full React | ❌ |
-| Event bubbling | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Error boundary | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Custom widgets | ✅ Widget trait | ✅ Widget trait | ✅ Class inheritance | ✅ React components | ✅ Model interface |
-
-### Animation
-
-| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| Tween | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Spring (physics) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Keyframes | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Sequence (chain) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Stagger (list) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| CSS transition | ❌ | ❌ | ✅ | ❌ | ❌ |
-
-### Deployment & Backends
-
-| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| Terminal backends | crossterm (optional) | crossterm, termion, termwiz | Built-in | Built-in | Built-in |
-| WASM/Browser | Source-verified browser backend; see [current scope and release gates](WASM.md) | ✅ ratzilla | ✅ textual serve | ❌ | ❌ |
-| Embedded (no_std) | ❌ | ✅ v0.30 | ❌ | ❌ | ❌ |
-| SSH server | ❌ | ❌ | ✅ | ❌ | ✅ Wish |
-| Game engine | ❌ | ✅ Bevy, egui | ❌ | ❌ | ❌ |
-| Inline mode | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Static output | ✅ | ❌ | ✅ | ✅ `<Static>` | ❌ |
-
-### Terminal Protocols
-
-| Protocol | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| Synchronized Output | ✅ | ✅ | ✅ | ❌ | ✅ v2 |
-| Kitty Keyboard | ✅ | ✅ | ❌ | ❌ | ✅ v2 |
-| Kitty Graphics | ✅ built-in | ✅ ratatui-image | ❌ | ❌ | ❌ |
-| Sixel | ✅ built-in | ✅ ratatui-image | ❌ | ❌ | ❌ |
-| OSC 8 links | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OSC 52 clipboard | ✅ read+write | ❌ | ❌ | ❌ | ✅ v2 read+write |
-| OSC 11 color scheme | ✅ | ❌ | ❌ | ❌ | ✅ v2 |
-
-### Syntax Highlighting
-
-| Feature | SLT | Ratatui | Textual | Ink | Bubbletea |
-|---|---|---|---|---|---|
-| Built-in highlighting | ✅ 15 languages (tree-sitter) | ❌ | ✅ tree-sitter | ❌ | ❌ |
-| Language-aware code blocks | ✅ `code_block_lang()` | ❌ | ✅ | ❌ | ❌ |
-| Streaming code highlight | ✅ `streaming_markdown()` | ❌ | ❌ | ❌ | ❌ |
-| Per-language feature gates | ✅ `syntax-rust`, etc. | N/A | N/A | N/A | N/A |
+| Old claim | Correction |
+|---|---|
+| "No other TUI framework has a dedicated animation system" | False: tachyonfx (ratatui), Textual animations, OpenTUI `Timeline`, FTXUI |
+| Accessibility: "Nobody has this" | False: Ink has screen-reader/ARIA support since 6.2; Huh v2 has an accessible mode |
+| Ink ❌ synchronized output / Kitty keyboard | False since Ink 6.7 |
+| Bubble Tea ❌ OSC 8 | Lip Gloss v2 has hyperlinks |
+| ratatui ❌ inline mode | False: ratatui has an inline viewport with `insert_before` |
+| Textual ✅ SSH server | `textual-serve` serves to a web browser, not SSH |
+| SLT image protocols: 3 | Now 4: half-block, Kitty, Sixel, iTerm2 |
+| SLT absolute positioning ❌ | Partial: anchored overlays with `(dx, dy)` insets (`overlay_at_offset`, `modal_at_offset`) |
+| SLT testing "most comprehensive among all TUI frameworks" | Overclaim. Textual's Pilot + SVG snapshots and devtools are at least as strong |
+| "SLT is the only TUI framework with built-in AI workflow widgets" | Overclaim. OpenTUI ships Markdown/Code/Diff and powers opencode; Ink powers Claude Code and Gemini CLI |
+| Dependency tree "26 vs 69" for ratatui + crossterm | 26 vs 67 in the 2026-10 measurement |
+| Binary "~1.45x larger" (preliminary) | 1.92x larger in the matched hello-world measurement |
+| Star counts (ratatui 19K, Textual 34K, Ink 14K, Bubble Tea 40K) | See the 2026-10 overview table |
 
 ---
 
-## Completed Roadmap (v0.14.0 – v0.19.2)
+## Candidate priorities
 
-### v0.14.0 — Ecosystem Foundation
+Derived from the gaps above. These are not commitments.
 
-| ID | Feature | Status |
-|---|---|---|
-| P0-1 | Backend trait abstraction (crossterm optional) | ✅ |
-| P0-2 | WASM backend (slt-wasm companion crate) | ✅ |
-| P1-1 | Gradient text | ✅ |
-| P1-2 | BigText (ASCII art) | ✅ |
-| P1-3 | Timer display | ✅ |
-| P1-4 | RichLog widget | ✅ |
-| P1-5 | Background color query (OSC 11) | ✅ |
-| — | QR code widget | ✅ |
-| — | DirectoryTree widget | ✅ |
-| — | Event constructors (crossterm-free) | ✅ |
-| — | OSC 52 clipboard read | ✅ |
-
-### v0.14.1 — Syntax Highlighting
-
-| ID | Feature | Status |
-|---|---|---|
-| P2-1 | Tree-sitter syntax highlighting (15 languages) | ✅ |
-| — | `code_block_lang()` / `code_block_numbered_lang()` APIs | ✅ |
-| — | `streaming_markdown()` code block highlighting upgrade | ✅ |
-| — | `markdown()` fenced code block fix | ✅ |
-
-### v0.16.0 — Core Consolidation
-
-| ID | Feature | Status |
-|---|---|---|
-| P1-6 | Single frame kernel + `TestBackend` parity | ✅ |
-| P1-7 | Context/session hardening | ✅ |
-| P1-8 | Layout kernel split + `collect_all()` sole collector | ✅ |
-| P1-9 | Runner/terminal flush dedup | ✅ |
-| — | Backend contract tests | ✅ |
-| — | Kernel parity + proptest coverage | ✅ |
-| — | Terminal session hardening | ✅ |
-| — | Interaction allocator unification | ✅ |
-
-### v0.18.x — Performance + Hardening
-
-| ID | Feature | Status |
-|---|---|---|
-| #62 | Flush coalescing — single ANSI emit per frame | ✅ |
-| #64 | Command enum boxing — shrinks the per-frame command stream | ✅ |
-| #67 | Flexbox U32Stack scratch — no per-frame allocations in layout | ✅ |
-| — | NO_COLOR env var support | ✅ |
-| — | `scroll_col` + `draw_with` helpers | ✅ |
-| — | `try_get` for safer state access | ✅ |
-
-### v0.19.0 — Component DX
-
-| ID | Feature | Status |
-|---|---|---|
-| — | `provide` / `use_context::<T>()` — scoped state injection (no parameter threading) | ✅ |
-| — | `use_state_named(id)` — id-keyed local state, safe inside conditionals | ✅ |
-| — | `with_if(cond, modifier)` / `with(modifier)` — fluent conditional styling on text and ContainerBuilder | ✅ |
-
-### v0.19.1 — Output + Image Perf
-
-| ID | Feature | Status |
-|---|---|---|
-| — | BufWriter stdout (1 flush/frame) | ✅ |
-| — | `image()` reduced to 1 RawDraw/frame (was 841) | ✅ |
-| — | Sixel exact-match detection | ✅ |
-| #131 | EventBuilder chain wrappers (`mouse_up`, `drag`, `key_release`, `focus_gained`, `focus_lost`) | ✅ |
-| #160 | CJK title clamp regression coverage | ✅ |
-
-### v0.19.2 — Theme + Status DX
-
-| ID | Feature | Status |
-|---|---|---|
-| #108 | `mx` / `my` margin shorthands | ✅ |
-| — | `ThemeBuilder` const fn — compile-time theme construction | ✅ |
-| #182 | `breadcrumb_response` / `breadcrumb_response_with` returning `(Response, Option<usize>)` | ✅ |
-| — | `RichLogState` bounded default (no unbounded growth) | ✅ |
+1. **Adoption**: real apps, third-party widget crates, and docs for people coming
+   from ratatui and the web (the gap no feature closes).
+2. **Editing**: selection inside text inputs, then a tree-sitter highlighted
+   editable textarea.
+3. **Overlays**: anchored popover, context menu, menubar.
+4. **State styles**: hover/focus/active styling on containers without
+   hand-written `Response.hovered` branches.
+5. **Terminal integration**: window title, OSC 9;4 progress, cursor shape.
+6. **Accessibility**: a screen-reader-friendly mode, following Ink and Huh.
+7. **SSH serving** through the `Backend` trait, as a companion crate.
 
 ---
 
-## Remaining Roadmap
+## Sources
 
-### P2 — Ecosystem Growth (post-0.16)
-
-| ID | Feature | Difficulty | Rationale |
-|---|---|---|---|
-| P2-1 | Plugin/extension system | Medium | Better postponed until internal contracts stop moving |
-| P2-2 | Accessibility (screen reader) | Hard | Nobody has this. First-mover advantage. Terminal protocol absent |
-| P2-3 | SSH server mode | Hard | Backend trait ready. `russh` + slt-ssh companion crate |
-| P2-5 | CSS-like style files | Hard | Hot-reload DX. Conflicts with immediate mode philosophy |
-
-### Removed from Roadmap
-
-| ID | Feature | Reason |
-|---|---|---|
-| ~~P2-4~~ | ~~Reactive binding~~ | Violates Principle 2 ("Your Closure IS the App"). Permanently removed |
-| ~~O(n) hit testing~~ | ~~HashMap conversion~~ | Already O(1) — original analysis was incorrect |
-
----
-
-## Key Insight
-
-SLT is already one of the broadest and easiest-to-start TUI libraries in Rust, now with **multi-backend support** (crossterm, WASM) and **AST-accurate syntax highlighting**. The next gap is no longer raw feature count; it is making the frame kernel and state boundaries boring, explicit, and hard to regress.
-
-**One-line summary**: SLT now has the core consolidation it needed. The next priority is ecosystem growth without losing the small public grammar or backend discipline.
+- ratatui 0.30 highlights: <https://ratatui.rs/highlights/v030/>
+- Textual releases: <https://github.com/Textualize/textual/releases>
+- Bubble Tea v2.0.0: <https://github.com/charmbracelet/bubbletea/releases/tag/v2.0.0>
+- Bubble Tea v2.1.0: <https://github.com/charmbracelet/bubbletea/releases/tag/v2.1.0>
+- Lip Gloss v2.0.0: <https://github.com/charmbracelet/lipgloss/releases/tag/v2.0.0>
+- Huh v2.0.0: <https://github.com/charmbracelet/huh/releases/tag/v2.0.0>
+- Ink releases: <https://github.com/vadimdemedes/ink/releases>
+- OpenTUI: <https://github.com/anomalyco/opentui>
+- FTXUI v7.0.0: <https://github.com/ArthurSonzogni/FTXUI/releases/tag/v7.0.0>
+- awesome-tuis: <https://github.com/rothgar/awesome-tuis>
+- Star counts and crates.io figures: GitHub and crates.io, read 2026-10.
+- Performance figures: matched ANSI-sink benchmark harness (outside this repository), run 2026-10.

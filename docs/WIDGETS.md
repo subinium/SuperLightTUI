@@ -10,7 +10,13 @@ If you are new, read in this order first:
 3. this file
 
 For composition advice, see [PATTERNS.md](PATTERNS.md).
-For animation, see the `anim` module.
+For animation, see [ANIMATION.md](ANIMATION.md) (`animate_bool` / `animate_value` quick transitions and the `anim` module structs).
+
+**Interaction:** focus, keyboard routing, mouse, and how `Response` signals are
+produced are covered in [INTERACTION.md](INTERACTION.md). Mouse capture is
+opt-in — without `slt::run_with(RunConfig::default().mouse(true), ...)`,
+`clicked` only fires from the keyboard (focus + Enter / Space) and `hovered`
+never fires.
 
 ## If you only learn a small core first
 
@@ -32,8 +38,8 @@ Every widget method on `Context` follows one of these return patterns:
 
 | Return type | Meaning | When to use |
 |---|---|---|
-| `&mut Self` | Style-chainable display element | `text`, `separator`, `toast`, `spacer` |
-| `Response` | Interactive widget with click/hover/changed/focused/rect | `button`, `list`, `table`, `tabs`, `col`, `row`, `alert`, charts |
+| `&mut Self` | Style-chainable display element | `text`, `styled`, `link`, `spacer`, `timer_display`, `toast` |
+| `Response` (`#[must_use]`) | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
 | Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
@@ -56,6 +62,20 @@ pub struct Response {
 }
 ```
 
+`rect` and the mouse-driven fields come from the previous frame's layout (zero
+on a widget's first frame). Instead of reading fields you can chain callbacks,
+since `Response` does not borrow `ui`:
+
+```rust
+let _ = ui
+    .button("Save")
+    .on_click(ui, |_| save())          // runs when `clicked`
+    .on_hover(ui, "Write to disk");    // tooltip while `hovered`
+```
+
+Related: `on_changed(ui, f)`, `on_hover_ui(ui, |ui| ...)` for a custom tooltip
+body. Hover-based callbacks need mouse capture enabled.
+
 ---
 
 ## Text & Display
@@ -68,7 +88,7 @@ All return `&mut Self` for style chaining unless noted.
 | `styled(s, style)` | Text with an explicit `Style` struct |
 | `link(text, url)` | Clickable hyperlink (OSC 8). Opens URL on Enter/Space/click |
 | `spacer()` | Invisible flex element — pushes siblings apart |
-| `separator()` | Horizontal divider line. Variant: `separator_colored(color)` |
+| `separator()` | Horizontal divider line; returns `Response`. Variant: `separator_colored(color)` |
 | `timer_display(elapsed)` | Format `Duration` as HH:MM:SS.CC |
 
 ### Rich text (return `Response`)

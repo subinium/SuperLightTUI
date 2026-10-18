@@ -175,34 +175,45 @@ src/
 │   ├── core.rs                 # Context core types + checkpoint / rollback state
 │   ├── container.rs            # ContainerBuilder + CanvasContext
 │   ├── runtime.rs              # Core Context methods (hooks, focus, notifications)
-│   ├── helpers.rs              # Shared helper functions for widget impls
+│   ├── helpers.rs              # Shared helper functions for widget impls, previous-frame geometry queries
+│   ├── async_tasks.rs          # In-frame async task API (spawn/poll, TaskHandle) — `async` feature
+│   ├── tests.rs, async_tasks_tests.rs, scheduler_tests.rs  # Context unit tests
 │   ├── widgets_display.rs      # Display/layout facade
 │   ├── widgets_display/
 │   │   ├── text.rs             # text, style chains, size/margin helpers
 │   │   ├── rich_output.rs      # big_text, image, streaming, tool approval, context bar
-│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, empty_state
-│   │   └── layout.rs           # screen, row/col, modal, tooltip, container, scrollable, form helpers
+│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, accordion, empty_state
+│   │   ├── gauge.rs            # gauge / line_gauge builders
+│   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
+│   │   ├── split.rs            # split_pane / vsplit_pane
+│   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
+│   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
 │   ├── widgets_interactive.rs  # Interactive facade
 │   ├── widgets_interactive/
 │   │   ├── collections.rs      # grid, list, calendar, file picker
 │   │   ├── selection.rs        # table, tabs, button, checkbox, toggle, select, radio, multi_select
-│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_seq
+│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_chord
 │   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
 │   │   └── tree_widgets.rs     # tree widget internals
 │   ├── widgets_input.rs        # Input facade
 │   ├── widgets_input/
 │   │   ├── text_input.rs       # text input widget
 │   │   ├── feedback.rs         # spinner, toast, slider
-│   │   └── textarea_progress.rs # textarea and progress widgets
+│   │   ├── textarea_progress.rs # textarea and progress widgets
+│   │   └── tests.rs            # Input widget tests
 │   └── widgets_viz.rs          # charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
 │
-├── widgets.rs                  # Facade for widget state types
+├── widgets.rs                  # Single `widgets` module: the files below are spliced in with `include!()`
+│                               # (not separate Rust modules); validators.rs is included inside `pub mod validators`
 ├── widgets/
-│   ├── input.rs                # StaticOutput, TextInputState, FormField, FormState, TextareaState, SpinnerState
-│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, ScrollState
-│   ├── feedback.rs             # RichLogState, CalendarState, Toast types, ButtonVariant, Trend
+│   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
+│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn
+│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend, SchedulerState
 │   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
-│   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
+│   ├── commanding.rs           # ChordState, CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
+│   ├── responses.rs            # FormFieldResponse, BreadcrumbResponse, GaugeResponse, SplitPaneResponse, GutterResponse
+│   ├── validators.rs           # Built-in FormField validators (`slt::validators`)
+│   └── tests.rs                # Widget state tests (`mod tests`)
 │
 ├── layout.rs                   # Thin facade re-exporting layout kernels
 ├── layout/
@@ -210,13 +221,15 @@ src/
 │   ├── tree.rs                 # LayoutNode, NodeKind, build_tree(), wrap helpers
 │   ├── collect.rs              # collect_all(), FrameData, raw-draw collection helpers
 │   ├── flexbox.rs              # compute(), layout_row(), layout_column(), gap/grow/shrink resolution
+│   ├── focus.rs                # Layout clip, focus/scroll geometry feedback, follow-focus scroll adjustments
 │   ├── render.rs               # render(), render_inner(), render_border(), clipping, viewport culling
 │   └── tests.rs                # Layout-focused kernel tests
 │
 ├── style.rs                    # Style, Border, Padding, Margin, Constraints, Modifiers, Align, Justify
 ├── style/
 │   ├── color.rs                # Color enum (Named, Indexed, Rgb), ColorDepth, color blending
-│   └── theme.rs                # Theme struct, Spacing, ThemeColor, 10 presets, ThemeBuilder, contrast helpers
+│   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
+│   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
 ├── terminal.rs                 # Terminal backend
 │   ├── Terminal                # Full-screen mode
@@ -237,9 +250,16 @@ src/
 ├── buffer.rs                   # Double-buffer with clip stack and diff tracking
 ├── syntax.rs                   # tree-sitter syntax highlighting
 ├── sixel.rs                    # Sixel image protocol support
-├── cell.rs                     # Cell = char + Style + optional URL
+├── iterm.rs                    # iTerm2 OSC 1337 inline-image encoder
+├── clock.rs                    # Platform clocks for frame timing, input and scheduling (native + wasm)
+├── cell.rs                     # Cell = one grapheme (CompactString symbol) + Style + optional OSC 8 hyperlink
 ├── rect.rs                     # Rect struct, bounds checking, intersection
 ├── event.rs                    # Event, KeyCode, KeyModifiers, MouseEvent, MouseButton
+├── event/
+│   ├── reply.rs                # Terminal query replies; preserves input consumed during probes (`crossterm`)
+│   ├── native.rs               # Owned nonblocking Unix input reader (`crossterm`, unix)
+│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1
+│   └── native/lifecycle_tests.rs, reply/review_tests.rs  # Input tests
 ├── halfblock.rs                # Half-block image rendering
 ├── keymap.rs                   # KeyMap, Binding structs
 ├── palette.rs                  # 256-color palette definitions
@@ -271,7 +291,7 @@ src/
 
 ## Key Patterns
 - `ContainerBuilder::draw()` requires `'static` closure (deferred execution)
-- `collect_all()` replaces 7 separate tree traversals — single DFS pass
+- `collect_all()` folds 7 former collect-phase walks into one DFS; a frame still runs build → layout → collect → render (four top-level passes), plus a second `collect_all` only when follow-focus scrolling moved a viewport
 - `apply_style_delta()` for flush — only emit changed attributes
 - `FrameData` struct holds all per-frame collected data
 - Keyframes stops pre-sorted at build time, not per-frame

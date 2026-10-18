@@ -555,7 +555,12 @@ pub struct Capabilities {
     /// iTerm2 OSC 1337 inline-image protocol confirmed (env identity for
     /// iTerm2 / WezTerm / Tabby / mintty; issue #265).
     pub iterm2: bool,
-    /// Kitty graphics protocol confirmed (DA2 terminal-ID heuristic).
+    /// Kitty graphics protocol confirmed: the terminal answered the startup
+    /// Kitty graphics query (`APC G a=q`) with an `OK` ack. When the query is
+    /// not acknowledged, falls back to the `TERM` / `TERM_PROGRAM` identity of
+    /// known Kitty-graphics hosts (Kitty, Ghostty, WezTerm), subject to
+    /// multiplexer / remote-session gating; `SLT_FORCE_KITTY` forces it on and
+    /// `SLT_DISABLE_KITTY` always clears it.
     pub kitty_graphics: bool,
     /// Kitty keyboard protocol confirmed.
     pub kitty_keyboard: bool,

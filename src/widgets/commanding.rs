@@ -311,13 +311,11 @@ impl StreamingTextState {
     ///
     /// # Example
     /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
     /// let mut stream = slt::StreamingTextState::new();
     /// stream.push("hello");
     /// assert_eq!(stream.version(), 1);
     /// stream.push(" world");
     /// assert_eq!(stream.version(), 2);
-    /// # });
     /// ```
     pub fn version(&self) -> u64 {
         self.version
@@ -412,11 +410,9 @@ impl StreamingMarkdownState {
     ///
     /// # Example
     /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
     /// let mut md = slt::StreamingMarkdownState::new();
     /// md.push("# Title");
     /// assert_eq!(md.version(), 1);
-    /// # });
     /// ```
     pub fn version(&self) -> u64 {
         self.version

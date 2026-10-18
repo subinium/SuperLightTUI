@@ -169,7 +169,9 @@ the `&mut Context` parameter or `&mut <Widget>State`.
 ### M4 — Response is the only return shape
 
 Interactive widgets return `Response` or a compound `<Widget>Response: Deref`.
-Stateless rendering returns `Response::none()` — no `()` returns.
+Display chains (`text`, `link`, `line`, `form_field`, `toast`, ...) return
+`&mut Self` instead. Known `()` returns: `screen`, overlay helpers such
+as `keymap_help_overlay`, and hook/side-effect methods.
 
 ---
 
@@ -202,34 +204,45 @@ src/
 │   ├── core.rs                 # Context struct + checkpoint / rollback state
 │   ├── container.rs            # ContainerBuilder + CanvasContext
 │   ├── runtime.rs              # Core Context methods (hooks, focus, notifications)
-│   ├── helpers.rs              # Shared helper functions for widget impls
+│   ├── helpers.rs              # Shared helper functions for widget impls, previous-frame geometry queries
+│   ├── async_tasks.rs          # In-frame async task API (spawn/poll, TaskHandle) — `async` feature
+│   ├── tests.rs, async_tasks_tests.rs, scheduler_tests.rs  # Context unit tests
 │   ├── widgets_display.rs      # Display/layout facade
 │   ├── widgets_display/
 │   │   ├── text.rs             # text, style chains, size/margin helpers
 │   │   ├── rich_output.rs      # big_text, image, streaming, tool approval, context bar
-│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, empty_state
-│   │   └── layout.rs           # screen, row/col, modal, tooltip, container, scrollable, form helpers
+│   │   ├── status.rs           # alert, breadcrumb, badge, stat, code_block, accordion, empty_state
+│   │   ├── gauge.rs            # gauge / line_gauge builders
+│   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
+│   │   ├── split.rs            # split_pane / vsplit_pane
+│   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
+│   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
 │   ├── widgets_interactive.rs  # Interactive facade
 │   ├── widgets_interactive/
 │   │   ├── collections.rs      # grid, list, calendar, file picker
 │   │   ├── selection.rs        # table, tabs, button, checkbox, toggle, select, radio, multi_select
-│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_seq
+│   │   ├── rich_markdown.rs    # rich_log, virtual_list, command palette, markdown, key_chord
 │   │   ├── events.rs           # keyboard, mouse, theme, size, quit helpers
 │   │   └── tree_widgets.rs     # tree widget internals
 │   ├── widgets_input.rs        # Input facade
 │   ├── widgets_input/
 │   │   ├── text_input.rs       # text input widget
 │   │   ├── feedback.rs         # spinner, toast, slider
-│   │   └── textarea_progress.rs # textarea and progress widgets
+│   │   ├── textarea_progress.rs # textarea and progress widgets
+│   │   └── tests.rs            # Input widget tests
 │   └── widgets_viz.rs          # Charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
 │
-├── widgets.rs                  # Facade for widget state types
+├── widgets.rs                  # Single `widgets` module: the files below are spliced in with `include!()`
+│                               # (not separate Rust modules); validators.rs is included inside `pub mod validators`
 ├── widgets/
-│   ├── input.rs                # StaticOutput, TextInputState, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState
-│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, ScrollState
-│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend
+│   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
+│   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn
+│   ├── feedback.rs             # RichLogState, RichLogEntry, CalendarState, ButtonVariant, Trend, SchedulerState
 │   ├── selection.rs            # SelectState, RadioState, MultiSelectState, TreeState, DirectoryTreeState, PaletteCommand
-│   └── commanding.rs           # CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
+│   ├── commanding.rs           # ChordState, CommandPaletteState, streaming states, ScreenState, ModeState, tool approval types, ContextItem
+│   ├── responses.rs            # FormFieldResponse, BreadcrumbResponse, GaugeResponse, SplitPaneResponse, GutterResponse
+│   ├── validators.rs           # Built-in FormField validators (`slt::validators`)
+│   └── tests.rs                # Widget state tests (`mod tests`)
 │
 ├── layout.rs                   # Thin facade re-exporting layout kernels
 ├── layout/
@@ -237,13 +250,15 @@ src/
 │   ├── tree.rs                 # LayoutNode, NodeKind, build_tree(), wrap helpers
 │   ├── collect.rs              # collect_all(), FrameData, raw-draw collection helpers
 │   ├── flexbox.rs              # compute(), layout_row(), layout_column(), gap/grow/shrink resolution
+│   ├── focus.rs                # Layout clip, focus/scroll geometry feedback, follow-focus scroll adjustments
 │   ├── render.rs               # render(), render_inner(), render_container_border(), clipping, viewport culling
 │   └── tests.rs                # Layout-focused kernel tests
 │
 ├── style.rs                    # Style struct, Border, Padding, Margin, Constraints, Modifiers, Align, Justify
 ├── style/
 │   ├── color.rs                # Color enum (Named, Indexed, Rgb), ColorDepth, color blending
-│   └── theme.rs                # Theme struct, Spacing, ThemeColor, 10 presets, ThemeBuilder, contrast helpers
+│   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
+│   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
 ├── terminal.rs                 # Terminal backend
 │   ├── Terminal                # Full-screen mode — alternate screen, raw mode, mouse capture
@@ -271,9 +286,16 @@ src/
 ├── buffer.rs                   # Double-buffer with clip stack and diff tracking
 ├── syntax.rs                   # Tree-sitter-based syntax highlighting helpers
 ├── sixel.rs                    # Sixel image protocol support
-├── cell.rs                     # Cell = char + Style + optional URL
+├── iterm.rs                    # iTerm2 OSC 1337 inline-image encoder
+├── clock.rs                    # Platform clocks for frame timing, input and scheduling (native + wasm)
+├── cell.rs                     # Cell = one grapheme (CompactString symbol) + Style + optional OSC 8 hyperlink
 ├── rect.rs                     # Rect struct, bounds checking, intersection
 ├── event.rs                    # Event, KeyCode, KeyModifiers, MouseEvent, MouseButton
+├── event/
+│   ├── reply.rs                # Terminal query replies; preserves input consumed during probes (`crossterm`)
+│   ├── native.rs               # Owned nonblocking Unix input reader (`crossterm`, unix)
+│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1
+│   └── native/lifecycle_tests.rs, reply/review_tests.rs  # Input tests
 ├── halfblock.rs                # Half-block (▀▄) image rendering
 ├── keymap.rs                   # KeyMap, Binding structs
 ├── palette.rs                  # 256-color palette definitions
@@ -284,7 +306,7 @@ src/
 
 ## Frame Lifecycle
 
-Every frame follows this exact sequence. The engine performs **four top-level DFS traversals** of the layout tree per frame (build → layout → collect → render), plus optional passes for the debug overlay.
+Every frame follows this exact sequence. The engine performs **four top-level DFS traversals** of the layout tree per frame (build → layout → collect → render) in the common case. When follow-focus scrolling moves a viewport (v0.25), it adds two more walks — `apply_scroll_adjustments()` and a second `collect_all()` — so rendering and hit-testing share the adjusted tree. The debug overlay adds optional passes on top.
 
 ```
 1. EVENT POLL
@@ -316,6 +338,9 @@ Every frame follows this exact sequence. The engine performs **four top-level DF
    └── Gathers, in a single walk: scroll regions, hit areas, group rects,
        content rects, focus rects/groups, raw-draw viewport rects
    └── See "The collect_all consolidation" below for what this replaced
+   └── Follow-focus check: if a focus transition or fresh bounds require a
+       scroll correction, apply_scroll_adjustments() rewrites the scroll
+       offsets in place and collect_all() runs once more (src/lib.rs)
 
 7. RENDER + DEFERRED DRAW — layout::render()         [DFS pass 4 of 4]
    └── render() → render_inner() → render_container_border()
@@ -344,7 +369,7 @@ The per-frame DFS count used to be higher. Before consolidation, the collect pha
 
 `collect_all()` folds those seven collect-phase walks into **one** DFS that produces a single `FrameData` struct holding every vector the runtime needs for the next frame's hit-testing and scroll feedback. The top-level pipeline is still four DFS passes (build, layout, collect, render) — `collect_all` did not fuse the phases, it fused the sub-walks inside one phase.
 
-Net effect: **10 traversals per frame → 4**. That is the real story; the marketing line "single DFS" was shorthand for "collect no longer does seven walks" and understated what is actually a four-stage pipeline.
+Net effect: **10 traversals per frame → 4** (6 on frames where follow-focus scrolling corrects a viewport). That is the real story; the marketing line "single DFS" was shorthand for "collect no longer does seven walks" and understated what is actually a four-stage pipeline.
 
 ---
 

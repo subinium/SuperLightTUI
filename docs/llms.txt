@@ -5,15 +5,18 @@
 ## Reading order for coding agents
 
 - [Complete reference (single-file)](COMPLETE_REFERENCE.md): condensed full API. Start here for most tasks.
-- [Quick start](QUICK_START.md): install, first app, closure mental model
+- [Quick start](QUICK_START.md): install, first app, closure mental model, mouse opt-in, shortcut ordering
 - [AI guide](AI_GUIDE.md): common questions agents get wrong, implementation rules
 - [Widgets](WIDGETS.md): categorized API catalog (50+ widgets, state types, runtime methods)
 - [Patterns](PATTERNS.md): composition patterns, state ownership, screens, forms
-- [Examples guide](EXAMPLES.md): 32 runnable examples grouped by product shape
+- [Examples guide](EXAMPLES.md): the 20 runnable `cargo run --example` targets (8 tours + entry, tool, and report binaries) and which source files each tour uses
 - [Architecture](ARCHITECTURE.md): module map, frame lifecycle, layout pipeline
 - [Design principles](DESIGN_PRINCIPLES.md): API philosophy, immediate-mode rationale
 
 ## Core concepts
+
+- Mouse capture is opt-in: `RunConfig::default().mouse` is `false` and `slt::run` uses the default. Use `slt::run_with(slt::RunConfig::default().mouse(true), |ui| { ... })` whenever the app relies on `.clicked`, `.hovered`, `on_hover`, or wheel scrolling. Focused buttons still activate with Enter / Space without it.
+- Check global shortcuts (`ui.key('q')`) after rendering widgets: `key*` sees events not consumed so far, so a check placed before a focused `text_input` fires while the user types into it.
 
 - [Run loop](ARCHITECTURE.md#frame-lifecycle): 8-stage per-frame pipeline
 - [Immediate mode](DESIGN_PRINCIPLES.md): no App trait, no Model/Update/View
@@ -33,11 +36,18 @@
 - `ui.use_state_named(id, init)` / `ui.use_state_named_default::<T>(id)` — id-keyed local state, safe inside conditionals
 - `.with_if(cond, modifier)` / `.with(modifier)` — fluent conditional styling on text and `ContainerBuilder`
 
-### v0.18.x highlights
+### Current (v0.25) highlights
+
+- Scroll containers follow keyboard focus (nested axes, modal forms, resize); opt out per container with the public `ScrollState::follow_focus` field (default `true`)
+- `ui.form_field_response(&mut field)` returns `FormFieldResponse`; `ui.focused_layout_rect()` / `ui.measured_layout_rect(name)` expose full previous-frame geometry
+- Input typed after a Tab in the same batch is queued for the next frame; custom loops can check `AppState::has_pending_input()` / `TestBackend::has_pending_input()`
+- Quick transitions: `ui.animate_bool(id, on)` / `ui.animate_value(id, target, ticks)` — see [Animation](ANIMATION.md)
+
+### Longer-standing helpers
 
 - `NO_COLOR` env var support (auto-disables color output when set)
 - `scroll_col` — vertical scroll container helper
-- `draw_with(rect, |buf| { ... })` — typed raw-draw entry point
+- `container().draw_with(data, |buf, rect, data| { ... })` — raw draw with owned data
 - `Buffer::try_get(x, y) -> Option<&Cell>` — fallible buffer cell accessor for `draw(|buf, rect| ...)` raw-draw closures
 
 ### Builder widgets
@@ -48,7 +58,7 @@
 ## Specialized topics
 
 - [Theming](THEMING.md): 10 preset themes, ThemeColor semantic tokens, WidgetColors overrides, Tailwind palette
-- [Animation](ANIMATION.md): Tween, Spring, Keyframes, Sequence, Stagger
+- [Animation](ANIMATION.md): animate_bool / animate_value quick transitions; Tween, Spring, Keyframes, Sequence, Stagger
 - [Backends](BACKENDS.md): custom backends, Backend trait, AppState, frame()
 - [Testing](TESTING.md): TestBackend, EventBuilder
 - [Debugging](DEBUGGING.md): F12 overlay, clipping issues, focus surprises
@@ -56,11 +66,21 @@
 
 ## Examples
 
-- [examples/hello.rs](../examples/hello.rs): smallest app
-- [examples/counter.rs](../examples/counter.rs): state plus keyboard
-- [examples/demo.rs](../examples/demo.rs): broad widget tour
-- [examples/demo_dashboard.rs](../examples/demo_dashboard.rs): dashboard composition
-- [examples/demo_cli.rs](../examples/demo_cli.rs): CLI-style layout
-- [examples/demo_infoviz.rs](../examples/demo_infoviz.rs): charts and visualizations
-- [examples/demo_website.rs](../examples/demo_website.rs): canonical `provide` / `use_context` composition (v0.19.0)
-- [examples/demo_cjk.rs](../examples/demo_cjk.rs): CJK / wide-character rendering, title clamp, mouse hover
+Runnable targets (`cargo run --example <name>`; `autoexamples = false`, so other file names in `examples/` are not runnable):
+
+- `hello` ([source](../examples/hello.rs)): smallest app
+- `counter` ([source](../examples/counter.rs)): state plus keyboard
+- `demo` ([source](../examples/demo.rs)): broad widget tour
+- `cookbook_tour` ([source](../examples/cookbook_tour.rs)): the COOKBOOK recipes as tabs
+- `v0211_tour` ([source](../examples/v0211_tour.rs)): click / double-click / scroll `Response` signals, `KeyMap`, focus traversal
+- `showcase_tour` ([source](../examples/showcase_tour.rs)): dashboard, infoviz, website, spreadsheet, trading screens
+- `text_tour` ([source](../examples/text_tour.rs)): CJK, IME, CLI-style text
+- `system_tour --features async` ([source](../examples/system_tour.rs)): error boundary, overlay anchor, async / inline modes
+
+Source modules shown inside tours (read them, run the tour):
+
+- [examples/demo_dashboard.rs](../examples/demo_dashboard.rs): dashboard composition — `showcase_tour`
+- [examples/demo_infoviz.rs](../examples/demo_infoviz.rs): charts and visualizations — `showcase_tour`
+- [examples/demo_website.rs](../examples/demo_website.rs): canonical `provide` / `use_context` composition — `showcase_tour`
+- [examples/demo_cli.rs](../examples/demo_cli.rs): CLI-style layout — `text_tour`
+- [examples/demo_cjk.rs](../examples/demo_cjk.rs): CJK / wide-character rendering, title clamp, mouse hover — `text_tour`

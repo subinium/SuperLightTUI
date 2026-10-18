@@ -24,7 +24,7 @@ reviewer responsibility.
 6. Sample-widget labeling       ← when you stuff helpers in for show
 7. Title and visible text       ← character set, length
 8. Snapshot-vs-live render      ← when both are needed
-9. macOS quirks                 ← Ctrl-C, mouse, scrollback
+9. Terminal quirks              ← Ctrl-C, mouse, scrollback
 10. Pre-merge checklist
 ```
 
@@ -149,9 +149,13 @@ v0.20 author and produced the second iteration of the named_focus bug).
 ### Quit keys
 
 Every demo binds quit to the **same triple**: `q`, `Esc`, `Ctrl-Q`.
-**Never bind `Ctrl-C`** — it's bound to "Copy" by default in Ghostty,
-iTerm2, and Terminal.app on macOS, so the keystroke never reaches the
-app reliably.
+**Don't bind `Ctrl-C` as a demo key.** By default the terminal sends it to
+the app as ETX (0x03), and SLT's runtime already treats it as "exit"
+(`RunConfig::handle_ctrl_c`, default `true`), so a demo-level binding is
+redundant. Some terminal profiles also remap Ctrl+C (for example to copy
+when text is selected), so it is not a reliable in-app key. On macOS,
+copy is normally Cmd+C, not Ctrl+C. Apps that need Ctrl+C as an in-app key
+set `RunConfig::default().handle_ctrl_c(false)` and handle it themselves.
 
 ```rust
 if ui.key('q') || ui.key_code(KeyCode::Esc) || ui.key_mod('q', KeyModifiers::CONTROL) {
@@ -339,13 +343,17 @@ binary uses `render`.
 
 ---
 
-## 9. macOS quirks
+## 9. Terminal quirks
 
-- **Ctrl-C is bound to "Copy"** in Ghostty, iTerm2, and Terminal.app
-  by default. Don't rely on it as a quit key. See §4.
-- **Mouse capture**: every interactive demo uses
-  `slt::run_with(RunConfig::default().mouse(true), …)`. Without this,
-  click events never reach the app and demos appear "broken".
+- **Ctrl-C**: delivered as ETX and handled by the runtime as exit by
+  default (`RunConfig::handle_ctrl_c`). Some terminal profiles remap it,
+  so don't rely on it as a demo key. See §4.
+- **Mouse capture is opt-in on every platform**, not a macOS quirk:
+  `RunConfig::default()` has `mouse: false`, and `slt::run` uses that
+  default. Every interactive demo therefore uses
+  `slt::run_with(RunConfig::default().mouse(true), …)`. Without it,
+  click, hover, and wheel events never reach the app and demos appear
+  "broken" (keyboard focus + Enter still works).
 - **Scrollback in alternate screen**: full-screen demos (default
   `slt::run`) use the alternate screen, where scrollback is isolated
   from the user's shell. `static_log` only makes sense in inline mode
@@ -370,9 +378,9 @@ Before submitting a demo (new or modified):
       interaction without manual prodding.
 - [ ] `scripts/api_audit.sh --strict` exits 0.
 - [ ] `cargo test --all-features` passes.
-- [ ] (When the v0.21 visual-regression fixtures land:) at least one
-      assertion in `tests/v020_interaction_regression.rs` covers the
-      demo's headline interaction.
+- [ ] At least one assertion in `tests/v020_interaction_regression.rs`
+      or `tests/visual_snapshots.rs` covers the demo's headline
+      interaction or layout.
 
 ---
 

@@ -68,6 +68,8 @@ This matters because SLT is trying to be easy at the API layer without becoming 
 
 ### Terminal compatibility policy
 
+> For a user-facing guide to terminal and multiplexer differences (tmux, Zellij, screen, image protocols, key reporting), see [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
+
 Multiplexer identity takes precedence over an inherited outer `TERM_PROGRAM`.
 SLT resolves each protocol independently instead of treating every multiplexer
 as one global capability switch.
@@ -182,7 +184,7 @@ Important details:
 
 - `tick_rate` controls how often the loop wakes up even if no input arrives
 - `max_fps` caps the render rate after work is done
-- `mouse(true)` enables clicks, hovers, and wheel input
+- `mouse(true)` enables clicks, hovers, and wheel input; it is `false` by default, so `slt::run` apps receive no mouse events
 - `kitty_keyboard(true)` requests richer key events on supported terminals
 - `RunConfig` and `Theme` are both `#[non_exhaustive]`, so prefer builder methods over struct literals
 

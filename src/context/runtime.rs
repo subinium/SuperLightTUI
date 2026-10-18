@@ -1919,9 +1919,15 @@ impl Context {
     /// to avoid collisions: `format!("my_component::item-{i}")`.
     ///
     /// # Stale entries
-    /// Removed items leak their state until the `Context` is dropped (or
-    /// the program exits). For long-running sessions with churn, manage
-    /// state externally via a single `Vec<T>` in [`use_state`].
+    /// Keyed entries are not pruned automatically: a slot survives across
+    /// frames for the lifetime of the run loop even after its item stops
+    /// rendering. Release stale slots explicitly with
+    /// [`remove_state_keyed`](Self::remove_state_keyed) (one id) or
+    /// [`retain_state_keyed`](Self::retain_state_keyed) (keep only live ids,
+    /// e.g. once per frame for a list with churn).
+    /// [`keyed_state_count`](Self::keyed_state_count) helps spot unbounded
+    /// growth. Alternatively, keep the per-item state in a single `Vec<T>`
+    /// via [`use_state`].
     ///
     /// # Example
     ///

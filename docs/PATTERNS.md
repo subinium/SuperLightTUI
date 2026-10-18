@@ -32,16 +32,20 @@ fn main() -> std::io::Result<()> {
         dark: false,
     };
 
-    slt::run(|ui: &mut Context| {
-        if ui.key('q') || ui.key_code(KeyCode::Esc) {
-            ui.quit();
-        }
+    // `.mouse(true)` so the button and checkbox react to clicks; without it
+    // they still work from the keyboard (Tab to focus, Enter/Space to press).
+    slt::run_with(slt::RunConfig::default().mouse(true), |ui: &mut Context| {
         if ui.button("+1").clicked {
             app.count += 1;
         }
 
-        ui.checkbox("Dark mode", &mut app.dark);
+        let _ = ui.checkbox("Dark mode", &mut app.dark);
         ui.text(format!("count: {}", app.count));
+
+        // Global shortcuts last, after widgets had a chance to consume keys.
+        if ui.key('q') || ui.key_code(KeyCode::Esc) {
+            ui.quit();
+        }
     })
 }
 ```
@@ -146,7 +150,8 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, trend: Trend) {
         let arrow = match trend {
             Trend::Up => "▲",
             Trend::Down => "▼",
-            Trend::Flat => "—",
+            // `Trend` is `#[non_exhaustive]`; future variants need a fallback.
+            _ => "•",
         };
         ui.text(arrow);
     });
@@ -160,7 +165,7 @@ fn render_dashboard(ui: &mut Context, app: &App) {
     ui.row(|ui| {
         metric_card(ui, "Revenue", app.revenue, Trend::Up);
         metric_card(ui, "Latency p99", app.p99_ms, Trend::Down);
-        metric_card(ui, "Active users", app.users, Trend::Flat);
+        metric_card(ui, "Active users", app.users, Trend::Up);
     });
 }
 ```
@@ -310,7 +315,7 @@ A good heuristic: reach for `provide` when the same value is needed by three or 
 
 ### Conditional Styling with `.with_if`
 
-Conditional styling is everywhere — a row that highlights when selected, a label that turns red when invalid, a button that dims when disabled. Without help, this clutters the call site:
+Conditional styling is everywhere — a row that highlights when selected, a label that turns red when invalid, a panel that highlights when focused. Without help, this clutters the call site:
 
 ```rust
 let mut t = ui.text("Status");
@@ -339,25 +344,35 @@ The closure runs only when the condition is true. The modifier receives a mutabl
 For unconditional grouping — factoring shared modifier blocks out of multiple call sites — use `.with(modifier)`:
 
 ```rust
-fn dim_label(t: &mut TextBuilder<'_>) {
-    t.dim().italic();
+// Text modifiers live on `Context` itself, so the helper takes `&mut Context`.
+fn dim_label(ui: &mut Context) {
+    ui.dim().italic();
 }
 
 ui.text("uptime: 3d 4h").with(dim_label);
 ui.text("region: us-west-2").with(dim_label);
 ```
 
-Both `.with` and `.with_if` are available on text and on container builders, so the same idiom works for `bordered`, `row`, `col`, etc.:
+Container builders (`bordered`, `container`, `row`/`col` builders) also have
+`.with_if`, but the closure shape differs. `ContainerBuilder` is a by-value
+builder, so its closure takes the builder and must **return** it
+(`FnOnce(ContainerBuilder) -> ContainerBuilder`), while the text version takes
+`&mut Context` and returns `()`:
 
 ```rust
-ui.bordered(Border::Single)
-    .with_if(panel_focused, |c| {
-        c.title("(focused)").p(2);
-    })
+let _ = ui
+    .bordered(Border::Single)
+    .with_if(panel_focused, |c| c.title("(focused)").p(2))
     .col(|ui| {
         // ...
     });
 ```
+
+> **There is no disabled-button state.** `.with_if` only changes how
+> something *looks*. A button styled to look disabled is still focusable and
+> still reports `clicked`, so gate the action in your handler instead:
+> `if ui.button("Save").clicked && can_save { save(); }` (and change the
+> label, e.g. `"Save (fix errors)"`, so the user knows why nothing happens).
 
 ### When to use which
 
@@ -366,7 +381,7 @@ ui.bordered(Border::Single)
 | Function + explicit args | Small components, fewer than 3-4 params | `metric_card`, `header_row`, `kv_pair` |
 | `use_state_named` | Component has LOCAL state that should survive across frames | collapsible panel, pagination cursor, sort direction |
 | `provide` / `use_context` | Values cross 3+ scope levels | theme, logged-in user, feature flags, request id |
-| `.with_if` | Styling depends on a runtime condition | selected row, error text, disabled state, focused panel |
+| `.with_if` | Styling depends on a runtime condition | selected row, error text, focused panel |
 | `.with` | Factor shared style blocks out of multiple call sites | "dim label", "code-style text", "subtle border" |
 
 ### Anti-patterns
@@ -421,6 +436,11 @@ For larger forms, reach for `FormField` and `FormState`.
 ## Focus and keyboard shortcuts
 
 ```rust
+// Render widgets first...
+let _ = ui.text_input(&mut search);
+let _ = ui.list(&mut results);
+
+// ...then check shortcuts. Only keys no widget consumed reach these checks.
 if ui.key('q') {
     ui.quit();
 }
@@ -432,7 +452,19 @@ if ui.raw_key_code(KeyCode::Esc) {
 }
 ```
 
-Use `raw_*` shortcuts for keys that must work regardless of modal or overlay state.
+### Shortcuts vs focused inputs
+
+`ui.key(...)` / `ui.key_code(...)` return `true` for any matching event that
+has not been consumed *so far in this frame*. Widgets consume their keys while
+they render, so a shortcut check placed **before** a focused `text_input`
+sees the raw keystroke: typing `q` into the field then inserts `q` **and**
+quits. Put global shortcuts at the end of the closure (or after the widgets
+that might consume the key). Keys a text input does not consume, such as Esc
+and Ctrl+Q, still reach a check placed after it.
+
+Use `raw_*` shortcuts for keys that must work regardless of modal or overlay
+state. They bypass only the modal/overlay guard; like `key_code`, they still
+skip events a widget already consumed.
 
 ## Screen helpers and navigation
 

@@ -57,6 +57,11 @@ tb.run_with_events(events, |ui| {
 
 Use `EventBuilder` when the widget logic depends on keyboard, mouse, paste, or resize events.
 
+> `TestBackend` injects mouse events directly, bypassing terminal mouse
+> capture. A click test can therefore pass even if the real app forgot
+> `RunConfig::default().mouse(true)` (mouse capture is off by default), so
+> keep that call in your `main` and cover it in a manual smoke run.
+
 ### Mouse and key chain wrappers (v0.19.1+)
 
 `EventBuilder` ships convenience wrappers for events that previously required
@@ -64,18 +69,19 @@ constructing raw `Event` values. The most useful ones to know:
 
 | Method | Emits | Use for |
 |--------|-------|---------|
-| `.click(x, y)` | mouse down + up at `(x, y)` | most click tests |
+| `.click(x, y)` | left-button press at `(x, y)` (SLT clicks fire on press) | most click tests |
 | `.mouse_up(x, y)` | mouse up only | testing release-only handlers, drag end |
 | `.drag(x, y)` | mouse drag at `(x, y)` (button held) | scrubbing sliders, resizing splits |
 | `.key_release(c)` | key release for `c` | matched press/release pairs (e.g. modifier holds) |
 | `.focus_gained()` | terminal `FocusGained` event | windows/tabs gaining focus |
 | `.focus_lost()` | terminal `FocusLost` event | pause-on-blur, autosave |
 
-Click vs drag is the test gap most authors miss — a `click` is two events
-in the same cell, a `drag` is movement while a button is held:
+Click vs drag is the test gap most authors miss — a `click` is a single
+left-button press (add `.mouse_up(x, y)` when a handler needs the release),
+a `drag` is movement while a button is held:
 
 ```rust
-// Click: down then up in the same cell
+// Click: a left-button press in that cell
 let events = EventBuilder::new()
     .click(10, 4)
     .build();
@@ -173,11 +179,14 @@ SLT itself does not require `insta`, but the in-tree test suite uses it —
 see `tests/snapshots.rs` for ~10 live examples covering text, rows, tables,
 tabs, calendars, lists, and separators.
 
-Add `insta` to your own project's dev-dependencies:
+Add `insta` to your own project's dev-dependencies (SLT itself stays a normal
+dependency — `TestBackend` ships in the main crate, no feature flag needed):
 
 ```toml
+[dependencies]
+superlighttui = "0.25"
+
 [dev-dependencies]
-superlighttui = "0.23.0"
 insta = "1"
 ```
 

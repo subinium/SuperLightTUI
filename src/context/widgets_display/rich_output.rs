@@ -628,14 +628,17 @@ impl Context {
     /// shows a blinking cursor (`▌`) at the end.
     ///
     /// ```no_run
-    /// # use slt::widgets::StreamingTextState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::StreamingTextState;
+    ///
     /// let mut stream = StreamingTextState::new();
     /// stream.start();
     /// stream.push("Hello from ");
     /// stream.push("the AI!");
-    /// ui.streaming_text(&mut stream);
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     // Push new tokens here as they arrive (e.g. drained from a channel).
+    ///     ui.streaming_text(&mut stream);
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn streaming_text(&mut self, state: &mut StreamingTextState) -> Response {
         if state.streaming {
@@ -668,15 +671,18 @@ impl Context {
     /// fenced code blocks with open/close tracking across stream chunks.
     ///
     /// ```no_run
-    /// # use slt::widgets::StreamingMarkdownState;
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::StreamingMarkdownState;
+    ///
     /// let mut stream = StreamingMarkdownState::new();
     /// stream.start();
     /// stream.push("# Hello\n");
     /// stream.push("- **streaming** markdown\n");
     /// stream.push("```rust\nlet x = 1;\n");
-    /// ui.streaming_markdown(&mut stream);
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     // Push new chunks here as they arrive (e.g. drained from a channel).
+    ///     ui.streaming_markdown(&mut stream);
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn streaming_markdown(
         &mut self,
@@ -919,13 +925,16 @@ impl Context {
     /// Returns the updated [`ApprovalAction`] each frame.
     ///
     /// ```no_run
-    /// # use slt::widgets::{ApprovalAction, ToolApprovalState};
-    /// # slt::run(|ui: &mut slt::Context| {
+    /// use slt::widgets::{ApprovalAction, ToolApprovalState};
+    ///
     /// let mut tool = ToolApprovalState::new("read_file", "Read contents of config.toml");
-    /// ui.tool_approval(&mut tool);
-    /// if tool.action == ApprovalAction::Approved {
-    /// }
-    /// # });
+    /// slt::run(|ui: &mut slt::Context| {
+    ///     ui.tool_approval(&mut tool);
+    ///     if tool.action == ApprovalAction::Approved {
+    ///         // run the tool
+    ///     }
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
     /// ```
     pub fn tool_approval(&mut self, state: &mut ToolApprovalState) -> Response {
         let old_action = state.action;

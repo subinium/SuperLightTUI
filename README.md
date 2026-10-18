@@ -2,7 +2,9 @@
 
 # SuperLightTUI
 
-**Superfast** to write. **Superlight** dependency tree (4 direct required deps, 26 resolved with default features vs 69 for ratatui + crossterm).
+**Build terminal UIs like web pages** — flexbox layout, Tailwind-style chaining, hooks, and click/hover/scroll, all in one Rust closure.
+
+**Superfast** to write. **Superlight** dependency tree (4 direct required deps, 26 resolved with default features vs 67 for ratatui 0.30.2 + crossterm, measured 2026-10).
 
 [![Crate Badge]][Crate]
 [![Docs Badge]][Docs]
@@ -17,29 +19,9 @@
 
 </div>
 
-SuperLightTUI is an immediate-mode TUI library for Rust with a deliberately small public grammar.
+SuperLightTUI (SLT) is an immediate-mode TUI library for Rust with a deliberately small public grammar.
 You write one closure, SLT calls it every frame, and the library handles layout, focus, diffing, and rendering.
-
-It is designed for fast product iteration, approachable Rust syntax, and serious backend discipline.
-That makes it work equally well for humans prototyping a tool and for coding agents generating UI from docs.
-
-## Showcase
-
-<table>
-  <tr>
-    <td align="center"><img src="assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --example text_tour</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="3"><img src="assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — text reflows around the mouse cursor in real time<br/><sub><code>cargo run --example text_tour</code></sub></td>
-  </tr>
-</table>
+State is plain Rust variables; there is no app trait, message enum, or retained widget tree to set up.
 
 ## Quick Start
 
@@ -55,9 +37,47 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop. Ctrl+C just works.
+5 lines. No `App` trait. No `Model`/`Update`/`View`. No manual event loop.
+Ctrl+C exits cleanly by default (opt out with `RunConfig::handle_ctrl_c(false)`).
 
-MSRV: Rust 1.88. Default features enable the `crossterm` backend.
+Mouse capture is **opt-in**. Plain `slt::run` is keyboard-driven: Tab/Shift+Tab move
+focus and Enter/Space activate the focused button. For click, hover, wheel scroll,
+and drag, start the loop with `RunConfig::default().mouse(true)`:
+
+```rust
+use slt::{Context, RunConfig};
+
+fn main() -> std::io::Result<()> {
+    let mut clicks = 0;
+
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+        ui.text(format!("clicked {clicks} times")).bold();
+        if ui.button("Click me").clicked {
+            clicks += 1;
+        }
+    })
+}
+```
+
+MSRV: Rust 1.88. Default features enable the `crossterm` backend and `bidi`.
+
+## Showcase
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
+    <td align="center"><img src="assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+    <td align="center"><img src="assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — text reflows around the mouse cursor in real time<br/><sub><code>cargo run --example text_tour</code></sub></td>
+  </tr>
+</table>
 
 ## 60-Second Grammar
 
@@ -83,6 +103,8 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 That is the core mental model. Everything else is depth, not a second framework.
+`clicked` fires on Enter/Space when the button is focused, and on mouse click when
+the loop runs with `RunConfig::default().mouse(true)`.
 
 ## A Real App
 
@@ -122,13 +144,13 @@ The same closure runs across several entry points. Pick one based on UI shape, n
 
 | Mode | API | When to use |
 |------|-----|-------------|
-| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app — alternate screen, mouse, theme. |
+| Full-screen | `slt::run` / `slt::run_with` | Standard TUI app on the alternate screen. Mouse capture is off unless `RunConfig::mouse(true)` is passed to `run_with`. |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | Fixed-height widget below the prompt — no alternate screen. |
 | Static + inline | `slt::run_static` | Log lines stream into scrollback while an inline UI stays live below. |
 | Async messages | `slt::run_async` *(feature: `async`)* | Background tasks use the wake-aware `AsyncSender`; retain the returned `AsyncRunHandle` to join or cancel the loop. |
 | Custom backend | `slt::frame` + `Backend` + `AppState` | Drive rendering yourself — tests, GUI embeds, WASM, snapshot harnesses. |
 
-`RunConfig` tunes mouse, kitty keyboard, color depth, max FPS, scroll speed, theme, and title across every mode.
+`RunConfig` tunes mouse capture (default: off), kitty keyboard, color depth, max FPS, scroll speed, theme, title, and Ctrl+C handling across every mode.
 
 ## Focus and Scrolling
 
@@ -167,7 +189,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **Small public grammar**. Most screens start with normal Rust state, `row()` / `col()` / `container()`, method chaining, and `Response`.
 - **Less framework ceremony**. Many apps do not need an app trait, retained tree, or message enum just to get moving.
-- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior, while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
+- **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (mouse events once `RunConfig::mouse(true)` is set), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
 - **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, WASM, clippy, examples, cargo-hack, semver, and deny checks.
 
 For Rust users, that usually means less setup than retained-mode TUI frameworks.
@@ -200,8 +222,8 @@ This architecture is what makes the simple grammar possible:
 
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
-- **Automatic performance.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine makes it fast. No manual dirty tracking.
-- **Auto-wired interaction.** `ui.button("Save")` gives you hover, click, and focus for free. The collect stage fused seven independent sub-walks (hit areas, focus rects, scroll regions, group rects, content rects, focus groups, raw-draw rects) into one DFS — so the top-level pipeline is four passes, not ten.
+- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. Per-frame cost is currently higher than ratatui's on matched workloads; see the [Performance Guide](docs/PERFORMANCE.md) for measurements.
+- **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free; with `RunConfig::mouse(true)` it also reports hover and click. No hit-testing code on your side.
 - **Synchronous feedback.** Interaction uses the previous frame's layout positions (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
 For the full eight-stage lifecycle, see [Architecture Guide].
@@ -222,7 +244,7 @@ ui.row(|ui| {
 
 // Inputs and actions
 ui.text_input(&mut input);          // input: TextInputState
-if ui.button("Save").clicked {}
+if ui.button("Save").clicked {}   // Enter/Space; mouse click needs mouse(true)
 ui.checkbox("Dark mode", &mut dark);
 
 // Data and navigation
@@ -262,6 +284,10 @@ For composition advice, see [Patterns Guide].
 |----------|----------------|
 | [Quick Start] | Install, first app, closure mental model, layout, widget state |
 | [Widget Guide] | Complete API catalog of widgets, runtime methods, and state types |
+| [Cookbook] | Copy-paste recipes for common apps, each backed by a runnable example |
+| [Web Developers Guide] | Coming from web: CSS/React → SLT mapping |
+| [Interaction Guide] | Mouse, click, hover, drag, wheel, expand/collapse, hit-testing |
+| [Positioning Guide] | `Anchor` and overlay APIs mapped to CSS/Flutter/React Native positioning |
 | [State API Guide] | Public fields, accessors, and mutation methods for widget state |
 | [Migration Guide] | Version-by-version breaking changes and upgrade paths |
 | [Patterns Guide] | State placement, screen composition, helper extraction, large-app structure |
@@ -269,6 +295,8 @@ For composition advice, see [Patterns Guide].
 | [Backends Guide] | `Backend`, `AppState`, `frame()`, inline mode, static output |
 | [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, backend contract tests |
 | [Debugging Guide] | F12 overlay, clipping, focus surprises, previous-frame behavior |
+| [Previous Frame Guide] | Why interaction uses last-frame layout, when `Response.rect` is zero, frame-1 correctness |
+| [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
 | [AI Guide] | Fastest path for AI-assisted builders and coding agents |
 | [Architecture Guide] | Module map, frame lifecycle, layout/render pipeline |
 | [Features Guide] | Feature flags, optional dependencies, recommended combos |
@@ -284,12 +312,12 @@ For composition advice, see [Patterns Guide].
 | `hello` | `cargo run --example hello` | Smallest possible app |
 | `counter` | `cargo run --example counter` | State + keyboard input |
 | `demo` | `cargo run --example demo` | Broad widget tour |
-| `showcase_tour` | `cargo run --example showcase_tour` | Dashboard, CLI, website, game, and showcase layouts |
+| `showcase_tour` | `cargo run --example showcase_tour` | Dashboard, design system, infoviz, trading, spreadsheet, table, and website layouts |
 | `cookbook_tour` | `cargo run --example cookbook_tour` | Form, table, modal, file picker, dashboard recipes |
-| `text_tour` | `cargo run --example text_tour` | CJK, pretext, image, and rich text demos |
-| `canvas_tour` | `cargo run --example canvas_tour` | Canvas and raw drawing |
-| `system_tour` | `cargo run --example system_tour --features async` | Inline, static output, async messages, and system demos |
-| `v020_tour` | `cargo run --example v020_tour` | v0.20 API feature tour |
+| `text_tour` | `cargo run --example text_tour` | CJK rendering, IME input, Pretext reflow, cargo-style CLI |
+| `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire, games (tetris/snake/minesweeper), raw draw, Kitty images, animation |
+| `system_tour` | `cargo run --example system_tour --features async` | Live error boundary and overlay anchor tabs; async and inline modes described as code |
+| `v020_tour` | `cargo run --example v020_tour` | v0.20 API feature tour, including static output (`run_static`) |
 | `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API additions |
 
 The full categorized index — including per-release feature tours and showcase demos — lives in [Examples Guide].
@@ -352,5 +380,11 @@ The release process expects format, check, clippy, tests, examples, and backend 
 [Animation Guide]: docs/ANIMATION.md
 [Theming Guide]: docs/THEMING.md
 [Features Guide]: docs/FEATURES.md
+[Cookbook]: docs/COOKBOOK.md
+[Previous Frame Guide]: docs/PREVIOUS_FRAME_GUIDE.md
+[Positioning Guide]: docs/POSITIONING.md
+[Web Developers Guide]: docs/WEB_DEVELOPERS.md
+[Interaction Guide]: docs/INTERACTION.md
+[Terminal Compatibility]: docs/TERMINAL_COMPATIBILITY.md
 [Contributing]: CONTRIBUTING.md
 [License]: ./LICENSE

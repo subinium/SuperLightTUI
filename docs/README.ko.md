@@ -2,6 +2,8 @@
 
 # SuperLightTUI
 
+**웹 페이지처럼 터미널 UI를 만드세요** — flexbox 레이아웃, Tailwind 스타일 체이닝, hooks, 클릭/hover/스크롤을 Rust 클로저 하나로.
+
 **빠르게 작성하고. 가벼운 의존성 트리**(직접 필수 의존성 4개, 기본 기능 기준 26개 resolved — ratatui + crossterm은 69개).
 
 [![Crate Badge]][Crate]
@@ -17,29 +19,13 @@
 
 </div>
 
+> 이 문서는 v0.25.0 기준 [영문 README](../README.md)를 요약 번역한 것입니다. 내용이 다르면 영문 README가 기준입니다.
+
 SuperLightTUI는 Rust를 위한 immediate-mode TUI 라이브러리로, public grammar를 의도적으로 작게 유지합니다.
 클로저 하나를 쓰면 SLT가 매 프레임 그 클로저를 호출하고, 라이브러리가 레이아웃, 포커스, diff, 렌더링을 처리합니다.
 
 빠른 제품 반복, 읽기 쉬운 Rust 문법, 그리고 진지한 백엔드 규율을 함께 가져가도록 설계했습니다.
 그래서 도구를 빠르게 시제품화하는 사람에게도, 문서로 UI를 생성하는 코딩 에이전트에게도 자연스럽게 맞습니다.
-
-## 쇼케이스
-
-<table>
-  <tr>
-    <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 마우스 커서 주변으로 텍스트가 실시간 재배치됩니다<br/><sub><code>cargo run --example text_tour</code></sub></td>
-  </tr>
-</table>
 
 ## 빠른 시작
 
@@ -55,7 +41,47 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5줄이면 시작됩니다. `App` 트레이트도, `Model`/`Update`/`View`도, 수동 이벤트 루프도 필요 없습니다. Ctrl+C도 바로 동작합니다.
+5줄이면 시작됩니다. `App` 트레이트도, `Model`/`Update`/`View`도, 수동 이벤트 루프도 필요 없습니다.
+Ctrl+C를 누르면 기본적으로 루프가 깔끔하게 종료됩니다(`RunConfig::handle_ctrl_c(false)`로 끌 수 있습니다).
+
+마우스 캡처는 **opt-in**입니다. 기본 `slt::run`은 키보드로 동작합니다. Tab/Shift+Tab으로 포커스를 옮기고,
+Enter/Space로 포커스된 버튼을 누릅니다. 클릭, hover, 휠 스크롤, 드래그가 필요하면
+`RunConfig::default().mouse(true)`로 루프를 시작하세요.
+
+```rust
+use slt::{Context, RunConfig};
+
+fn main() -> std::io::Result<()> {
+    let mut clicks = 0;
+
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+        ui.text(format!("clicked {clicks} times")).bold();
+        if ui.button("Click me").clicked {
+            clicks += 1;
+        }
+    })
+}
+```
+
+MSRV: Rust 1.88. 기본 feature는 `crossterm` 백엔드와 `bidi`입니다.
+
+## 쇼케이스
+
+<table>
+  <tr>
+    <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — 마우스 커서 주변으로 텍스트가 실시간 재배치됩니다<br/><sub><code>cargo run --example text_tour</code></sub></td>
+  </tr>
+</table>
 
 ## 60초 문법
 
@@ -81,6 +107,7 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 이게 핵심 mental model입니다. 나머지는 별도의 프레임워크가 아니라 깊이와 확장입니다.
+`clicked`는 버튼에 포커스가 있을 때 Enter/Space로 켜지고, `RunConfig::default().mouse(true)`로 실행한 경우에는 마우스 클릭으로도 켜집니다.
 
 ## 실제 앱
 
@@ -114,11 +141,54 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+## 런타임 모드
+
+같은 클로저가 여러 진입점에서 동작합니다. 앱 크기가 아니라 UI 형태에 맞춰 고르세요.
+
+| 모드 | API | 용도 |
+|------|-----|------|
+| 풀스크린 | `slt::run` / `slt::run_with` | alternate screen을 쓰는 일반 TUI 앱. 마우스 캡처는 `run_with`에 `RunConfig::mouse(true)`를 넘겨야 켜집니다. |
+| Inline | `slt::run_inline` / `slt::run_inline_with` | 프롬프트 아래에 고정 높이 위젯을 그립니다. alternate screen 없음. |
+| Static + inline | `slt::run_static` | 로그 줄은 scrollback으로 흘려보내고, 그 아래 inline UI를 계속 유지합니다. |
+| Async 메시지 | `slt::run_async` *(feature: `async`)* | 백그라운드 작업이 wake-aware `AsyncSender`로 메시지를 보냅니다. 반환된 `AsyncRunHandle`을 보관해 join/cancel 하세요. |
+| 커스텀 백엔드 | `slt::frame` + `Backend` + `AppState` | 테스트, GUI 임베드, WASM, 스냅샷 하네스처럼 렌더링을 직접 구동할 때. |
+
+`RunConfig`로 마우스 캡처(기본값: 꺼짐), kitty keyboard, color depth, 최대 FPS, 스크롤 속도, 테마, 타이틀, Ctrl+C 처리를 모든 모드에서 조정합니다.
+
+## 포커스와 스크롤
+
+스크롤 컨테이너는 포커스, 캐럿, 레이아웃이 바뀌면 포커스된 위젯이 보이도록 스크롤합니다(중첩된 가로/세로 뷰와 모달 폼 포함).
+그 사이에 사용자가 직접 스크롤한 위치는 유지됩니다. 위치를 애플리케이션이 직접 제어하려면 `scroll.follow_focus = false`로 설정하세요. 컨테이너마다 `ScrollState`를 하나씩 두세요.
+
+필드/입력 상호작용 피드백이 필요하면 `ui.form_field_response(...)`를 쓰세요. 기존 `ui.form_field(...)` 호출은 그대로 동작합니다.
+`ui.focused_layout_rect()`와 `ui.measured_layout_rect(name)`은 스크롤·클리핑 전의 이전 프레임 geometry를 돌려주고, `Response.rect`는 화면에 보이는 마우스 hit 영역입니다.
+좌표와 타이밍 규칙은 [마이그레이션 가이드]를 참고하세요.
+
+## Feature Flags
+
+```toml
+[dependencies]
+superlighttui = { version = "0.25.0", features = ["async", "image"] }
+```
+
+| Feature | 추가되는 것 |
+|---------|-------------|
+| `async` | `tokio` + 백그라운드 메시지 루프용 `run_async` |
+| `bidi` | UAX #9 양방향 텍스트 재배열. 기본 활성화 |
+| `serde` | 일부 상태 타입의 `Serialize`/`Deserialize` |
+| `theme-watch` | TOML 테마 핫 리로드(`serde` + 파일 시스템 watcher) |
+| `image` | `ui.image`용 PNG/JPEG 디코딩 |
+| `qrcode` | QR 코드 렌더링 |
+| `kitty-compress` | Kitty 이미지 프로토콜용 zlib 압축 |
+| `syntax` | 번들된 모든 언어의 tree-sitter 하이라이팅 |
+| `syntax-<lang>` | 단일 언어 하이라이팅(`rust`, `python`, `typescript`, ...) |
+| `full` | `crossterm + async + serde + theme-watch + image + qrcode + kitty-compress + bidi`. `syntax`는 **포함하지 않습니다**(문법 파일이 무거우므로 명시적으로 opt-in). |
+
 ## 왜 SLT인가
 
 - **작은 public grammar**. 대부분의 화면은 일반 Rust 상태, `row()` / `col()` / `container()`, 메서드 체이닝, `Response`로 시작합니다.
 - **프레임워크 의식이 적습니다**. 움직이기 위해 앱 트레이트, retained tree, 메시지 enum을 먼저 만들 필요가 없는 경우가 많습니다.
-- **기본기는 풍부하지만 백엔드는 진지합니다**. 공용 위젯이 포커스, hover, 클릭, scroll을 기본으로 연결해 주고, 내부 런타임은 `Backend`, `AppState`, `frame()`으로 보수적인 low-level 경로를 유지합니다.
+- **기본기는 풍부하지만 백엔드는 진지합니다**. 공용 위젯이 포커스, hover, 클릭, scroll을 기본으로 연결해 주고(마우스 이벤트는 `RunConfig::mouse(true)` 설정 시), 내부 런타임은 `Backend`, `AppState`, `frame()`으로 보수적인 low-level 경로를 유지합니다.
 - **내부 구현도 보수적으로 다집니다**. shared frame kernel, explicit backend contract test, zero `unsafe`, feature-gated runtime path, `all-features`/`no-default-features`/WASM/clippy/examples/cargo-hack/semver/deny 검증으로 품질을 잠급니다.
 
 Rust 사용자에게는 retained-mode TUI보다 초기 설정이 덜한 경우가 많습니다.
@@ -152,7 +222,7 @@ graph LR
 - **의식 절차가 없습니다.** Immediate-mode이므로 `App` 트레이트, `Model`/`Message`/`Update`/`View`가 필요 없습니다. 클로저가 전체 UI이고, 상태는 일반 Rust 변수, 제어 흐름은 `if`/`for`입니다.
 - **레이아웃이 보이지 않습니다.** `ui.col(|ui| { ... })`는 "open column" 커맨드를 기록합니다. 엔진이 트리를 빌드하고 flexbox를 실행합니다 — `LayoutNode`는 노출되지 않습니다.
 - **성능이 자동입니다.** 더블 버퍼가 프레임 간 셀을 비교하고 변경된 ANSI 속성만 출력합니다. 매 프레임 전체를 다시 그리지만 엔진이 빠르게 처리합니다. 수동 dirty tracking이 필요 없습니다.
-- **상호작용이 자동 연결됩니다.** `ui.button("Save")`만으로 hover, click, focus가 제공됩니다. collect 단계가 7개의 독립된 서브 순회(hit area, focus rect, scroll region, group rect, content rect, focus group, raw-draw rect)를 하나의 DFS로 통합했습니다 — 그 결과 최상위 파이프라인은 10회가 아닌 4회 순회입니다.
+- **상호작용이 자동 연결됩니다.** `ui.button("Save")`만으로 키보드 포커스와 Enter/Space 활성화가 제공되고, `RunConfig::mouse(true)`를 켜면 hover와 click도 보고됩니다. hit-testing 코드를 직접 작성할 필요가 없습니다.
 - **동기적 피드백.** 상호작용은 이전 프레임의 레이아웃 위치를 사용합니다(60 FPS에서 감지 불가). 콜백도 async 레이아웃 쿼리도 없이 코드가 선형으로 유지됩니다.
 
 전체 8단계 라이프사이클은 [아키텍처 가이드]를 참고하세요.
@@ -217,6 +287,15 @@ ui.canvas(40, 10, |cv| {
 | [애니메이션 가이드] | Tween, spring, keyframe, sequence, stagger |
 | [테마 가이드] | Theme struct, preset, ThemeBuilder, 커스텀 테마 |
 | [설계 원칙] | API 제약과 설계 철학 |
+| [상태 API 가이드] | 위젯 상태의 public 필드, accessor, 변경 메서드 |
+| [마이그레이션 가이드] | 버전별 breaking change와 업그레이드 경로 |
+| [쿡북] | 자주 만드는 앱 레시피. 각 레시피는 실행 가능한 예제로도 제공 |
+| [웹 개발자 가이드] | 웹에서 오셨다면: CSS/React → SLT 대응표 |
+| [상호작용 가이드] | 마우스, 클릭, hover, 드래그, 휠, 펼치기/접기, hit-testing |
+| [포지셔닝 가이드] | `Anchor`와 오버레이 API를 CSS/Flutter/React Native 개념에 대응 |
+| [이전 프레임 가이드] | 상호작용이 이전 프레임 레이아웃을 쓰는 이유, `Response.rect`가 0인 경우, 첫 프레임 정확성 |
+| [터미널 호환성] | 터미널/멀티플렉서/SSH 지원 표, 환경 변수, fallback |
+| [API 설계] | 새 위젯을 위한 다섯 가지 일관성 규칙과 PR 리뷰 체크리스트 |
 
 ## 대표 예제
 
@@ -225,15 +304,25 @@ ui.canvas(40, 10, |cv| {
 | `hello` | `cargo run --example hello` | 가장 작은 앱 |
 | `counter` | `cargo run --example counter` | 상태 + 키보드 입력 |
 | `demo` | `cargo run --example demo` | 폭넓은 위젯 투어 |
-| `demo_dashboard` | `cargo run --example showcase_tour` | 대시보드 레이아웃 |
-| `demo_cli` | `cargo run --example showcase_tour` | CLI 도구 레이아웃 |
-| `demo_infoviz` | `cargo run --example showcase_tour` | 차트와 데이터 시각화 |
-| `demo_game` | `cargo run --example showcase_tour` | immediate-mode 상호작용 |
-| `demo_design_system` | `cargo run --example showcase_tour` | 디자인 토큰, 테마, 스타일 상속 |
-| `inline` | `cargo run --example system_tour` | 일반 프롬프트 아래 inline 렌더링 |
-| `async_demo` | `cargo run --example system_tour --features async` | 백그라운드 메시지 |
+| `showcase_tour` | `cargo run --example showcase_tour` | 대시보드, 디자인 시스템, infoviz, 트레이딩, 스프레드시트, 테이블, 웹사이트 레이아웃 |
+| `cookbook_tour` | `cargo run --example cookbook_tour` | 폼, 테이블, 모달, 파일 선택기, 대시보드 레시피 |
+| `text_tour` | `cargo run --example text_tour` | CJK 렌더링, IME 입력, Pretext reflow, cargo 스타일 CLI |
+| `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire, 게임(tetris/snake/minesweeper), raw draw, Kitty 이미지, 애니메이션 |
+| `system_tour` | `cargo run --example system_tour --features async` | error boundary와 overlay anchor 라이브 탭. async/inline 모드는 코드로 설명 |
+| `v020_tour` | `cargo run --example v020_tour` | v0.20 API 투어(static output `run_static` 포함) |
+| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 API 추가분 |
 
-전체 분류 인덱스는 [예제 가이드]에 있습니다.
+릴리즈별 feature 투어와 쇼케이스 데모를 포함한 전체 분류 인덱스는 [예제 가이드]에 있습니다.
+
+### 데모 런처
+
+`scripts/ghostty_demos.sh`는 데모를 새 Ghostty 창에 띄워 줍니다. 여러 데모를 나란히 훑어볼 때 편합니다.
+
+```bash
+./scripts/ghostty_demos.sh             # 대화형 선택
+./scripts/ghostty_demos.sh --features  # 전체 feature 투어
+./scripts/ghostty_demos.sh --showcase  # 통합 쇼케이스만
+```
 
 ## 커스텀 위젯과 백엔드
 
@@ -280,3 +369,12 @@ escape hatch가 필요해져도 public grammar는 작게 유지됩니다.
 [기능 가이드]: FEATURES.md
 [설계 원칙]: DESIGN_PRINCIPLES.md
 [기여하기]: ../CONTRIBUTING.md
+[상태 API 가이드]: STATE_APIS.md
+[마이그레이션 가이드]: MIGRATION.md
+[API 설계]: API_DESIGN.md
+[쿡북]: COOKBOOK.md
+[웹 개발자 가이드]: WEB_DEVELOPERS.md
+[상호작용 가이드]: INTERACTION.md
+[포지셔닝 가이드]: POSITIONING.md
+[이전 프레임 가이드]: PREVIOUS_FRAME_GUIDE.md
+[터미널 호환성]: TERMINAL_COMPATIBILITY.md

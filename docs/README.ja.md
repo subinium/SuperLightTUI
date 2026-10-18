@@ -2,6 +2,8 @@
 
 # SuperLightTUI
 
+**Web ページのようにターミナル UI を作る** — flexbox レイアウト、Tailwind 風のメソッドチェーン、hooks、クリック/ホバー/スクロールを Rust のクロージャ 1 つで。
+
 **書くのは速く。依存ツリーは軽量**（直接の必須依存は 4 つ、デフォルト機能で解決後 26 クレート。ratatui + crossterm は 69）。
 
 [![Crate Badge]][Crate]
@@ -17,29 +19,13 @@
 
 </div>
 
+> このページは v0.25.0 時点の [英語版 README](../README.md) の翻訳要約です。内容に差異がある場合は英語版 README が正となります。
+
 SuperLightTUI は、公開される文法を意図的に小さく保った Rust 向けの immediate-mode TUI ライブラリです。
 クロージャを 1 つ書けば、SLT が毎フレームそれを呼び出し、レイアウト、フォーカス、差分計算、レンダリングを処理します。
 
 高速なプロダクト反復、読みやすい Rust 構文、そして真面目なバックエンド規律を両立するために設計されています。
 そのため、ツールを素早く試作する人にも、ドキュメントから UI を生成するコーディングエージェントにも自然に合います。
-
-## ショーケース
-
-<table>
-  <tr>
-    <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
-    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
-    <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --release --example demo_fire</code></sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — マウスカーソルの周りでテキストがリアルタイムに再配置されます<br/><sub><code>cargo run --example text_tour</code></sub></td>
-  </tr>
-</table>
 
 ## クイックスタート
 
@@ -55,7 +41,47 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-5 行で始められます。`App` トレイトも、`Model`/`Update`/`View` も、手書きのイベントループも不要です。Ctrl+C もそのまま動作します。
+5 行で始められます。`App` トレイトも、`Model`/`Update`/`View` も、手書きのイベントループも不要です。
+Ctrl+C はデフォルトでループをきれいに終了します（`RunConfig::handle_ctrl_c(false)` で無効化できます）。
+
+マウスキャプチャは **オプトイン** です。素の `slt::run` はキーボード操作で動きます。Tab/Shift+Tab でフォーカスを移動し、
+Enter/Space でフォーカス中のボタンを押します。クリック、ホバー、ホイールスクロール、ドラッグが必要なら、
+`RunConfig::default().mouse(true)` でループを開始してください。
+
+```rust
+use slt::{Context, RunConfig};
+
+fn main() -> std::io::Result<()> {
+    let mut clicks = 0;
+
+    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+        ui.text(format!("clicked {clicks} times")).bold();
+        if ui.button("Click me").clicked {
+            clicks += 1;
+        }
+    })
+}
+```
+
+MSRV: Rust 1.88。デフォルト feature は `crossterm` バックエンドと `bidi` です。
+
+## ショーケース
+
+<table>
+  <tr>
+    <td align="center"><img src="../assets/demo.png" alt="Widget Demo" /><br/><b>Widget Demo</b><br/><sub><code>cargo run --example demo</code></sub></td>
+    <td align="center"><img src="../assets/demo_dashboard.png" alt="Dashboard" /><br/><b>Dashboard</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_website.png" alt="Website" /><br/><b>Website Layout</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="../assets/demo_spreadsheet.png" alt="Spreadsheet" /><br/><b>Spreadsheet</b><br/><sub><code>cargo run --example showcase_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_game.gif" alt="Games" /><br/><b>Games</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+    <td align="center"><img src="../assets/demo_fire.gif" alt="DOOM Fire" /><br/><b>DOOM Fire Effect</b><br/><sub><code>cargo run --example canvas_tour</code></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="../assets/demo_pretext.gif" alt="Pretext Reflow" /><br/><b><a href="https://github.com/chenglou/pretext">Pretext</a> Reflow</b> — マウスカーソルの周りでテキストがリアルタイムに再配置されます<br/><sub><code>cargo run --example text_tour</code></sub></td>
+  </tr>
+</table>
 
 ## 60 秒でわかる文法
 
@@ -81,6 +107,7 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 これが中核となる mental model です。残りは別フレームワークではなく、深さと拡張です。
+`clicked` はボタンにフォーカスがあるときの Enter/Space で立ち、`RunConfig::default().mouse(true)` で起動した場合はマウスクリックでも立ちます。
 
 ## 実際のアプリ
 
@@ -114,11 +141,54 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+## ランタイムモード
+
+同じクロージャが複数のエントリポイントで動きます。アプリの規模ではなく UI の形で選んでください。
+
+| モード | API | 用途 |
+|--------|-----|------|
+| フルスクリーン | `slt::run` / `slt::run_with` | alternate screen を使う標準的な TUI アプリ。マウスキャプチャは `run_with` に `RunConfig::mouse(true)` を渡したときだけ有効です。 |
+| Inline | `slt::run_inline` / `slt::run_inline_with` | プロンプトの下に固定高さのウィジェットを描画。alternate screen なし。 |
+| Static + inline | `slt::run_static` | ログ行を scrollback に流しつつ、その下で inline UI を動かし続けます。 |
+| 非同期メッセージ | `slt::run_async` *(feature: `async`)* | バックグラウンドタスクが wake-aware な `AsyncSender` でメッセージを送ります。返される `AsyncRunHandle` を保持して join/cancel します。 |
+| カスタムバックエンド | `slt::frame` + `Backend` + `AppState` | テスト、GUI への埋め込み、WASM、スナップショットハーネスなど、描画を自分で駆動する場合。 |
+
+`RunConfig` で、マウスキャプチャ（デフォルト: オフ）、kitty keyboard、color depth、最大 FPS、スクロール速度、テーマ、タイトル、Ctrl+C の扱いをすべてのモードで調整できます。
+
+## フォーカスとスクロール
+
+スクロールコンテナは、フォーカス、キャレット、レイアウトが変わるとフォーカス中のウィジェットが見えるようにスクロールします（入れ子の横/縦ビューやモーダルフォームも含む）。
+その間に手動でスクロールした位置は保持されます。位置をアプリ側で制御したい場合は `scroll.follow_focus = false` を設定してください。コンテナごとに `ScrollState` を 1 つ持たせてください。
+
+フィールドや入力のインタラクション結果が欲しい場合は `ui.form_field_response(...)` を使います。既存の `ui.form_field(...)` 呼び出しはそのまま動きます。
+`ui.focused_layout_rect()` と `ui.measured_layout_rect(name)` はスクロール・クリッピング前の前フレームのジオメトリを返し、`Response.rect` は画面上に見えているマウスのヒット領域です。
+座標とタイミングのルールは [マイグレーションガイド] を参照してください。
+
+## Feature Flags
+
+```toml
+[dependencies]
+superlighttui = { version = "0.25.0", features = ["async", "image"] }
+```
+
+| Feature | 追加されるもの |
+|---------|----------------|
+| `async` | `tokio` + バックグラウンドのメッセージループ用 `run_async` |
+| `bidi` | UAX #9 の双方向テキスト並べ替え。デフォルトで有効 |
+| `serde` | 一部の状態型への `Serialize`/`Deserialize` |
+| `theme-watch` | TOML テーマのホットリロード（`serde` + ファイルシステム watcher） |
+| `image` | `ui.image` 用の PNG/JPEG デコード |
+| `qrcode` | QR コード描画 |
+| `kitty-compress` | Kitty 画像プロトコルの zlib 圧縮 |
+| `syntax` | 同梱の全言語に対する tree-sitter ハイライト |
+| `syntax-<lang>` | 単一言語のハイライト（`rust`、`python`、`typescript` など） |
+| `full` | `crossterm + async + serde + theme-watch + image + qrcode + kitty-compress + bidi`。`syntax` は **含みません**（文法が重いため明示的にオプトイン）。 |
+
 ## なぜ SLT か
 
 - **公開文法が小さい**。多くの画面は普通の Rust の状態、`row()` / `col()` / `container()`、メソッドチェーン、`Response` で始められます。
 - **フレームワークの儀式が少ない**。動き始めるために app trait、retained tree、message enum を先に用意しなくてよいケースが多いです。
-- **部品は充実していて、バックエンドは真面目**。共通ウィジェットが focus、hover、click、scroll を自動で結び付け、内部ランタイムは `Backend`、`AppState`、`frame()` を通して保守的な低レベル経路を維持します。
+- **部品は充実していて、バックエンドは真面目**。共通ウィジェットが focus、hover、click、scroll を自動で結び付け（マウスイベントは `RunConfig::mouse(true)` 設定時）、内部ランタイムは `Backend`、`AppState`、`frame()` を通して保守的な低レベル経路を維持します。
 - **内部実装も保守的に固めています**。shared frame kernel、明示的な backend contract test、zero `unsafe`、feature-gated runtime path、`all-features`/`no-default-features`/WASM/clippy/examples/cargo-hack/semver/deny の検証で品質を固定しています。
 
 Rust ユーザーにとっては、retained-mode の TUI フレームワークより初期設定が少なくて済むことが多いです。
@@ -152,7 +222,7 @@ graph LR
 - **儀式がありません。** Immediate-mode なので `App` トレイト、`Model`/`Message`/`Update`/`View` は不要です。クロージャが UI そのもの。状態は普通の Rust 変数、制御フローは `if`/`for` です。
 - **レイアウトが見えません。** `ui.col(|ui| { ... })` は「カラムを開く」コマンドを記録します。エンジンがツリーを構築し flexbox を実行 — `LayoutNode` は露出しません。
 - **パフォーマンスが自動です。** ダブルバッファがフレーム間でセルを比較し、変更された ANSI 属性だけを出力します。毎フレーム全体を再描画しても、エンジンが高速に処理します。手動の dirty tracking は不要です。
-- **インタラクションが自動接続されます。** `ui.button("Save")` だけで hover、click、focus が無料で得られます。collect ステージは 7 つの独立したサブ走査（ヒット領域、focus rect、スクロール領域、group rect、content rect、focus group、raw-draw rect）を 1 回の DFS に統合しました — そのため最上位パイプラインは 4 パスであり、10 パスではありません。
+- **インタラクションが自動接続されます。** `ui.button("Save")` だけでキーボードフォーカスと Enter/Space による起動が得られ、`RunConfig::mouse(true)` を有効にすれば hover と click も報告されます。ヒットテストのコードを書く必要はありません。
 - **同期的フィードバック。** インタラクションは前フレームのレイアウト位置を使います（60 FPS では知覚不可能）。コールバックも async レイアウトクエリも不要 — コードはリニアなままです。
 
 完全な 8 ステージのライフサイクルは [アーキテクチャ] を参照してください。
@@ -217,6 +287,15 @@ ui.canvas(40, 10, |cv| {
 | [アニメーションガイド] | Tween、spring、keyframe、sequence、stagger |
 | [テーマガイド] | Theme struct、preset、ThemeBuilder、カスタムテーマ |
 | [設計原則] | API の制約と設計哲学 |
+| [状態 API ガイド] | ウィジェット状態の公開フィールド、アクセサ、変更メソッド |
+| [マイグレーションガイド] | バージョンごとの破壊的変更とアップグレード手順 |
+| [クックブック] | よくあるアプリのレシピ集。各レシピは実行可能なサンプルとしても提供 |
+| [Web 開発者向けガイド] | Web から来た人向け: CSS/React → SLT の対応表 |
+| [インタラクションガイド] | マウス、クリック、ホバー、ドラッグ、ホイール、展開/折りたたみ、ヒットテスト |
+| [ポジショニングガイド] | `Anchor` とオーバーレイ API を CSS/Flutter/React Native の概念に対応付け |
+| [前フレームガイド] | インタラクションが前フレームのレイアウトを使う理由、`Response.rect` が 0 になる場合、1 フレーム目の正しさ |
+| [ターミナル互換性] | ターミナル/マルチプレクサ/SSH の対応表、環境変数、フォールバック |
+| [API 設計] | 新しいウィジェットのための 5 つの一貫性ルールと PR レビューチェックリスト |
 
 ## 代表的なサンプル
 
@@ -225,15 +304,25 @@ ui.canvas(40, 10, |cv| {
 | `hello` | `cargo run --example hello` | 最小のアプリ |
 | `counter` | `cargo run --example counter` | 状態 + キーボード入力 |
 | `demo` | `cargo run --example demo` | 幅広いウィジェットツアー |
-| `demo_dashboard` | `cargo run --example showcase_tour` | ダッシュボードレイアウト |
-| `demo_cli` | `cargo run --example showcase_tour` | CLI ツールのレイアウト |
-| `demo_infoviz` | `cargo run --example showcase_tour` | チャートとデータ可視化 |
-| `demo_game` | `cargo run --example showcase_tour` | immediate-mode のインタラクション |
-| `demo_design_system` | `cargo run --example showcase_tour` | デザイントークン、テーマ、スタイル継承 |
-| `inline` | `cargo run --example system_tour` | 通常のプロンプトの下に inline 描画 |
-| `async_demo` | `cargo run --example system_tour --features async` | バックグラウンドメッセージ |
+| `showcase_tour` | `cargo run --example showcase_tour` | ダッシュボード、デザインシステム、infoviz、トレーディング、スプレッドシート、テーブル、Web サイト風レイアウト |
+| `cookbook_tour` | `cargo run --example cookbook_tour` | フォーム、テーブル、モーダル、ファイルピッカー、ダッシュボードのレシピ |
+| `text_tour` | `cargo run --example text_tour` | CJK 描画、IME 入力、Pretext リフロー、cargo 風 CLI |
+| `canvas_tour` | `cargo run --example canvas_tour` | DOOM fire、ゲーム（tetris/snake/minesweeper）、raw draw、Kitty 画像、アニメーション |
+| `system_tour` | `cargo run --example system_tour --features async` | error boundary と overlay anchor のライブタブ。async/inline モードはコードで解説 |
+| `v020_tour` | `cargo run --example v020_tour` | v0.20 API ツアー（static output の `run_static` を含む） |
+| `v0211_tour` | `cargo run --example v0211_tour` | v0.21.1 の API 追加分 |
 
-分類済みの完全な一覧は [サンプル集] にあります。
+リリースごとの feature ツアーやショーケースを含む分類済みの完全な一覧は [サンプル集] にあります。
+
+### デモランチャー
+
+`scripts/ghostty_demos.sh` はデモを新しい Ghostty ウィンドウで開きます。複数のデモを並べて眺めるのに便利です。
+
+```bash
+./scripts/ghostty_demos.sh             # 対話的に選択
+./scripts/ghostty_demos.sh --features  # feature ツアー一式
+./scripts/ghostty_demos.sh --showcase  # 統合ショーケースのみ
+```
 
 ## カスタムウィジェットとバックエンド
 
@@ -280,3 +369,12 @@ escape hatch が必要になっても、公開文法は小さいままです。
 [設計原則]: DESIGN_PRINCIPLES.md
 [コントリビュート]: ../CONTRIBUTING.md
 [License]: ../LICENSE
+[状態 API ガイド]: STATE_APIS.md
+[マイグレーションガイド]: MIGRATION.md
+[API 設計]: API_DESIGN.md
+[クックブック]: COOKBOOK.md
+[Web 開発者向けガイド]: WEB_DEVELOPERS.md
+[インタラクションガイド]: INTERACTION.md
+[ポジショニングガイド]: POSITIONING.md
+[前フレームガイド]: PREVIOUS_FRAME_GUIDE.md
+[ターミナル互換性]: TERMINAL_COMPATIBILITY.md
