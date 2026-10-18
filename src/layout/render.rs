@@ -676,7 +676,7 @@ fn set_string_clipped_x(
         }
         return x;
     }
-    let full_width = UnicodeWidthStr::width(text) as i64;
+    let full_width = crate::cell::display_width(text) as i64;
     let left = i64::from(buf.area.x);
     if screen_x >= left {
         let sx = screen_x as u32;
@@ -947,7 +947,7 @@ fn render_inner(
                         if line_y < 0 {
                             continue;
                         }
-                        let text_width = UnicodeWidthStr::width(line.as_str()) as u32;
+                        let text_width = crate::cell::display_width(line) as u32;
                         let x_align = if text_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,
@@ -970,10 +970,10 @@ fn render_inner(
                     if sy < 0 {
                         return;
                     }
-                    let text_width = UnicodeWidthStr::width(text.as_str()) as u32;
+                    let text_width = crate::cell::display_width(text) as u32;
                     if node.truncate && text_width > node.size.0 && node.size.0 > 1 {
                         let truncated = truncate_with_ellipsis(text, node.size.0 as usize);
-                        let trunc_width = UnicodeWidthStr::width(truncated.as_str()) as u32;
+                        let trunc_width = crate::cell::display_width(&truncated) as u32;
                         let x_align = if trunc_width < node.size.0 {
                             match node.align {
                                 Align::Start => 0,

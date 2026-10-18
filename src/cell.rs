@@ -2,6 +2,7 @@
 
 use compact_str::CompactString;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::style::Style;
 
@@ -26,6 +27,68 @@ pub(crate) fn sanitize_cell_char(ch: char) -> char {
 #[inline]
 pub(crate) fn is_control_char(ch: char) -> bool {
     sanitize_cell_char(ch) != ch
+}
+
+/// Return whether `byte` is printable ASCII (`0x20..=0x7E`).
+#[inline]
+pub(crate) const fn is_printable_ascii_byte(byte: u8) -> bool {
+    byte >= 0x20 && byte < 0x7f
+}
+
+/// Return whether every byte of `s` is printable ASCII (`0x20..=0x7E`).
+///
+/// Printable ASCII is the fast path of the cell-write and width code: each
+/// byte is its own extended grapheme cluster (no ASCII code point is Extend,
+/// ZWJ, SpacingMark, Prepend or Control-like under UAX #29), has display
+/// width 1, is a strong-LTR or neutral bidi class, and needs no
+/// sanitization. Checks eight bytes per step (SWAR) without `unsafe`.
+#[inline]
+pub(crate) fn is_printable_ascii(s: &str) -> bool {
+    const ONES: u64 = u64::from_ne_bytes([0x01; 8]);
+    const HIGHS: u64 = u64::from_ne_bytes([0x80; 8]);
+
+    let (words, remainder) = s.as_bytes().as_chunks::<8>();
+    for word in words {
+        let x = u64::from_ne_bytes(*word);
+        // Any byte < 0x20: the classic "has less than" test. Any byte > 0x7E
+        // (DEL or non-ASCII): adding 1 sets its high bit, or it already had
+        // one. Carries can only add false positives next to a true positive,
+        // which is fine for an "any byte" test.
+        let below = x.wrapping_sub(ONES.wrapping_mul(0x20)) & !x & HIGHS;
+        let above = (x.wrapping_add(ONES) | x) & HIGHS;
+        if below | above != 0 {
+            return false;
+        }
+    }
+    remainder.iter().all(|&byte| is_printable_ascii_byte(byte))
+}
+
+/// Display width of `s` in terminal columns.
+///
+/// Equal to [`UnicodeWidthStr::width`] for every input, with an O(len)
+/// byte-check fast path for printable ASCII.
+#[inline]
+pub(crate) fn display_width(s: &str) -> usize {
+    if is_printable_ascii(s) {
+        s.len()
+    } else {
+        UnicodeWidthStr::width(s)
+    }
+}
+
+/// Display width of a single-scalar symbol, as [`UnicodeWidthStr::width`]
+/// would measure the one-char string.
+///
+/// `UnicodeWidthChar` reports `None` for C0/DEL/C1 controls, which the
+/// string measure counts as width 1; every other scalar agrees (verified
+/// exhaustively in the tests).
+#[inline]
+#[allow(dead_code)] // Adopted by the cell-write fast path (#484).
+pub(crate) fn char_display_width(ch: char) -> usize {
+    if ch.is_ascii() {
+        return 1;
+    }
+    UnicodeWidthChar::width(ch).unwrap_or(1)
 }
 
 /// Normalize an arbitrary string into one bounded, terminal-safe grapheme.
@@ -243,6 +306,70 @@ mod tests {
             let once = normalize_cell_symbol(&s);
             prop_assert_eq!(normalize_cell_symbol(&once), once);
         }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+
+        #[test]
+        fn display_width_matches_unicode_width(s in test_strategies::cell_text()) {
+            prop_assert_eq!(display_width(&s), UnicodeWidthStr::width(s.as_str()));
+        }
+
+        #[test]
+        fn display_width_matches_unicode_width_for_arbitrary_text(s in ".{0,40}") {
+            prop_assert_eq!(display_width(&s), UnicodeWidthStr::width(s.as_str()));
+        }
+
+        #[test]
+        fn printable_ascii_check_matches_bytewise_reference(
+            bytes in prop::collection::vec(0u8..=0x7f, 0..40),
+            tail in ".{0,3}",
+        ) {
+            let mut s = String::from_utf8(bytes).expect("ASCII is UTF-8");
+            s.push_str(&tail);
+            let reference = s.bytes().all(|b| (0x20..=0x7e).contains(&b));
+            prop_assert_eq!(is_printable_ascii(&s), reference);
+        }
+    }
+
+    #[test]
+    fn printable_ascii_check_rejects_every_non_printable_byte_in_every_lane() {
+        for len in 1..=17usize {
+            assert!(is_printable_ascii(&"~".repeat(len)));
+            for position in 0..len {
+                for byte in (0u8..0x20).chain([0x7f]) {
+                    let mut bytes = vec![b' '; len];
+                    bytes[position] = byte;
+                    let s = String::from_utf8(bytes).expect("ASCII");
+                    assert!(!is_printable_ascii(&s), "{len} {position} {byte:#x}");
+                }
+                let mut s = " ".repeat(position);
+                s.push('é');
+                s.push_str(&" ".repeat(len - position));
+                assert!(!is_printable_ascii(&s), "non-ASCII at {position}");
+            }
+        }
+        assert!(is_printable_ascii(""));
+    }
+
+    #[test]
+    fn char_display_width_matches_string_width_for_every_scalar() {
+        let mut encoded = [0u8; 4];
+        let mut mismatches = Vec::new();
+        for ch in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+            let s = ch.encode_utf8(&mut encoded);
+            let expected = UnicodeWidthStr::width(&*s);
+            if char_display_width(ch) != expected || display_width(s) != expected {
+                mismatches.push((u32::from(ch), char_display_width(ch), expected));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} mismatches (scalar, char path, str width): {:x?}",
+            mismatches.len(),
+            &mismatches[..mismatches.len().min(64)]
+        );
     }
 
     #[test]

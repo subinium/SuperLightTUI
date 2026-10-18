@@ -255,7 +255,7 @@ impl LayoutNode {
         constraints: Constraints,
     ) -> Self {
         let (cursor_offset, wrap, truncate) = text_meta;
-        let width = UnicodeWidthStr::width(content.as_str()) as u32;
+        let width = crate::cell::display_width(&content) as u32;
         Self {
             kind: NodeKind::Text,
             text_data: Some(Box::new(TextNodeData {
@@ -312,9 +312,8 @@ impl LayoutNode {
         constraints: Constraints,
     ) -> Self {
         let width = segments.iter().fold(0u32, |total, (text, _)| {
-            total.saturating_add(
-                u32::try_from(UnicodeWidthStr::width(text.as_str())).unwrap_or(u32::MAX),
-            )
+            total
+                .saturating_add(u32::try_from(crate::cell::display_width(text)).unwrap_or(u32::MAX))
         });
         Self {
             kind: NodeKind::Text,
