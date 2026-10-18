@@ -18,6 +18,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 | `syntax-rust` / `syntax-python` / `syntax-javascript` / `syntax-typescript` / `syntax-go` / `syntax-bash` / `syntax-json` / `syntax-toml` / `syntax-c` / `syntax-cpp` / `syntax-java` / `syntax-ruby` / `syntax-css` / `syntax-html` / `syntax-yaml` | no | Per-language tree-sitter grammars | `ui.code_block(code, "rust")` etc. |
 | `syntax` | no | All `syntax-*` combined | every language above |
 | `kitty-compress` | no | zlib-compressed kitty protocol | larger images, smaller payloads |
+| `ratatui` | no | ratatui widget bridge (`ratatui-core` 0.1, no backend) | `ContainerBuilder::ratatui` / `ratatui_widget`, `From` conversions for `Color` / `Modifiers` / `Style`; not in `full` |
 | `full` | no | crossterm+async+serde+theme-watch+image+qrcode+kitty-compress+bidi | development / demos only; excludes syntax grammars |
 
 ## Runtime defaults that change behavior
@@ -144,7 +145,7 @@ These docs are maintained for the current release, but source and compile-tested
 
 **Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
-## Examples (`examples/` — 63 Rust files, 29 Cargo-listed targets)
+## Examples (`examples/` — 64 Rust files, 30 Cargo-listed targets)
 
 The skill's `SKILL.md` lists the canonical reference example for each domain. Highlights:
 - **Feature demos**: `widgets_tour.rs` (target `widgets_tour`, tabbed over every single-feature demo such as `gauge.rs`, `modal_trap.rs`, `named_focus.rs`), `dx_shortcuts.rs` (on_hover/animate_bool/fill), `feature_showcase.rs` (target `feature_showcase`, the same features on one screen).

@@ -105,6 +105,10 @@ tree-sitter-ruby = { version = "0.23", optional = true }
 tree-sitter-css = { version = "0.25", optional = true }
 tree-sitter-html = { version = "0.23", optional = true }
 tree-sitter-yaml = { version = "0.7", optional = true }
+# Render-only ratatui widget bridge (issue #470). `ratatui-core` carries the
+# `Widget` trait and `Buffer`/`Rect`/`Style` types without any backend, so no
+# second crossterm is pulled. Pinned to the ratatui 0.30 line (core 0.1.x).
+ratatui-core = { version = "0.1.2", optional = true, default-features = false, features = ["underline-color"] }
 
 # Unix job-control suspend/resume (Ctrl+Z / `fg`). Safe API only — used to
 # restore the terminal before SIGTSTP stops the process and re-enter it on
@@ -126,6 +130,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 insta = "1"
 proptest = "1"
 serde_json = "1"
+# Stock ratatui widgets (`Paragraph`, `Block`, …) for the `ratatui` bridge
+# tests and `examples/ratatui_bridge.rs`. Dev-only: never in the normal tree.
+ratatui-widgets = { version = "0.3.2", default-features = false }
 
 [features]
 crossterm = ["dep:crossterm", "dep:signal-hook", "dep:rustix", "dep:mio"]
@@ -178,6 +185,10 @@ kitty-compress = ["dep:flate2"]
 # end-to-end escape-code / image-protocol assertions. Off by default; pulls
 # `crossterm` for the SGR/queue! emitters. Not part of `full`.
 pty-test = ["crossterm"]
+# Render ratatui-core `Widget`s inside SLT containers (issue #470). Opt-in and
+# deliberately NOT part of `full`, so default/full dependency trees stay
+# unchanged.
+ratatui = ["dep:ratatui-core"]
 full = ["crossterm", "async", "serde", "theme-watch", "image", "qrcode", "kitty-compress", "bidi"]
 
 [package.metadata.docs.rs]
@@ -287,6 +298,11 @@ path = "examples/demo_kitty_image.rs"
 [[example]]
 name = "demo_raw_draw"
 path = "examples/demo_raw_draw.rs"
+
+[[example]]
+name = "ratatui_bridge"
+path = "examples/ratatui_bridge.rs"
+required-features = ["ratatui"]
 
 # ── Standalone — performance measurement
 
