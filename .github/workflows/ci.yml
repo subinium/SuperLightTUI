@@ -31,6 +31,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo generate-lockfile
       - run: cargo check -p superlighttui --features async,serde
+      # Every optional dependency (incl. all `syntax-*` tree-sitter crates)
+      # must build on the declared MSRV; tree-sitter-highlight is pinned to
+      # 0.26 because 0.27 requires Rust 1.90 (#475).
+      - run: cargo check -p superlighttui --all-features
       - run: cargo clippy -p superlighttui --all-features -- -D warnings
 
   test:

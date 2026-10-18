@@ -425,7 +425,7 @@ impl KeyModifiers {
 /// `pixel_x` and `pixel_y` are reserved for future sub-cell precision
 /// (e.g. Kitty pixel mouse protocol, WASM backend); they are currently
 /// always `None` with the crossterm backend, since SGR 1006 only reports
-/// cell coordinates and crossterm 0.28 has no pixel mouse fields.
+/// cell coordinates and crossterm 0.29 has no pixel mouse fields.
 /// Mouse events are only produced when `mouse: true` is set in
 /// [`crate::RunConfig`].
 #[non_exhaustive]

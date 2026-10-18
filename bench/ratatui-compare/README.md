@@ -5,8 +5,8 @@ deterministic allocation, output-byte and text-equivalence regression test.
 
 Not published (`publish = false`). The crate is excluded from the main
 workspace (`workspace.exclude` in the root `Cargo.toml`) and has its own
-`Cargo.lock`, so ratatui's dependency tree (crossterm 0.29, rustix 1.x
-alongside 0.38, lru 0.18, ...) never reaches `cargo audit`, `cargo deny check`
+`Cargo.lock`, so ratatui's dependency tree (crossterm 0.29, compact_str 0.9,
+lru 0.18, ...) never reaches `cargo audit`, `cargo deny check`
 or `cargo hack` runs on `superlighttui`. ratatui is pinned to `=0.30.2`;
 bump it deliberately and re-record the baseline below.
 

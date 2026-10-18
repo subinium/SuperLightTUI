@@ -302,7 +302,7 @@ pub(super) fn apply_style_delta(
     if added.contains(Modifiers::OVERLINE) {
         queue!(w, SetAttribute(Attribute::OverLined))?;
     }
-    // Underline style and color use raw escapes: crossterm 0.28 cannot
+    // Underline style and color use raw escapes: crossterm 0.29 cannot
     // express the `CSI 4:Nm` subparameters or the `SGR 58`/`59` underline
     // color reliably (its discriminants collide on these terminals).
     if new.modifiers.contains(Modifiers::UNDERLINE)

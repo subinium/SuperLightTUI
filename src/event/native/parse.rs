@@ -1,4 +1,6 @@
-//! Adapted from Crossterm 0.28.1 `src/event/sys/unix/parse.rs`.
+//! Adapted from Crossterm 0.28.1 `src/event/sys/unix/parse.rs`; the upstream
+//! decoder is behaviourally unchanged in 0.29.0 (only assertion literals moved
+//! to byte strings), so no re-sync was needed for the 0.29 upgrade.
 //! Copyright (c) 2019 Timon. MIT license: `LICENSE.crossterm` at the crate root.
 //! Public event types remain Crossterm types. SLT adaptations: raw-mode access,
 //! unconditional bracketed paste, and checked one-based coordinate conversion.

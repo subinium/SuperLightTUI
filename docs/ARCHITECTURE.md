@@ -319,7 +319,7 @@ src/
 ├── event/
 │   ├── reply.rs                # Terminal query replies; preserves input consumed during probes (`crossterm`)
 │   ├── native.rs               # Owned nonblocking Unix input reader (`crossterm`, unix)
-│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1
+│   ├── native/parse.rs         # Escape-sequence parser adapted from Crossterm 0.28.1 (unchanged in 0.29)
 │   └── native/lifecycle_tests.rs, reply/review_tests.rs  # Input tests
 ├── halfblock.rs                # Half-block (▀▄) image rendering
 ├── keymap.rs                   # KeyMap, Binding structs

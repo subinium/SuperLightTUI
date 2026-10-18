@@ -136,7 +136,8 @@ Pending calls invalidated by session teardown return `Interrupted` rather than
 reporting an event that a subsequent read cannot retrieve.
 
 Cursor-position replies use this same reader and preserve queued keyboard
-events. Key decoding reuses Crossterm 0.28.1's MIT-licensed parser and tests,
+events. Key decoding reuses Crossterm 0.28.1's MIT-licensed parser and tests
+(the upstream decoder is unchanged in 0.29.0),
 with checked coordinate conversion; attribution is in `LICENSE.crossterm`.
 Public Crossterm event types and SLT's conversion API retain their identity.
 This fixes the built-in SLT loops, not a caller's separate upstream Crossterm
