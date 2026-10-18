@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use super::*;
-
 #[derive(Debug, Clone)]
 pub(crate) struct TickSpec {
     pub(crate) values: Vec<f64>,

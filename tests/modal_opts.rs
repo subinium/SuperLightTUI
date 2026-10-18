@@ -4,13 +4,12 @@
 
 use slt::{Anchor, Border, Context, EventBuilder, KeyCode, ModalOpts, TestBackend};
 
+/// A modal entry point under test: draws `body` inside some modal variant.
+type ModalFn = dyn Fn(&mut Context, &mut dyn FnMut(&mut Context));
+
 /// Background buttons, then a modal with two buttons. Records which label
 /// reports `focused` each frame.
-fn scene(
-    ui: &mut Context,
-    modal: &dyn Fn(&mut Context, &mut dyn FnMut(&mut Context)),
-    log: &mut Vec<String>,
-) {
+fn scene(ui: &mut Context, modal: &ModalFn, log: &mut Vec<String>) {
     let mut focused = String::from("-");
     if ui.button("Back A").focused {
         focused = "Back A".into();
@@ -35,9 +34,7 @@ fn scene(
 /// Drive `modal` through Tab, Shift+Tab, a programmatic jump to a background
 /// slot, and more Tabs. Returns the focus log, the final focus index and the
 /// final buffer.
-fn drive(
-    modal: &dyn Fn(&mut Context, &mut dyn FnMut(&mut Context)),
-) -> (Vec<String>, usize, String) {
+fn drive(modal: &ModalFn) -> (Vec<String>, usize, String) {
     let mut tb = TestBackend::new(40, 12);
     let mut log = Vec::new();
     let mut index = 0usize;

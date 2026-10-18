@@ -232,7 +232,10 @@ pub use context::{
 };
 // Issue #462: modal options at the crate root; `ModalOptions` is the
 // deprecated former name, kept for one release.
-#[allow(deprecated)]
+#[expect(
+    deprecated,
+    reason = "re-exports the deprecated ModalOptions alias for one release (#462)"
+)]
 pub use context::ModalOptions;
 pub use context::ModalOpts;
 // Issue #459: element-anchored popovers and menus.

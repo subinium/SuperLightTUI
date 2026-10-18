@@ -58,7 +58,6 @@ impl Drop for DeferredDrawClipGuard<'_> {
 /// The callback panic is returned to the frame kernel instead of crossing the
 /// cleanup boundary. The caller decides whether to render an error-boundary
 /// fallback or write persistent frame state back and resume unwinding.
-#[allow(dead_code)] // Called by the #340 frame-kernel integration in src/runtime/kernel.rs.
 pub(crate) fn invoke_deferred_draw(
     buffer: &mut crate::buffer::Buffer,
     rect: Rect,
@@ -781,7 +780,6 @@ pub(crate) fn validate_link_url(url: &str) -> Result<&str, LinkError> {
 /// `cmd /c start`, because cmd.exe would interpret `&`, `|`, `^`, `<`, `>`
 /// and `%` inside the URL. Returns `None` on platforms without a known
 /// opener.
-#[allow(unused_variables)]
 pub(crate) fn opener_command(url: &str) -> Option<(&'static str, Vec<&str>)> {
     #[cfg(target_os = "macos")]
     {
@@ -797,6 +795,7 @@ pub(crate) fn opener_command(url: &str) -> Option<(&'static str, Vec<&str>)> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
+        let _ = url;
         None
     }
 }

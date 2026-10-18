@@ -1,6 +1,9 @@
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal chart kernel: dataset plus the resolved axis ranges and plot geometry"
+)]
 pub(super) fn draw_braille_dataset(
     dataset: &Dataset,
     x_min: f64,

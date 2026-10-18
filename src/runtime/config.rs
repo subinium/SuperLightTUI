@@ -56,6 +56,7 @@ impl From<bool> for MouseMode {
 impl MouseMode {
     /// Whether this mode delivers `event`. Used as an input filter on
     /// platforms where the terminal cannot be asked for a reporting level.
+    #[cfg(feature = "crossterm")]
     pub(crate) fn admits(self, event: &crate::Event) -> bool {
         use crate::event::MouseKind;
         let crate::Event::Mouse(mouse) = event else {

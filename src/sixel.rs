@@ -375,7 +375,7 @@ mod tests {
                 }
                 value @ b'?'..=b'~' => {
                     for bit in 0..6 {
-                        if value - b'?' & (1 << bit) != 0 {
+                        if (value - b'?') & (1 << bit) != 0 {
                             assert!(x < 4 && y + bit < 4, "out-of-footprint pixel");
                             decoded[y + bit][x] = color;
                         }

@@ -627,7 +627,10 @@ pub(super) fn discard_static_log(state: &mut FrameState, mode: &str) {
     let drained = drain_static_log(state);
     #[cfg(debug_assertions)]
     if !drained.is_empty() {
-        #[allow(clippy::print_stderr)]
+        #[expect(
+            clippy::print_stderr,
+            reason = "debug-build warning; the terminal is already restored here"
+        )]
         {
             eprintln!(
                 "[slt] {} static_log lines were dropped: {} runtime has no scrollback channel; use slt::run_static for streaming output",

@@ -1,6 +1,3 @@
-#![allow(clippy::print_stderr)]
-#![allow(clippy::unwrap_used)]
-
 use super::tree::{ContainerConfig, default_container_config};
 use super::*;
 
@@ -2826,8 +2823,10 @@ fn partially_clipped_container_applies_padding_before_viewport_clip() {
 #[test]
 fn frame_data_swaps_feedback_capacity_back_for_reuse() {
     let mut data = FrameData::default();
-    let mut feedback = crate::LayoutFeedbackState::default();
-    feedback.prev_hit_map = Vec::with_capacity(64);
+    let mut feedback = crate::LayoutFeedbackState {
+        prev_hit_map: Vec::with_capacity(64),
+        ..Default::default()
+    };
     feedback
         .prev_hit_map
         .push(crate::rect::Rect::new(0, 0, 1, 1));

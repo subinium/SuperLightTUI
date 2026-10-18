@@ -203,7 +203,6 @@ mod code_block_tests {
         });
         let mut tb_alias = TestBackend::new(40, 8);
         tb_alias.render(|ui| {
-            #[allow(deprecated)]
             let _ = ui.code_block(code).lang("rust").numbered();
         });
         assert_eq!(

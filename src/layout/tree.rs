@@ -324,7 +324,10 @@ impl LayoutNode {
     }
 
     /// [`LayoutNode::text`] reusing a recycled (reset) payload box (#488).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors LayoutNode::text plus the recycled payload box"
+    )]
     fn text_in(
         mut data: Box<TextNodeData>,
         content: String,
@@ -844,7 +847,10 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
 
     // Append a word that is known to fit within `max_width` to the current line,
     // flushing the line first if the word would overflow.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "wrap kernel threads line buffers and running widths without allocation"
+    )]
     fn append_fitting_word(
         text: &str,
         lines: &mut Vec<String>,
@@ -870,7 +876,10 @@ pub(crate) fn wrap_lines(text: &str, max_width: u32) -> Vec<String> {
 
     // Handle a completed word (skipping empty ranges). Words wider than
     // `max_width` are split into sub-chunks via `split_long_word`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "wrap kernel threads line buffers and running widths without allocation"
+    )]
     fn push_word(
         text: &str,
         lines: &mut Vec<String>,
@@ -1263,7 +1272,10 @@ pub(crate) struct LayoutArena {
     /// Reset text payload boxes ready for reuse. The boxes themselves are
     /// the recycled allocations (a node holds `Box<TextNodeData>`), so the
     /// pool must keep them boxed.
-    #[allow(clippy::vec_box)]
+    #[expect(
+        clippy::vec_box,
+        reason = "the boxes are the recycled allocations a LayoutNode holds"
+    )]
     text_pool: Vec<Box<TextNodeData>>,
     /// Text payloads handed out by the current build.
     used_text: usize,

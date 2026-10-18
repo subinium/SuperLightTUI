@@ -213,15 +213,8 @@ pub fn __bench_new_sprixel_fixture(n: usize) -> __BenchSprixelFixture {
     __BenchSprixelFixture { current, previous }
 }
 
-// The bench fixture's inherent methods are reachable only once the crate root
-// re-exports `__BenchSprixelFixture` (an integrator step listed in the release
-// notes); until then the lib-target dead-code lint flags them, exactly as it
-// would the already-shipped `__BenchKittyFixture` methods without their
-// `lib.rs` re-export. They are also exercised by the in-crate tests below.
-// Suppress the lint on the impl rather than gating the items behind `cfg(test)`,
-// which would make them invisible to the external `benches/` crate they exist
-// to serve.
-#[allow(dead_code)]
+// Reachable from `benches/` through the crate-root re-export; the methods stay
+// ungated (not `cfg(test)`) so the external bench crate can call them.
 impl __BenchSprixelFixture {
     /// Run [`flush_sprixels`] once, writing any re-blitted graphics into `sink`.
     /// A steady-state fixture emits nothing; this measures the no-damage scan

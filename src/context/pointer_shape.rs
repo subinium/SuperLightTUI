@@ -47,6 +47,7 @@ pub enum PointerShape {
 
 impl PointerShape {
     /// CSS cursor name sent in the OSC 22 payload.
+    #[cfg(feature = "crossterm")]
     pub(crate) fn css_name(self) -> &'static str {
         match self {
             Self::Default => "default",

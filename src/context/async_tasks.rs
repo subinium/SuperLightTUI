@@ -332,7 +332,10 @@ mod tests {
 
         let panicked = tasks.spawn(async {
             panic!("task exploded");
-            #[allow(unreachable_code)]
+            #[expect(
+                unreachable_code,
+                reason = "the tail value fixes the task's output type after the panic"
+            )]
             11u32
         });
         let outcome = wait_for_outcome(&mut tasks, &panicked).await;

@@ -726,7 +726,10 @@ fn number_or_blank(number: Option<u32>) -> String {
 }
 
 /// One line (unified row, or one half of a split row).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one diff row: state, line indices, gutter widths and per-side styles"
+)]
 fn render_side(
     state: &DiffState,
     global: usize,

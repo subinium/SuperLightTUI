@@ -76,7 +76,10 @@ impl Drop for PanicHookGuard {
     }
 }
 
-#[allow(clippy::print_stderr)]
+#[expect(
+    clippy::print_stderr,
+    reason = "the panic hook reports to stderr after restoring the terminal"
+)]
 #[cfg(feature = "crossterm")]
 fn slt_panic_hook(panic_info: &std::panic::PanicHookInfo<'_>) {
     if cfg!(panic = "unwind") && RECOVERABLE_PANICS.with(|depth| depth.get() > 0) {

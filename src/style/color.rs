@@ -1226,7 +1226,6 @@ fn xterm256_to_rgb(idx: u8) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

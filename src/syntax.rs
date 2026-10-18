@@ -968,7 +968,6 @@ pub(crate) fn highlight_lines(code: &str, lang: &str, theme: &Theme) -> Option<H
 ///
 /// This checks both that the corresponding `syntax-*` feature is enabled
 /// and that the language string is recognised.
-#[allow(unused_variables)]
 pub fn is_language_supported(lang: &str) -> bool {
     #[cfg(any(
         feature = "syntax-rust",
@@ -1008,13 +1007,13 @@ pub fn is_language_supported(lang: &str) -> bool {
         feature = "syntax-yaml",
     )))]
     {
+        let _ = lang;
         false
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::style::Theme;
 

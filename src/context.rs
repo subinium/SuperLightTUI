@@ -31,7 +31,6 @@ use crate::widgets::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-#[allow(dead_code)]
 fn slt_assert(condition: bool, msg: &str) {
     if !condition {
         panic!("[SLT] {msg}");
@@ -39,18 +38,23 @@ fn slt_assert(condition: bool, msg: &str) {
 }
 
 #[cfg(debug_assertions)]
-#[allow(dead_code, clippy::print_stderr)]
+#[expect(
+    clippy::print_stderr,
+    reason = "debug-build developer diagnostics go to stderr by design"
+)]
 fn slt_warn(msg: &str) {
     eprintln!("\x1b[33m[SLT warning]\x1b[0m {msg}");
 }
 
 #[cfg(not(debug_assertions))]
-#[allow(dead_code)]
 fn slt_warn(_msg: &str) {}
 
 mod widgets;
 pub use widgets::CodeEditor;
-#[allow(deprecated)]
+#[expect(
+    deprecated,
+    reason = "re-exports the deprecated ModalOptions alias for one release (#462)"
+)]
 pub use widgets::ModalOptions;
 pub use widgets::ModalOpts;
 pub use widgets::Text;

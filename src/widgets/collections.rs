@@ -64,7 +64,10 @@ pub struct ListState {
 impl ListState {
     /// Create a list with the given items. The first item is selected initially.
     // The struct literal initialises the deprecated `selected` storage (#455).
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     pub fn new(items: Vec<impl Into<String>>) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
         let item_search_cache: Vec<String> = items.iter().map(|s| s.to_lowercase()).collect();
@@ -449,13 +452,19 @@ impl ListState {
     /// Storage accessors for the deprecated public `selected` field (#455):
     /// crate code reads and writes the view cursor through these so the
     /// deprecation only reaches downstream direct field access.
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor(&self) -> usize {
         self.selected
     }
 
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
         &mut self.selected
@@ -1111,7 +1120,10 @@ pub struct TableState {
 
 impl Default for TableState {
     // The struct literal initialises the deprecated `selected` storage (#455).
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     fn default() -> Self {
         Self {
             headers: Vec::new(),
@@ -1478,13 +1490,19 @@ impl TableState {
 
     /// Storage accessors for the deprecated public `selected` field (#455);
     /// see [`ListState::view_cursor`].
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor(&self) -> usize {
         self.selected
     }
 
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "crate-internal storage access to the deprecated public selected field (#455)"
+    )]
     #[inline]
     pub(crate) fn view_cursor_mut(&mut self) -> &mut usize {
         &mut self.selected

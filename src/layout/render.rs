@@ -1428,7 +1428,6 @@ pub(super) fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::tree::default_container_config;
     use super::*;
 

@@ -436,7 +436,10 @@ impl Context {
     /// Note: this intentionally reads `prev_focus_count` (the settled count
     /// from the last completed frame) rather than `focus_count` (the
     /// still-incrementing counter for the current frame).
-    #[allow(clippy::misnamed_getters)]
+    #[expect(
+        clippy::misnamed_getters,
+        reason = "returns the settled count from the last frame, not the live focus_count field"
+    )]
     pub fn focus_count(&self) -> usize {
         self.rollback.focus_count_origin
     }
@@ -1386,7 +1389,10 @@ impl Context {
         note = "use `use_state_keyed_default(id)`; named and keyed ids now share one slot map"
     )]
     pub fn use_state_named_default<T: 'static + Default>(&mut self, id: &'static str) -> State<T> {
-        #[allow(deprecated)]
+        #[expect(
+            deprecated,
+            reason = "deprecated wrapper forwards to the deprecated use_state_named"
+        )]
         self.use_state_named(id, T::default)
     }
 

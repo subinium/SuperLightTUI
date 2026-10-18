@@ -491,7 +491,6 @@ impl TextareaHistory {
     /// Record `lines` / `meta` as an undo step, dropping the redo branch and
     /// evicting the oldest steps beyond the count cap or byte budget. The
     /// newest step is always kept.
-    #[allow(clippy::ptr_arg)] // documents are stored as `Vec<String>`
     pub(crate) fn push(&mut self, lines: &Vec<String>, meta: TextareaMeta) {
         if self.max == 0 {
             return;
@@ -570,7 +569,6 @@ impl TextInputHistory {
     }
 
     /// Record `value` / `meta` as an undo step, dropping the redo branch.
-    #[allow(clippy::ptr_arg)] // values are stored as `String`
     pub(crate) fn push(
         &mut self,
         value: &String,

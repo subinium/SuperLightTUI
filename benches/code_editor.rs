@@ -44,7 +44,7 @@ fn rust_source(lines: usize) -> String {
         out.push("    Ok(total)".into());
         out.push("}".into());
         out.push(String::new());
-        if item % 5 == 0 {
+        if item.is_multiple_of(5) {
             out.push("#[derive(Debug, Clone, Default)]".into());
             out.push(format!("pub struct Record{item} {{"));
             out.push("    pub id: u32,".into());

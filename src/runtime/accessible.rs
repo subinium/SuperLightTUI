@@ -20,14 +20,20 @@
 //!   field by field.
 //!
 //! The visual runtimes never set [`FrameState::accessible`], so widgets pay a
-//! single `bool` check per call there.
+//! single `bool` check per call there. Widgets record nodes in every build;
+//! the linearizer and prompt session that consume them are compiled only with
+//! the `crossterm` runtime (and in tests).
 
+#[cfg(any(feature = "crossterm", test))]
 use std::io;
 
+#[cfg(any(feature = "crossterm", test))]
 use unicode_segmentation::UnicodeSegmentation;
 
+#[cfg(any(feature = "crossterm", test))]
 use super::FrameState;
 use crate::Context;
+#[cfg(any(feature = "crossterm", test))]
 use crate::layout::{Command, Direction};
 
 /// Reserved `named_states` key holding the in-flight [`A11yFrame`].
@@ -74,6 +80,7 @@ pub(crate) enum A11yRole {
 }
 
 impl A11yRole {
+    #[cfg(any(feature = "crossterm", test))]
     fn name(self) -> &'static str {
         match self {
             Self::TextField => "text field",
@@ -92,6 +99,13 @@ impl A11yRole {
 
 /// An answer read from a prompt, applied by the widget on the next frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(any(feature = "crossterm", test)),
+    expect(
+        dead_code,
+        reason = "read only by the accessible session, which needs the crossterm runtime"
+    )
+)]
 pub(crate) enum A11yAnswer {
     /// Replace a text value and submit it.
     Text(String),
@@ -109,6 +123,13 @@ pub(crate) enum A11yAnswer {
 
 /// What a widget reports about itself.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(
+    not(any(feature = "crossterm", test)),
+    expect(
+        dead_code,
+        reason = "read only by the accessible session, which needs the crossterm runtime"
+    )
+)]
 pub(crate) struct A11yInfo {
     /// Widget-intrinsic name (checkbox / button label, confirm question).
     pub label: Option<String>,
@@ -124,6 +145,13 @@ pub(crate) struct A11yInfo {
 
 /// One interactive widget recorded during a frame.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    not(any(feature = "crossterm", test)),
+    expect(
+        dead_code,
+        reason = "read only by the accessible session, which needs the crossterm runtime"
+    )
+)]
 pub(crate) struct A11yNode {
     pub role: A11yRole,
     /// Focus slot, `None` when focus is suppressed (outside an open modal).
@@ -137,6 +165,7 @@ pub(crate) struct A11yNode {
     pub end: usize,
 }
 
+#[cfg(any(feature = "crossterm", test))]
 impl A11yNode {
     /// Accessible name: explicit name, intrinsic label, placeholder, role.
     fn display_name(&self) -> String {
@@ -164,6 +193,7 @@ impl A11yNode {
 }
 
 /// Linearized frame item.
+#[cfg(any(feature = "crossterm", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum A11yItem {
     Line(String),
@@ -177,6 +207,7 @@ pub(crate) struct A11yFrame {
     pub pending_name: Option<String>,
     /// Answer for the widget in slot `.0`, taken by that widget.
     pub answer: Option<(usize, A11yAnswer)>,
+    #[cfg(any(feature = "crossterm", test))]
     pub items: Vec<A11yItem>,
 }
 
@@ -327,6 +358,7 @@ impl Context {
 
     /// Linearize this frame's commands into lines and widget slots. Runs at
     /// the end of the frame closure, before layout drains the commands.
+    #[cfg(any(feature = "crossterm", test))]
     pub(crate) fn a11y_harvest(&mut self) {
         if !self.accessible {
             return;
@@ -470,6 +502,7 @@ impl A11yBegin {
 }
 
 /// Strip decoration and a trailing colon from a label.
+#[cfg(any(feature = "crossterm", test))]
 fn clean_label(label: &str) -> String {
     label
         .trim()
@@ -481,6 +514,7 @@ fn clean_label(label: &str) -> String {
 }
 
 /// Replace control characters so printed text cannot carry escapes.
+#[cfg(any(feature = "crossterm", test))]
 pub(crate) fn plain_text(input: &str) -> String {
     input
         .chars()
@@ -496,10 +530,12 @@ pub(crate) fn plain_text(input: &str) -> String {
 
 /// Lines with no letter or digit (rules, box drawing, bullets, spinners)
 /// carry nothing for a listener.
+#[cfg(any(feature = "crossterm", test))]
 fn is_meaningful(line: &str) -> bool {
     line.chars().any(char::is_alphanumeric)
 }
 
+#[cfg(any(feature = "crossterm", test))]
 fn push_plain_lines(items: &mut Vec<A11yItem>, text: &str) {
     for line in text.lines() {
         let line = plain_text(line.trim());
@@ -509,12 +545,14 @@ fn push_plain_lines(items: &mut Vec<A11yItem>, text: &str) {
     }
 }
 
+#[cfg(any(feature = "crossterm", test))]
 struct LineBuilder {
     /// One entry per open container: `true` for rows.
     rows: Vec<bool>,
     line: String,
 }
 
+#[cfg(any(feature = "crossterm", test))]
 impl LineBuilder {
     fn in_row(&self) -> bool {
         self.rows.iter().any(|row| *row)
@@ -559,6 +597,7 @@ impl LineBuilder {
     }
 }
 
+#[cfg(any(feature = "crossterm", test))]
 fn harvest(commands: &[Command], frame: &mut A11yFrame) {
     let items = &mut frame.items;
     items.clear();
