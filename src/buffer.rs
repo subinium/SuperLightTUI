@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::cell::{
     Cell, char_display_width, display_width, is_printable_ascii, is_printable_ascii_byte,
-    normalize_cell_symbol, normalize_grapheme, sanitize_cell_char,
+    normalize_cell_symbol, normalize_grapheme, sanitize_cell_char, standalone_scalar,
 };
 use crate::rect::Rect;
 use crate::style::Style;
@@ -1199,35 +1199,61 @@ impl Buffer {
         link: Option<&compact_str::CompactString>,
         clip: Option<Rect>,
     ) -> u32 {
+        // Every scalar printable ASCII or `standalone_scalar`: each one is its
+        // own grapheme, so skip the segmenter (box-drawing rules, markers,
+        // dashes, CJK).
+        if s.chars()
+            .all(|ch| ch.is_ascii_graphic() || ch == ' ' || standalone_scalar(ch))
+        {
+            for (at, ch) in s.char_indices() {
+                if x >= self.area.right() {
+                    break;
+                }
+                x = self.set_one_grapheme(x, y, &s[at..at + ch.len_utf8()], style, link, clip);
+            }
+            return x;
+        }
         for grapheme in s.graphemes(true) {
             if x >= self.area.right() {
                 break;
             }
-            if grapheme.len() == 1 && is_printable_ascii_byte(grapheme.as_bytes()[0]) {
-                if self.ascii_cell_writable(x, y, clip) {
-                    self.touch_cols(y, x, x + 1);
-                    self.write_ascii_cell(x, y, grapheme, style, link, clip);
-                }
-                x = x.saturating_add(1);
-                continue;
-            }
-            let symbol = normalize_grapheme(grapheme);
-            let width = display_width(&symbol) as u32;
-            if width == 1
-                && let Some(idx) = self.narrow_cell_index(x, y, clip)
-            {
-                self.touch_cols(y, x, x + 1);
-                let cell = &mut self.content[idx];
-                cell.symbol = symbol;
-                cell.style = style;
-                cell.hyperlink = link.cloned();
-                x = x.saturating_add(1);
-                continue;
-            }
-            let width = self.set_grapheme_normalized(x, y, symbol, width, style, link, clip);
-            x = x.saturating_add(width);
+            x = self.set_one_grapheme(x, y, grapheme, style, link, clip);
         }
         x
+    }
+
+    /// Write one extended grapheme cluster at `x`; returns the next column.
+    #[inline]
+    fn set_one_grapheme(
+        &mut self,
+        x: u32,
+        y: u32,
+        grapheme: &str,
+        style: Style,
+        link: Option<&compact_str::CompactString>,
+        clip: Option<Rect>,
+    ) -> u32 {
+        if grapheme.len() == 1 && is_printable_ascii_byte(grapheme.as_bytes()[0]) {
+            if self.ascii_cell_writable(x, y, clip) {
+                self.touch_cols(y, x, x + 1);
+                self.write_ascii_cell(x, y, grapheme, style, link, clip);
+            }
+            return x.saturating_add(1);
+        }
+        let symbol = normalize_grapheme(grapheme);
+        let width = display_width(&symbol) as u32;
+        if width == 1
+            && let Some(idx) = self.narrow_cell_index(x, y, clip)
+        {
+            self.touch_cols(y, x, x + 1);
+            let cell = &mut self.content[idx];
+            cell.symbol = symbol;
+            cell.style = style;
+            cell.hyperlink = link.cloned();
+            return x.saturating_add(1);
+        }
+        let width = self.set_grapheme_normalized(x, y, symbol, width, style, link, clip);
+        x.saturating_add(width)
     }
 
     /// Write a printable-ASCII string: one width-1 cell per byte, clipped to

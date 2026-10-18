@@ -71,6 +71,45 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
+/// Whether `ch` always forms its own extended grapheme cluster next to
+/// printable ASCII or another such scalar: its Grapheme_Cluster_Break is
+/// neither Prepend, Extend, ZWJ, SpacingMark, Regional_Indicator nor a
+/// joining Hangul jamo, and it is not Extended_Pictographic (UAX #29).
+///
+/// Lets mixed-text writes skip the segmenter for the glyphs that dominate
+/// terminal UIs. Conservative: `false` only costs the general path. An
+/// exhaustive test checks the segmentation behaviour of every scalar for
+/// which this returns `true`.
+#[inline]
+pub(crate) fn standalone_scalar(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        // Latin-1 punctuation and letters, Latin Extended-A/B (not ©/®,
+        // which are Extended_Pictographic, nor the soft hyphen, a Control).
+        0x00A0..=0x00A8
+            | 0x00AA..=0x00AC
+            | 0x00AF..=0x024F
+            // Greek and Cyrillic letters (not the Cyrillic combining marks).
+            | 0x0370..=0x0377
+            | 0x037A..=0x037F
+            | 0x0384..=0x0482
+            | 0x048A..=0x052F
+            // Dashes, quotes, bullets and ellipsis.
+            | 0x2010..=0x2027
+            | 0x2030..=0x203B
+            // Arrows that are not Extended_Pictographic.
+            | 0x2190..=0x2193
+            // Box drawing, block elements.
+            | 0x2500..=0x259F
+            // Braille patterns (charts, sparklines).
+            | 0x2800..=0x28FF
+            // CJK unified ideographs.
+            | 0x4E00..=0x9FFF
+            // Fullwidth ASCII variants and punctuation.
+            | 0xFF01..=0xFF60
+    )
+}
+
 /// Display width of `s` in terminal columns.
 ///
 /// Equal to [`crate::width::str_width`] (which honours the frame's
@@ -83,8 +122,50 @@ pub(crate) fn display_width(s: &str) -> usize {
     if is_printable_ascii(s) {
         s.len()
     } else {
-        crate::width::str_width(s)
+        mixed_display_width(s)
     }
+}
+
+/// [`display_width`] of text that is not all printable ASCII.
+///
+/// Long, mostly-ASCII strings (table rows, list rows) are measured by
+/// counting their interior ASCII bytes and running the width tables only
+/// over the stretches around non-ASCII scalars. The split points lie between
+/// two printable-ASCII bytes, where no width rule of `unicode-width` (CR LF,
+/// variation selectors, emoji ZWJ, Lisu tones, lam-alef) can span: a
+/// proptest checks the result against [`crate::width::str_width`].
+fn mixed_display_width(s: &str) -> usize {
+    /// Strings this short gain nothing from splitting.
+    const SPLIT_MIN_BYTES: usize = 16;
+    if s.len() < SPLIT_MIN_BYTES {
+        return crate::width::str_width(s);
+    }
+    let bytes = s.as_bytes();
+    let printable = |i: usize| is_printable_ascii_byte(bytes[i]);
+    // A byte whose neighbours are printable ASCII too: splitting on both
+    // sides of it never separates a width sequence.
+    let interior = |i: usize| {
+        printable(i) && (i == 0 || printable(i - 1)) && (i + 1 == bytes.len() || printable(i + 1))
+    };
+    let mut width = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        if interior(i) {
+            i += 1;
+            while i < bytes.len() && interior(i) {
+                i += 1;
+            }
+            width = width.saturating_add(i - start);
+        } else {
+            i += 1;
+            while i < bytes.len() && !interior(i) {
+                i += 1;
+            }
+            width = width.saturating_add(crate::width::str_width(&s[start..i]));
+        }
+    }
+    width
 }
 
 /// Display width of a single-scalar symbol, as [`crate::width::str_width`]
@@ -352,6 +433,8 @@ pub(crate) mod test_strategies {
             1 => prop::sample::select(vec![
                 "世", "界", "한", "ｱ", "👩\u{200D}💻", "❤\u{FE0F}", "🇰🇷", "\u{1100}\u{1161}\u{11A8}",
                 "e\u{301}", "क\u{094D}\u{0937}",
+                // Standalone scalars of the segmenter-free path.
+                "│", "—", "é", "Ж", "⣿",
                 // Prepend (GB9b): joins the following ASCII letter.
                 "\u{0600}", "\u{0D4E}", "\u{110BD}",
             ])
@@ -377,8 +460,60 @@ mod tests {
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
 
+    #[test]
+    fn standalone_scalars_never_join_their_neighbours() {
+        let count = |s: &str| s.graphemes(true).count();
+        for ch in (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .filter(|&ch| standalone_scalar(ch))
+        {
+            let code = ch as u32;
+            // Not Extend / ZWJ / SpacingMark: breaks after an ASCII letter.
+            assert_eq!(
+                count(&format!("a{ch}")),
+                2,
+                "U+{code:04X} joins a preceding letter"
+            );
+            // Not Prepend: breaks before an ASCII letter.
+            assert_eq!(
+                count(&format!("{ch}a")),
+                2,
+                "U+{code:04X} joins a following letter"
+            );
+            // Not a regional indicator or joining Hangul jamo.
+            assert_eq!(count(&format!("{ch}{ch}")), 2, "U+{code:04X} joins itself");
+            // Not Extended_Pictographic: no emoji ZWJ sequence (GB11).
+            assert_eq!(
+                count(&format!("{ch}\u{200D}\u{1F600}")),
+                2,
+                "U+{code:04X} starts an emoji ZWJ sequence"
+            );
+            assert!(!is_control_char(ch), "U+{code:04X} is a control");
+        }
+        // Pairs of distinct standalone scalars also break (GB999).
+        assert_eq!(count("│─▸—世"), 5);
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        #[test]
+        fn mixed_display_width_matches_str_width(
+            parts in prop::collection::vec(
+                prop_oneof![
+                    3 => "[ -~]{1,12}",
+                    1 => test_strategies::fragment(),
+                ],
+                0..12,
+            ),
+            ambiguous_wide in any::<bool>(),
+        ) {
+            let s = parts.concat();
+            crate::width::set_ambiguous_wide(ambiguous_wide);
+            let (got, want) = (display_width(&s), crate::width::str_width(&s));
+            crate::width::set_ambiguous_wide(false);
+            prop_assert_eq!(got, want, "{:?}", s);
+        }
 
         #[test]
         fn normalize_cell_symbol_is_idempotent(s in test_strategies::cell_text()) {
