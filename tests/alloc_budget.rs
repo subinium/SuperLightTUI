@@ -129,10 +129,11 @@ fn framestate_reuse_steady_state_alloc_count_low() {
 
     // 100 frames with the six fields and the layout tree reused must stay
     // under a tight budget. Regressing either the six fields (+6/frame) or
-    // the tree storage (+5/frame) breaks it. Budget: 5 per frame.
+    // the tree storage (+5/frame) breaks it. Budget: the 4 content
+    // allocations per frame.
     assert!(
-        count <= 500,
-        "framestate-reuse regression: 100 frames allocated {} times (budget 500)",
+        count <= 400,
+        "framestate-reuse regression: 100 frames allocated {} times (budget 400)",
         count
     );
 }
@@ -732,14 +733,13 @@ fn list_and_table_allocations_scale_with_viewport_not_items() {
         table_10k.abs_diff(table_1k) < SLACK,
         "table allocations grow with item count: 1k={table_1k} 10k={table_10k}"
     );
-    // About one row String per visible row per frame plus frame overhead.
-    // #488 recycled the layout tree storage: 109 -> 51 per frame.
-    assert!(
-        list_10k < 20 * 60,
-        "list 10k: {list_10k} allocations / 20 frames"
-    );
-    assert!(
-        table_10k < 20 * 60,
+    // #488 recycled the layout tree storage (109 -> 51 per frame); v0.26
+    // inlined the container command and formats rows into strings recycled
+    // from the previous frame's tree, so a steady-state frame of either
+    // widget allocates nothing.
+    assert_eq!(list_10k, 0, "list 10k: {list_10k} allocations / 20 frames");
+    assert_eq!(
+        table_10k, 0,
         "table 10k: {table_10k} allocations / 20 frames"
     );
 }
@@ -828,10 +828,13 @@ fn layout_tree_dashboard_steady_state_budget() {
     // `children` vectors (regrowing 4 -> 8 -> 16 -> 32 for 23 children) and
     // two flexbox scratch spills per frame on top of the ~23 content strings:
     // about 54 allocations per frame. With the storage recycled only the
-    // content strings remain.
+    // content strings remained (24). Since v0.26 the container command is
+    // inline and the separator and progress bar format into recycled
+    // strings, so what is left is the app's own text: 20 `format!` rows and
+    // the `"Header"` `&str` that `ui.text` turns into a `String`.
     assert!(
-        count <= FRAMES * 25,
-        "dashboard steady state: {count} allocations over {FRAMES} frames (budget 25/frame)"
+        count <= FRAMES * 21,
+        "dashboard steady state: {count} allocations over {FRAMES} frames (budget 21/frame)"
     );
 }
 

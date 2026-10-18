@@ -16,6 +16,7 @@ mod command;
 mod flexbox;
 mod focus;
 mod render;
+mod string_pool;
 mod tree;
 
 pub(crate) use collect::{FrameData, HitMeta, NO_HIT_PARENT, collect_all};
@@ -26,6 +27,7 @@ pub(crate) use focus::{
     FocusScrollState, GeometryFeedback, ScrollAdjustment, ScrollPolicy, apply_scroll_adjustments,
 };
 pub(crate) use render::{InspectorFocus, render, render_debug_overlay, render_inspector};
+pub(crate) use string_pool::StringPool;
 pub(crate) use tree::{
     LayoutArena, LayoutNode, MAX_LAYOUT_DEPTH, NodeKind, build_tree, build_tree_in, wrap_lines,
     wrap_segments,

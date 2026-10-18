@@ -254,6 +254,7 @@ impl Context {
 
         let mut ctx = Self {
             commands,
+            string_pool: state.layout_arena.take_strings(),
             geometry_cursor: 0,
             geometry_stack,
             geometry_pending_interaction: None,

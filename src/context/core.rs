@@ -17,6 +17,10 @@ use super::*;
 /// ```
 pub struct Context {
     pub(crate) commands: Vec<Command>,
+    /// Cleared text buffers from the previous frame's layout tree, lent by
+    /// `FrameState::layout_arena` for widgets that format their own rows
+    /// (see [`Context::pooled_string`]). Returned before the tree is built.
+    pub(crate) string_pool: crate::layout::StringPool,
     pub(crate) geometry_cursor: usize,
     pub(crate) geometry_stack: Vec<(usize, Option<usize>)>,
     pub(crate) geometry_pending_interaction: Option<usize>,
@@ -182,6 +186,19 @@ pub struct Context {
     /// exist (zero overhead) when the feature is off.
     #[cfg(feature = "async")]
     pub(crate) async_tasks: AsyncTasks,
+}
+
+impl Context {
+    /// An empty `String` with room for `len` bytes, recycled from the
+    /// previous frame's text when possible.
+    ///
+    /// Widgets that build their own row text (list rows, table rows,
+    /// separators, progress bars) format into this instead of a fresh
+    /// `String`, so a steady-state frame allocates nothing for it.
+    #[inline]
+    pub(crate) fn pooled_string(&mut self, len: usize) -> String {
+        self.string_pool.take(len)
+    }
 }
 
 type RawDrawCallback = Box<dyn FnOnce(&mut crate::buffer::Buffer, Rect)>;

@@ -148,20 +148,53 @@ pub(crate) fn format_token_count(count: usize) -> String {
     }
 }
 
+/// Append the decimal digits of `n` to `out` (no `fmt` machinery, no
+/// temporary `String`).
+pub(crate) fn push_usize(out: &mut String, mut n: usize) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[start..] {
+        out.push(char::from(digit));
+    }
+}
+
 /// Build one table row (cells padded/truncated to `widths`, joined by
 /// `separator`) into a single `String`.
 ///
 /// Every cell is written straight into the row buffer through
 /// [`push_table_cell`], so a row costs exactly one allocation regardless of
 /// the column count (no per-cell `String`). Missing cells render as blanks.
+/// Widgets use [`push_table_row`] into a pooled buffer; this owned form is
+/// the reference the tests compare against.
+#[cfg(test)]
 pub(crate) fn format_table_row<S: AsRef<str>>(
     cells: &[S],
     widths: &[u32],
     separator: &str,
 ) -> String {
-    // Byte capacity: a padded cell needs `len + (width - display_width)`
-    // bytes, bounded by `max(width, len)` for ASCII content. Multi-byte
-    // padding may grow the buffer once; ASCII rows never reallocate.
+    let mut row = String::with_capacity(table_row_capacity(cells, widths, separator));
+    push_table_row(&mut row, cells, widths, separator);
+    row
+}
+
+/// Byte capacity [`push_table_row`] needs for an ASCII row.
+///
+/// A padded cell needs `len + (width - display_width)` bytes, bounded by
+/// `max(width, len)` for ASCII content. Multi-byte padding may grow the
+/// buffer once; ASCII rows never reallocate.
+pub(crate) fn table_row_capacity<S: AsRef<str>>(
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) -> usize {
     let mut capacity = separator
         .len()
         .saturating_mul(widths.len().saturating_sub(1));
@@ -169,18 +202,23 @@ pub(crate) fn format_table_row<S: AsRef<str>>(
         let len = cells.get(i).map_or(0, |cell| cell.as_ref().len());
         capacity = capacity.saturating_add((*width as usize).max(len));
     }
-    let mut row = String::with_capacity(capacity);
+    capacity
+}
+
+/// Append one table row to `row`: the [`format_table_row`] output without
+/// allocating when `row` has room (see [`table_row_capacity`]).
+pub(crate) fn push_table_row<S: AsRef<str>>(
+    row: &mut String,
+    cells: &[S],
+    widths: &[u32],
+    separator: &str,
+) {
     for (i, width) in widths.iter().enumerate() {
         if i > 0 {
             row.push_str(separator);
         }
-        push_table_cell(
-            &mut row,
-            cells.get(i).map(AsRef::as_ref).unwrap_or(""),
-            *width,
-        );
+        push_table_cell(row, cells.get(i).map(AsRef::as_ref).unwrap_or(""), *width);
     }
-    row
 }
 
 /// Pad or truncate `cell` so its display width is exactly `width` cells.
