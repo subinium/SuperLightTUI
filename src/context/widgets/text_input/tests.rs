@@ -603,10 +603,7 @@ proptest::proptest! {
 
         let mut slider_value = value;
         backend.render(|ui| {
-            let _ = ui.slider_with(
-                &mut slider_value,
-                crate::widgets::SliderOpts::new("value", min..=max).step(step),
-            );
+            ui.slider("value", &mut slider_value, min..=max).step(step);
         });
         proptest::prop_assert!(slider_value.is_finite());
     }

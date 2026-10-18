@@ -13,9 +13,11 @@ mod bars;
 mod canvas;
 mod charts;
 mod heat_tree;
+mod line_chart;
 mod qr;
 
 pub use heat_tree::TreemapItem;
+pub use line_chart::LineChart;
 
 #[cfg(test)]
 mod tests;

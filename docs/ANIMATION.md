@@ -39,9 +39,10 @@ Signatures:
 
 Rules:
 
-- **`id` is the state key.** Like `use_state_named`, it is a single global
-  namespace per context — use a unique id per call site. Reusing an id that
-  `use_state_named` already holds with a different type panics.
+- **`id` is the state key.** All `animate_bool` / `animate_value` calls share
+  one namespace per context — use a unique id per call site, or two call sites
+  drive the same tween.
+
 - **First call snaps.** On the first frame the value starts at the target, so
   widgets that mount in their final state don't animate in. To animate on
   mount, start with the "off" target and flip it on a later frame.

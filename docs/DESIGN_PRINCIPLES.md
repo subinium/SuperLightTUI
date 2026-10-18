@@ -347,13 +347,14 @@ Breakpoints: Xs (<40), Sm (40–79), Md (80–119), Lg (120–159), Xl (≥160).
 - Never call order-based hooks inside conditionals or loops.
 - Hook type mismatches panic with a descriptive message — this is a
   programmer error.
-- v0.19.0 added id-keyed state, now exposed as `use_state_named(id, init)`
-  and `use_state_named_default::<T>(id)`, keyed by `&'static str` and explicitly
-  safe inside conditional branches — use them when conditional placement
-  is genuinely required.
-- v0.20.0 added `use_state_keyed(impl Into<String>, init)` that accepts
-  runtime-computed keys (e.g. `format!("counter-{i}")`). Use it for
-  list-item state where the key isn't `&'static str`.
+- Id-keyed state, `use_state_keyed(impl Into<String>, init)` and
+  `use_state_keyed_default::<T>(id)`, is explicitly safe inside conditional
+  branches and loops. It accepts `&'static str` literals and runtime keys
+  (e.g. `format!("counter-{i}")`) — use it when conditional placement or
+  per-item state is genuinely required.
+- History: v0.19.0 added `&'static str`-keyed `use_state_named`, v0.20.0 added
+  `use_state_keyed`; v0.26 merged them into one slot map and deprecated
+  `use_state_named` (see [MIGRATION.md](MIGRATION.md#v025x--v0260)).
 
 (Operationalizes [P4 — Immediate-Mode Honesty](#p4--immediate-mode-honesty).)
 
@@ -589,11 +590,13 @@ a review concern rather than a claimed complete sweep.
 | v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | shipped |
 | v0.24 | **Harden runtime** | Owned native input source, recoverable panics, canvas budgets, owned browser (WASM) runtime | shipped |
 | v0.25 | **Harden focus & scroll** | Focus-following scroll containers, unique initial focus, modal focus stability, `form_field_response`, layout-rect queries | shipped (current) |
-| pre-1.0 | **Stabilize** | Remove deprecated aliases (e.g. `pad`, `min_width`, `use_state_named_with`, `code_block_*`, f32 color methods) | not yet scheduled |
+| v0.26 | **Consolidate** | Remove the 0.20–0.22 deprecated aliases (`pad`, `min_width`, `use_state_named_with`, `code_block_*`, f32 color methods); option builders (`Button`, `Badge`, `Stat`, `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`); one keyed-state slot map; `slt::prelude` | in progress |
+| pre-1.0 | **Stabilize** | Remove the 0.26 deprecations (`button_with`, `button_colored`, display `*_colored` variants, `slider_with`, `grid_with`, `use_state_named`) | not yet scheduled |
 | v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | not yet scheduled |
 
-Remaining rows are direction, not dated commitments; deprecated aliases listed
-above still compile in v0.25. Each stabilization increment should have a
+Remaining rows are direction, not dated commitments; the 0.26 deprecations
+listed above still compile (with a warning) in v0.26. Each stabilization increment should have a
+
 reviewable issue scope and explicit verification. Deprecated API removals follow the schedule in
 [R8 — API Stability](#r8--api-stability); invariant-sensitive field changes
 follow the pre-1.0 migration exception documented there.

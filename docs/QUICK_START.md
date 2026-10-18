@@ -51,6 +51,11 @@ fn main() -> std::io::Result<()> {
 
 There is no framework state object. Use normal Rust variables and structs.
 
+These steps name every type they import. In your own app, the one-line
+`use slt::prelude::*;` brings in `run` / `run_with`, `Context`, `Response`, the
+style types (`Color`, `Border`, `Style`, ...), `KeyCode` and the common widget
+states (`TextInputState`, `ListState`, `TableState`, ...).
+
 ## 4. Use layout and style chaining
 
 <!-- slt-check: {"name":"qs_layout","features":["crossterm"],"context":"module"} -->
@@ -189,18 +194,29 @@ the mouse off entirely. See [INTERACTION.md](INTERACTION.md) for every mode.
 // text() returns a Text builder: chained options style that text only.
 ui.text("hello").bold().fg(Color::Cyan);
 
-// Most widgets return a Response — interactive ones (button, text_input,
-// list) and display ones (badge, stat, alert, separator) alike. Ignore it
-// freely; only a bare `ui.button(..)` warns, since its click is its output.
-if ui.button("Save").clicked {
+// Widgets return a Response — interactive ones (button, text_input, list)
+// and display ones (badge, stat, alert, separator) alike. Some, like button
+// and badge, hand you a small builder first: chain options, then read the
+// Response straight off it. Ignore it freely; only a bare `ui.button(..)`
+// warns, since its click is its output.
+if ui.button("Save").variant(ButtonVariant::Primary).clicked {
     // handle save
 }
-ui.badge("beta");
+let ok = ui.theme().success; // bind theme colors before the builder call
+ui.badge("beta").color(ok);
+
+// To keep a response while you call `ui` again, take it with `.show()`.
+let cancel = ui.button("Cancel").show();
+ui.text("unsaved changes").dim();
+if cancel.clicked {
+    // handle cancel
+}
 ```
 
 This is the core contract across the library. `Response` also offers
 callback chaining: `ui.button("Save").on_click(ui, |_| save())` and
 `.on_hover(ui, "tooltip text")`.
+
 
 ## 9. Layout data is one frame behind
 

@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use crate::Style;
 use crate::context::Response;
 
-/// Bare function-pointer validator used by the deprecated positional
-/// [`FormState::validate`](crate::widgets::FormState::validate) API.
+/// Bare function-pointer validator, the shape taken by the positional
+/// `FormState::validate` API (removed in 0.26).
 ///
 /// Retained for backward compatibility. New code should attach
 /// [`Validator`] closures per field via

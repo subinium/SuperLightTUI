@@ -213,9 +213,12 @@ Constraint translation:
 | `.margin(1)` on Layout | `.p(1)` on parent container |
 | `.spacing(1)` between chunks | `.gap(1)` on parent `row` / `col` |
 
-`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/widthspec.rs`.
+`Constraints` value type also exposes the v0.20 `WidthSpec` set: `Constraints::default().w_pct(50)`, `.w_ratio(1, 3)`, `.w_minmax(10, 30)` — see `examples/widthspec.rs`. Containers take the ratio directly too: `ui.container().w_ratio(1, 3).col(..)` (and `h_ratio`), like ratatui's `Constraint::Ratio(1, 3)`.
 
 ### State mapping (re-exported via `slt::*`)
+
+`use slt::prelude::*;` imports the common ones below plus `Context`, `run` / `run_with`, the style types and `KeyCode` in one line (no `crossterm` re-export, so it never shadows your own crossterm dependency during a port).
+
 
 | ratatui / your code | SLT |
 |---|---|
@@ -394,7 +397,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 - **"My ratatui app calls `terminal.clear()` between frames."** — don't. SLT diffs the buffer and only emits changed cells. Manual clear breaks the diff and causes flicker.
 - **"My panic hook restores raw mode."** — drop it. `slt::run` installs one on first call.
 - **"I'm threading `&App` through every render fn."** — replace read-only sharing with `ui.provide(ctx, \|ui\| ...)` + `ui.use_context::<AppCtx>()`. Keep `&mut` for writes.
-- **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (returns `Response`).
+- **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (a `ProgressBar` builder that derefs to `Response`; chain `.color(c)`).
 - **"Hover does nothing."** — the default mouse mode reports clicks, wheel and drags only: `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. If clicks do nothing either, look for `.mouse(false)` / `MouseMode::Off`.
 - **"Typing `q` in a search box quits."** — the shortcut uses `raw_key` / `raw_events()`, which ignore text focus. Use `ui.key('q')` or `ui.shortcut(..)`; they skip keys a focused input edits with.
 

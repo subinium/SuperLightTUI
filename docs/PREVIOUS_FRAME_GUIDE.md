@@ -74,9 +74,11 @@ frame.
 
 ```rust
 slt::run(|ui: &mut slt::Context| {
-    let r = ui.button("Save");
+    // `.show()` returns an owned `Response`, so `ui` is free again below.
+    let r = ui.button("Save").show();
 
     if ui.tick() > 0 && r.rect.width > 0 {
+
         // Safe to use the visible r.rect for anim targets
         // or tooltip anchors. The rect reflects last frame's layout.
         anim_target = r.rect;

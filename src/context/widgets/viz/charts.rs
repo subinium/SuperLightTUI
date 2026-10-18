@@ -217,51 +217,7 @@ impl Context {
         response
     }
 
-    /// Render a multi-row line chart using braille characters.
-    ///
-    /// `width` and `height` are terminal cell dimensions. Internally this uses
-    /// braille dot resolution (`width*2` x `height*4`) for smoother plotting.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// let data = [1.0, 3.0, 2.0, 5.0, 4.0, 6.0, 3.0, 7.0];
-    /// ui.line_chart(&data, 40, 8);
-    /// # });
-    /// ```
-    pub fn line_chart(&mut self, data: &[f64], width: u32, height: u32) -> Response {
-        self.line_chart_colored(data, width, height, self.theme.primary)
-    }
-
-    /// Render a multi-row line chart using a custom color.
-    pub fn line_chart_colored(
-        &mut self,
-        data: &[f64],
-        width: u32,
-        height: u32,
-        color: Color,
-    ) -> Response {
-        self.render_line_chart_internal(data, width, height, color, false)
-    }
-
-    /// Render a multi-row area chart using the primary theme color.
-    pub fn area_chart(&mut self, data: &[f64], width: u32, height: u32) -> Response {
-        self.area_chart_colored(data, width, height, self.theme.primary)
-    }
-
-    /// Render a multi-row area chart using a custom color.
-    pub fn area_chart_colored(
-        &mut self,
-        data: &[f64],
-        width: u32,
-        height: u32,
-        color: Color,
-    ) -> Response {
-        self.render_line_chart_internal(data, width, height, color, true)
-    }
-
-    fn render_line_chart_internal(
+    pub(super) fn render_line_chart_internal(
         &mut self,
         data: &[f64],
         width: u32,

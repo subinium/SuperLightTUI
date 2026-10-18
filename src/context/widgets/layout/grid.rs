@@ -104,6 +104,13 @@ impl Context {
     }
 
     /// Render children in a grid with per-column width specifications.
+    #[deprecated(since = "0.26.0", note = "renamed to `grid_columns(columns, f)`")]
+    pub fn grid_with(&mut self, columns: &[GridColumn], f: impl FnOnce(&mut Context)) -> Response {
+        self.grid_columns(columns, f)
+    }
+
+    /// Render children in a grid with per-column width specifications (CSS
+    /// `grid-template-columns`).
     ///
     /// The number of columns is determined by the length of `columns`. Children
     /// are placed left-to-right, top-to-bottom, wrapping into rows
@@ -121,7 +128,7 @@ impl Context {
     /// ```no_run
     /// use slt::GridColumn;
     /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.grid_with(&[
+    /// ui.grid_columns(&[
     ///     GridColumn::Fixed(8),
     ///     GridColumn::Grow(1),
     ///     GridColumn::Grow(1),
@@ -133,7 +140,11 @@ impl Context {
     /// });
     /// # });
     /// ```
-    pub fn grid_with(&mut self, columns: &[GridColumn], f: impl FnOnce(&mut Context)) -> Response {
+    pub fn grid_columns(
+        &mut self,
+        columns: &[GridColumn],
+        f: impl FnOnce(&mut Context),
+    ) -> Response {
         let cols = columns.len().max(1);
         let interaction_id = self.next_interaction_id();
         let border = self.theme.border;

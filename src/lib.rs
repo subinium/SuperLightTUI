@@ -225,9 +225,10 @@ pub use cell::Cell;
 // `GraphType`, `Axis`) live under `slt::chart::*`.
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
-    Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CanvasError,
-    CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
-    State, TreemapItem, Widget,
+    Anchor, Badge, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, Button, CanvasContext,
+    CanvasError, CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, Help,
+    LineChart, LineGauge, Memo, ProgressBar, Response, Separator, Slider, Stat, State, TreemapItem,
+    Widget,
 };
 // Issue #462: modal options at the crate root; `ModalOptions` is the
 // deprecated former name, kept for one release.
@@ -286,6 +287,61 @@ pub use widgets::{
     TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState, TreeNode, TreeState,
     Trend, ValidateTrigger, Validator,
 };
+
+/// Hook handle returned by [`Context::use_state`] and
+/// [`Context::use_state_keyed`].
+///
+/// Same type as [`State<T>`]; the alias names it a *handle* (an index into
+/// the context's hook storage, read with `.get(ui)` / `.get_mut(ui)`) to keep
+/// it apart from owned widget state such as [`ListState`] or
+/// [`TextInputState`], which your app stores itself.
+///
+/// ```
+/// use slt::prelude::*;
+///
+/// fn counter(ui: &mut Context) {
+///     let count: StateHandle<i32> = ui.use_state(|| 0);
+///     ui.text(format!("{}", count.get(ui)));
+/// }
+/// # slt::TestBackend::new(10, 1).render(counter);
+/// ```
+pub type StateHandle<T> = State<T>;
+
+/// The common imports for an SLT app: `use slt::prelude::*;`.
+///
+/// Brings in the run entry points, [`Context`] and its builders, the style
+/// vocabulary, key types and the widget state structs most apps store. It
+/// deliberately leaves out the `slt::crossterm` re-export (a glob import of it
+/// would shadow your own `crossterm` dependency), the `__bench_*` hooks and
+/// the submodules; import those by path when you need them.
+///
+/// ```
+/// use slt::prelude::*;
+///
+/// fn app(ui: &mut Context) {
+///     ui.bordered(Border::Rounded).p(1).col(|ui| {
+///         ui.text("Hello").bold().fg(Color::Cyan);
+///         if ui.button("Quit").clicked {
+///             ui.quit();
+///         }
+///     });
+/// }
+/// # slt::TestBackend::new(20, 5).render(app);
+/// ```
+pub mod prelude {
+    pub use crate::{
+        Align, Border, Button, ButtonVariant, Color, ContainerBuilder, Context, Justify, KeyCode,
+        KeyModifiers, Modifiers, MouseMode, Padding, Response, RunConfig, State, StateHandle,
+        Style, Text, Theme, WidgetColors,
+    };
+    pub use crate::{
+        CalendarState, CommandPaletteState, FormField, FormState, ListState, MultiSelectState,
+        RadioState, ScrollState, SelectState, SpinnerState, SplitPaneState, TableState, TabsState,
+        TextInputState, TextareaState, ToastLevel, ToastState, TreeState,
+    };
+    #[cfg(feature = "crossterm")]
+    pub use crate::{run, run_with};
+}
 
 /// Rendering backend for SLT.
 ///
@@ -418,15 +474,6 @@ impl AppState {
     /// Time spent presenting the latest frame through the backend.
     pub fn flush_duration(&self) -> Duration {
         self.inner.diagnostics.flush_duration
-    }
-
-    /// Deprecated `f32` alias for [`fps_f64`](Self::fps_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use AppState::fps_f64() to keep public float APIs on f64"
-    )]
-    pub fn fps(&self) -> f32 {
-        self.inner.diagnostics.fps_ema
     }
 
     /// Toggle the debug overlay (same as pressing F12).

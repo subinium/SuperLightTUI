@@ -71,15 +71,32 @@ impl Gauge<'_> { pub fn show(self) -> GaugeResponse { ... } }
 optional configuration via chaining. Avoids `gauge_w` / `gauge_with_label` proliferation
 where every new optional dimension grows the public surface combinatorially.
 
-**The `_colored` exception**: immediate (non-builder) widgets that return `Response`
-directly — `badge`, `stat`, `separator`, `progress_bar`, `button`, `list`, `table`, etc. —
-do **not** have a chainable builder to hang `.color(...)` off of. For those, a single
-blessed `_colored` color-override variant is the canonical, documented shape (see the
-[NAMING.md](NAMING.md) suffix table). What Rule 1 forbids is the *combinatoric* explosion
-(`gauge_colored(r, "CPU", Color::Green, 48)` stacking color **and** width **and** label as
-positional args, or a `_w` × `_colored` × `_with_label` cross-product), not a single,
-consistent `_colored` sibling. Widgets that already expose a builder (`gauge`, `line_gauge`)
-use `.color(...)` and have no `_colored` variant.
+**One mechanism per widget (v0.26, #460)**: a widget's options are builder methods on the
+value its entry point returns, so knowledge from one widget transfers to the next and options
+compose (`ui.button("Delete").variant(ButtonVariant::Danger).colors(&c)`). Builders come in
+two recording modes with the same contract — the widget renders exactly where the call is
+written, and the builder holds the exclusive `&mut Context` borrow until it is recorded, so
+nothing can be recorded in between:
+
+- **Record at creation, restyle in place** (`Text`, `Button`, `Badge`, `Stat`, `Help`,
+  `Separator`, `ProgressBar`): used when options only change the look. The `Response` is final
+  at creation, so the builder implements `Deref<Target = Response>` (`ui.button("x").clicked`,
+  `ui.badge("x").on_hover(ui, ..)`), needs no `Drop`, and `.show()` returns the `Response`.
+- **Record on first read** (`Slider`, `LineChart`): used when an option changes input handling
+  or rasterization. The widget is recorded when its response is first read (`Deref` or
+  `.show()`), or on `Drop` at the end of the statement. The older `Gauge`, `LineGauge`,
+  `Breadcrumb` and `CodeBlock` builders render on `Drop` and return their response only from
+  `.show()`.
+
+A builder must not allocate beyond what the plain call allocates.
+
+**Known exceptions (tracked for cleanup)**: the stateful widgets `text_input`, `list`,
+`list_reorderable`, `table`, `tabs`, `paginator`, `checkbox`, `toggle`, `select`, `radio` and
+`color_picker` still take colors through a `<widget>_colored(.., &WidgetColors)` sibling and
+return their `Response` directly; `_colored` means exactly that shape and no new `_colored`
+names may be added (`scripts/api_audit.sh` V9). `bar_chart_with` / `histogram_with` configure
+through a closure (`_with` = extra closure parameter), and `modal_with` pairs `ModalOpts` with
+the body closure.
 
 **Example** (good):
 
@@ -129,8 +146,9 @@ ui.gauge(cpu as f32 / 100.0, &format!("{cpu:.1}%"));
 
 **Exception**: explicit graphics math where `f32` dominates (color blending in `style/color.rs`,
 GPU-style normalized math) may use `f32` internally. Public API still takes/returns `f64` and converts at
-the boundary. Known exceptions (tracked for cleanup): `Context::gradient_stops` and
-`Context::bg_gradient_stops` take `&[(f32, Color)]`, and `ScrollState::progress()` returns `f32`.
+the boundary. The last `f32` exceptions (`gradient_stops`, `bg_gradient_stops`,
+`ScrollState::progress`, the `f32` `Color` / `Theme` helpers and `AppState::fps`) were removed in
+v0.26 (#463).
 
 ---
 
@@ -204,8 +222,6 @@ this rule. Do not use them as precedent for new APIs:
 | `heatmap_halfblock(data, width, height, low_color, high_color)` | 5 |
 | `overlay_at_offset(anchor, dx, dy, f)` | 4 |
 | `modal_at_offset(anchor, dx, dy, f)` (deprecated: `modal_with(ModalOpts)`) | 4 |
-| `line_chart_colored(data, width, height, color)` | 4 |
-| `area_chart_colored(data, width, height, color)` | 4 |
 | `kitty_image_fit(rgba, src_width, src_height, cols)` | 4 |
 | `histogram_with(data, configure, width, height)` | 4 |
 
@@ -296,7 +312,8 @@ pub fn breadcrumb(&mut self, segments: &[&str]) -> (Response, Option<usize>);
 The `#[must_use]` attribute on every compound `*Response` is mandatory — it catches the common bug of dropping
 a meaningful response without checking it. The plain `Response` is the exception (since v0.26): it is
 returned by nearly every layout and display call, so the attribute sits on the individual methods whose
-result is their only output (`button`, `button_colored`, `button_with`) instead of on the type.
+result is their only output instead of on the type: the `Button` builder type (and the deprecated
+`button_colored` / `button_with`) is `#[must_use]`.
 
 ---
 
@@ -327,7 +344,7 @@ Copy-paste this checklist into any PR that adds or changes a public widget:
 
 - [ ] Floats are `f64` (no `f32` in public signature)
 - [ ] Public function takes ≤ 3 positional args (otherwise opts struct or builder)
-- [ ] Optional configuration uses the consuming-builder pattern (chainable `mut self -> Self`, renders on `Drop`, `.show()` for the response)
+- [ ] Optional configuration uses the consuming-builder pattern (chainable `mut self -> Self`, renders where written, `.show()` for the response; see Rule 1 for the two recording modes)
 - [ ] Stateful widget takes `&mut XxxState` newtype (not `&mut String` / `&mut Vec<…>`)
 - [ ] Returns `Response` (or `XxxResponse: Deref<Target = Response>` for compound widgets)
 - [ ] `*Response` struct has `#[must_use = "..."]` attribute
@@ -336,7 +353,7 @@ Copy-paste this checklist into any PR that adds or changes a public widget:
       `GaugeOpts`, not `GaugeConfig` or `GaugeParams`). Known exceptions that predate this rule and are
       tracked for cleanup: `RunConfig`, `ChartConfig`, `BarChartConfig` — do not copy them
 - [ ] No `_w` / `_with_label` / `_numbered` combinatoric suffix variants — fold into builder methods instead
-- [ ] Color customization uses the blessed `_colored` suffix (see [NAMING.md](NAMING.md) suffix table) — the canonical color-override variant for immediate widgets that take a `Color` or `&WidgetColors`; do **not** invent `_w`/`_with_label` cross-products on top of it
+- [ ] Color customization is a builder method (`.color(c)`, `.colors(&c)`); no new `_colored` siblings (V9) and no `_with` that takes a value instead of a closure (V8) — see [NAMING.md](NAMING.md)
 ```
 
 If a check fails, fix the API before merging. The cost of an inconsistent shape compounds across every

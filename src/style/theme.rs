@@ -453,15 +453,6 @@ impl Theme {
         color.blend_f64(self.bg, alpha)
     }
 
-    /// Deprecated `f32` alias for [`overlay_f64`](Self::overlay_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Theme::overlay_f64() to keep public float APIs on f64"
-    )]
-    pub fn overlay(&self, color: Color, alpha: f32) -> Color {
-        self.overlay_f64(color, f64::from(alpha))
-    }
-
     /// Create a dark theme with cyan primary and white text.
     pub const fn dark() -> Self {
         Self {

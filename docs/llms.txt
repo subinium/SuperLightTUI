@@ -33,7 +33,8 @@
 - `ui.provide(value, |ui| { ... })` — context injection, scoped to the closure body
 - `ui.use_context::<T>()` — read provided context (panics if no `T` is in scope)
 - `ui.try_use_context::<T>()` — read provided context, returns `Option<&T>` (safe form)
-- `ui.use_state_named(id, init)` / `ui.use_state_named_default::<T>(id)` — id-keyed local state, safe inside conditionals
+- `ui.use_state_keyed(id, init)` / `ui.use_state_keyed_default::<T>(id)` — id-keyed local state, safe inside conditionals and loops (`use_state_named` is a deprecated alias sharing the same slot)
+
 - `.with_if(cond, modifier)` / `.with(modifier)` — fluent conditional styling on text and `ContainerBuilder`
 
 ### Current (v0.25) highlights
@@ -53,6 +54,9 @@
 ### Builder widgets
 
 - `ui.breadcrumb(segments).separator(...).show()` — returns `BreadcrumbResponse` with the standard interaction signals and `clicked_segment`
+- `ui.button(label).variant(ButtonVariant::Danger).colors(&c)`, `ui.badge(l).color(c)`, `ui.stat(l, v).color(c)`, `ui.help(b).key_color(c)`, `ui.separator().color(c)`, `ui.progress(r).color(c)`, `ui.slider(l, &mut v, range).step(s)`, `ui.line_chart(d, w, h).color(c)` — option builders that deref to `Response`; `.show()` returns an owned `Response` when you store it across other `ui.` calls. Bind `let c = ui.theme().x;` before the call: builder arguments cannot borrow `ui`
+- `use slt::prelude::*;` — one-line import of the run entry points, `Context`, builders, style types, `State` / `StateHandle` and the common widget states
+
 - `mx(n)` / `my(n)` — horizontal / vertical margin shorthands
 
 ## Specialized topics

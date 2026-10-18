@@ -184,9 +184,7 @@ pub fn render_frame(
                     ui.stat_trend("Requests", &format!("{}", metrics.requests), Trend::Up);
                 });
                 ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    ui.stat_colored(
-                        "Errors",
-                        &format!("{}", metrics.errors),
+                    ui.stat("Errors", &format!("{}", metrics.errors)).color(
                         if metrics.errors > 5 {
                             Color::Red
                         } else {
@@ -195,10 +193,10 @@ pub fn render_frame(
                     );
                 });
                 ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    ui.stat_colored("P99", "45ms", Color::Yellow);
+                    ui.stat("P99", "45ms").color(Color::Yellow);
                 });
                 ui.bordered(Border::Rounded).p(1).grow(1).col(|ui| {
-                    ui.stat_colored("Threads", "24", Color::Blue);
+                    ui.stat("Threads", "24").color(Color::Blue);
                 });
             });
 
@@ -317,7 +315,7 @@ fn metric_card(ui: &mut Context, label: &str, value: f64, unit: &str, color: Col
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_w - filled);
         ui.text(bar).fg(color);
         if value > 80.0 {
-            ui.badge_colored("HIGH", Color::Red);
+            ui.badge("HIGH").color(Color::Red);
         }
     });
     let _ = resp;

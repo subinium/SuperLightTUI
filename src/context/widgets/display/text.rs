@@ -537,7 +537,7 @@ impl Context {
             .visible_bindings()
             .map(|binding| (binding.display.as_str(), binding.description.as_str()))
             .collect();
-        self.help(&pairs)
+        self.help(&pairs).show()
     }
 
     /// Render a text element with an explicit [`Style`] and return its
@@ -966,19 +966,6 @@ impl Context {
         self
     }
 
-    /// Deprecated `f32` alias of the multi-stop foreground gradient.
-    #[deprecated(since = "0.22.2", note = "use `ui.text(..).gradient_stops_f64(stops)`")]
-    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
-        let stops: Vec<(f64, Color)> = stops
-            .iter()
-            .map(|(pos, color)| (f64::from(*pos), *color))
-            .collect();
-        if let Some(idx) = self.last_text() {
-            self.gradient_stops_at(idx, false, &stops);
-        }
-        self
-    }
-
     /// Apply a per-character background gradient to the last rendered text.
     #[deprecated(
         since = "0.26.0",
@@ -999,22 +986,6 @@ impl Context {
     pub fn bg_gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
         if let Some(idx) = self.last_text() {
             self.gradient_stops_at(idx, true, stops);
-        }
-        self
-    }
-
-    /// Deprecated `f32` alias of the multi-stop background gradient.
-    #[deprecated(
-        since = "0.22.2",
-        note = "use `ui.text(..).bg_gradient_stops_f64(stops)`"
-    )]
-    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
-        let stops: Vec<(f64, Color)> = stops
-            .iter()
-            .map(|(pos, color)| (f64::from(*pos), *color))
-            .collect();
-        if let Some(idx) = self.last_text() {
-            self.gradient_stops_at(idx, true, &stops);
         }
         self
     }

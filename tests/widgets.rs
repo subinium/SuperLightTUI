@@ -280,65 +280,6 @@ fn form_renders_fields() {
     tb.assert_contains("Password");
 }
 
-// Exercises the deprecated positional `FormState::validate` shim (#252):
-// it must keep its exact pre-0.21.0 behavior. New code should attach
-// per-field validators via `FormField::validate` + `validate_all()`.
-#[test]
-#[allow(deprecated)]
-fn form_validation() {
-    let mut form = FormState::new()
-        .field(FormField::new("Email"))
-        .field(FormField::new("Password"));
-
-    form.fields[0].input.value = "invalid-email".into();
-    form.fields[1].input.value = "short".into();
-
-    let valid = form.validate(&[
-        |v| {
-            if v.contains('@') {
-                Ok(())
-            } else {
-                Err("invalid email".into())
-            }
-        },
-        |v| {
-            if v.len() >= 8 {
-                Ok(())
-            } else {
-                Err("too short".into())
-            }
-        },
-    ]);
-
-    assert!(!valid);
-    assert_eq!(form.fields[0].error.as_deref(), Some("invalid email"));
-    assert_eq!(form.fields[1].error.as_deref(), Some("too short"));
-
-    form.fields[0].input.value = "user@example.com".into();
-    form.fields[1].input.value = "long-enough".into();
-
-    let valid = form.validate(&[
-        |v| {
-            if v.contains('@') {
-                Ok(())
-            } else {
-                Err("invalid email".into())
-            }
-        },
-        |v| {
-            if v.len() >= 8 {
-                Ok(())
-            } else {
-                Err("too short".into())
-            }
-        },
-    ]);
-
-    assert!(valid);
-    assert_eq!(form.fields[0].error, None);
-    assert_eq!(form.fields[1].error, None);
-}
-
 #[test]
 fn list_renders_items() {
     let mut tb = TestBackend::new(40, 10);
@@ -3331,34 +3272,6 @@ fn markdown_list() {
 }
 
 #[test]
-#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
-fn key_seq_matches_sequence() {
-    let mut tb = TestBackend::new(80, 24);
-    let events = slt::EventBuilder::new().key('g').key('g').build();
-    let mut matched = false;
-
-    tb.render_with_events(events, 0, 1, |ui| {
-        matched = ui.key_seq("gg");
-    });
-
-    assert!(matched);
-}
-
-#[test]
-#[allow(deprecated)] // intentionally exercising the deprecated `key_seq` alias
-fn key_seq_rejects_non_sequence() {
-    let mut tb = TestBackend::new(80, 24);
-    let events = slt::EventBuilder::new().key('g').key('x').build();
-    let mut matched = false;
-
-    tb.render_with_events(events, 0, 1, |ui| {
-        matched = ui.key_seq("gg");
-    });
-
-    assert!(!matched);
-}
-
-#[test]
 fn password_masked() {
     let mut tb = TestBackend::new(80, 24);
     let mut input = TextInputState::new();
@@ -4238,7 +4151,7 @@ fn badge_renders_label() {
 fn badge_colored_has_bg() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        ui.badge_colored("OK", slt::Color::Green);
+        ui.badge("OK").color(slt::Color::Green);
     });
     let cell = tb.buffer().get(1, 0);
     assert_eq!(cell.style.bg, Some(slt::Color::Green));
@@ -4344,10 +4257,10 @@ fn badge_colored_reports_hover() {
     let hovered = Cell::new(false);
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
-        let _ = ui.badge_colored("OK", slt::Color::Green);
+        let _ = ui.badge("OK").color(slt::Color::Green);
     });
     tb.run_with_events(vec![slt::Event::mouse_move(1, 0)], |ui| {
-        hovered.set(ui.badge_colored("OK", slt::Color::Green).hovered);
+        hovered.set(ui.badge("OK").color(slt::Color::Green).hovered);
     });
     assert!(hovered.get(), "badge_colored should report hovered");
 }
@@ -4386,10 +4299,10 @@ fn stat_colored_reports_hover() {
     let hovered = Cell::new(false);
     let mut tb = TestBackend::new(20, 5);
     tb.render(|ui| {
-        let _ = ui.stat_colored("Err", "0", slt::Color::Green);
+        let _ = ui.stat("Err", "0").color(slt::Color::Green);
     });
     tb.run_with_events(vec![slt::Event::mouse_move(1, 1)], |ui| {
-        hovered.set(ui.stat_colored("Err", "0", slt::Color::Green).hovered);
+        hovered.set(ui.stat("Err", "0").color(slt::Color::Green).hovered);
     });
     assert!(hovered.get(), "stat_colored should report hovered");
 }
@@ -4485,9 +4398,9 @@ fn demo_v094_content_does_not_panic() {
         let _ = ui.breadcrumb(&["Home", "Settings"]);
         ui.stat("Uptime", "14d");
         ui.stat_trend("Revenue", "$12,400", Trend::Up);
-        ui.stat_colored("CPU", "72%", Color::Yellow);
+        ui.stat("CPU", "72%").color(Color::Yellow);
         ui.badge("v0.9.4");
-        ui.badge_colored("Stable", Color::Green);
+        ui.badge("Stable").color(Color::Green);
         ui.key_hint("Ctrl+S");
         ui.accordion("General", &mut acc_gen, |ui| {
             ui.definition_list(&[("Theme", "Dark")]);
@@ -4560,7 +4473,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // numbered + lang
     let mut tb_alias = slt::TestBackend::new(40, 10);
     tb_alias.render(|ui| {
-        ui.code_block_numbered_lang(code, "rust");
+        ui.code_block(code).lang("rust").numbered();
     });
     let mut tb_builder = slt::TestBackend::new(40, 10);
     tb_builder.render(|ui| {
@@ -4575,7 +4488,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // lang only
     let mut tb_alias2 = slt::TestBackend::new(40, 10);
     tb_alias2.render(|ui| {
-        ui.code_block_lang(code, "rust");
+        ui.code_block(code).lang("rust");
     });
     let mut tb_builder2 = slt::TestBackend::new(40, 10);
     tb_builder2.render(|ui| {
@@ -4586,7 +4499,7 @@ fn code_block_deprecated_aliases_match_builder() {
     // numbered only
     let mut tb_alias3 = slt::TestBackend::new(40, 10);
     tb_alias3.render(|ui| {
-        ui.code_block_numbered(code);
+        ui.code_block(code).numbered();
     });
     let mut tb_builder3 = slt::TestBackend::new(40, 10);
     tb_builder3.render(|ui| {
@@ -5240,7 +5153,7 @@ fn slider_with_opts_uses_explicit_step() {
         .key_code(slt::KeyCode::Right)
         .build();
     tb.render_with_events(events, 0, 1, |ui| {
-        ui.slider_with(&mut value, SliderOpts::new("Volume", 0.0..=100.0).step(1.0));
+        ui.slider("Volume", &mut value, 0.0..=100.0).step(1.0);
     });
     assert!(
         (value - 51.0).abs() < f64::EPSILON,
@@ -5270,7 +5183,7 @@ fn deprecated_slider_with_step_delegates_to_opts_api() {
         .key_code(slt::KeyCode::Right)
         .build();
     tb.render_with_events(events, 0, 0, |ui| {
-        ui.slider_with_step("Volume", &mut value, 0.0..=100.0, 2.0);
+        ui.slider("Volume", &mut value, 0.0..=100.0).step(2.0);
     });
 
     assert_eq!(value, 52.0);
@@ -5298,10 +5211,8 @@ fn numeric_inputs_normalize_reversed_and_non_finite_values() {
 
     let mut slider_value = f64::NAN;
     tb.render(|ui| {
-        ui.slider_with(
-            &mut slider_value,
-            SliderOpts::new("Reversed", 10.0..=-10.0).step(f64::INFINITY),
-        );
+        ui.slider("Reversed", &mut slider_value, 10.0..=-10.0)
+            .step(f64::INFINITY);
     });
     assert!(slider_value.is_finite());
     assert!((-10.0..=10.0).contains(&slider_value));
@@ -5717,7 +5628,7 @@ fn grid_and_grid_with_produce_same_elements() {
 
     let mut tb2 = TestBackend::new(60, 10);
     tb2.render(|ui| {
-        ui.grid_with(
+        ui.grid_columns(
             &[
                 slt::GridColumn::Auto,
                 slt::GridColumn::Auto,
@@ -5841,7 +5752,7 @@ fn separator_still_callable_after_move() {
 fn separator_colored_still_callable_after_move() {
     let mut tb = TestBackend::new(40, 5);
     tb.render(|ui| {
-        ui.separator_colored(slt::Color::Red);
+        ui.separator().color(slt::Color::Red);
     });
     tb.assert_contains("─");
 }
@@ -5854,7 +5765,7 @@ fn separator_returns_response() {
     // so the rect is empty on frame 1 and populated on frame 2.
     let mut tb = TestBackend::new(40, 5);
     let render = |ui: &mut slt::Context| {
-        let r = ui.separator();
+        let r = ui.separator().show();
         // A real Response (not a chained `&mut Self`).
         assert!(!r.clicked, "no click event was injected");
         r
@@ -5873,7 +5784,7 @@ fn separator_returns_response() {
 #[test]
 fn separator_colored_returns_response() {
     let mut tb = TestBackend::new(40, 5);
-    let render = |ui: &mut slt::Context| ui.separator_colored(slt::Color::Cyan);
+    let render = |ui: &mut slt::Context| ui.separator().color(slt::Color::Cyan).show();
     tb.render(|ui| {
         render(ui);
     });

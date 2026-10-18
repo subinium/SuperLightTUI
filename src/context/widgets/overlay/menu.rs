@@ -376,7 +376,7 @@ impl Context {
     /// let mut frame = |tb: &mut TestBackend, events| {
     ///     tb.sequence()
     ///         .events(events, |ui| {
-    ///             let file = ui.button("notes.md");
+    ///             let file = ui.button("notes.md").show();
     ///             if let Some(id) = ui.context_menu(&mut menu, &file) {
     ///                 chosen = Some(id);
     ///             }

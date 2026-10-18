@@ -138,8 +138,8 @@ ui.container().w(20).md_w(40).lg_w(60).col(|ui| {
 | React | SLT | Notes |
 |-------|-----|-------|
 | `useState` | `ui.use_state(\|\| init)` returns a `State<T>` handle; read with `.get(ui)`, write with `.get_mut(ui)` | Order-based, like React's rules of hooks. |
-| `useState` inside a `.map()` | `ui.use_state_keyed(key, \|\| init)` | Key-based, survives reordering. |
-| stable named slot | `ui.use_state_named("id", \|\| init)` | `&'static str` id. |
+| `useState` inside a `.map()` or an `if` | `ui.use_state_keyed(key, \|\| init)` | Key-based (`&'static str` or `String`), survives reordering and conditional calls. |
+
 | `useMemo` | `ui.use_memo(&deps, \|deps\| ..)` | Recomputes when `deps` changes (`PartialEq`). |
 | `useEffect` | `ui.use_effect(\|deps\| .., &deps)` | Runs on first frame and when `deps` changes. No cleanup closure. |
 | Context provider / `useContext` | `ui.provide(value, \|ui\| ..)` / `ui.use_context::<T>()` | Scoped to the closure body. |

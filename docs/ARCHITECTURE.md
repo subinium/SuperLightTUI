@@ -65,7 +65,7 @@ styling (border, padding, background, foreground), per-subtree theme
 override, alignment.
 
 **Lifecycle**: created via `ui.container()` or shortcut entry points
-(`ui.bordered(B)`, `ui.col(...)`, `ui.row(...)`, `ui.row_gap(g, ...)`),
+(`ui.bordered(B)`, `ui.col(...)`, `ui.row(...)`, `ui.line(...)`),
 mutated via chained methods, finalized by `.col(closure)` /
 `.row(closure)` / `.line(closure)` / `Drop`.
 
@@ -200,21 +200,21 @@ render method are always found under the same name:
 | Family | State (`src/widgets/<family>.rs`) | Methods (`src/context/widgets/<family>.rs` + dir) |
 |---|---|---|
 | `text_input` | `TextInputState`, `Validator`, `AsyncValidation`, `ValidateTrigger`, `FormField`, `FormState`, `FormFieldResponse`, `TextareaState`, `NumberInputState`, `CodeEditorState` (validators in `widgets/validators.rs`, code editor state in `widgets/text_input/code_editor.rs`) | `text_input`, `textarea`, `number_input`, `form`, `form_field`, `form_field_response`, `form_submit`, `code_editor` |
-| `selection` | `SelectState`, `RadioState`, `MultiSelectState`, `TabsState`, `ButtonVariant`, `PickerMode`, `ColorPickerState` | `tabs`, `button`, `button_with`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
+| `selection` | `SelectState`, `RadioState`, `MultiSelectState`, `TabsState`, `ButtonVariant`, `PickerMode`, `ColorPickerState` | `tabs`, `button` / `Button` builder, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
 | `collections` | `ListState`, `ListResponse`, `FilePickerState`, `FileEntry`, `TableState`, `TableColumn`, `PaginatorState`, `PaginatorStyle`, `TreeNode`, `TreeState`, `DirectoryTreeState`, `CalendarState`, `CalDate`, `CalendarSelect` | `list`, `list_reorderable`, `virtual_list`, `table`, `paginator`, `tree`, `directory_tree`, `calendar`, `file_picker` |
-| `feedback` | `ToastState`, `ToastMessage`, `ToastLevel`, `AlertLevel`, `SpinnerState`, `SpinnerPreset`, `SliderOpts`, `GaugeResponse` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar`, `gauge`, `line_gauge` |
+| `feedback` | `ToastState`, `ToastMessage`, `ToastLevel`, `AlertLevel`, `SpinnerState`, `SpinnerPreset`, `SliderOpts`, `GaugeResponse` | `spinner`, `toast`, `slider` / `Slider`, `alert`, `confirm`, `progress` / `progress_bar` (`ProgressBar`), `gauge`, `line_gauge` |
 | `rich` | `RichLogState`, `RichLogEntry`, `StreamingTextState`, `StreamingMarkdownState`, `ApprovalAction`, `ToolApprovalState`, `ContextItem`, `DiffState`, `DiffResponse`, `DiffLayout`, `DiffKeys`, `DiffColors`, `HunkId`, `HunkAction`, `HunkDecision`, `DiffParseError`, `DiffFile`, `DiffHunk`, `DiffLine` (diff state in `widgets/rich/diff.rs`) | `rich_log`, `markdown`, `streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`, `code_block`, `diff` |
-| `commanding` | `ChordState`, `CommandPaletteState`, `PaletteCommand`, `ScreenState`, `ModeState` | `screen`, `push_screen` / `pop_screen` / `reset_screen`, `command_palette`, `key_chord`, `key_seq` |
-| `layout` | `ScrollState`, `HighlightRange`, `SplitPaneState`, `GridColumn`, `SplitPaneResponse`, `GutterResponse` | `col` / `row` / `line`, `separator`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `grid`, `split_pane`, `scrollable_with_gutter` |
-| `display` | `Trend`, `BreadcrumbResponse` | `text` and style chains, `link`, `timer_display`, `help`, `badge`, `key_hint`, `stat`, `breadcrumb`, `accordion`, `definition_list`, `divider_text`, `empty_state` |
+| `commanding` | `ChordState`, `CommandPaletteState`, `PaletteCommand`, `ScreenState`, `ModeState` | `screen`, `push_screen` / `pop_screen` / `reset_screen`, `command_palette`, `key_chord` |
+| `layout` | `ScrollState`, `HighlightRange`, `SplitPaneState`, `GridColumn`, `SplitPaneResponse`, `GutterResponse` | `col` / `row` / `line`, `separator` / `Separator`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `grid` / `grid_columns`, `split_pane`, `scrollable_with_gutter` |
+| `display` | `Trend`, `BreadcrumbResponse` | `text` and style chains, `link`, `timer_display`, `help` / `Help`, `badge` / `Badge`, `key_hint`, `stat` / `Stat`, `breadcrumb`, `accordion`, `definition_list`, `divider_text`, `empty_state` |
 | `overlay` | `MenuState`, `MenuItem`, `MenuBarState`, `PopoverResponse` | `modal`, `modal_with` / `ModalOpts`, `overlay`, `overlay_at(_offset)`, `modal_at(_offset)` (deprecated), `popover` / `Placement`, `context_menu`, `menu_bar`, `tooltip`, `Anchor` |
 | `media` | — | `big_text`, `image`, `kitty_image(_fit)`, `sixel_image`, `iterm_image(_fit)` |
-| `viz` | — (bar data types in `context/bars.rs`, chart config in `crate::chart`) | `viz/bars.rs`, `viz/charts.rs`, `viz/heat_tree.rs`, `viz/canvas.rs`, `viz/qr.rs` |
+| `viz` | — (bar data types in `context/bars.rs`, chart config in `crate::chart`) | `viz/bars.rs`, `viz/charts.rs`, `viz/line_chart.rs` (`LineChart`), `viz/heat_tree.rs`, `viz/canvas.rs`, `viz/qr.rs` |
 | `events` | — | keyboard / mouse / paste / scroll queries, theme, size, tick, quit, debug toggles |
 | `runtime` | `StaticOutput`, `SchedulerState` (non-widget runtime state) | `src/context/runtime.rs` |
 
 Borderline assignments: `ButtonVariant` is `selection` because only
-`button_with` consumes it; `Trend` is `display` (`stat_trend`);
+`Button::variant` consumes it; `Trend` is `display` (`stat_trend`);
 `SchedulerState` and `StaticOutput` are runtime state rather than widget
 state, so they live in `widgets/runtime.rs` next to `context/runtime.rs`;
 compound `*Response` types live with the family that returns them.
@@ -252,11 +252,14 @@ src/
 │       ├── display.rs          # Display family facade
 │       ├── display/
 │       │   ├── text.rs         # text, link, timer_display, help_from_keymap, style chains, size/margin helpers
-│       │   ├── status.rs       # help, breadcrumb, accordion, definition_list, divider_text, badge, key_hint, stat, empty_state
+│       │   ├── status.rs       # breadcrumb, accordion, definition_list, divider_text, key_hint, stat_trend, empty_state
+│       │   ├── status/
+│       │   │   └── builders.rs # help, badge, stat (Help / Badge / Stat builders)
 │       │   └── tests.rs        # Display widget tests
-│       ├── layout.rs           # separator, col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
+│       ├── layout.rs           # col/row/line/line_wrap, group, container, scrollable, scrollbar, bordered
 │       ├── layout/
-│       │   ├── grid.rs         # grid / grid_with
+│       │   ├── separator.rs    # separator (Separator builder)
+│       │   ├── grid.rs         # grid / grid_columns
 │       │   ├── gutter.rs       # scrollable_with_gutter, GutterOpts
 │       │   ├── split.rs        # split_pane / vsplit_pane
 │       │   └── line_wrap_tests.rs
@@ -265,13 +268,15 @@ src/
 │       │   ├── popover.rs      # Placement, flip/clamp placement, popover, floating panels
 │       │   ├── menu.rs         # context_menu, menu_bar
 │       │   └── tooltip_wrap.rs # tooltip word wrapping
-│       ├── commanding.rs       # screen stack, command_palette, key_chord / key_seq
+│       ├── commanding.rs       # screen stack, command_palette, key_chord
 │       ├── text_input.rs       # text_input, form / form_field / form_submit
 │       ├── text_input/
 │       │   ├── textarea.rs     # textarea
 │       │   ├── number_input.rs # number_input
 │       │   └── tests.rs        # Text-input family tests
-│       ├── selection.rs        # tabs, button, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── selection.rs        # tabs, checkbox, toggle, select, radio, multi_select, color_picker
+│       ├── selection/
+│       │   └── button.rs       # button (Button builder: variant / colors / show)
 │       ├── collections.rs      # Collections family facade
 │       ├── collections/
 │       │   ├── list.rs         # list, list_reorderable, virtual_list(_variable)
@@ -279,8 +284,10 @@ src/
 │       │   ├── tree.rs         # tree, directory_tree
 │       │   ├── calendar.rs     # calendar
 │       │   └── file_picker.rs  # file_picker
-│       ├── feedback.rs         # spinner, toast, slider, alert, confirm, progress / progress_bar
+│       ├── feedback.rs         # spinner, toast, alert, confirm
 │       ├── feedback/
+│       │   ├── slider.rs       # slider (Slider builder)
+│       │   ├── progress.rs     # progress / progress_bar (ProgressBar builder)
 │       │   ├── gauge.rs        # gauge / line_gauge builders
 │       │   └── tests.rs        # Feedback family tests
 │       ├── rich.rs             # Rich-content family facade
@@ -299,7 +306,9 @@ src/
 │       ├── viz.rs              # Viz family facade + shared viz-root helpers
 │       ├── viz/
 │       │   ├── bars.rs         # bar_chart, grouped and stacked bars
-│       │   ├── charts.rs       # sparkline, line/area, candlestick(_hd), chart, scatter, histogram
+│       │   ├── charts.rs       # sparkline, candlestick(_hd), chart, scatter, histogram
+│       │   ├── line_chart.rs   # line_chart / area_chart (LineChart builder)
+
 │       │   ├── heat_tree.rs    # heatmap, heatmap_halfblock, treemap, TreemapItem
 │       │   ├── canvas.rs       # canvas / try_canvas / canvas_with
 │       │   ├── qr.rs           # qr_code

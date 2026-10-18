@@ -251,21 +251,6 @@ impl ScrollState {
         }
     }
 
-    /// Deprecated `f32` alias for [`progress_ratio`](Self::progress_ratio).
-    ///
-    /// `ScrollState::progress` was the only `f32` ratio left after the v0.20
-    /// `f32 → f64` ratio unification. Migrate to [`progress_ratio`](Self::progress_ratio):
-    /// call sites that wrapped the result in `as f64` can drop the cast, while
-    /// call sites passing the value to `gauge` / `progress_bar` (which already
-    /// take `f64`) need no cast at all.
-    #[deprecated(
-        since = "0.21.0",
-        note = "use progress_ratio() — f64 matches the rest of the v0.20+ ratio surface (gauge/progress_bar take f64; drop any `as f64` cast)"
-    )]
-    pub fn progress(&self) -> f32 {
-        self.progress_ratio() as f32
-    }
-
     /// Scroll up by the given number of rows, clamped to 0.
     pub fn scroll_up(&mut self, amount: usize) {
         self.offset = self.offset.saturating_sub(amount);
@@ -578,7 +563,7 @@ impl Default for SplitPaneState {
 /// ```no_run
 /// use slt::GridColumn;
 /// # slt::run(|ui: &mut slt::Context| {
-/// ui.grid_with(&[
+/// ui.grid_columns(&[
 ///     GridColumn::Fixed(8),   // label column: exactly 8 chars
 ///     GridColumn::Grow(1),    // flexible column
 ///     GridColumn::Grow(1),    // flexible column
@@ -692,15 +677,5 @@ mod scroll_state_progress_tests {
         let third = scrolled(40, 10, 10); // max = 30, offset = 10 → 1/3
         let ratio = third.progress_ratio();
         assert!((ratio - 1.0 / 3.0).abs() < 1e-12);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_progress_delegates_to_progress_ratio() {
-        // The deprecated f32 alias must agree with the f64 source within f32 epsilon.
-        let state = scrolled(100, 20, 40);
-        let expected = state.progress_ratio() as f32;
-        assert_eq!(state.progress(), expected);
-        assert!((state.progress() - 0.5).abs() < f32::EPSILON);
     }
 }

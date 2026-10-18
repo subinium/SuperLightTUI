@@ -18,6 +18,19 @@ part of the stable surface.
 - "Methods" covers all other public methods on the type.
 - `Self` in signatures means the enclosing type.
 
+## Hook state vs. widget state
+
+The `*State` structs below are widget state you own and pass by `&mut`.
+Hook state is different: `ui.use_state(|| init)` (positional, same call order
+every frame) and `ui.use_state_keyed(id, || init)` /
+`ui.use_state_keyed_default::<T>(id)` (keyed by a `&'static str` or `String`
+id, safe inside `if` / `match` / loops) return a `State<T>` handle, also
+exported as `StateHandle<T>`. Read it with `.get(ui)` and write it with
+`.get_mut(ui)`. `use_state_named` / `use_state_named_default` are deprecated
+aliases: named and keyed ids now share one slot map, so the same id reaches the
+same value through either call. Release stale keyed slots with
+`remove_state_keyed(id)` or `retain_state_keyed(..)`.
+
 ## TextInputState
 
 Source: `src/widgets/text_input.rs`.
@@ -245,7 +258,8 @@ Multi-field form.
 | `get(&self, key: &str) -> Option<&str>` | Read a field's value by key, then label. Survives reordering. |
 | `field_mut(&mut self, key: &str) -> Option<&mut FormField>` | Mutable field lookup by key, then label. |
 | `value(&self, index: usize) -> &str` | Positional read of the Nth field's value, `""` if out of range. |
-| `validate(&mut self, validators: &[FormValidator]) -> bool` | Deprecated positional validation. |
+| `validate_with(&mut self, f: impl Fn(&FormState) -> Vec<(usize, String)>) -> bool` | Cross-field validation; `f` returns `(field index, message)` errors. |
+
 
 ### Minimal example
 
@@ -665,7 +679,7 @@ let mut menu = MenuState::new(vec![
     MenuItem::separator(),
     MenuItem::new("delete", "Delete").disabled(true),
 ]);
-let row = ui.button("notes.md");
+let row = ui.button("notes.md").show();
 if let Some(id) = ui.context_menu(&mut menu, &row) {
     // run the command named `id`
 }
@@ -1322,7 +1336,9 @@ ui.toast(&mut toasts);
 
 Source: `src/widgets/selection.rs`.
 
-Visual variant accepted by `Context::button_with`.
+Visual variant accepted by `ui.button(label).variant(..)`. It composes with
+`.colors(&WidgetColors)`, which layers literal overrides on top of the variant.
+
 
 ### Variants
 

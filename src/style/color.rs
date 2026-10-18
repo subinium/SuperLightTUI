@@ -109,15 +109,6 @@ impl Color {
         0.2126 * rf + 0.7152 * gf + 0.0722 * bf
     }
 
-    /// Deprecated `f32` alias for [`luminance_f64`](Self::luminance_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::luminance_f64() to keep public float APIs on f64"
-    )]
-    pub fn luminance(self) -> f32 {
-        self.luminance_f64() as f32
-    }
-
     /// Return a contrasting foreground color for the given background.
     ///
     /// Uses the WCAG 2.1 relative luminance threshold (0.179) to decide
@@ -176,15 +167,6 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Deprecated `f32` alias for [`blend_f64`](Self::blend_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::blend_f64() to keep public float APIs on f64"
-    )]
-    pub fn blend(self, other: Color, alpha: f32) -> Color {
-        self.blend_f64(other, f64::from(alpha))
-    }
-
     /// Lighten this color by the given amount (0.0–1.0).
     ///
     /// Blends toward white. `amount = 0.0` returns the original color;
@@ -193,30 +175,12 @@ impl Color {
         Color::Rgb(255, 255, 255).blend_f64(self, amount)
     }
 
-    /// Deprecated `f32` alias for [`lighten_f64`](Self::lighten_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::lighten_f64() to keep public float APIs on f64"
-    )]
-    pub fn lighten(self, amount: f32) -> Color {
-        self.lighten_f64(f64::from(amount))
-    }
-
     /// Darken this color by the given amount (0.0–1.0).
     ///
     /// Blends toward black. `amount = 0.0` returns the original color;
     /// `amount = 1.0` returns black.
     pub fn darken_f64(self, amount: f64) -> Color {
         Color::Rgb(0, 0, 0).blend_f64(self, amount)
-    }
-
-    /// Deprecated `f32` alias for [`darken_f64`](Self::darken_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::darken_f64() to keep public float APIs on f64"
-    )]
-    pub fn darken(self, amount: f32) -> Color {
-        self.darken_f64(f64::from(amount))
     }
 
     /// Compute the WCAG 2.1 contrast ratio between two colors.
@@ -236,15 +200,6 @@ impl Color {
         let la = a.luminance_f64() + 0.05;
         let lb = b.luminance_f64() + 0.05;
         if la > lb { la / lb } else { lb / la }
-    }
-
-    /// Deprecated `f32` alias for [`contrast_ratio_f64`](Self::contrast_ratio_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::contrast_ratio_f64() to keep public float APIs on f64"
-    )]
-    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
-        Self::contrast_ratio_f64(a, b) as f32
     }
 
     /// Returns `true` if the contrast ratio between two colors meets WCAG AA
@@ -358,15 +313,6 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Deprecated `f32` alias for [`from_hsl_f64`](Self::from_hsl_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::from_hsl_f64() to keep public float APIs on f64"
-    )]
-    pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
-        Self::from_hsl_f64(f64::from(h), f64::from(s), f64::from(l))
-    }
-
     /// Construct an [`Color::Rgb`] from HSV (a.k.a. HSB) components.
     ///
     /// `h` is the hue in degrees (wrapped into `0..360`), `s` is the
@@ -384,15 +330,6 @@ impl Color {
     pub fn from_hsv_f64(h: f64, s: f64, v: f64) -> Color {
         let (r, g, b) = hsv_to_rgb(h, s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
         Color::Rgb(r, g, b)
-    }
-
-    /// Deprecated `f32` alias for [`from_hsv_f64`](Self::from_hsv_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::from_hsv_f64() to keep public float APIs on f64"
-    )]
-    pub fn from_hsv(h: f32, s: f32, v: f32) -> Color {
-        Self::from_hsv_f64(f64::from(h), f64::from(s), f64::from(v))
     }
 
     /// Rotate the hue of this color by `degrees` around the HSL color wheel.
@@ -416,15 +353,6 @@ impl Color {
         let (h, s, l) = rgb_to_hsl(r, g, b);
         let (nr, ng, nb) = hsl_to_rgb(h + degrees, s, l);
         Color::Rgb(nr, ng, nb)
-    }
-
-    /// Deprecated `f32` alias for [`rotate_hue_f64`](Self::rotate_hue_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Color::rotate_hue_f64() to keep public float APIs on f64"
-    )]
-    pub fn rotate_hue(self, degrees: f32) -> Color {
-        self.rotate_hue_f64(f64::from(degrees))
     }
 }
 

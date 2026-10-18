@@ -190,41 +190,6 @@ fn use_memo_retries_initial_and_update_panics_atomically() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn use_memo_ref_retries_initial_and_update_panics_atomically() {
-    let mut state = FrameState::default();
-    let mut ctx = Context::new(Vec::new(), 20, 5, &mut state, Theme::dark());
-
-    ctx.error_boundary_with(
-        |ui| {
-            let _ = ui.use_memo_ref(&1u8, |_| -> u16 { panic!("initial memo_ref panic") });
-        },
-        |_ui, _| {},
-    );
-    assert!(
-        ctx.hook_states.is_empty(),
-        "initial panic must not create a slot"
-    );
-
-    assert_eq!(*ctx.use_memo_ref(&1u8, |dep| u16::from(*dep) * 10), 10);
-
-    ctx.rollback.hook_cursor = 0;
-    ctx.error_boundary_with(
-        |ui| {
-            let _ = ui.use_memo_ref(&2u8, |_| -> u16 { panic!("update memo_ref panic") });
-        },
-        |_ui, _| {},
-    );
-
-    ctx.rollback.hook_cursor = 0;
-    assert_eq!(
-        *ctx.use_memo_ref(&2u8, |dep| u16::from(*dep) * 10),
-        20,
-        "same deps must recompute after panic"
-    );
-}
-
-#[test]
 fn use_memo_copied_matches_get() {
     let mut tb = TestBackend::new(20, 3);
     tb.render(|ui| {
@@ -233,20 +198,6 @@ fn use_memo_copied_matches_get() {
         ui.text(format!("{}", m.copied(ui)));
     });
     tb.assert_contains("21");
-}
-
-#[test]
-fn use_memo_ref_still_compiles() {
-    // The deprecated `&T`-returning alias remains a drop-in for existing
-    // callers and yields the same value as the handle form.
-    let mut tb = TestBackend::new(20, 3);
-    tb.render(|ui| {
-        #[allow(deprecated)]
-        let v = *ui.use_memo_ref(&8i32, |d| d * 2);
-        assert_eq!(v, 16);
-        ui.text(format!("{v}"));
-    });
-    tb.assert_contains("16");
 }
 
 #[test]
@@ -821,7 +772,7 @@ fn grid_with_fixed_columns_emit_constraints() {
     let mut state = FrameState::default();
     let mut ctx = Context::new(Vec::new(), 80, 24, &mut state, Theme::dark());
 
-    let _ = ctx.grid_with(
+    let _ = ctx.grid_columns(
         &[GridColumn::Fixed(10), GridColumn::Grow(2), GridColumn::Auto],
         |ui| {
             ui.text("A");
@@ -1283,30 +1234,6 @@ fn key_chord_modal_guard() {
     assert!(
         !ctx.key_chord("gg"),
         "modal guard suppresses chords (overlay_depth == 0)"
-    );
-}
-
-#[test]
-#[allow(deprecated)] // regression-lock the deprecated `key_seq` delegation
-fn key_seq_deprecated_alias_matches_across_frames() {
-    use crate::test_utils::TestBackend;
-    use std::cell::Cell;
-
-    let mut tb = TestBackend::new(40, 4);
-    let frame2 = Cell::new(false);
-    tb.sequence()
-        .key(KeyCode::Char('g'), |ui| {
-            ui.key_seq("gg");
-            ui.text("hi");
-        })
-        .key(KeyCode::Char('g'), |ui| {
-            frame2.set(ui.key_seq("gg"));
-            ui.text("hi");
-        })
-        .run();
-    assert!(
-        frame2.get(),
-        "deprecated `key_seq` now matches across frames via `key_chord`"
     );
 }
 

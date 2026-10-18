@@ -40,8 +40,9 @@ Every widget method on `Context` follows one of these return patterns:
 | Return type | Meaning | When to use |
 |---|---|---|
 | `&mut Self` | Style-chainable display element | `text`, `styled`, `link`, `spacer`, `timer_display`, `toast` |
-| `Response` | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
+| `Response` | Widget with click/hover/changed/focused/rect — includes display widgets | `list`, `table`, `tabs`, `col`, `row`, `line`, `alert`, `markdown`, `sparkline`, `bar_chart` |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
+| Response builder | Recorded immediately (`slider`, `line_chart`, `area_chart`: when the response is first read or at end of statement); options chain as methods; derefs to `Response`, `.show()` returns an owned `Response` | `button`, `badge`, `stat`, `help`, `separator`, `progress`, `progress_bar`, `slider`, `line_chart`, `area_chart` |
 | Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff`, `code_editor` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
 
@@ -77,6 +78,19 @@ ui
 Related: `on_changed(ui, f)`, `on_hover_ui(ui, |ui| ...)` for a custom tooltip
 body. Hover-based callbacks need `MouseMode::Hover`.
 
+Response builders hold `&mut ui` until their last use. Reading a field on the
+same line (`ui.button("Save").clicked`) is fine; to keep the result while you
+call `ui.` again, store an owned copy with `.show()`:
+
+```rust
+let save = ui.button("Save").show();
+ui.text("unsaved changes");
+if save.clicked { /* ... */ }
+```
+
+Builder arguments cannot borrow `ui` either, so bind theme colors first:
+`let ok = ui.theme().success; ui.badge("ok").color(ok);`.
+
 ---
 
 ## Text & Display
@@ -90,7 +104,7 @@ its chain options style that element only, and `.show()` returns a `Response`.
 | `styled(s, style)` | Text with an explicit `Style` struct |
 | `link(text, url)` | Clickable hyperlink (OSC 8). Opens URL on Enter/Space/click |
 | `spacer()` | Invisible flex element — pushes siblings apart |
-| `separator()` | Horizontal divider line; returns `Response`. Variant: `separator_colored(color)` |
+| `separator()` | Horizontal divider line; `Separator` builder. Chain `.color(color)`; `.show()` returns `Response` |
 | `timer_display(elapsed)` | Format `Duration` as HH:MM:SS.CC |
 
 ### Rich text (return `Response`)
@@ -98,7 +112,7 @@ its chain options style that element only, and `.show()` returns a `Response`.
 | Method | Description |
 |---|---|
 | `markdown(text)` | Render Markdown with headings, bold, italic, links, lists, code |
-| `code_block(code)` | Fenced code block. Variants: `code_block_lang(code, lang)`, `code_block_numbered(code)`, `code_block_numbered_lang(code, lang)` |
+| `code_block(code)` | Fenced code block builder (renders on Drop). Chain `.lang(lang)` for highlighting, `.numbered()` for line numbers; `.show()` returns `Response` |
 | `big_text(s)` | 8x8 bitmap text rendered as half-block pixels (4 rows tall) |
 
 ```rust
@@ -117,19 +131,19 @@ All return `Response` unless noted.
 | Method | Description |
 |---|---|
 | `alert(message, level)` | Banner with icon. `AlertLevel`: `Info`, `Success`, `Warning`, `Error` |
-| `badge(label)` | Themed badge pill. Variant: `badge_colored(label, color)` |
+| `badge(label)` | Themed badge pill; `Badge` builder. Chain `.color(color)` |
 | `key_hint(key)` | Keyboard shortcut hint badge |
-| `stat(label, value)` | Label-value stat display. Variants: `stat_colored(label, value, color)`, `stat_trend(label, value, trend)` where `Trend`: `Up`, `Down` |
+| `stat(label, value)` | Label-value stat display; `Stat` builder. Chain `.color(color)`. Variant: `stat_trend(label, value, trend)` where `Trend`: `Up`, `Down` |
 | `empty_state(title, desc)` | Centered empty-state message. Variant: `empty_state_action(title, desc, action)` |
 | `divider_text(label)` | Horizontal divider with centered label |
 | `definition_list(items)` | Key-value list from `&[(&str, &str)]` |
 | `accordion(title, open, f)` | Collapsible section. `open: &mut bool` |
 | `confirm(question, result)` | Yes/No dialog. `result: &mut bool`, `Response.clicked` on answer |
 | `breadcrumb(segments)` | Clickable breadcrumb builder. Chain `.separator(...)` / `.color(...)`; `.show()` returns `BreadcrumbResponse` with `clicked_segment`. |
-| `help(bindings)` | Keybinding help bar from `&[(&str, &str)]`. Variant: `help_colored(bindings, key_color, text_color)` |
+| `help(bindings)` | Keybinding help bar from `&[(&str, &str)]`; `Help` builder. Chain `.key_color(color)` / `.text_color(color)` |
 | `help_from_keymap(keymap)` | Help bar from a `KeyMap` struct |
 
-Note: `separator()` and `separator_colored()` return `&mut Self` (listed under Text & Display).
+Note: `separator()` is listed under Text & Display.
 
 ---
 
@@ -137,11 +151,12 @@ Note: `separator()` and `separator_colored()` return `&mut Self` (listed under T
 
 | Method | Returns | Description |
 |---|---|---|
-| `col(f)` | `Response` | Vertical container. Variant: `col_gap(gap, f)` |
-| `row(f)` | `Response` | Horizontal container. Variant: `row_gap(gap, f)` |
-| `line(f)` | `&mut Self` | Inline rich text (zero-gap row, no interaction) |
+| `col(f)` | `Response` | Vertical container. With a gap: `container().gap(n).col(f)` |
+| `row(f)` | `Response` | Horizontal container. With a gap: `container().gap(n).row(f)` |
+| `line(f)` | `Response` | Inline rich text (zero-gap row, no interaction) |
 | `line_wrap(f)` | `&mut Self` | Wrapping inline text |
 | `grid(cols, f)` | `Response` | Fixed-column grid layout |
+| `grid_columns(&[GridColumn], f)` | `Response` | Grid with per-column widths (`GridColumn::{Auto, Fixed(n), Grow(w), Percent(p)}`) |
 | `container()` | `ContainerBuilder` | Fluent builder for borders, padding, grow, constraints, title |
 | `scrollable(state)` | `ContainerBuilder` | Scrollable container. `ScrollState` |
 | `scrollbar(state)` | `Response` | Render and interact with a mutable `ScrollState` scrollbar track |
@@ -181,15 +196,14 @@ ui.row(|ui| {
 
 ## Interactive Widgets
 
-All return `Response`. Most have a `_colored(&WidgetColors)` variant.
+All return `Response` (or a builder that derefs to it). Stateful widgets have a `_colored(state, &WidgetColors)` variant; builders take colors as a chained method.
 
 | Method | State type | Description |
 |---|---|---|
-| `button(label)` | — | Click button. Variants: `button_colored(label, colors)`, `button_with(label, variant)` where `ButtonVariant`: `Default`, `Primary`, `Danger`, `Outline` |
+| `button(label)` | — | Click button; `Button` builder. Chain `.variant(ButtonVariant)` (`Default`, `Primary`, `Danger`, `Outline`) and/or `.colors(&WidgetColors)`, e.g. `ui.button("Delete").variant(ButtonVariant::Danger).colors(&c)`; `.show()` returns the `Response` |
 | `checkbox(label, checked)` | `&mut bool` | Checkbox toggle. Variant: `checkbox_colored(...)` |
 | `toggle(label, on)` | `&mut bool` | Toggle switch. Variant: `toggle_colored(...)` |
-| `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider (default step = `span / 20`) |
-| `slider_with(value, opts)` | `&mut f64`, `SliderOpts` | Slider with explicit options, e.g. `SliderOpts::new(label, range).step(1.0)` |
+| `slider(label, value, range)` | `&mut f64`, `RangeInclusive<f64>` | Horizontal slider; `Slider` builder (default step = `span / 20`, `.step(1.0)` sets it explicitly) |
 | `number_input(state)` | `NumberInputState` | Editable integer or floating-point stepper |
 | `text_input(state)` | `TextInputState` | Single-line text input. Variant: `text_input_colored(...)` |
 | `textarea(state, visible_rows)` | `TextareaState` | Multi-line text editor |
@@ -229,8 +243,8 @@ if ui.tabs(&mut tabs).changed {
 
 | Method | Returns | State type | Description |
 |---|---|---|---|
-| `progress(ratio)` | `Response` | — | Progress bar, `f64` 0.0..1.0 |
-| `progress_bar(ratio, width)` | `Response` | — | Fixed-width progress bar. Variant: `progress_bar_colored(ratio, width, color)` |
+| `progress(ratio)` | `ProgressBar` | — | Progress bar, `f64` 0.0..1.0. Chain `.color(color)` |
+| `progress_bar(ratio, width)` | `ProgressBar` | — | Fixed-width progress bar. Chain `.color(color)` |
 | `spinner(state)` | `Response` | `SpinnerState` | Animated spinner (dots, line, etc.) |
 | `toast(state)` | `&mut Self` | `ToastState` | Render active toast notifications |
 | `notify(message, level)` | `()` | — | Fire-and-forget toast. `ToastLevel`: `Info`, `Success`, `Warning`, `Error` |
@@ -246,8 +260,8 @@ All return `Response`.
 | `bar_chart(data, max_width)` | Horizontal bar chart from `&[(&str, f64)]`. Variant: `bar_chart_with(bars, configure, max_size)` for per-bar colors and layout options |
 | `bar_chart_grouped(groups, max_width)` | Grouped bar chart from `&[BarGroup]`. Variant: `bar_chart_grouped_with(groups, configure, max_size)` |
 | `sparkline(data, width)` | Inline sparkline from `&[f64]`. Variant: `sparkline_styled(data, width)` with per-point `Option<Color>` |
-| `line_chart(data, width, height)` | Line chart. Variant: `line_chart_colored(...)` |
-| `area_chart(data, width, height)` | Filled area chart. Variant: `area_chart_colored(...)` |
+| `line_chart(data, width, height)` | Line chart; `LineChart` builder. Chain `.color(color)` |
+| `area_chart(data, width, height)` | Filled area chart; same builder, `.color(color)` |
 | `scatter(data, width, height)` | Braille scatter plot from `&[(f64, f64)]` |
 | `histogram(data, width, height)` | Histogram from `&[f64]`. Variant: `histogram_with(data, configure, w, h)` |
 | `bar_chart_stacked(groups, max_height)` | Stacked bar chart from `&[BarGroup]`. Variant: `bar_chart_stacked_with(groups, configure, max_height)` |
@@ -305,7 +319,8 @@ These are not widgets but essential `Context` methods for state, input, and envi
 
 | Method | Returns | Description |
 |---|---|---|
-| `use_state(init)` | `State<T>` | Persistent state across frames. Read with `.get(ui)`, mutate with `.get_mut(ui)` |
+| `use_state(init)` | `State<T>` | Persistent state across frames, keyed by call order. Read with `.get(ui)`, mutate with `.get_mut(ui)` |
+| `use_state_keyed(id, init)` / `use_state_keyed_default::<T>(id)` | `State<T>` | Same, keyed by an id (`&'static str` or `String`), so safe inside `if`/`match`/loops |
 | `use_memo(deps, compute)` | `Memo<T>` | Memoized computation; read with `.get(ui)` / `.copied(ui)` |
 
 ### Focus & interaction
@@ -334,7 +349,6 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `raw_key_mod(c, mods)` | `bool` | Char + modifier, ignoring consumed state |
 | `key_chord(seq)` | `bool` | Cross-frame multi-key sequence (vi `gg`, leader keys); buffers partial input and times out on inactivity |
 | `key_chord_timeout(seq, ticks)` | `bool` | `key_chord` with an explicit per-call timeout in ticks |
-| `key_seq(seq)` | `bool` | **Deprecated** — alias for `key_chord` |
 | `key_release(c)` | `bool` | Char key released |
 | `key_code_release(code)` | `bool` | KeyCode released |
 
@@ -434,7 +448,7 @@ Finalize with `.col(f)`, `.row(f)`, or `.draw(f)`.
 | `.border_fg(color)` | Border foreground color |
 | `.dark_border_style(style)` | Border style override in dark mode |
 | `.bg(color)` / `.dark_bg(color)` | Background color (with dark mode variant) |
-| `.text_color(color)` | Default text color for children |
+| `.fg(color)` / `.text_color(color)` | Default text color for children |
 | `.hover_bg(color)` / `.hover_fg(color)` / `.hover_border_fg(color)` | `:hover`: this container's own rect is under the pointer |
 | `.focus_bg(color)` / `.focus_fg(color)` / `.focus_border_fg(color)` | `:focus`: the focusable registered right before the container holds focus |
 | `.focus_within_bg(color)` / `.focus_within_border_fg(color)` | `:focus-within`: a widget inside holds focus |
@@ -447,7 +461,7 @@ Finalize with `.col(f)`, `.row(f)`, or `.draw(f)`.
 
 | Method | Description |
 |---|---|
-| `.p(n)` | Uniform padding (`.pad(n)` is a deprecated compatibility alias) |
+| `.p(n)` | Uniform padding |
 | `.px(n)` / `.py(n)` | Horizontal / vertical padding |
 | `.pt(n)` / `.pr(n)` / `.pb(n)` / `.pl(n)` | Individual side padding |
 | `.padding(Padding)` | Full `Padding` struct |
@@ -466,6 +480,7 @@ Finalize with `.col(f)`, `.row(f)`, or `.draw(f)`.
 | `.min_w(n)` / `.max_w(n)` | Min / max width |
 | `.min_h(n)` / `.max_h(n)` | Min / max height |
 | `.w_pct(p)` / `.h_pct(p)` | Percentage of parent (`u8`, 0-100) |
+| `.w_ratio(num, den)` / `.h_ratio(num, den)` | Fraction of parent, e.g. `.w_ratio(1, 3)` |
 | `.constraints(Constraints)` | Full `Constraints` struct |
 
 ### Layout
@@ -528,13 +543,14 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 |---|---|
 | `src/context/widgets.rs` | Widget-method facade (one module per family) |
 | `src/context/widgets/display/text.rs` | `text`, `styled`, `link`, `spacer`, `timer_display`, `help_from_keymap` |
-| `src/context/widgets/display/status.rs` | `help`, `help_colored`, `badge`, `stat`, `breadcrumb`, `accordion`, `divider_text`, `definition_list`, `empty_state`, `key_hint` |
-| `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered`, `separator`, `separator_colored` (+ `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
+| `src/context/widgets/display/status.rs` | `breadcrumb`, `accordion`, `divider_text`, `definition_list`, `empty_state`, `key_hint`, `stat_trend` (+ `status/builders.rs`: `help`, `badge`, `stat`) |
+| `src/context/widgets/layout.rs` | `col`, `row`, `line`, `line_wrap`, `group`, `container`, `scrollable`, `scrollbar`, `bordered` (+ `layout/separator.rs`, `layout/grid.rs`, `layout/split.rs`, `layout/gutter.rs`) |
 | `src/context/widgets/overlay.rs` | `modal`, `modal_with`, `ModalOpts`, `overlay`, `overlay_at`, `tooltip`, `Anchor` (+ `overlay/popover.rs` (`popover`, `Placement`), `overlay/menu.rs` (`context_menu`, `menu_bar`)) |
-| `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord`, `key_seq` |
+| `src/context/widgets/commanding.rs` | `screen`, `push_screen`, `pop_screen`, `command_palette`, `key_chord` |
 | `src/context/widgets/text_input.rs` | `text_input`, `text_input_colored`, `form`, `form_field`, `form_submit` (+ `text_input/textarea.rs`, `text_input/number_input.rs`, `text_input/code_editor.rs` (`code_editor`)) |
-| `src/context/widgets/feedback.rs` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar` (+ `feedback/gauge.rs`) |
-| `src/context/widgets/selection.rs` | `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
+| `src/context/widgets/feedback.rs` | `spinner`, `toast`, `alert`, `confirm` (+ `feedback/slider.rs`, `feedback/progress.rs` (`progress`, `progress_bar`), `feedback/gauge.rs`) |
+| `src/context/widgets/selection.rs` | `tabs`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` (+ `selection/button.rs`) |
+
 | `src/context/widgets/collections/` | `list.rs` (`list`, `virtual_list`), `table.rs` (`table`, `paginator`), `tree.rs` (`tree`, `directory_tree`), `calendar.rs`, `file_picker.rs` |
 | `src/context/widgets/rich/` | `rich_log.rs`, `markdown.rs`, `streaming.rs` (`streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`), `code_block.rs`, `diff.rs` (`diff`) |
 | `src/context/widgets/media.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `iterm_image` |

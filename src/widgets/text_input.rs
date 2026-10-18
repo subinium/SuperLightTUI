@@ -1362,8 +1362,8 @@ impl FormState {
 
     /// Run every field's own validators, returning `true` when all pass.
     ///
-    /// This is the replacement for the deprecated positional
-    /// [`validate`](Self::validate) — validators are co-located with their
+    /// This replaced the positional `validate(&[FormValidator])` (removed in
+    /// 0.26) — validators are co-located with their
     /// fields, so there is no index slice to misalign.
     ///
     /// # Example
@@ -1423,31 +1423,6 @@ impl FormState {
             }
         }
         extra.is_empty()
-    }
-
-    /// Validate all fields with a positional slice of function-pointer
-    /// validators.
-    ///
-    /// Returns `true` when all validations pass. A field whose index has no
-    /// matching validator is silently skipped.
-    #[deprecated(
-        since = "0.21.0",
-        note = "Attach validators per-field via FormField::validate and call validate_all(); positional slices misalign silently."
-    )]
-    pub fn validate(&mut self, validators: &[FormValidator]) -> bool {
-        let mut all_valid = true;
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if let Some(validator) = validators.get(i) {
-                match validator(&field.input.value) {
-                    Ok(()) => field.error = None,
-                    Err(msg) => {
-                        field.error = Some(msg);
-                        all_valid = false;
-                    }
-                }
-            }
-        }
-        all_valid
     }
 
     /// Get field value by index.

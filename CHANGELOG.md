@@ -4,6 +4,36 @@
 
 ### Added
 
+- Widget builders with one configuration mechanism each (#460):
+  `ui.button(label)` returns `Button` with `.variant(..)` and `.colors(..)`,
+  which compose (`ui.button("Delete").variant(ButtonVariant::Danger)
+  .colors(&c)` was impossible before); `badge`, `stat`, `separator`,
+  `progress` / `progress_bar` return `Badge` / `Stat` / `Separator` /
+  `ProgressBar` with `.color(..)`, `help` returns `Help` with `.key_color(..)`
+  / `.text_color(..)`, `slider` returns `Slider` with `.step(..)`, and
+  `line_chart` / `area_chart` return `LineChart` with `.color(..)`. Every
+  builder dereferences to its `Response` and has `.show()`. `grid_columns`
+  is the new name of `grid_with`. Each builder records its widget where it
+  is written: immediately (`Button`, the display builders, like `Text`) or,
+  when an option changes input handling or rasterization (`Slider`,
+  `LineChart`), when the response is first read or at the end of the
+  statement, before anything else can be recorded. No extra allocation per
+  call.
+- `slt::prelude` (#463): `use slt::prelude::*;` imports the run entry points,
+  `Context`, the builders, the style vocabulary, `KeyCode` / `KeyModifiers`,
+  `MouseMode` and the common widget states, but not the `crossterm`
+  re-export, so a glob import no longer shadows the application's own
+  `crossterm` dependency.
+- `StateHandle<T>`, an alias of `State<T>` that names the hook handle apart
+  from widget state structs (#463).
+- `ContainerBuilder::fg` (same as `text_color`) and
+  `ContainerBuilder::w_ratio` / `h_ratio` (same as `Constraints`) (#463).
+- `scripts/api_audit.sh` checks V8 (`_with` needs a closure parameter), V9
+  (`_colored` takes `&WidgetColors` and the set is frozen) and V10 (the 0.26
+  removed / renamed names stay gone, `Context::line` returns `Response`), all
+  gated in `--strict`; `scripts/check_doc_examples.py` compiles maintained
+  recipes with `#![deny(deprecated)]` (#460, #463).
+
 - Element-level interactive state styles on `ContainerBuilder` (#458), the
   CSS pseudo-classes as builder calls: `hover_bg` / `hover_fg` /
   `hover_border_fg` (`:hover`, from the container's own previous-frame rect,
@@ -128,6 +158,24 @@
 
 ### Changed
 
+- `button`, `badge`, `stat`, `help`, `separator`, `progress`,
+  `progress_bar`, `slider`, `line_chart` and `area_chart` return builders
+  instead of `Response` (#460). Field access, `.on_click(ui, ..)` /
+  `.on_hover(ui, ..)` chains and statements compile unchanged; storing the
+  result as a `Response` value needs `.show()`. Rendering without options is
+  unchanged (cell-for-cell, checked against 0.25 in the plain, focused and
+  hovered states).
+- `Response` is `Copy` (#460), so `Response` methods chain off a builder.
+- `Context::line` returns `Response`, like `ContainerBuilder::line`, instead
+  of `&mut Self` (#463).
+- `use_state_named` and `use_state_keyed` share one slot map (#463): the same
+  id from either call is one slot, and `remove_state_keyed` /
+  `retain_state_keyed` / `keyed_state_count` include named ids. Before, the
+  two were independent maps.
+- Variant buttons (`.variant(..)`, formerly `button_with`) honour the
+  `RunConfig::widget_theme` button colors like the plain button does; with
+  the default widget theme they render as before (#460).
+
 - `Context::modal(f)` is now exactly `modal_with(ModalOpts::default(), f)` and
   traps focus by default, as `ModalOptions` already documented (#462).
   `modal_with(ModalOpts::new().tab_trap(false), f)` restores the old
@@ -147,8 +195,8 @@
   `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, `ui.alert(..)` and the other
   layout/display calls are plain statements without `let _ =`, and
   `Response::{on_hover, on_hover_ui, on_click, ..}` can end a chain. Only
-  `button`, `button_colored` and `button_with` keep a fn-level `#[must_use]`,
-  because their `clicked` flag is their only output.
+  the button keeps `#[must_use]` (on the `Button` builder type since #460),
+  because its `clicked` flag is its only output.
 - **Breaking:** `Context::text`, `styled`, `link` and `timer_display` return a
   scoped `slt::Text<'_>` builder instead of `&mut Context` (#457). Its style,
   size and margin options (`bold`, `fg`, `gradient`, `w`, `m`, `wrap`,
@@ -400,7 +448,28 @@
   100k items with 10 now retains under 1 KB instead of ~1.6 MB.
   `TableState::set_rows` already released them; filter changes keep capacity.
 
+### Removed
+
+- Items deprecated in 0.20 - 0.22 (#463): `ContainerBuilder::pad`,
+  `min_width`, `max_width`, `min_height`, `max_height`; `Context::col_gap`,
+  `row_gap`, `key_seq`, `code_block_lang`, `code_block_numbered`,
+  `code_block_numbered_lang`, `use_state_named_with`, `use_memo_ref`,
+  `gradient_stops`, `bg_gradient_stops`; `FilePickerState::selected`;
+  `ScrollState::progress`; `FormState::validate`; `AppState::fps`; the `f32`
+  `Color::{luminance, blend, lighten, darken, contrast_ratio, from_hsl,
+  from_hsv, rotate_hue}` and `Theme::overlay`. docs/MIGRATION.md lists each
+  replacement.
+
 ### Deprecated
+
+- `_with` / `_colored` variants that did not mean "plus a closure" / "plus
+  `&WidgetColors`" (#460): `button_with`, `button_colored`, `slider_with`,
+  `grid_with`, `separator_colored`, `badge_colored`, `stat_colored`,
+  `progress_bar_colored`, `line_chart_colored`, `area_chart_colored` and
+  `help_colored`, in favour of the builder methods above. Each forward
+  renders the same buffer as its replacement.
+- `use_state_named` / `use_state_named_default`, in favour of
+  `use_state_keyed` / `use_state_keyed_default` (#463).
 
 - `ModalOptions` is renamed `ModalOpts`, and `Context::modal_at` /
   `modal_at_offset` are deprecated in favour of

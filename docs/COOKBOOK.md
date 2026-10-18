@@ -311,7 +311,7 @@ fn main() -> std::io::Result<()> {
                         toasts.info("List refreshed", tick);
                     }
                     ui.spacer();
-                    if ui.button_with("Delete", ButtonVariant::Danger).clicked
+                    if ui.button("Delete").variant(ButtonVariant::Danger).clicked
                         && !items.is_empty()
                     {
                         show_modal = true;
@@ -347,7 +347,8 @@ fn main() -> std::io::Result<()> {
                             }
                             ui.spacer();
                             if ui
-                                .button_with("Delete", ButtonVariant::Danger)
+                                .button("Delete")
+                                .variant(ButtonVariant::Danger)
                                 .clicked
                             {
                                 let name = items.remove(selected);
@@ -383,7 +384,7 @@ fn main() -> std::io::Result<()> {
 
 - Simulated per-tick metrics feeding a `sparkline` and `bar_chart`.
 - `ui.chart(|c| ...)` multi-series builder with a `line` and `area` overlay.
-- `stat_trend` and `stat_colored` for KPI tiles.
+- `stat_trend` and `stat(..).color(..)` for KPI tiles.
 - A ring buffer of recent values — the classic "rolling window" pattern for TUIs.
 
 > Dashboards often want hover-driven highlight or drag-to-pan. Both use previous-frame layout data, so the first frame after layout change can look odd. See [DEBUGGING.md](DEBUGGING.md) for why — it is not a bug, it is immediate mode's trade-off.
@@ -437,10 +438,10 @@ fn main() -> std::io::Result<()> {
                     });
                     ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
                         let color = if cpu > 80.0 { Color::Red } else { Color::Cyan };
-                        ui.stat_colored("CPU", &format!("{cpu:.1}%"), color);
+                        ui.stat("CPU", &format!("{cpu:.1}%")).color(color);
                     });
                     ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                        ui.stat_colored("P99", "42ms", Color::Yellow);
+                        ui.stat("P99", "42ms").color(Color::Yellow);
                     });
                 });
 
@@ -498,7 +499,8 @@ fn main() -> std::io::Result<()> {
 
 - Store history in a fixed-size `Vec<f64>` and rotate it. This is cheaper than `VecDeque` for tiny buffers and keeps data contiguous for `sparkline(&history, width)`.
 - `ui.chart(|c| { ... }, width, height)` takes an explicit size. For grow-to-fit behavior, read `ui.width()` / `ui.height()` and compute manually.
-- `stat_trend` pairs a value with an up/down arrow via `Trend::Up` / `Trend::Down`. `stat_colored` lets you encode severity.
+- `stat_trend` pairs a value with an up/down arrow via `Trend::Up` / `Trend::Down`. `ui.stat(label, value).color(c)` lets you encode severity.
+
 - Spinners animate off the frame tick automatically — just create one `SpinnerState::dots()` at startup and hand the reference in each frame.
 
 ---

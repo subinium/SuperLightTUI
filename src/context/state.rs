@@ -3,10 +3,10 @@ use super::*;
 /// Internal discriminator for [`State<T>`] handles.
 ///
 /// `Indexed` refers to a slot in `Context::hook_states` (positional, used by
-/// [`Context::use_state`] / [`Context::use_memo`]). `Named` refers to a key in
-/// `Context::named_states` (used by [`Context::use_state_named`]). `Keyed`
-/// refers to a runtime-string key in `Context::keyed_states` (used by
-/// [`Context::use_state_keyed`]).
+/// [`Context::use_state`] / [`Context::use_memo`]). `Named` and `Keyed` both
+/// refer to a key in `Context::keyed_states`: `Named` borrows the
+/// `&'static str` id of the deprecated `use_state_named` so it never
+/// allocates, `Keyed` owns the runtime string of [`Context::use_state_keyed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StateKey {
     Indexed(usize),
@@ -118,7 +118,7 @@ impl<T: 'static> State<T> {
                 format_args!("use_state type mismatch at hook index {idx}"),
             ),
             StateKey::Named(id) => {
-                let boxed = ui.named_states.get(id).unwrap_or_else(|| {
+                let boxed = ui.keyed_states.get(*id).unwrap_or_else(|| {
                     panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
                 });
                 downcast_or_panic::<T>(
@@ -151,7 +151,7 @@ impl<T: 'static> State<T> {
                 format_args!("use_state type mismatch at hook index {idx}"),
             ),
             StateKey::Named(id) => {
-                let boxed = ui.named_states.get_mut(id).unwrap_or_else(|| {
+                let boxed = ui.keyed_states.get_mut(*id).unwrap_or_else(|| {
                     panic!("use_state_named: no entry for id {id:?} — was use_state_named called?")
                 });
                 downcast_or_panic_mut::<T>(
@@ -192,7 +192,7 @@ pub(crate) struct MemoSlot<T> {
 /// Like [`State<T>`], this is an *index handle*, not a live borrow — it stores
 /// only the hook slot index and does **not** keep [`Context`] borrowed. That is
 /// the whole point: the handle composes with later `ui.*` calls, where the old
-/// `&T`-returning form (now [`Context::use_memo_ref`]) held an immutable borrow
+/// `&T`-returning form (`use_memo_ref`, removed in 0.26) held an immutable borrow
 /// of `ui` that conflicted with any subsequent mutation.
 ///
 /// Read the value with [`get`](Self::get) (`&T`) or [`copied`](Self::copied)
@@ -313,10 +313,8 @@ impl<T: 'static> Memo<T> {
 /// calls (`ui.col(..)`, `ui.row(..)`, `ui.separator()`, `ui.badge(..)`, ...)
 /// are plain statements, with no `let _ =`. The warning is kept only where
 /// dropping the result is almost always a bug: the stateless clickable
-/// widgets [`button`](Context::button),
-/// [`button_colored`](Context::button_colored) and
-/// [`button_with`](Context::button_with), whose `clicked` flag is their only
-/// output.
+/// widget [`button`](Context::button) (its [`Button`](crate::Button) builder
+/// type is `#[must_use]`), whose `clicked` flag is its only output.
 ///
 /// ```
 /// #![deny(unused_must_use)]
@@ -357,7 +355,7 @@ impl<T: 'static> Memo<T> {
 /// }
 /// # });
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Response {
     /// Whether the widget was left-clicked (or activated) this frame.
     ///

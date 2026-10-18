@@ -1052,6 +1052,15 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// Set the default foreground (text) color for child text elements.
+    ///
+    /// Same as [`text_color`](Self::text_color), spelled like
+    /// [`Text::fg`](crate::Text::fg) and the CSS-style `bg`/`fg` pair.
+    /// Individual `.fg()` calls on text elements still override it.
+    pub fn fg(self, color: Color) -> Self {
+        self.text_color(color)
+    }
+
     /// Background color used when dark mode is active.
     pub fn dark_bg(mut self, color: Color) -> Self {
         self.dark_bg = Some(color);
@@ -1221,12 +1230,6 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
-    /// Set uniform padding on all sides. Deprecated alias for [`p`](Self::p).
-    #[deprecated(since = "0.20.0", note = "Use `p()` instead")]
-    pub fn pad(self, value: u32) -> Self {
-        self.p(value)
-    }
-
     /// Set horizontal padding (left and right).
     pub fn px(mut self, value: u32) -> Self {
         self.padding.left = value;
@@ -1366,7 +1369,7 @@ impl<'a> ContainerBuilder<'a> {
         at = h_at => ["Height applied only at the given breakpoint."]
     );
 
-    /// Set the minimum width constraint. Shorthand for [`min_width`](Self::min_width).
+    /// Set the minimum width constraint.
     pub fn min_w(mut self, value: u32) -> Self {
         self.constraints.set_min_width(Some(value));
         self
@@ -1383,7 +1386,7 @@ impl<'a> ContainerBuilder<'a> {
         at = min_w_at => ["Minimum width applied only at the given breakpoint."]
     );
 
-    /// Set the maximum width constraint. Shorthand for [`max_width`](Self::max_width).
+    /// Set the maximum width constraint.
     pub fn max_w(mut self, value: u32) -> Self {
         self.constraints.set_max_width(Some(value));
         self
@@ -1400,7 +1403,7 @@ impl<'a> ContainerBuilder<'a> {
         at = max_w_at => ["Maximum width applied only at the given breakpoint."]
     );
 
-    /// Set the minimum height constraint. Shorthand for [`min_height`](Self::min_height).
+    /// Set the minimum height constraint.
     pub fn min_h(mut self, value: u32) -> Self {
         self.constraints.set_min_height(Some(value));
         self
@@ -1417,7 +1420,7 @@ impl<'a> ContainerBuilder<'a> {
         at = min_h_at => ["Minimum height applied only at the given breakpoint."]
     );
 
-    /// Set the maximum height constraint. Shorthand for [`max_height`](Self::max_height).
+    /// Set the maximum height constraint.
     pub fn max_h(mut self, value: u32) -> Self {
         self.constraints.set_max_height(Some(value));
         self
@@ -1434,30 +1437,6 @@ impl<'a> ContainerBuilder<'a> {
         at = max_h_at => ["Maximum height applied only at the given breakpoint."]
     );
 
-    /// Set the minimum width constraint in cells. Deprecated alias for [`min_w`](Self::min_w).
-    #[deprecated(since = "0.20.0", note = "Use `min_w()` instead")]
-    pub fn min_width(self, value: u32) -> Self {
-        self.min_w(value)
-    }
-
-    /// Set the maximum width constraint in cells. Deprecated alias for [`max_w`](Self::max_w).
-    #[deprecated(since = "0.20.0", note = "Use `max_w()` instead")]
-    pub fn max_width(self, value: u32) -> Self {
-        self.max_w(value)
-    }
-
-    /// Set the minimum height constraint in rows. Deprecated alias for [`min_h`](Self::min_h).
-    #[deprecated(since = "0.20.0", note = "Use `min_h()` instead")]
-    pub fn min_height(self, value: u32) -> Self {
-        self.min_h(value)
-    }
-
-    /// Set the maximum height constraint in rows. Deprecated alias for [`max_h`](Self::max_h).
-    #[deprecated(since = "0.20.0", note = "Use `max_h()` instead")]
-    pub fn max_height(self, value: u32) -> Self {
-        self.max_h(value)
-    }
-
     /// Set width as a percentage (1-100) of the parent container.
     pub fn w_pct(mut self, pct: u8) -> Self {
         self.constraints.set_width_pct(Some(pct.min(100)));
@@ -1467,6 +1446,32 @@ impl<'a> ContainerBuilder<'a> {
     /// Set height as a percentage (1-100) of the parent container.
     pub fn h_pct(mut self, pct: u8) -> Self {
         self.constraints.set_height_pct(Some(pct.min(100)));
+        self
+    }
+
+    /// Set width as the fraction `num / den` of the parent container.
+    ///
+    /// Same as [`Constraints::w_ratio`]: `w_ratio(1, 3)` resolves to
+    /// `parent_width / 3` (floor division).
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(30, 3).render(|ui| {
+    /// ui.container().w_ratio(1, 3).fg(Color::Red).col(|ui| {
+    ///     ui.text("one third");
+    /// });
+    /// # });
+    /// ```
+    pub fn w_ratio(mut self, num: u16, den: u16) -> Self {
+        self.constraints = self.constraints.w_ratio(num, den);
+        self
+    }
+
+    /// Set height as the fraction `num / den` of the parent container.
+    ///
+    /// Same as [`Constraints::h_ratio`] (floor division).
+    pub fn h_ratio(mut self, num: u16, den: u16) -> Self {
+        self.constraints = self.constraints.h_ratio(num, den);
         self
     }
 
@@ -2464,7 +2469,7 @@ impl Context {
     /// let mut submitted = false;
     /// let mut tb = TestBackend::new(30, 3);
     /// tb.run_with_events(EventBuilder::new().key_code(KeyCode::Enter).build(), |ui| {
-    ///     let submit = ui.disabled(!form_valid, |ui| ui.button("Submit"));
+    ///     let submit = ui.disabled(!form_valid, |ui| ui.button("Submit").show());
     ///     assert!(submit.disabled);
     ///     submitted |= submit.clicked;
     /// });

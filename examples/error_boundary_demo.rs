@@ -20,7 +20,8 @@ fn main() -> std::io::Result<()> {
                     .fg(Color::Cyan);
 
                 let trigger_panic = ui
-                    .button_with("Panic in boundary", ButtonVariant::Danger)
+                    .button("Panic in boundary")
+                    .variant(ButtonVariant::Danger)
                     .clicked
                     || ui.key('p');
 

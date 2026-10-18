@@ -11,9 +11,11 @@ use std::sync::LazyLock;
 
 mod grid;
 mod gutter;
+mod separator;
 mod split;
 
 pub use gutter::GutterOpts;
+pub use separator::Separator;
 
 static SEP_LINE: LazyLock<String> = LazyLock::new(|| "─".repeat(200));
 
@@ -22,76 +24,6 @@ fn sep_line() -> &'static str {
 }
 
 impl Context {
-    /// Render a horizontal divider line.
-    ///
-    /// The line is drawn with the theme's border color and expands to fill the
-    /// container width.
-    ///
-    /// Returns a [`Response`] so the divider's hit-test rect is available for
-    /// hover detection. Prior to v0.21.0 this returned `&mut Self`, but the
-    /// chained style mutators (`.bold()`, `.fg()`) were a no-op — the cached
-    /// separator string is already finalized — so the chain was dropped.
-    /// Statement-form callers (`ui.separator();`) compile unchanged.
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.separator();
-    /// # });
-    /// ```
-    pub fn separator(&mut self) -> Response {
-        let response = self.interaction();
-        // The cached `sep_line()` is much wider than any reasonable terminal,
-        // so the cross-axis (column-direction) clip in `Buffer::set_string`
-        // truncates the trailing chars. Keeping `grow = 0` means a column
-        // layout doesn't stretch the separator vertically, and `truncate =
-        // false` avoids the ellipsis fallback which would otherwise replace
-        // the last cell with `…`.
-        self.commands.push(Command::Text {
-            content: sep_line().to_owned(),
-            cursor_offset: None,
-            cursor_masked: false,
-            style: Style::new().fg(self.theme.border).dim(),
-            grow: 0,
-            align: Align::Start,
-            wrap: false,
-            truncate: false,
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-        });
-        self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        response
-    }
-
-    /// Render a horizontal separator line with a custom color.
-    ///
-    /// Returns a [`Response`] for hover detection; see [`Context::separator`]
-    /// for the v0.21.0 return-shape change. Statement-form callers compile
-    /// unchanged.
-    ///
-    /// ```no_run
-    /// # use slt::Color;
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// ui.separator_colored(Color::Cyan);
-    /// # });
-    /// ```
-    pub fn separator_colored(&mut self, color: Color) -> Response {
-        let response = self.interaction();
-        self.commands.push(Command::Text {
-            content: sep_line().to_owned(),
-            cursor_offset: None,
-            cursor_masked: false,
-            style: Style::new().fg(color),
-            grow: 0,
-            align: Align::Start,
-            wrap: false,
-            truncate: false,
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-        });
-        self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        response
-    }
-
     /// Create a vertical (column) container.
     ///
     /// Children are stacked top-to-bottom. Returns a [`Response`] with
@@ -109,22 +41,6 @@ impl Context {
     /// ```
     pub fn col(&mut self, f: impl FnOnce(&mut Context)) -> Response {
         self.push_container(Direction::Column, 0, f)
-    }
-
-    /// Create a vertical (column) container with a gap between children.
-    ///
-    /// `gap` is the number of blank rows inserted between each child.
-    ///
-    /// **Deprecated since 0.20.1**: the name collides with
-    /// [`ContainerBuilder::col_gap`], which sets the *row-finalize* main-axis
-    /// gap (Tailwind `gap-x` axis convention) and so means the opposite thing.
-    /// Use `ui.container().gap(n).col(f)` instead — same output, no collision.
-    #[deprecated(
-        since = "0.20.1",
-        note = "Use `ui.container().gap(n).col(f)` instead — same output, no name collision with `ContainerBuilder::col_gap`."
-    )]
-    pub fn col_gap(&mut self, gap: u32, f: impl FnOnce(&mut Context)) -> Response {
-        self.push_container(Direction::Column, gap, f)
     }
 
     /// Create a horizontal (row) container.
@@ -147,30 +63,15 @@ impl Context {
         self.push_container(Direction::Row, 0, f)
     }
 
-    /// Create a horizontal (row) container with a gap between children.
-    ///
-    /// `gap` is the number of blank columns inserted between each child.
-    ///
-    /// **Deprecated since 0.20.1**: the name collides with
-    /// [`ContainerBuilder::row_gap`], which sets the *column-finalize*
-    /// main-axis gap (Tailwind `gap-y` axis convention) and so means the
-    /// opposite thing. Use `ui.container().gap(n).row(f)` instead — same
-    /// output, no collision.
-    #[deprecated(
-        since = "0.20.1",
-        note = "Use `ui.container().gap(n).row(f)` instead — same output, no name collision with `ContainerBuilder::row_gap`."
-    )]
-    pub fn row_gap(&mut self, gap: u32, f: impl FnOnce(&mut Context)) -> Response {
-        self.push_container(Direction::Row, gap, f)
-    }
-
     /// Render inline text with mixed styles on a single line.
     ///
     /// Unlike [`row`](Context::row), `line()` is designed for rich text —
     /// children are rendered as continuous inline text without gaps.
     ///
-    /// It intentionally returns `&mut Self` instead of [`Response`] so you can
-    /// keep chaining display-oriented modifiers after composing the inline run.
+    /// Returns the line's [`Response`], like
+    /// [`ContainerBuilder::line`](crate::ContainerBuilder::line). Before 0.26
+    /// it returned `&mut Self` so the now-deprecated "style the last text"
+    /// modifiers could follow it; a statement `ui.line(..);` is unchanged.
     ///
     /// # Example
     ///
@@ -183,9 +84,8 @@ impl Context {
     /// });
     /// # });
     /// ```
-    pub fn line(&mut self, f: impl FnOnce(&mut Context)) -> &mut Self {
-        let _ = self.push_container(Direction::Row, 0, f);
-        self
+    pub fn line(&mut self, f: impl FnOnce(&mut Context)) -> Response {
+        self.push_container(Direction::Row, 0, f)
     }
 
     /// Render inline text with mixed styles, wrapping at word boundaries.
@@ -1302,7 +1202,7 @@ mod v024_geometry_cache_tests {
                         });
                     };
                     if specified {
-                        let _ = ui.grid_with(&[GridColumn::Auto, GridColumn::Auto], cells);
+                        let _ = ui.grid_columns(&[GridColumn::Auto, GridColumn::Auto], cells);
                     } else {
                         let _ = ui.grid(2, cells);
                     }
