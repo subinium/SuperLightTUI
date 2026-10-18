@@ -346,6 +346,13 @@ below it up, because SLT has no scroll anchoring.
 - Enter / Space activate a focused button, checkbox, accordion, and similar.
 - `ui.register_focusable_named("search")` + `ui.focus_by_name("search")` move
   focus programmatically.
+- Focus follows the widget, not its position: when a focusable appears or
+  disappears before the focused `text_input` / `textarea` / form field / named
+  slot, focus stays on that widget (like a browser element). Custom widgets
+  opt in with `ui.register_focusable_keyed(key)`; plain
+  `ui.register_focusable()` slots, buttons and other stateless widgets remain
+  positional. If the focused widget itself goes away, focus moves to the
+  nearest remaining slot on the next frame.
 
 **Focused text fields own their keys.** While a `text_input`, `textarea`,
 form field or open command palette has focus, `ui.key(..)`, `ui.key_code(..)`,

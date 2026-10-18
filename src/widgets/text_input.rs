@@ -149,6 +149,8 @@ pub struct TextInputState {
     validators: Vec<TextInputValidator>,
     /// All current validation errors from all validators.
     validation_errors: Vec<String>,
+    /// Issue #454: process-unique focus identity (fresh on `Clone`).
+    focus_key: u64,
 }
 
 impl std::fmt::Debug for TextInputState {
@@ -165,6 +167,7 @@ impl std::fmt::Debug for TextInputState {
             .field("show_suggestions", &self.show_suggestions)
             .field("validators_len", &self.validators.len())
             .field("validation_errors", &self.validation_errors)
+            .field("focus_key", &self.focus_key)
             .finish()
     }
 }
@@ -179,6 +182,9 @@ impl Clone for TextInputState {
     /// re-running any validation.
     ///
     /// Re-register validators on the clone before calling `run_validators()`.
+    ///
+    /// The clone gets its own [`focus_key`](TextInputState::focus_key), so
+    /// rendering both copies yields two independent focus slots.
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -192,6 +198,7 @@ impl Clone for TextInputState {
             show_suggestions: self.show_suggestions,
             validators: Vec::new(),
             validation_errors: self.validation_errors.clone(),
+            focus_key: crate::runtime::next_state_focus_key(),
         }
     }
 }
@@ -211,7 +218,19 @@ impl TextInputState {
             show_suggestions: false,
             validators: Vec::new(),
             validation_errors: Vec::new(),
+            focus_key: crate::runtime::next_state_focus_key(),
         }
+    }
+
+    /// Stable focus identity of this input (issue #454).
+    ///
+    /// [`Context::text_input`](crate::Context::text_input) registers its focus
+    /// slot under this key, so focus stays on this input when other
+    /// focusables are inserted or removed before it. Each state (including a
+    /// [`Clone`]) has its own key. Compare with
+    /// [`Context::focused_key`](crate::Context::focused_key).
+    pub fn focus_key(&self) -> u64 {
+        self.focus_key
     }
 
     /// Create a text input with placeholder text shown when the value is empty.
@@ -902,7 +921,7 @@ pub(crate) struct TextareaNavigation {
 /// })?;
 /// # Ok::<_, std::io::Error>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TextareaState {
     /// The lines of text, one entry per line.
     pub lines: Vec<String>,
@@ -932,6 +951,31 @@ pub struct TextareaState {
     /// keypress does not push a snapshot.
     pub(crate) last_was_char_insert: bool,
     pub(crate) navigation: Option<TextareaNavigation>,
+    /// Issue #454: process-unique focus identity (fresh on `Clone`).
+    focus_key: u64,
+}
+
+impl Clone for TextareaState {
+    /// Clones content, cursor and history. The clone gets its own
+    /// [`focus_key`](TextareaState::focus_key) so both copies can be rendered
+    /// as independent focus slots.
+    fn clone(&self) -> Self {
+        Self {
+            lines: self.lines.clone(),
+            cursor_row: self.cursor_row,
+            cursor_col: self.cursor_col,
+            max_length: self.max_length,
+            wrap_width: self.wrap_width,
+            scroll_offset: self.scroll_offset,
+            history: self.history.clone(),
+            history_index: self.history_index,
+            history_max: self.history_max,
+            redo_tip: self.redo_tip.clone(),
+            last_was_char_insert: self.last_was_char_insert,
+            navigation: self.navigation,
+            focus_key: crate::runtime::next_state_focus_key(),
+        }
+    }
 }
 
 impl TextareaState {
@@ -950,7 +994,14 @@ impl TextareaState {
             redo_tip: None,
             last_was_char_insert: false,
             navigation: None,
+            focus_key: crate::runtime::next_state_focus_key(),
         }
+    }
+
+    /// Stable focus identity of this text area (issue #454). See
+    /// [`TextInputState::focus_key`].
+    pub fn focus_key(&self) -> u64 {
+        self.focus_key
     }
 
     /// Return all lines joined with newline characters.

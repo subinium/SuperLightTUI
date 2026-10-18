@@ -150,7 +150,10 @@ impl Context {
         } else {
             focus_index
         };
-        let focus_identity = focus.identity.begin_frame(focus_target);
+        let focus_identity =
+            focus
+                .identity
+                .begin_frame(focus_target, focus_index, focus.prev_focus_index);
 
         // Reuse `commands_buf` capacity from the previous frame (issue #150).
         // `mem::take` swaps an empty Vec into `state.commands_buf`; we then
@@ -267,6 +270,7 @@ impl Context {
                 last_text_idx: None,
                 focus_count: 0,
                 text_entry_claim: None,
+                focus_key_match: None,
                 last_focusable_id: None,
                 pending_focusable_id: None,
                 interaction_count: 0,
@@ -807,10 +811,24 @@ impl Context {
     /// closes that gap (v0.21.1).
     pub(crate) fn focus_transitions(&mut self, focused: bool) -> (bool, bool) {
         if let Some(this_id) = self.rollback.last_focusable_id.take() {
-            let was_focused = self
-                .prev_focus_index
-                .map(|prev| prev == this_id)
-                .unwrap_or(false);
+            // Issue #454: when the previously focused slot had an identity,
+            // compare identities so inserting or removing focusables before
+            // this one does not report a spurious gain or loss. A key never
+            // seen last frame (state rebuilt each frame) keeps the positional
+            // comparison.
+            let this_key = self
+                .focus_identity
+                .slots
+                .get(this_id)
+                .and_then(|slot| slot.key);
+            let was_focused = match (self.focus_identity.prev_focused_key, this_key) {
+                (Some(prev), Some(key)) if self.focus_identity.seen_last_frame(key) => prev == key,
+                (Some(_), None) => false,
+                _ => self
+                    .prev_focus_index
+                    .map(|prev| prev == this_id)
+                    .unwrap_or(false),
+            };
             (focused && !was_focused, !focused && was_focused)
         } else {
             (false, false)
@@ -958,14 +976,82 @@ impl Context {
         self.register_focusable_slot(crate::runtime::FocusSlotMeta::default())
     }
 
+    /// Register a focusable slot whose focus follows a stable `key` instead of
+    /// its position in the frame.
+    ///
+    /// Behaves like [`register_focusable`](Self::register_focusable) and
+    /// returns whether the slot currently has focus. When focusables are
+    /// inserted, removed or reordered between frames, focus stays on the slot
+    /// registered with the same key, the way a browser keeps focus on the same
+    /// element. Use any `Hash` value that identifies the widget (an item id, a
+    /// `&str`, a tuple). Keys only need to be unique among the focusables of
+    /// one frame. Tab order is still declaration order.
+    ///
+    /// Built-in [`text_input`](Self::text_input) and
+    /// [`textarea`](Self::textarea) key their slot by their state, so they
+    /// already behave this way.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let items = ["alpha", "beta", "gamma"];
+    /// for item in items {
+    ///     let focused = ui.register_focusable_keyed(item);
+    ///     let label = if focused { format!("> {item}") } else { format!("  {item}") };
+    ///     ui.text(label);
+    /// }
+    /// # });
+    /// ```
+    pub fn register_focusable_keyed(&mut self, key: impl std::hash::Hash) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta {
+            key: Some(crate::runtime::hashed_focus_key(key)),
+            text_entry: None,
+        })
+    }
+
+    /// Issue #454: the identity key of the focused slot.
+    ///
+    /// Returns the key of the slot focused so far in this frame, or, before
+    /// the focused widget has registered, the key of the slot focus started
+    /// on. `None` when that slot is positional (registered with
+    /// [`register_focusable`](Self::register_focusable)). Compare against
+    /// [`TextInputState::focus_key`](crate::widgets::TextInputState::focus_key)
+    /// or [`TextareaState::focus_key`](crate::widgets::TextareaState::focus_key)
+    /// in tests and debugging overlays.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{TestBackend, widgets::TextInputState};
+    ///
+    /// let mut tb = TestBackend::new(30, 5);
+    /// let mut input = TextInputState::new();
+    /// let mut focused = None;
+    /// tb.render(|ui| {
+    ///     let _ = ui.text_input(&mut input);
+    ///     focused = ui.focused_key();
+    /// });
+    /// assert_eq!(focused, Some(input.focus_key()));
+    /// ```
+    pub fn focused_key(&self) -> Option<u64> {
+        match self.rollback.focused_widget_id {
+            Some(id) => self.focus_identity.slots.get(id).and_then(|slot| slot.key),
+            None => self.focus_identity.expected_key,
+        }
+    }
+
     /// Issue #453: register a text-entry focus slot. While it owns focus,
     /// [`key`](Self::key) / [`key_code`](Self::key_code) and friends do not
-    /// report the keys the widget edits with.
+    /// report the keys the widget edits with. Issue #454: `key` is the
+    /// widget state's focus identity.
     pub(crate) fn register_text_entry_focusable(
         &mut self,
         kind: crate::runtime::TextEntryKind,
+        key: u64,
     ) -> bool {
         self.register_focusable_slot(crate::runtime::FocusSlotMeta {
+            key: Some(key),
             text_entry: Some(kind),
         })
     }
@@ -1013,9 +1099,55 @@ impl Context {
             slots.resize(id, crate::runtime::FocusSlotMeta::default());
             slots.push(meta);
         } else {
+            // A name bound by `register_focusable_named` is the user's
+            // explicit identity for the slot, so it wins over a state key.
             let slot = &mut slots[id];
+            slot.key = slot.key.or(meta.key);
             slot.text_entry = meta.text_entry.or(slot.text_entry);
         }
+    }
+
+    /// Issue #454: whether focus currently follows the identity key recorded
+    /// as the frame started.
+    ///
+    /// Any explicit focus move this frame (`set_focus_index`, Tab, group
+    /// navigation, a modal or screen rebasing `focus_index`) switches back to
+    /// the positional rule, as does an open or closing modal, whose focus trap
+    /// manages slot numbers itself.
+    fn focus_follows_key(&self) -> bool {
+        self.focus_identity.expected_key.is_some()
+            && self.rollback.focus_generation == 0
+            && self.focus_index == self.focus_identity.origin_index
+            && !self.prev_modal_active
+            && !self.rollback.modal_active
+    }
+
+    /// Issue #454: resolve focus for slot `id` by identity. Returns `None`
+    /// when the positional rule should decide instead.
+    fn focus_slot_by_key(&mut self, id: usize, positional_target: usize) -> Option<bool> {
+        if !self.focus_follows_key() {
+            return None;
+        }
+        if let Some(matched) = self.rollback.focus_key_match {
+            return Some(matched == id);
+        }
+        let key = self.focus_identity.slots.get(id).and_then(|slot| slot.key);
+        let claim = match key {
+            Some(key) if Some(key) == self.focus_identity.expected_key => true,
+            // A key never seen last frame is a widget whose state is rebuilt
+            // each frame (or a brand-new widget): it cannot be the expected
+            // one, so the positional rule decides, exactly as before 0.26.
+            Some(key) if !self.focus_identity.seen_last_frame(key) => positional_target == id,
+            // Positional slots and other known widgets are not the widget
+            // focus belongs to.
+            _ => false,
+        };
+        if claim {
+            self.rollback.focus_key_match = Some(id);
+            self.focus_index = id;
+            self.focus_identity.origin_index = id;
+        }
+        Some(claim)
     }
 
     /// Issue #453: the text-entry kind that currently owns unmodified keys.
@@ -1039,6 +1171,13 @@ impl Context {
 
     /// Issue #453: hand this frame's slot metadata back to `FrameState`.
     pub(crate) fn finish_focus_identity(&mut self, focus: &mut crate::runtime::FocusState) {
+        // Issue #454: the widget focus belonged to is gone and nothing took
+        // its place. Fall back to the nearest surviving slot (clamped, not
+        // wrapped) so focus lands next to where it was.
+        let count = self.rollback.focus_count;
+        if self.focus_follows_key() && self.rollback.focused_widget_id.is_none() && count > 0 {
+            self.focus_index = self.focus_index.min(count - 1);
+        }
         focus.identity.end_frame(
             &mut self.focus_identity,
             self.rollback.focus_count,
@@ -2174,7 +2313,15 @@ impl Context {
         self.rollback.focus_count += 1;
         self.rollback.last_focusable_id = Some(id);
         self.commands.push(Command::FocusMarker(id));
-        self.record_focus_slot(id, crate::runtime::FocusSlotMeta::default(), true);
+        // Issue #454: the name is the slot's stable identity.
+        self.record_focus_slot(
+            id,
+            crate::runtime::FocusSlotMeta {
+                key: Some(crate::runtime::hashed_focus_key(name)),
+                text_entry: None,
+            },
+            true,
+        );
         // First-write-wins on duplicate names within a single frame —
         // a second `register_focusable_named("dup")` keeps the first
         // slot bound to the name and orphans its own slot's name binding.
@@ -2209,6 +2356,17 @@ impl Context {
             .is_some_and(|guard| guard.blocked_generation == Some(self.rollback.focus_generation))
         {
             return false;
+        }
+        let positional_target = if self.prev_focus_count > 0 {
+            self.focus_index % self.prev_focus_count
+        } else {
+            self.focus_index
+        };
+        if let Some(focused) = self.focus_slot_by_key(id, positional_target) {
+            if focused {
+                self.rollback.focused_widget_id = Some(id);
+            }
+            return focused;
         }
         let target = if self.prev_modal_active
             && self.prev_modal_focus_count > 0

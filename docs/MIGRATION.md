@@ -18,6 +18,14 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   purpose (for example a vim-style mode that also feeds an input), switch those
   reads to `ui.raw_key(c)` / `ui.raw_key_code(..)`. New `ui.shortcut(code,
   modifiers)` matches modifiers exactly.
+- **Focus identity (#454).** Focus now stays on the same `text_input` /
+  `textarea` / form field / named slot when focusables appear or disappear
+  before it, instead of staying on the same slot number. Keep each widget's
+  state alive across frames (create it outside the closure) to benefit;
+  custom focusable widgets can opt in with `ui.register_focusable_keyed(id)`.
+  `focus_index()` / `set_focus_index()` remain positional. Tests that assumed
+  focus stays on slot N after inserting a focusable before it must follow the
+  widget instead.
 
 ## 1. v0.24.x → v0.25.0
 

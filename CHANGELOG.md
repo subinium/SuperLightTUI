@@ -29,8 +29,25 @@
   app's first frame nothing is withheld. Ctrl/Super/Meta chords (#349), Esc,
   Tab and F-keys are unchanged. Migration: code that intentionally reads typed
   characters while a field is focused switches to `raw_key`.
+- Focus follows the widget, not the slot number (#454). `text_input`,
+  `textarea` and `form_field` key their focus slot by a process-unique id
+  stored in their state (a `Clone` gets a fresh id), and
+  `register_focusable_named` keys its slot by the name. When focusables are
+  inserted or removed before the focused widget, focus (and
+  `gained_focus` / `lost_focus`) stays on that widget; clicks and
+  `focus_by_name` resolve to the identity of their target. If the focused
+  widget itself disappears, focus moves to the nearest surviving slot
+  (clamped instead of wrapped) on the next frame. Explicit moves (Tab,
+  `set_focus_index`, `focus_next`, group navigation, screen and modal focus
+  traps) keep their positional semantics. A keyed widget whose key was not
+  registered on the previous frame (for example state rebuilt inside the
+  closure each frame) keeps the 0.25 positional behaviour.
 
 ### Added
+
+- `Context::register_focusable_keyed(key)` for custom widgets whose focus
+  should follow a stable `Hash` key, `Context::focused_key()`, and
+  `TextInputState::focus_key()` / `TextareaState::focus_key()` (#454).
 
 - `Context::shortcut(code, modifiers)`: order-independent shortcut query with
   exact modifier matching (Shift ignored for characters) that follows the

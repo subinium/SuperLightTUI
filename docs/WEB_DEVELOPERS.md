@@ -39,9 +39,11 @@ Three consequences worth internalizing early:
 - **No event listeners.** A widget returns a `Response` describing what
   happened to it this frame (`clicked`, `hovered`, `changed`, ...). You branch
   on it right where you rendered it.
-- **No virtual DOM keys.** Identity comes from call order (hooks, focus) or
-  from state you pass in (`&mut ScrollState`). Keep call order stable, and use
-  `use_state_keyed` when items move around.
+- **No virtual DOM keys.** Identity comes from call order (hooks, button
+  focus) or from state you pass in (`&mut ScrollState`, `&mut TextInputState`:
+  a focused input keeps focus when widgets before it come and go). Keep call
+  order stable, and use `use_state_keyed` / `register_focusable_keyed` when
+  items move around.
 - **Layout is one frame behind.** Hit-testing and `Response.rect` use the
   previous frame's layout, the way `getBoundingClientRect()` would if you could
   only call it before the browser reflowed. See

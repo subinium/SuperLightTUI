@@ -52,8 +52,30 @@ pub(crate) enum TextEntryKind {
 /// Per-frame metadata recorded for every focus slot, indexed by slot id.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FocusSlotMeta {
+    /// Issue #454: stable identity of the widget that owns the slot (a
+    /// widget-state id, a hashed `register_focusable_keyed` key, or a hashed
+    /// `register_focusable_named` name). `None` for positional slots.
+    pub key: Option<u64>,
     /// Issue #453: `Some` when the slot is a text-entry widget.
     pub text_entry: Option<TextEntryKind>,
+}
+
+/// Issue #454: high bit reserved for widget-state focus keys so they never
+/// collide with hashed user keys (which have it cleared).
+pub(crate) const STATE_FOCUS_KEY_BIT: u64 = 1 << 63;
+
+/// Issue #454: allocate a process-unique focus key for a widget state.
+pub(crate) fn next_state_focus_key() -> u64 {
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) | STATE_FOCUS_KEY_BIT
+}
+
+/// Issue #454: map a user-supplied key to the hashed-key namespace.
+pub(crate) fn hashed_focus_key(key: impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher as _;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    hasher.finish() & !STATE_FOCUS_KEY_BIT
 }
 
 /// In-frame view of the focus-slot metadata, owned by `Context`.
@@ -65,22 +87,50 @@ pub(crate) struct FocusIdentity {
     pub prev_slots: Vec<FocusSlotMeta>,
     /// Issue #453: text-entry ownership at the start of this frame.
     pub prev_text_entry: Option<TextEntryKind>,
+    /// Issue #454: key of the slot focus starts on. While set (and focus has
+    /// not been moved explicitly this frame), focus follows this key instead
+    /// of the slot number.
+    pub expected_key: Option<u64>,
+    /// Issue #454: `focus_index` value the key rule is anchored to. Any other
+    /// value means focus was moved explicitly and the positional rule applies.
+    pub origin_index: usize,
+    /// Issue #454: key of the slot that was focused when the previous frame
+    /// ended, for `gained_focus` / `lost_focus`.
+    pub prev_focused_key: Option<u64>,
+}
+
+impl FocusIdentity {
+    /// Whether `key` belonged to some slot in the previous frame.
+    pub(crate) fn seen_last_frame(&self, key: u64) -> bool {
+        self.prev_slots.iter().any(|slot| slot.key == Some(key))
+    }
 }
 
 impl FocusIdentityCarry {
     /// Hand the carried metadata to a new frame whose focus starts on
-    /// `target`, a slot id in the previous frame's numbering.
-    pub(crate) fn begin_frame(&mut self, target: usize) -> FocusIdentity {
+    /// `target` with `focus_index == origin_index`. `target` and
+    /// `prev_focused` are slot ids in the previous frame's numbering.
+    pub(crate) fn begin_frame(
+        &mut self,
+        target: usize,
+        origin_index: usize,
+        prev_focused: Option<usize>,
+    ) -> FocusIdentity {
         let mut slots = std::mem::take(&mut self.slots_buf);
         slots.clear();
         let prev_slots = std::mem::take(&mut self.slots);
-        let prev_text_entry = self
-            .text_claim
-            .or_else(|| prev_slots.get(target).and_then(|slot| slot.text_entry));
+        let start = prev_slots.get(target).copied().unwrap_or_default();
+        let prev_text_entry = self.text_claim.or(start.text_entry);
+        let prev_focused_key = prev_focused
+            .and_then(|id| prev_slots.get(id))
+            .and_then(|slot| slot.key);
         FocusIdentity {
             slots,
             prev_slots,
             prev_text_entry,
+            expected_key: start.key,
+            origin_index,
+            prev_focused_key,
         }
     }
 

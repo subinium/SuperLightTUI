@@ -133,7 +133,10 @@ impl Context {
             .cursor_col
             .min(grapheme_count(&state.lines[state.cursor_row]));
 
-        let focused = self.register_text_entry_focusable(crate::runtime::TextEntryKind::MultiLine);
+        let focused = self.register_text_entry_focusable(
+            crate::runtime::TextEntryKind::MultiLine,
+            state.focus_key(),
+        );
         let wrap_w = state.wrap_width.unwrap_or(u32::MAX);
         let wrapping = state.wrap_width.is_some();
 

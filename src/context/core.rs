@@ -227,6 +227,9 @@ pub(crate) struct ContextRollbackState {
     /// Issue #453: text-entry ownership claimed this frame by a widget that
     /// takes keys without a focus slot (an open command palette).
     pub(crate) text_entry_claim: Option<crate::runtime::TextEntryKind>,
+    /// Issue #454: slot that took focus through the key rule this frame.
+    /// Once set, no other slot reports focus while the key rule applies.
+    pub(crate) focus_key_match: Option<usize>,
     /// Issue #208: id assigned by the most recent `register_focusable()` /
     /// `register_focusable_named(...)` call. `begin_widget_interaction`
     /// reads this to compute `Response::gained_focus` / `lost_focus`
