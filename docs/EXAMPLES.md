@@ -89,6 +89,7 @@ Derived from the `#[path = ...]` includes in each tour file.
 | `demo_game` | `cargo run --example demo_game` | - | Tetris, snake, and minesweeper |
 | `demo_kitty_image` | `cargo run --example demo_kitty_image` | - | Kitty graphics image gallery in a scroll view |
 | `demo_raw_draw` | `cargo run --example demo_raw_draw` | - | `ContainerBuilder::draw` raw buffer primitives |
+| `ratatui_bridge` | `cargo run --example ratatui_bridge --features ratatui` | `ratatui` | Stock ratatui widgets rendered inside SLT containers, including a scrolled region |
 
 ## Diagnostics And Development Tools
 

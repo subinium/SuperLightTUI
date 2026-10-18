@@ -1,0 +1,3 @@
+/target/
+# Cargo.lock is committed on purpose: the CI terminal jobs that build this
+# crate are blocking, so the PTY-driver dependency set must not drift.

@@ -448,11 +448,113 @@ jobs:
           run_case(False)
           run_case(True)
           PY
+      # Issue #450: the steps above prove input arrives; this one proves what
+      # tmux actually displays and where clicks land. It compares
+      # `capture-pane` against SLT's own TestBackend frame (box, CJK, VS16,
+      # ZWJ rows; first paint plus two incremental updates), checks SGR with
+      # `capture-pane -e`, and asserts mouse coordinates through an attached
+      # client (status line on top, mouse off and on) and `send-keys -H`.
+      - name: Build terminal render probe
+        if: matrix.kind == 'tmux'
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe
+      - name: Assert tmux render geometry and mouse coordinates
+        if: matrix.kind == 'tmux'
+        run: |
+          set -euo pipefail
+          # Strict expected-fail markers: the row must fail while the bug is
+          # observable on this tmux, and an unexpected pass fails the step.
+          # TODO(#441): remove `--known-issue 441` when the VS16 padding fix lands.
+          # TODO(#449): remove `--known-issue 449` when per-terminal cluster widths land.
+          for attempt in 1 2; do
+            if timeout 240s python3 scripts/tmux_render_check.py \
+                --probe target/terminal-probe/debug/slt-terminal-probe \
+                --artifacts "$RUNNER_TEMP/slt-mux-smoke/render-attempt-$attempt" \
+                --known-issue 441 --known-issue 449; then
+              exit 0
+            fi
+            echo "::warning::tmux render check attempt $attempt failed"
+          done
+          exit 1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: terminal-smoke-${{ matrix.name }}
-          path: ${{ runner.temp }}/slt-mux-smoke/*.log
+          path: |
+            ${{ runner.temp }}/slt-mux-smoke/*.log
+            ${{ runner.temp }}/slt-mux-smoke/render-attempt-*/
+
+  # Issue #450: a session-level Windows test. The probe runs inside a real
+  # ConPTY pseudo-console (portable-pty, confined to the standalone
+  # tests/fixtures/terminal_probe crate so the main crate gains no
+  # dev-dependency), and the driver asserts on a vt100 model of what ConPTY
+  # rendered: alternate-screen enter/exit, rendered text, a key, a resize and
+  # a clean exit status.
+  windows-conpty-smoke:
+    name: Terminal smoke (Windows ConPTY)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build probe and ConPTY driver
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe --features pty-driver
+      - name: Drive the probe through ConPTY
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $logs = Join-Path $env:RUNNER_TEMP 'slt-conpty'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          foreach ($attempt in 1, 2) {
+            & target/terminal-probe/debug/slt-pty-smoke.exe target/terminal-probe/debug/slt-terminal-probe.exe (Join-Path $logs "raw-$attempt.log")
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Output "::warning::ConPTY smoke attempt $attempt failed"
+          }
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: terminal-smoke-windows-conpty
+          path: ${{ runner.temp }}/slt-conpty/
+
+  # Issue #450: a real GUI terminal emulator, headless. xterm runs the probe
+  # under Xvfb; xdotool types and clicks through XTEST like a user. Nothing is
+  # compared as pixels: the probe reports xterm's CPR cursor advances and the
+  # events it received (key effect, click cell, widget toggle, exit status).
+  xterm-smoke:
+    name: Terminal smoke (xterm under Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install xterm, Xvfb and xdotool
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xterm xvfb xauth xdotool xfonts-base
+          xterm -version
+          xdotool version
+      - name: Build terminal probe
+        run: cargo build --manifest-path tests/fixtures/terminal_probe/Cargo.toml --target-dir target/terminal-probe
+      - name: Drive the probe in xterm
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if timeout 240s xvfb-run -a -s "-screen 0 1280x1024x24" python3 scripts/xterm_smoke.py \
+                --probe target/terminal-probe/debug/slt-terminal-probe \
+                --artifacts "$RUNNER_TEMP/slt-xterm/attempt-$attempt"; then
+              exit 0
+            fi
+            echo "::warning::xterm smoke attempt $attempt failed"
+          done
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: terminal-smoke-xterm
+          path: ${{ runner.temp }}/slt-xterm/
 
   # VHS gallery gate (issue #274). Renders every `.tape` in the repo through
   # VHS and asserts each produces its declared `Output` asset at a non-trivial
