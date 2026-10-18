@@ -165,7 +165,7 @@ pub fn run_with(config: RunConfig, f: impl FnMut(&mut Context)) -> io::Result<()
 fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Result<()> {
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(
-        config.mouse,
+        config.effective_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,
@@ -342,7 +342,7 @@ fn run_inline_with_inner(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         height,
-        config.mouse,
+        config.effective_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,
@@ -457,7 +457,7 @@ fn run_static_with_inner(
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = InlineTerminal::new(
         dynamic_height,
-        config.mouse,
+        config.effective_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,
@@ -644,6 +644,9 @@ pub(super) fn poll_events(
 ) -> io::Result<bool> {
     let mut has_resize = false;
     let batch_start = events.len();
+    // #444: drop pointer events above the requested reporting level (Windows
+    // consoles report every mouse record regardless of the mode).
+    let mouse_mode = config.effective_mouse_mode();
 
     fn process_ev(ev: &Event, has_resize: &mut bool) {
         *has_resize |= matches!(ev, Event::Resize(_, _));
@@ -664,7 +667,7 @@ pub(super) fn poll_events(
             // single `on_resize` call is deferred to end-of-batch so a burst
             // collapses into one geometry sync.
             process_ev(&ev, &mut has_resize);
-            if accept_input {
+            if accept_input && mouse_mode.admits(&ev) {
                 events.push(ev);
             }
         }
@@ -683,7 +686,7 @@ pub(super) fn poll_events(
                     return Ok(true);
                 }
                 process_ev(&ev, &mut has_resize);
-                if accept_input {
+                if accept_input && mouse_mode.admits(&ev) {
                     events.push(ev);
                 }
             }

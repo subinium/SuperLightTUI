@@ -369,7 +369,7 @@ fn run_async_loop_inner<M: Send + 'static>(
 ) -> io::Result<()> {
     let color_depth = config.color_depth.unwrap_or_else(ColorDepth::detect);
     let mut term = Terminal::new(
-        config.mouse,
+        config.effective_mouse_mode(),
         config.kitty_keyboard,
         config.report_all_keys,
         color_depth,

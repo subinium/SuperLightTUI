@@ -117,8 +117,8 @@ impl Context {
     ///
     /// The returned [`Response::clicked`] flag is set on activation. The button
     /// is styled with the theme's primary color when focused and the accent
-    /// color when hovered. Mouse click and hover require mouse capture
-    /// (`RunConfig::default().mouse(true)`, off by default); keyboard
+    /// color when hovered. Mouse clicks work with the default mouse mode;
+    /// hover styling needs [`MouseMode::Hover`](crate::MouseMode::Hover); keyboard
     /// activation works without it.
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         let colors = self.widget_theme.button;

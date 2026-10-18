@@ -32,6 +32,15 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   region (popups, pickers) that must keep the wheel. A wheel event that no
   region can move is left unconsumed, so `ui.scroll_up()` / `ui.scroll_down()`
   may now see it where the innermost region used to swallow it.
+- **Mouse on by default (#444).** Plain `slt::run` now captures the mouse in
+  `MouseMode::Drag` (or `Click` over SSH/mosh). Apps that relied on the
+  terminal's native selection by default should set
+  `RunConfig::default().mouse_mode(MouseMode::Off)` (or `.mouse(false)`);
+  users can also Shift-drag to select natively on most emulators. Hover
+  styling and tooltips need `.mouse_mode(MouseMode::Hover)`; the existing
+  `.mouse(true)` still means Hover. Code that read or wrote the
+  `RunConfig::mouse` field must use `mouse_mode` (`Option<MouseMode>`) or
+  `effective_mouse_mode()`.
 - **Scroll anchoring (#443).** `ScrollState::anchor` defaults to `true`, so the
   offset moves when content above the viewport changes height. Apps that do
   their own offset math for that case should set `scroll.anchor = false` (or

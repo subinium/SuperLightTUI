@@ -364,7 +364,7 @@ pub struct Response {
     /// `hovered` while the pointer is over the button, which is what hover
     /// styling usually wants. Use [`hovered_top`](Self::hovered_top) for the
     /// single slot that would receive a click there. Needs pointer motion
-    /// reporting (`RunConfig::mouse(true)`) to track
+    /// reporting ([`MouseMode::Hover`](crate::MouseMode::Hover)) to track
     /// moves without a button held.
     pub hovered: bool,
     /// Whether the widget is the topmost, innermost slot under the pointer:
@@ -392,8 +392,9 @@ pub struct Response {
     pub dragging: bool,
     /// Pointer motion in cells `(dx, dy)` this frame while this widget holds
     /// the capture. Sum the deltas across frames for the total drag distance.
-    /// Drag motion needs button-motion reporting from the terminal (on with
-    /// `RunConfig::mouse(true)`). Available since v0.26.0.
+    /// Drag motion needs [`MouseMode::Drag`](crate::MouseMode::Drag) (the
+    /// local default) or [`MouseMode::Hover`](crate::MouseMode::Hover).
+    /// Available since v0.26.0.
     pub drag_delta: (i32, i32),
     /// Whether the middle button was pressed on this widget this frame
     /// (topmost, innermost target). Available since v0.26.0.

@@ -13,7 +13,7 @@ pub(super) enum TerminalSessionMode {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SessionSnapshot {
     pub(super) mode: TerminalSessionMode,
-    pub(super) mouse_enabled: bool,
+    pub(super) mouse_mode: crate::MouseMode,
     pub(super) kitty_keyboard: bool,
     pub(super) report_all_keys: bool,
     pub(super) raw_mode_owned: bool,
@@ -69,7 +69,7 @@ pub(super) fn active_session_snapshot() -> Option<SessionSnapshot> {
 #[derive(Debug)]
 pub(super) struct TerminalSessionGuard {
     pub(super) mode: TerminalSessionMode,
-    pub(super) mouse_enabled: bool,
+    pub(super) mouse_mode: crate::MouseMode,
     pub(super) kitty_keyboard: bool,
     pub(super) report_all_keys: bool,
     pub(super) raw_mode_owned: bool,
@@ -87,7 +87,7 @@ impl TerminalSessionGuard {
     pub(super) fn enter(
         mode: TerminalSessionMode,
         stdout: &mut impl Write,
-        mouse_enabled: bool,
+        mouse_mode: crate::MouseMode,
         kitty_keyboard: bool,
         report_all_keys: bool,
     ) -> io::Result<Self> {
@@ -102,7 +102,7 @@ impl TerminalSessionGuard {
 
         let mut guard = Self {
             mode,
-            mouse_enabled,
+            mouse_mode,
             kitty_keyboard,
             report_all_keys,
             raw_mode_owned,
@@ -144,7 +144,7 @@ impl TerminalSessionGuard {
             stdout,
             self.mode,
             inline_reserved,
-            self.mouse_enabled,
+            self.mouse_mode,
             self.kitty_keyboard,
         );
         if self.raw_mode_owned {
@@ -158,7 +158,7 @@ impl TerminalSessionGuard {
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             mode: self.mode,
-            mouse_enabled: self.mouse_enabled,
+            mouse_mode: self.mouse_mode,
             kitty_keyboard: self.kitty_keyboard,
             report_all_keys: self.report_all_keys,
             raw_mode_owned: self.raw_mode_owned,
@@ -201,14 +201,68 @@ pub(super) fn write_session_enter(
     // TUI conventions (zellij, helix, yazi) and the cost is one extra SGR
     // per session.
     execute!(stdout, EnableFocusChange)?;
-    if session.mouse_enabled {
-        execute!(stdout, EnableMouseCapture)?;
-    }
+    write_mouse_enable(stdout, session.mouse_mode)?;
     if session.kitty_keyboard {
         let _ = write_kitty_keyboard_push(stdout, session.report_all_keys);
     }
 
     Ok(())
+}
+
+/// DEC private modes requested for each [`crate::MouseMode`], in enable order
+/// (#444). SGR (`?1006`) is always last on enable and first on disable.
+pub(super) fn mouse_mode_sequences(mode: crate::MouseMode) -> &'static [u16] {
+    match mode {
+        crate::MouseMode::Off => &[],
+        crate::MouseMode::Click => &[1000, 1006],
+        crate::MouseMode::Drag => &[1000, 1002, 1006],
+        crate::MouseMode::Hover => &[1000, 1003, 1006],
+    }
+}
+
+/// Enable mouse reporting at `mode`'s level. Writes the DEC modes directly
+/// (crossterm's `EnableMouseCapture` always requests any-motion `?1003`).
+/// Windows consoles get crossterm's console-API capture instead, and the run
+/// loop filters events down to `mode`.
+pub(super) fn write_mouse_enable(
+    stdout: &mut impl Write,
+    mode: crate::MouseMode,
+) -> io::Result<()> {
+    if mode == crate::MouseMode::Off {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        execute!(stdout, EnableMouseCapture)
+    }
+    #[cfg(not(windows))]
+    {
+        for code in mouse_mode_sequences(mode) {
+            write!(stdout, "\x1b[?{code}h")?;
+        }
+        stdout.flush()
+    }
+}
+
+/// Disable mouse reporting enabled by [`write_mouse_enable`], in reverse order.
+pub(super) fn write_mouse_disable(
+    stdout: &mut impl Write,
+    mode: crate::MouseMode,
+) -> io::Result<()> {
+    if mode == crate::MouseMode::Off {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        execute!(stdout, DisableMouseCapture)
+    }
+    #[cfg(not(windows))]
+    {
+        for code in mouse_mode_sequences(mode).iter().rev() {
+            write!(stdout, "\x1b[?{code}l")?;
+        }
+        stdout.flush()
+    }
 }
 
 /// Assemble the Kitty keyboard enhancement flags to push.
@@ -280,19 +334,17 @@ pub(super) fn write_session_exit(
     stdout: &mut impl Write,
     mode: TerminalSessionMode,
     inline_reserved: bool,
-    mouse_enabled: bool,
+    mouse_mode: crate::MouseMode,
     kitty_keyboard: bool,
 ) -> io::Result<()> {
     if kitty_keyboard {
         write_kitty_keyboard_pop(stdout)?;
     }
-    if mouse_enabled {
-        // On Windows this uses crossterm's process-global console mode state,
-        // which may not have been initialized when panic cleanup runs. Mouse
-        // restoration is best-effort so it cannot prevent the core cursor,
-        // paste, and screen cleanup below.
-        let _ = execute!(stdout, DisableMouseCapture);
-    }
+    // On Windows this uses crossterm's process-global console mode state,
+    // which may not have been initialized when panic cleanup runs. Mouse
+    // restoration is best-effort so it cannot prevent the core cursor,
+    // paste, and screen cleanup below.
+    let _ = write_mouse_disable(stdout, mouse_mode);
     let _ = execute!(stdout, DisableFocusChange);
     write_session_cleanup(stdout, mode, inline_reserved)
 }
@@ -325,7 +377,7 @@ pub(crate) fn cleanup_after_panic() -> bool {
             &mut stdout,
             snapshot.mode,
             false,
-            snapshot.mouse_enabled,
+            snapshot.mouse_mode,
             snapshot.kitty_keyboard,
         );
     }
@@ -338,7 +390,13 @@ pub(crate) fn cleanup_after_panic() -> bool {
 
 #[cfg(test)]
 pub(super) fn write_panic_cleanup(stdout: &mut impl Write) -> io::Result<()> {
-    write_session_exit(stdout, TerminalSessionMode::Fullscreen, false, true, true)
+    write_session_exit(
+        stdout,
+        TerminalSessionMode::Fullscreen,
+        false,
+        crate::MouseMode::Hover,
+        true,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +452,7 @@ pub(super) fn write_suspend_sequence(
         stdout,
         snapshot.mode,
         false,
-        snapshot.mouse_enabled,
+        snapshot.mouse_mode,
         snapshot.kitty_keyboard,
     )
 }
@@ -437,7 +495,7 @@ pub(super) fn resume_from_shell_with_writer(
 ) -> io::Result<()> {
     let guard = TerminalSessionGuard {
         mode: snapshot.mode,
-        mouse_enabled: snapshot.mouse_enabled,
+        mouse_mode: snapshot.mouse_mode,
         kitty_keyboard: snapshot.kitty_keyboard,
         report_all_keys: snapshot.report_all_keys,
         raw_mode_owned: snapshot.raw_mode_owned,
@@ -460,7 +518,7 @@ pub(super) fn test_snapshot(
 ) -> SessionSnapshot {
     SessionSnapshot {
         mode,
-        mouse_enabled: mouse,
+        mouse_mode: crate::MouseMode::from(mouse),
         kitty_keyboard: kitty,
         report_all_keys: false,
         raw_mode_owned: true,
@@ -473,7 +531,7 @@ pub(super) fn test_snapshot(
 pub(crate) fn test_session_snapshot() -> SessionSnapshot {
     SessionSnapshot {
         mode: TerminalSessionMode::Fullscreen,
-        mouse_enabled: false,
+        mouse_mode: crate::MouseMode::Off,
         kitty_keyboard: false,
         report_all_keys: false,
         raw_mode_owned: true,

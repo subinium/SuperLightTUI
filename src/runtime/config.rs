@@ -4,10 +4,87 @@ use std::time::Duration;
 
 use crate::{ColorDepth, Theme, style};
 
+/// How much pointer activity the terminal reports to the app.
+///
+/// Each mode asks the terminal for a different DEC mouse-tracking level, so
+/// apps only pay for the pointer traffic they use. SGR encoding (`?1006`) is
+/// always requested; the legacy urxvt encoding (`?1015`) is never used.
+///
+/// | Mode | DEC modes | Delivers |
+/// |---|---|---|
+/// | `Off` | none | nothing; the terminal's native selection keeps working |
+/// | `Click` | `?1000h ?1006h` | presses, releases and the wheel |
+/// | `Drag` | `?1000h ?1002h ?1006h` | plus motion while a button is held |
+/// | `Hover` | `?1000h ?1003h ?1006h` | plus all motion (hover, tooltips) |
+///
+/// The default ([`RunConfig::default`]) is `Drag` locally and `Click` in an
+/// SSH or mosh session; see [`RunConfig::mouse_mode`]. While any mode other
+/// than `Off` is active the terminal's own text selection is replaced by
+/// SLT's built-in selection; most emulators bypass mouse capture while Shift
+/// is held (Shift-drag selects natively).
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{MouseMode, RunConfig};
+/// // Hover styling and tooltips need every pointer move.
+/// let config = RunConfig::default().mouse_mode(MouseMode::Hover);
+/// assert_eq!(config.effective_mouse_mode(), MouseMode::Hover);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseMode {
+    /// No mouse reporting.
+    Off,
+    /// Button presses, releases and wheel events.
+    Click,
+    /// `Click` plus motion while a button is held: drags, split handles,
+    /// scrollbar thumbs and the built-in text selection.
+    Drag,
+    /// `Drag` plus every pointer move: hover styling and tooltips. Every
+    /// move produces an event and a frame, which costs the most over SSH.
+    Hover,
+}
+
+impl From<bool> for MouseMode {
+    /// `true` maps to [`MouseMode::Hover`] (the pre-0.26 `mouse(true)`
+    /// behavior), `false` to [`MouseMode::Off`].
+    fn from(enabled: bool) -> Self {
+        if enabled { Self::Hover } else { Self::Off }
+    }
+}
+
+impl MouseMode {
+    /// Whether this mode delivers `event`. Used as an input filter on
+    /// platforms where the terminal cannot be asked for a reporting level.
+    pub(crate) fn admits(self, event: &crate::Event) -> bool {
+        use crate::event::MouseKind;
+        let crate::Event::Mouse(mouse) = event else {
+            return true;
+        };
+        match self {
+            Self::Off => false,
+            Self::Click => !matches!(mouse.kind, MouseKind::Moved | MouseKind::Drag(_)),
+            Self::Drag => !matches!(mouse.kind, MouseKind::Moved),
+            Self::Hover => true,
+        }
+    }
+}
+
+/// Resolve the reporting mode: an explicit mode always wins; the default is
+/// `Drag` locally and `Click` in a remote (SSH/mosh) session.
+pub(crate) fn resolve_mouse_mode(explicit: Option<MouseMode>, remote: bool) -> MouseMode {
+    match explicit {
+        Some(mode) => mode,
+        None if remote => MouseMode::Click,
+        None => MouseMode::Drag,
+    }
+}
+
 /// Configuration for a TUI run loop.
 ///
 /// Pass to [`run_with`](crate::run_with) or [`run_inline_with`](crate::run_inline_with) to customize behavior.
-/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, no mouse, dark theme).
+/// Use [`Default::default()`] for sensible defaults (16ms tick / 60fps, mouse
+/// clicks and drags on, dark theme).
 /// This type is `#[non_exhaustive]`, so prefer builder methods instead of struct literals.
 ///
 /// # Example
@@ -18,7 +95,7 @@ use crate::{ColorDepth, Theme, style};
 ///
 /// let config = RunConfig::default()
 ///     .tick_rate(Duration::from_millis(50))
-///     .mouse(true)
+///     .mouse_mode(slt::MouseMode::Hover)
 ///     .theme(Theme::light())
 ///     .max_fps(60);
 /// ```
@@ -30,11 +107,17 @@ pub struct RunConfig {
     /// Lower values give smoother animations at the cost of more CPU usage.
     /// Defaults to 16ms (60fps).
     pub tick_rate: Duration,
-    /// Whether to enable mouse event reporting.
+    /// Mouse reporting mode, or `None` for the automatic default.
     ///
-    /// When `true`, the terminal captures mouse clicks, scrolls, and movement.
-    /// Defaults to `false`.
-    pub mouse: bool,
+    /// `None` (the default) resolves to [`MouseMode::Drag`] locally and to
+    /// [`MouseMode::Click`] when an SSH or mosh session is detected, so
+    /// clicks, the wheel, drag handles and text selection work out of the box
+    /// without flooding a remote link with motion events. Set an explicit mode
+    /// with [`mouse_mode`](Self::mouse_mode) (or the [`mouse`](Self::mouse)
+    /// shorthand); an explicit mode is never overridden. Hover styling and
+    /// tooltips need [`MouseMode::Hover`]. Since 0.26.0 (replaces the
+    /// `mouse: bool` field).
+    pub mouse_mode: Option<MouseMode>,
     /// Whether to enable the Kitty keyboard protocol for enhanced input.
     ///
     /// When `true`, enables disambiguated key events, key release events,
@@ -170,7 +253,7 @@ impl Default for RunConfig {
     fn default() -> Self {
         Self {
             tick_rate: Duration::from_millis(16),
-            mouse: false,
+            mouse_mode: None,
             kitty_keyboard: false,
             report_all_keys: false,
             theme: Theme::dark(),
@@ -195,10 +278,38 @@ impl RunConfig {
         self
     }
 
-    /// Enable or disable mouse event reporting.
+    /// Shorthand for [`mouse_mode`](Self::mouse_mode): `true` selects
+    /// [`MouseMode::Hover`] (every pointer move, as before 0.26) and `false`
+    /// selects [`MouseMode::Off`].
+    ///
+    /// Mouse reporting is on by default since 0.26 ([`MouseMode::Drag`]
+    /// locally), so `mouse(true)` is only needed for hover, and `mouse(false)`
+    /// restores the terminal's native selection.
     pub fn mouse(mut self, enabled: bool) -> Self {
-        self.mouse = enabled;
+        self.mouse_mode = Some(MouseMode::from(enabled));
         self
+    }
+
+    /// Choose the mouse reporting mode explicitly. See [`MouseMode`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{MouseMode, RunConfig};
+    /// // Clicks and the wheel only, the cheapest mode over SSH.
+    /// let config = RunConfig::default().mouse_mode(MouseMode::Click);
+    /// assert_eq!(config.mouse_mode, Some(MouseMode::Click));
+    /// ```
+    pub fn mouse_mode(mut self, mode: MouseMode) -> Self {
+        self.mouse_mode = Some(mode);
+        self
+    }
+
+    /// The mode a run loop will request: the explicit
+    /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Drag`] locally and
+    /// [`MouseMode::Click`] in an SSH or mosh session.
+    pub fn effective_mouse_mode(&self) -> MouseMode {
+        resolve_mouse_mode(self.mouse_mode, crate::context::session_is_remote())
     }
 
     /// Enable or disable Kitty keyboard protocol.
@@ -356,7 +467,7 @@ impl RunConfig {
     ///
     /// ```no_run
     /// use slt::RunConfig;
-    /// let cfg = RunConfig::default().mouse(true).text_selection(false);
+    /// let cfg = RunConfig::default().text_selection(false);
     /// assert!(!cfg.text_selection);
     /// ```
     pub fn text_selection(mut self, enabled: bool) -> Self {

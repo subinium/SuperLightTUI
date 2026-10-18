@@ -23,11 +23,30 @@
   when content above the viewport changes height; `ScrollState::stick_to_bottom`
   (field, plus the `stick_to_bottom(bool)` builder) follows appended content
   while the view is at the end. Focus reveal wins on the frame focus moves.
+- `MouseMode::{Off, Click, Drag, Hover}` and `RunConfig::mouse_mode(..)` /
+  `RunConfig::effective_mouse_mode()` choose how much pointer activity the
+  terminal reports (#444). Each mode writes only its DEC modes (`?1000h ?1006h`
+  for Click, plus `?1002h` for Drag or `?1003h` for Hover) and restores them in
+  reverse order on exit, panic and suspend; the urxvt `?1015` encoding is no
+  longer requested. `Terminal::new` / `InlineTerminal::new` accept a
+  `MouseMode` (a `bool` still works).
 - `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
   text selection and copy-on-release off for apps with their own drag or
   selection model (#438).
 
 ### Changed
+
+- **Breaking:** the mouse is on by default (#444, owner decision).
+  `RunConfig::default()` resolves to `MouseMode::Drag` locally (clicks,
+  wheel, drag handles, scrollbar thumbs and the built-in text selection) and
+  to `MouseMode::Click` when an SSH or mosh session is detected, so plain
+  `slt::run` apps react to the mouse out of the box without a motion flood.
+  Hover styling and tooltips need `MouseMode::Hover`. The `RunConfig::mouse`
+  field is replaced by `mouse_mode: Option<MouseMode>` (`None` = automatic);
+  `RunConfig::mouse(true)` is kept and maps to `Hover` (the previous
+  any-motion behavior), `mouse(false)` to `Off`. While the mouse is captured
+  the terminal's native selection is replaced by SLT's; most emulators still
+  select natively with Shift-drag, or use `MouseMode::Off`.
 
 - Scrollables anchor by default (#443): collapsing or growing content above
   the viewport now adjusts `ScrollState::offset` by the height change instead
