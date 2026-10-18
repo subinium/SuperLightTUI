@@ -574,7 +574,7 @@ fn scrollable_form() -> std::io::Result<()> {
         .field(slt::FormField::new("Email").validate(|value| {
             if value.contains('@') { Ok(()) } else { Err("Invalid email".into()) }
         }))
-        .field(slt::FormField::new("Password"));
+        .field(slt::FormField::new("Password").masked(true));
     let mut scroll = slt::ScrollState::new();
     let mut focused_label = String::new();
     slt::run(|ui| {
@@ -617,7 +617,7 @@ For single inputs without `FormState`:
 ```rust
 let mut email = TextInputState::with_placeholder("you@example.com");
 ui.text_input(&mut email);
-email.validate(|v| if v.contains('@') { Ok(()) } else { Err("Invalid".into()) });
+email.validate_now(|v| if v.contains('@') { Ok(()) } else { Err("Invalid".into()) });
 if let Some(err) = &email.validation_error { ui.alert(err, AlertLevel::Error); }
 ```
 
@@ -1322,9 +1322,9 @@ suggestion_index: usize            // (pub)
 show_suggestions: bool            // (pub)
 // (private) validators + validation_errors read via errors()
 ```
-Constructors: `TextInputState::new()`, `TextInputState::with_placeholder("...")`.
-Builders: `.max_length(n)`.
-Methods: `.validate(|v| -> Result<(),String>)`, `.add_validator(f)`, `.run_validators()`, `.errors() -> &[String]`, `.set_suggestions(Vec<String>)`, `.matched_suggestions() -> Vec<&str>`.
+Constructors: `TextInputState::new()`, `TextInputState::with_placeholder("...")`, `TextInputState::password()`.
+Builders: `.max_length(n)`, `.masked(bool)`.
+Methods: `.clear()`, `.set_value(s)`, `.validate_now(|v| -> Result<(),String>)` (runs once; `.validate` is its deprecated name), `.add_validator(f)` + `.run_validators()` (re-runnable), `.errors() -> &[String]`, `.set_suggestions(Vec<String>)`, `.matched_suggestions() -> Vec<&str>`, `.focus_key()`.
 
 ### TextareaState (multi-line)
 ```text
@@ -1546,7 +1546,7 @@ error: Option<String>
 fields: Vec<FormField>
 submitted: bool
 ```
-Builders: `FormState::new().field(FormField::new("Email").placeholder("..."))`. `.validate(&[FormValidator]) -> bool` returns whether every field validated. `.value(i) -> &str`.
+Builders: `FormState::new().field(FormField::new("Email").key("email").placeholder("..."))`; `FormField` also has `.masked(bool)` / `.password()` and `.validate(f)` (attaches a validator). Read values with `.get("email") -> Option<&str>` (by key, then label) and `.field_mut("email")`; positional `.value(i) -> &str` breaks when fields are reordered. `.validate_all() -> bool` runs every field's validators; `.validate(&[FormValidator])` is deprecated.
 
 ### ScreenState / ModeState
 ```text

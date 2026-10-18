@@ -48,6 +48,20 @@
 - `Context::register_focusable_keyed(key)` for custom widgets whose focus
   should follow a stable `Hash` key, `Context::focused_key()`, and
   `TextInputState::focus_key()` / `TextareaState::focus_key()` (#454).
+- Text-input builders (#461): `TextInputState::clear()` (value, cursor,
+  validation errors, suggestion popup), `set_value(..)` (clamped to
+  `max_length` graphemes, cursor at the end, line breaks become spaces),
+  `masked(bool)` builder and `TextInputState::password()`;
+  `FormField::masked(bool)` / `password()` / `key(..)`; keyed form access via
+  `FormState::get(key)` and `FormState::field_mut(key)` (explicit key first,
+  then the label of unkeyed fields), which survives field reordering.
+
+### Deprecated
+
+- `TextInputState::validate` is renamed `TextInputState::validate_now`
+  (#461). On `FormField`, `validate` attaches a validator; on
+  `TextInputState` it ran immediately, so copied code silently changed
+  meaning. The old name remains as a deprecated alias.
 
 - `Context::shortcut(code, modifiers)`: order-independent shortcut query with
   exact modifier matching (Shift ignored for characters) that follows the

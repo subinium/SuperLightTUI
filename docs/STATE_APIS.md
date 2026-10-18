@@ -43,6 +43,7 @@ Single-line text input state. Pass `&mut TextInputState` to
 
 - `TextInputState::new() -> Self`
 - `TextInputState::with_placeholder(p: impl Into<String>) -> Self`
+- `TextInputState::password() -> Self` (same as `new().masked(true)`)
 - `TextInputState::default() -> Self` (same as `new`)
 
 ### Methods
@@ -50,12 +51,20 @@ Single-line text input state. Pass `&mut TextInputState` to
 | Signature | Description |
 |-----------|-------------|
 | `max_length(self, len: usize) -> Self` | Builder: cap character count. |
-| `validate(&mut self, validator: impl Fn(&str) -> Result<(), String>)` | Run one validator and store its error into `validation_error`. |
+| `masked(self, on: bool) -> Self` | Builder: render `•` glyphs instead of the value. |
+| `clear(&mut self)` | Empty the value, reset cursor, validation errors and suggestions. |
+| `set_value(&mut self, value: impl Into<String>)` | Replace the value (clamped to `max_length`), cursor to the end. |
+| `validate_now(&mut self, validator: impl Fn(&str) -> Result<(), String>)` | Run one validator now and store its error into `validation_error`. `validate` is the deprecated name. |
 | `add_validator(&mut self, f: impl Fn(&str) -> Result<(), String> + 'static)` | Register a boxed validator. |
 | `run_validators(&mut self)` | Run all validators; populates `errors()` and `validation_error`. |
 | `errors(&self) -> &[String]` | All current validator errors. |
 | `set_suggestions(&mut self, suggestions: Vec<String>)` | Replace suggestions and reset popup state. |
 | `matched_suggestions(&self) -> Vec<&str>` | Suggestions whose prefix matches `value` (case-insensitive). |
+| `focus_key(&self) -> u64` | Stable focus identity used by `text_input` (fresh on `Clone`). |
+
+One recommended validation path each: standalone inputs use `add_validator`
++ `run_validators`; forms use `FormField::validate` (attached, run by
+`form_field`). `validate_now` is for one-shot checks.
 
 > **`Clone` note**: `TextInputState::clone()` produces a copy *without* registered
 > validators. Validators are stored as `Box<dyn Fn>`, which is not `Clone`, so
@@ -140,11 +149,15 @@ One labeled input inside a `FormState`.
 | Signature | Description |
 |-----------|-------------|
 | `placeholder(self, p: impl Into<String>) -> Self` | Builder: set the nested input's placeholder. |
+| `masked(self, on: bool) -> Self` / `password(self) -> Self` | Builder: mask the nested input. |
+| `key(self, key: impl Into<String>) -> Self` | Builder: lookup key for `FormState::get` (defaults to the label). |
+| `validate(self, f) -> Self` | Builder: attach a validator (run by `form_field` per `trigger`). |
 
 ### Minimal example
 
 ```rust
-let email = FormField::new("Email").placeholder("you@example.com");
+let email = FormField::new("Email").key("email").placeholder("you@example.com");
+let password = FormField::new("Password").masked(true);
 ```
 
 ## FormState
@@ -170,16 +183,22 @@ Multi-field form.
 | Signature | Description |
 |-----------|-------------|
 | `field(self, field: FormField) -> Self` | Builder: append a field. |
-| `validate(&mut self, validators: &[FormValidator]) -> bool` | Run per-field validators; returns `true` when every field passes. |
-| `value(&self, index: usize) -> &str` | Read the Nth field's input value, `""` if out of range. |
+| `validate_all(&mut self) -> bool` | Run every field's attached validators; `true` when all pass. |
+| `get(&self, key: &str) -> Option<&str>` | Read a field's value by key, then label. Survives reordering. |
+| `field_mut(&mut self, key: &str) -> Option<&mut FormField>` | Mutable field lookup by key, then label. |
+| `value(&self, index: usize) -> &str` | Positional read of the Nth field's value, `""` if out of range. |
+| `validate(&mut self, validators: &[FormValidator]) -> bool` | Deprecated positional validation. |
 
 ### Minimal example
 
 ```rust
 let mut form = FormState::new()
-    .field(FormField::new("Name"))
-    .field(FormField::new("Email"));
-if form.validate(&validators) { form.submitted = true; }
+    .field(FormField::new("Name").validate(validators::required("required")))
+    .field(FormField::new("Email").key("email").validate(validators::email()));
+if form.validate_all() {
+    form.submitted = true;
+    let email = form.get("email").unwrap_or_default();
+}
 ```
 
 ## StaticOutput

@@ -186,10 +186,8 @@ pub fn render_frame(
                 if ui.button("초기화 / Reset").clicked {
                     *counts_state.get_mut(ui) = [0; 4];
                     *last_clicked_state.get_mut(ui) = None;
-                    name_input.value.clear();
-                    tag_input.value.clear();
-                    name_input.cursor = 0;
-                    tag_input.cursor = 0;
+                    name_input.clear();
+                    tag_input.clear();
                 }
                 if ui.button("포커스 / Focus next").clicked && focus_count > 0 {
                     ui.set_focus_index((focus_index + 1) % focus_count);

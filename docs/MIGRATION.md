@@ -26,6 +26,11 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   `focus_index()` / `set_focus_index()` remain positional. Tests that assumed
   focus stays on slot N after inserting a focusable before it must follow the
   widget instead.
+- **`TextInputState::validate` → `validate_now` (#461).** Same behaviour, new
+  name; the old one is deprecated. Replace `s.value.clear(); s.cursor = 0;`
+  with `s.clear()`, `s.masked = true` with `TextInputState::password()` /
+  `.masked(true)`, and positional `form.value(i)` with `form.get("key")`
+  (set keys with `FormField::key`, otherwise the label is used).
 
 ## 1. v0.24.x → v0.25.0
 

@@ -78,17 +78,23 @@ use slt::{Context, TextInputState};
 fn main() -> std::io::Result<()> {
     let mut name = TextInputState::with_placeholder("Type here...");
 
+    let mut names: Vec<String> = Vec::new();
+
     slt::run(|ui: &mut Context| {
         let _ = ui.col(|ui| {
             ui.text("Name").bold();
-            let _ = ui.text_input(&mut name);
-            ui.text(format!("Value: {}", name.value));
+            if ui.text_input(&mut name).submitted && !name.value.is_empty() {
+                names.push(name.value.clone());
+                name.clear(); // empty the field after Enter
+            }
+            ui.text(format!("Saved: {}", names.join(", ")));
         });
     })
 }
 ```
 
 Interactive widgets usually own a `*State` type that you create once and pass every frame.
+For a password field use `TextInputState::password()` (or `.masked(true)` on any input).
 
 ## 6. Global shortcuts and focused text fields
 

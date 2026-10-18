@@ -247,15 +247,137 @@ impl TextInputState {
         self
     }
 
-    /// Validate the current value and store the latest error message.
+    /// Create an empty masked input for passwords: shorthand for
+    /// `TextInputState::new().masked(true)`.
     ///
-    /// Sets [`TextInputState::validation_error`] to `None` when validation
-    /// succeeds, or to `Some(error)` when validation fails.
+    /// # Example
     ///
-    /// This is a backward-compatible shorthand that runs a single validator.
-    /// For multiple validators, use [`add_validator`](Self::add_validator) and [`run_validators`](Self::run_validators).
-    pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
+    /// ```
+    /// use slt::{TestBackend, widgets::TextInputState};
+    ///
+    /// let mut pw = TextInputState::password();
+    /// pw.set_value("hunter2");
+    /// let mut tb = TestBackend::new(20, 3);
+    /// tb.render(|ui| {
+    ///     let _ = ui.text_input(&mut pw);
+    /// });
+    /// tb.assert_contains("•••••••");
+    /// tb.assert_not_contains("hunter2");
+    /// ```
+    pub fn password() -> Self {
+        Self::new().masked(true)
+    }
+
+    /// Builder: display the value as `•` glyphs (`true`) or as plain text.
+    ///
+    /// Sets the public [`masked`](TextInputState::masked) field.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let pin = TextInputState::with_placeholder("PIN").masked(true);
+    /// assert!(pin.masked);
+    /// ```
+    pub fn masked(mut self, on: bool) -> Self {
+        self.masked = on;
+        self
+    }
+
+    /// Clear the input: empties the value, moves the cursor to the start and
+    /// resets validation errors and the suggestion popup.
+    ///
+    /// Registered validators and the placeholder are kept. Use it after a
+    /// submit, e.g. in a chat or todo input.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut todo = TextInputState::new();
+    /// todo.set_value("buy milk");
+    /// todo.clear();
+    /// assert_eq!(todo.value, "");
+    /// assert_eq!(todo.cursor, 0);
+    /// ```
+    pub fn clear(&mut self) {
+        self.value.clear();
+        self.cursor = 0;
+        self.validation_error = None;
+        self.validation_errors.clear();
+        self.suggestion_index = 0;
+        self.show_suggestions = false;
+    }
+
+    /// Replace the value and move the cursor to its end.
+    ///
+    /// The text is truncated to [`max_length`](TextInputState::max_length)
+    /// grapheme clusters when a limit is set. Line breaks are not allowed in
+    /// a single-line input: `\r` and `\n` are replaced with spaces.
+    /// Validation state is left untouched; call
+    /// [`run_validators`](Self::run_validators) if the new value should be
+    /// re-checked.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut code = TextInputState::new().max_length(4);
+    /// code.set_value("123456");
+    /// assert_eq!(code.value, "1234");
+    /// assert_eq!(code.cursor, 4);
+    /// ```
+    pub fn set_value(&mut self, value: impl Into<String>) {
+        let mut value: String = value.into();
+        if value.contains(['\r', '\n']) {
+            value = value.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        }
+        if let Some(max) = self.max_length
+            && let Some((byte, _)) = value.grapheme_indices(true).nth(max)
+        {
+            value.truncate(byte);
+        }
+        self.cursor = value.graphemes(true).count();
+        self.value = value;
+    }
+
+    /// Run `validator` against the current value once, now, and store the
+    /// result in [`validation_error`](TextInputState::validation_error)
+    /// (`None` on success).
+    ///
+    /// For validators that should run again on demand, register them with
+    /// [`add_validator`](Self::add_validator) and call
+    /// [`run_validators`](Self::run_validators). Inside a form, attach them
+    /// with [`FormField::validate`], which `form_field` runs automatically.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::TextInputState;
+    ///
+    /// let mut email = TextInputState::new();
+    /// email.set_value("nobody");
+    /// email.validate_now(|v| if v.contains('@') { Ok(()) } else { Err("invalid".into()) });
+    /// assert_eq!(email.validation_error.as_deref(), Some("invalid"));
+    /// ```
+    pub fn validate_now(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
         self.validation_error = validator(&self.value).err();
+    }
+
+    /// Deprecated name of [`validate_now`](Self::validate_now).
+    ///
+    /// On [`FormField`], `validate` *attaches* a validator that runs later;
+    /// here it ran immediately, so code copied between the two silently
+    /// changed meaning. The immediate form is now spelled `validate_now`.
+    #[deprecated(
+        since = "0.26.0",
+        note = "renamed to `validate_now`; `FormField::validate` attaches a validator instead of running it"
+    )]
+    pub fn validate(&mut self, validator: impl Fn(&str) -> Result<(), String>) {
+        self.validate_now(validator);
     }
 
     /// Add a validator function that produces its own error message.
@@ -450,6 +572,8 @@ pub struct FormField {
     /// When the field's validators run. Defaults to
     /// [`ValidateTrigger::OnBlur`].
     pub trigger: ValidateTrigger,
+    /// Stable lookup key for [`FormState::get`]; defaults to the label.
+    key: Option<String>,
     /// This field's validators. Mutate via [`validate`](Self::validate); run
     /// via [`run_validators`](Self::run_validators).
     validators: Vec<Validator>,
@@ -473,6 +597,7 @@ impl FormField {
             input: TextInputState::new(),
             error: None,
             trigger: ValidateTrigger::default(),
+            key: None,
             validators: Vec::new(),
             was_focused: false,
             #[cfg(feature = "async")]
@@ -484,6 +609,55 @@ impl FormField {
     pub fn placeholder(mut self, p: impl Into<String>) -> Self {
         self.input.placeholder = p.into();
         self
+    }
+
+    /// Builder: mask this field's input as `•` glyphs (passwords, PINs).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{TestBackend, widgets::FormField};
+    ///
+    /// let mut field = FormField::new("Password").masked(true);
+    /// field.input.set_value("s3cret");
+    /// let mut tb = TestBackend::new(30, 6);
+    /// tb.render(|ui| {
+    ///     ui.form_field(&mut field);
+    /// });
+    /// tb.assert_contains("••••••");
+    /// tb.assert_not_contains("s3cret");
+    /// ```
+    pub fn masked(mut self, on: bool) -> Self {
+        self.input.masked = on;
+        self
+    }
+
+    /// Builder: shorthand for [`masked(true)`](Self::masked).
+    pub fn password(self) -> Self {
+        self.masked(true)
+    }
+
+    /// Builder: set the key [`FormState::get`] and
+    /// [`FormState::field_mut`] look this field up by. Defaults to the
+    /// label, so set it when labels are translated or may change.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::{FormField, FormState};
+    ///
+    /// let form = FormState::new().field(FormField::new("Courriel").key("email"));
+    /// assert_eq!(form.get("email"), Some(""));
+    /// ```
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    /// The key this field is looked up by: the one set with
+    /// [`key`](Self::key), or the label.
+    pub fn lookup_key(&self) -> &str {
+        self.key.as_deref().unwrap_or(&self.label)
     }
 
     /// Attach a validator closure (chainable; call multiple times to stack
@@ -796,11 +970,58 @@ impl FormState {
     }
 
     /// Get field value by index.
+    ///
+    /// Positional: reordering fields changes which value is read. Prefer
+    /// [`get`](Self::get).
     pub fn value(&self, index: usize) -> &str {
         self.fields
             .get(index)
             .map(|f| f.input.value.as_str())
             .unwrap_or("")
+    }
+
+    /// Get a field's value by its [`key`](FormField::key); fields without an
+    /// explicit key are matched by label. Returns `None` when no field
+    /// matches.
+    ///
+    /// Unlike [`value`](Self::value), this keeps reading the right field when
+    /// fields are reordered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::widgets::{FormField, FormState};
+    ///
+    /// let mut form = FormState::new()
+    ///     .field(FormField::new("Name"))
+    ///     .field(FormField::new("Email").key("email"));
+    /// form.field_mut("email").unwrap().input.set_value("a@b.c");
+    /// assert_eq!(form.get("email"), Some("a@b.c"));
+    /// assert_eq!(form.get("Name"), Some(""));
+    /// assert_eq!(form.get("phone"), None);
+    /// ```
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.field_index(key)
+            .map(|index| self.fields[index].input.value.as_str())
+    }
+
+    /// Get a field mutably by its [`key`](FormField::key); fields without an
+    /// explicit key are matched by label.
+    pub fn field_mut(&mut self, key: &str) -> Option<&mut FormField> {
+        self.field_index(key).map(|index| &mut self.fields[index])
+    }
+
+    /// Explicit keys win over labels, so a field whose label equals another
+    /// field's key never shadows it.
+    fn field_index(&self, key: &str) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|field| field.key.as_deref() == Some(key))
+            .or_else(|| {
+                self.fields
+                    .iter()
+                    .position(|field| field.key.is_none() && field.label == key)
+            })
     }
 }
 

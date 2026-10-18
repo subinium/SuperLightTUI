@@ -422,7 +422,7 @@ If a closure becomes hard to scan, extract render helpers before inventing a new
 ```rust
 let mut email = TextInputState::with_placeholder("you@example.com");
 ui.text_input(&mut email);
-email.validate(|value| {
+email.validate_now(|value| {
     if value.contains('@') {
         Ok(())
     } else {
