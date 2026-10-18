@@ -172,8 +172,22 @@
   re-highlight the whole document), and
   `cargo run --example code_editor` demos it. While focused the editor owns
   Tab / Shift+Tab (`CodeEditorState::tab_indents(false)` opts out).
+- `TextareaState::history_max_bytes(bytes)` (default 8 MiB) bounds the bytes
+  retained by undo records, with `history_bytes()` / `history_bytes_cap()`
+  getters (#415). New bench `benches/textarea_history.rs`, alloc diagnostic
+  modes `SLT_AUDIT_FILTER=textarea_paste` / `textarea_wrapped_idle`, and the
+  ignored measurement `tests/textarea_retained_memory.rs`.
 
 ### Changed
+
+- `TextareaState` and `TextInputState` undo history stores each step as an
+  edit record (the changed rows, or bytes for a text input, before and
+  after) against one shared copy of the document instead of a full copy per
+  step, and evicts the oldest steps when records exceed the byte budget
+  (#415). Undo/redo results, typing-burst coalescing, selection replacement
+  as one step, code-editor indent/dedent steps and rejected-paste behavior
+  are unchanged; direct writes to `lines` / `value` between edits are still
+  captured exactly.
 
 - `button`, `badge`, `stat`, `help`, `separator`, `progress`,
   `progress_bar`, `slider`, `line_chart` and `area_chart` return builders
@@ -446,6 +460,20 @@
 
 ### Perf
 
+- Textarea undo memory scales with edit size (#415): 150 one-byte edits of
+  a 1 MB document at the default cap of 100 retain 1.59 MB instead of
+  156 MB (cap 8: 1.57 MB instead of 12.5 MB), and 100 Backspaces in a 1 MB
+  `text_input` retain 1.0 MB instead of 100 MB. Undo / redo on a 1 MB
+  document take about half the time (ASCII undo 1.40 -> 0.59 ms) because
+  they apply one record instead of cloning the document; a 100 KB paste into
+  it makes 26,897 instead of 51,283 allocations (p50 1.00 -> 0.77 ms).
+- A soft-wrapped textarea reuses its wrap layout across frames while the
+  text and width are unchanged (#415): an idle frame of a wrapped 1 MB
+  document drops from 12.8 ms (ASCII) / 5.9 ms (CJK) to ~0.08 ms. Matched
+  runs at v0.23 / v0.24 / v0.25 show no v0.24 wrapped-idle regression; the
+  cost was the per-frame whole-document wrap. Details in
+  docs/internals/performance.md "Textarea undo history and large
+  documents".
 - The layout tree's storage is reused across frames (#488): containers get
   their `children` vectors back from a `FrameState`-owned arena and text
   nodes reuse their payload boxes, flexbox scratch for containers over 16

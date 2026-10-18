@@ -272,6 +272,126 @@ the source string, current document and backend as well as history. The
 roughly 12.7 MB history-related difference did **not** disappear: undo remains
 whole-document snapshots capped by count, not a byte-bounded or delta history.
 Do not infer retained-memory improvement from the lower per-frame requests.
+(v0.26 replaced the snapshots with delta records; see the next section.)
+
+### Textarea undo history and large documents (#415, v0.26)
+
+`TextareaState` and `TextInputState` record each undo step as an edit
+record — the changed rows (a text input: the changed bytes) before and
+after, with the shared first-row prefix and last-row suffix trimmed —
+against one materialized copy of the document taken at the first recorded
+edit. Records are computed by diffing that copy against the live document
+when a step is recorded, so direct writes to the public `lines` / `value`
+are captured exactly as the snapshots captured them. Records are bounded by
+`history_max` steps and `TextareaState::history_max_bytes` (default 8 MiB;
+the newest step is always kept). A property test drives random edit /
+undo / redo / external-write sequences through the delta history and the
+pre-0.26 snapshot implementation and requires identical documents,
+restored cursors and history lengths after every step.
+
+Measured on 2026-10-18, Apple M3 Pro, rustc 1.98.0, release, shared host
+(load average 7–10). "Before" is `release/v0.26.0` `b1e4f66`; "after" is
+the same tree with this change. Same harness both sides.
+
+**Retained memory** (`tests/textarea_retained_memory.rs`, counting
+allocator, live bytes retained by one frame of edits; 1 MB document of
+40-glyph rows):
+
+```bash
+cargo test --release --test textarea_retained_memory -- --ignored --nocapture --test-threads=1
+```
+
+| Fixture | Before | After |
+|---|---|---|
+| ASCII, default cap 100, 150 one-byte pastes | 156,121,362 B | 1,587,647 B |
+| ASCII, cap 8, same edits | 12,495,296 B | 1,568,227 B |
+| CJK, default cap 100, same edits | 119,026,962 B | 1,216,783 B |
+| ASCII, history disabled, same edits | 5,172 B | 5,172 B |
+| ASCII, default cap, 10 pastes of 100 KB | 24,397,869 B | 6,193,962 B |
+| Undo all 150 steps (redo tip), ASCII cap 100 | +1,359,998 B | +109 B |
+| `text_input`, 1 MB single line, 100 Backspaces | 100,004,622 B | 1,013,767 B |
+
+After the change almost all retained history is the one document copy
+(~1.56 MB for the 1 MB ASCII document, which is ~1.76 MB live as rows); the
+100 records themselves are ~20 KB (`history_bytes()`). The 100 KB paste row
+retains the copy of the grown 2 MB document plus ~1.6 MB of inserted rows.
+History is no longer proportional to `history_max × document size`; the
+worst case is one document copy plus `history_max_bytes` of records plus
+the newest record.
+
+**Large paste scaling** (`SLT_AUDIT_FILTER=textarea_paste cargo bench
+--bench alloc_diagnostics`): one paste per sample, a full 80x24 frame, on a
+fresh clone of a document whose history already holds one step; 41 samples
+(21 when document + payload exceed 1 MB), p95 is the ceil(0.95 n)-th
+sample. µs and allocation calls per paste:
+
+| Alphabet / document / payload / position | p50 before -> after | p95 before -> after | Allocations before -> after |
+|---|---|---|---|
+| ASCII / 1 KB / 100 KB / end | 402 -> 138 | 569 -> 152 | 2,557 -> 2,537 |
+| ASCII / 1 KB / 1 MB / end | 1,142 -> 1,159 | 1,194 -> 1,228 | 24,511 -> 24,491 |
+| ASCII / 100 KB / 100 KB / middle | 226 -> 206 | 229 -> 221 | 7,392 -> 4,957 |
+| ASCII / 100 KB / 1 MB / middle | 1,270 -> 1,276 | 1,284 -> 1,331 | 29,346 -> 26,911 |
+| ASCII / 1 MB / 100 KB / end | 1,003 -> 765 | 1,054 -> 798 | 51,283 -> 26,897 |
+| ASCII / 1 MB / 100 KB / middle | 1,012 -> 780 | 1,051 -> 807 | 51,294 -> 26,908 |
+| ASCII / 1 MB / 1 MB / end | 2,007 -> 1,799 | 2,067 -> 1,824 | 73,234 -> 48,848 |
+| ASCII / 1 MB / 1 MB / middle | 2,105 -> 1,871 | 2,156 -> 1,944 | 73,248 -> 48,862 |
+| CJK / 1 MB / 100 KB / middle | 404 -> 359 | 409 -> 380 | 17,427 -> 9,167 |
+| CJK / 1 MB / 1 MB / middle | 1,088 -> 1,080 | 1,104 -> 1,164 | 24,869 -> 16,609 |
+| ZWJ / 1 MB / 100 KB / middle | 481 -> 475 | 492 -> 498 | 4,831 -> 2,568 |
+| ZWJ / 1 MB / 1 MB / middle | 1,194 -> 1,179 | 1,348 -> 1,250 | 6,876 -> 4,613 |
+
+The full 36-row matrix (ASCII / CJK / ZWJ × 1 KB / 100 KB / 1 MB documents
+× 100 KB / 1 MB payloads × end / middle) is printed by the command above.
+End and middle insertion cost the same within noise: rows are spliced, so
+position does not matter. Cost scales with **both** payload and document
+size. The payload part (normalizing CR/LF, building the inserted rows,
+rendering) is unchanged; the document part dropped by the snapshot clone
+(about 24k allocations for the 1 MB ASCII document) but remains, because
+an editing frame still clones the document once for exact
+`Response::changed` and compares it afterwards, and recording a step
+compares the history copy with the document. The 1 KB-document rows
+(p50 402 -> 138 for the first) are dominated by sampling noise in the
+before run; their allocation counts are unchanged.
+
+**Undo, redo and typing** (`cargo bench --bench textarea_history`,
+criterion medians, 1 MB document, one frame per operation):
+
+| Operation (end / middle of document) | ASCII before -> after | CJK before -> after |
+|---|---|---|
+| First key of a typing burst (records a step) | 895 -> 653 / 860 -> 636 µs | 344 -> 293 / 728 -> 275 µs |
+| Paste 100 KB | 989 -> 729 / 959 -> 755 µs | 399 -> 334 / 485 -> 344 µs |
+| Undo a 1 KB paste | 1,402 -> 592 / 1,371 -> 627 µs | 464 -> 242 / 475 -> 261 µs |
+| Redo it | 1,114 -> 620 / 1,121 -> 639 µs | 612 -> 260 / 405 -> 270 µs |
+| Wrapped idle, `word_wrap(60)` | 13,508 -> 71 µs | 5,820 -> 76 µs |
+
+"Before" ran the identical bench file against an exported `b1e4f66` tree,
+immediately followed by "after". Single runs on a loaded host: the CJK
+"before" medians spread by up to ~1.8x between runs (an earlier CJK redo
+run measured 387 µs, typing-burst middle 417 µs), so read ratios, not
+absolute times. Undo and redo no longer clone the document: they compare
+it with the history copy and apply one record. Typing still clones the
+document once per editing frame for `Response::changed`.
+
+**Wrapped idle** (`SLT_AUDIT_FILTER=textarea_wrapped_idle`, 1 MB document,
+`word_wrap(60)`, 80x24, no input): ASCII p50 12,835 -> 73 µs (p95 13,095 ->
+80), CJK p50 5,926 -> 76 µs (p95 6,068 -> 80); requested bytes per frame
+1,601 KB -> 28 KB. The textarea now keeps its soft-wrap layout across frames
+and re-wraps only when the rows or the width change, checked by one byte
+comparison of the rows against a contiguous copy (so a wrapped textarea
+retains about one more copy of its text plus the layout). An editing or
+navigation frame on a wrapped document still re-wraps the whole document.
+
+*Attribution of the v0.24 "6.654 -> 7.230 ms" wrapped CJK idle sample.* The
+same out-of-tree harness (TestBackend 80x24, 1 MB CJK, `word_wrap(60)`,
+101 samples after 20 warm-ups, three rounds, cleanest round shown) was built
+against each revision: `37933f9` (v0.23 docs) 5.79 ms, `c05c856` (v0.24.0)
+5.57–5.62 ms, `15fd63a` (v0.25.0) 5.56–5.63 ms, `b1e4f66` 5.91–5.96 ms
+p50. A 1 KB wrapped document took 0.085 / 0.080 / 0.081 / 0.036 ms, so the
+frame kernel is under 1.5% of the 1 MB frame. v0.24 did not regress wrapped
+idle in a matched run; the earlier sample difference is within this host's
+run-to-run spread (one v0.23 round measured 17.6 ms under load). The cost
+was the per-frame whole-document wrap in the textarea, not the frame kernel
+(#483/#484), and the wrap cache above removes it.
 
 ### Steady-state allocations: target vs measured
 
@@ -372,6 +492,10 @@ The benchmark suite is defined in `benches/benchmarks.rs` and uses
 - `widget_list_100_items`, `widget_list_sizes`, `widget_table_50_rows`,
   `widget_tabs_5`, `widget_checkbox_10`, `widget_select_10_items`,
   `widget_progress_10`
+
+`cargo bench --bench textarea_history` (#415) covers textarea undo
+recording, undo/redo, 100 KB pastes and wrapped idle frames on 1 MB
+documents; `cargo bench --bench code_editor` covers code-editor keystrokes.
 
 Compare results before and after a change with criterion's built-in
 baseline:

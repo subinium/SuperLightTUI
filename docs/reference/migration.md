@@ -10,6 +10,14 @@ current APIs, see `docs/guide/03-patterns.md` and `docs/reference/cookbook.md`.
 
 ## v0.25.x → v0.26.0
 
+- **Textarea undo is byte-bounded (#415).** `TextareaState` and
+  `TextInputState` store undo steps as edit records instead of document
+  copies, and drop the oldest steps once the records exceed 8 MiB
+  (`TextareaState::history_max_bytes`; the newest step is always kept).
+  Undo/redo results are unchanged; only a history of very large edits (for
+  example several multi-megabyte pastes) now keeps fewer than `history_max`
+  steps. For the 0.25 count-only cap use
+  `TextareaState::new().history_max_bytes(usize::MAX)`.
 - **Idle frame skipping is opt-in (#490).** Nothing changes by default:
   every `tick_rate` still renders a frame. To stop idle apps from rendering,
   pass `RunConfig::default().idle_redraw(false)`, then call
