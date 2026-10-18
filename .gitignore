@@ -12,3 +12,7 @@ CLAUDE.md
 # Claude Code session artifacts
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+
+# insta pending snapshots
+*.pending-snap
+*.snap.new
