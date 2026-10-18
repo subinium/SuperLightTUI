@@ -1,0 +1,244 @@
+# Runtime Modes
+
+Step 9 of the learning path. Which run loop to pick — full-screen, inline,
+static output, or your own loop — and the `RunConfig` policy that the built-in
+loops share.
+
+If you just want a normal terminal app, use `slt::run(...)` or `slt::run_with(...)`.
+To drive SLT from a non-terminal target or an external event loop, read
+[Custom backends](../internals/custom-backends.md).
+
+## Choose the right entry point
+
+| Goal | API |
+|------|-----|
+| Full-screen terminal app | `run()` / `run_with()` |
+| Inline widget below the current prompt | `run_inline()` / `run_inline_with()` |
+| Inline widget plus scrollback log output | `run_static()` + `StaticOutput` |
+| Non-terminal target or external loop | `Backend` + `AppState` + `frame()` |
+
+## `RunConfig` in practice
+
+`RunConfig` is the runtime policy object for all built-in loops.
+
+<!-- slt-check: {"name": "rt_run_config", "features": ["crossterm"], "context": "module"} -->
+```rust
+use slt::{MouseMode, RunConfig, Theme};
+use std::time::Duration;
+
+fn main() -> std::io::Result<()> {
+    let config = RunConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_mode(MouseMode::Hover)
+        .theme(Theme::light())
+        .max_fps(60)
+        .scroll_speed(2)
+        .title("My App");
+
+    slt::run_with(config, |ui| {
+        ui.text("configured");
+    })
+}
+```
+
+Important details:
+
+- `tick_rate` controls how often the loop wakes up even if no input arrives
+- `max_fps` caps the render rate after work is done
+- `mouse_mode(..)` picks the mouse reporting level; the default (`None`) is `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `slt::run` apps get clicks, wheel, and drags out of the box. `MouseMode::Hover` adds every pointer move (hover, tooltips); `MouseMode::Off` disables the mouse. `mouse(true)` / `mouse(false)` are shorthands for `Hover` / `Off`
+- `kitty_keyboard(true)` requests richer key events on supported terminals
+- `title(..)` is the initial window title; `ui.set_title(..)` replaces it at runtime, and the previous title is restored on exit
+- `color_depth(..)` pins the depth; without it, the built-in loops resolve it from the environment plus the startup probe (`ColorDepth::resolve`)
+- `clipboard_passthrough(true)` / `clipboard_max_bytes(n)` control OSC 52 delivery inside tmux / screen and the payload cap (default 74,994 bytes)
+- `ambiguous_wide(true)`, `width_conservative(..)`, and `width_probe(true)` control cluster-width handling (see [Terminal compatibility guide](11-terminal-compatibility.md))
+- `RunConfig` and `Theme` are both `#[non_exhaustive]`, so prefer builder methods over struct literals
+
+## Inline mode details
+
+`run_inline(height, ...)` is for CLI tools that should remain embedded in normal terminal flow.
+
+- It does not enter alternate screen mode.
+- It reserves a fixed display area below the cursor.
+- Resize events can change the width, but the reserved height stays the one you requested.
+- Pressing `Ctrl+C` still exits the loop like the regular terminal backend.
+
+Use it when the TUI is a helper surface rather than the whole app.
+
+## Static output mode details
+
+`StaticOutput` is a scrollback-friendly companion for inline apps.
+
+<!-- slt-check: {"name": "rt_static_output", "features": ["crossterm"], "context": "module"} -->
+```rust
+use slt::StaticOutput;
+
+fn main() -> std::io::Result<()> {
+    let mut output = StaticOutput::new();
+    output.println("Build started...");
+    output.println("Fetching data...");
+
+    // Printed lines go to scrollback; the closure stays live below them.
+    slt::run_static(&mut output, 3, |ui| {
+        ui.text("Working...");
+    })
+}
+```
+
+Use it when you want:
+
+- a fixed inline control surface at the bottom
+- persistent logs or messages above it
+- a CLI tool that mixes streaming text output with interaction
+
+## What the built-in backends guarantee
+
+The built-in terminal backends are intentionally boring:
+
+- full-screen and inline terminals share the same diff writer path for buffer, raw sequence, and cursor flushing
+- terminal session setup and cleanup are centralized so raw mode, alternate screen, mouse capture, bracketed paste, and Kitty keyboard teardown stay symmetric
+- built-in run loops and `TestBackend` share the same frame kernel, which reduces lifecycle drift between production rendering and tests
+
+This matters because SLT is trying to be easy at the API layer without becoming sloppy underneath.
+
+### Terminal compatibility policy
+
+> For a user-facing guide to terminal and multiplexer differences (tmux, Zellij, screen, image protocols, key reporting), see [Terminal compatibility guide](11-terminal-compatibility.md).
+
+Multiplexer identity takes precedence over an inherited outer `TERM_PROGRAM`.
+SLT resolves each protocol independently instead of treating every multiplexer
+as one global capability switch.
+
+| Environment | Automatic replies | Synchronized output | Kitty graphics | Sixel | iTerm2 images | Kitty keyboard |
+|-------------|-------------------|---------------------|----------------|-------|---------------|----------------|
+| Identified direct terminal | Probed once | Probe result; unknown keeps the historical default | Probe or known direct identity | DA1 or known direct identity | Known direct identity | Pushed when requested and confirmed by a `CSI ? u` reply |
+| tmux 3.2+ | Off | Off | Off | Off | Off | Off |
+| Zellij 0.43.1+ | Off | Off | Off | On | Off | Pushed when requested (policy only) |
+| GNU screen 4.09+ | Off | Off | Off | Off | Off | Off |
+| SSH | Direct-terminal rules apply, but generic `TERM=xterm-256color` is not enough to start automatic probes | Direct-terminal policy | Do not rely on an inherited outer identity | Do not rely on an inherited outer identity | Off unless explicitly forced | Depends on the remote endpoint |
+| Generic PTY / unknown bridge | Off | Historical direct default; disable when the bridge strips DEC modes | Off | Off | Off | Not negotiated |
+
+Explicit disable flags always win over force flags. Force flags are escape
+hatches for a configured passthrough path; they are not evidence that a
+protocol works through the current multiplexer.
+
+| Protocol | Force | Disable |
+|----------|-------|---------|
+| Reply queries | `SLT_FORCE_TERMINAL_QUERIES` | `SLT_DISABLE_TERMINAL_QUERIES` |
+| Synchronized output | `SLT_FORCE_SYNC_OUTPUT` | `SLT_DISABLE_SYNC_OUTPUT` |
+| Kitty graphics | `SLT_FORCE_KITTY` | `SLT_DISABLE_KITTY` |
+| Sixel | `SLT_FORCE_SIXEL` | `SLT_DISABLE_SIXEL` |
+| iTerm2 images | `SLT_FORCE_ITERM` | `SLT_DISABLE_ITERM` |
+| Kitty keyboard (force also skips the `CSI ? u` confirmation) | `SLT_FORCE_KITTY_KEYBOARD` | `SLT_DISABLE_KITTY_KEYBOARD` |
+| OSC 9;4 progress | `SLT_FORCE_PROGRESS` | `SLT_DISABLE_PROGRESS` |
+| OSC 7501 program status | `SLT_FORCE_PROGRAM_STATUS` | `SLT_DISABLE_PROGRAM_STATUS` |
+
+tmux is identified from `TMUX` even when its `default-terminal` sets
+`TERM=screen-256color`, unless GNU screen's `STY` is also present. The
+distinction matters for OSC 52 passthrough, which uses a different wrapper
+for each.
+
+CI starts isolated real sessions for tmux 3.2 and the Ubuntu package, Zellij
+0.43.1 and 0.45.0, and the Ubuntu GNU screen package. Each run is bounded and
+checks default and forced-query startup, resize, first bracketed-paste text,
+Tab, Escape, suspend/resume recovery, and normal Ctrl+C cleanup. Session names,
+config/data directories, and tmux sockets are unique to the job; live sessions
+are killed on both success and failure, while logs are retained as artifacts.
+GNU screen older than 4.09, configured graphics
+passthrough, nested multiplexers, panic cleanup inside a real multiplexer, and
+Windows-hosted multiplexers are not covered by this Linux matrix.
+
+Terminal capability probes are synchronous, bounded and startup-only. Once
+native input ownership begins, raw probes are refused; late `read_clipboard`
+returns `None`. Windows does not perform raw console probes. Cached values,
+environment policy and ioctl metrics remain available. No background stdin
+reader survives a successful, partial or silent query deadline.
+
+### Focus-navigation input boundaries
+
+When a batch contains Tab/Shift+Tab, later non-navigation input is retained for
+the next frame. This prevents following text or Enter from reaching the widget
+that is about to lose focus. Built-in loops handle the queue; custom loops should
+check `AppState::has_pending_input()` and schedule the next frame before blocking
+for new events. Each `frame`/`frame_owned` call still invokes the UI closure once.
+Native loops continue polling termination controls while input is queued. The
+async loop retains its FPS wait; a normal message-channel close drains input
+already received, without accepting more typing. Explicit cancellation and
+`ui.quit()` still stop immediately.
+
+### Unix input ownership (v0.24)
+
+Built-in Unix loops own a separately opened, nonblocking terminal descriptor;
+they do not change inherited stdin/stdout file-status flags. A bounded read
+retains readiness until `WouldBlock`, so a full 1,024-byte read cannot strand
+the rest of an input burst behind a missing edge. Partial sequences remain in
+the same parser across polls, including zero-timeout polls. SIGWINCH uses a
+scoped wake pipe, and normal final-session cleanup releases input resources.
+Pending calls invalidated by session teardown return `Interrupted` rather than
+reporting an event that a subsequent read cannot retrieve.
+
+Cursor-position replies use this same reader and preserve queued keyboard
+events. Key decoding reuses Crossterm 0.28.1's MIT-licensed parser and tests
+(the upstream decoder is unchanged in 0.29.0),
+with checked coordinate conversion; attribution is in `LICENSE.crossterm`.
+Public Crossterm event types and SLT's conversion API retain their identity.
+This fixes the built-in SLT loops, not a caller's separate upstream Crossterm
+event loop. Do not mix another stdin reader or simultaneous TUI loop with an
+active SLT loop. For `frame()`, the external event source remains caller-owned.
+
+Input safety limits are 4 KiB per non-paste sequence, 4 MiB per encoded paste,
+4,096 queued events and 8 MiB of queued paste text. Exceeding a limit reports
+`InvalidData`; built-in loops return the error and restore their terminal
+session instead of silently truncating accepted input. Final session teardown
+abandons its remaining private input queue and partial sequence. Fatal input
+errors, including a cursor-query timeout, make later native input fail closed
+until process restart: a late cursor reply has no request identifier and must
+not be promoted to the response of a retry. Normal session cleanup is not a
+fatal error and permits a subsequent session.
+
+### Buffered stdout (v0.19.1)
+
+Both `Terminal` and `InlineTerminal` wrap stdout in `BufWriter::with_capacity(65536, _)`. Every queued ANSI sequence — cursor moves, style deltas, raw sequences, Kitty placements — accumulates in a 64 KiB buffer and is committed with a single `flush()` per frame. This collapses what was previously dozens to thousands of individual `write` syscalls per frame into one, which materially reduces overhead for high-frequency rendering (charts, animations, image-heavy frames).
+
+The contract for custom backends is unchanged: `Backend::flush()` is still called once per frame and may itself defer or batch writes however it likes.
+
+### Terminal side effects go through the built-in flush (v0.26)
+
+Terminal metadata (`ui.set_title`, `ui.set_progress`, `ui.set_status`, `ui.set_cursor_shape`) and OSC 52 clipboard writes (`ui.copy_to_clipboard` and mouse-selection copies) are staged by the frame kernel and written by the built-in `Terminal` / `InlineTerminal` flush into the same buffered stream as the frame. Metadata is compared with what was last emitted and written only on change; the title stack, progress, program status, and cursor shape are restored when the session ends (including Ctrl+Z suspend and panic cleanup). Clipboard writes happen after the frame bytes are flushed, and their outcome is reported through `ui.clipboard_status()` on the next frame instead of printing to stderr or failing the frame.
+
+Custom backends never emit any of this: they keep `owns_terminal_session() == false`, so nothing is staged for them, and no bytes reach process stdout behind their back. The recorded state stays observable through `ui.terminal_title()`, `ui.terminal_progress()`, `ui.program_status()`, `ui.cursor_shape()`, and `ui.clipboard_status()` (which stays `None` because no write happens). `RunConfig::ambiguous_wide(true)` is different: it changes measurement in the buffer and layout, so it applies to every backend, `frame()` callers included.
+
+### `kitty_keyboard` honored in inline mode (v0.19.1)
+
+`InlineTerminal::new` now reads `RunConfig::kitty_keyboard` and propagates it through `TerminalSessionGuard`. Earlier versions hardcoded inline-mode kitty keyboard support to `false` regardless of config; both full-screen and inline runs now agree on the flag.
+
+Since v0.26 the session guard runs the capability probe before pushing the protocol. When startup queries run, the push happens only if the terminal answered `CSI ? u` (or `SLT_FORCE_KITTY_KEYBOARD` is set), and teardown pops exactly what was pushed.
+
+## Sixel auto-detection (v0.19.1)
+
+`ui.sixel_image(...)` is gated by a runtime check that asks "does this terminal speak sixel?" before emitting any sixel sequence. Unsupported terminals see the reserved cell area but no garbled escape output.
+
+Detection logic, in order:
+
+1. `SLT_FORCE_SIXEL=1` (also `true` / `yes` / `on`) — explicit override, returns true unconditionally. Use this for patched-xterm-with-sixel, embedded targets, or testing.
+2. Exact-match `TERM` against the known-good list: `mlterm`, `foot`, `yaft`, `xterm-256color-sixel`.
+3. Substring match: `TERM` contains `sixel` (catches custom builds and forks).
+4. `TERM_PROGRAM` is `foot` or `mlterm`.
+
+Pre-v0.19.1 used `term.contains("xterm")`, which fired on the default `xterm-256color` `TERM` value used by macOS Terminal.app, VS Code's integrated terminal, and most SSH clients — none of which actually parse sixel. Output appeared as raw escape junk in the scrollback. The new exact-match list fixes the false positive while still covering the terminals that do support the protocol.
+
+If you ship an app for end users on unknown terminals, prefer the half-block (`ui.image`) or Kitty (`ui.kitty_image`) path; sixel is a niche protocol and even the "supported" list above varies in fidelity.
+
+## `image()` is one RawDraw command (v0.19.1)
+
+`ui.image(&half_block_image)` previously emitted one `Command::RawDraw` per cell plus one `String` allocation per cell — for a modest 40×20 half-block image, that worked out to ~841 commands and ~800 transient `String` allocations per frame. The implementation now wraps the whole image in a single `container().draw(closure)` call: one `RawDraw`, one closure capture, the inner double-loop runs against the buffer directly with no per-cell allocation.
+
+This matters most for animated image content (frame-by-frame video, sprite scrolling), where the per-frame allocation pressure is what was previously dominating CPU. The widget API (`ui.image(&half)`) is unchanged — the optimization is purely internal.
+
+## Related docs
+
+- [Custom backends](../internals/custom-backends.md) — `Backend`, `AppState`, driving `frame()` yourself
+- [Feature flags](../reference/features.md) — feature-gated runtime behavior
+- [Testing guide](08-testing.md) — `TestBackend`, backend contract tests, multi-frame patterns
+- [Debugging guide](../reference/debugging.md) — F12 overlay and layout debugging
+- [Terminal compatibility](11-terminal-compatibility.md) — capability probing and fallbacks
+- [`src/runtime/config.rs`](../../src/runtime/config.rs) — `RunConfig`

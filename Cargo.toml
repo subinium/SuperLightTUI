@@ -378,3 +378,9 @@ harness = false
 [[bench]]
 name = "code_editor"
 harness = false
+
+# Issue #415: textarea undo recording, undo/redo, large paste and wrapped
+# idle cost on 1 MB documents.
+[[bench]]
+name = "textarea_history"
+harness = false
