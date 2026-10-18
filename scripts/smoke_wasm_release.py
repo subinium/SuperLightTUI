@@ -38,8 +38,11 @@ def verify_docs(version, attempts):
     raise RuntimeError(f"Exact docs are not ready: {sorted(pending)}")
 
 
-def verify_registry(version, attempts):
-    pending = {"superlighttui": "su/pe/superlighttui", "slt-wasm": "sl/t-/slt-wasm"}
+REGISTRY_INDEX_PATHS = {"superlighttui": "su/pe/superlighttui", "slt-wasm": "sl/t-/slt-wasm"}
+
+
+def verify_registry(version, attempts, packages=("superlighttui", "slt-wasm")):
+    pending = {package: REGISTRY_INDEX_PATHS[package] for package in packages}
     for attempt in range(attempts):
         for package, index_path in list(pending.items()):
             request = urllib.request.Request(
