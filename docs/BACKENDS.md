@@ -362,4 +362,4 @@ This matters most for animated image content (frame-by-frame video, sprite scrol
 - `docs/TESTING.md` - `TestBackend`, backend contract tests, multi-frame patterns
 - `docs/DEBUGGING.md` - F12 overlay, one-frame delay, layout debugging
 - `docs/PATTERNS.md` - hooks, overlays, custom widgets
-- `src/lib.rs` - canonical rustdoc for `Backend`, `AppState`, `frame()`, `RunConfig`
+- `src/lib.rs` - canonical rustdoc for `Backend`, `AppState`, `frame()`; `RunConfig` lives in `src/runtime/config.rs`

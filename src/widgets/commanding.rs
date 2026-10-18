@@ -1,3 +1,7 @@
+//! Key chord, command palette, streaming, screen, mode, tool approval and context state.
+
+use super::*;
+
 /// Default tick budget (~1s at 60Hz) after which a partially-typed chord
 /// is abandoned. Matches the tick clock used by notifications/animation.
 ///
@@ -473,7 +477,13 @@ pub(crate) struct ScreenFocusUpdate {
 impl Clone for ScreenState {
     fn clone(&self) -> Self {
         let mut focus_state = self.focus_state.clone();
-        if let Some(update) = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.as_ref() {
+        if let Some(update) = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .as_ref()
+        {
             focus_state.insert(update.name.to_string(), (update.index, update.count));
         }
         Self {
@@ -555,7 +565,9 @@ impl ScreenState {
             return false;
         }
         let removed = self.focus_state.remove(name).is_some();
-        if removed { self.cancel_focus_update(name); }
+        if removed {
+            self.cancel_focus_update(name);
+        }
         removed
     }
 
@@ -569,9 +581,18 @@ impl ScreenState {
         let stack = &self.stack;
         self.focus_state
             .retain(|name, _| stack.iter().any(|screen| screen == name) || keep(name));
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
-        mailbox.leases.retain(|name, _| self.focus_state.contains_key(name.as_ref()));
-        if mailbox.update.as_ref().is_some_and(|update| !self.focus_state.contains_key(update.name.as_ref())) {
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        mailbox
+            .leases
+            .retain(|name, _| self.focus_state.contains_key(name.as_ref()));
+        if mailbox
+            .update
+            .as_ref()
+            .is_some_and(|update| !self.focus_state.contains_key(update.name.as_ref()))
+        {
             mailbox.update = None;
         }
         before - self.focus_state.len()
@@ -598,12 +619,18 @@ impl ScreenState {
         if let Some(slot) = self.focus_state.get_mut(name) {
             *slot = (focus_index, focus_count);
         } else {
-            self.focus_state.insert(name.to_string(), (focus_index, focus_count));
+            self.focus_state
+                .insert(name.to_string(), (focus_index, focus_count));
         }
     }
 
     pub(crate) fn restore_focus(&self, name: &str) -> (usize, usize) {
-        if let Some(update) = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.as_ref()
+        if let Some(update) = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .as_ref()
             && update.name.as_ref() == name
         {
             return (update.index, update.count);
@@ -612,25 +639,42 @@ impl ScreenState {
     }
 
     pub(crate) fn sync_focus(&mut self) {
-        let pending = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner()).update.take();
+        let pending = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update
+            .take();
         if let Some(update) = pending {
             self.save_focus(&update.name, update.index, update.count);
         }
     }
 
     fn cancel_focus_update(&mut self, name: &str) {
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         mailbox.leases.remove(name);
-        if mailbox.update.as_ref().is_some_and(|update| update.name.as_ref() == name) {
+        if mailbox
+            .update
+            .as_ref()
+            .is_some_and(|update| update.name.as_ref() == name)
+        {
             mailbox.update = None;
         }
     }
 
     pub(crate) fn focus_updates(&self, name: &std::sync::Arc<str>) -> (PendingScreenFocus, u64) {
-        let mut mailbox = self.pending_focus.lock().unwrap_or_else(|error| error.into_inner());
+        let mut mailbox = self
+            .pending_focus
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         mailbox.generation = mailbox.generation.wrapping_add(1);
         let generation = mailbox.generation;
-        mailbox.leases.insert(std::sync::Arc::clone(name), generation);
+        mailbox
+            .leases
+            .insert(std::sync::Arc::clone(name), generation);
         (std::sync::Arc::clone(&self.pending_focus), generation)
     }
 }

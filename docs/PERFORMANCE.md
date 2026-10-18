@@ -22,7 +22,7 @@ broken down by phase:
 | **Total framework overhead** | **< 5 ms** | |
 
 The remaining ~11 ms is yours: terminal I/O, async work, and slack for the
-OS scheduler. The pipeline runs in `slt::frame()` (see `src/lib.rs`)
+OS scheduler. The pipeline runs in `slt::frame()` (see `src/runtime/kernel.rs`)
 which is called once per tick by `run_with` / `run_inline_with` /
 `run_static_with`.
 
@@ -318,7 +318,7 @@ When the debug overlay is active (toggled by F12 at runtime, or via
 pass in `src/layout/render.rs` draws layout outlines on top of the
 frame. The overlay layer is configurable via
 `DiagnosticsState.debug_layer: DebugLayer` — `All` (default), `TopMost`,
-or `BaseOnly` (issue #201; see `DiagnosticsState` in `src/lib.rs`).
+or `BaseOnly` (issue #201; see `DiagnosticsState` in `src/runtime/frame_state.rs`).
 
 There is no `RunConfig::show_fps()` builder method. To put an FPS readout
 on screen, render `state.fps_f64()` yourself in your UI closure, or rely on

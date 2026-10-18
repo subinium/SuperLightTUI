@@ -58,7 +58,7 @@ impl Drop for DeferredDrawClipGuard<'_> {
 /// The callback panic is returned to the frame kernel instead of crossing the
 /// cleanup boundary. The caller decides whether to render an error-boundary
 /// fallback or write persistent frame state back and resume unwinding.
-#[allow(dead_code)] // Called by the #340 frame-kernel integration in src/lib.rs.
+#[allow(dead_code)] // Called by the #340 frame-kernel integration in src/runtime/kernel.rs.
 pub(crate) fn invoke_deferred_draw(
     buffer: &mut crate::buffer::Buffer,
     rect: Rect,

@@ -23,23 +23,21 @@ use crate::context::Response;
 pub type FormValidator = fn(&str) -> Result<(), String>;
 type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
 
-/// Built-in field validator constructors (required / length / email / range /
-/// regex / one-of).
-///
-/// Each function returns a closure suitable for
-/// [`FormField::validate`](crate::widgets::FormField::validate) or
-/// [`Validator::new`](crate::widgets::Validator::new). All matchers are
-/// handwritten — there is no `regex` or email-parsing dependency.
-pub mod validators {
-    include!("widgets/validators.rs");
-}
+pub mod validators;
 
-include!("widgets/input.rs");
-include!("widgets/collections.rs");
-include!("widgets/feedback.rs");
-include!("widgets/selection.rs");
-include!("widgets/commanding.rs");
-include!("widgets/responses.rs");
+mod collections;
+mod commanding;
+mod feedback;
+mod input;
+mod responses;
+mod selection;
+
+pub use collections::*;
+pub use commanding::*;
+pub use feedback::*;
+pub use input::*;
+pub use responses::*;
+pub use selection::*;
 
 #[cfg(test)]
 mod tests;

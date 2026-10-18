@@ -195,7 +195,17 @@ as `keymap_help_overlay`, and hook/side-effect methods.
 
 ```
 src/
-├── lib.rs                      # Crate root, public re-exports, run()/frame() entry points
+├── lib.rs                      # Crate root: docs, mod decls, public re-exports, Backend / AppState / frame()
+├── runtime.rs                  # Private run-loop facade; entry points re-exported from lib.rs
+├── runtime/
+│   ├── config.rs               # RunConfig + builder methods
+│   ├── frame_state.rs          # FrameState, FocusState, LayoutFeedbackState, DiagnosticsState, DebugLayer
+│   ├── kernel.rs               # run_frame_kernel, run_frame, input_frame, run-loop event handling
+│   ├── native.rs               # run / run_with / run_inline* / run_static*, event polling (`crossterm`)
+│   ├── async_run.rs            # run_async*, AsyncSender, AsyncRunHandle (`async`)
+│   ├── panic.rs                # Panic hook + recoverable-panic scopes
+│   ├── suspend.rs              # Ctrl+Z suspend / resume (`crossterm`, unix)
+│   └── tests.rs                # Run-loop tests
 ├── context.rs                  # Facade for core context types + widget impl modules
 ├── context/
 │   ├── state.rs                # State<T>, Response
@@ -215,6 +225,10 @@ src/
 │   │   ├── gauge.rs            # gauge / line_gauge builders
 │   │   ├── gutter.rs           # scrollable_with_gutter, GutterOpts
 │   │   ├── split.rs            # split_pane / vsplit_pane
+│   │   ├── font8x8.rs          # 8x8 bitmap font for big_text
+│   │   ├── fallback_highlight.rs # keyword fallback highlighter, tree-sitter line renderer
+│   │   ├── media.rs            # image preparation caches, encoders, half-block / RGBA fallback
+│   │   ├── tooltip_wrap.rs     # tooltip word wrapping
 │   │   ├── tests.rs, line_wrap_tests.rs  # Display widget tests
 │   │   └── layout.rs           # screen, row/col, modal, overlay_at(_offset), tooltip, container, scrollable, form helpers
 │   ├── widgets_interactive.rs  # Interactive facade
@@ -232,8 +246,8 @@ src/
 │   │   └── tests.rs            # Input widget tests
 │   └── widgets_viz.rs          # Charts, sparklines, heatmap, treemap, candlestick, stacked bar, canvas, QR
 │
-├── widgets.rs                  # Single `widgets` module: the files below are spliced in with `include!()`
-│                               # (not separate Rust modules); validators.rs is included inside `pub mod validators`
+├── widgets.rs                  # Facade: private submodules below, glob re-exported (`pub use input::*;` …)
+│                               # so every state type stays at `slt::widgets::*`; `validators` is `pub mod`
 ├── widgets/
 │   ├── input.rs                # StaticOutput, TextInputState, Validator, AsyncValidation, FormField, FormState, ToastState, ToastMessage, ToastLevel, AlertLevel, TextareaState, SpinnerState, SliderOpts, NumberInputState
 │   ├── collections.rs          # ListState, FilePickerState, TabsState, TableState, PaginatorState, ScrollState, HighlightRange, SplitPaneState, GridColumn
@@ -260,13 +274,24 @@ src/
 │   ├── theme.rs                # Theme struct, Spacing, ThemeColor, 11 color presets + 3 density variants, ThemeBuilder, contrast helpers
 │   └── theme_io.rs             # TOML ThemeFile loading (`serde`) and ThemeWatcher hot reload (`theme-watch`)
 │
-├── terminal.rs                 # Terminal backend
+├── terminal.rs                 # Terminal backend facade: buffer helpers, Sink, Terminal, InlineTerminal
 │   ├── Terminal                # Full-screen mode — alternate screen, raw mode, mouse capture
 │   ├── InlineTerminal          # Inline mode — renders below cursor, no alternate screen
-│   └── ANSI output, synchronized output (DECSET 2026), event polling
+│   └── submodule re-exports    # Capabilities, ColorScheme, clipboard, bench hooks
 │
 ├── terminal/
-│   └── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── kitty.rs                # KittyImageManager: upload dedup, placement diff, compression
+│   ├── cell_pixel.rs           # CSI 16 t cell-pixel probe + cache
+│   ├── capabilities.rs         # Capabilities, BlitterSupport, Blitter, host / multiplexer / env policy
+│   ├── query.rs                # Reply reader, DA1/DA2/DECRPM/XTGETTCAP parsing, sync-output resolution
+│   ├── session.rs              # Session registry/guard, enter/exit/cleanup writers, panic cleanup, suspend/resume
+│   ├── osc.rs                  # OSC 11 color scheme, OSC 52 clipboard, base64
+│   ├── flush.rs                # flush_buffer_diff*, cursor, SGR style delta
+│   ├── sprixel.rs              # Graphics emission policy, raw-sequence + sprixel flush
+│   ├── bench_hooks.rs          # `#[doc(hidden)]` __bench_* fixtures
+│   ├── selection.rs            # SelectionState, text selection overlay rendering
+│   ├── tests.rs                # Test facade
+│   └── tests/                  # capability / detection / flush / graphics / lifecycle / query / selection tests
 │
 ├── anim.rs                     # Animation primitives
 │   ├── Tween                   # Linear interpolation with 9 easing functions
@@ -340,7 +365,7 @@ Every frame follows this exact sequence. The engine performs **four top-level DF
    └── See "The collect_all consolidation" below for what this replaced
    └── Follow-focus check: if a focus transition or fresh bounds require a
        scroll correction, apply_scroll_adjustments() rewrites the scroll
-       offsets in place and collect_all() runs once more (src/lib.rs)
+       offsets in place and collect_all() runs once more (src/runtime/kernel.rs)
 
 7. RENDER + DEFERRED DRAW — layout::render()         [DFS pass 4 of 4]
    └── render() → render_inner() → render_container_border()
@@ -395,7 +420,7 @@ Interactive widgets depend on `prev_*` data for hit testing, scroll bounds, and 
 ## Module Dependency Flow
 
 ```
-lib.rs (entry point)
+lib.rs (entry point) ←── runtime.rs ←── runtime/*.rs (run loops, frame kernel)
   ├── context.rs ←── context/widgets_*.rs (impl blocks on Context)
   │     ↑
   │     ├── widgets.rs (state types)
@@ -406,7 +431,7 @@ lib.rs (entry point)
   │     ├── event.rs
   │     └── rect.rs
   │
-  ├── terminal.rs ←── terminal/selection.rs
+  ├── terminal.rs ←── terminal/{kitty, cell_pixel, capabilities, query, session, osc, flush, sprixel, bench_hooks, selection}.rs
   │     ↑
   │     └── buffer.rs, event.rs (for flush and polling)
   │
