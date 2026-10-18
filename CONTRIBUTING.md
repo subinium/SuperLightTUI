@@ -73,8 +73,8 @@ cargo check --examples --all-features
 Follow this checklist when adding a new widget:
 
 1. **State struct** in `widgets.rs` — name it `{Widget}State`, implement `Default`
-2. **State placement** in the matching `src/widgets/*.rs` group file, then surfaced through `src/widgets.rs`
-3. **Rendering method** on `Context` in the matching `src/context/widgets_*/` subfile (`widgets_input/`, `widgets_display/`, `widgets_interactive/`, or `widgets_viz.rs`)
+2. **State placement** in the matching `src/widgets/<family>.rs` family file (see the Widget Families table in `docs/ARCHITECTURE.md`), then surfaced through `src/widgets.rs`
+3. **Rendering method** on `Context` in `src/context/widgets/<family>.rs` (or its `<family>/` directory) — the same family name as the state file
 4. **Re-export** in `lib.rs`
 5. **Doc comment** (`///`) on the public method with usage example
 6. **Response pattern** — interactive and independently framed display widgets return `Response`; style-chain text helpers return `&mut Self`

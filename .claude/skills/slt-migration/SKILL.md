@@ -7,7 +7,7 @@ description: Migrate Rust TUIs from ratatui (or cursive, Python textual) to Supe
 
 This skill complements `.agents/skills/slt/SKILL.md` (authoring). Use this one to **port** an existing codebase. After migration switch to the `slt` skill for day-to-day work.
 
-**Targets SLT v0.25.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets_*.rs`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
+**Targets SLT v0.25.0**. Every API name below must be verified against `src/lib.rs` and `src/context/widgets/`. The v0.20 API consistency pass removed several v0.19 names; the historical table below remains relevant.
 
 ## When to use
 
@@ -98,7 +98,7 @@ fn main() -> std::io::Result<()> {
 
 ### Widget mapping (top ratatui widgets → SLT)
 
-Every SLT method below is verified against `src/context/widgets_*.rs`.
+Every SLT method below is verified against `src/context/widgets/`.
 
 | ratatui | SLT |
 |---|---|
@@ -400,7 +400,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 
 4. **Replace layout splitters.** Each `Layout::default().constraints(...).split(area)` becomes nested `ui.row` / `ui.col` + `.fill / .h / .w / .h_pct / .w_pct / .align / .justify`. `.gap(n)` instead of `.spacing(n)`, `.p(n)` instead of `.margin(n)`.
 
-5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the mapping table or grep `src/context/widgets_*.rs`.
+5. **Replace each `f.render_widget(...)` with the SLT method.** Convert widget by widget. Verify any uncertain method via the mapping table or grep `src/context/widgets/`.
 
 6. **Adopt current builders.** Where the old code hand-rolled gauges, breadcrumbs, scrollable-with-line-numbers, or split panes, use the current builders/opts directly. They handle hit-testing and accessibility.
 
@@ -417,7 +417,7 @@ After everything compiles, run the full quality gate (project `AGENTS.md`):
 
 Be honest with the user — these need workarounds:
 
-- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `Context::canvas` in `src/context/widgets_viz.rs`.
+- **ratatui `Canvas` braille drawing primitive.** SLT has `ui.canvas(width, height, \|cv\| { cv.line(...); cv.circle(...); })` but the API takes a `CanvasContext` closure, not a value-typed widget. Custom point/line drawing logic needs a small rewrite. See `Context::canvas` in `src/context/widgets/viz/canvas.rs`.
 - **ratatui `Wrap { trim: true }` exact semantics.** SLT wraps via container width and `.wrap()` on text; trim-leading-whitespace behavior isn't identical. Test wrap-heavy text manually.
 - **cursive's deep view layering / multiple modal stacks.** SLT supports `ui.modal(...)` / `ui.modal_with(...)` / `ui.overlay_at(anchor, \|ui\| ...)` but not arbitrary nested view managers. Most uses fold into `if state.show_modal { ui.modal(\|ui\| ...) }`.
 - **textual's CSS/TCSS hot reload.** SLT does not hot-reload layout or arbitrary style code. The `theme-watch` feature can reload TOML themes through `ThemeWatcher`; use `cargo watch -x run` for code and layout iteration.
@@ -431,7 +431,7 @@ If a feature genuinely doesn't map, tell the user — don't fake it.
 - `examples/gauge.rs`, `examples/breadcrumb_response.rs`, `examples/gutter_highlights.rs`, `examples/split_pane.rs`, etc. — single-feature demos, compiled and run through `cargo run --example widgets_tour`.
 - `tests/hooks_focus.rs`, `tests/widgets.rs`, `tests/example_snapshots/` — regression tests showing canonical TestBackend + sequence patterns.
 - `src/lib.rs` — authoritative public re-exports.
-- `src/context/widgets_*.rs` — authoritative widget signatures.
+- `src/context/widgets/` — authoritative widget signatures.
 - ratatui repo: <https://github.com/ratatui-org/ratatui>
 - cursive repo: <https://github.com/gyscos/cursive>
 - textual repo: <https://github.com/Textualize/textual>

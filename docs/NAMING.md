@@ -362,10 +362,10 @@ The lifetime parameter is required because builders borrow `&mut Context`.
 
 | Module | Family |
 |--------|--------|
-| `widgets_display/text.rs` | text & inline styling |
-| `widgets_display/status.rs` | alerts, badges, code blocks |
-| `widgets_input/text_input.rs` | text input variants |
-| `widgets/responses.rs` | Layer 5 compound response types |
+| `context/widgets/display/text.rs` | text & inline styling |
+| `context/widgets/display/status.rs` | badges, stats, breadcrumbs |
+| `context/widgets/text_input.rs` | text input variants |
+| `widgets/text_input.rs` | state types in the text-input family |
 
 ### Modules vs files
 
@@ -374,7 +374,7 @@ Rust 2018 style: `filename.rs` + `filename/` directory. Avoid `mod.rs`.
 ```
 src/widgets.rs           # facade re-exports
 src/widgets/
-    input.rs             # state types in input family
+    text_input.rs        # state types in text_input family
     selection.rs
     ...
 ```

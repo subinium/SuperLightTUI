@@ -425,7 +425,7 @@ impl Response {
         if tooltip_text.is_empty() {
             return self;
         }
-        let lines = super::widgets_display::wrap_tooltip_text(&tooltip_text, 38);
+        let lines = super::widgets::wrap_tooltip_text(&tooltip_text, 38);
         ctx.pending_tooltips.push(PendingTooltip {
             anchor_rect: self.rect,
             lines,

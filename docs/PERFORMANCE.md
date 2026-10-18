@@ -670,7 +670,7 @@ The `dhat-heap.json` output opens in
 
 - **Calling widgets inside a `for` loop with thousands of items** — use
   `ui.virtual_list(&mut state, visible_height, |ui, idx| {...})` from
-  `src/context/widgets_interactive/rich_markdown.rs` instead of
+  `src/context/widgets/collections/list.rs` instead of
   `ui.list(&mut state)`. `virtual_list` only renders rows in the visible
   window; a 100k-item list pays for the visible 50 rows, not all 100k.
 - **Heavy derivation on every frame** — cache results in

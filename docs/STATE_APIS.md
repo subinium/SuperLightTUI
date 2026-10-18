@@ -20,7 +20,7 @@ part of the stable surface.
 
 ## TextInputState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/text_input.rs`.
 
 Single-line text input state. Pass `&mut TextInputState` to
 `Context::text_input` each frame.
@@ -79,7 +79,7 @@ for err in input.errors() { ui.text(err).fg(Color::Red); }
 
 ## TextareaState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/text_input.rs`.
 
 Multi-line text area state. Pass with a row count to `Context::textarea`.
 
@@ -118,7 +118,7 @@ if ui.button("Save").clicked { save(&area.value()); }
 
 ## FormField
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/text_input.rs`.
 
 One labeled input inside a `FormState`.
 
@@ -149,7 +149,7 @@ let email = FormField::new("Email").placeholder("you@example.com");
 
 ## FormState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/text_input.rs`.
 
 Multi-field form.
 
@@ -184,7 +184,7 @@ if form.validate(&validators) { form.submitted = true; }
 
 ## StaticOutput
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/runtime.rs`.
 
 Buffer of static lines emitted above an inline TUI via `slt::run_static`.
 
@@ -351,7 +351,7 @@ No additional methods beyond field access.
 
 ## TabsState
 
-Source: `src/widgets/collections.rs`.
+Source: `src/widgets/selection.rs`.
 
 ### Fields
 
@@ -460,7 +460,7 @@ ui.table(&mut table);
 
 ## ScrollState
 
-Source: `src/widgets/collections.rs`.
+Source: `src/widgets/layout.rs`.
 
 Vertical scroll bookkeeping for `Context::scrollable`.
 
@@ -595,7 +595,7 @@ ui.multi_select(&mut ms);
 
 ## TreeNode
 
-Source: `src/widgets/selection.rs`.
+Source: `src/widgets/collections.rs`.
 
 One node in a hierarchical tree.
 
@@ -621,7 +621,7 @@ One node in a hierarchical tree.
 
 ## TreeState
 
-Source: `src/widgets/selection.rs`.
+Source: `src/widgets/collections.rs`.
 
 ### Fields
 
@@ -653,7 +653,7 @@ ui.tree(&mut tree);
 
 ## DirectoryTreeState
 
-Source: `src/widgets/selection.rs`.
+Source: `src/widgets/collections.rs`.
 
 Directory-flavored tree with icon toggle.
 
@@ -687,7 +687,7 @@ ui.directory_tree(&mut dt);
 
 ## PaletteCommand
 
-Source: `src/widgets/selection.rs`.
+Source: `src/widgets/commanding.rs`.
 
 One entry in a command palette.
 
@@ -753,7 +753,7 @@ if r.changed { if let Some(i) = palette.last_selected { run(i); } }
 
 ## StreamingTextState
 
-Source: `src/widgets/commanding.rs`.
+Source: `src/widgets/rich.rs`.
 
 Plain-text streaming buffer.
 
@@ -780,7 +780,7 @@ Plain-text streaming buffer.
 
 ## StreamingMarkdownState
 
-Source: `src/widgets/commanding.rs`.
+Source: `src/widgets/rich.rs`.
 
 Streaming markdown buffer with fenced-code awareness.
 
@@ -880,7 +880,7 @@ modes.screens_mut().push("advanced");
 
 ## ToolApprovalState
 
-Source: `src/widgets/commanding.rs`.
+Source: `src/widgets/rich.rs`.
 
 Human-in-the-loop approval prompt for an AI tool call.
 
@@ -908,7 +908,7 @@ Human-in-the-loop approval prompt for an AI tool call.
 
 ## ContextItem
 
-Source: `src/widgets/commanding.rs`.
+Source: `src/widgets/rich.rs`.
 
 Entry in a context bar for AI chat UIs.
 
@@ -929,7 +929,7 @@ None beyond the constructor.
 
 ## RichLogState
 
-Source: `src/widgets/feedback.rs`.
+Source: `src/widgets/rich.rs`.
 
 Multi-style append-only log.
 
@@ -975,7 +975,7 @@ Multi-style append-only log.
 
 ## CalendarState
 
-Source: `src/widgets/feedback.rs`.
+Source: `src/widgets/collections.rs`.
 
 Date picker.
 
@@ -1016,7 +1016,7 @@ if let Some((y, m, d)) = cal.selected_date() { println!("{y}-{m:02}-{d:02}"); }
 
 ## SpinnerState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/feedback.rs`.
 
 Tick-driven spinner.
 
@@ -1046,7 +1046,7 @@ ui.text(format!("{ch} Loading..."));
 
 ## ToastState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/feedback.rs`.
 
 Stack of timed toast notifications. Pass to `Context::toast` each frame.
 
@@ -1088,7 +1088,7 @@ ui.toast(&mut toasts);
 
 ## ButtonVariant
 
-Source: `src/widgets/feedback.rs`.
+Source: `src/widgets/selection.rs`.
 
 Visual variant accepted by `Context::button_with`.
 
@@ -1105,7 +1105,7 @@ Visual variant accepted by `Context::button_with`.
 
 ## Trend
 
-Source: `src/widgets/feedback.rs`.
+Source: `src/widgets/display.rs`.
 
 ### Variants
 
@@ -1116,7 +1116,7 @@ Source: `src/widgets/feedback.rs`.
 
 ## NumberInputState
 
-Source: `src/widgets/input.rs`.
+Source: `src/widgets/text_input.rs`.
 
 Editable numeric stepper with normalized bounds.
 
@@ -1163,7 +1163,7 @@ Standalone page navigation for arbitrary data.
 
 ## SplitPaneState
 
-Source: `src/widgets/collections.rs`.
+Source: `src/widgets/layout.rs`.
 
 Shared state for `Context::split_pane` and `Context::vsplit_pane`.
 
@@ -1215,7 +1215,7 @@ default-constructed state across frames; callers use `Context::key_chord` and
 
 ## SchedulerState
 
-Source: `src/widgets/feedback.rs`.
+Source: `src/widgets/runtime.rs`.
 
 All fields and methods are crate-internal. `Context` owns the default-constructed
 timer and exclusive-claim state across frames; callers use `Context::schedule`,

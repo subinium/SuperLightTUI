@@ -1,4 +1,18 @@
+//! Feedback family — spinners, toasts, sliders, alerts, confirm prompts,
+//! progress bars and gauges.
+//!
+//! State types ([`crate::widgets::ToastState`],
+//! [`crate::widgets::SpinnerState`], [`crate::widgets::SliderOpts`],
+//! [`crate::widgets::AlertLevel`], ...) live in `src/widgets/feedback.rs`.
+
 use super::*;
+
+mod gauge;
+
+pub use gauge::{Gauge, LineGauge};
+
+#[cfg(test)]
+mod tests;
 
 impl Context {
     /// Render an animated spinner.
@@ -238,109 +252,114 @@ impl Context {
         response
     }
 
-    /// Numeric stepper field: Up/Down (or `k`/`j`) and scroll-wheel adjust by
-    /// `step`, or type a value directly and press `Enter`. The committed value
-    /// is always clamped to `[min, max]` (and rounded in integer mode).
+    /// Render an alert banner with icon and level-based coloring.
     ///
-    /// Unlike [`slider`](Context::slider) — a bar-and-thumb control keyed by
-    /// Left/Right — this renders the raw value as a `▾ 42 ▴` field that accepts
-    /// direct typing. Config lives on [`NumberInputState`]. Up/`k` increments,
-    /// Down/`j` decrements; `Enter` commits a typed buffer, `Esc` discards it,
-    /// `Backspace` edits it. Left/Right are intentionally unused (reserved).
-    ///
-    /// `Response.focused` reflects focus and `Response.changed` is `true` iff
-    /// the committed value changed this frame. All handled key and scroll
-    /// events are consumed so they do not leak to other widgets or the global
-    /// quit handler.
-    ///
-    /// Available since `0.21.0`.
+    /// Argument order is `(message, level)` — message first, then the
+    /// [`AlertLevel`](crate::widgets::AlertLevel). This is the executable
+    /// proof that [API_DESIGN.md](https://github.com/subinium/superlighttui/blob/main/docs/API_DESIGN.md)
+    /// Rule 3 matches the shipped signature.
     ///
     /// # Example
     ///
-    /// ```
-    /// # use slt::*;
-    /// # use slt::widgets::NumberInputState;
-    /// # TestBackend::new(80, 24).render(|ui| {
-    /// let mut qty = NumberInputState::integer(3, 0, 10).step(1.0);
-    /// let r = ui.number_input(&mut qty);
-    /// if r.changed { /* qty.value updated */ }
+    /// ```no_run
+    /// # use slt::AlertLevel;
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// ui.alert("Disk full", AlertLevel::Error);
+    /// ui.alert("Saved", AlertLevel::Success);
     /// # });
     /// ```
-    pub fn number_input(&mut self, state: &mut NumberInputState) -> Response {
-        let focused = self.register_focusable();
-        // v0.21.1: capture focus-edge flags (issue #208 gap — number_input
-        // assembled its Response by hand and never set gained/lost_focus).
-        let (gained_focus, lost_focus) = self.focus_transitions(focused);
+    pub fn alert(&mut self, message: &str, level: crate::widgets::AlertLevel) -> Response {
+        use crate::widgets::AlertLevel;
 
-        // Normalize the committed value before processing input so the
-        // pre-frame baseline used for `changed` is itself in-range.
-        state.normalize();
-        let old = state.value;
-        let step = state.step;
-
-        let adjust = |state: &mut NumberInputState, delta: f64| {
-            if delta == 0.0 {
-                return;
-            }
-            // Adjusting commits any in-progress buffer (discarding it) and
-            // clears a prior parse error.
-            state.editing = None;
-            state.parse_error = None;
-            state.value =
-                crate::widgets::normalize_numeric_value(state.value + delta, state.min, state.max);
-            if state.integer {
-                state.value = state.value.round();
-            }
+        let theme = self.theme;
+        let (icon, color) = match level {
+            AlertLevel::Info => ("ℹ", theme.accent),
+            AlertLevel::Success => ("✓", theme.success),
+            AlertLevel::Warning => ("⚠", theme.warning),
+            AlertLevel::Error => ("✕", theme.error),
         };
 
+        let focused = self.register_focusable();
+        let key_dismiss = if focused {
+            let consumed: Vec<usize> = self
+                .available_key_presses()
+                .filter_map(|(i, key)| {
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Char('x')) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let dismissed = !consumed.is_empty();
+            self.consume_indices(consumed);
+            dismissed
+        } else {
+            false
+        };
+
+        let mut response = self.container().col(|ui| {
+            ui.line(|ui| {
+                let mut icon_text = String::with_capacity(icon.len() + 2);
+                icon_text.push(' ');
+                icon_text.push_str(icon);
+                icon_text.push(' ');
+                ui.text(icon_text).fg(color).bold();
+                ui.text(message).grow(1);
+                ui.text(" [×] ").dim();
+            });
+        });
+        response.focused = focused;
+        if key_dismiss {
+            response.clicked = true;
+        }
+
+        response
+    }
+
+    /// Yes/No confirmation dialog. Returns Response with .clicked=true when answered.
+    ///
+    /// `result` is set to true for Yes, false for No.
+    ///
+    /// # Examples
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(80, 24).render(|ui| {
+    /// let mut answer = false;
+    /// let r = ui.confirm("Delete this file?", &mut answer);
+    /// if r.clicked && answer { /* user confirmed */ }
+    /// # });
+    /// ```
+    pub fn confirm(&mut self, question: &str, result: &mut bool) -> Response {
+        let focused = self.register_focusable();
+        let mut is_yes = *result;
+        let mut clicked = false;
+
+        // 1) Keyboard hit-test runs first so it can mutate `is_yes`.
         if focused {
             let mut consumed_indices = Vec::new();
             for (i, key) in self.available_key_presses() {
                 match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        adjust(state, step);
+                    KeyCode::Char('y') => {
+                        is_yes = true;
+                        *result = true;
+                        clicked = true;
                         consumed_indices.push(i);
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        adjust(state, -step);
+                    KeyCode::Char('n') => {
+                        is_yes = false;
+                        *result = false;
+                        clicked = true;
                         consumed_indices.push(i);
                     }
-                    KeyCode::Char(ch) if is_number_char(ch, state) => {
-                        let buf = state.editing.get_or_insert_with(String::new);
-                        buf.push(ch);
-                        state.parse_error = None;
+                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                        is_yes = !is_yes;
+                        *result = is_yes;
                         consumed_indices.push(i);
-                    }
-                    KeyCode::Backspace => {
-                        if let Some(buf) = state.editing.as_mut() {
-                            buf.pop();
-                            state.parse_error = None;
-                            consumed_indices.push(i);
-                        }
                     }
                     KeyCode::Enter => {
-                        if let Some(buf) = state.editing.take() {
-                            let trimmed = buf.trim();
-                            match trimmed.parse::<f64>() {
-                                Ok(parsed) if parsed.is_finite() => {
-                                    state.value = crate::widgets::normalize_numeric_value(
-                                        parsed, state.min, state.max,
-                                    );
-                                    if state.integer {
-                                        state.value = state.value.round();
-                                    }
-                                    state.parse_error = None;
-                                }
-                                _ => {
-                                    state.parse_error = Some(format!("invalid number: {trimmed}"));
-                                }
-                            }
-                            consumed_indices.push(i);
-                        }
-                    }
-                    KeyCode::Esc if state.editing.is_some() => {
-                        state.editing = None;
-                        state.parse_error = None;
+                        *result = is_yes;
+                        clicked = true;
                         consumed_indices.push(i);
                     }
                     _ => {}
@@ -349,95 +368,109 @@ impl Context {
             self.consume_indices(consumed_indices);
         }
 
-        // Clamp again after key handling so the rendered value is in-range.
-        state.value = state.clamped();
-
-        let display = if let Some(buf) = state.editing.as_ref() {
-            buf.clone()
-        } else if state.integer {
-            format!("{:.0}", state.value)
-        } else {
-            format_compact_number(state.value)
-        };
-
-        let primary_color = self.theme.primary;
-        let dim_color = self.theme.text_dim;
-        let error_color = self.theme.error;
-        let value_color = if focused { primary_color } else { dim_color };
-        let arrow_color = if focused { primary_color } else { dim_color };
-        let parse_error = state.parse_error.clone();
-        let editing = state.editing.is_some();
-
-        let mut response = self.container().row(|ui| {
-            ui.text("▾").fg(arrow_color);
-            ui.text(" ");
-            if focused {
-                ui.text(display.as_str()).bold().fg(value_color);
-            } else {
-                ui.text(display.as_str()).fg(value_color);
-            }
-            ui.text(" ");
-            ui.text("▴").fg(arrow_color);
-            if editing {
-                ui.text(" ✎").fg(dim_color);
-            }
-            if let Some(err) = parse_error.as_ref() {
-                let mut indicator = String::with_capacity(2 + err.len());
-                indicator.push_str("  ⚠ ");
-                indicator.push_str(err);
-                ui.text(indicator).dim().fg(error_color);
-            }
-        });
-
-        // Scroll-wheel adjustment over the rendered field's rect. The row's
-        // `Response.rect` comes from the previous frame's hit map (the standard
-        // `prev_hit_map` pattern, mirroring `rich_log`), so a scroll tick takes
-        // effect on the next frame. `ScrollUp` increments, `ScrollDown`
-        // decrements, both clamped to `[min, max]`.
-        if response.rect.width > 0 && response.rect.height > 0 {
-            let rect = response.rect;
-            let mut consumed = Vec::new();
-            for (i, mouse) in self.mouse_events_in_rect(rect) {
-                match mouse.kind {
-                    MouseKind::ScrollUp => {
-                        adjust(state, step);
-                        consumed.push(i);
-                    }
-                    MouseKind::ScrollDown => {
-                        adjust(state, -step);
-                        consumed.push(i);
-                    }
-                    _ => {}
+        // 2) Mouse hit-test runs *before* style computation and rendering so
+        // the visual feedback for `[Yes]` / `[No]` reflects the click in the
+        // same frame the click happened. Predict the row's interaction id
+        // (the next slot the row will allocate) and look up the previous
+        // frame's rect from `prev_hit_map`. On the first frame the row has
+        // no entry yet, so we fall back to assuming the row starts at (0,0)
+        // — same behaviour as the prior implementation.
+        let q_width = UnicodeWidthStr::width(question) as u32;
+        if !clicked && let Some((mx, my)) = self.click_pos {
+            let next_id = self.rollback.interaction_count;
+            let prev_rect = self.prev_hit_map.get(next_id).copied();
+            let row_x = prev_rect.map(|r| r.x).unwrap_or(0);
+            let in_row_y = match prev_rect {
+                Some(r) if r.height > 0 => my >= r.y && my < r.bottom(),
+                _ => true,
+            };
+            if in_row_y {
+                let yes_start = row_x + q_width + 1;
+                let yes_end = yes_start + 5;
+                let no_start = yes_end + 1;
+                let no_end = no_start + 4; // "[No]" = 4 display columns
+                if mx >= yes_start && mx < yes_end {
+                    is_yes = true;
+                    *result = true;
+                    clicked = true;
+                } else if mx >= no_start && mx < no_end {
+                    is_yes = false;
+                    *result = false;
+                    clicked = true;
                 }
             }
-            self.consume_indices(consumed);
         }
 
-        // Final clamp guards against any direct mutation or scroll adjustment.
-        state.value = state.clamped();
+        // 3) Style computation reads the now-mutated `is_yes`.
+        let yes_style = if is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.success).bold()
+            } else {
+                Style::new().fg(self.theme.success).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+        let no_style = if !is_yes {
+            if focused {
+                Style::new().fg(self.theme.bg).bg(self.theme.error).bold()
+            } else {
+                Style::new().fg(self.theme.error).bold()
+            }
+        } else {
+            Style::new().fg(self.theme.text_dim)
+        };
+
+        // 4) Render with the post-hit-test styles.
+        let mut response = self.row(|ui| {
+            ui.text(question);
+            ui.text(" ");
+            ui.styled("[Yes]", yes_style);
+            ui.text(" ");
+            ui.styled("[No]", no_style);
+        });
 
         response.focused = focused;
-        // `changed` is true iff the committed value actually moved this frame.
-        response.changed = (state.value - old).abs() > f64::EPSILON;
-        response.gained_focus = gained_focus;
-        response.lost_focus = lost_focus;
+        response.clicked = clicked;
+        response.changed = clicked;
         response
     }
-}
 
-/// Whether `ch` may be appended to the in-progress edit buffer.
-///
-/// Always allows ASCII digits. Allows a single `.` in float mode (not when the
-/// buffer already contains one). Allows a leading `-` only when negatives are
-/// representable (`min < 0`) and the buffer is empty.
-fn is_number_char(ch: char, state: &NumberInputState) -> bool {
-    if ch.is_ascii_digit() {
-        return true;
+    /// Render a progress bar (20 chars wide). `ratio` is clamped to `0.0..=1.0`.
+    ///
+    /// Uses block characters (`█` filled, `░` empty). For a custom width use
+    /// [`Context::progress_bar`]. For an inline label use [`Context::gauge`].
+    ///
+    /// Returns a [`Response`] so callers can detect hover, attach a tooltip,
+    /// or implement click-to-set scrubbers. Prior to v0.20.0 this returned
+    /// `&mut Self`; ignoring the return value still compiles but the
+    /// `#[must_use]` attribute on `Response` warns at the call site.
+    pub fn progress(&mut self, ratio: f64) -> Response {
+        self.progress_bar(ratio, 20)
     }
-    let buf = state.editing.as_deref().unwrap_or("");
-    match ch {
-        '.' => !state.integer && !buf.contains('.'),
-        '-' => state.min < 0.0 && buf.is_empty(),
-        _ => false,
+
+    /// Render a progress bar with a custom character width.
+    ///
+    /// `ratio` is clamped to `0.0..=1.0`. `width` is the total number of
+    /// characters rendered.
+    pub fn progress_bar(&mut self, ratio: f64, width: u32) -> Response {
+        self.progress_bar_colored(ratio, width, self.theme.primary)
+    }
+
+    /// Render a progress bar with a custom fill color.
+    pub fn progress_bar_colored(&mut self, ratio: f64, width: u32, color: Color) -> Response {
+        let response = self.interaction();
+        let clamped = ratio.clamp(0.0, 1.0);
+        let filled = (clamped * width as f64).round() as u32;
+        let empty = width.saturating_sub(filled);
+        let mut bar = String::with_capacity(width as usize * 3);
+        for _ in 0..filled {
+            bar.push('█');
+        }
+        for _ in 0..empty {
+            bar.push('░');
+        }
+        self.styled(bar, Style::new().fg(color));
+        response
     }
 }

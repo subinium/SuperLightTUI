@@ -1,4 +1,7 @@
-//! List, file picker, tabs, table, paginator, scroll, split-pane and grid state.
+//! Collections family state — list, file picker, table, paginator, tree,
+//! directory tree and calendar.
+//!
+//! Rendered by `context/widgets/collections.rs`.
 
 use super::*;
 
@@ -848,33 +851,6 @@ impl FilePickerState {
 impl Default for FilePickerState {
     fn default() -> Self {
         Self::new(".")
-    }
-}
-
-/// State for a tab navigation widget.
-///
-/// Pass a mutable reference to `Context::tabs` each frame. Left/Right arrow
-/// keys cycle through tabs when the widget is focused.
-#[derive(Debug, Clone, Default)]
-pub struct TabsState {
-    /// The tab labels displayed in the bar.
-    pub labels: Vec<String>,
-    /// Index of the currently active tab.
-    pub selected: usize,
-}
-
-impl TabsState {
-    /// Create tabs with the given labels. The first tab is active initially.
-    pub fn new(labels: Vec<impl Into<String>>) -> Self {
-        Self {
-            labels: labels.into_iter().map(Into::into).collect(),
-            selected: 0,
-        }
-    }
-
-    /// Get the currently selected tab label, or `None` if there are no tabs.
-    pub fn selected_label(&self) -> Option<&str> {
-        self.labels.get(self.selected).map(String::as_str)
     }
 }
 
@@ -1740,554 +1716,544 @@ impl PaginatorState {
     }
 }
 
-/// A highlighted line range within a scrollable region.
-///
-/// Used with [`ScrollState::set_highlights`] to mark search results, error
-/// lines, or any per-line emphasis. The `scrollable_with_gutter` widget reads
-/// the active highlights and renders a background band on matching lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HighlightRange {
-    /// First line (0-based, relative to content top).
-    pub start_line: usize,
-    /// Number of lines in the range (1 = single line).
-    pub line_count: usize,
+// ── Tree ──────────────────────────────────────────────────────────────
+
+/// A node in a tree view.
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    /// Display label for this node.
+    pub label: String,
+    /// Child nodes.
+    pub children: Vec<TreeNode>,
+    /// Whether the node is expanded in the tree view.
+    pub expanded: bool,
 }
 
-impl HighlightRange {
-    /// Create a single-line highlight at `line`.
-    ///
-    /// Field-name pairing: `start_line` + `line_count` → constructor named
-    /// `line`. Use [`Self::span`] for multi-line ranges.
-    pub fn line(line: usize) -> Self {
+impl TreeNode {
+    /// Create a collapsed tree node with no children.
+    pub fn new(label: impl Into<String>) -> Self {
         Self {
-            start_line: line,
-            line_count: 1,
+            label: label.into(),
+            children: Vec::new(),
+            expanded: false,
         }
     }
 
-    /// Create a multi-line highlight starting at `start_line` covering `line_count` rows.
-    pub fn span(start_line: usize, line_count: usize) -> Self {
-        Self {
-            start_line,
-            line_count: line_count.max(1),
-        }
-    }
-
-    /// Check whether the given absolute line index falls within this range.
-    pub fn contains(&self, line: usize) -> bool {
-        line >= self.start_line && line < self.start_line + self.line_count
-    }
-}
-
-/// State for a scrollable container.
-///
-/// Pass a mutable reference to `Context::scrollable` each frame. The context
-/// updates `offset` and the internal bounds automatically based on mouse wheel
-/// and drag events.
-///
-/// Both axes are tracked (#247): the vertical axis (`offset`, [`scroll_up`] /
-/// [`scroll_down`]) drives [`Context::scroll_col`], and the horizontal axis
-/// (`offset_x`, [`scroll_left`] / [`scroll_right`]) drives
-/// [`Context::scroll_row`]. A single [`ScrollState`] scrolls one axis per
-/// container — nest a `scroll_row` inside a `scroll_col` for both. The vertical
-/// API is unchanged from earlier versions.
-///
-/// [`scroll_up`]: ScrollState::scroll_up
-/// [`scroll_down`]: ScrollState::scroll_down
-/// [`scroll_left`]: ScrollState::scroll_left
-/// [`scroll_right`]: ScrollState::scroll_right
-/// [`Context::scroll_col`]: crate::Context::scroll_col
-/// [`Context::scroll_row`]: crate::Context::scroll_row
-#[derive(Debug)]
-pub struct ScrollState {
-    id: u64,
-    /// Reveal newly focused children automatically. Defaults to `true`.
-    ///
-    /// Also follows changes to the focused child's layout or viewport size.
-    /// Manual scrolling is preserved while focus and geometry stay unchanged.
-    /// Set to `false` for application-controlled scrolling. Layout corrections
-    /// are rendered immediately and synchronized into this state on its next
-    /// `Context::scrollable` binding unless the application changed the offset.
-    pub follow_focus: bool,
-    /// Current vertical scroll offset in rows.
-    pub offset: usize,
-    /// Current horizontal scroll offset in columns (#247).
-    pub offset_x: usize,
-    /// Whether the scrollbar thumb is currently being dragged.
-    ///
-    /// Set to `true` by [`Context::scrollbar`] on a mouse-down inside the
-    /// thumb and back to `false` on mouse-up, mirroring
-    /// [`SplitPaneState::dragging`](crate::widgets::SplitPaneState). Persists
-    /// across frames so cursor motion outside the thumb (or even outside the
-    /// track on the x-axis) keeps scrolling while the button is held.
-    ///
-    /// [`Context::scrollbar`]: crate::Context::scrollbar
-    pub dragging: bool,
-    content_height: u32,
-    viewport_height: u32,
-    content_width: u32,
-    viewport_width: u32,
-    max_offset_y: u32,
-    max_offset_x: u32,
-    highlights: Vec<HighlightRange>,
-    current_highlight: Option<usize>,
-}
-
-fn next_scroll_state_id() -> u64 {
-    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
-impl Clone for ScrollState {
-    fn clone(&self) -> Self {
-        Self {
-            id: next_scroll_state_id(),
-            follow_focus: self.follow_focus,
-            offset: self.offset,
-            offset_x: self.offset_x,
-            dragging: self.dragging,
-            content_height: self.content_height,
-            viewport_height: self.viewport_height,
-            content_width: self.content_width,
-            viewport_width: self.viewport_width,
-            max_offset_y: self.max_offset_y,
-            max_offset_x: self.max_offset_x,
-            highlights: self.highlights.clone(),
-            current_highlight: self.current_highlight,
-        }
-    }
-}
-
-impl ScrollState {
-    /// Create scroll state starting at offset 0.
-    pub fn new() -> Self {
-        Self {
-            id: next_scroll_state_id(),
-            follow_focus: true,
-            offset: 0,
-            offset_x: 0,
-            dragging: false,
-            content_height: 0,
-            viewport_height: 0,
-            content_width: 0,
-            viewport_width: 0,
-            max_offset_y: 0,
-            max_offset_x: 0,
-            highlights: Vec::new(),
-            current_highlight: None,
-        }
-    }
-
-    pub(crate) fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// Check if scrolling upward is possible (offset is greater than 0).
-    pub fn can_scroll_up(&self) -> bool {
-        self.offset > 0
-    }
-
-    /// Check if scrolling downward is possible (content extends below the viewport).
-    pub fn can_scroll_down(&self) -> bool {
-        self.offset < self.max_offset()
-    }
-
-    /// Get the total content height in rows.
-    pub fn content_height(&self) -> u32 {
-        self.content_height
-    }
-
-    /// Get the viewport height in rows.
-    pub fn viewport_height(&self) -> u32 {
-        self.viewport_height
-    }
-
-    /// Maximum vertical offset from the most recent viewport binding.
-    /// Accounts for leading clipping; it need not equal content minus visible height.
-    pub fn max_offset(&self) -> usize {
-        self.max_offset_y as usize
-    }
-
-    /// Maximum horizontal offset from the most recent viewport binding.
-    pub fn max_offset_x(&self) -> usize {
-        self.max_offset_x as usize
-    }
-
-    /// Get the scroll progress as a ratio in `[0.0, 1.0]`.
-    ///
-    /// Returns `f64` to match the rest of the ratio surface unified in v0.20
-    /// (`Gauge::ratio`, `SplitPaneState::ratio`, `progress(ratio)`,
-    /// `progress_bar(ratio)`). Feed the value straight into [`Context::gauge`]
-    /// or [`Context::progress_bar`] without a cast.
-    ///
-    /// [`Context::gauge`]: crate::Context::gauge
-    /// [`Context::progress_bar`]: crate::Context::progress_bar
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// // Bounds are populated by the `scrollable` widget each frame; a fresh
-    /// // state with no content reports 0.0.
-    /// let ratio: f64 = scroll.progress_ratio();
-    /// assert!((0.0..=1.0).contains(&ratio));
-    /// ```
-    pub fn progress_ratio(&self) -> f64 {
-        let max = self.max_offset();
-        if max == 0 {
-            0.0
-        } else {
-            self.offset.min(max) as f64 / max as f64
-        }
-    }
-
-    /// Deprecated `f32` alias for [`progress_ratio`](Self::progress_ratio).
-    ///
-    /// `ScrollState::progress` was the only `f32` ratio left after the v0.20
-    /// `f32 → f64` ratio unification. Migrate to [`progress_ratio`](Self::progress_ratio):
-    /// call sites that wrapped the result in `as f64` can drop the cast, while
-    /// call sites passing the value to `gauge` / `progress_bar` (which already
-    /// take `f64`) need no cast at all.
-    #[deprecated(
-        since = "0.21.0",
-        note = "use progress_ratio() — f64 matches the rest of the v0.20+ ratio surface (gauge/progress_bar take f64; drop any `as f64` cast)"
-    )]
-    pub fn progress(&self) -> f32 {
-        self.progress_ratio() as f32
-    }
-
-    /// Scroll up by the given number of rows, clamped to 0.
-    pub fn scroll_up(&mut self, amount: usize) {
-        self.offset = self.offset.saturating_sub(amount);
-    }
-
-    /// Scroll down by the given number of rows, clamped to the maximum offset.
-    pub fn scroll_down(&mut self, amount: usize) {
-        let max_offset = self.max_offset();
-        self.offset = self.offset.saturating_add(amount).min(max_offset);
-    }
-
-    /// Set the absolute scroll offset, clamped to `[0, content - viewport]`.
-    ///
-    /// Uses the same `max_offset` semantics as [`scroll_down`](Self::scroll_down).
-    /// Click-to-jump and thumb-drag in [`Context::scrollbar`] route through
-    /// this so an out-of-range target row never leaves the offset past the
-    /// last full screen of content. Direct `state.offset = …` writes keep
-    /// working; this is the clamping-safe alternative.
-    ///
-    /// [`Context::scrollbar`]: crate::Context::scrollbar
-    ///
-    /// ```no_run
-    /// # use slt::widgets::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// // Bounds are populated by the `scrollable` widget each frame; on a
-    /// // fresh state max_offset is 0 so any target clamps to 0.
-    /// scroll.set_offset(999);
-    /// assert_eq!(scroll.offset, 0);
-    /// ```
-    pub fn set_offset(&mut self, offset: usize) {
-        let max_offset = self.max_offset();
-        self.offset = offset.min(max_offset);
-    }
-
-    pub(crate) fn set_bounds(&mut self, content_height: u32, viewport_height: u32) {
-        self.content_height = content_height;
-        self.viewport_height = viewport_height;
-        self.max_offset_y = content_height.saturating_sub(viewport_height);
-    }
-
-    pub(crate) fn set_clipped_bounds(
-        &mut self,
-        content: u32,
-        viewport: u32,
-        max: u32,
-        horizontal: bool,
-    ) {
-        if horizontal {
-            self.set_bounds_x(content, viewport);
-            self.max_offset_x = max;
-        } else {
-            self.set_bounds(content, viewport);
-            self.max_offset_y = max;
-        }
-    }
-
-    /// Update the horizontal (x-axis) bounds (#247).
-    ///
-    /// Called by [`Context::scroll_row`] / [`Context::scrollable`] each frame
-    /// when the bound scrollable scrolls horizontally. The vertical
-    /// [`set_bounds`](Self::set_bounds) is left untouched, keeping the two axes
-    /// independent.
-    ///
-    /// [`Context::scroll_row`]: crate::Context::scroll_row
-    /// [`Context::scrollable`]: crate::Context::scrollable
-    pub(crate) fn set_bounds_x(&mut self, content_width: u32, viewport_width: u32) {
-        self.content_width = content_width;
-        self.viewport_width = viewport_width;
-        self.max_offset_x = content_width.saturating_sub(viewport_width);
-    }
-
-    /// Check if scrolling left is possible (`offset_x` is greater than 0, #247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// assert!(!scroll.can_scroll_left());
-    /// ```
-    pub fn can_scroll_left(&self) -> bool {
-        self.offset_x > 0
-    }
-
-    /// Check if scrolling right is possible (content extends past the right
-    /// edge of the viewport, #247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// // A fresh state with no content cannot scroll right.
-    /// assert!(!scroll.can_scroll_right());
-    /// ```
-    pub fn can_scroll_right(&self) -> bool {
-        self.offset_x < self.max_offset_x()
-    }
-
-    /// Total horizontal content width in columns (#247).
-    pub fn content_width(&self) -> u32 {
-        self.content_width
-    }
-
-    /// Horizontal viewport width in columns (#247).
-    pub fn viewport_width(&self) -> u32 {
-        self.viewport_width
-    }
-
-    /// Horizontal scroll progress as a ratio in `[0.0, 1.0]` (#247).
-    ///
-    /// The x-axis mirror of [`progress_ratio`](Self::progress_ratio). Returns
-    /// `0.0` when the content fits the viewport (no horizontal overflow). Feed
-    /// it to a future horizontal scrollbar, a position readout, or a minimap.
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let scroll = ScrollState::new();
-    /// let p: f64 = scroll.progress_x();
-    /// assert!((0.0..=1.0).contains(&p));
-    /// ```
-    pub fn progress_x(&self) -> f64 {
-        let max = self.max_offset_x();
-        if max == 0 {
-            0.0
-        } else {
-            self.offset_x.min(max) as f64 / max as f64
-        }
-    }
-
-    /// Scroll left by the given number of columns, clamped to 0 (#247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// scroll.scroll_left(4); // clamps at 0 with no content
-    /// assert_eq!(scroll.offset_x, 0);
-    /// ```
-    pub fn scroll_left(&mut self, amount: usize) {
-        self.offset_x = self.offset_x.saturating_sub(amount);
-    }
-
-    /// Scroll right by the given number of columns, clamped to the maximum
-    /// horizontal offset (#247).
-    ///
-    /// ```no_run
-    /// # use slt::ScrollState;
-    /// let mut scroll = ScrollState::new();
-    /// scroll.scroll_right(4); // clamps to content bounds (0 with no content)
-    /// assert_eq!(scroll.offset_x, 0);
-    /// ```
-    pub fn scroll_right(&mut self, amount: usize) {
-        let max_offset = self.max_offset_x();
-        self.offset_x = self.offset_x.saturating_add(amount).min(max_offset);
-    }
-
-    /// Set the active highlight ranges. Replaces any previous highlights.
-    ///
-    /// Selecting the first highlight automatically when the list is non-empty
-    /// matches the behavior of search-result navigation in code editors.
-    pub fn set_highlights(&mut self, ranges: &[HighlightRange]) {
-        self.highlights.clear();
-        self.highlights.extend_from_slice(ranges);
-        self.current_highlight = if self.highlights.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
-    }
-
-    /// Read-only access to the active highlight ranges.
-    pub fn highlights(&self) -> &[HighlightRange] {
-        &self.highlights
-    }
-
-    /// Index of the currently focused highlight, if any.
-    pub fn current_highlight(&self) -> Option<usize> {
-        self.current_highlight
-    }
-
-    /// Clear all highlights and reset the current index.
-    pub fn clear_highlights(&mut self) {
-        self.highlights.clear();
-        self.current_highlight = None;
-    }
-
-    /// Advance to the next highlight, scrolling the viewport to show it.
-    /// Wraps from last to first.
-    pub fn highlight_next(&mut self) {
-        if self.highlights.is_empty() {
-            return;
-        }
-        let next = match self.current_highlight {
-            Some(i) => (i + 1) % self.highlights.len(),
-            None => 0,
-        };
-        self.current_highlight = Some(next);
-        self.scroll_to_current_highlight();
-    }
-
-    /// Move to the previous highlight, scrolling the viewport to show it.
-    /// Wraps from first to last.
-    pub fn highlight_previous(&mut self) {
-        if self.highlights.is_empty() {
-            return;
-        }
-        let next = match self.current_highlight {
-            Some(i) => {
-                if i == 0 {
-                    self.highlights.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.current_highlight = Some(next);
-        self.scroll_to_current_highlight();
-    }
-
-    /// Scroll the viewport so the currently focused highlight is visible
-    /// with one line of context above when possible.
-    pub fn scroll_to_current_highlight(&mut self) {
-        let Some(idx) = self.current_highlight else {
-            return;
-        };
-        let Some(range) = self.highlights.get(idx).copied() else {
-            return;
-        };
-        let target = range.start_line;
-        let viewport = self.viewport_height as usize;
-        let max_offset = self.max_offset();
-        if target < self.offset {
-            self.offset = target.saturating_sub(1).min(max_offset);
-        } else if viewport > 0 && target >= self.offset + viewport {
-            let desired = target + 2;
-            let new_offset = desired.saturating_sub(viewport);
-            self.offset = new_offset.min(max_offset);
-        } else if self.offset > max_offset {
-            self.offset = max_offset;
-        }
-    }
-}
-
-impl Default for ScrollState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// State for a [`crate::Context::split_pane`] /
-/// [`crate::Context::vsplit_pane`] container.
-///
-/// Tracks the split ratio and drag state. Pass a mutable reference each frame
-/// — the widget updates `ratio` in place when the user drags the handle or
-/// presses arrow keys with the handle focused.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SplitPaneState {
-    /// Fraction of space given to the first pane. Clamped to
-    /// `[min_ratio, 1.0 - min_ratio]`.
-    pub ratio: f64,
-    /// Whether the handle is currently being dragged.
-    pub dragging: bool,
-    /// Minimum fraction allocated to either pane. Default: `0.10`.
-    pub min_ratio: f64,
-}
-
-/// Default minimum fraction of either pane, used by [`SplitPaneState::new`].
-///
-/// Crate-internal: there is no public path that benefits from constructing
-/// with this constant — call [`SplitPaneState::new`] for the default (0.10)
-/// or [`SplitPaneState::with_min_ratio`] to override per-instance.
-pub(crate) const DEFAULT_SPLIT_MIN_RATIO: f64 = 0.10;
-
-impl SplitPaneState {
-    /// Create split state with the given initial ratio, clamped to
-    /// `[DEFAULT_SPLIT_MIN_RATIO, 1.0 - DEFAULT_SPLIT_MIN_RATIO]` (default
-    /// `[0.10, 0.90]`).
-    pub fn new(ratio: f64) -> Self {
-        let min_ratio = DEFAULT_SPLIT_MIN_RATIO;
-        let clamped = ratio.clamp(min_ratio, 1.0 - min_ratio);
-        Self {
-            ratio: clamped,
-            dragging: false,
-            min_ratio,
-        }
-    }
-
-    /// Override the minimum ratio for either pane (clamped to `[0.0, 0.49]`).
-    pub fn with_min_ratio(mut self, min: f64) -> Self {
-        self.min_ratio = min.clamp(0.0, 0.49);
-        self.ratio = self.ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
+    /// Mark this node as expanded.
+    pub fn expanded(mut self) -> Self {
+        self.expanded = true;
         self
     }
 
-    /// Set the ratio, clamped to `[min_ratio, 1.0 - min_ratio]`.
-    pub fn set_ratio(&mut self, ratio: f64) {
-        self.ratio = ratio.clamp(self.min_ratio, 1.0 - self.min_ratio);
+    /// Set child nodes for this node.
+    pub fn children(mut self, children: Vec<TreeNode>) -> Self {
+        self.children = children;
+        self
+    }
+
+    /// Returns `true` when this node has no children.
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    fn flatten(&self, depth: usize, out: &mut Vec<FlatTreeEntry>) {
+        out.push(FlatTreeEntry {
+            depth,
+            label: self.label.clone(),
+            is_leaf: self.is_leaf(),
+            expanded: self.expanded,
+        });
+        if self.expanded {
+            for child in &self.children {
+                child.flatten(depth + 1, out);
+            }
+        }
     }
 }
 
-impl Default for SplitPaneState {
+pub(crate) struct FlatTreeEntry {
+    pub depth: usize,
+    pub label: String,
+    pub is_leaf: bool,
+    pub expanded: bool,
+}
+
+/// State for a hierarchical tree view widget.
+#[derive(Debug, Clone)]
+pub struct TreeState {
+    /// Root nodes of the tree.
+    pub nodes: Vec<TreeNode>,
+    /// Selected row index in the flattened visible tree.
+    pub selected: usize,
+}
+
+impl TreeState {
+    /// Create tree state from root nodes.
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self { nodes, selected: 0 }
+    }
+
+    pub(crate) fn flatten(&self) -> Vec<FlatTreeEntry> {
+        let mut entries = Vec::new();
+        for node in &self.nodes {
+            node.flatten(0, &mut entries);
+        }
+        entries
+    }
+
+    pub(crate) fn toggle_at(&mut self, flat_index: usize) {
+        let mut counter = 0usize;
+        Self::toggle_recursive(&mut self.nodes, flat_index, &mut counter);
+    }
+
+    fn toggle_recursive(nodes: &mut [TreeNode], target: usize, counter: &mut usize) -> bool {
+        for node in nodes.iter_mut() {
+            if *counter == target {
+                if !node.is_leaf() {
+                    node.expanded = !node.expanded;
+                }
+                return true;
+            }
+            *counter += 1;
+            if node.expanded && Self::toggle_recursive(&mut node.children, target, counter) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// State for the directory tree widget.
+#[derive(Debug, Clone)]
+pub struct DirectoryTreeState {
+    /// The underlying tree state (reuses existing TreeState).
+    pub tree: TreeState,
+    /// Whether to show file/folder icons.
+    pub show_icons: bool,
+}
+
+impl DirectoryTreeState {
+    /// Create directory tree state from root nodes.
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self {
+            tree: TreeState::new(nodes),
+            show_icons: true,
+        }
+    }
+
+    /// Build a directory tree from slash-delimited paths.
+    pub fn from_paths(paths: &[&str]) -> Self {
+        let mut roots: Vec<TreeNode> = Vec::new();
+
+        for raw_path in paths {
+            let parts: Vec<&str> = raw_path
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            insert_path(&mut roots, &parts, 0);
+        }
+
+        Self::new(roots)
+    }
+
+    /// Return selected node label if a node is selected.
+    pub fn selected_label(&self) -> Option<&str> {
+        let mut cursor = 0usize;
+        selected_label_in_nodes(&self.tree.nodes, self.tree.selected, &mut cursor)
+    }
+}
+
+impl Default for DirectoryTreeState {
     fn default() -> Self {
-        Self::new(0.5)
+        Self::new(Vec::<TreeNode>::new())
     }
 }
 
-/// Column specification for [`crate::Context::grid_with()`].
+fn insert_path(nodes: &mut Vec<TreeNode>, parts: &[&str], depth: usize) {
+    let Some(label) = parts.get(depth) else {
+        return;
+    };
+
+    let is_last = depth + 1 == parts.len();
+    let idx = nodes
+        .iter()
+        .position(|node| node.label == *label)
+        .unwrap_or_else(|| {
+            let mut node = TreeNode::new(*label);
+            if !is_last {
+                node.expanded = true;
+            }
+            nodes.push(node);
+            nodes.len() - 1
+        });
+
+    if is_last {
+        return;
+    }
+
+    nodes[idx].expanded = true;
+    insert_path(&mut nodes[idx].children, parts, depth + 1);
+}
+
+fn selected_label_in_nodes<'a>(
+    nodes: &'a [TreeNode],
+    target: usize,
+    cursor: &mut usize,
+) -> Option<&'a str> {
+    for node in nodes {
+        if *cursor == target {
+            return Some(node.label.as_str());
+        }
+        *cursor += 1;
+        if node.expanded
+            && let Some(found) = selected_label_in_nodes(&node.children, target, cursor)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// An absolute calendar date `(year, month 1–12, day 1–31)`.
 ///
-/// Controls the width allocation of individual columns in a grid layout.
+/// Used by [`CalendarState`] to represent range endpoints that can span
+/// month and year boundaries (a `selected_day` alone is scoped to the
+/// currently displayed month). Available since `0.21.0`.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use slt::GridColumn;
-/// # slt::run(|ui: &mut slt::Context| {
-/// ui.grid_with(&[
-///     GridColumn::Fixed(8),   // label column: exactly 8 chars
-///     GridColumn::Grow(1),    // flexible column
-///     GridColumn::Grow(1),    // flexible column
-///     GridColumn::Fixed(4),   // status column: exactly 4 chars
-/// ], |ui| {
-///     // children placed left-to-right, wrapping to next row
-/// });
-/// # });
+/// use slt::CalDate;
+///
+/// let d = CalDate { year: 2024, month: 12, day: 31 };
+/// assert_eq!((d.year, d.month, d.day), (2024, 12, 31));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GridColumn {
-    /// Equal-width column with grow weight 1 (default `grid()` behavior).
-    Auto,
-    /// Fixed-width column in character cells. Does not grow or shrink.
-    Fixed(u32),
-    /// Flexible column with a custom grow weight. Higher values take
-    /// proportionally more space.
-    Grow(u16),
-    /// Column sized as a percentage (1–100) of the grid width.
-    Percent(u8),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalDate {
+    /// Calendar year.
+    pub year: i32,
+    /// Month of year, `1`–`12`.
+    pub month: u32,
+    /// Day of month, `1`–`31`.
+    pub day: u32,
+}
+
+impl CalDate {
+    /// Sort key ordering this date against another by year, then month, then day.
+    fn key(&self) -> (i32, u32, u32) {
+        (self.year, self.month, self.day)
+    }
+}
+
+/// Selection behavior for [`CalendarState`].
+///
+/// Defaults to [`Single`](CalendarSelect::Single), preserving the original
+/// single-date pick. Switch to [`Range`](CalendarSelect::Range) via
+/// [`CalendarState::with_range`] for start/end range selection. Available
+/// since `0.21.0`.
+///
+/// # Example
+///
+/// ```no_run
+/// use slt::{CalendarSelect, CalendarState};
+///
+/// let mut cal = CalendarState::from_ym(2024, 3);
+/// assert_eq!(cal.mode(), CalendarSelect::Single);
+/// cal.with_range();
+/// assert_eq!(cal.mode(), CalendarSelect::Range);
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CalendarSelect {
+    /// Pick exactly one date (default).
+    #[default]
+    Single,
+    /// Pick a start/end date range via Shift-extend.
+    Range,
+}
+
+/// State for the calendar date picker widget.
+#[derive(Debug, Clone)]
+pub struct CalendarState {
+    /// Current display year.
+    pub year: i32,
+    /// Current display month (1–12).
+    pub month: u32,
+    /// Currently selected day, if any (single-date mode).
+    pub selected_day: Option<u32>,
+    pub(crate) cursor_day: u32,
+    pub(crate) mode: CalendarSelect,
+    pub(crate) anchor: Option<CalDate>,
+    pub(crate) extent: Option<CalDate>,
+    pub(crate) time_enabled: bool,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
+}
+
+impl CalendarState {
+    /// Create a new `CalendarState` initialized to the current month.
+    pub fn new() -> Self {
+        let (year, month) = Self::current_year_month();
+        Self::from_ym(year, month)
+    }
+
+    /// Create a `CalendarState` for a specific year and month.
+    pub fn from_ym(year: i32, month: u32) -> Self {
+        let month = month.clamp(1, 12);
+        Self {
+            year,
+            month,
+            selected_day: None,
+            cursor_day: 1,
+            mode: CalendarSelect::Single,
+            anchor: None,
+            extent: None,
+            time_enabled: false,
+            hour: 0,
+            minute: 0,
+        }
+    }
+
+    /// Enable date-range selection (start/end via Shift-extend).
+    ///
+    /// Single-date mode remains the default; call this to opt in. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// ```
+    pub fn with_range(&mut self) -> &mut Self {
+        self.mode = CalendarSelect::Range;
+        self
+    }
+
+    /// Enable hour/minute selection, rendered as `HH:MM` below the grid.
+    ///
+    /// Off by default — no time row is rendered unless enabled. Returns
+    /// `&mut Self` for chaining. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_time();
+    /// ```
+    pub fn with_time(&mut self) -> &mut Self {
+        self.time_enabled = true;
+        self
+    }
+
+    /// The active selection mode (`Single` by default).
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::{CalendarSelect, CalendarState};
+    ///
+    /// let cal = CalendarState::from_ym(2024, 3);
+    /// assert_eq!(cal.mode(), CalendarSelect::Single);
+    /// ```
+    pub fn mode(&self) -> CalendarSelect {
+        self.mode
+    }
+
+    /// Returns the selected date as `(year, month, day)`, if any.
+    pub fn selected_date(&self) -> Option<(i32, u32, u32)> {
+        self.selected_day.map(|day| (self.year, self.month, day))
+    }
+
+    /// The normalized selected range as `(start, end)` with `start <= end`.
+    ///
+    /// Returns `None` in single-date mode or until an anchor has been set in
+    /// range mode. Endpoints are absolute [`CalDate`]s, so a range may span
+    /// month or year boundaries. Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// cal.with_range();
+    /// assert!(cal.selected_range().is_none());
+    /// ```
+    pub fn selected_range(&self) -> Option<(CalDate, CalDate)> {
+        if self.mode != CalendarSelect::Range {
+            return None;
+        }
+        let anchor = self.anchor?;
+        let extent = self.extent.unwrap_or(anchor);
+        if anchor.key() <= extent.key() {
+            Some((anchor, extent))
+        } else {
+            Some((extent, anchor))
+        }
+    }
+
+    /// The selected `(hour, minute)` when time is enabled, else `None`.
+    ///
+    /// Available since `0.21.0`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::CalendarState;
+    ///
+    /// let mut cal = CalendarState::from_ym(2024, 3);
+    /// assert!(cal.selected_time().is_none());
+    /// cal.with_time();
+    /// assert_eq!(cal.selected_time(), Some((0, 0)));
+    /// ```
+    pub fn selected_time(&self) -> Option<(u8, u8)> {
+        self.time_enabled.then_some((self.hour, self.minute))
+    }
+
+    /// The cursor day as an absolute [`CalDate`] in the displayed month.
+    pub(crate) fn cursor_date(&self) -> CalDate {
+        CalDate {
+            year: self.year,
+            month: self.month,
+            day: self.cursor_day,
+        }
+    }
+
+    /// Set the range anchor to the cursor, clearing any prior extent.
+    pub(crate) fn set_anchor_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        self.anchor = Some(cur);
+        self.extent = None;
+    }
+
+    /// Set the range extent endpoint to the cursor.
+    ///
+    /// If no anchor exists yet, the cursor becomes the anchor.
+    pub(crate) fn extend_to_cursor(&mut self) {
+        let cur = self.cursor_date();
+        if self.anchor.is_none() {
+            self.anchor = Some(cur);
+        }
+        self.extent = Some(cur);
+    }
+
+    /// Whether the given absolute date falls inside the selected range
+    /// (inclusive of both endpoints).
+    pub(crate) fn in_range(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => start.key() <= d.key() && d.key() <= end.key(),
+            None => false,
+        }
+    }
+
+    /// Whether the given absolute date is one of the range endpoints.
+    pub(crate) fn is_range_endpoint(&self, d: CalDate) -> bool {
+        match self.selected_range() {
+            Some((start, end)) => d == start || d == end,
+            None => false,
+        }
+    }
+
+    /// Navigate to the previous month.
+    pub fn prev_month(&mut self) {
+        if self.month == 1 {
+            self.month = 12;
+            self.year -= 1;
+        } else {
+            self.month -= 1;
+        }
+        self.clamp_days();
+    }
+
+    /// Navigate to the next month.
+    pub fn next_month(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
+        } else {
+            self.month += 1;
+        }
+        self.clamp_days();
+    }
+
+    pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if Self::is_leap_year(year) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        }
+    }
+
+    pub(crate) fn first_weekday(year: i32, month: u32) -> u32 {
+        let month = month.clamp(1, 12);
+        let offsets = [0_i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let mut y = year;
+        if month < 3 {
+            y -= 1;
+        }
+        let sunday_based = (y + y / 4 - y / 100 + y / 400 + offsets[(month - 1) as usize] + 1) % 7;
+        ((sunday_based + 6) % 7) as u32
+    }
+
+    fn clamp_days(&mut self) {
+        let max_day = Self::days_in_month(self.year, self.month);
+        self.cursor_day = self.cursor_day.clamp(1, max_day);
+        if let Some(day) = self.selected_day {
+            self.selected_day = Some(day.min(max_day));
+        }
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    }
+
+    fn current_year_month() -> (i32, u32) {
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return (1970, 1);
+        };
+        let days_since_epoch = (duration.as_secs() / 86_400) as i64;
+        let (year, month, _) = Self::civil_from_days(days_since_epoch);
+        (year, month)
+    }
+
+    fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+        let z = days_since_epoch + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let mut year = (yoe as i32) + (era as i32) * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let month = (mp + if mp < 10 { 3 } else { -9 }) as u32;
+        if month <= 2 {
+            year += 1;
+        }
+        (year, month, day)
+    }
+}
+
+impl Default for CalendarState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -2491,64 +2457,6 @@ mod list_state_height_tests {
         assert_eq!(state.item_height(2), 1);
         state.ensure_row_prefix();
         assert_eq!(state.row_prefix(), &[0, 2, 5]);
-    }
-}
-
-#[cfg(test)]
-mod scroll_state_progress_tests {
-    use super::ScrollState;
-
-    /// Build a state with the bounds the `scrollable` widget would set, plus an
-    /// offset, so `progress_ratio` exercises a realistic non-zero ratio.
-    fn scrolled(content_height: u32, viewport_height: u32, offset: usize) -> ScrollState {
-        let mut state = ScrollState::new();
-        state.set_bounds(content_height, viewport_height);
-        state.offset = offset;
-        state
-    }
-
-    #[test]
-    fn progress_ratio_returns_f64_in_unit_range() {
-        // Top of a scrollable region → 0.0.
-        let top = scrolled(100, 20, 0);
-        let ratio: f64 = top.progress_ratio();
-        assert_eq!(ratio, 0.0);
-
-        // Halfway through the scrollable range (offset 40 of max 80) → 0.5.
-        let mid = scrolled(100, 20, 40);
-        assert_eq!(mid.progress_ratio(), 0.5);
-
-        // Fully scrolled (offset == max) → 1.0.
-        let bottom = scrolled(100, 20, 80);
-        assert_eq!(bottom.progress_ratio(), 1.0);
-    }
-
-    #[test]
-    fn progress_ratio_is_zero_when_content_fits_viewport() {
-        // No overflow → no scroll range → 0.0 (and no divide-by-zero).
-        let fits = scrolled(20, 20, 0);
-        assert_eq!(fits.progress_ratio(), 0.0);
-
-        let smaller = scrolled(10, 20, 5);
-        assert_eq!(smaller.progress_ratio(), 0.0);
-    }
-
-    #[test]
-    fn progress_ratio_preserves_f64_precision() {
-        // 1/3 is lossy in f32; the f64 surface keeps more digits than `as f32`.
-        let third = scrolled(40, 10, 10); // max = 30, offset = 10 → 1/3
-        let ratio = third.progress_ratio();
-        assert!((ratio - 1.0 / 3.0).abs() < 1e-12);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_progress_delegates_to_progress_ratio() {
-        // The deprecated f32 alias must agree with the f64 source within f32 epsilon.
-        let state = scrolled(100, 20, 40);
-        let expected = state.progress_ratio() as f32;
-        assert_eq!(state.progress(), expected);
-        assert!((state.progress() - 0.5).abs() < f32::EPSILON);
     }
 }
 
