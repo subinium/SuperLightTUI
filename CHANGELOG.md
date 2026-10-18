@@ -27,6 +27,21 @@
   ways (lossy cases documented in `slt::ratatui_compat`). Depends only on
   `ratatui-core` 0.1 (ratatui 0.30, no backend) and is not part of `full`, so
   default and `full` dependency trees are unchanged.
+- Diff viewer widget (#467): `DiffState::from_unified(patch)` parses
+  multi-file unified / `git diff` output (renames, copies, created/deleted
+  files, binary markers reported but not rendered, `\ No newline at end of
+  file`) with no new dependency, returning `DiffParseError` for malformed
+  input instead of panicking; `DiffState::to_unified()` writes it back.
+  `ui.diff(&mut state)` renders it unified or side by side
+  (`.layout(DiffLayout::Split)`, unified below `.split_min_width`) with an
+  old/new line-number gutter, collapsible hunks (Enter/Space or a click on the
+  header), keyboard navigation (`j`/`k`, `]`/`[`, `n`/`p`, configurable via
+  `DiffKeys`) and per-hunk accept/reject reported once in
+  `DiffResponse::hunk_actions`. Rendering is virtualized (one command per
+  visible row), long lines truncate at grapheme boundaries with tab expansion,
+  and syntax highlighting reuses the `syntax-*` features per file extension.
+  Added/removed backgrounds derive from the theme's `success` / `error`
+  colors; override them with `DiffColors`. New example: `diff_viewer`.
 
 ### Security
 

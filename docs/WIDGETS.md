@@ -41,7 +41,7 @@ Every widget method on `Context` follows one of these return patterns:
 | `&mut Self` | Style-chainable display element | `text`, `styled`, `link`, `spacer`, `timer_display`, `toast` |
 | `Response` (`#[must_use]`) | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
-| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block` |
+| Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
 
 **`Response` fields:**
@@ -273,6 +273,7 @@ All return `Response`.
 | `streaming_text(state)` | `StreamingTextState` | Incrementally rendered text stream |
 | `streaming_markdown(state)` | `StreamingMarkdownState` | Incrementally rendered Markdown stream |
 | `tool_approval(state)` | `ToolApprovalState` | Tool call approval dialog. `ApprovalAction`: `Approve`, `Deny`, `Edit` |
+| `diff(state)` | `DiffState` | Builder (renders on Drop, `.show()` returns `DiffResponse`). Unified-diff viewer: `.layout(DiffLayout::Split)` side by side (falls back to unified below `.split_min_width(n)`, default 80), `.h(rows)`, `.lang("rust")`, `.tab_width(n)`, `.line_numbers(false)`, `.colors(DiffColors)`. Keys: Up/Down `j`/`k`, `]`/`n` `[`/`p` hunks, Enter/Space collapse, `a`/`r` accept/reject (rebind via `DiffState::keys`); click a hunk header to collapse. Virtualized — only visible rows are emitted. `DiffResponse::hunk_actions` reports each decision once |
 | `context_bar(items)` | `&[ContextItem]` | Context display with token counts |
 | `image(img)` | `HalfBlockImage` | Half-block image rendering (2 pixels per cell) |
 | `kitty_image(rgba, pw, ph, cols, rows)` | — | Kitty graphics protocol image |
@@ -393,6 +394,7 @@ These are not widgets but essential `Context` methods for state, input, and envi
 | `streaming_text` | `StreamingTextState` | `.push(text)`, `.content`, `.streaming` |
 | `streaming_markdown` | `StreamingMarkdownState` | `.push(text)`, `.streaming` |
 | `tool_approval` | `ToolApprovalState` | `.tool_name`, `.description`, `.action: ApprovalAction` (`Pending`, `Approved`, `Rejected`) |
+| `diff` | `DiffState` | `::from_unified(patch) -> Result<_, DiffParseError>`, `.files()` (`DiffFile` → `DiffHunk` → `DiffLine`), `.hunk_ids()`, `.decision(id)` / `.set_decision(id, HunkDecision)`, `.is_collapsed(id)` / `.set_collapsed(id, bool)`, `.collapse_all()`, `.expand_all()`, `.focused_hunk()`, `.focus_hunk(id)`, `.to_unified()`, `.keys: DiffKeys` |
 | `rich_log` | `RichLogState` | `.push(text, style)`, `.entries()`, `.entry(index)`, `.auto_scroll`, `.max_entries`. `::new()` uses O(1)-amortized capped deque retention; `::new_unbounded()` opts out. |
 | `treemap` | `TreemapItem` | `.label: String`, `.value: f64`, `.color: Color`, `::new(label, value, color)` |
 
@@ -512,7 +514,7 @@ Received in `ui.canvas(w, h, |cv| { ... })`. Coordinates are in pixel space (col
 | `src/context/widgets/feedback.rs` | `spinner`, `toast`, `slider`, `alert`, `confirm`, `progress`, `progress_bar` (+ `feedback/gauge.rs`) |
 | `src/context/widgets/selection.rs` | `tabs`, `button`, `checkbox`, `toggle`, `select`, `radio`, `multi_select`, `color_picker` |
 | `src/context/widgets/collections/` | `list.rs` (`list`, `virtual_list`), `table.rs` (`table`, `paginator`), `tree.rs` (`tree`, `directory_tree`), `calendar.rs`, `file_picker.rs` |
-| `src/context/widgets/rich/` | `rich_log.rs`, `markdown.rs`, `streaming.rs` (`streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`), `code_block.rs` |
+| `src/context/widgets/rich/` | `rich_log.rs`, `markdown.rs`, `streaming.rs` (`streaming_text`, `streaming_markdown`, `tool_approval`, `context_bar`), `code_block.rs`, `diff.rs` (`diff`) |
 | `src/context/widgets/media.rs` | `big_text`, `image`, `kitty_image`, `sixel_image`, `iterm_image` |
 | `src/context/widgets/events.rs` | Key/mouse input, clipboard, theme, environment queries |
 | `src/context/widgets/viz/` | `bars.rs` (`bar_chart*`), `charts.rs` (`sparkline`, `line_chart`, `candlestick`, `chart`, `scatter`, `histogram`), `heat_tree.rs` (`heatmap`, `treemap`), `canvas.rs`, `qr.rs` |

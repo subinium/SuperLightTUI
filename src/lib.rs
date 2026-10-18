@@ -218,8 +218,8 @@ pub use cell::Cell;
 pub use chart::{Candle, ChartBuilder, ChartConfig, Dataset, LegendPosition, Marker};
 pub use context::{
     Anchor, Bar, BarChartConfig, BarDirection, BarGroup, Breadcrumb, CanvasContext, CanvasError,
-    CodeBlock, ContainerBuilder, Context, Gauge, GutterOpts, LineGauge, Memo, Response, State,
-    TreemapItem, Widget,
+    CodeBlock, ContainerBuilder, Context, DiffView, Gauge, GutterOpts, LineGauge, Memo, Response,
+    State, TreemapItem, Widget,
 };
 // Issue #234: opaque handle from `Context::spawn`, gated behind `async`.
 #[cfg(feature = "async")]
@@ -252,15 +252,16 @@ pub use widgets::validators;
 pub use widgets::{
     AlertLevel, ApprovalAction, BreadcrumbResponse, ButtonVariant, CalDate, CalendarSelect,
     CalendarState, ChordState, ColorPickerState, CommandPaletteState, ContextItem,
-    DEFAULT_CHORD_TIMEOUT_TICKS, DirectoryTreeState, FileEntry, FilePickerScanError,
-    FilePickerScanOperation, FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse,
-    FormState, GaugeResponse, GridColumn, GutterResponse, HighlightRange, ListResponse, ListState,
-    ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle, PaletteCommand,
-    PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState, ScreenState, ScrollState,
-    SelectState, SliderOpts, SpinnerPreset, SpinnerState, SplitPaneResponse, SplitPaneState,
-    StaticOutput, StreamingMarkdownState, StreamingTextState, TableColumn, TableState, TabsState,
-    TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState, ToolApprovalState,
-    TreeNode, TreeState, Trend, ValidateTrigger, Validator,
+    DEFAULT_CHORD_TIMEOUT_TICKS, DiffColors, DiffKeys, DiffLayout, DiffParseError, DiffResponse,
+    DiffState, DirectoryTreeState, FileEntry, FilePickerScanError, FilePickerScanOperation,
+    FilePickerScanStatus, FilePickerState, FormField, FormFieldResponse, FormState, GaugeResponse,
+    GridColumn, GutterResponse, HighlightRange, HunkAction, HunkDecision, HunkId, ListResponse,
+    ListState, ModeState, MultiSelectState, NumberInputState, PaginatorState, PaginatorStyle,
+    PaletteCommand, PickerMode, RadioState, RichLogEntry, RichLogState, SchedulerState,
+    ScreenState, ScrollState, SelectState, SliderOpts, SpinnerPreset, SpinnerState,
+    SplitPaneResponse, SplitPaneState, StaticOutput, StreamingMarkdownState, StreamingTextState,
+    TableColumn, TableState, TabsState, TextInputState, TextareaState, ToastLevel, ToastMessage,
+    ToastState, ToolApprovalState, TreeNode, TreeState, Trend, ValidateTrigger, Validator,
 };
 
 /// Rendering backend for SLT.
