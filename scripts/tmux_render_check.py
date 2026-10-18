@@ -154,6 +154,30 @@ class Tmux:
     def display(self, target: str, fmt: str) -> str:
         return self.run("display-message", "-p", "-t", target, fmt).strip()
 
+    def wait_exit_status(self, target: str, timeout: float, what: str) -> str:
+        """Wait until the pane's process is reaped; return its exit status.
+
+        `#{pane_dead}` turns 1 as soon as tmux reads EOF on the pty, but
+        `#{pane_dead_status}` / `#{pane_dead_signal}` stay empty until tmux
+        handles SIGCHLD (PANE_STATUSREADY). The two arrive in either order,
+        so wait for the status itself. A signal death is reported as
+        `signal N`.
+        """
+
+        def reaped() -> str | None:
+            fields = self.display(
+                target, "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}"
+            ).split("|")
+            if len(fields) != 3 or fields[0] != "1":
+                return None
+            if fields[1]:
+                return fields[1]
+            if fields[2]:
+                return f"signal {fields[2]}"
+            return None
+
+        return wait_for(reaped, timeout, what)
+
     def capture(
         self, target: str, escapes: bool = False, history: bool = False
     ) -> list[str]:
@@ -393,12 +417,9 @@ class Checker:
         self.tmux.run(
             "new-session", "-d", "-s", "measure", "-x", "80", "-y", "24", command
         )
-        wait_for(
-            lambda: self.tmux.display("measure", "#{pane_dead}") == "1",
-            15,
-            "the CPR width probe to exit",
+        status = self.tmux.wait_exit_status(
+            "measure", 15, "the CPR width probe to exit"
         )
-        status = self.tmux.display("measure", "#{pane_dead_status}")
         if status != "0" or not out.exists():
             lines = self.tmux.capture("measure")
             self.save("measure-failed", lines)
@@ -562,10 +583,7 @@ class Checker:
 
     def exit_cleanly(self) -> None:
         self.tmux.run("send-keys", "-t", "probe", "q")
-        wait_for(
-            lambda: self.tmux.display("probe", "#{pane_dead}") == "1", 10, "probe exit"
-        )
-        status = self.tmux.display("probe", "#{pane_dead_status}")
+        status = self.tmux.wait_exit_status("probe", 10, "probe exit")
         # Include history: tmux prints "Pane is dead" on the last row, which
         # scrolls the restored main screen up by one line.
         lines = self.tmux.capture("probe", history=True)

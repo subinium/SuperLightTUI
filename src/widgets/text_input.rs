@@ -641,8 +641,9 @@ impl TextInputState {
     /// selection.
     pub fn set_selection(&mut self, anchor: usize, cursor: usize) {
         let len = self.value.graphemes(true).count();
-        self.editing.anchor = Some(anchor.min(len));
-        self.cursor = cursor.min(len);
+        let (anchor, cursor) = (anchor.min(len), cursor.min(len));
+        self.editing.anchor = (anchor != cursor).then_some(anchor);
+        self.cursor = cursor;
     }
 
     /// Drop the selection, keeping the cursor where it is.
@@ -728,6 +729,9 @@ impl TextInputState {
     /// nothing) when nothing is selected.
     pub(crate) fn delete_selection(&mut self) -> bool {
         let Some(range) = self.selection() else {
+            // An empty `anchor == cursor` selection must not turn into a
+            // real one once the delete moves the cursor.
+            self.editing.anchor = None;
             return false;
         };
         self.push_undo();
@@ -774,6 +778,9 @@ impl TextInputState {
             self.editing.last_typing = typing;
             return true;
         }
+        // An empty `anchor == cursor` selection (a plain click, or a drag or
+        // Shift+arrow back to its start) must not grow over the inserted text.
+        self.editing.anchor = None;
         let byte = grapheme_byte(&self.value, self.cursor);
         let Some((value, caret)) = prepare_text_insert(&self.value, byte, text, self.max_length)
         else {
@@ -1862,10 +1869,12 @@ impl TextareaState {
     }
 
     /// Select from `anchor` to `cursor` (`(row, col)` grapheme positions,
-    /// clamped). The cursor ends at `cursor`.
+    /// clamped). The cursor ends at `cursor`; `anchor == cursor` clears the
+    /// selection.
     pub fn set_selection(&mut self, anchor: (usize, usize), cursor: (usize, usize)) {
-        self.anchor = Some(self.clamp_pos(anchor));
-        (self.cursor_row, self.cursor_col) = self.clamp_pos(cursor);
+        let (anchor, cursor) = (self.clamp_pos(anchor), self.clamp_pos(cursor));
+        self.anchor = (anchor != cursor).then_some(anchor);
+        (self.cursor_row, self.cursor_col) = cursor;
         self.navigation = None;
     }
 
@@ -1886,6 +1895,9 @@ impl TextareaState {
     /// is selected.
     pub(crate) fn delete_selection(&mut self) -> bool {
         let Some(range) = self.selection() else {
+            // An empty `anchor == cursor` selection must not turn into a
+            // real one once the delete moves the cursor.
+            self.anchor = None;
             return false;
         };
         self.push_history();
@@ -1914,6 +1926,9 @@ impl TextareaState {
     /// (a single snapshot before the delete + insert).
     pub(crate) fn replace_selection_or_insert(&mut self, text: &str, typing: bool) -> bool {
         let Some(range) = self.selection() else {
+            // An empty `anchor == cursor` selection (a plain click, or a drag
+            // back to its start) must not grow over the inserted text.
+            self.anchor = None;
             return self.insert_text(text, typing);
         };
         self.push_history();
