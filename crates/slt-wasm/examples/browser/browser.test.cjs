@@ -52,6 +52,12 @@ async function run() {
     await action();
     await page.waitForFunction(before => probe.frames() > before + 1, before);
   }
+  // #442: the runtime delivers at most one press per frame and carries later
+  // presses to the following frames, so a burst of N clicks needs N RAF frames
+  // (16.7 ms each at 60 fps). Wait for the delivered count, not a fixed delay.
+  async function waitPresses(page, count) {
+    await page.waitForFunction(count => (probe.events().match(/kind: Down\(/g) || []).length >= count, count);
+  }
   async function close(test, label) {
     assert.deepEqual(test.errors, [], `${label}: page errors`);
     await test.page.evaluate(() => { probe.dispose(); window.other?.dispose(); });
@@ -106,11 +112,12 @@ async function run() {
           await page.mouse.click(position.x, position.y);
         }
       }
-      await page.waitForTimeout(60);
+      await waitPresses(page, 96);
       const recorded = await page.evaluate(() => probe.events());
-      for (let y = 0; y < 6; y++) for (let x = 0; x < 16; x++) {
-        assert.match(recorded, new RegExp(`Down\\(Left\\), x: ${x}, y: ${y},`));
-      }
+      const presses = [...recorded.matchAll(/Down\(Left\), x: (\d+), y: (\d+),/g)].map(m => `${m[1]},${m[2]}`);
+      const expected = [];
+      for (let y = 0; y < 6; y++) for (let x = 0; x < 16; x++) expected.push(`${x},${y}`);
+      assert.deepEqual(presses, expected, 'every press is delivered once, in order');
       const before = await page.locator('#host pre').boundingBox();
       await waitChange(page, () => page.evaluate(() => probe.set_phase(3)));
       const after = await page.locator('#host pre').boundingBox();
@@ -145,7 +152,7 @@ async function run() {
         assert.equal(await page.evaluate(p => document.elementFromPoint(p.x, p.y).tagName, position), 'TEXTAREA');
         await page.mouse.click(position.x, position.y);
       }
-      await page.waitForTimeout(50);
+      await waitPresses(page, 5);
       assert.match(await page.evaluate(() => probe.events()), /Down\(Left\), x: 15, y: 5,/);
       await page.locator('#host').focus(); await page.keyboard.type('transformed');
       await page.waitForFunction(() => probe.text() === 'transformed');
@@ -267,7 +274,7 @@ async function run() {
         await page.mouse.move(p.x + 20, p.y); await page.mouse.up({ button });
         await page.keyboard.up('Shift');
       }
-      await page.waitForTimeout(50);
+      await page.waitForFunction(() => /Drag\(Right\)/.test(probe.events()));
       assert.match(await page.evaluate(() => probe.events()), /Drag\(Middle\)/);
       assert.match(await page.evaluate(() => probe.events()), /Drag\(Right\)/);
       await close(test, 'real splitter drag, captured outside release, no stuck subsequent hover');
