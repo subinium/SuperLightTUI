@@ -26,6 +26,8 @@ impl Context {
     /// statement (since v0.26 `Response` is not `#[must_use]` as a type).
     pub fn spinner(&mut self, state: &SpinnerState) -> Response {
         let response = self.interaction();
+        // #490: a spinner animates on every tick.
+        self.request_frame();
         self.styled(
             state.frame(self.tick).to_string(),
             Style::new().fg(self.theme.primary),
@@ -42,6 +44,8 @@ impl Context {
         if state.messages.is_empty() {
             return self;
         }
+        // #490: toasts expire after a number of rendered ticks.
+        self.request_frame();
 
         self.skip_interaction_slot();
         self.commands

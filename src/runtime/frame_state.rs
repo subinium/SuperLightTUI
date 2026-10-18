@@ -376,4 +376,6 @@ pub(crate) struct FrameState {
     pub pointer: context::PointerState,
     #[cfg(feature = "crossterm")]
     pub selection: terminal::SelectionState,
+    /// Issue #490: idle frame-skip bookkeeping (`RunConfig::idle_redraw`).
+    pub idle: super::IdleState,
 }

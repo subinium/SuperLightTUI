@@ -182,9 +182,17 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
         let frame_start = Instant::now();
         // Issue #263: after a SIGCONT resume, repaint the whole frame.
         #[cfg(unix)]
-        drain_resume_redraw(&mut || term.handle_resize())?;
+        let resumed = drain_resume_redraw(&mut || term.handle_resize())?;
+        #[cfg(not(unix))]
+        let resumed = false;
         let (w, h) = term.size();
-        if w > 0 && h > 0 {
+        // Issue #490: with `idle_redraw(false)`, skip frames nothing can change.
+        let signals = LoopSignals {
+            input: !events.is_empty(),
+            resumed,
+            woken: false,
+        };
+        if w > 0 && h > 0 && should_render(&mut state, &config, (w, h), signals, frame_start) {
             if !run_frame(
                 &mut term,
                 &mut state,
@@ -209,7 +217,11 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
-        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
+        let input_wait = idle_poll_wait(
+            &state,
+            &config,
+            input_poll_wait(&state, term.size(), config.tick_rate),
+        );
         if !poll_events(
             &mut events,
             &mut state,
@@ -222,7 +234,10 @@ fn run_with_inner(config: RunConfig, mut f: impl FnMut(&mut Context)) -> io::Res
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
+        sleep_for_fps_cap(
+            config.max_fps,
+            idle_fps_elapsed(&state, &config, frame_start),
+        );
     }
 
     Ok(())
@@ -362,9 +377,17 @@ fn run_inline_with_inner(
         let frame_start = Instant::now();
         // Issue #263: after a SIGCONT resume, repaint the whole frame.
         #[cfg(unix)]
-        drain_resume_redraw(&mut || term.handle_resize())?;
+        let resumed = drain_resume_redraw(&mut || term.handle_resize())?;
+        #[cfg(not(unix))]
+        let resumed = false;
         let (w, h) = term.size();
-        if w > 0 && h > 0 {
+        // Issue #490: with `idle_redraw(false)`, skip frames nothing can change.
+        let signals = LoopSignals {
+            input: !events.is_empty(),
+            resumed,
+            woken: false,
+        };
+        if w > 0 && h > 0 && should_render(&mut state, &config, (w, h), signals, frame_start) {
             localize_inline_events(&term, &mut state, &mut events);
             if !run_frame(
                 &mut term,
@@ -389,7 +412,11 @@ fn run_inline_with_inner(
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
-        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
+        let input_wait = idle_poll_wait(
+            &state,
+            &config,
+            input_poll_wait(&state, term.size(), config.tick_rate),
+        );
         if !poll_events(
             &mut events,
             &mut state,
@@ -402,7 +429,10 @@ fn run_inline_with_inner(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
+        sleep_for_fps_cap(
+            config.max_fps,
+            idle_fps_elapsed(&state, &config, frame_start),
+        );
     }
 
     Ok(())
@@ -482,10 +512,18 @@ fn run_static_with_inner(
         let frame_start = Instant::now();
         // Issue #263: after a SIGCONT resume, repaint the whole frame.
         #[cfg(unix)]
-        drain_resume_redraw(&mut || term.handle_resize())?;
+        let resumed = drain_resume_redraw(&mut || term.handle_resize())?;
+        #[cfg(not(unix))]
+        let resumed = false;
         let (w, h) = term.size();
+        // Issue #490: with `idle_redraw(false)`, skip frames nothing can change.
+        let signals = LoopSignals {
+            input: !events.is_empty(),
+            resumed,
+            woken: false,
+        };
         term.write_scrollback(&output.drain_new())?;
-        if w > 0 && h > 0 {
+        if w > 0 && h > 0 && should_render(&mut state, &config, (w, h), signals, frame_start) {
             localize_inline_events(&term, &mut state, &mut events);
             let keep_running = run_frame(
                 &mut term,
@@ -514,7 +552,11 @@ fn run_static_with_inner(
         #[cfg(not(unix))]
         let mut on_suspend = || Ok(());
 
-        let input_wait = input_poll_wait(&state, term.size(), config.tick_rate);
+        let input_wait = idle_poll_wait(
+            &state,
+            &config,
+            input_poll_wait(&state, term.size(), config.tick_rate),
+        );
         if !poll_events(
             &mut events,
             &mut state,
@@ -527,7 +569,10 @@ fn run_static_with_inner(
             break;
         }
 
-        sleep_for_fps_cap(config.max_fps, frame_start.elapsed());
+        sleep_for_fps_cap(
+            config.max_fps,
+            idle_fps_elapsed(&state, &config, frame_start),
+        );
     }
 
     Ok(())
@@ -739,6 +784,8 @@ pub(super) fn poll_events(
     }
     if has_resize {
         on_resize()?;
+        // #490: the resize cleared the screen; the next iteration repaints.
+        state.idle.force();
     }
 
     if has_resize {

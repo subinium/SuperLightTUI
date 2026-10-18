@@ -98,6 +98,58 @@ because it walks every cell and emits SGR/ANSI bytes. The
 worst case for output volume; steady-state frames emit few bytes (see
 `flush/sparse_change_*`). They still pay the row-hash and reset cost above.
 
+### Idle cost
+
+What an app costs while nobody touches it, measured in a real PTY (#414,
+#490): the static 200×60 dashboard from `tests/pty_idle.rs` (rounded border,
+four bordered metric panels, 40 table rows) runs for 30 s with no input under
+`tests/support/idle_pty.py`, which reads every output byte and the child's
+CPU time from `getrusage(RUSAGE_CHILDREN)` (process start and exit
+included). Release build, `--all-features`, Apple M3 Pro, Rust 1.98.0, on a
+host shared with other builds (load average 6–15), so the default rows
+spread widely between runs. "Base" is `release/v0.26.0` `dce9b67` with the
+same harness; base and branch runs were interleaved.
+
+```bash
+cargo test --release --all-features --test pty_idle idle_cpu_report -- --ignored --nocapture
+```
+
+| Config | CPU, share of one core (runs) | Frames in 30 s | Idle output |
+|---|---|---|---|
+| Base, default, 16 ms tick | 3.6%, 5.9%, 8.1% | 1,555–1,612 (~53/s) | ~850 B/s |
+| Default `idle_redraw(true)`, 16 ms tick | 3.0%, 3.9%, 7.2% | 1,573–1,624 (~53/s) | ~850 B/s |
+| `idle_redraw(false)`, 16 ms tick | 0.08%, 0.09%, 0.09% | 3 | 0 B/s |
+| Base, default, `tick_rate(1 s)` | 0.11%, 0.15%, 0.17% | 31 | 16 B/s |
+| Default `idle_redraw(true)`, `tick_rate(1 s)` | 0.08%, 0.12%, 0.15% | 31 | 16 B/s |
+| `idle_redraw(false)`, `tick_rate(1 s)` | 0.02%, 0.03%, 0.04% | 3 | 0.6 B/s |
+| `run_async_with`, default, 16 ms tick | 4.8% | 1,698 | ~900 B/s |
+| `run_async_with`, `idle_redraw(false)`, 16 ms tick | 1.0% | 6 | 0 B/s |
+
+"Idle output" counts bytes from 1 s after start to 0.5 s before the quit
+timer. With the default config every tick runs the closure, layout, render
+and diff and writes a synchronized-output pair (16 bytes) although nothing
+changed: about 3–8% of a core at 16 ms on this host. The default rows match
+the base within run-to-run spread, so the default path did not regress.
+
+With `idle_redraw(false)` the three frames are the startup frame, its
+follow-up and the frame that runs the quit timer. The native loops still
+wake once per `tick_rate` to poll input (resume and resize detection rely on
+it), which is the remaining 0.02–0.09%. The 0.6 B/s at a 1 s tick is the
+follow-up frame's empty synchronized-output pair, which lands inside the
+window. The async loop keeps its 4 ms input-poll slices so a message wake is
+seen within 4 ms; that polling is the remaining ~1% and would need a
+combined input/message wait to remove.
+
+Wake latency with `idle_redraw(false)` (`tests/pty_idle.rs`, release, same
+host, three runs): a key press reaches the terminal as frame bytes in
+0.2–1.6 ms and a resize in 0.1–0.3 ms. A tooltip with a 300 ms
+`tooltip_delay` appears 301–302 ms after the hover with no further input.
+For 20 async messages sent 50 ms apart, the time from `send` to the frame
+that drains the message is p95 13.5–15.4 ms with the default config and
+0.03–3.7 ms with `idle_redraw(false)`: the default loop holds a message
+until the `max_fps` cap since the last tick frame expires, and an idle
+loop has no recent frame for the `max_fps` cap to wait on.
+
 ## 2. Allocation budget
 
 ### v0.24 diagnostic baseline

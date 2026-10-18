@@ -227,6 +227,8 @@ pub(crate) fn run_frame_kernel(
     ctx.set_scroll_speed(config.scroll_speed);
     ctx.widget_theme = config.widget_theme;
 
+    // Issue #490: drop an animation sample taken outside this frame.
+    crate::anim::take_animation_frame_request();
     f(&mut ctx);
     if ctx.prev_modal_active && !ctx.rollback.modal_active {
         ctx.focus_index = ctx.rollback.modal_restore_index.take().unwrap_or(0);
@@ -241,6 +243,11 @@ pub(crate) fn run_frame_kernel(
     ctx.finish_focus_identity(&mut state.focus);
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
+    // Issue #490: a running animation sampled by the closure wants the next tick.
+    if crate::anim::take_animation_frame_request() {
+        ctx.request_frame();
+    }
+    let (frame_request, frame_instant) = (ctx.frame_request.get(), ctx.frame_instant);
 
     debug_assert_eq!(
         ctx.rollback.overlay_depth, 0,
@@ -572,6 +579,11 @@ pub(crate) fn run_frame_kernel(
         layout::render_inspector(&tree, buffer, &focus);
     }
 
+    // Issue #490: when the next frame is due if nothing else happens.
+    if !config.idle_redraw {
+        schedule_wake(state, frame_request, frame_instant);
+    }
+
     // The callback executed after layout, so no Context fallback can safely
     // run here. Restore every persistent frame field first, then preserve the
     // original panic for the owning runtime or outer catch_unwind boundary.
@@ -695,12 +707,19 @@ pub(crate) fn run_frame(
     // A clipboard status is visible to exactly one frame.
     context::store_clipboard_status(&mut state.named_states, None);
 
+    // Issue #490: an unchanged frame lets an idle-skipping loop go quiet.
+    #[cfg(feature = "crossterm")]
+    if !config.idle_redraw {
+        record_output(state, term.buffer_mut());
+    }
     let flush_start = Instant::now();
     term.flush()?;
     state.diagnostics.flush_duration = flush_start.elapsed();
     #[cfg(feature = "crossterm")]
     if terminal_side_effects && let Some(status) = terminal::take_clipboard_status() {
         context::store_clipboard_status(&mut state.named_states, Some(status));
+        // The status is shown by the next frame (#490).
+        state.idle.force();
     }
     state.diagnostics.tick = state.diagnostics.tick.wrapping_add(1);
 

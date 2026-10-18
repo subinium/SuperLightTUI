@@ -72,6 +72,12 @@ Animations run on frame ticks, not wall-clock time.
 - `RunConfig::default().tick_rate(Duration::from_millis(16))` controls the polling interval (default 16ms / ~60fps).
 - All animation types use `reset(tick)` to set a start time and `value(tick)` to sample.
 - Lower `tick_rate` = smoother animations but more CPU usage.
+- With `RunConfig::idle_redraw(false)` an idle loop renders nothing, and
+  `ui.tick()` advances only on rendered frames. A running `Tween`, `Spring`,
+  `Keyframes`, `Sequence` or `Stagger` that is sampled during a frame asks for
+  the next tick by itself, so it plays at the same speed; once it finishes
+  the loop goes quiet. An animation you drive from `ui.tick()` yourself must
+  call `ui.request_frame()` while it runs.
 
 ## Animation types
 
