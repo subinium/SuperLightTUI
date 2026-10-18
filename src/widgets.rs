@@ -25,19 +25,28 @@ type TextInputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
 
 pub mod validators;
 
+// One file per widget family; each pairs with the `Context` method file of
+// the same name under `src/context/widgets/`. `runtime` holds non-widget
+// runtime state driven by `src/context/runtime.rs`.
 mod collections;
 mod commanding;
+mod display;
 mod feedback;
-mod input;
-mod responses;
+mod layout;
+mod rich;
+mod runtime;
 mod selection;
+mod text_input;
 
 pub use collections::*;
 pub use commanding::*;
+pub use display::*;
 pub use feedback::*;
-pub use input::*;
-pub use responses::*;
+pub use layout::*;
+pub use rich::*;
+pub use runtime::*;
 pub use selection::*;
+pub use text_input::*;
 
 #[cfg(test)]
 mod tests;

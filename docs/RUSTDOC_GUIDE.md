@@ -141,11 +141,11 @@ breaks under refactor.
 Every public module file starts with a `//!` doc comment:
 
 ```rust
-//! Display widgets — text, alerts, badges, code blocks.
+//! Display widgets — text, badges, stats, breadcrumbs.
 //!
 //! This module hosts Layer 3 (Widget) primitives that produce visual
 //! output without consuming events. For interactive widgets see
-//! [`widgets_interactive`](super::widgets_interactive).
+//! [`selection`](super::selection).
 //!
 //! # Family
 //!

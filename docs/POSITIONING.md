@@ -92,7 +92,7 @@ ui.overlay_at_offset(Anchor::BottomRight, 2, 1, |ui| {
 
 Positive `dx` / `dy` always **inset toward the center**, regardless of which
 corner or edge you anchored to. Internally the offset becomes a margin on the
-anchoring column (`src/context/widgets_display/layout.rs`,
+anchoring column (`src/context/widgets/overlay.rs`,
 `anchor_offset_to_margin`):
 
 | Anchor axis | Positive value | Negative value |
@@ -271,7 +271,7 @@ ui.modal_at(Anchor::Center, |ui| {
 - **API reference**: `Anchor` is re-exported from the crate root (`src/lib.rs`);
   `overlay_at`, `overlay_at_offset`, `modal_at`, `modal_at_offset` are
   `Context` methods
-- **Implementation**: `src/context/widgets_display/layout.rs` (`Anchor` enum,
+- **Implementation**: `src/context/widgets/overlay.rs` (`Anchor` enum,
   `anchor_to_align_justify`, `anchor_offset_to_margin`, `overlay_at`,
   `modal_at`, `overlay_at_offset`, `modal_at_offset`)
 - **Container margin helpers**: `ml`, `mt`, `mr`, `mb`, `mx`, `my`, `margin` in

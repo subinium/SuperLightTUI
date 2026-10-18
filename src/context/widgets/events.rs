@@ -1,93 +1,12 @@
+//! Event and environment helpers — keyboard / mouse / paste / scroll
+//! queries, quit, clipboard, theme, terminal size, tick and debug toggles.
+//!
+//! Not a widget family: these read the current frame's input and runtime
+//! state and have no state type.
+
 use super::*;
 
 impl Context {
-    /// Render a help bar showing keybinding hints.
-    ///
-    /// `bindings` is a slice of `(key, action)` pairs. Keys are rendered in the
-    /// theme's primary color; actions in the dim text color. Pairs are separated
-    /// by a `·` character.
-    pub fn help(&mut self, bindings: &[(&str, &str)]) -> Response {
-        if bindings.is_empty() {
-            return Response::none();
-        }
-
-        self.skip_interaction_slot();
-        let help_gap = self.theme.spacing.sm();
-        self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
-                direction: Direction::Row,
-                gap: help_gap as i32,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            })));
-        for (idx, (key, action)) in bindings.iter().enumerate() {
-            if idx > 0 {
-                self.styled("·", Style::new().fg(self.theme.text_dim));
-            }
-            self.styled(*key, Style::new().bold().fg(self.theme.primary));
-            self.styled(*action, Style::new().fg(self.theme.text_dim));
-        }
-        self.commands.push(Command::EndContainer);
-        self.rollback.last_text_idx = None;
-
-        Response::none()
-    }
-
-    /// Render a help bar with custom key/description colors.
-    pub fn help_colored(
-        &mut self,
-        bindings: &[(&str, &str)],
-        key_color: Color,
-        text_color: Color,
-    ) -> Response {
-        if bindings.is_empty() {
-            return Response::none();
-        }
-
-        self.skip_interaction_slot();
-        let help_gap = self.theme.spacing.sm();
-        self.commands
-            .push(Command::BeginContainer(Box::new(BeginContainerArgs {
-                direction: Direction::Row,
-                gap: help_gap as i32,
-                align: Align::Start,
-                align_self: None,
-                justify: Justify::Start,
-                border: None,
-                border_sides: BorderSides::all(),
-                border_style: Style::new().fg(self.theme.border),
-                bg_color: None,
-                padding: Padding::default(),
-                margin: Margin::default(),
-                constraints: Constraints::default(),
-                title: None,
-                grow: 0,
-                group_name: None,
-            })));
-        for (idx, (key, action)) in bindings.iter().enumerate() {
-            if idx > 0 {
-                self.styled("·", Style::new().fg(text_color));
-            }
-            self.styled(*key, Style::new().bold().fg(key_color));
-            self.styled(*action, Style::new().fg(text_color));
-        }
-        self.commands.push(Command::EndContainer);
-        self.rollback.last_text_idx = None;
-
-        Response::none()
-    }
-
     // ── events ───────────────────────────────────────────────────────
 
     /// Check if a character key was pressed this frame.

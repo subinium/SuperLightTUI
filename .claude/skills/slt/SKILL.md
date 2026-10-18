@@ -229,7 +229,7 @@ For mouse hit-testing call `ui.interaction()` (no arguments) immediately before 
 
 1. Confirm the goal — what app? Data table? Dashboard? Form? Game?
 2. Check `examples/` for the closest pattern (see Reference Examples below). Start from that file if it fits.
-3. Grep `src/context/widgets_*` and `src/widgets/*` for the actual signature before writing `ui.foo(...)`. **Do NOT invent APIs.**
+3. Grep `src/context/widgets/` and `src/widgets/` for the actual signature before writing `ui.foo(...)`. **Do NOT invent APIs.**
 4. Keep `Cargo.toml` features minimal — see REFERENCES.md.
 5. Run the quality gate before saying "done".
 
@@ -367,13 +367,13 @@ See `tests/example_snapshots/testing_report.rs` for `record_frames`, `assert_not
 | Public API | `src/lib.rs` (re-exports) |
 | Run loop / backend | `src/terminal.rs`, `src/lib.rs` (`run`, `run_with`, `run_inline`, `run_async`, `run_static`, `frame`, `frame_owned`) |
 | Context core | `src/context/{core,runtime,container,helpers,state}.rs` |
-| Widget impls | `src/context/widgets_display/*`, `widgets_interactive/*`, `widgets_input/*`, `widgets_viz.rs` |
-| Layer 4 state types | `src/widgets/*.rs` |
-| Compound responses | `src/widgets/responses.rs` (`BreadcrumbResponse`, `GaugeResponse`, `SplitPaneResponse`, `GutterResponse`) |
+| Widget impls | `src/context/widgets/<family>.rs` (+ `<family>/`), same family names as the state files |
+| Layer 4 state types | `src/widgets/<family>.rs` |
+| Compound responses | next to their family's state: `BreadcrumbResponse` (`display.rs`), `GaugeResponse` (`feedback.rs`), `SplitPaneResponse` / `GutterResponse` (`layout.rs`), `FormFieldResponse` (`text_input.rs`) |
 | Layout kernels | `src/layout/{tree,flexbox,collect,render,command}.rs` |
 | Style / theme | `src/style/{color,theme}.rs`, `src/style.rs` |
 | Animation | `src/anim.rs` |
-| Charts | `src/chart.rs`, `src/chart/*.rs`, `src/context/widgets_viz.rs` |
+| Charts | `src/chart.rs`, `src/chart/*.rs`, `src/context/widgets/viz/*.rs` |
 | Testing helpers | `src/test_utils.rs` |
 | Skill references | `REFERENCES.md` (feature flags, doc pointers) |
 

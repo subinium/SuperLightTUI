@@ -30,7 +30,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 ## v0.24 / v0.25 additions
 
 - `ScrollState::follow_focus: bool` (public field, default `true`) — scroll containers reveal the focused child, including nested axes and modal forms. Set `false` for app-controlled scrolling. `src/widgets/collections.rs`.
-- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets_display/layout.rs`, `src/widgets/responses.rs`.
+- `Context::form_field_response(&mut FormField) -> FormFieldResponse` — `{ response, input, layout_rect: Option<Rect> }`, `Deref<Target = Response>`. `form_field` stays chainable. `src/context/widgets/text_input.rs`, `src/widgets/text_input.rs`.
 - `Context::focused_layout_rect() -> Option<Rect>` and `Context::measured_layout_rect(name) -> Option<Rect>` — previous-frame full border box before scroll/clip. `Response.rect` stays the clipped hit rect. `src/context/helpers.rs`.
 - `TestBackend::has_pending_input()` / `AppState::has_pending_input()` — input queued behind a Tab group for the next frame.
 - `TestBackend::advance_time(Duration)` — deterministic headless clock (ticks now advance per frame).
@@ -42,12 +42,12 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 These shipped in v0.20 and are NOT in older docs. Every entry verified against `src/`.
 
 ### Builders (Rule 1)
-- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets_display/gauge.rs`.
-- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets_display/gauge.rs`.
-- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets_display/status.rs`.
+- `ui.gauge(ratio: f64) -> Gauge<'_>` — `.label(s).width(n).color(c).show() -> GaugeResponse`. See `src/context/widgets/feedback/gauge.rs`.
+- `ui.line_gauge(ratio: f64) -> LineGauge<'_>` — `.label(s).filled(c).empty(c).width(n).show()`. See `src/context/widgets/feedback/gauge.rs`.
+- `ui.breadcrumb(&[&str]) -> Breadcrumb<'_>` — `.separator(s).color(c).show() -> BreadcrumbResponse`. See `src/context/widgets/display/status.rs`.
 
 ### Opts struct (Rule 3)
-- `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `widgets_display/gutter.rs:115`
+- `ui.scrollable_with_gutter(&mut ScrollState, GutterOpts<G>, body)` — `context/widgets/layout/gutter.rs:115`
 - `GutterOpts::line_numbers(total, viewport)` — 90% case smart constructor
 - `GutterOpts::new(total, viewport, |i| label)` — custom labels
 - `HighlightRange::line(i)` / `::span(start, len)` — replaces v0.19 `::single`
@@ -142,7 +142,7 @@ These docs are maintained for the current release, but source and compile-tested
 - `docs/API_DESIGN.md` — current. The 5 rules this skill encodes.
 - `docs/DESIGN_PRINCIPLES.md` — current. North-star + audit matrix.
 
-**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets_*.rs` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
+**Authoritative when docs disagree**: source code (`src/lib.rs` re-exports, `src/context/widgets/` signatures), compile-checked `examples/*.rs` demos, `tests/*.rs` regression tests.
 
 ## Examples (`examples/` — 63 Rust files, 29 Cargo-listed targets)
 

@@ -1,5 +1,18 @@
+//! Text-input family — single-line text input, textarea, number input and
+//! form helpers.
+//!
+//! State types ([`crate::widgets::TextInputState`],
+//! [`crate::widgets::TextareaState`], [`crate::widgets::NumberInputState`],
+//! [`crate::widgets::FormState`], ...) live in `src/widgets/text_input.rs`.
+
 use super::*;
 use crate::widgets::{grapheme_cursor_after, prepare_text_insert};
+
+mod number_input;
+mod textarea;
+
+#[cfg(test)]
+mod tests;
 
 impl Context {
     /// Render a single-line text input. Auto-handles cursor, typing, and backspace.
@@ -413,5 +426,131 @@ impl Context {
                 });
         }
         response
+    }
+
+    /// Render a form that groups input fields vertically.
+    ///
+    /// Wraps the fields in a column container and forwards the form state
+    /// to the closure. Use [`Context::form_field`] inside the closure to
+    /// render each field with label + input + error display.
+    ///
+    /// Submission is driven by [`Context::form_submit`]. Per-field validators
+    /// attached via [`FormField::validate`](crate::widgets::FormField::validate)
+    /// run automatically inside [`Context::form_field`]; aggregate validity is
+    /// read via [`FormState::is_valid`](crate::widgets::FormState::is_valid).
+    pub fn form(
+        &mut self,
+        state: &mut FormState,
+        f: impl FnOnce(&mut Context, &mut FormState),
+    ) -> &mut Self {
+        let _ = self.col(|ui| {
+            f(ui, state);
+        });
+        self
+    }
+
+    /// Render a single form field with label and input, running its validators.
+    ///
+    /// The field's own validators (attached via
+    /// [`FormField::validate`](crate::widgets::FormField::validate)) run
+    /// automatically according to its
+    /// [`trigger`](crate::widgets::FormField::trigger):
+    /// [`OnChange`](crate::widgets::ValidateTrigger::OnChange) re-validates on
+    /// each keystroke, [`OnBlur`](crate::widgets::ValidateTrigger::OnBlur)
+    /// (the default) re-validates when focus leaves the field, and
+    /// [`Manual`](crate::widgets::ValidateTrigger::Manual) never auto-validates.
+    /// The resulting [`error`](crate::widgets::FormField::error) is shown below
+    /// the input.
+    ///
+    /// With the `async` feature, any in-flight
+    /// [`validate_async`](crate::widgets::FormField::validate_async) check is
+    /// polled each frame and its result surfaced as the field error.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use slt::widgets::{FormField, validators};
+    /// # slt::run(|ui: &mut slt::Context| {
+    /// let mut field = FormField::new("Email")
+    ///     .validate(validators::email()); // OnBlur by default
+    /// ui.form_field(&mut field);
+    /// # });
+    /// ```
+    pub fn form_field(&mut self, field: &mut FormField) -> &mut Self {
+        let _ = self.form_field_response(field);
+        self
+    }
+
+    /// Render a form field and return its focus, input and full layout feedback.
+    ///
+    /// Runs the same validators as [`form_field`](Self::form_field), but returns
+    /// a [`FormFieldResponse`](crate::FormFieldResponse) instead of a chainable
+    /// context. Geometry is from the previous completed frame; see
+    /// [`focused_layout_rect`](Self::focused_layout_rect) for coordinate rules.
+    pub fn form_field_response(&mut self, field: &mut FormField) -> crate::FormFieldResponse {
+        let id = self.rollback.interaction_count;
+        let layout_rect = self
+            .prev_allocated_areas
+            .get(id)
+            .copied()
+            .filter(|rect| !rect.is_empty());
+        #[cfg(feature = "async")]
+        let async_resolved = field.poll_async();
+        // Bind the input's single focus slot to the entire field so keyboard
+        // reveal includes its label/error, while a tiny viewport prefers the
+        // actual input caret. Named reservations remain attached to this slot.
+        self.register_focusable();
+        self.rollback.pending_focusable_id = self.rollback.last_focusable_id;
+        let layout_rect = if self.rollback.new_focus_slot {
+            None
+        } else {
+            layout_rect
+        };
+        let mut resp = Response::none();
+        let mut response = self.col(|ui| {
+            ui.styled(field.label.as_str(), Style::new().bold().fg(ui.theme.text));
+            resp = ui.text_input(&mut field.input);
+            if let Some(error) = field.error.as_deref() {
+                ui.styled(error, Style::new().dim().fg(ui.theme.error));
+            }
+        });
+        #[cfg(feature = "async")]
+        let _ = async_resolved;
+        // Validation retains a field-local edge even if positional focus slots
+        // change as other fields are inserted or removed.
+        let lost_focus = field.observe_focus(resp.focused);
+        match field.trigger {
+            ValidateTrigger::OnChange if resp.changed => {
+                field.run_validators();
+            }
+            ValidateTrigger::OnBlur if lost_focus => {
+                field.run_validators();
+            }
+            _ => {}
+        }
+        response.focused = resp.focused;
+        response.gained_focus = resp.gained_focus;
+        response.lost_focus = resp.lost_focus;
+        response.changed = resp.changed;
+        response.submitted = resp.submitted;
+        crate::FormFieldResponse {
+            response,
+            input: resp,
+            layout_rect,
+        }
+    }
+
+    /// Render a primary-styled submit button.
+    ///
+    /// Distinguishes the submit affordance from incidental buttons in the
+    /// same form by rendering in the theme's primary color (via
+    /// [`ButtonVariant::Primary`]). Returns `true` in `.clicked` when the
+    /// user clicks it, presses Enter while focused, or activates it with
+    /// Space. Pair with
+    /// [`FormState::validate_all`](crate::widgets::FormState::validate_all) /
+    /// [`FormState::is_valid`](crate::widgets::FormState::is_valid) to gate
+    /// submission on all fields being valid.
+    pub fn form_submit(&mut self, label: impl Into<String>) -> Response {
+        self.button_with(label, ButtonVariant::Primary)
     }
 }
