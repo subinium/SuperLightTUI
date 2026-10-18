@@ -44,17 +44,17 @@ fn main() -> std::io::Result<()> {
 5 行で始められます。`App` トレイトも、`Model`/`Update`/`View` も、手書きのイベントループも不要です。
 Ctrl+C はデフォルトでループをきれいに終了します（`RunConfig::handle_ctrl_c(false)` で無効化できます）。
 
-マウスキャプチャは **オプトイン** です。素の `slt::run` はキーボード操作で動きます。Tab/Shift+Tab でフォーカスを移動し、
-Enter/Space でフォーカス中のボタンを押します。クリック、ホバー、ホイールスクロール、ドラッグが必要なら、
-`RunConfig::default().mouse(true)` でループを開始してください。
+マウスは **デフォルトで有効** です。素の `slt::run` でクリック、ホイールスクロール、ドラッグ
+（分割ハンドル、スクロールバー、テキスト選択）が届きます。SSH 越しではクリックとホイールのみになります。
+Tab/Shift+Tab でのフォーカス移動と Enter/Space でのボタン操作は常に使えます。
 
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut clicks = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         ui.text(format!("clicked {clicks} times")).bold();
         if ui.button("Click me").clicked {
             clicks += 1;
@@ -62,6 +62,11 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+ホバーのスタイルとツールチップはすべてのポインタ移動を必要とするため、別途有効にします:
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`。
+マウスをキャプチャしている間も、多くのターミナルでは Shift+ドラッグでネイティブのテキスト選択ができます。
+`MouseMode::Off` でマウスを完全に無効化できます。
 
 MSRV: Rust 1.88。デフォルト feature は `crossterm` バックエンドと `bidi` です。
 
@@ -107,7 +112,7 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 これが中核となる mental model です。残りは別フレームワークではなく、深さと拡張です。
-`clicked` はボタンにフォーカスがあるときの Enter/Space で立ち、`RunConfig::default().mouse(true)` で起動した場合はマウスクリックでも立ちます。
+`clicked` はボタンにフォーカスがあるときの Enter/Space で立ち、マウスクリックでも立ちます（マウスはデフォルトで有効）。
 
 ## 実際のアプリ
 
@@ -147,13 +152,13 @@ fn main() -> std::io::Result<()> {
 
 | モード | API | 用途 |
 |--------|-----|------|
-| フルスクリーン | `slt::run` / `slt::run_with` | alternate screen を使う標準的な TUI アプリ。マウスキャプチャは `run_with` に `RunConfig::mouse(true)` を渡したときだけ有効です。 |
+| フルスクリーン | `slt::run` / `slt::run_with` | alternate screen を使う標準的な TUI アプリ。マウスのクリック、ホイール、ドラッグはデフォルトで有効。ホバーには `RunConfig::mouse_mode(MouseMode::Hover)` が必要です。 |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | プロンプトの下に固定高さのウィジェットを描画。alternate screen なし。 |
 | Static + inline | `slt::run_static` | ログ行を scrollback に流しつつ、その下で inline UI を動かし続けます。 |
 | 非同期メッセージ | `slt::run_async` *(feature: `async`)* | バックグラウンドタスクが wake-aware な `AsyncSender` でメッセージを送ります。返される `AsyncRunHandle` を保持して join/cancel します。 |
 | カスタムバックエンド | `slt::frame` + `Backend` + `AppState` | テスト、GUI への埋め込み、WASM、スナップショットハーネスなど、描画を自分で駆動する場合。 |
 
-`RunConfig` で、マウスキャプチャ（デフォルト: オフ）、kitty keyboard、color depth、最大 FPS、スクロール速度、テーマ、タイトル、Ctrl+C の扱いをすべてのモードで調整できます。
+`RunConfig` で、マウスモード（デフォルト: ローカルは `Drag`、SSH 越しは `Click`。必要なら `Hover` / `Off`）、kitty keyboard、color depth、最大 FPS、スクロール速度、テーマ、タイトル、Ctrl+C の扱いをすべてのモードで調整できます。
 
 ## フォーカスとスクロール
 
@@ -188,7 +193,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **公開文法が小さい**。多くの画面は普通の Rust の状態、`row()` / `col()` / `container()`、メソッドチェーン、`Response` で始められます。
 - **フレームワークの儀式が少ない**。動き始めるために app trait、retained tree、message enum を先に用意しなくてよいケースが多いです。
-- **部品は充実していて、バックエンドは真面目**。共通ウィジェットが focus、hover、click、scroll を自動で結び付け（マウスイベントは `RunConfig::mouse(true)` 設定時）、内部ランタイムは `Backend`、`AppState`、`frame()` を通して保守的な低レベル経路を維持します。
+- **部品は充実していて、バックエンドは真面目**。共通ウィジェットが focus、hover、click、scroll を自動で結び付け（クリック、ホイール、ドラッグはデフォルト、ホバーは `MouseMode::Hover`）、内部ランタイムは `Backend`、`AppState`、`frame()` を通して保守的な低レベル経路を維持します。
 - **内部実装も保守的に固めています**。shared frame kernel、明示的な backend contract test、zero `unsafe`、feature-gated runtime path、`all-features`/`no-default-features`/WASM/clippy/examples/cargo-hack/semver/deny の検証で品質を固定しています。
 
 Rust ユーザーにとっては、retained-mode の TUI フレームワークより初期設定が少なくて済むことが多いです。
@@ -222,7 +227,7 @@ graph LR
 - **儀式がありません。** Immediate-mode なので `App` トレイト、`Model`/`Message`/`Update`/`View` は不要です。クロージャが UI そのもの。状態は普通の Rust 変数、制御フローは `if`/`for` です。
 - **レイアウトが見えません。** `ui.col(|ui| { ... })` は「カラムを開く」コマンドを記録します。エンジンがツリーを構築し flexbox を実行 — `LayoutNode` は露出しません。
 - **パフォーマンスが自動です。** ダブルバッファがフレーム間でセルを比較し、変更された ANSI 属性だけを出力します。毎フレーム全体を再描画しても、エンジンが高速に処理します。手動の dirty tracking は不要です。
-- **インタラクションが自動接続されます。** `ui.button("Save")` だけでキーボードフォーカスと Enter/Space による起動が得られ、`RunConfig::mouse(true)` を有効にすれば hover と click も報告されます。ヒットテストのコードを書く必要はありません。
+- **インタラクションが自動接続されます。** `ui.button("Save")` だけでキーボードフォーカスと Enter/Space による起動が得られ、マウスクリックも最初から報告され、`MouseMode::Hover` では hover も報告されます。ヒットテストのコードを書く必要はありません。
 - **同期的フィードバック。** インタラクションは前フレームのレイアウト位置を使います（60 FPS では知覚不可能）。コールバックも async レイアウトクエリも不要 — コードはリニアなままです。
 
 完全な 8 ステージのライフサイクルは [アーキテクチャ] を参照してください。

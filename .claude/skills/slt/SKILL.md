@@ -9,11 +9,11 @@ Targets SLT v0.25.0. Verify every API against `src/` before using it.
 
 ## Two runtime rules agents get wrong
 
-1. **Mouse capture is opt-in.** `RunConfig::default()` sets `mouse: false` (`src/lib.rs`), so `slt::run(...)` delivers no mouse events: `Response.clicked`, `hovered`, `right_clicked`, `double_clicked`, `scroll_delta`, scrollbar drag and split-pane drag all stay inert. Any app that relies on clicks, hover or wheel must start with
+1. **The mouse is on by default; hover is opt-in.** Since v0.26, `RunConfig::default()` leaves `mouse_mode: None`, which resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh (`src/runtime/config.rs`). Plain `slt::run(...)` therefore delivers `Response.clicked`, `right_clicked`, `double_clicked`, `scroll_delta`, scrollbar and split-pane drags, and the built-in text selection. Pointer moves without a button held are only reported in `MouseMode::Hover`, so any app that relies on `hovered`, `group_hover_*`, `on_hover` or `ui.tooltip` must start with
    ```rust
-   slt::run_with(slt::RunConfig::default().mouse(true), |ui| { /* ... */ })
+   slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| { /* ... */ })
    ```
-   Keyboard-only apps can keep `slt::run`. Headless `TestBackend` tests inject mouse events directly and do not need this flag.
+   `MouseMode::Off` (or `.mouse(false)`) disables the mouse and keeps the terminal's native selection; `.mouse(true)` is a shorthand for `Hover`. Headless `TestBackend` tests inject mouse events directly regardless of the mode.
 2. **Check global shortcuts after rendering focused text inputs.** `ui.key('q')` sees every unconsumed key press. If you call it *before* `ui.text_input(...)` / `ui.textarea(...)` renders, typing `q` into the input also fires the shortcut. Render the inputs first (they consume the keys they handle), then check `ui.key(...)`, or gate the shortcut on the input not being focused.
    ```rust
    let r = ui.text_input(&mut search);       // consumes typed characters
@@ -273,7 +273,7 @@ Red flags that mean STOP: "Probably fine", "Just a docs change", "CI will catch 
 ## Common pitfalls (AI-generated SLT code)
 
 - **Inventing method names.** Always grep `src/context/` and `src/widgets/` first.
-- **Expecting clicks without `.mouse(true)`.** Mouse capture is off by default; see "Two runtime rules" above.
+- **Expecting hover without `MouseMode::Hover`.** Clicks, wheel and drags work by default, but plain pointer moves are not reported; see "Two runtime rules" above. Do not add `.mouse(true)` just to "turn the mouse on".
 - **Shortcut checked before a text input renders.** Typing `q` quits the app. Render inputs first, then check `ui.key(...)`.
 - **Assuming `ui.modal` traps focus.** Plain `modal()` keeps legacy `tab_trap: false`. Use `ui.modal_with(slt::context::ModalOptions { tab_trap: true }, |ui| ...)` (also `ModalOptions::default()`).
 - **Calling `ui.interaction(rect)` or `available_key_presses()`.** `interaction()` takes no arguments; `available_key_presses` is crate-private. Use `key_presses_when(focused)` + `consume_event(i)`.

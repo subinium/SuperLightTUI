@@ -71,7 +71,7 @@ overlays entirely.
 
 Check:
 
-- is mouse capture on at all? (see failure mode 6)
+- does the mouse mode report it? Hover needs `MouseMode::Hover` (see failure mode 6)
 - was the widget laid out in the previous frame?
 - are you reading a child response when the container owns the interaction area?
 - are you conditionally rendering the widget in a way that changes call order?
@@ -121,18 +121,26 @@ Verify:
 
 ### 6. Clicks, hover, or scrolling do nothing
 
-Mouse capture is opt-in. `slt::run(...)` uses `RunConfig::default()`, where
-`mouse` is `false`, so the terminal never sends mouse events. Start the app with:
+The mouse is on by default: `slt::run(...)` uses `RunConfig::default()`, which
+resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh. So:
+
+- **Hover and tooltips do nothing**: pointer moves without a button held are
+  only reported in `MouseMode::Hover`. Start the app with:
 
 ```rust
-slt::run_with(slt::RunConfig::default().mouse(true), |ui| {
+slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| {
     // ...
 })
 ```
 
-Buttons still work from the keyboard without it (Tab to focus, Enter / Space to
-activate), which can make the missing flag easy to overlook. `TestBackend`
-tests inject mouse events directly, so they pass either way. Run
+- **Drags do nothing over SSH**: the SSH default is `Click`; set
+  `.mouse_mode(slt::MouseMode::Drag)` explicitly.
+- **Nothing works**: look for `.mouse(false)` or `MouseMode::Off` in your
+  config. `config.effective_mouse_mode()` returns the resolved mode.
+
+Buttons still work from the keyboard (Tab to focus, Enter / Space to
+activate), which can make a wrong mode easy to overlook. `TestBackend`
+tests inject mouse events directly, so they pass in any mode. Run
 `cargo run --example mouse_probe` to check whether your terminal delivers mouse
 events at all.
 

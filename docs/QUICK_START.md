@@ -120,18 +120,19 @@ text input does not consume (such as Esc and Ctrl+Q) still reach a check placed
 after it. Ctrl+C quits by default without any check
 (`RunConfig::handle_ctrl_c(false)` hands it to your closure instead).
 
-## 7. Turn on the mouse when you need clicks, hover, or scrolling
+## 7. The mouse is on by default; hover is opt-in
 
-Mouse capture is opt-in. `slt::run` uses `RunConfig::default()`, which has
-`mouse: false`, so clicks, hover, and the scroll wheel never reach SLT:
+`slt::run` uses `RunConfig::default()`, which turns the mouse on: clicks, the
+scroll wheel, drag handles, and text selection reach SLT with no setup (over
+SSH the default drops to clicks and the wheel only):
 
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut saved = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         if ui.button("Save").clicked {
             saved += 1;
         }
@@ -140,10 +141,26 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Without `.mouse(true)` the app still works from the keyboard: Tab moves focus
-to the button and Enter or Space activates it (`clicked` becomes `true`).
-Leaving mouse capture off keeps the terminal's native text selection working,
-which is why it is not the default.
+The app also works from the keyboard: Tab moves focus to the button and Enter
+or Space activates it (`clicked` becomes `true`).
+
+Hover styling (`hovered`, `group_hover_bg`) and tooltips need every pointer
+move, which is heavier, so opt in:
+
+```rust
+use slt::{Context, MouseMode, RunConfig};
+
+fn main() -> std::io::Result<()> {
+    slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui: &mut Context| {
+        let _ = ui.button("Deploy").on_hover(ui, "Push to staging");
+    })
+}
+```
+
+While the mouse is captured, SLT's own selection replaces the terminal's: drag
+across text and it is copied on release. Most terminals still select natively
+with Shift-drag, and `RunConfig::default().mouse_mode(MouseMode::Off)` turns
+the mouse off entirely. See [INTERACTION.md](INTERACTION.md) for every mode.
 
 ## 8. Know the two main return patterns
 

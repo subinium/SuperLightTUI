@@ -67,7 +67,7 @@ Rules you will use every file:
 
 | Call | Purpose |
 |---|---|
-| `slt::run(|ui| { ... })` | Full-screen alternate-screen runtime. Default 60 FPS. Needs `crossterm` (default feature). Uses `RunConfig::default()`, so **mouse capture is off** — use `run_with(RunConfig::default().mouse(true), f)` for clicks, hover, and wheel. |
+| `slt::run(|ui| { ... })` | Full-screen alternate-screen runtime. Default 60 FPS. Needs `crossterm` (default feature). Uses `RunConfig::default()`, so the **mouse is on** in `MouseMode::Drag` (clicks, wheel, drags, text selection; `MouseMode::Click` over SSH/mosh). Hover styling and tooltips need `run_with(RunConfig::default().mouse_mode(MouseMode::Hover), f)`. |
 | `slt::run_with(config, |ui| { ... })` | Same plus a `RunConfig`. |
 | `slt::run_inline(height, |ui| { ... })` | Render a fixed `height` below the current cursor. No alt-screen. |
 | `slt::run_inline_with(height, config, f)` | Inline + config. |
@@ -83,7 +83,7 @@ Rules you will use every file:
 ```rust
 slt::RunConfig::default()
     .tick_rate(Duration::from_millis(16))
-    .mouse(true)
+    .mouse_mode(MouseMode::Hover) // default None = Drag locally, Click over SSH
     .kitty_keyboard(true)
     .theme(Theme::dracula())
     .color_depth(ColorDepth::TrueColor)
@@ -116,6 +116,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `Backend` | Trait for custom render targets. |
 | `AppState` | Opaque session state passed to `frame()`. |
 | `RunConfig` | Per-run configuration. |
+| `MouseMode` | `Off` / `Click` / `Drag` / `Hover` mouse reporting level for `RunConfig::mouse_mode`. Default (`None`) resolves to `Drag` locally, `Click` over SSH/mosh; `RunConfig::effective_mouse_mode()` returns the resolved mode. `RunConfig::mouse(true)` = `Hover`, `mouse(false)` = `Off`. |
 | `TestBackend` | Headless backend for tests: `TestBackend::new(w, h).render(|ui| ...)`, then `assert_contains`/`line`/`to_string_trimmed`. |
 | `EventBuilder` | `EventBuilder::new().key('a').key_code(KeyCode::Enter).click(5, 2).mouse_up(x, y).drag(x, y).key_release('c').focus_gained().focus_lost().scroll_up(x, y).paste("txt").resize(w, h).build()`. |
 
@@ -1101,7 +1102,7 @@ tb.render_with_events(
 16. **`ui.screen` isolates hooks.** `use_state` inside one `screen(...)` does not share state with another. Use plain app state if you need cross-screen values.
 17. **Modal traps focus.** Tab and Shift+Tab cycle only within the current modal; outside widgets are not reachable while the modal is open.
 18. **Breakpoint method naming.** `xs_w`, `sm_w`, `md_w`, `lg_w`, `xl_w`, `w_at(bp, v)` — the breakpoint is a **prefix** on the base name (not `w_xs`).
-19. **Mouse capture is opt-in.** `RunConfig::default().mouse` is `false`; without `.mouse(true)` no click, hover, or wheel event reaches the app. Focused buttons still activate with Enter / Space.
+19. **Hover needs `MouseMode::Hover`.** The mouse is on by default (`MouseMode::Drag`, or `Click` over SSH/mosh), so clicks, wheel, and drags work with plain `slt::run`, but pointer moves without a button held are only reported in `MouseMode::Hover`: `hovered`, group hover, and tooltips stay inert until you opt in. Over SSH, drags need an explicit `Drag`. Native terminal selection: Shift-drag in most terminals, or `MouseMode::Off`.
 20. **Check global shortcuts after widgets.** `ui.key('q')` sees any event not consumed *so far*; called before a focused `text_input`, typing `q` both inserts it and fires the shortcut. Put global shortcut checks at the end of the closure.
 
 ---
@@ -1178,7 +1179,7 @@ TextInputState, TextareaState, ToastLevel, ToastMessage, ToastState,
 ToolApprovalState, TreeNode, TreeState, Trend
 
 // Runtime entry points (most need `crossterm` feature)
-Backend, AppState, RunConfig,
+Backend, AppState, RunConfig, MouseMode,
 run, run_with, run_inline, run_inline_with,
 run_static, run_static_with,
 frame, frame_owned,
@@ -1298,7 +1299,7 @@ async fn main() -> std::io::Result<()> {
 - Switch theme: `ui.set_theme(Theme::dracula())`.
 - Set window title: `RunConfig::default().title("My App")`.
 - Change scroll speed: `RunConfig::default().scroll_speed(3)` or `ui.set_scroll_speed(3)`.
-- Enable mouse: `RunConfig::default().mouse(true)`.
+- Mouse mode: on by default; `RunConfig::default().mouse_mode(MouseMode::Hover)` for hover/tooltips, `MouseMode::Off` to disable.
 - Ask the terminal for a color scheme: `slt::detect_color_scheme()` (returns `ColorScheme`).
 - Query clipboard content: `slt::read_clipboard()` (requires `crossterm`).
 - Render to a test buffer: `TestBackend::new(w,h).render(|ui| {...}); tb.assert_contains("x")`.

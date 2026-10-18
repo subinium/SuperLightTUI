@@ -19,12 +19,12 @@ variables, or inside it in hooks (`ui.use_state`), which play the role of
 
 <!-- slt-check: {"name":"web_counter","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut count = 0; // state lives outside the render function
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         // This whole closure is your component's render body.
         ui.text(format!("count: {count}"));
         if ui.button("+1").clicked {
@@ -166,9 +166,12 @@ helper.
 
 ## Events (DOM to SLT)
 
-Mouse input is **off by default**. Enable it with
-`RunConfig::default().mouse(true)`. Keyboard focus (Tab / Shift+Tab) and
-activation (Enter / Space) work either way.
+Mouse input is **on by default**: clicks, the wheel, and drags reach your
+closure with plain `slt::run` (over SSH the default drops to clicks and the
+wheel only). `:hover`, `onMouseEnter`, and tooltips need every pointer move,
+so opt in with `RunConfig::default().mouse_mode(MouseMode::Hover)`; see
+[INTERACTION.md](INTERACTION.md#the-mouse-is-on-by-default). Keyboard focus
+(Tab / Shift+Tab) and activation (Enter / Space) work either way.
 
 | DOM | SLT |
 |-----|-----|
@@ -181,8 +184,8 @@ activation (Enter / Space) work either way.
 | `onAuxClick` (middle button) | `response.middle_clicked` |
 | `event.shiftKey` / `ctrlKey` / `altKey` on a click | `response.modifiers.contains(KeyModifiers::SHIFT)` |
 | `onContextMenu` | `response.right_clicked` (no menu widget; render your own overlay) |
-| `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below) |
-| `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")` |
+| `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below); needs `MouseMode::Hover` |
+| `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")`; needs `MouseMode::Hover` |
 | `onChange` | `response.changed` |
 | `onSubmit` / Enter in an input | `response.submitted` |
 | `onFocus` / `onBlur` | `response.gained_focus` / `response.lost_focus`; `response.focused` while focused |
@@ -318,12 +321,14 @@ Be honest with yourself about these before porting a design:
 - **No element-anchored popovers or context menus**, apart from tooltips.
 - **No cursor-shape API** (`cursor: pointer`). The terminal owns the pointer.
 - **No sub-cell positioning, fonts, or font sizes.** One character per cell.
-- **No scroll anchoring or stick-to-bottom.** Collapsing content above the
-  viewport shifts what is visible.
-- **No free text selection while mouse capture is on**, the way a browser page
-  has it. SLT draws its own selection overlay and copies on release; most
-  terminals also let you hold a modifier (often Shift, Option on macOS) to
-  bypass capture. With the mouse off, native terminal selection works as usual.
+- **No native text selection while the mouse is captured** (the default),
+  the way a browser page has it. SLT draws its own selection overlay and
+  copies on release; widget drags never select, the way `user-select: none`
+  keeps a slider drag from selecting. `RunConfig::text_selection(false)` turns
+  the overlay off app-wide. Most terminals bypass mouse capture while Shift is
+  held (Shift-drag selects natively); the modifier differs on some macOS
+  terminals. `RunConfig::default().mouse_mode(MouseMode::Off)` restores native
+  selection entirely.
 - **No guaranteed capabilities.** Colors, images, hyperlinks, clipboard, and
   extra key events depend on the user's terminal and multiplexer. Design for a
   graceful fallback; see [TERMINAL_COMPATIBILITY.md](TERMINAL_COMPATIBILITY.md).
@@ -335,7 +340,7 @@ expands it, and the wheel scrolls the list.
 
 <!-- slt-check: {"name":"web_card_list","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Border, Color, Context, KeyCode, RunConfig, ScrollState, Style};
+use slt::{Border, Color, Context, KeyCode, MouseMode, RunConfig, ScrollState, Style};
 
 struct Card {
     title: String,
@@ -380,8 +385,10 @@ fn main() -> std::io::Result<()> {
         .collect();
     let mut scroll = ScrollState::new();
 
-    // Mouse capture is opt-in: without it there is no hover, click, or wheel.
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    // Click and wheel work by default; hover highlighting needs every
+    // pointer move, which is MouseMode::Hover.
+    let config = RunConfig::default().mouse_mode(MouseMode::Hover);
+    slt::run_with(config, |ui: &mut Context| {
         card_list(ui, &mut cards, &mut scroll);
 
         // Global shortcuts after the widgets.
@@ -396,8 +403,8 @@ What to notice:
 
 - `ui.group(name)` is a container that also tracks hover. Its own
   `group_hover_*` styles, and those of containers directly inside it, switch on
-  while the pointer is over the group. Reusing the same name for every card
-  would highlight them all together.
+  while the pointer is over the group (hence `MouseMode::Hover` above).
+  Reusing the same name for every card would highlight them all together.
 - The card container's `Response` is clickable. Clicks register on mouse
   press (or on release with `RunConfig::click_on_release(true)`), and
   hit-testing uses last frame's layout, so a card that just expanded has its

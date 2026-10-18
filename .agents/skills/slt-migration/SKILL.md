@@ -21,7 +21,7 @@ If starting fresh (no existing TUI), use the `slt` skill instead.
 
 ## Two rules that break naive ports
 
-1. **Mouse capture is opt-in.** ratatui apps enable it with `EnableMouseCapture`; in SLT `slt::run` leaves it off (`RunConfig::default()` has `mouse: false`). If the original app used the mouse, port to `slt::run_with(RunConfig::default().mouse(true), |ui| ...)`, or every `Response.clicked` / `hovered` / `scroll_delta` stays `false`.
+1. **The mouse is on by default; hover is opt-in.** ratatui apps enable capture with `EnableMouseCapture` (all motion). Since v0.26, `slt::run` turns the mouse on by itself (`MouseMode::Drag` locally, `MouseMode::Click` over SSH/mosh), so `Response.clicked` / `scroll_delta` and drags work without configuration. If the original app reacted to plain pointer moves (hover), port to `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| ...)`, or `hovered` only changes on clicks and drags. If the original never enabled capture and users rely on native terminal selection, use `MouseMode::Off`.
 2. **Check global shortcuts after rendering text inputs.** A ratatui `match key.code { Char('q') => quit, .. }` dispatched before the focused input sees the key. In SLT, render `text_input` / `textarea` first (they consume the keys they handle), then check `ui.key('q')`, or gate on the input's `Response.focused`.
 
 ## v0.20 removed APIs (do NOT migrate to these)
@@ -82,8 +82,9 @@ SLT:
 ```rust
 fn main() -> std::io::Result<()> {
     let mut app = App::default();
-    // ratatui enabled mouse capture above; SLT needs it explicitly.
-    slt::run_with(slt::RunConfig::default().mouse(true), |ui| {
+    // Clicks, wheel and drags are on by default. ratatui's EnableMouseCapture
+    // also reported every pointer move; MouseMode::Hover is the equivalent.
+    slt::run_with(slt::RunConfig::default().mouse_mode(slt::MouseMode::Hover), |ui| {
         if ui.key('q') || ui.key_code(KeyCode::Esc) { ui.quit(); }
         render(ui, &mut app);
     })
@@ -91,7 +92,7 @@ fn main() -> std::io::Result<()> {
 ```
 
 `slt::run` enters alternate screen, enables raw mode, installs a panic hook restoring terminal state, and tears down on exit. Variants:
-- `slt::run_with(RunConfig::default().mouse(true).theme(Theme::dark()), \|ui\| ...)` — mouse capture, custom theme
+- `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover).theme(Theme::dark()), \|ui\| ...)` — hover reporting, custom theme
 - `slt::run_inline(rows, \|ui\| ...)` — render below the prompt, no alt screen
 - `slt::run_static(\|ui\| ...)` — append-only scrollback (use with `ui.static_log(...)`)
 - `slt::run_async::<Message>(\|ui, messages\| ...)` — tokio integration (`async` feature)
@@ -259,7 +260,7 @@ Reserve explicit `&mut` parameters for **writes** (`&mut MyDocState`).
 | `KeyCode::Char('q')` match | `if ui.key('q') { ... }` |
 | `KeyCode::Esc` match | `if ui.key_code(KeyCode::Esc) { ... }` |
 | `KeyModifiers::CONTROL + Char('c')` | `if ui.key_mod('c', KeyModifiers::CONTROL) { ... }` (Ctrl-C is also auto-handled by `slt::run`) |
-| `EnableMouseCapture` | `slt::run_with(RunConfig::default().mouse(true), ...)` — required for every mouse row below |
+| `EnableMouseCapture` | Nothing for clicks, wheel and drags (on by default); `RunConfig::default().mouse_mode(MouseMode::Hover)` for `MouseEventKind::Moved` / hover |
 | `MouseEventKind::Down(MouseButton::Left)` | `if let Some((x, y)) = ui.mouse_down() { ... }` or `Response.clicked` |
 | `MouseEventKind::Down(MouseButton::Right)` | `Response.right_clicked` (v0.20) |
 | `MouseEventKind::ScrollUp` | `if ui.scroll_up() { ... }` |
@@ -382,7 +383,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
 - **"My panic hook restores raw mode."** — drop it. `slt::run` installs one on first call.
 - **"I'm threading `&App` through every render fn."** — replace read-only sharing with `ui.provide(ctx, \|ui\| ...)` + `ui.use_context::<AppCtx>()`. Keep `&mut` for writes.
 - **"My ratatui Gauge has no label."** — use `ui.gauge(0.75)` (no label) or `ui.progress(0.75)` (returns `Response`).
-- **"Clicks and scroll do nothing."** — mouse capture is opt-in: `slt::run_with(RunConfig::default().mouse(true), ...)`.
+- **"Hover does nothing."** — the default mouse mode reports clicks, wheel and drags only: `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. If clicks do nothing either, look for `.mouse(false)` / `MouseMode::Off`.
 - **"Typing `q` in a search box quits."** — the shortcut was checked before the input rendered. Move `ui.key('q')` after `ui.text_input(...)` or gate it on `!response.focused`.
 
 ## Migration workflow
@@ -394,7 +395,7 @@ textual is class-based with reactive state and CSS. SLT is functional with plain
    ```
    Map each to an SLT method via the tables above.
 
-2. **Convert the run loop.** Replace `Terminal::new` setup + draw loop + `disable_raw_mode` teardown with one of `slt::run`, `slt::run_with`, `slt::run_inline`, or `slt::run_async`. If the original enabled mouse capture, use `run_with(RunConfig::default().mouse(true), ...)`.
+2. **Convert the run loop.** Replace `Terminal::new` setup + draw loop + `disable_raw_mode` teardown with one of `slt::run`, `slt::run_with`, `slt::run_inline`, or `slt::run_async`. If the original relied on hover (`MouseEventKind::Moved`), use `run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`; clicks and wheel need nothing.
 
 3. **Move state out of the draw closure.** Most ratatui apps already do this. Keep the same shape — your `App` struct now feeds into one SLT closure.
 

@@ -8,7 +8,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 | Feature | Default? | Purpose | APIs / capabilities enabled |
 |---|---|---|---|
-| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse capture is off unless `RunConfig::default().mouse(true)` |
+| `crossterm` | yes | Terminal backend | `slt::run`, `slt::run_with`, `slt::run_inline`, `slt::run_static`, `detect_color_scheme`, `read_clipboard`. Mouse on by default (`MouseMode::Drag`, `Click` over SSH/mosh); hover needs `RunConfig::default().mouse_mode(MouseMode::Hover)` |
 | `bidi` | yes | UAX #9 text reordering | correct RTL and mixed-direction buffer rendering |
 | `async` | no | Tokio integration | `slt::run_async` (channel-based message pump) |
 | `serde` | no | Serialize/Deserialize | derives on `Style`, `Color`, `Theme`, layout types |
@@ -22,7 +22,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 
 ## Runtime defaults that change behavior
 
-- **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
+- **Mouse is on by default, hover is opt-in.** `RunConfig::default()` resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh, so `clicked` / `right_clicked` / `double_clicked` / `scroll_delta` and (locally) scrollbar and split-pane drags fire with plain `slt::run`. `hovered`, group hover and tooltips need `slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`. `MouseMode::Off` keeps native terminal selection.
 - **Global shortcuts go after inputs.** Render `text_input` / `textarea` before checking `ui.key('q')`, or gate on the input's `Response.focused`; otherwise typed characters also trigger shortcuts.
 - **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
 - **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.

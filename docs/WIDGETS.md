@@ -13,10 +13,11 @@ For composition advice, see [PATTERNS.md](PATTERNS.md).
 For animation, see [ANIMATION.md](ANIMATION.md) (`animate_bool` / `animate_value` quick transitions and the `anim` module structs).
 
 **Interaction:** focus, keyboard routing, mouse, and how `Response` signals are
-produced are covered in [INTERACTION.md](INTERACTION.md). Mouse capture is
-opt-in — without `slt::run_with(RunConfig::default().mouse(true), ...)`,
-`clicked` only fires from the keyboard (focus + Enter / Space) and `hovered`
-never fires.
+produced are covered in [INTERACTION.md](INTERACTION.md). The mouse is on by
+default, so `clicked` fires from a mouse click as well as the keyboard (focus +
+Enter / Space). Pointer hover is only reported with
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), ...)`; without
+it `hovered` changes only on clicks and drags.
 
 ## If you only learn a small core first
 
@@ -74,7 +75,7 @@ let _ = ui
 ```
 
 Related: `on_changed(ui, f)`, `on_hover_ui(ui, |ui| ...)` for a custom tooltip
-body. Hover-based callbacks need mouse capture enabled.
+body. Hover-based callbacks need `MouseMode::Hover`.
 
 ---
 

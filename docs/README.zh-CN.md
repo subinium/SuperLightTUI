@@ -44,17 +44,16 @@ fn main() -> std::io::Result<()> {
 5 行代码就能启动。没有 `App` trait，没有 `Model`/`Update`/`View`，也不需要手写事件循环。
 默认情况下 Ctrl+C 会干净地退出循环（可用 `RunConfig::handle_ctrl_c(false)` 关闭）。
 
-鼠标捕获需要**手动开启（opt-in）**。直接使用 `slt::run` 时以键盘操作为主：Tab/Shift+Tab 切换焦点，
-Enter/Space 触发当前聚焦的按钮。如果需要点击、悬停、滚轮滚动和拖拽，
-请用 `RunConfig::default().mouse(true)` 启动循环：
+鼠标**默认开启**。直接使用 `slt::run` 即可收到点击、滚轮滚动和拖拽（分割手柄、滚动条、文本选择）；
+通过 SSH 时只保留点击和滚轮。Tab/Shift+Tab 切换焦点、Enter/Space 触发聚焦按钮始终可用：
 
 ```rust
-use slt::{Context, RunConfig};
+use slt::Context;
 
 fn main() -> std::io::Result<()> {
     let mut clicks = 0;
 
-    slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
+    slt::run(|ui: &mut Context| {
         ui.text(format!("clicked {clicks} times")).bold();
         if ui.button("Click me").clicked {
             clicks += 1;
@@ -62,6 +61,10 @@ fn main() -> std::io::Result<()> {
     })
 }
 ```
+
+悬停样式和 tooltip 需要每一次指针移动，因此需单独开启：
+`slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui| { ... })`。
+鼠标被捕获时，大多数终端仍可用 Shift+拖拽进行原生文本选择；`MouseMode::Off` 可完全关闭鼠标。
 
 MSRV：Rust 1.88。默认特性启用 `crossterm` 后端和 `bidi`。
 
@@ -107,7 +110,7 @@ ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
 ```
 
 这就是核心 mental model。剩下的是深度，不是第二套框架。
-按钮获得焦点时按 Enter/Space 会触发 `clicked`；用 `RunConfig::default().mouse(true)` 启动时，鼠标点击也会触发。
+按钮获得焦点时按 Enter/Space 会触发 `clicked`；鼠标点击也会触发（鼠标默认开启）。
 
 ## 一个真实的应用
 
@@ -147,13 +150,13 @@ fn main() -> std::io::Result<()> {
 
 | 模式 | API | 适用场景 |
 |------|-----|----------|
-| 全屏 | `slt::run` / `slt::run_with` | 使用 alternate screen 的标准 TUI 应用。只有向 `run_with` 传入 `RunConfig::mouse(true)` 时才开启鼠标捕获。 |
+| 全屏 | `slt::run` / `slt::run_with` | 使用 alternate screen 的标准 TUI 应用。鼠标点击、滚轮和拖拽默认开启；悬停需要 `RunConfig::mouse_mode(MouseMode::Hover)`。 |
 | Inline | `slt::run_inline` / `slt::run_inline_with` | 在提示符下方渲染固定高度的组件，不使用 alternate screen。 |
 | Static + inline | `slt::run_static` | 日志行流入 scrollback，下方的 inline UI 保持实时更新。 |
 | 异步消息 | `slt::run_async` *（特性：`async`）* | 后台任务通过可唤醒的 `AsyncSender` 发送消息；保留返回的 `AsyncRunHandle` 以便 join 或取消循环。 |
 | 自定义后端 | `slt::frame` + `Backend` + `AppState` | 自己驱动渲染：测试、嵌入 GUI、WASM、快照测试工具。 |
 
-`RunConfig` 可在所有模式下调整鼠标捕获（默认：关闭）、kitty keyboard、色深、最大 FPS、滚动速度、主题、标题以及 Ctrl+C 处理。
+`RunConfig` 可在所有模式下调整鼠标模式（默认：本地为 `Drag`，SSH 下为 `Click`；按需设为 `Hover` 或 `Off`）、kitty keyboard、色深、最大 FPS、滚动速度、主题、标题以及 Ctrl+C 处理。
 
 ## 焦点与滚动
 
@@ -188,7 +191,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 
 - **公开语法足够小**。很多界面只需要普通 Rust 状态、`row()` / `col()` / `container()`、方法链和 `Response`。
 - **更少框架仪式感**。很多应用一开始并不需要 app trait、retained tree 或 message enum。
-- **组件够用，后端也认真**。常用组件会自动接好 focus、hover、click、scroll（鼠标事件需设置 `RunConfig::mouse(true)`），而 runtime 通过 `Backend`、`AppState` 和 `frame()` 保持一条保守的底层路径。
+- **组件够用，后端也认真**。常用组件会自动接好 focus、hover、click、scroll（点击、滚轮、拖拽默认可用，悬停需 `MouseMode::Hover`），而 runtime 通过 `Backend`、`AppState` 和 `frame()` 保持一条保守的底层路径。
 - **内部实现同样保守**。SLT 保持公开表面紧凑，但内部用 shared frame kernel、明确的 backend contract test、零 `unsafe`、feature-gated runtime path，以及覆盖 `all-features`、`no-default-features`、WASM、clippy、examples、cargo-hack、semver 和 deny 的验证来锁定质量。
 
 对 Rust 用户来说，这通常意味着比 retained-mode TUI 框架更少的启动样板代码。
@@ -222,7 +225,7 @@ graph LR
 - **零仪式。** Immediate-mode 意味着不需要 `App` trait、`Model`/`Message`/`Update`/`View`。你的闭包就是整个 UI。状态是普通 Rust 变量，控制流就是 `if`/`for`。
 - **布局不可见。** `ui.col(|ui| { ... })` 只是记录一条"打开列"的命令。引擎负责构建树和运行 flexbox — 你永远不会看到 `LayoutNode`。
 - **性能是自动的。** 双缓冲在帧间对比每个单元格，只输出变化的 ANSI 属性。你在概念上每帧全部重绘，引擎让它变快。无需手动 dirty tracking。
-- **交互自动接线。** `ui.button("Save")` 免费提供键盘焦点和 Enter/Space 触发；开启 `RunConfig::mouse(true)` 后还会报告 hover 和 click。无需自己编写命中测试代码。
+- **交互自动接线。** `ui.button("Save")` 免费提供键盘焦点和 Enter/Space 触发；鼠标 click 开箱即用，`MouseMode::Hover` 下还会报告 hover。无需自己编写命中测试代码。
 - **同步反馈。** 交互使用前一帧的布局位置（60 FPS 下不可察觉）。无回调、无 async 布局查询 — 代码保持线性。
 
 完整的八阶段生命周期请见[架构指南]。

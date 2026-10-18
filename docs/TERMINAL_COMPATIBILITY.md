@@ -26,8 +26,8 @@ version, and the output of the diagnostics below is very welcome.
 | 24-bit color | Terminal truecolor support | `COLORTERM=truecolor` or `24bit` in the environment, or `RunConfig::color_depth` | Colors are downsampled to 256 or 16 colors |
 | 256 colors | `TERM` containing `256color` | Environment only | Downsampled to the 16 ANSI colors |
 | No color | `NO_COLOR` set to any non-empty value | Environment (wins over everything else) | n/a: no color codes are emitted |
-| Mouse (click, hover, wheel, drag) | SGR mouse reporting | Opt-in: `RunConfig::default().mouse(true)`. Enables all-motion tracking | Keyboard focus (Tab) and activation (Enter/Space) still work |
-| Text selection + copy | Mouse on, OSC 52 | Built in while the mouse is on; copies on release. Widget drags (split handles, scrollbar thumbs) never select. `RunConfig::text_selection(false)` turns it off | Native terminal selection (mouse off, or the terminal's bypass modifier) |
+| Mouse (click, wheel, drag, hover) | SGR mouse reporting (`?1006`) | On by default: `MouseMode::Drag` locally (`?1000h ?1002h ?1006h`), `MouseMode::Click` over SSH/mosh (`?1000h ?1006h`). Hover is opt-in with `RunConfig::mouse_mode(MouseMode::Hover)` (`?1000h ?1003h ?1006h`); `MouseMode::Off` disables it. An explicit mode is never overridden | Keyboard focus (Tab) and activation (Enter/Space) still work |
+| Text selection + copy | `MouseMode::Drag` or `Hover`, OSC 52 | Built in while the mouse is captured; copies on release. Widget drags (split handles, scrollbar thumbs) never select. `RunConfig::text_selection(false)` turns it off | Native terminal selection (`MouseMode::Off`, or the terminal's bypass modifier, usually Shift) |
 | Clipboard write | OSC 52 | `ui.copy_to_clipboard(..)` always emits it | Silently ignored by the terminal |
 | Hyperlinks | OSC 8 | `ui.link(..)` always emits it, and also opens the URL with the local system opener on click or Enter | Plain styled text; the local opener still runs |
 | Bracketed paste | Bracketed paste mode | Always requested | Pasted text arrives as individual key presses |
@@ -105,8 +105,12 @@ Practical consequences:
   only `TERM=xterm-256color` (256 colors). Either add `SendEnv COLORTERM` on
   the client and `AcceptEnv COLORTERM` on the server, export
   `COLORTERM=truecolor` remotely, or set `RunConfig::color_depth`.
-- With the mouse on, every pointer move is sent over the connection. On slow
-  links, consider leaving the mouse off.
+- The default mouse mode falls back to `MouseMode::Click` when `SSH_CONNECTION`,
+  `SSH_TTY` or `MOSH_IP` is set: presses, releases and the wheel only, so no
+  motion events cross the link. Drag gestures (split handles, scrollbar
+  thumbs, built-in selection) need an explicit
+  `RunConfig::mouse_mode(MouseMode::Drag)`. `MouseMode::Hover` sends every
+  pointer move over the connection; avoid it on slow links.
 - OSC 52 copy goes to the **local** terminal's clipboard, which is usually
   what you want over SSH (if the terminal allows OSC 52).
 - `ui.link(..)` activation runs the system opener on the **remote** host. Over
@@ -164,8 +168,11 @@ fn main() -> std::io::Result<()> {
   lands on 16 colors. Set `RunConfig::color_depth(ColorDepth::TrueColor)` (it
   supports 24-bit color) or export `COLORTERM=truecolor`.
 - Ctrl+Z suspend handling is Unix-only; on Windows it is a normal key event.
-- Mouse and focus work through crossterm's console input. They are
-  **expected** to work but are not verified beyond `cargo test` in CI.
+- Mouse and focus work through crossterm's console input. The console API
+  cannot be asked for a reporting level, so SLT captures the mouse and drops
+  events above the configured `MouseMode` (for example, plain moves outside
+  `Hover`). They are **expected** to work but are not verified beyond
+  `cargo test` in CI.
 
 ## Troubleshooting
 
@@ -182,11 +189,14 @@ For any other key, log every event SLT receives:
 
 <!-- slt-check: {"name":"tc_event_log","features":["crossterm"],"context":"module"} -->
 ```rust
-use slt::{Context, KeyCode, RunConfig};
+use slt::{Context, KeyCode, MouseMode, RunConfig};
 
 fn main() -> std::io::Result<()> {
     let mut log: Vec<String> = Vec::new();
-    let config = RunConfig::default().mouse(true).kitty_keyboard(true);
+    // Hover mode logs every pointer move, not only presses and drags.
+    let config = RunConfig::default()
+        .mouse_mode(MouseMode::Hover)
+        .kitty_keyboard(true);
 
     slt::run_with(config, |ui: &mut Context| {
         let batch: Vec<String> = ui.raw_events().map(|e| format!("{e:?}")).collect();
@@ -222,8 +232,11 @@ ui.text(format!(
 
 ### The mouse does nothing
 
-1. Did you enable it? `RunConfig::default().mouse(true)`. It is off by
-   default.
+1. Is it turned off? The mouse is on by default (`MouseMode::Drag` locally,
+   `MouseMode::Click` over SSH/mosh), so check for `.mouse(false)` or
+   `.mouse_mode(MouseMode::Off)`. `config.effective_mouse_mode()` shows the
+   resolved mode. Hover styling and tooltips need `MouseMode::Hover`; drags
+   need `Drag` or `Hover`, which is not the default over SSH.
 2. Run `mouse_probe`. If it prints no mouse events, the terminal or
    multiplexer is not reporting them: check multiplexer mouse mode
    (`set -g mouse on` in tmux). If `mouse_probe` works but your app does not,
@@ -281,9 +294,13 @@ ui.text(format!(
 1. The terminal must allow OSC 52. Some disable it by default or only allow
    writes (check the terminal's clipboard or security settings).
 2. Inside tmux, set `set -g set-clipboard on`.
-3. With the mouse on, native selection is replaced by SLT's selection
-   overlay. Hold the terminal's bypass modifier (often Shift, Option on macOS)
-   to select natively, or turn the mouse off.
+3. While the mouse is captured (the default), native selection is replaced
+   by SLT's selection overlay, which copies through OSC 52 on release. Most
+   terminals bypass mouse capture while Shift is held (Shift-drag); the
+   modifier differs on some macOS terminals, so check your terminal's
+   settings. `RunConfig::mouse_mode(MouseMode::Off)` (or `.mouse(false)`)
+   keeps native selection entirely, and `RunConfig::text_selection(false)`
+   turns off only SLT's overlay.
 
 ## Related docs
 

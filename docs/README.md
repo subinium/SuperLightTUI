@@ -15,7 +15,7 @@ Read these in order. Each guide assumes the ones before it.
 2. [WEB_DEVELOPERS.md](WEB_DEVELOPERS.md) - HTML/CSS, React and DOM concepts mapped to SLT
 3. [WIDGETS.md](WIDGETS.md) - categorized widget map
 4. [PATTERNS.md](PATTERNS.md) - common composition patterns
-5. [INTERACTION.md](INTERACTION.md) - mouse (opt-in), keyboard, focus, scrolling and shortcut ordering
+5. [INTERACTION.md](INTERACTION.md) - mouse (on by default, `MouseMode`), keyboard, focus, scrolling and shortcut ordering
 6. [STATE_APIS.md](STATE_APIS.md) - public state fields, accessors, and mutation APIs
 7. [THEMING.md](THEMING.md) - theme struct, presets, ThemeBuilder, custom themes
 8. [ANIMATION.md](ANIMATION.md) - tween, spring, keyframes, sequence, stagger
