@@ -155,6 +155,14 @@ pub struct RunConfig {
     /// drag or selection model; nothing is highlighted or copied then. The
     /// terminal's native selection is still reachable with the emulator's
     /// bypass modifier (usually Shift-drag). Since 0.26.0.
+    ///
+    /// Any rendered text is selectable, including text outside containers. A
+    /// selection that starts inside a [`scrollable`](crate::Context::scrollable)
+    /// stays attached to its text while the region scrolls, and holding the
+    /// pointer on or beyond the region's top or bottom row scrolls it one step
+    /// per frame. Only the part of the selection that is visible when the
+    /// button is released is copied; rows scrolled out of view are not
+    /// retained.
     pub text_selection: bool,
 }
 

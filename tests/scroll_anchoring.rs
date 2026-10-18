@@ -95,6 +95,7 @@ impl Harness {
     }
 
     fn frame(&mut self, events: Vec<Event>, app: &mut Log) {
+        self.backend.buffer.reset();
         slt::frame_owned(
             &mut self.backend,
             &mut self.state,

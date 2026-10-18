@@ -798,8 +798,11 @@ impl Drop for InlineTerminal {
 
 mod selection;
 pub(crate) use selection::{
-    SelectionState, apply_selection_overlay, extract_selection_text, track_selection,
+    ScrollView, SelectionState, apply_selection_overlay_in, extract_selection_text_in,
+    track_selection,
 };
+#[cfg(test)]
+pub(crate) use selection::{apply_selection_overlay, extract_selection_text};
 #[cfg(test)]
 pub(crate) use selection::{find_innermost_rect, normalize_selection};
 

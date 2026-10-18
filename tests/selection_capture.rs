@@ -68,6 +68,8 @@ impl Session {
     }
 
     fn frame(&mut self, events: Vec<Event>, f: &mut impl FnMut(&mut Context)) {
+        // Fresh buffer per frame, like a terminal backend after its flush.
+        self.backend.buffer.reset();
         slt::frame_owned(&mut self.backend, &mut self.state, &self.config, events, f)
             .expect("frame");
     }

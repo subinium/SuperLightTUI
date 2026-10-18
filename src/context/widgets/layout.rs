@@ -574,6 +574,19 @@ impl Context {
         if let Some(index) = index {
             self.auto_scroll_nested(index, state, is_horizontal);
         }
+        // #445: a text-selection drag held on this region's top or bottom row
+        // scrolls it one step per frame so the selection can extend.
+        if !is_horizontal
+            && let Some((region, direction)) = self.pointer.selection_autoscroll
+            && region == id
+        {
+            let step = self.scroll_lines_per_event as usize;
+            if direction < 0 {
+                state.scroll_up(step);
+            } else {
+                state.scroll_down(step);
+            }
+        }
         // #443: hand this binding's anchoring policy to the layout pass.
         self.pointer
             .scroll_policies

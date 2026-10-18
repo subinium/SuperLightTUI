@@ -325,13 +325,19 @@ pub(crate) fn run_frame_kernel(
 
     // #438: widget-consumed presses and drags never start a text selection.
     #[cfg(feature = "crossterm")]
-    let should_copy_selection = terminal::track_selection(
-        &mut state.selection,
-        &ctx.events,
-        &ctx.consumed,
-        &state.layout_feedback.prev_content_map,
-        config.text_selection,
-    );
+    let should_copy_selection = {
+        let selection = terminal::track_selection(
+            &mut state.selection,
+            &ctx.events,
+            &ctx.consumed,
+            &state.layout_feedback.prev_content_map,
+            terminal::ScrollView::new(&ctx.prev_geometry, &ctx.prev_scroll_rects),
+            config.text_selection,
+        );
+        // #445: edge auto-scroll applies at the region's next binding.
+        state.pointer.selection_autoscroll = selection.autoscroll;
+        selection.should_copy
+    };
 
     state.focus.focus_index = ctx.focus_index;
     state.focus.prev_focus_count = ctx.rollback.focus_count;
@@ -601,18 +607,26 @@ pub(crate) fn run_frame(
 
     #[cfg(feature = "crossterm")]
     if state.selection.active {
-        terminal::apply_selection_overlay(
+        terminal::apply_selection_overlay_in(
             term.buffer_mut(),
             &state.selection,
             &state.layout_feedback.prev_content_map,
+            terminal::ScrollView::new(
+                &state.layout_feedback.geometry,
+                &state.layout_feedback.prev_scroll_rects,
+            ),
         );
     }
     #[cfg(feature = "crossterm")]
     if terminal_side_effects && kernel.should_copy_selection {
-        let text = terminal::extract_selection_text(
+        let text = terminal::extract_selection_text_in(
             term.buffer_mut(),
             &state.selection,
             &state.layout_feedback.prev_content_map,
+            terminal::ScrollView::new(
+                &state.layout_feedback.geometry,
+                &state.layout_feedback.prev_scroll_rects,
+            ),
         );
         if !text.is_empty() {
             term.write_clipboard(&text)?;

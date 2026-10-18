@@ -60,6 +60,13 @@
 
 ### Fixed
 
+- The built-in text selection works on any text, including top-level
+  `ui.text` outside containers (#445). A selection that starts inside a
+  `scrollable` is kept in content coordinates, so the highlight stays on its
+  text while the region scrolls (rows scrolled out of view stay selected but
+  are not drawn), and dragging onto or past the region's top or bottom row
+  auto-scrolls it one step per frame. Copying still reads the visible part of
+  the selection only.
 - Dragging a split handle, a scrollbar thumb, or any widget that consumes the
   press no longer highlights text or overwrites the clipboard over OSC 52
   (#438). The selection tracker skips consumed events, and a consumed press

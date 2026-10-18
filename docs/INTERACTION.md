@@ -36,9 +36,12 @@ What changes when you turn it on:
 - SLT enables all-motion reporting, so **every pointer move is an event**. That
   is what makes hover work, and it is also more traffic over a slow SSH link.
 - The terminal's own text selection stops working while the pointer is over
-  the app. SLT draws its own selection overlay: drag across text and it is
-  copied (OSC 52) on release. Most terminals also let you hold a modifier
-  (often Shift, or Option on macOS) to bypass capture and select natively.
+  the app. SLT draws its own selection overlay: drag across any text and it is
+  copied (OSC 52) on release. A selection inside a scrollable stays on its
+  text while the region scrolls, and holding the pointer on the region's top
+  or bottom row scrolls it so the selection can grow. Only the part visible at
+  release is copied. Most terminals also let you hold a modifier (often Shift,
+  or Option on macOS) to bypass capture and select natively.
 - Without the mouse, the app is still fully usable from the keyboard: Tab and
   Shift+Tab move focus, Enter or Space activate the focused widget.
 

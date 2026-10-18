@@ -150,3 +150,56 @@ fn plain_text_drag_highlights_and_copies_once() {
         "the copied text is the dragged text"
     );
 }
+
+#[test]
+fn top_level_text_drag_copies_that_text() {
+    let view = |ui: &mut Context| {
+        ui.text("TOPLEVEL words here");
+    };
+    let mut pb = PtyBackend::new(40, 3);
+    pb.render(view);
+    pb.render(view);
+    pb.render_with_events(EventBuilder::new().click(0, 0).drag(7, 0).build(), view);
+    assert!(
+        contains(pb.last_raw(), REVERSE),
+        "top-level text highlights"
+    );
+    pb.render_with_events(EventBuilder::new().mouse_up(7, 0).build(), view);
+    let payload = format!("{OSC52}c;{}", base64(b"TOPLEVEL"));
+    assert!(pb.frames_raw().any(|raw| contains(raw, &payload)));
+}
+
+fn rows(ui: &mut Context, scroll: &mut ScrollState) {
+    let _ = ui.scrollable(scroll).grow(1).col(|ui| {
+        for i in 0..40 {
+            ui.text(format!("row {i:02} abcdef"));
+        }
+    });
+}
+
+#[test]
+fn scrolled_region_copy_matches_the_selected_lines() {
+    let mut scroll = ScrollState::new();
+    let mut pb = PtyBackend::new(30, 6);
+    pb.render(|ui| rows(ui, &mut scroll));
+    pb.render(|ui| rows(ui, &mut scroll));
+    // Scroll first so the selection lives in content rows 4 and 5.
+    let wheel = EventBuilder::new()
+        .scroll_down(3, 3)
+        .scroll_down(3, 3)
+        .scroll_down(3, 3)
+        .build();
+    pb.render_with_events(wheel, |ui| rows(ui, &mut scroll));
+    pb.render(|ui| rows(ui, &mut scroll));
+    pb.render_with_events(EventBuilder::new().click(0, 1).drag(8, 2).build(), |ui| {
+        rows(ui, &mut scroll)
+    });
+    pb.render_with_events(EventBuilder::new().mouse_up(8, 2).build(), |ui| {
+        rows(ui, &mut scroll)
+    });
+    let payload = format!("{OSC52}c;{}", base64(b"row 04 abcdef\nrow 05 ab"));
+    assert!(
+        pb.frames_raw().any(|raw| contains(raw, &payload)),
+        "copied text is the selected logical content"
+    );
+}

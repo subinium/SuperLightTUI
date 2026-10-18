@@ -75,6 +75,9 @@ pub(crate) struct PointerState {
     pub scroll_policy_buf: Vec<crate::layout::ScrollPolicy>,
     /// `RunConfig::click_on_release`, refreshed by the frame kernel.
     pub click_on_release: bool,
+    /// Text-selection edge auto-scroll for the next frame: `ScrollState` id
+    /// and direction (#445). Written by the frame kernel.
+    pub selection_autoscroll: Option<(u64, i8)>,
 }
 
 impl PointerState {
@@ -153,6 +156,8 @@ pub(crate) struct PointerFrame {
     pub scroll_policies: Vec<crate::layout::ScrollPolicy>,
     /// `RunConfig::click_on_release` for this frame.
     pub click_on_release: bool,
+    /// Selection edge auto-scroll requested by the previous frame (#445).
+    pub selection_autoscroll: Option<(u64, i8)>,
     /// Lazily computed gestures for this frame.
     gestures: OnceCell<Gestures>,
     /// Lazily resolved winner per entry of `presses`.
@@ -181,6 +186,7 @@ impl PointerFrame {
             contain,
             scroll_policies,
             click_on_release: state.pointer.click_on_release,
+            selection_autoscroll: state.pointer.selection_autoscroll,
             gestures: OnceCell::new(),
             targets: OnceCell::new(),
             hover_target: OnceCell::new(),

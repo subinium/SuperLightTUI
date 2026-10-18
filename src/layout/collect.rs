@@ -242,6 +242,14 @@ pub(crate) fn collect_all(node: &LayoutNode, data: &mut FrameData) {
     {
         data.focus_rects.push((id, visible_rect));
     }
+    // #445: the root viewport is a selectable area too, so text rendered
+    // outside any container still has an owner for the built-in selection.
+    if matches!(node.kind, NodeKind::Container(_))
+        && !visible_rect.is_empty()
+        && let Some(content) = screen_rect.inset(node).to_rect()
+    {
+        data.content_areas.push((visible_rect, content));
+    }
     let mut hit_parent = NO_HIT_PARENT;
     if let Some(id) = node.interaction_id {
         record_allocated_area(node, data, id);
