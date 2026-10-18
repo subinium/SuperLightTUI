@@ -1041,9 +1041,11 @@ impl Buffer {
     }
 
     fn existing_grapheme_range(&self, x: u32, y: u32) -> (u32, u32) {
+        // Walk back over every continuation: a cluster can be wider than two
+        // columns (for example a wide base plus a spacing mark).
         let mut left = x;
-        if self.content[self.index_of(x, y)].is_continuation() && x > self.area.x {
-            left = x - 1;
+        while self.content[self.index_of(left, y)].is_continuation() && left > self.area.x {
+            left -= 1;
         }
         let symbol = self.content[self.index_of(left, y)].normalized_symbol();
         let width = (UnicodeWidthStr::width(symbol.as_str()) as u32).max(1);
@@ -1061,7 +1063,8 @@ impl Buffer {
             return;
         }
         let mut leading_x = x - 1;
-        if self.content[self.index_of(leading_x, y)].is_continuation() && leading_x > self.area.x {
+        while self.content[self.index_of(leading_x, y)].is_continuation() && leading_x > self.area.x
+        {
             leading_x -= 1;
         }
         let (_, right) = self.existing_grapheme_range(leading_x, y);
@@ -2342,6 +2345,49 @@ mod tests {
     #[test]
     fn reorder_line_visual_empty_is_noop() {
         assert_eq!(reorder_line_visual(""), "");
+    }
+
+    #[test]
+    fn three_column_cluster_is_cleared_and_extended_as_one_unit() {
+        // "世" + U+0903 (spacing mark) is one cluster of display width 3.
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 1));
+        buf.set_string(1, 0, "世\u{0903}", Style::new());
+        assert_eq!(UnicodeWidthStr::width(buf.get(1, 0).symbol.as_str()), 3);
+        assert!(buf.get(2, 0).is_continuation() && buf.get(3, 0).is_continuation());
+        // A zero-width suffix after the cluster extends its leading cell, not
+        // the middle continuation.
+        buf.set_string(4, 0, "\u{301}", Style::new());
+        assert!(buf.get(1, 0).symbol.ends_with('\u{301}'));
+        // A control-class format char (RLO) cannot join the cluster and must
+        // not turn the middle continuation into a leading cell.
+        buf.set_string(4, 0, "\u{202E}", Style::new());
+        assert!(buf.get(2, 0).is_continuation() && buf.get(3, 0).is_continuation());
+        // Overwriting the last continuation clears the whole cluster.
+        buf.set_char(3, 0, 'x', Style::new());
+        assert_eq!(buf.get(1, 0).symbol, " ");
+        assert_eq!(buf.get(2, 0).symbol, " ");
+        assert_eq!(buf.get(3, 0).symbol, "x");
+        assert_eq!(assert_no_orphan_continuations(&buf), Ok(()));
+    }
+
+    /// Every continuation cell must be covered by the display width of the
+    /// leading cell before it (no orphan continuation).
+    fn assert_no_orphan_continuations(buf: &Buffer) -> Result<(), String> {
+        for y in buf.area.y..buf.area.bottom() {
+            let mut covered_until = buf.area.x;
+            for x in buf.area.x..buf.area.right() {
+                let cell = buf.get(x, y);
+                if cell.is_continuation() {
+                    if x >= covered_until {
+                        return Err(format!("orphan continuation at ({x}, {y})"));
+                    }
+                } else {
+                    let width = UnicodeWidthStr::width(cell.symbol.as_str()).max(1) as u32;
+                    covered_until = x.saturating_add(width);
+                }
+            }
+        }
+        Ok(())
     }
 
     mod geometry_proptest {
