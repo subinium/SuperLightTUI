@@ -508,6 +508,40 @@ pub(super) fn terminal_multiplexer_env(
     }
 }
 
+/// Whether the innermost multiplexer is a tmux whose VS16 handling misplaces
+/// the padding cell (before 3.5, see [`WidthPolicy::text_presentation`]).
+#[cfg(feature = "crossterm")]
+pub(super) fn tmux_vs16_padding_bug(multiplexer: Option<MultiplexerKind>) -> bool {
+    matches!(multiplexer, Some(MultiplexerKind::Tmux))
+        && tmux_version_misplaces_vs16_padding(
+            &std::env::var("TERM_PROGRAM").unwrap_or_default(),
+            &std::env::var("TERM_PROGRAM_VERSION").unwrap_or_default(),
+        )
+}
+
+/// `false` only when tmux reports itself (`TERM_PROGRAM=tmux`, set in every
+/// pane) at version 3.5 or later. An unknown version, e.g. tmux reached over
+/// SSH, which does not forward `TERM_PROGRAM`, counts as affected: text
+/// presentation keeps the row geometry right on every version.
+pub(super) fn tmux_version_misplaces_vs16_padding(term_program: &str, version: &str) -> bool {
+    if !term_program.eq_ignore_ascii_case("tmux") {
+        return true;
+    }
+    // `3.4`, `3.5a`, `next-3.6`, `3.6-rc`.
+    let version = version.strip_prefix("next-").unwrap_or(version);
+    let leading = |part: &str| -> Option<u32> {
+        let end = part
+            .find(|ch: char| !ch.is_ascii_digit())
+            .unwrap_or(part.len());
+        part[..end].parse().ok()
+    };
+    let mut parts = version.split('.');
+    match parts.next().and_then(leading) {
+        Some(major) => (major, parts.next().and_then(leading).unwrap_or(0)) < (3, 5),
+        None => true,
+    }
+}
+
 #[cfg(feature = "crossterm")]
 fn terminal_is_remote() -> bool {
     // Shared with link opening (`Context::link`), which must not spawn a

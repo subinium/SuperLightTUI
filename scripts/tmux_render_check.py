@@ -66,6 +66,22 @@ KNOWN_ISSUE_ROWS = {
 }
 ZWJ_FAMILY = "\U0001f468‍\U0001f469‍\U0001f467"
 VS16_HEART = "❤️"
+VS16 = "\ufe0f"
+
+
+def tmux_misplaces_vs16_padding(version: str) -> bool:
+    """Mirror SLT's tmux < 3.5 detection (`tmux -V` prints `tmux 3.4`).
+
+    tmux before 3.5 widens a VS16 cluster but marks its padding one column
+    too far right (fixed by tmux 89c1c43, "Write padding character into
+    the right position"), leaving a stray cell after the emoji. No byte
+    sequence that contains U+FE0F avoids it, so SLT emits such clusters in
+    text presentation (without U+FE0F) there and keeps the blank fill.
+    """
+    match = re.search(r"(\d+)(?:\.(\d+))?", version.removeprefix("tmux "))
+    if match is None:
+        return True
+    return (int(match.group(1)), int(match.group(2) or 0)) < (3, 5)
 
 
 class CheckFailure(Exception):
@@ -200,7 +216,11 @@ def describe(grid: list[object]) -> str:
 
 
 def row_mismatches(
-    expected_row: list[list[object]], captured: str, widths: dict[str, int], cols: int
+    expected_row: list[list[object]],
+    captured: str,
+    widths: dict[str, int],
+    cols: int,
+    text_presentation: bool = False,
 ) -> list[str]:
     expected: list[object] = [" "] * cols
     advance: dict[int, int] = {}
@@ -209,7 +229,16 @@ def row_mismatches(
         expected[x] = symbol
         for extra in range(1, int(buffer_width)):
             expected[x + extra] = CONTINUATION
-        advance[x] = widths.get(str(symbol), int(buffer_width))
+        shown = str(symbol)
+        if text_presentation and VS16 in shown:
+            # SLT emitted the cluster without U+FE0F: its advance is the
+            # bare base's, and the buffer's extra column is blank fill.
+            shown = shown.replace(VS16, "") or " "
+            advance[x] = widths.get(
+                shown, fallback_width(shown) if len(shown) == 1 else 1
+            )
+        else:
+            advance[x] = widths.get(shown, int(buffer_width))
     actual = terminal_columns(captured, widths, cols)
     problems = []
     owner = 0
@@ -241,6 +270,7 @@ class Checker:
         self.tmux = Tmux(args.tmux, self.artifacts, "check")
         self.known_rows = {KNOWN_ISSUE_ROWS[issue]: issue for issue in args.known_issue}
         self.widths: dict[str, int] = {}
+        self.text_presentation = False
         self.cols = 0
         self.rows = 0
         self.state = {"variant": "x", "toggled": 0, "hits": 0, "down": None}
@@ -288,7 +318,9 @@ class Checker:
             lines += [""] * (self.rows - len(lines))
             failures: dict[int, list[str]] = {}
             for y, row in enumerate(expected):
-                problems = row_mismatches(row, lines[y], self.widths, self.cols)
+                problems = row_mismatches(
+                    row, lines[y], self.widths, self.cols, self.text_presentation
+                )
                 if problems:
                     failures[y] = problems
             blocking = {
@@ -555,6 +587,12 @@ class Checker:
             [self.args.tmux, "-V"], capture_output=True, text=True, check=True
         ).stdout.strip()
         log(f"INFO  {version}")
+        self.text_presentation = tmux_misplaces_vs16_padding(version)
+        if self.text_presentation:
+            log(
+                "INFO  tmux < 3.5 misplaces VS16 padding (tmux 89c1c43): SLT emits "
+                "VS16 clusters in text presentation; their rows expect blank fill"
+            )
         self.tmux.kill()
         try:
             self.measure()

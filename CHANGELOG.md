@@ -436,6 +436,13 @@
 
 ### Fixed
 
+- Under tmux older than 3.5 (detected from `TERM_PROGRAM_VERSION`, or tmux
+  with an unknown version), width-conservative mode emits VS16 emoji such as
+  `❤️` without U+FE0F (text presentation) and keeps the blank fill for the
+  buffer's second column. Those tmux versions widen a VS16 cluster but mark
+  its padding cell one column too far right (fixed upstream in tmux 3.5), so
+  every redraw shifted the rest of the row by one column. tmux 3.5 and later,
+  and `width_conservative(false)`, keep the emoji presentation (#441).
 - Border titles are truncated by grapheme cluster with the frame's
   ambiguous-width setting (`RunConfig::ambiguous_wide`, #449) instead of per
   `char` with the Unicode default, so a title never splits a cluster and
