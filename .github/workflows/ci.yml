@@ -463,13 +463,12 @@ jobs:
           set -euo pipefail
           # Strict expected-fail markers: the row must fail while the bug is
           # observable on this tmux, and an unexpected pass fails the step.
-          # TODO(#441): remove `--known-issue 441` when the VS16 padding fix lands.
           # TODO(#449): remove `--known-issue 449` when per-terminal cluster widths land.
           for attempt in 1 2; do
             if timeout 240s python3 scripts/tmux_render_check.py \
                 --probe target/terminal-probe/debug/slt-terminal-probe \
                 --artifacts "$RUNNER_TEMP/slt-mux-smoke/render-attempt-$attempt" \
-                --known-issue 441 --known-issue 449; then
+                --known-issue 449; then
               exit 0
             fi
             echo "::warning::tmux render check attempt $attempt failed"

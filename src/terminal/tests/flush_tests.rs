@@ -312,13 +312,12 @@ fn bufwriter_coalesces_writes_into_single_flush() {
     );
 }
 
-/// Issue #171 regression: identical buffers must produce no flush
-/// output once both have refreshed line hashes. Validates that the
-/// per-row skip path is correctness-preserving — a skipped row
-/// emits zero bytes, exactly like the per-cell path would for an
-/// unchanged row.
+/// Issue #171/#486 regression: identical buffers must produce no flush
+/// output. Validates that the per-row skip path is correctness-preserving —
+/// a skipped row emits zero bytes, exactly like the per-cell path would for
+/// an unchanged row.
 #[test]
-fn flush_skips_unchanged_rows_when_hashes_match() {
+fn flush_skips_unchanged_rows() {
     let area = Rect::new(0, 0, 20, 4);
     let mut current = Buffer::empty(area);
     let mut previous = Buffer::empty(area);
@@ -327,8 +326,6 @@ fn flush_skips_unchanged_rows_when_hashes_match() {
         current.set_string(0, y, "identical-row-content", Style::new());
         previous.set_string(0, y, "identical-row-content", Style::new());
     }
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_buffer_diff(
@@ -348,7 +345,7 @@ fn flush_skips_unchanged_rows_when_hashes_match() {
     );
 }
 
-/// Issue #171 regression: when only some rows match, only those rows
+/// Issue #171/#486 regression: when only some rows match, only those rows
 /// are skipped. The differing row must still drive its full per-cell
 /// flush path so the terminal sees the correct glyphs.
 #[test]
@@ -362,8 +359,6 @@ fn flush_skips_only_matching_rows_in_mixed_diff() {
     previous.set_string(0, 1, "yyyyyy", Style::new());
     current.set_string(0, 2, "zzzzzz", Style::new());
     previous.set_string(0, 2, "zzzzzz", Style::new());
-    current.recompute_line_hashes();
-    previous.recompute_line_hashes();
 
     let mut out: Vec<u8> = Vec::new();
     flush_buffer_diff(
@@ -600,5 +595,269 @@ fn osc8_hyperlink_emitted_verbatim_after_write_rewrite() {
         contains_seq(&out, b"\x1b]8;;\x07"),
         "OSC 8 close must appear: {:?}",
         String::from_utf8_lossy(&out)
+    );
+}
+
+/// Minimal terminal emulator for flush tests: applies cursor moves
+/// (`CSI row;col H`) and printable text to a symbol grid, ignoring SGR, OSC
+/// and mode sequences. A grapheme of display width `w` occupies `w` cells;
+/// the trailing cells become empty continuation markers.
+pub(super) fn apply_ansi_to_screen(screen: &mut [Vec<String>], bytes: &[u8]) {
+    apply_ansi_to_screen_with(screen, bytes, &|grapheme| UnicodeWidthStr::width(grapheme));
+}
+
+/// [`apply_ansi_to_screen`] for a terminal that advances `width_of(cluster)`
+/// columns per grapheme (for example one column for VS16 emoji).
+pub(super) fn apply_ansi_to_screen_with(
+    screen: &mut [Vec<String>],
+    bytes: &[u8],
+    width_of: &dyn Fn(&str) -> usize,
+) {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let put_text = |screen: &mut [Vec<String>], text: &str, row: usize, col: &mut usize| {
+        for grapheme in text.graphemes(true) {
+            let width = width_of(grapheme).max(1);
+            if let Some(line) = screen.get_mut(row) {
+                if let Some(cell) = line.get_mut(*col) {
+                    *cell = grapheme.to_string();
+                }
+                for offset in 1..width {
+                    if let Some(cell) = line.get_mut(*col + offset) {
+                        cell.clear();
+                    }
+                }
+            }
+            *col += width;
+        }
+    };
+
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let mut i = 0usize;
+    let mut text_start = None;
+    while i < bytes.len() {
+        if bytes[i] != 0x1b {
+            text_start.get_or_insert(i);
+            i += 1;
+            continue;
+        }
+        if let Some(start) = text_start.take() {
+            let text = std::str::from_utf8(&bytes[start..i]).expect("utf-8 text run");
+            put_text(screen, text, row, &mut col);
+        }
+        match bytes.get(i + 1) {
+            Some(b'[') => {
+                let mut j = i + 2;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'H') {
+                    let params = std::str::from_utf8(&bytes[i + 2..j]).expect("ascii params");
+                    let mut parts = params.split(';');
+                    let r: usize = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+                    let c: usize = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+                    row = r.saturating_sub(1);
+                    col = c.saturating_sub(1);
+                }
+                i = j + 1;
+            }
+            Some(b']') => {
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j] != 0x07 {
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            _ => i += 2,
+        }
+    }
+    if let Some(start) = text_start {
+        let text = std::str::from_utf8(&bytes[start..]).expect("utf-8 text run");
+        put_text(screen, text, row, &mut col);
+    }
+}
+
+/// Visible symbols of `buffer` in the same shape as [`apply_ansi_to_screen`].
+pub(super) fn buffer_symbols(buffer: &Buffer) -> Vec<Vec<String>> {
+    (buffer.area.y..buffer.area.bottom())
+        .map(|y| {
+            (buffer.area.x..buffer.area.right())
+                .map(|x| buffer.get(x, y).symbol.to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// Issue #484: `"\r\n"` is one extended grapheme. It used to normalize to
+/// two `U+FFFD` (width 2, reserving a continuation cell) and then be stored
+/// as one, so the flush skipped the orphan continuation and left the previous
+/// frame's glyph on screen.
+#[test]
+fn crlf_write_leaves_no_stale_glyph_after_flush() {
+    let area = Rect::new(0, 0, 6, 1);
+    let mut screen = vec![vec![" ".to_string(); 6]];
+    let mut previous = Buffer::empty(area);
+    previous.set_string(0, 0, "aXYb", Style::new());
+    let mut out = Vec::new();
+    let mut blank = Buffer::empty(area);
+    __bench_flush_buffer_diff_mut_with_buf(
+        &mut out,
+        &mut previous,
+        &mut blank,
+        ColorDepth::TrueColor,
+        &mut String::new(),
+    )
+    .unwrap();
+    apply_ansi_to_screen(&mut screen, &out);
+    assert_eq!(screen, buffer_symbols(&previous));
+
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "a\r\nb", Style::new());
+    assert_eq!(current.get(1, 0).symbol, "\u{FFFD}");
+    assert!(!current.get(2, 0).is_continuation());
+    assert_eq!(current.get(2, 0).symbol, "b");
+
+    out.clear();
+    __bench_flush_buffer_diff_mut_with_buf(
+        &mut out,
+        &mut current,
+        &mut previous,
+        ColorDepth::TrueColor,
+        &mut String::new(),
+    )
+    .unwrap();
+    apply_ansi_to_screen(&mut screen, &out);
+    assert_eq!(
+        screen,
+        buffer_symbols(&current),
+        "stale glyph left on screen"
+    );
+}
+
+/// Issue #441: a VS16 emoji is drawn two columns wide by conformant
+/// terminals and one column by others. The flush must not pad it with a
+/// literal space (which shifts the rest of the row on two-column terminals)
+/// and must position the next cell explicitly.
+#[test]
+fn vs16_cluster_is_repositioned_not_padded() {
+    let area = Rect::new(0, 0, 8, 1);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "A\u{2764}\u{FE0F}BC", Style::new());
+    let mut out = Vec::new();
+    flush_buffer_diff(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+    )
+    .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(
+        text,
+        "\x1b[1;1HA\x1b[1;3H \x1b[1;2H\u{2764}\u{FE0F}\x1b[1;4HBC\x1b[0m"
+    );
+    assert!(
+        !text.contains("\u{FE0F} "),
+        "no padding space after the cluster"
+    );
+}
+
+/// Issue #441: after frames that change only the trailing cell, the screen
+/// equals the buffer on both one- and two-column VS16 terminals.
+#[test]
+fn vs16_row_stays_in_sync_on_one_and_two_column_terminals() {
+    for vs16_columns in [1usize, 2] {
+        let width_of = |grapheme: &str| {
+            if grapheme.contains('\u{FE0F}') {
+                vs16_columns
+            } else {
+                UnicodeWidthStr::width(grapheme)
+            }
+        };
+        let area = Rect::new(0, 0, 8, 1);
+        let mut screen = vec![vec![" ".to_string(); 8]];
+        let mut previous = Buffer::empty(area);
+        for tail in ["x", "y", "x"] {
+            let mut current = Buffer::empty(area);
+            current.set_string(0, 0, &format!("|A\u{2764}\u{FE0F}B{tail}|"), Style::new());
+            let mut out = Vec::new();
+            flush_buffer_diff(
+                &mut out,
+                &current,
+                &previous,
+                ColorDepth::TrueColor,
+                0,
+                &mut String::new(),
+            )
+            .unwrap();
+            apply_ansi_to_screen_with(&mut screen, &out, &width_of);
+            let mut expected = buffer_symbols(&current);
+            if vs16_columns == 1 {
+                // The terminal shows the blank fill where the buffer keeps
+                // the cluster's continuation cell.
+                expected[0][3] = " ".to_string();
+            }
+            assert_eq!(
+                screen, expected,
+                "{vs16_columns}-column terminal, tail {tail}"
+            );
+            previous = current;
+        }
+    }
+}
+
+/// Issue #441: ASCII and CJK rows keep their pre-#441 bytes (only the #489
+/// single reset differs from v0.25.0).
+#[test]
+fn ascii_and_cjk_rows_keep_golden_bytes() {
+    let area = Rect::new(0, 0, 10, 2);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "AB\u{4E16}C", Style::new());
+    current.set_string(2, 1, "hi \u{D55C}\u{AE00}", Style::new().fg(Color::Red));
+    let mut out = Vec::new();
+    flush_buffer_diff(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "\x1b[1;1HAB\u{4E16}C\x1b[2;3H\x1b[0m\x1b[31mhi \u{D55C}\u{AE00}\x1b[0m"
+    );
+}
+
+/// #449 conservative width mode repositions after every width-uncertain
+/// cluster, including plain non-BMP emoji.
+#[test]
+fn conservative_width_policy_repositions_after_emoji() {
+    let area = Rect::new(0, 0, 8, 1);
+    let mut current = Buffer::empty(area);
+    current.set_string(0, 0, "\u{1F600}ab", Style::new());
+    let policy = WidthPolicy {
+        conservative: true,
+        ..WidthPolicy::default()
+    };
+    let mut out = Vec::new();
+    flush_buffer_diff_rows(
+        &mut out,
+        &current,
+        &Buffer::empty(area),
+        ColorDepth::TrueColor,
+        0,
+        &mut String::new(),
+        &[],
+        policy,
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "\x1b[1;1H\u{1F600}\x1b[1;3Hab\x1b[0m"
     );
 }

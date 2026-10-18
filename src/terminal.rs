@@ -269,17 +269,12 @@ impl Terminal {
         if sync_guard {
             queue!(self.stdout, BeginSynchronizedUpdate)?;
         }
-        // Issue #171: refresh both buffers' per-row digests so the per-row
-        // skip inside `flush_buffer_diff` can short-circuit unchanged rows.
-        // `previous` only needs a recompute when the prior frame mutated
-        // it (e.g. after a swap); cheap when nothing's dirty.
-        self.current.recompute_line_hashes();
-        self.previous.recompute_line_hashes();
         let redrawn_sprixel_rows =
             previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
                 self.graphics_support
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
+        let width_policy = self.width_policy();
         flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
@@ -288,6 +283,7 @@ impl Terminal {
             0,
             &mut self.run_buf,
             &redrawn_sprixel_rows,
+            width_policy,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
@@ -347,7 +343,6 @@ impl Terminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
-    #[allow(dead_code)]
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -544,7 +539,6 @@ impl InlineTerminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
-    #[allow(dead_code)]
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -588,15 +582,12 @@ impl InlineTerminal {
                 .min(rows.saturating_sub(sat_u16(self.height)));
         }
         let row_offset = self.start_row as u32;
-        // Issue #171: refresh per-row digests before the diff so the
-        // unchanged-row skip can fire (same call shape as `Terminal::flush`).
-        self.current.recompute_line_hashes();
-        self.previous.recompute_line_hashes();
         let redrawn_sprixel_rows =
             previous_only_sprixel_rows(&self.current, &self.previous, |placement| {
                 self.graphics_support
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
+        let width_policy = self.width_policy();
         flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
@@ -605,6 +596,7 @@ impl InlineTerminal {
             row_offset,
             &mut self.run_buf,
             &redrawn_sprixel_rows,
+            width_policy,
         )?;
 
         // Kitty graphics: structured image management with IDs and compression.
