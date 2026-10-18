@@ -1360,7 +1360,7 @@ pub struct TextInputState { /* ... */ }
 
 This matrix is preserved as the v0.20 design baseline. Current enforcement and
 exceptions live in `scripts/api_audit.sh --strict`; current delivery status lives
-in the roadmap below. Historical action notes are not claims about current (v0.25) coverage.
+in the roadmap below. Historical action notes are not claims about current (v0.26) coverage.
 
 Status legend: ✅ enforced & green, ⚠️ documented & ad-hoc, ❌ known gap.
 
@@ -1440,8 +1440,8 @@ a review concern rather than a claimed complete sweep.
 | v0.22 | **Refine** | Edition 2024, f64 surface, terminal/release hardening | shipped |
 | v0.23 | **Correct** | Runtime, Unicode, state, docs, and response-contract audit | shipped |
 | v0.24 | **Harden runtime** | Owned native input source, recoverable panics, canvas budgets, owned browser (WASM) runtime | shipped |
-| v0.25 | **Harden focus & scroll** | Focus-following scroll containers, unique initial focus, modal focus stability, `form_field_response`, layout-rect queries | shipped (current) |
-| v0.26 | **Consolidate** | Remove the 0.20–0.22 deprecated aliases (`pad`, `min_width`, `use_state_named_with`, `code_block_*`, f32 color methods); option builders (`Button`, `Badge`, `Stat`, `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`); one keyed-state slot map; `slt::prelude` | in progress |
+| v0.25 | **Harden focus & scroll** | Focus-following scroll containers, unique initial focus, modal focus stability, `form_field_response`, layout-rect queries | shipped |
+| v0.26 | **Consolidate** | Remove the 0.20–0.22 deprecated aliases (`pad`, `min_width`, `use_state_named_with`, `code_block_*`, f32 color methods); option builders (`Button`, `Badge`, `Stat`, `Help`, `Separator`, `ProgressBar`, `Slider`, `LineChart`); one keyed-state slot map; `slt::prelude` | shipped (current) |
 | pre-1.0 | **Stabilize** | Remove the 0.26 deprecations (`button_with`, `button_colored`, display `*_colored` variants, `slider_with`, `grid_with`, `use_state_named`) | not yet scheduled |
 | v1.0 | **Freeze** | Public API semver-locked. Matrix all ✅. | not yet scheduled |
 

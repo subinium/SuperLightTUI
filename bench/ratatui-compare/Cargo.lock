@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "superlighttui"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "compact_str 0.10.0",
  "crossterm",

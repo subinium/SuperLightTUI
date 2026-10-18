@@ -979,7 +979,12 @@ fn dependency_pins_track_the_package_minor() {
         let link = relative(&root, &path);
         // Version-by-version upgrade notes and dated snapshots name old
         // releases on purpose.
-        if link == "docs/reference/migration.md" || link.starts_with("docs/archive/") {
+        // The browser guide pins the last published slt-wasm pair (0.25.0)
+        // while slt-wasm is deferred (#367) and not released with 0.26.
+        if link == "docs/reference/migration.md"
+            || link == "docs/guide/10-browser.md"
+            || link.starts_with("docs/archive/")
+        {
             continue;
         }
         for problem in stale_pins(&read(&path), version) {

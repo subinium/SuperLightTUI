@@ -1,6 +1,11 @@
 # SLT Competitive Analysis
 
 **Snapshot**: as of 2026-10-18, SLT v0.25.0
+
+> **Superseded on performance.** The frame-time findings below describe
+> v0.25.0. SLT 0.26.0 is faster than ratatui 0.30.2 on every matched
+> workload; current numbers are in
+> [performance](../internals/performance.md#vs-ratatui-matched-harness).
 **Scope**: SLT against ratatui, Textual, Bubble Tea, Ink, and OpenTUI, with short
 notes on other TUI frameworks. This is a dated snapshot, not a living spec:
 competitor versions, star counts, and download figures go stale quickly.

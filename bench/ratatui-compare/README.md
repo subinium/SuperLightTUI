@@ -153,34 +153,35 @@ cd bench/ratatui-compare && cargo test --locked
 
 ## Baseline (v0.26)
 
-Recorded 2026-10-18 on `wp/perf-final` (release/v0.26.0 plus the command,
-string-pool, text-path and border-run commits), against the v0.26 base
-`df6690e` and the v0.25.0 baseline recorded earlier with this crate.
+The v0.26 columns were re-recorded 2026-10-18 on the final 0.26.0 release
+tree (`release/v0.26.0` at `48387c1` plus the version bump; three runs of
+`time`, one of `alloc`). The v0.26 base `df6690e` and v0.25.0 columns were
+recorded earlier with this crate on the same host and toolchain.
 
-- host: Apple M3 Pro (aarch64-macos), shared machine, load average ~5
+- host: Apple M3 Pro (aarch64-macos), shared machine, load average ~4-5
 - rustc: rustc 1.98.0 (88d9e12ae 2026-08-18)
 - profile: release (`debug = 1`)
 - superlighttui: default features
 - ratatui: 0.30.2
 - bench features: none (time), count-alloc (alloc)
 
-### Time, sink harness (median of three interleaved `time` runs, µs per frame)
+### Time, sink harness (median of three `time` runs, µs per frame)
 
 | Workload | SLT v0.25.0 | SLT base `df6690e` | SLT v0.26 | ratatui 0.30.2 | SLT / ratatui |
 |---|---|---|---|---|---|
-| a. static dashboard 200x60 | 213.6 | 13.2 | **10.3** | 110.2 | 0.09x |
-| b. 10k `ui.list`, 100x50 | 1834.0 | 72.3 | **23.0** | 622.2 | 0.04x |
-| b'. 10k `ui.virtual_list`, 100x50 | 262.8 | 73.8 | **25.6** | — | — |
-| c. table 1000x6, 200x60 | 1037.9 | 166.4 | **55.6** | 998.2 ¹ | 0.06x |
-| c'. table 1000x6, `page_size = 57` | 636.4 | 163.8 | **55.0** | — | — |
-| d. 60 nested bordered boxes, 240x80 | 1104.8 | 175.4 | **159.0** | 344.2 | 0.46x |
-| e. one cell changes per frame, 200x60 | 218.1 | 13.2 | **10.2** | 110.6 | 0.09x |
-| f. idle (unchanged), 200x60 | 213.2 | 13.2 | **10.3** | 110.3 | 0.09x |
+| a. static dashboard 200x60 | 213.6 | 13.2 | **10.2** | 106.9 | 0.10x |
+| b. 10k `ui.list`, 100x50 | 1834.0 | 72.3 | **23.0** | 622.1 | 0.04x |
+| b'. 10k `ui.virtual_list`, 100x50 | 262.8 | 73.8 | **25.8** | — | — |
+| c. table 1000x6, 200x60 | 1037.9 | 166.4 | **55.8** | 997.5 ¹ | 0.06x |
+| c'. table 1000x6, `page_size = 57` | 636.4 | 163.8 | **54.9** | — | — |
+| d. 60 nested bordered boxes, 240x80 | 1104.8 | 175.4 | **157.8** | 340.0 | 0.46x |
+| e. one cell changes per frame, 200x60 | 218.1 | 13.2 | **10.2** | 107.0 | 0.10x |
+| f. idle (unchanged), 200x60 | 213.2 | 13.2 | **10.3** | 106.8 | 0.10x |
 
 ¹ ratatui draws the table with the same rules as SLT (11 cells per row, see
 Equivalence), so it is slower than the prototype's 6 `Fill` columns.
 
-SLT is faster than ratatui on every workload: ~2x on the nested boxes, where
+SLT is faster than ratatui on every workload: ~2.2x on the nested boxes, where
 every row of the screen is written each frame, and 10-27x on the others.
 
 Per-case detail (v0.26; first-frame and steady bytes are identical in every
@@ -188,33 +189,33 @@ run):
 
 | case | first-frame bytes | steady bytes/frame | median µs | flush mean µs |
 |---|---|---|---|---|
-| a_dashboard_200x60/slt/sink | 1000 | 16.0 | 10.3 | 1.8 |
-| a_dashboard_200x60/ratatui/sink | 1290 | 25.0 | 110.2 | 88.4 |
-| b_list10k_100x50/slt/sink | 2301 | 16.0 | 23.0 | 10.0 |
-| b_list10k_100x50/ratatui/sink | 3873 | 25.0 | 622.2 | 38.6 |
-| b_list10k_100x50(virtual_list)/slt/sink | 2292 | 16.0 | 25.6 | 9.9 |
-| c_table1000x6_200x60/slt/sink | 5284 | 16.0 | 55.6 | 21.7 |
-| c_table1000x6_200x60/ratatui/sink | 9568 | 25.0 | 998.2 | 95.6 |
-| c_table1000x6_200x60(page_size=57)/slt/sink | 5230 | 16.0 | 55.0 | 21.5 |
-| d_nested60_240x80/slt/sink | 26422 | 16.0 | 159.0 | 86.9 |
-| d_nested60_240x80/ratatui/sink | 25879 | 25.0 | 344.2 | 194.2 |
+| a_dashboard_200x60/slt/sink | 1000 | 16.0 | 10.2 | 1.8 |
+| a_dashboard_200x60/ratatui/sink | 1290 | 25.0 | 106.9 | 85.2 |
+| b_list10k_100x50/slt/sink | 2301 | 16.0 | 23.0 | 10.1 |
+| b_list10k_100x50/ratatui/sink | 3873 | 25.0 | 622.1 | 37.1 |
+| b_list10k_100x50(virtual_list)/slt/sink | 2292 | 16.0 | 25.8 | 9.9 |
+| c_table1000x6_200x60/slt/sink | 5284 | 16.0 | 55.8 | 21.8 |
+| c_table1000x6_200x60/ratatui/sink | 9568 | 25.0 | 997.5 | 91.5 |
+| c_table1000x6_200x60(page_size=57)/slt/sink | 5230 | 16.0 | 54.9 | 21.7 |
+| d_nested60_240x80/slt/sink | 26422 | 16.0 | 157.8 | 87.2 |
+| d_nested60_240x80/ratatui/sink | 25879 | 25.0 | 340.0 | 190.6 |
 | e_onecell_200x60/slt/sink | 1000 | 36.0 | 10.2 | 1.8 |
-| e_onecell_200x60/ratatui/sink | 1290 | 32.0 | 110.6 | 88.5 |
+| e_onecell_200x60/ratatui/sink | 1290 | 32.0 | 107.0 | 85.0 |
 | f_idle_200x60/slt/sink | 1000 | 16.0 | 10.3 | 1.8 |
-| f_idle_200x60/ratatui/sink | 1290 | 25.0 | 110.3 | 88.9 |
+| f_idle_200x60/ratatui/sink | 1290 | 25.0 | 106.8 | 85.0 |
 
 ### Time, in-memory TestBackend (render only, median of three runs, µs)
 
 | Workload | SLT base `df6690e` | SLT v0.26 | ratatui | SLT / ratatui |
 |---|---|---|---|---|
-| a. dashboard | 11.5 | 8.6 | 114.2 | 0.08x |
-| b. 10k list | 64.8 | 15.0 | 621.0 | 0.02x |
-| b'. virtual_list | 66.5 | 17.8 | — | — |
-| c. table | 149.5 | 39.0 | 990.6 | 0.04x |
-| c'. paged table | 147.2 | 38.4 | — | — |
-| d. nested boxes | 108.9 | 101.5 | 350.0 | 0.29x |
-| e. one cell | 11.6 | 8.7 | 114.0 | 0.08x |
-| f. idle | 11.6 | 8.7 | 114.2 | 0.08x |
+| a. dashboard | 11.5 | 8.5 | 106.9 | 0.08x |
+| b. 10k list | 64.8 | 14.8 | 621.4 | 0.02x |
+| b'. virtual_list | 66.5 | 17.5 | — | — |
+| c. table | 149.5 | 38.6 | 986.2 | 0.04x |
+| c'. paged table | 147.2 | 38.0 | — | — |
+| d. nested boxes | 108.9 | 99.8 | 337.8 | 0.30x |
+| e. one cell | 11.6 | 8.5 | 107.0 | 0.08x |
+| f. idle | 11.6 | 8.6 | 106.9 | 0.08x |
 
 ### Allocations (`alloc`, 50 warm-up frames, mean over 200 frames)
 

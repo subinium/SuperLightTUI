@@ -1,6 +1,6 @@
 # SLT References
 
-Targets SLT v0.25.0.
+Targets SLT v0.26.0.
 
 Load this when the user asks about feature flags, version-specific APIs, or doc locations.
 

@@ -179,7 +179,7 @@ See [the migration guide](docs/reference/migration.md) for the coordinate and ti
 
 ```toml
 [dependencies]
-superlighttui = { version = "0.25.0", features = ["async", "image"] }
+superlighttui = { version = "0.26.0", features = ["async", "image"] }
 ```
 
 | Feature | What it adds |
@@ -200,7 +200,7 @@ superlighttui = { version = "0.25.0", features = ["async", "image"] }
 - **Small public grammar**. Most screens start with normal Rust state, `row()` / `col()` / `container()`, method chaining, and `Response`.
 - **Less framework ceremony**. Many apps do not need an app trait, retained tree, or message enum just to get moving.
 - **Batteries included, backend still serious**. Common widgets auto-wire focus, hover, click, and scroll behavior (clicks, wheel, and drags by default; hover with `MouseMode::Hover`), while the runtime keeps a conservative low-level path through `Backend`, `AppState`, and `frame()`.
-- **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, WASM, clippy, examples, cargo-hack, semver, and deny checks.
+- **Conservative internals**. SLT keeps the public surface small, but the internals stay deliberately boring: shared frame kernel, explicit backend contract coverage, zero `unsafe`, feature-gated runtime paths, and validation across `all-features`, `no-default-features`, clippy, examples, cargo-hack, semver, and deny checks (the WASM target is a local check while browser support is deferred).
 
 For Rust users, that usually means less setup than retained-mode TUI frameworks.
 For AI-assisted workflows, it means the public grammar is easy to infer from docs and examples.
@@ -232,7 +232,7 @@ This architecture is what makes the simple grammar possible:
 
 - **No ceremony.** Immediate-mode means no `App` trait, no `Model`/`Message`/`Update`/`View`. Your closure is the entire UI. State is normal Rust variables. Control flow is `if`/`for`.
 - **Invisible layout.** `ui.col(|ui| { ... })` records an "open column" command. The engine builds the tree and runs flexbox — you never see `LayoutNode`.
-- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. On the matched ratatui comparison harness SLT renders faster per frame; see the [Performance Guide] for measurements.
+- **Automatic diffing.** The double-buffer diffs cells between frames and only emits changed ANSI attributes. You redraw everything; the engine decides what to write. No manual dirty tracking. On the matched ratatui comparison harness SLT 0.26 renders faster than ratatui 0.30.2 on every workload: 10.2 vs 106.9 µs for a 200×60 dashboard, 23.0 vs 622.1 µs for a 10k-item list, 157.8 vs 340.0 µs for 60 nested boxes (Apple M3 Pro, rustc 1.98.0, 2026-10-18, shared host). See the [Performance Guide] for method and caveats.
 - **Auto-wired interaction.** `ui.button("Save")` gets keyboard focus and Enter/Space activation for free, reports mouse clicks out of the box, and reports hover under `MouseMode::Hover`. No hit-testing code on your side.
 - **Synchronous feedback.** Interaction uses the [previous frame's layout](docs/guide/02-state.md#the-previous-frame-rule) (imperceptible at 60 FPS). No callbacks, no async layout queries — your code stays linear.
 
@@ -305,7 +305,7 @@ The [Docs Index] lists every page.
 | 7 | [Animation Guide] | Tween, spring, keyframes, sequence, stagger |
 | 8 | [Testing Guide] | `TestBackend`, `EventBuilder`, multi-frame tests, snapshots |
 | 9 | [Runtime Modes Guide] | `run` vs `run_inline` vs `run_static`, `RunConfig`, driving `frame()` |
-| 10 | [Browser Guide] | The `slt-wasm` browser runtime |
+| 10 | [Browser Guide] | The `slt-wasm` browser runtime (deferred in 0.26; latest published `slt-wasm` is 0.25.0) |
 | 11 | [Terminal Compatibility] | Terminal/multiplexer/SSH support matrix, env vars, fallbacks |
 
 Coming from another stack: [Web Developers Guide] (HTML/CSS/React → SLT) and

@@ -415,8 +415,21 @@ A practical order for a port:
 ## Performance
 
 On the matched comparison harness, which drives both libraries through their
-real per-frame path with the same visible output, SLT renders faster per frame
-than ratatui. Methodology, workloads and current numbers are in
+real per-frame path with the same visible output, SLT 0.26 renders faster per
+frame than ratatui 0.30.2 on every workload (median µs per frame, Apple M3 Pro,
+rustc 1.98.0, 2026-10-18, on a shared host; absolute numbers carry noise):
+
+| Workload | SLT 0.26 | ratatui 0.30.2 |
+|---|---|---|
+| Dashboard, 200×60 | 10.2 | 106.9 |
+| 10k-item list, 100×50 | 23.0 | 622.1 |
+| Table 1000×6, 200×60 | 55.8 | 997.5 |
+| 60 nested bordered boxes, 240×80 | 157.8 | 340.0 |
+| Idle frame, 200×60 | 10.3 | 106.8 |
+
+A stripped release binary is still larger than ratatui's (hello-world about
+2.1×, a list / table dashboard about 1.7×; see Binary size in the performance
+guide). Methodology, workloads and current numbers are in
 [performance](../internals/performance.md) and the
 [ratatui comparison bench](../../bench/ratatui-compare/README.md).
 

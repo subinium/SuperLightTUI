@@ -26,7 +26,7 @@ private_intra_doc_links = "warn"
 
 [package]
 name = "superlighttui"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2024"
 description = "Super Light TUI - A lightweight, ergonomic terminal UI library"
 license = "MIT"

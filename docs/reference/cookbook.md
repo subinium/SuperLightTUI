@@ -21,7 +21,7 @@ Add SLT to a fresh project:
 ```toml
 # Cargo.toml
 [dependencies]
-superlighttui = "0.25"
+superlighttui = "0.26"
 ```
 
 Every recipe follows the same outer shape:

@@ -37,7 +37,17 @@
 
 - `.with_if(cond, modifier)` / `.with(modifier)` — fluent conditional styling on text and `ContainerBuilder`
 
-### Current (v0.25) highlights
+### Current (v0.26) highlights
+
+- Mouse on by default: `RunConfig::default()` resolves to `MouseMode::Drag` locally and `MouseMode::Click` over SSH/mosh; hover, tooltips and `group_hover_*` need `RunConfig::default().mouse_mode(MouseMode::Hover)`. Inline and static runs keep the mouse off
+- Option builders: `ui.button(l).variant(v).colors(&c)`, `ui.badge(l).color(c)`, `ui.slider(l, &mut v, range).step(s)`, ... deref to `Response`; `.show()` returns an owned `Response`. `ui.text(..)` returns a scoped `Text<'_>` builder; `use slt::prelude::*;`
+- Focus follows the widget (`register_focusable_keyed`), keys a focused text field edits with never reach `ui.key(..)`, `ui.shortcut(code, mods)` matches modifiers exactly, `ui.raw_key(c)` ignores text focus, and `ui.modal(f)` traps focus
+- Text selection, Ctrl+C / Ctrl+X copy and undo in `text_input` / `textarea`; `ui.disabled(cond, |ui| ..)`; `hover_bg` / `focus_bg` / `focus_within_bg` / `active_bg` on containers; `ui.popover`, `ui.context_menu`, `ui.menu_bar`
+- New widgets and modes: `ui.code_editor(&mut CodeEditorState)`, `ui.diff(&mut DiffState)`, the opt-in `ratatui` feature (`ContainerBuilder::ratatui_widget`), accessible output with `SLT_ACCESSIBLE=1` / `RunConfig::accessible(true)`
+- Multi-step tests: `tb.step(events, &mut f).press(KeyCode::Tab, &mut f).type_text("x", &mut f)`; `run_with_events` keeps focus
+- Upgrading from 0.25: [Migration](reference/migration.md). `slt-wasm` is deferred in 0.26 (latest published: 0.25.0)
+
+### v0.25 additions
 
 - Scroll containers follow keyboard focus (nested axes, modal forms, resize); opt out per container with the public `ScrollState::follow_focus` field (default `true`)
 - `ui.form_field_response(&mut field)` returns `FormFieldResponse`; `ui.focused_layout_rect()` / `ui.measured_layout_rect(name)` expose full [previous-frame](guide/02-state.md#the-previous-frame-rule) geometry

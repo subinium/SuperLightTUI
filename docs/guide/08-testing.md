@@ -242,7 +242,7 @@ dependency — `TestBackend` ships in the main crate, no feature flag needed):
 
 ```toml
 [dependencies]
-superlighttui = "0.25"
+superlighttui = "0.26"
 
 [dev-dependencies]
 insta = "1"

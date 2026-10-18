@@ -782,32 +782,33 @@ a `Vec<u8>`; its README has the full method and the text-equivalence check:
   and `Terminal::try_draw`, with the same visible text per workload.
 - `cargo run --release -- time`: one untimed frame, at least 200 warm-up
   frames and 0.3 s, then up to 1.5 s or 20,000 samples; median per frame.
-  Three interleaved runs of the v0.26 base (`df6690e`) and this release;
-  the table is the median of the three medians.
-- Apple M3 Pro, macOS, rustc 1.98.0, 2026-10, on a shared host (load
-  average ~5). Absolute numbers carry noise; the ratios held across runs.
+  The SLT 0.26 and ratatui columns are the median of three runs on the
+  final 0.26.0 tree (2026-10-18); the v0.25.0 and 0.26 base (`df6690e`)
+  columns were recorded earlier with the same harness, host and toolchain.
+- Apple M3 Pro, macOS, rustc 1.98.0, 2026-10-18, on a shared host (load
+  average ~4-5). Absolute numbers carry noise; the ratios held across runs.
 
 | Workload | SLT v0.25.0 | SLT 0.26 base `df6690e` | SLT 0.26 | ratatui 0.30.2 | SLT 0.26 / ratatui |
 |---|---|---|---|---|---|
-| Dashboard, 200×60 | 213.6 µs | 13.2 µs | **10.3 µs** | 110.2 µs | 0.09× |
-| 10k-item list, 100×50, `ui.list` | 1,834.0 µs | 72.3 µs | **23.0 µs** | 622.2 µs | 0.04× |
-| 10k-item list, 100×50, `ui.virtual_list` | 262.8 µs | 73.8 µs | **25.6 µs** | — | — |
-| Table 1000×6, 200×60, `ui.table` | 1,037.9 µs | 166.4 µs | **55.6 µs** | 998.2 µs ¹ | 0.06× |
-| Table 1000×6, 200×60, `page_size = 57` | 636.4 µs | 163.8 µs | **55.0 µs** | — | — |
-| 60 nested bordered boxes, 240×80 | 1,104.8 µs | 175.4 µs | **159.0 µs** | 344.2 µs | 0.46× |
-| Dashboard, one cell changes per frame | 218.1 µs | 13.2 µs | **10.2 µs** | 110.6 µs | 0.09× |
-| Dashboard, idle (nothing changes) | 213.2 µs | 13.2 µs | **10.3 µs** | 110.3 µs | 0.09× |
+| Dashboard, 200×60 | 213.6 µs | 13.2 µs | **10.2 µs** | 106.9 µs | 0.10× |
+| 10k-item list, 100×50, `ui.list` | 1,834.0 µs | 72.3 µs | **23.0 µs** | 622.1 µs | 0.04× |
+| 10k-item list, 100×50, `ui.virtual_list` | 262.8 µs | 73.8 µs | **25.8 µs** | — | — |
+| Table 1000×6, 200×60, `ui.table` | 1,037.9 µs | 166.4 µs | **55.8 µs** | 997.5 µs ¹ | 0.06× |
+| Table 1000×6, 200×60, `page_size = 57` | 636.4 µs | 163.8 µs | **54.9 µs** | — | — |
+| 60 nested bordered boxes, 240×80 | 1,104.8 µs | 175.4 µs | **157.8 µs** | 340.0 µs | 0.46× |
+| Dashboard, one cell changes per frame | 218.1 µs | 13.2 µs | **10.2 µs** | 107.0 µs | 0.10× |
+| Dashboard, idle (nothing changes) | 213.2 µs | 13.2 µs | **10.3 µs** | 106.8 µs | 0.10× |
 
 ¹ ratatui draws the table with SLT's ` │ ` column rules and `─┼─` header
 rule (11 cells per row) so both arms show the same text; see the harness
 README.
 
 In-memory `TestBackend` (render only, no diff or flush), same runs:
-dashboard 8.6 µs vs ratatui 114.2 µs, list 15.0 vs 621.0, table 39.0 vs
-990.6, nested 101.5 vs 350.0.
+dashboard 8.5 µs vs ratatui 106.9 µs, list 14.8 vs 621.4, table 38.6 vs
+986.2, nested 99.8 vs 337.8.
 
 **Result: SLT 0.26 is faster than ratatui 0.30.2 on every matched
-workload**, from about 2× on the nested boxes to 10-27× on the dashboard,
+workload**, from about 2.2× on the nested boxes to 10-27× on the dashboard,
 list and table. v0.25.0 was 1.7-3.5× *slower* on the same workloads; the
 frame kernel, buffer and flush work of 0.26 (#483-#489, #493-#495) and the
 text and allocation work after it account for the change.
@@ -879,25 +880,26 @@ Each is built under two profiles, applied equally to both libraries: the
 default `[profile.release]` (no LTO, `opt-level = 3`, 16 codegen units,
 `panic = "unwind"`) followed by `strip`, and the **size profile** below.
 Apple M3 Pro, aarch64 macOS, rustc 1.98.0, ratatui 0.30.2 with default
-features. Stripped bytes:
+features. The 0.26 columns are the final 0.26.0 tree (2026-10-18); the base
+columns are `4ef8ae2`. Stripped bytes:
 
 | Program | Library | release, 0.26 base `4ef8ae2` | release, 0.26 | size profile, base | size profile, 0.26 |
 |---|---|---|---|---|---|
-| hello | SLT default (`crossterm`, `bidi`) | 1,232,400 | **1,165,744** | 704,976 | **688,320** |
-| hello | SLT `crossterm` only | 1,164,744 | **1,097,880** | 671,800 | **655,160** |
+| hello | SLT default (`crossterm`, `bidi`) | 1,232,400 | **1,149,216** | 704,976 | **688,320** |
+| hello | SLT `crossterm` only | 1,164,744 | **1,097,896** | 671,800 | **655,160** |
 | hello | ratatui | 553,384 | 553,384 | 421,568 | 421,568 |
 | dashboard | SLT default | 1,367,208 | **1,267,480** | 754,800 | **738,160** |
-| dashboard | SLT `crossterm` only | 1,299,520 | **1,216,144** | 721,648 | **704,992** |
+| dashboard | SLT `crossterm` only | 1,299,520 | **1,216,160** | 721,648 | **705,008** |
 | dashboard | ratatui | 759,976 | 759,976 | 504,824 | 504,824 |
 
 | SLT default / ratatui | release, base | release, 0.26 | size profile, base | size profile, 0.26 |
 |---|---|---|---|---|
-| hello | 2.22x | **2.11x** | 1.67x | **1.63x** |
-| dashboard | 1.79x | **1.67x** | 1.50x | **1.46x** |
+| hello | 2.22x | **2.07x** | 1.67x | **1.63x** |
+| dashboard | 1.79x | **1.66x** | 1.50x | **1.46x** |
 
 The hello-world measures SLT's fixed cost, the runtime that every `slt::run`
 program links (see "Why SLT stays larger" below). Widgets add less in SLT
-than in ratatui: going from hello to the dashboard adds ~102 KB to SLT and
+than in ratatui: going from hello to the dashboard adds ~118 KB to SLT and
 ~207 KB to ratatui in the release profile, so the ratio shrinks as an app
 grows. On arm64 macOS `__TEXT` is padded to 16 KiB pages, so stripped sizes
 move in 16 KiB steps; a change of a few KB of code can show as 0 or 16 KiB.
@@ -918,7 +920,7 @@ panic = "abort"     # no unwind tables or landing pads
 strip = true        # drop symbols
 ```
 
-On the hello-world it removes 41% (1,165,744 → 688,320 B), on the dashboard
+On the hello-world it removes 40% (1,149,216 → 688,320 B), on the dashboard
 42% (1,267,480 → 738,160 B). Trade-offs: `opt-level = "z"` is slower code (measure your own frame
 times; `opt-level = "s"` is a middle ground), fat LTO and one codegen unit
 make release builds slower, and `panic = "abort"` turns every panic into
@@ -1020,7 +1022,9 @@ for both the hello-world (≤ 1,170,780 B) and the dashboard
 removed and no workload slower by more than 2%. Result against the final
 base: hello −5.4% (1,165,744 B), dashboard −7.3% (1,267,480 B), frame time
 within ±1.1%. The hello margin is one page: a few KiB of new runtime code
-can cross it. The round-1 absolute number (1,140,000 B) is not met
+can cross it. On the final 0.26.0 tree (2026-10-18) the hello-world is one
+16 KiB page smaller again, 1,149,216 B (−6.7% against `4ef8ae2`); the
+dashboard is unchanged at 1,267,480 B. The round-1 absolute number (1,140,000 B) is not met
 (25,744 B away); the base grew by 34 KB between the rounds with the v0.26
 frame-path work.
 

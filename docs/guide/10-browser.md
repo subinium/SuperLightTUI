@@ -4,18 +4,17 @@
 application supplies its own `cdylib`, wasm-bindgen entry point, and retained
 `WasmAppHandle`. No npm package publication is required.
 
-The v0.24 implementation is verified from source by compiled browser tests.
-Source verification is not evidence of registry publication. Exact-version
-registry builds, docs.rs, and release workflow verification remain release gates.
+> **Deferred in 0.26 (#367).** Browser support is not part of the 0.26
+> release. `slt-wasm` is not published with superlighttui 0.26.0; the latest
+> version on crates.io is **slt-wasm 0.25.0**, which depends on superlighttui
+> 0.25.0. The crate stays in this repository (`publish = false`) and still
+> builds for `wasm32-unknown-unknown`, but CI and the release workflow no
+> longer build, test or publish it. Treat this page as the reference for the
+> 0.25.0 registry pair and for source builds of the in-repo crate.
 
-Candidate package verification uses `cargo package --workspace
---no-default-features --target wasm32-unknown-unknown --locked`; Cargo builds
-the packaged root and companion through a temporary local registry. This does
-not publish either package. After publication, `python3
-scripts/smoke_wasm_release.py X.Y.Z --expect-commit COMMIT` resolves both exact
-versions from crates.io, runs the compiled browser consumer, and waits for
-their exact docs.rs pages. The release workflow blocks its combined success
-announcement on this verification.
+The implementation is verified from source by compiled browser tests, run
+locally while the backend is deferred. Source verification is not evidence of
+registry publication.
 
 ## Runnable Example
 
@@ -34,7 +33,9 @@ Open `http://localhost:8080`. Its HTML imports generated local JavaScript and
 WASM from `pkg/`; HTTP serving is necessary, not `file://` loading. `pagehide`
 disposes the retained Rust runtime. No Node toolchain is needed to run it.
 
-For an independent consumer after the matching versions are published:
+For an independent consumer from crates.io, pin the last published pair,
+0.25.0 (slt-wasm 0.25.0 depends on superlighttui 0.25.0, so the root crate
+cannot be 0.26 here):
 
 ```toml
 [package]
@@ -54,8 +55,9 @@ web-sys = { version = "0.3", features = ["HtmlElement"] }
 
 Use the example's `src/lib.rs` and HTML loading pattern. Do not enable the root
 crate's native defaults through another dependency: Cargo unifies features.
-The example's path dependencies are for source development; registry acceptance
-must remove every path/git override and resolve both exact published versions.
+To try the 0.26 APIs in the browser, build against this repository with path
+dependencies, as the example does; there is no 0.26 registry release of
+`slt-wasm`.
 
 ## Mounting And Options
 
@@ -195,7 +197,8 @@ browser gate; other browsers are not implied tested by compilation alone.
 
 ## Verification
 
-Compiled WASM integration tests run in the existing browser gate:
+Compiled WASM integration tests (a local check while the backend is deferred;
+CI does not run them):
 
 ```sh
 wasm-pack test --headless --chrome crates/slt-wasm
