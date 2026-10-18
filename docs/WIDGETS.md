@@ -40,7 +40,7 @@ Every widget method on `Context` follows one of these return patterns:
 | Return type | Meaning | When to use |
 |---|---|---|
 | `&mut Self` | Style-chainable display element | `text`, `styled`, `link`, `spacer`, `timer_display`, `toast` |
-| `Response` (`#[must_use]`) | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
+| `Response` | Widget with click/hover/changed/focused/rect — includes display widgets | `button`, `list`, `table`, `tabs`, `col`, `row`, `separator`, `badge`, `stat`, `alert`, `markdown`, charts |
 | `ContainerBuilder<'a>` | Fluent builder — finalize with `.col()`, `.row()`, or `.draw()` | `container`, `scrollable`, `bordered`, `group` |
 | Widget builder | Optional widget configuration, renders on Drop, `.show()` captures response | `breadcrumb`, `gauge`, `line_gauge`, `code_block`, `diff`, `code_editor` |
 | `()` | Fire-and-forget side-effect | `tooltip`, `notify`, `screen` |
@@ -68,7 +68,7 @@ on a widget's first frame). Instead of reading fields you can chain callbacks,
 since `Response` does not borrow `ui`:
 
 ```rust
-let _ = ui
+ui
     .button("Save")
     .on_click(ui, |_| save())          // runs when `clicked`
     .on_hover(ui, "Write to disk");    // tooltip while `hovered`
@@ -81,7 +81,8 @@ body. Hover-based callbacks need `MouseMode::Hover`.
 
 ## Text & Display
 
-All return `&mut Self` for style chaining unless noted.
+`text`, `styled`, `link` and `timer_display` return the scoped `Text` builder;
+its chain options style that element only, and `.show()` returns a `Response`.
 
 | Method | Description |
 |---|---|

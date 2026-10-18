@@ -236,7 +236,7 @@ offset the CPU cost per frame.
 | Measurement | SLT | ratatui + crossterm |
 |---|---|---|
 | Unique normal dependencies | **26** | 67 |
-| Stripped hello-world binary | 1,063,952 B (1039 KiB) | 553,384 B (540 KiB) — SLT 1.92x larger |
+| Stripped hello-world binary | 1,063,952 B (1039 KiB); 0.26: 1,164,360 B (#491) | 553,384 B (540 KiB) — SLT 1.92x larger (0.26: 2.10x; see PERFORMANCE.md "Binary size") |
 | Cold `cargo build --release` (two runs) | ~11.0 s / 9.9 s | ~7.1 s / 6.2 s — SLT ~1.6x slower |
 
 The SLT dependency count was re-run for this snapshot with

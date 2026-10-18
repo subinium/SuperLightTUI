@@ -55,8 +55,7 @@ pub fn render_frame(
     let counts_state = ui.use_state(|| [0u32; 4]);
     let last_clicked_state = ui.use_state(|| Option::<String>::None);
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("한글 / 中文 / 日本語 demo")
         .p(1)
         .grow(1)
@@ -64,11 +63,10 @@ pub fn render_frame(
             ui.text("CJK 위젯 데모 — Ctrl+Q to quit · 카드를 클릭해 보세요")
                 .bold()
                 .fg(Color::Cyan);
-            let _ = ui.separator();
+            ui.separator();
 
-            let _ = ui.row(|ui| {
-                let _ = ui
-                    .bordered(Border::Rounded)
+            ui.row(|ui| {
+                ui.bordered(Border::Rounded)
                     .title("짧은 제목")
                     .p(1)
                     .grow(1)
@@ -80,8 +78,7 @@ pub fn render_frame(
                             .wrap();
                     });
 
-                let _ = ui
-                    .bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .title("Mixed 한·中·日 title overflow test")
                     .p(1)
                     .grow(1)
@@ -92,28 +89,26 @@ pub fn render_frame(
                     });
             });
 
-            let _ = ui.separator();
-            let _ = ui.row(|ui| {
+            ui.separator();
+            ui.row(|ui| {
                 // Group name encodes the focus role so `is_group_focused`
                 // (used by `text_input` internally) stays unique even if
                 // the title text were to change later.
-                let _ = ui
-                    .group("input-name")
+                ui.group("input-name")
                     .border(Border::Rounded)
                     .title("입력")
                     .p(1)
                     .grow(1)
                     .col(|ui| {
                         ui.text("이름:").dim();
-                        let _ = ui.text_input(name_input);
+                        ui.text_input(name_input);
                         ui.text("태그:").dim();
-                        let _ = ui.text_input(tag_input);
+                        ui.text_input(tag_input);
                         ui.text("Tab으로 포커스 이동, 또는 아래 [포커스] 버튼")
                             .dim();
                     });
 
-                let _ = ui
-                    .bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .title("결과")
                     .p(1)
                     .grow(1)
@@ -126,10 +121,10 @@ pub fn render_frame(
                     });
             });
 
-            let _ = ui.separator();
+            ui.separator();
             ui.text("Truncation table — 각 박스는 너비 12, 제목이 잘려야 정상 (hover/click)")
                 .dim();
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 // Read counts up front so the click handler below can set
                 // the next value without holding an immutable borrow on
                 // `ui` while we also read `is_group_hovered`.
@@ -169,8 +164,8 @@ pub fn render_frame(
                 }
             });
 
-            let _ = ui.separator();
-            let _ = ui.row(|ui| {
+            ui.separator();
+            ui.row(|ui| {
                 let last_label = last_clicked_state
                     .get(ui)
                     .clone()

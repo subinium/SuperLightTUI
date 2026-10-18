@@ -87,7 +87,7 @@ impl App {
             self.info_open = !self.info_open;
         }
 
-        let _ = ui.container().p(1).gap(1).grow(1).col(|ui| {
+        ui.container().p(1).gap(1).grow(1).col(|ui| {
             ui.text("Files (right-click a row)").bold();
             for index in 0..self.files.len() {
                 let file = self.files[index];
@@ -130,15 +130,14 @@ impl App {
 
             let ready = !self.name.value.trim().is_empty();
             let primary = ui.theme().primary;
-            let _ = ui
-                .bordered(Border::Rounded)
+            ui.bordered(Border::Rounded)
                 .title("Order")
                 .p(1)
                 .gap(1)
                 .focus_within_border_fg(primary)
                 .col(|ui| {
-                    let _ = ui.text_input(&mut self.name);
-                    let _ = ui.select(&mut self.size);
+                    ui.text_input(&mut self.name);
+                    ui.select(&mut self.size);
                     let submit = ui.disabled(!ready, |ui| ui.button("Submit"));
                     if submit.clicked {
                         self.log = format!(
@@ -153,10 +152,10 @@ impl App {
         });
 
         if self.confirm_quit {
-            let _ = ui.modal_with(ModalOpts::new(), |ui| {
-                let _ = ui.bordered(Border::Rounded).p(1).gap(1).col(|ui| {
+            ui.modal_with(ModalOpts::new(), |ui| {
+                ui.bordered(Border::Rounded).p(1).gap(1).col(|ui| {
                     ui.text("Quit the demo?");
-                    let _ = ui.row(|ui| {
+                    ui.row(|ui| {
                         if ui.button("Quit").clicked {
                             ui.quit();
                         }

@@ -120,38 +120,17 @@ echo "── V1: Two-path methods (Context vs ContainerBuilder) ──"
 # Allowlist — methods intentionally overloaded between Context's immediate
 # text/widget modifiers and ContainerBuilder's deferred container modifiers.
 # Any new overlap must be reviewed and added explicitly.
+#
+# v0.26 (#457): the text style/size/margin modifiers moved to the `Text`
+# builder and their Context versions are deprecated, so they no longer count.
 V1_ALLOWLIST=(
-    "align"
-    "bg"
-    "col"
-    "col_gap"
-    "color"
-    "group_hover_bg"
-    "grow"
-    "h"
-    "m"
-    "max_h"
-    "max_w"
-    "mb"
-    "min_h"
-    "min_w"
-    "ml"
-    "mr"
-    "mt"
-    "mx"
-    "my"
-    "row"
-    "row_gap"
-    "text"           # Context: unbordered shortcut; Builder: inside-builder form
+    "col"            # Context: plain column; Builder: styled column
+    "color"          # Context: theme token lookup; CanvasContext (container.rs): pen color
+    "row"            # same as col
     "theme"          # Context: getter; Builder: per-subtree override
     "width"          # Context: terminal width; Builder: w() (different name already)
     "height"         # same as width
-    "push_container" # internal helper used in both layers
-    "line"           # Context: row-shorthand; ContainerBuilder: not present (false pos)
-    "w"
-    "with"
-    "with_if"
-    "wrap"
+    "line"           # Context: row-shorthand; Builder: styled inline row
 )
 
 is_allowlisted_v1() {
@@ -178,11 +157,27 @@ if [[ -d "${SRC}/context/widgets" ]]; then
     done < <(find "${SRC}/context/widgets" -name '*.rs' -type f)
 fi
 
+# Only `pub fn`s inside top-level `impl Context {` blocks count: builder types
+# defined in the same files (`Text`, `Gauge`, ...) are separate paths, and
+# `#[deprecated]` Context methods are on their way out (issue #457 deprecated
+# the "modify the last text" modifiers in favour of the `Text` builder).
 ctx_methods=""
 for f in "${ctx_files[@]}"; do
     [[ -f "$f" ]] || continue
-    ctx_methods+=$(grep -hE '^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+' "$f" 2>/dev/null \
-        | sed -E 's/.*pub[[:space:]]+fn[[:space:]]+([[:alnum:]_]+).*/\1/' || true)
+    ctx_methods+=$(awk '
+        /^impl Context \{/ { in_ctx = 1; deprecated = 0; next }
+        /^\}/ { in_ctx = 0; next }
+        !in_ctx { next }
+        /^[[:space:]]*#\[deprecated/ { deprecated = 1; next }
+        /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?fn[[:space:]]/ {
+            if (!deprecated && $0 ~ /^[[:space:]]*pub[[:space:]]+fn[[:space:]]+[[:alnum:]_]+/) {
+                sub(/^[[:space:]]*pub[[:space:]]+fn[[:space:]]+/, "")
+                sub(/[^[:alnum:]_].*/, "")
+                print
+            }
+            deprecated = 0
+        }
+    ' "$f" 2>/dev/null || true)
     ctx_methods+=$'\n'
 done
 ctx_methods=$(printf '%s' "${ctx_methods}" | sort -u)

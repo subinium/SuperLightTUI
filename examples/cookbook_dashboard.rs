@@ -100,27 +100,26 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let mem_slice: Vec<f64> = state.mem_hist.iter().copied().collect();
     let req_slice: Vec<f64> = state.req_hist.iter().copied().collect();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Cookbook: Dashboard")
         .p(1)
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.container().gap(2).row(|ui| {
-                let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored("CPU", &format!("{:.1}%", m.cpu), Color::Cyan);
+            ui.container().gap(2).row(|ui| {
+                ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                    ui.stat_colored("CPU", &format!("{:.1}%", m.cpu), Color::Cyan);
                 });
-                let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored("Memory", &format!("{:.1}%", m.mem), Color::Yellow);
+                ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                    ui.stat_colored("Memory", &format!("{:.1}%", m.mem), Color::Yellow);
                 });
-                let _ = ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
-                    let _ = ui.stat_colored("Req/s", &format!("{:.0}", m.req_per_s), Color::Green);
+                ui.bordered(Border::Single).p(1).grow(1).col(|ui| {
+                    ui.stat_colored("Req/s", &format!("{:.0}", m.req_per_s), Color::Green);
                 });
             });
 
             ui.text("CPU history (last 60 ticks)").dim();
-            let _ = ui.chart(
+            ui.chart(
                 |c| {
                     let _ = c.line(&cpu_points).color(Color::Cyan).label("cpu");
                     c.grid(true);
@@ -130,13 +129,13 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             );
 
             let spark_w = ui.width().saturating_sub(14).max(20);
-            let _ = ui.container().gap(2).row(|ui| {
+            ui.container().gap(2).row(|ui| {
                 ui.text("Memory").dim();
-                let _ = ui.sparkline(&mem_slice, spark_w);
+                ui.sparkline(&mem_slice, spark_w);
             });
-            let _ = ui.container().gap(2).row(|ui| {
+            ui.container().gap(2).row(|ui| {
                 ui.text("Req/s ").dim();
-                let _ = ui.sparkline(&req_slice, spark_w);
+                ui.sparkline(&req_slice, spark_w);
             });
 
             ui.text("q or Ctrl+Q to quit.").dim();

@@ -134,8 +134,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
 
     let sp = ui.spacing();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("v0.20.0 #235: scrollable_with_gutter")
         .p(sp.xs())
         .gap(sp.xs())

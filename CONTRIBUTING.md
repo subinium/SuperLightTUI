@@ -77,7 +77,7 @@ Follow this checklist when adding a new widget:
 3. **Rendering method** on `Context` in `src/context/widgets/<family>.rs` (or its `<family>/` directory) — the same family name as the state file
 4. **Re-export** in `lib.rs`
 5. **Doc comment** (`///`) on the public method with usage example
-6. **Response pattern** — interactive and independently framed display widgets return `Response`; style-chain text helpers return `&mut Self`
+6. **Response pattern** — interactive and independently framed display widgets return `Response`; text elements (`text`, `styled`, `link`, `timer_display`) return the scoped `Text<'_>` builder
 7. **Focus** — call `register_focusable()` if the widget accepts keyboard input
 8. **Events** — consume handled key events so they don't bubble
 9. **Theme** — use `self.theme.*` for default colors

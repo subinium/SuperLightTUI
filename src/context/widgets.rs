@@ -28,7 +28,7 @@ mod selection;
 mod text_input;
 mod viz;
 
-pub use display::Breadcrumb;
+pub use display::{Breadcrumb, Text};
 pub use feedback::{Gauge, LineGauge};
 pub use layout::GutterOpts;
 #[allow(deprecated)]

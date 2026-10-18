@@ -22,9 +22,8 @@ impl Context {
     ///
     /// Returns a [`Response`] with `hovered` populated correctly so callers
     /// can attach tooltips or react to mouse interaction. Prior to v0.20.0
-    /// this returned `&mut Self`; existing code that ignores the return value
-    /// keeps compiling, though the `#[must_use]` attribute on `Response`
-    /// surfaces a warning that nudges callers to handle interaction state.
+    /// this returned `&mut Self`; `ui.spinner(&state);` stays a plain
+    /// statement (since v0.26 `Response` is not `#[must_use]` as a type).
     pub fn spinner(&mut self, state: &SpinnerState) -> Response {
         let response = self.interaction();
         self.styled(
@@ -458,8 +457,8 @@ impl Context {
     ///
     /// Returns a [`Response`] so callers can detect hover, attach a tooltip,
     /// or implement click-to-set scrubbers. Prior to v0.20.0 this returned
-    /// `&mut Self`; ignoring the return value still compiles but the
-    /// `#[must_use]` attribute on `Response` warns at the call site.
+    /// `&mut Self`; `ui.progress(0.5);` stays a plain statement (since
+    /// v0.26 `Response` is not `#[must_use]` as a type).
     pub fn progress(&mut self, ratio: f64) -> Response {
         self.progress_bar(ratio, 20)
     }

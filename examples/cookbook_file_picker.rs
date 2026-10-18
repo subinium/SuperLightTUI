@@ -96,25 +96,22 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         });
     }
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Cookbook: File Picker")
         .p(1)
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.container().grow(1).row(|ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+            ui.container().grow(1).row(|ui| {
+                ui.bordered(Border::Single)
                     .title("Files")
                     .p(1)
                     .grow(1)
                     .col(|ui| {
-                        let _ = ui.file_picker(&mut state.picker);
+                        ui.file_picker(&mut state.picker);
                     });
 
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .title("Preview")
                     .p(1)
                     .grow(2)

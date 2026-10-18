@@ -112,14 +112,13 @@ fn main() -> std::io::Result<()> {
         }
 
         let pad = ui.spacing().xs();
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Showcase Tour: domain examples")
             .p(pad)
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(&mut state.tabs);
-                let _ = ui.separator();
+                ui.tabs(&mut state.tabs);
+                ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so tabs whose
                 // demo content overflows the viewport (Design's stacked
@@ -127,8 +126,9 @@ fn main() -> std::io::Result<()> {
                 // stay fully reachable. Mouse wheel outside any inner
                 // scroll region scrolls the whole tab body; when the
                 // content fits the viewport this is a no-op.
-                let _ = ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
-                    match state.tabs.selected {
+                ui.scrollable(&mut state.tab_scroll)
+                    .grow(1)
+                    .col(|ui| match state.tabs.selected {
                         0 => render_intro(ui),
                         1 => render_dashboard(ui, &mut state),
                         2 => render_design(ui, &mut state),
@@ -138,8 +138,7 @@ fn main() -> std::io::Result<()> {
                         6 => render_table(ui, &mut state),
                         7 => render_website(ui, &mut state),
                         _ => {}
-                    }
-                });
+                    });
             });
 
         // 'q' and Esc are checked AFTER demos render so a focused
@@ -154,7 +153,7 @@ fn main() -> std::io::Result<()> {
 
 /// Tab 1: Intro. Pure overview - no embedded demo.
 fn render_intro(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let pad = ui.spacing().xs();
         ui.text("Welcome to the showcase tour.").bold();
         ui.text("");
@@ -163,7 +162,7 @@ fn render_intro(ui: &mut Context) {
         ui.text("without changes - what you see in a tab is exactly the").dim();
         ui.text("standalone demo's render path.").dim();
         ui.text("");
-        let _ = ui
+        ui
             .bordered(Border::Single)
             .title("Domain examples at a glance")
             .p(pad)
@@ -212,7 +211,7 @@ fn render_intro(ui: &mut Context) {
 
 /// One label/description row for the intro example list.
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<12}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });

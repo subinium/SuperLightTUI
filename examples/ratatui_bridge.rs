@@ -32,8 +32,7 @@ fn main() -> std::io::Result<()> {
         }
         let tick = ui.tick();
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("ratatui widgets inside SLT")
             .p(1)
             .gap(1)
@@ -41,7 +40,7 @@ fn main() -> std::io::Result<()> {
                 ui.text("SLT layout + ratatui-core Widget rendering. q to quit.")
                     .fg(Color::Cyan);
 
-                let _ = ui.container().gap(1).row(|ui| {
+                ui.container().gap(1).row(|ui| {
                     let percent = (tick % 101) as u16;
                     ui.container().grow(1).h(3).ratatui_widget(
                         Gauge::default()
@@ -66,7 +65,7 @@ fn main() -> std::io::Result<()> {
                 let log: String = (1..=LOG_LINES)
                     .map(|i| format!("line {i:02}: ratatui Paragraph, scrolled by SLT\n"))
                     .collect();
-                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                ui.scrollable(&mut scroll).grow(1).col(|ui| {
                     ui.container().h(LOG_LINES as u32 + 2).ratatui_widget(
                         Paragraph::new(log).block(Block::bordered().title("Scroll me")),
                     );

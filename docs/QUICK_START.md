@@ -10,6 +10,7 @@ cargo add superlighttui
 
 ## 2. Render text
 
+<!-- slt-check: {"name":"qs_render_text","features":["crossterm"],"context":"module"} -->
 ```rust
 fn main() -> std::io::Result<()> {
     slt::run(|ui: &mut slt::Context| {
@@ -22,6 +23,7 @@ That is the whole model: your closure runs every frame and describes the UI.
 
 ## 3. Add state in your closure
 
+<!-- slt-check: {"name":"qs_state","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Context, KeyCode};
 
@@ -51,14 +53,15 @@ There is no framework state object. Use normal Rust variables and structs.
 
 ## 4. Use layout and style chaining
 
+<!-- slt-check: {"name":"qs_layout","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Border, Color, Context};
 
 fn main() -> std::io::Result<()> {
     slt::run(|ui: &mut Context| {
-        let _ = ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
+        ui.bordered(Border::Rounded).title("Status").p(1).gap(1).col(|ui| {
             ui.text("SuperLightTUI").bold().fg(Color::Cyan);
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("mode:");
                 ui.text("ready").fg(Color::Green);
             });
@@ -72,6 +75,7 @@ Use chainable modifiers like `.p()`, `.m()`, `.w()`, `.grow()`, `.fg()`, and `.b
 
 ## 5. Reach for widget state when a widget needs it
 
+<!-- slt-check: {"name":"qs_widget_state","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Context, TextInputState};
 
@@ -81,7 +85,7 @@ fn main() -> std::io::Result<()> {
     let mut names: Vec<String> = Vec::new();
 
     slt::run(|ui: &mut Context| {
-        let _ = ui.col(|ui| {
+        ui.col(|ui| {
             ui.text("Name").bold();
             if ui.text_input(&mut name).submitted && !name.value.is_empty() {
                 names.push(name.value.clone());
@@ -106,6 +110,7 @@ Home and End (plus Enter, Up and Down for `textarea`). `ui.key('q')`,
 check runs before or after the field, so typing `q` into a search box never
 quits the app:
 
+<!-- slt-check: {"name":"qs_shortcuts","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Context, KeyCode, KeyModifiers, TextInputState};
 
@@ -121,7 +126,7 @@ fn main() -> std::io::Result<()> {
         if ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL) {
             // save
         }
-        let _ = ui.text_input(&mut name);
+        ui.text_input(&mut name);
     })
 }
 ```
@@ -139,6 +144,7 @@ closure instead).
 scroll wheel, drag handles, and text selection reach SLT with no setup (over
 SSH the default drops to clicks and the wheel only):
 
+<!-- slt-check: {"name":"qs_mouse","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::Context;
 
@@ -160,12 +166,13 @@ or Space activates it (`clicked` becomes `true`).
 Hover styling (`hovered`, `group_hover_bg`) and tooltips need every pointer
 move, which is heavier, so opt in:
 
+<!-- slt-check: {"name":"qs_hover","features":["crossterm"],"context":"module"} -->
 ```rust
 use slt::{Context, MouseMode, RunConfig};
 
 fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().mouse_mode(MouseMode::Hover), |ui: &mut Context| {
-        let _ = ui.button("Deploy").on_hover(ui, "Push to staging");
+        ui.button("Deploy").on_hover(ui, "Push to staging");
     })
 }
 ```
@@ -177,16 +184,18 @@ the mouse off entirely. See [INTERACTION.md](INTERACTION.md) for every mode.
 
 ## 8. Know the two main return patterns
 
+<!-- slt-check: {"name":"qs_return_patterns","features":[],"context":"ui"} -->
 ```rust
-// Text and its style chain return &mut Context for chaining.
+// text() returns a Text builder: chained options style that text only.
 ui.text("hello").bold().fg(Color::Cyan);
 
-// Most widgets return a #[must_use] Response — interactive ones (button,
-// text_input, list) and display ones (badge, stat, alert, separator) alike.
+// Most widgets return a Response — interactive ones (button, text_input,
+// list) and display ones (badge, stat, alert, separator) alike. Ignore it
+// freely; only a bare `ui.button(..)` warns, since its click is its output.
 if ui.button("Save").clicked {
     // handle save
 }
-let _ = ui.badge("beta"); // `let _ =` when you ignore it
+ui.badge("beta");
 ```
 
 This is the core contract across the library. `Response` also offers

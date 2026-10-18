@@ -69,7 +69,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         "v0.20.0 #223: split_pane (horizontal)"
     };
 
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title(title)
         .p(sp.xs())

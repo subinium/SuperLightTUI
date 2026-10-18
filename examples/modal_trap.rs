@@ -48,8 +48,7 @@ impl Default for State {
 /// app overrides the theme, this demo's density follows automatically.
 fn body(ui: &mut Context, state: &mut State) {
     let sp = ui.spacing();
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("SLT v0.20: Modal focus trap")
         .p(sp.sm())
         .gap(sp.xs())
@@ -67,7 +66,7 @@ fn body(ui: &mut Context, state: &mut State) {
             // Three throwaway background buttons. They exist so the user can
             // see that focus genuinely escapes the modal scope when no trap
             // is active — and is held captive once the modal opens.
-            let _ = ui.container().gap(sp.sm()).row(|ui| {
+            ui.container().gap(sp.sm()).row(|ui| {
                 let _ = ui.button("First bg button");
                 let _ = ui.button("Second bg button");
                 let _ = ui.button("Third bg button");
@@ -87,15 +86,14 @@ fn body(ui: &mut Context, state: &mut State) {
     if state.show_modal {
         // tab_trap = true is the load-bearing line: focus cannot leave the
         // modal even if a stray click hits a background widget rect.
-        let _ = ui.modal_with(ModalOpts::new(), |ui| {
-            let _ = ui
-                .bordered(Border::Rounded)
+        ui.modal_with(ModalOpts::new(), |ui| {
+            ui.bordered(Border::Rounded)
                 .title("Confirm")
                 .p(sp.sm())
                 .gap(sp.xs())
                 .col(|ui| {
                     ui.text("Press Tab — focus stays inside the modal.").bold();
-                    let _ = ui.container().gap(sp.sm()).row(|ui| {
+                    ui.container().gap(sp.sm()).row(|ui| {
                         if ui.button_with("Yes", ButtonVariant::Primary).clicked {
                             state.answered = Some(true);
                             state.show_modal = false;

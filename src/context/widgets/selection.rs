@@ -124,13 +124,20 @@ impl Context {
     /// color when hovered. Mouse clicks work with the default mouse mode;
     /// hover styling needs [`MouseMode::Hover`](crate::MouseMode::Hover); keyboard
     /// activation works without it.
+    #[must_use = "a button's only output is its Response: check `.clicked` or chain `.on_click(ui, ..)`"]
     pub fn button(&mut self, label: impl Into<String>) -> Response {
         let colors = self.widget_theme.button;
         self.button_colored(label, &colors)
     }
 
     /// Render a clickable button with custom widget colors.
+    #[must_use = "a button's only output is its Response: check `.clicked` or chain `.on_click(ui, ..)`"]
     pub fn button_colored(&mut self, label: impl Into<String>, colors: &WidgetColors) -> Response {
+        // Non-generic body (#491): one copy instead of one per label type.
+        self.button_colored_string(label.into(), colors)
+    }
+
+    fn button_colored_string(&mut self, label: String, colors: &WidgetColors) -> Response {
         let focused = self.register_focusable();
         let mut a11y = self.a11y_begin(focused);
         let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
@@ -175,7 +182,7 @@ impl Context {
                 grow: 0,
                 group_name: None,
             })));
-        let raw_label = label.into();
+        let raw_label = label;
         let mut label_text = String::with_capacity(raw_label.len() + 4);
         label_text.push_str("[ ");
         label_text.push_str(&raw_label);
@@ -195,6 +202,7 @@ impl Context {
     ///
     /// Use [`ButtonVariant::Primary`] for call-to-action, [`ButtonVariant::Danger`]
     /// for destructive actions, or [`ButtonVariant::Outline`] for secondary actions.
+    #[must_use = "a button's only output is its Response: check `.clicked` or chain `.on_click(ui, ..)`"]
     pub fn button_with(&mut self, label: impl Into<String>, variant: ButtonVariant) -> Response {
         let focused = self.register_focusable();
         let mut a11y = self.a11y_begin(focused);

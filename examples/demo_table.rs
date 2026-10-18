@@ -71,31 +71,31 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     });
     let theme = *ui.theme();
 
-    let _ = ui.container().p(1).grow(1).col(|ui| {
-        let _ = ui.row(|ui| {
+    ui.container().p(1).grow(1).col(|ui| {
+        ui.row(|ui| {
             ui.text("Table Demo").bold().fg(theme.primary);
             ui.spacer();
-            let _ = ui.toggle("Dark", &mut state.dark_mode);
+            ui.toggle("Dark", &mut state.dark_mode);
         });
 
-        let _ = ui.separator();
+        ui.separator();
 
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.text("Filter").bold().fg(theme.text_dim);
-            let _ = ui.container().grow(1).col(|ui| {
-                let _ = ui.text_input(&mut state.filter);
+            ui.container().grow(1).col(|ui| {
+                ui.text_input(&mut state.filter);
             });
         });
         state.table.set_filter(&state.filter.value);
 
-        let _ = ui.container().grow(1).gap(0).col(|ui| {
-            let _ = ui.table(&mut state.table);
+        ui.container().grow(1).gap(0).col(|ui| {
+            ui.table(&mut state.table);
         });
 
-        let _ = ui.separator();
+        ui.separator();
 
         if let Some(row) = state.table.selected_row() {
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("Selected").bold().fg(theme.primary);
                 ui.text(row.join(" \u{00b7} "));
             });
@@ -103,7 +103,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("No matching rows").dim();
         }
 
-        let _ = ui.row(|ui| {
+        ui.row(|ui| {
             ui.text(format!(
                 "{} / {} rows",
                 state.table.visible_indices().len(),
@@ -122,7 +122,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             }
         });
 
-        let _ = ui.help(&[
+        ui.help(&[
             ("Ctrl-Q / Esc", "quit"),
             ("\u{2191}\u{2193}/jk", "select"),
             ("PgUp/Dn", "page"),

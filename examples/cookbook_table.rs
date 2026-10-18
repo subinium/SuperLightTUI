@@ -63,14 +63,13 @@ impl Default for DemoState {
 /// Render one frame of the table demo. Caller owns `DemoState` so the
 /// filter text, sort column, and table cursor persist across frames.
 pub fn render(ui: &mut Context, state: &mut DemoState) {
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("Cookbook: Table")
         .p(1)
         .gap(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.container().gap(1).row(|ui| {
+            ui.container().gap(1).row(|ui| {
                 ui.text("Search:").dim();
                 let resp = ui.text_input(&mut state.search);
                 if resp.changed {
@@ -78,7 +77,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
             });
 
-            let _ = ui.table(&mut state.table);
+            ui.table(&mut state.table);
 
             let sort_label = match state.table.sort_column {
                 Some(c) => {
@@ -92,7 +91,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 None => "unsorted".to_string(),
             };
             let n = state.table.visible_indices().len();
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(format!("{n} rows / {sort_label}")).fg(Color::Cyan);
                 ui.spacer();
                 ui.text("s cycle sort   Enter invert   Esc quit").dim();

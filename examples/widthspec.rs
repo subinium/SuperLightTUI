@@ -54,8 +54,7 @@ pub fn render(ui: &mut Context) {
     let theme = ui.theme();
     let pad = theme.spacing.xs();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("WidthSpec showcase")
         .p(pad)
         .grow(1)
@@ -67,8 +66,7 @@ pub fn render(ui: &mut Context) {
 
             // Fixed(20) — exact column count.
             row(ui, "Fixed(20)", |ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .constraints(Constraints::default().w(20))
                     .col(|ui| {
                         ui.text("WidthSpec::Fixed(20)").fg(Color::Yellow);
@@ -77,8 +75,7 @@ pub fn render(ui: &mut Context) {
 
             // Pct(50) — half of the parent width.
             row(ui, "Pct(50)", |ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .constraints(Constraints::default().w_pct(50))
                     .col(|ui| {
                         ui.text("WidthSpec::Pct(50)").fg(Color::Green);
@@ -87,8 +84,7 @@ pub fn render(ui: &mut Context) {
 
             // Ratio(1, 3) — exact 1/3 of the parent width.
             row(ui, "Ratio(1, 3)", |ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .constraints(Constraints::default().w_ratio(1, 3))
                     .col(|ui| {
                         ui.text("WidthSpec::Ratio(1, 3)").fg(Color::Magenta);
@@ -97,8 +93,7 @@ pub fn render(ui: &mut Context) {
 
             // MinMax { 10..=30 } — clamps to the inclusive range.
             row(ui, "MinMax { 10..=30 }", |ui| {
-                let _ = ui
-                    .bordered(Border::Single)
+                ui.bordered(Border::Single)
                     .constraints(Constraints::default().w_minmax(MINMAX_LO, MINMAX_HI))
                     .col(|ui| {
                         ui.text("WidthSpec::MinMax { 10..=30 }").fg(Color::Blue);
@@ -108,7 +103,7 @@ pub fn render(ui: &mut Context) {
             // Auto — sized to fit content (the default when no width spec
             // is supplied).
             row(ui, "Auto (content)", |ui| {
-                let _ = ui.bordered(Border::Single).col(|ui| {
+                ui.bordered(Border::Single).col(|ui| {
                     ui.text("WidthSpec::Auto").fg(Color::White);
                 });
             });
@@ -119,7 +114,7 @@ pub fn render(ui: &mut Context) {
 // box starts at the same x — readers can compare resolved widths visually
 // without measuring against a moving baseline.
 fn row<F: FnOnce(&mut Context)>(ui: &mut Context, label: &str, content: F) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<width$}", width = LABEL_W)).bold();
         content(ui);
     });

@@ -22,8 +22,7 @@ async fn main() -> std::io::Result<()> {
             updates.drain(0..overflow);
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Async Demo")
             .p(1)
             .gap(1)

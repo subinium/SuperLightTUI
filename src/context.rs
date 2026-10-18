@@ -53,6 +53,7 @@ pub use widgets::CodeEditor;
 #[allow(deprecated)]
 pub use widgets::ModalOptions;
 pub use widgets::ModalOpts;
+pub use widgets::Text;
 pub use widgets::{
     Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, Placement, TreemapItem,
 };

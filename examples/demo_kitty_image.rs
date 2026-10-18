@@ -30,25 +30,24 @@ fn main() -> std::io::Result<()> {
             scroll.offset = scroll.offset.saturating_sub(2);
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Kitty Image Gallery")
             .grow(1)
             .col(|ui| {
-                let _ = ui.row(|ui| {
+                ui.row(|ui| {
                     ui.text("j/k scroll | q quit").dim();
                     ui.spacer();
                     ui.text(format!("offset: {}", scroll.offset)).dim();
                 });
 
-                let _ = ui.scrollable(&mut scroll).grow(1).col(|ui| {
+                ui.scrollable(&mut scroll).grow(1).col(|ui| {
                     for (i, (label, rgba, w, h)) in images.iter().enumerate() {
                         ui.text(format!("{}. {}", i + 1, label))
                             .bold()
                             .fg(Color::Yellow);
-                        let _ = ui.kitty_image(rgba, *w, *h, 30, 8);
+                        ui.kitty_image(rgba, *w, *h, 30, 8);
                         if i < images.len() - 1 {
-                            let _ = ui.separator();
+                            ui.separator();
                         }
                     }
                     ui.text("");

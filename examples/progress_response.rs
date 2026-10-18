@@ -108,8 +108,7 @@ impl Default for DemoState {
 pub fn render(ui: &mut Context, state: &mut DemoState) {
     let sp = ui.spacing();
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("v0.20.0 #212: Response from progress / spinner")
         .p(sp.xs())
         .gap(sp.xs())
@@ -118,7 +117,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Hover the spinner or the progress bar to see Response in action.")
                 .fg(Color::Cyan);
 
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 let s = ui.spinner(&state.spinner);
                 ui.text(" Loading...").dim();
                 if s.hovered {
@@ -146,25 +145,25 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
             ui.text("Static variants (different ratios, different widths):")
                 .fg(Color::Cyan);
 
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("  0%  ");
-                let _ = ui.progress(0.0);
+                ui.progress(0.0);
             });
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(" 25%  ");
-                let _ = ui.progress(0.25);
+                ui.progress(0.25);
             });
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(" 50%  ");
-                let _ = ui.progress(0.50);
+                ui.progress(0.50);
             });
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text(" 75%  ");
-                let _ = ui.progress(0.75);
+                ui.progress(0.75);
             });
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("100%  ");
-                let _ = ui.progress(1.0);
+                ui.progress(1.0);
             });
 
             ui.text("Space pauses; ←/→ nudges 5%. q / Esc / Ctrl-Q quits.")

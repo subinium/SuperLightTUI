@@ -134,22 +134,22 @@ fn main() -> std::io::Result<()> {
         }
 
         let pad = ui.spacing().xs();
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("SLT v0.20 Tour: every feature, one demo")
             .p(pad)
             .grow(1)
             .col(|ui| {
-                let _ = ui.tabs(&mut state.tabs);
-                let _ = ui.separator();
+                ui.tabs(&mut state.tabs);
+                ui.separator();
 
                 // Wrap the tab body in a vertical scrollable so tabs that
                 // stack multiple sub-demos (notably Hooks: three demos in
                 // one tab) stay reachable on small terminals. Mouse wheel
                 // outside any inner scroll region scrolls the tab body;
                 // when the body fits the viewport this is a no-op.
-                let _ = ui.scrollable(&mut state.tab_scroll).grow(1).col(|ui| {
-                    match state.tabs.selected {
+                ui.scrollable(&mut state.tab_scroll)
+                    .grow(1)
+                    .col(|ui| match state.tabs.selected {
                         0 => render_intro(ui),
                         1 => render_hooks(ui, &mut state),
                         2 => render_theme(ui),
@@ -162,8 +162,7 @@ fn main() -> std::io::Result<()> {
                         9 => ctrl_c_passthrough::render(ui, &mut state.ctrl_c_passthrough),
                         10 => dx_shortcuts::render(ui, &mut state.dx_shortcuts),
                         _ => {}
-                    }
-                });
+                    });
             });
 
         // 'q' is checked AFTER demos render so a focused text_input
@@ -176,7 +175,7 @@ fn main() -> std::io::Result<()> {
 
 /// Tab 1: Intro. Pure overview — no embedded demo.
 fn render_intro(ui: &mut Context) {
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         let pad = ui.spacing().xs();
         ui.text("Welcome to the v0.20 tour.").bold();
         ui.text("");
@@ -184,7 +183,7 @@ fn render_intro(ui: &mut Context) {
         ui.text("examples/<demo>.rs without modification — what you see in").dim();
         ui.text("a tab is exactly the standalone demo's render path.").dim();
         ui.text("");
-        let _ = ui
+        ui
             .bordered(Border::Single)
             .title("v0.20 features at a glance")
             .p(pad)
@@ -208,7 +207,7 @@ fn render_intro(ui: &mut Context) {
 
 /// One label/description row for the intro feature list.
 fn row_pair(ui: &mut Context, label: &str, desc: &str) {
-    let _ = ui.container().gap(1).row(|ui| {
+    ui.container().gap(1).row(|ui| {
         ui.text(format!("{label:<8}")).bold().fg(Color::Cyan);
         ui.text(desc).dim();
     });
@@ -217,16 +216,16 @@ fn row_pair(ui: &mut Context, label: &str, desc: &str) {
 /// Tab 2: Hooks. Three demos in one tab — keyed counters | effect log,
 /// with named_focus inputs across the bottom.
 fn render_hooks(ui: &mut Context, state: &mut TourState) {
-    let _ = ui.col(|ui| {
-        let _ = ui.row(|ui| {
-            let _ = ui.container().fill().col(|ui| {
+    ui.col(|ui| {
+        ui.row(|ui| {
+            ui.container().fill().col(|ui| {
                 use_state_keyed::render(ui, &mut state.use_state_keyed);
             });
-            let _ = ui.container().fill().col(|ui| {
+            ui.container().fill().col(|ui| {
                 use_effect::render(ui, &mut state.use_effect);
             });
         });
-        let _ = ui.container().fill().col(|ui| {
+        ui.container().fill().col(|ui| {
             named_focus::render(ui, &mut state.named_focus);
         });
     });
@@ -257,11 +256,11 @@ fn render_modal(ui: &mut Context, state: &mut TourState) {
 
 /// Tab 5: Layout. split_pane on the left half, widthspec on the right.
 fn render_layout(ui: &mut Context, state: &mut TourState) {
-    let _ = ui.row(|ui| {
-        let _ = ui.container().fill().col(|ui| {
+    ui.row(|ui| {
+        ui.container().fill().col(|ui| {
             split_pane_demo::render(ui, &mut state.split_pane);
         });
-        let _ = ui.container().fill().col(|ui| {
+        ui.container().fill().col(|ui| {
             widthspec::render(ui);
         });
     });
@@ -269,20 +268,20 @@ fn render_layout(ui: &mut Context, state: &mut TourState) {
 
 /// Tab 6: Widgets. 2x2 grid — gauge, progress, breadcrumb, gutter.
 fn render_widgets(ui: &mut Context, state: &mut TourState) {
-    let _ = ui.col(|ui| {
-        let _ = ui.row(|ui| {
-            let _ = ui.container().fill().col(|ui| {
+    ui.col(|ui| {
+        ui.row(|ui| {
+            ui.container().fill().col(|ui| {
                 gauge_demo::render(ui, &mut state.gauge);
             });
-            let _ = ui.container().fill().col(|ui| {
+            ui.container().fill().col(|ui| {
                 progress_response::render(ui, &mut state.progress);
             });
         });
-        let _ = ui.row(|ui| {
-            let _ = ui.container().fill().col(|ui| {
+        ui.row(|ui| {
+            ui.container().fill().col(|ui| {
                 breadcrumb_response::render(ui, &mut state.breadcrumb);
             });
-            let _ = ui.container().fill().col(|ui| {
+            ui.container().fill().col(|ui| {
                 gutter_highlights::render(ui, &mut state.gutter);
             });
         });
@@ -306,7 +305,7 @@ fn render_widgets(ui: &mut Context, state: &mut TourState) {
 /// demo to see the actual scrollback effect.
 fn render_log(ui: &mut Context) {
     let pad = ui.spacing().xs();
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title("v0.20 #233: static_log (append-only scrollback)")
         .p(pad)
@@ -324,12 +323,12 @@ fn render_log(ui: &mut Context) {
                 .dim();
             ui.text("and re-render cycles without flicker.").dim();
             ui.text("");
-            let _ = ui
+            ui
                 .bordered(Border::Single)
                 .title("typical usage")
                 .p(pad)
                 .col(|ui| {
-                    let _ = ui
+                    ui
                         .code_block(
                             "if frame % 5 == 0 {\n    ui.static_log(format!(\"[tick] count = {count}\"));\n}",
                         )

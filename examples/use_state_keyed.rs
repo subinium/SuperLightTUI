@@ -79,7 +79,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
     let pad = ui.spacing().xs();
     let gap = ui.spacing().xs();
 
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title("use_state_keyed: per-item counters")
         .p(pad)
@@ -108,7 +108,7 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 }
 
                 let row_gap = ui.spacing().xs();
-                let _ = ui.container().gap(row_gap).row(|ui| {
+                ui.container().gap(row_gap).row(|ui| {
                     let value = *counter.get(ui);
                     let prefix = if i == selected { "▶" } else { " " };
                     let label = format!("{prefix} item {i:>2}  count = {value:>4}");

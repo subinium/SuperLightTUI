@@ -8,8 +8,7 @@ fn main() -> std::io::Result<()> {
             ui.quit();
         }
 
-        let _ = ui
-            .bordered(Border::Rounded)
+        ui.bordered(Border::Rounded)
             .title("Error Boundary Demo")
             .p(1)
             .gap(1)

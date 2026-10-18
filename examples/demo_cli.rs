@@ -201,29 +201,27 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
         }
     }
 
-    let _ = ui
-        .bordered(Border::Rounded)
+    ui.bordered(Border::Rounded)
         .title("cargo-slt")
         .p(1)
         .grow(1)
         .col(|ui| {
-            let _ = ui.row(|ui| {
+            ui.row(|ui| {
                 ui.text("cargo-slt").bold().fg(Color::Cyan);
                 ui.spacer();
                 ui.text(format!("{} packages", PACKAGES.len())).dim();
             });
-            let _ = ui.separator();
+            ui.separator();
 
-            let _ = ui.container().grow(1).row(|ui| {
+            ui.container().grow(1).row(|ui| {
                 // left: search + list
-                let _ = ui
-                    .bordered(Border::Rounded)
+                ui.bordered(Border::Rounded)
                     .title("Packages")
                     .p(1)
                     .grow(1)
                     .col(|ui| {
-                        let _ = ui.text_input(&mut state.search);
-                        let _ = ui.separator();
+                        ui.text_input(&mut state.search);
+                        ui.separator();
                         if filtered.is_empty() {
                             ui.text("No packages found").dim();
                         } else {
@@ -243,40 +241,39 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                                 })
                                 .collect();
                             state.pkg_list.set_items(items);
-                            let _ = ui.list(&mut state.pkg_list);
+                            ui.list(&mut state.pkg_list);
                         }
                     });
 
                 // right: detail + output
-                let _ = ui.container().grow(1).col(|ui| {
+                ui.container().grow(1).col(|ui| {
                     let sel = filtered
                         .get(state.pkg_list.selected_view_index())
                         .copied()
                         .unwrap_or(0);
                     let pkg = &PACKAGES[sel];
 
-                    let _ = ui
-                        .bordered(Border::Rounded)
+                    ui.bordered(Border::Rounded)
                         .title("Details")
                         .p(1)
                         .col(|ui| {
                             ui.text(pkg.name).bold().fg(Color::Cyan);
                             ui.text(format!("v{}", pkg.version)).dim();
-                            let _ = ui.separator();
+                            ui.separator();
                             ui.text(pkg.desc);
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("License:").dim();
                                 ui.text(pkg.license);
                             });
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("Dependencies:").dim();
                                 ui.text(format!("{}", pkg.deps));
                             });
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("Size:").dim();
                                 ui.text(pkg.size);
                             });
-                            let _ = ui.row(|ui| {
+                            ui.row(|ui| {
                                 ui.text("Status:").dim();
                                 let (label, color) = match pkg.status {
                                     "installed" => ("installed", Color::Green),
@@ -287,19 +284,19 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                             });
 
                             if state.installing {
-                                let _ = ui.separator();
-                                let _ = ui.row(|ui| {
-                                    let _ = ui.spinner(&state.spinner);
+                                ui.separator();
+                                ui.row(|ui| {
+                                    ui.spinner(&state.spinner);
                                     ui.text(format!(
                                         " Installing... {:.0}%",
                                         state.install_progress * 100.0
                                     ))
                                     .fg(Color::Yellow);
                                 });
-                                let _ = ui.progress(state.install_progress);
+                                ui.progress(state.install_progress);
                             } else {
-                                let _ = ui.separator();
-                                let _ = ui.row(|ui| {
+                                ui.separator();
+                                ui.row(|ui| {
                                     let action = match pkg.status {
                                         "installed" => "Reinstall",
                                         "outdated" => "Update",
@@ -324,13 +321,12 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                             }
                         });
 
-                    let _ = ui
-                        .bordered(Border::Rounded)
+                    ui.bordered(Border::Rounded)
                         .title("Output")
                         .p(1)
                         .grow(1)
                         .col(|ui| {
-                            let _ = ui.scrollable(&mut state.output_scroll).grow(1).col(|ui| {
+                            ui.scrollable(&mut state.output_scroll).grow(1).col(|ui| {
                                 for (color, line) in &state.output_lines {
                                     ui.text(line.as_str()).fg(*color);
                                 }
@@ -339,8 +335,8 @@ pub fn render(ui: &mut Context, state: &mut DemoState) {
                 });
             });
 
-            let _ = ui.separator();
-            let _ = ui.help(&[
+            ui.separator();
+            ui.help(&[
                 ("Ctrl+Q", "quit"),
                 ("Ctrl+T", "theme"),
                 ("Tab", "focus"),

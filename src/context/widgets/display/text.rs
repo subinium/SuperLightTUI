@@ -1,8 +1,413 @@
 use super::*;
 use crate::KeyMap;
 
+/// Scoped builder for one text element.
+///
+/// Returned by [`Context::text`], [`Context::styled`], [`Context::link`] and
+/// [`Context::timer_display`]. The element is recorded when the builder is
+/// created and every chained method edits that one element in place, so a
+/// chain renders exactly where it is written, in call order, and the builder
+/// can be dropped at any point:
+///
+/// ```
+/// # use slt::*;
+/// # TestBackend::new(40, 6).render(|ui| {
+/// ui.text("hello").bold().fg(Color::Cyan);
+/// ui.text("a longer body that wraps").wrap().w(16).mt(1);
+/// ui.text("Status").with_if(true, |t| {
+///     t.fg(Color::Red);
+/// });
+/// if ui.text("hover me").show().hovered {
+///     // show a hint
+/// }
+/// # });
+/// ```
+///
+/// Only text options follow `text()`, so a modifier always styles the element
+/// it visibly follows. Chaining another widget does not compile:
+///
+/// ```compile_fail
+/// # slt::TestBackend::new(40, 4).render(|ui| {
+/// let _ = ui.text("Name:").bold().button("Save");
+/// # });
+/// ```
+///
+/// The builder owns no heap data: `ui.text(s)` costs the same as before
+/// v0.26, when it returned `&mut Context`. The `Context`-level modifiers
+/// (`ui.bold()`, `ui.fg(..)`, ...) that styled "the last text" are deprecated
+/// in its favour; see `docs/MIGRATION.md`.
+pub struct Text<'a> {
+    ctx: &'a mut Context,
+    /// Response computed when the element was recorded, for widgets that
+    /// already reserved their hit slot (`link`). Plain text reserves one
+    /// lazily in [`Text::show`].
+    response: Option<Response>,
+}
+
+impl<'a> Text<'a> {
+    /// Wrap the text element that `ctx` recorded last.
+    #[inline]
+    fn new(ctx: &'a mut Context, response: Option<Response>) -> Self {
+        Self { ctx, response }
+    }
+
+    /// Index of this builder's element. Holding `&mut Context` exclusively
+    /// guarantees nothing is recorded after it while the builder lives.
+    #[inline]
+    fn idx(&self) -> usize {
+        self.ctx.commands.len().saturating_sub(1)
+    }
+
+    #[inline]
+    fn style(self, f: impl FnMut(&mut Style)) -> Self {
+        let idx = self.idx();
+        self.ctx.style_text_at(idx, f);
+        self
+    }
+
+    /// Bold.
+    #[inline]
+    pub fn bold(self) -> Self {
+        self.style(|s| s.modifiers |= Modifiers::BOLD)
+    }
+
+    /// Dim. Also switches an inherited foreground to the theme's `text_dim`
+    /// color; an explicit [`fg`](Self::fg) is kept.
+    #[inline]
+    pub fn dim(self) -> Self {
+        let idx = self.idx();
+        self.ctx.dim_text_at(idx);
+        self
+    }
+
+    /// Italic.
+    #[inline]
+    pub fn italic(self) -> Self {
+        self.style(|s| s.modifiers |= Modifiers::ITALIC)
+    }
+
+    /// Underline.
+    #[inline]
+    pub fn underline(self) -> Self {
+        self.style(|s| s.modifiers |= Modifiers::UNDERLINE)
+    }
+
+    /// Reverse video.
+    #[inline]
+    pub fn reversed(self) -> Self {
+        self.style(|s| s.modifiers |= Modifiers::REVERSED)
+    }
+
+    /// Strikethrough.
+    #[inline]
+    pub fn strikethrough(self) -> Self {
+        self.style(|s| s.modifiers |= Modifiers::STRIKETHROUGH)
+    }
+
+    /// Foreground color.
+    #[inline]
+    pub fn fg(self, color: Color) -> Self {
+        self.style(|s| s.fg = Some(color))
+    }
+
+    /// Background color.
+    #[inline]
+    pub fn bg(self, color: Color) -> Self {
+        self.style(|s| s.bg = Some(color))
+    }
+
+    /// Per-character foreground gradient from `from` to `to`.
+    #[inline]
+    pub fn gradient(self, from: Color, to: Color) -> Self {
+        let idx = self.idx();
+        self.ctx
+            .apply_char_gradient(idx, false, |t| to.blend_f64(from, t));
+        self
+    }
+
+    /// Per-character multi-stop foreground gradient.
+    ///
+    /// `stops` is a slice of `(position, color)` pairs where `position` lies
+    /// in `0.0..=1.0`. Stops do not need to be pre-sorted. An empty slice is a
+    /// no-op; a single stop produces a solid color.
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(20, 2).render(|ui| {
+    /// ui.text("rainbow").gradient_stops_f64(&[
+    ///     (0.0, Color::Red),
+    ///     (0.5, Color::Yellow),
+    ///     (1.0, Color::Green),
+    /// ]);
+    /// # });
+    /// ```
+    #[inline]
+    pub fn gradient_stops_f64(self, stops: &[(f64, Color)]) -> Self {
+        let idx = self.idx();
+        self.ctx.gradient_stops_at(idx, false, stops);
+        self
+    }
+
+    /// Per-character background gradient from `from` to `to`.
+    #[inline]
+    pub fn bg_gradient(self, from: Color, to: Color) -> Self {
+        let idx = self.idx();
+        self.ctx
+            .apply_char_gradient(idx, true, |t| to.blend_f64(from, t));
+        self
+    }
+
+    /// Per-character multi-stop background gradient; stop handling matches
+    /// [`gradient_stops_f64`](Self::gradient_stops_f64).
+    #[inline]
+    pub fn bg_gradient_stops_f64(self, stops: &[(f64, Color)]) -> Self {
+        let idx = self.idx();
+        self.ctx.gradient_stops_at(idx, true, stops);
+        self
+    }
+
+    /// Foreground color applied while the enclosing
+    /// [`group`](Context::group) is hovered or focused.
+    #[inline]
+    pub fn group_hover_fg(self, color: Color) -> Self {
+        if self.ctx.group_style_active() {
+            self.fg(color)
+        } else {
+            self
+        }
+    }
+
+    /// Background color applied while the enclosing
+    /// [`group`](Context::group) is hovered or focused.
+    #[inline]
+    pub fn group_hover_bg(self, color: Color) -> Self {
+        if self.ctx.group_style_active() {
+            self.bg(color)
+        } else {
+            self
+        }
+    }
+
+    /// Wrap at word boundaries instead of overflowing.
+    #[inline]
+    pub fn wrap(self) -> Self {
+        let idx = self.idx();
+        self.ctx.wrap_text_at(idx);
+        self
+    }
+
+    /// Truncate with `…` when the text exceeds its allocated width. Use with
+    /// [`w`](Self::w), or let the parent container constrain it.
+    #[inline]
+    pub fn truncate(self) -> Self {
+        let idx = self.idx();
+        self.ctx.truncate_text_at(idx);
+        self
+    }
+
+    /// Flex-grow factor; `1` fills the remaining main-axis space.
+    #[inline]
+    pub fn grow(self, value: u16) -> Self {
+        let idx = self.idx();
+        self.ctx.grow_text_at(idx, value);
+        self
+    }
+
+    /// Horizontal alignment within the element's width.
+    #[inline]
+    pub fn align(self, align: Align) -> Self {
+        let idx = self.idx();
+        self.ctx.align_text_at(idx, align);
+        self
+    }
+
+    /// Center horizontally; shorthand for `.align(Align::Center)`. Needs a
+    /// width (via [`w`](Self::w) or the parent) to be visible.
+    #[inline]
+    pub fn text_center(self) -> Self {
+        self.align(Align::Center)
+    }
+
+    /// Right-align; shorthand for `.align(Align::End)`.
+    #[inline]
+    pub fn text_right(self) -> Self {
+        self.align(Align::End)
+    }
+
+    #[inline]
+    fn constraints(self, f: impl FnOnce(&mut Constraints)) -> Self {
+        let idx = self.idx();
+        self.ctx.constraints_text_at(idx, f);
+        self
+    }
+
+    #[inline]
+    fn margin(self, f: impl FnOnce(&mut Margin)) -> Self {
+        let idx = self.idx();
+        self.ctx.margin_text_at(idx, f);
+        self
+    }
+
+    /// Fixed width in columns (padded or truncated).
+    #[inline]
+    pub fn w(self, value: u32) -> Self {
+        self.constraints(|c| *c = c.w(value))
+    }
+
+    /// Fixed height in rows.
+    #[inline]
+    pub fn h(self, value: u32) -> Self {
+        self.constraints(|c| *c = c.h(value))
+    }
+
+    /// Minimum width in columns.
+    #[inline]
+    pub fn min_w(self, value: u32) -> Self {
+        self.constraints(|c| c.set_min_width(Some(value)))
+    }
+
+    /// Maximum width in columns.
+    #[inline]
+    pub fn max_w(self, value: u32) -> Self {
+        self.constraints(|c| c.set_max_width(Some(value)))
+    }
+
+    /// Minimum height in rows.
+    #[inline]
+    pub fn min_h(self, value: u32) -> Self {
+        self.constraints(|c| c.set_min_height(Some(value)))
+    }
+
+    /// Maximum height in rows.
+    #[inline]
+    pub fn max_h(self, value: u32) -> Self {
+        self.constraints(|c| c.set_max_height(Some(value)))
+    }
+
+    /// Uniform margin on all sides.
+    #[inline]
+    pub fn m(self, value: u32) -> Self {
+        self.margin(|m| *m = Margin::all(value))
+    }
+
+    /// Horizontal margin (left and right).
+    #[inline]
+    pub fn mx(self, value: u32) -> Self {
+        self.margin(|m| {
+            m.left = value;
+            m.right = value;
+        })
+    }
+
+    /// Vertical margin (top and bottom).
+    #[inline]
+    pub fn my(self, value: u32) -> Self {
+        self.margin(|m| {
+            m.top = value;
+            m.bottom = value;
+        })
+    }
+
+    /// Top margin.
+    #[inline]
+    pub fn mt(self, value: u32) -> Self {
+        self.margin(|m| m.top = value)
+    }
+
+    /// Right margin.
+    #[inline]
+    pub fn mr(self, value: u32) -> Self {
+        self.margin(|m| m.right = value)
+    }
+
+    /// Bottom margin.
+    #[inline]
+    pub fn mb(self, value: u32) -> Self {
+        self.margin(|m| m.bottom = value)
+    }
+
+    /// Left margin.
+    #[inline]
+    pub fn ml(self, value: u32) -> Self {
+        self.margin(|m| m.left = value)
+    }
+
+    /// Apply `f` only if `cond` is true, keeping the chain intact.
+    ///
+    /// The closure gets a builder for the same element; it is skipped
+    /// entirely when `cond` is `false`.
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(20, 2).render(|ui| {
+    /// let is_error = true;
+    /// ui.text("Status")
+    ///     .with_if(is_error, |t| {
+    ///         t.bold().fg(Color::Red);
+    ///     })
+    ///     .with_if(!is_error, |t| {
+    ///         t.dim();
+    ///     });
+    /// # });
+    /// ```
+    #[inline]
+    pub fn with_if(self, cond: bool, f: impl FnOnce(Text<'_>)) -> Self {
+        if cond {
+            f(Text::new(&mut *self.ctx, None));
+        }
+        self
+    }
+
+    /// Apply `f` unconditionally; useful for factoring out a block of
+    /// modifiers.
+    #[inline]
+    pub fn with(self, f: impl FnOnce(Text<'_>)) -> Self {
+        self.with_if(true, f)
+    }
+
+    /// Finish the chain and return the element's [`Response`].
+    ///
+    /// Plain text reserves its hover / click hit area only when `show()` is
+    /// called, so call it on the same element every frame to keep the slot
+    /// stable. For [`Context::link`] the response is the link's own, with
+    /// `clicked` set when it was activated by mouse or keyboard.
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(20, 2).render(|ui| {
+    /// let r = ui.text("hover me").fg(Color::Cyan).show();
+    /// if r.hovered {
+    ///     // ...
+    /// }
+    /// # });
+    /// ```
+    #[must_use = "show() only returns the Response; drop the builder instead if you do not need it"]
+    #[inline]
+    pub fn show(self) -> Response {
+        if let Some(response) = self.response {
+            return response;
+        }
+        let ctx = self.ctx;
+        let Some(command) = ctx.commands.pop() else {
+            return Response::none();
+        };
+        // The hit slot marker must precede the element it describes.
+        let idx = ctx.commands.len();
+        ctx.invalidate_geometry_cache_from(idx);
+        let response = ctx.interaction();
+        ctx.commands.push(command);
+        if ctx.rollback.last_text_idx == Some(idx) {
+            ctx.rollback.last_text_idx = Some(ctx.commands.len() - 1);
+        }
+        response
+    }
+}
+
 impl Context {
-    /// Render a text element. Returns `&mut Self` for style chaining.
+    /// Render a text element and return its [`Text`] builder.
+    ///
+    /// Chain style, size and margin options on the result; it renders where
+    /// it is written whether or not anything is chained.
     ///
     /// # Example
     ///
@@ -12,7 +417,7 @@ impl Context {
     /// ui.text("hello").bold().fg(Color::Cyan);
     /// # });
     /// ```
-    pub fn text(&mut self, s: impl Into<String>) -> &mut Self {
+    pub fn text(&mut self, s: impl Into<String>) -> Text<'_> {
         let content = s.into();
         let default_fg = self.inherited_text_fg();
         self.commands.push(Command::Text {
@@ -28,16 +433,17 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
+        Text::new(self, None)
     }
 
-    /// Render a clickable hyperlink.
+    /// Render a clickable hyperlink and return its [`Text`] builder.
     ///
     /// The link is interactive: clicking it (or pressing Enter/Space when
     /// focused) opens the URL with the system opener (`open` on macOS,
     /// `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on
     /// Windows; never through a shell). OSC 8 is also emitted for terminals
-    /// that support native hyperlinks.
+    /// that support native hyperlinks. [`Text::show`] returns the link's
+    /// [`Response`]; `clicked` is set when it was activated.
     ///
     /// # Safety of link targets
     ///
@@ -51,12 +457,13 @@ impl Context {
     /// `MOSH_IP` set), SLT does not spawn an opener at all, since it would
     /// open on the remote host. The OSC 8 hyperlink still lets the local
     /// terminal open the link.
-    pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
+    pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> Text<'_> {
         let url_str = url.into();
         let focused = self.register_focusable();
-        let (_interaction_id, response) = self.begin_widget_interaction(focused);
+        let (_interaction_id, mut response) = self.begin_widget_interaction(focused);
 
         let activated = response.clicked || self.consume_activation_keys(focused);
+        response.clicked = activated;
 
         // Never print here: writing to stderr would corrupt the alternate
         // screen. Surface the failure as a toast instead.
@@ -88,13 +495,13 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
+        Text::new(self, Some(response))
     }
 
-    /// Render an elapsed time display.
+    /// Render an elapsed time display and return its [`Text`] builder.
     ///
     /// Formats as `HH:MM:SS.CC` when hours are non-zero, otherwise `MM:SS.CC`.
-    pub fn timer_display(&mut self, elapsed: std::time::Duration) -> &mut Self {
+    pub fn timer_display(&mut self, elapsed: std::time::Duration) -> Text<'_> {
         let total_centis = elapsed.as_millis() / 10;
         let centis = total_centis % 100;
         let total_seconds = total_centis / 100;
@@ -121,7 +528,7 @@ impl Context {
             constraints: Constraints::default(),
         });
         self.rollback.last_text_idx = Some(self.commands.len() - 1);
-        self
+        Text::new(self, None)
     }
 
     /// Render help bar from a KeyMap. Shows visible bindings as key-description pairs.
@@ -133,197 +540,182 @@ impl Context {
         self.help(&pairs)
     }
 
-    // ── style chain (applies to last text) ───────────────────────────
+    /// Render a text element with an explicit [`Style`] and return its
+    /// [`Text`] builder.
+    ///
+    /// Equivalent to `text(s)` followed by style-chain methods, but more
+    /// concise when you already have a `Style` value.
+    pub fn styled(&mut self, s: impl Into<String>, style: Style) -> Text<'_> {
+        self.styled_with_cursor(s, style, None);
+        Text::new(self, None)
+    }
 
-    /// Apply bold to the last rendered text element.
-    pub fn bold(&mut self) -> &mut Self {
-        self.modify_last_style(|s| s.modifiers |= Modifiers::BOLD);
+    pub(crate) fn styled_with_cursor(
+        &mut self,
+        s: impl Into<String>,
+        style: Style,
+        cursor_offset: Option<usize>,
+    ) -> &mut Self {
+        self.styled_with_cursor_privacy(s, style, cursor_offset, false)
+    }
+
+    pub(crate) fn styled_with_cursor_privacy(
+        &mut self,
+        s: impl Into<String>,
+        style: Style,
+        cursor_offset: Option<usize>,
+        cursor_masked: bool,
+    ) -> &mut Self {
+        self.commands.push(Command::Text {
+            content: s.into(),
+            cursor_offset,
+            cursor_masked,
+            style,
+            grow: 0,
+            align: Align::Start,
+            wrap: false,
+            truncate: false,
+            margin: Margin::default(),
+            constraints: Constraints::default(),
+        });
+        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
-    /// Apply dim styling to the last rendered text element.
+    /// Render an invisible spacer that expands to fill available space.
     ///
-    /// Also sets the foreground color to the theme's `text_dim` color if no
-    /// explicit foreground has been set.
-    pub fn dim(&mut self) -> &mut Self {
+    /// Useful for pushing siblings to opposite ends of a row or column.
+    pub fn spacer(&mut self) -> &mut Self {
+        self.commands.push(Command::Spacer { grow: 1 });
+        self.rollback.last_text_idx = None;
+        self
+    }
+
+    fn inherited_text_fg(&self) -> Color {
+        self.rollback
+            .text_color_stack
+            .iter()
+            .rev()
+            .find_map(|color| *color)
+            .unwrap_or(self.theme.text)
+    }
+
+    // ── element editors shared by `Text` and the deprecated modifiers ──
+
+    fn style_text_at(&mut self, idx: usize, mut f: impl FnMut(&mut Style)) {
+        match self.commands.get_mut(idx) {
+            Some(Command::Text { style, .. } | Command::Link { style, .. }) => f(style),
+            Some(Command::RichText { segments, .. }) => {
+                for (_, style) in segments {
+                    f(style);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dim_text_at(&mut self, idx: usize) {
         let text_dim = self.theme.text_dim;
         let inherited_fg = self.inherited_text_fg();
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text { style, .. } => {
+        match self.commands.get_mut(idx) {
+            Some(Command::Text { style, .. }) => {
+                style.modifiers |= Modifiers::DIM;
+                if style.fg.is_none() || style.fg == Some(inherited_fg) {
+                    style.fg = Some(text_dim);
+                }
+            }
+            Some(Command::Link { style, .. }) => {
+                style.modifiers |= Modifiers::DIM;
+            }
+            Some(Command::RichText { segments, .. }) => {
+                let all_inherited = segments
+                    .iter()
+                    .all(|(_, style)| style.fg.is_none() || style.fg == Some(inherited_fg));
+                for (_, style) in segments {
                     style.modifiers |= Modifiers::DIM;
-                    if style.fg.is_none() || style.fg == Some(inherited_fg) {
+                    if all_inherited {
                         style.fg = Some(text_dim);
                     }
                 }
-                Command::Link { style, .. } => {
-                    style.modifiers |= Modifiers::DIM;
-                }
-                Command::RichText { segments, .. } => {
-                    let all_inherited = segments
-                        .iter()
-                        .all(|(_, style)| style.fg.is_none() || style.fg == Some(inherited_fg));
-                    for (_, style) in segments {
-                        style.modifiers |= Modifiers::DIM;
-                        if all_inherited {
-                            style.fg = Some(text_dim);
-                        }
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
-        self
     }
 
-    /// Apply italic to the last rendered text element.
-    pub fn italic(&mut self) -> &mut Self {
-        self.modify_last_style(|s| s.modifiers |= Modifiers::ITALIC);
-        self
+    fn wrap_text_at(&mut self, idx: usize) {
+        if let Some(
+            Command::Text { wrap, .. }
+            | Command::Link { wrap, .. }
+            | Command::RichText { wrap, .. },
+        ) = self.commands.get_mut(idx)
+        {
+            *wrap = true;
+        }
     }
 
-    /// Apply underline to the last rendered text element.
-    pub fn underline(&mut self) -> &mut Self {
-        self.modify_last_style(|s| s.modifiers |= Modifiers::UNDERLINE);
-        self
+    fn truncate_text_at(&mut self, idx: usize) {
+        if let Some(Command::Text { truncate, .. }) = self.commands.get_mut(idx) {
+            *truncate = true;
+        }
     }
 
-    /// Apply reverse-video to the last rendered text element.
-    pub fn reversed(&mut self) -> &mut Self {
-        self.modify_last_style(|s| s.modifiers |= Modifiers::REVERSED);
-        self
+    fn grow_text_at(&mut self, idx: usize, value: u16) {
+        if let Some(Command::Text { grow, .. }) = self.commands.get_mut(idx) {
+            *grow = value;
+        }
     }
 
-    /// Apply strikethrough to the last rendered text element.
-    pub fn strikethrough(&mut self) -> &mut Self {
-        self.modify_last_style(|s| s.modifiers |= Modifiers::STRIKETHROUGH);
-        self
+    fn align_text_at(&mut self, idx: usize, align: Align) {
+        if let Some(
+            Command::Text {
+                align: text_align, ..
+            }
+            | Command::RichText {
+                align: text_align, ..
+            },
+        ) = self.commands.get_mut(idx)
+        {
+            *text_align = align;
+        }
     }
 
-    /// Set the foreground color of the last rendered text element.
-    pub fn fg(&mut self, color: Color) -> &mut Self {
-        self.modify_last_style(|s| s.fg = Some(color));
-        self
+    fn constraints_text_at(&mut self, idx: usize, f: impl FnOnce(&mut Constraints)) {
+        if let Some(
+            Command::Text { constraints, .. }
+            | Command::Link { constraints, .. }
+            | Command::RichText { constraints, .. },
+        ) = self.commands.get_mut(idx)
+        {
+            f(constraints);
+        }
     }
 
-    /// Set the background color of the last rendered text element.
-    pub fn bg(&mut self, color: Color) -> &mut Self {
-        self.modify_last_style(|s| s.bg = Some(color));
-        self
+    fn margin_text_at(&mut self, idx: usize, f: impl FnOnce(&mut Margin)) {
+        if let Some(
+            Command::Text { margin, .. }
+            | Command::Link { margin, .. }
+            | Command::RichText { margin, .. },
+        ) = self.commands.get_mut(idx)
+        {
+            f(margin);
+        }
     }
 
-    /// Apply a per-character foreground gradient to the last rendered text.
-    pub fn gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        self.apply_char_gradient(false, |t| to.blend_f64(from, t));
-        self
+    /// Whether the innermost [`group`](Context::group) is hovered or focused.
+    fn group_style_active(&self) -> bool {
+        self.rollback
+            .group_stack
+            .last()
+            .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
+            .unwrap_or(false)
     }
 
-    /// Apply a per-character multi-stop foreground gradient to the last text.
-    ///
-    /// `stops` is a slice of `(position, color)` pairs where `position` lies in
-    /// `0.0..=1.0`. Stops do not need to be pre-sorted. The text is colored by
-    /// linearly interpolating between adjacent stops across its displayed
-    /// columns, using the same column-mapping and clamping as [`gradient`].
-    ///
-    /// - An empty slice is a no-op (the text keeps its current style).
-    /// - A single stop produces a solid color.
-    ///
-    /// [`gradient`]: Self::gradient
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::Color;
-    /// ui.text("rainbow").gradient_stops_f64(&[
-    ///     (0.0, Color::Red),
-    ///     (0.5, Color::Yellow),
-    ///     (1.0, Color::Green),
-    /// ]);
-    /// # });
-    /// ```
-    pub fn gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
+    fn gradient_stops_at(&mut self, idx: usize, is_bg: bool, stops: &[(f64, Color)]) {
         if stops.is_empty() {
-            return self;
+            return;
         }
         let sorted = Self::sorted_gradient_stops(stops);
-        self.apply_char_gradient(false, |t| Self::sample_gradient_stops(&sorted, t));
-        self
-    }
-
-    /// Deprecated `f32` alias for [`gradient_stops_f64`](Self::gradient_stops_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Context::gradient_stops_f64() to keep public float APIs on f64"
-    )]
-    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
-        let stops: Vec<(f64, Color)> = stops
-            .iter()
-            .map(|(pos, color)| (f64::from(*pos), *color))
-            .collect();
-        self.gradient_stops_f64(&stops)
-    }
-
-    /// Apply a per-character background gradient to the last rendered text.
-    ///
-    /// The two-stop background analogue of [`gradient`]. Colors the cell
-    /// background instead of the foreground, using identical column-mapping and
-    /// clamping so width handling stays consistent.
-    ///
-    /// [`gradient`]: Self::gradient
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::Color;
-    /// ui.text("banner").bg_gradient(Color::Blue, Color::Magenta);
-    /// # });
-    /// ```
-    pub fn bg_gradient(&mut self, from: Color, to: Color) -> &mut Self {
-        self.apply_char_gradient(true, |t| to.blend_f64(from, t));
-        self
-    }
-
-    /// Apply a per-character multi-stop background gradient to the last text.
-    ///
-    /// The background analogue of [`gradient_stops`]: identical stop handling
-    /// (positions in `0.0..=1.0`, unsorted-safe, empty = no-op, single stop =
-    /// solid) but applied to the cell background instead of the foreground.
-    ///
-    /// [`gradient_stops`]: Self::gradient_stops
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::Color;
-    /// ui.text("header").bg_gradient_stops_f64(&[
-    ///     (0.0, Color::Blue),
-    ///     (1.0, Color::Magenta),
-    /// ]);
-    /// # });
-    /// ```
-    pub fn bg_gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
-        if stops.is_empty() {
-            return self;
-        }
-        let sorted = Self::sorted_gradient_stops(stops);
-        self.apply_char_gradient(true, |t| Self::sample_gradient_stops(&sorted, t));
-        self
-    }
-
-    /// Deprecated `f32` alias for [`bg_gradient_stops_f64`](Self::bg_gradient_stops_f64).
-    #[deprecated(
-        since = "0.22.2",
-        note = "use Context::bg_gradient_stops_f64() to keep public float APIs on f64"
-    )]
-    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
-        let stops: Vec<(f64, Color)> = stops
-            .iter()
-            .map(|(pos, color)| (f64::from(*pos), *color))
-            .collect();
-        self.bg_gradient_stops_f64(&stops)
+        self.apply_char_gradient(idx, is_bg, |t| Self::sample_gradient_stops(&sorted, t));
     }
 
     /// Return `stops` sorted ascending by clamped position. Positions are
@@ -379,368 +771,496 @@ impl Context {
         last.1
     }
 
-    /// Replace the last `Text` command with a `RichText` gradient, mapping each
-    /// grapheme's starting cell to a position in `0.0..=1.0` exactly like
-    /// [`gradient`](Self::gradient). `is_bg` selects background vs foreground.
-    fn apply_char_gradient(&mut self, is_bg: bool, color_at: impl Fn(f64) -> Color) {
-        if let Some(idx) = self.rollback.last_text_idx {
-            let replacement = match &self.commands[idx] {
-                Command::Text {
-                    content,
-                    style,
-                    wrap,
-                    align,
-                    margin,
-                    constraints,
-                    ..
-                } => {
-                    let graphemes: Vec<&str> = content.graphemes(true).collect();
-                    let last_start = graphemes
-                        .iter()
-                        .take(graphemes.len().saturating_sub(1))
-                        .map(|grapheme| crate::width::str_width(grapheme))
-                        .sum::<usize>();
-                    let denom = last_start.max(1) as f64;
-                    let mut cell = 0usize;
-                    let segments = graphemes
-                        .into_iter()
-                        .map(|grapheme| {
-                            let mut seg_style = *style;
-                            let color = color_at(cell as f64 / denom);
-                            if is_bg {
-                                seg_style.bg = Some(color);
-                            } else {
-                                seg_style.fg = Some(color);
-                            }
-                            cell = cell.saturating_add(crate::width::str_width(grapheme));
-                            (grapheme.to_string(), seg_style)
-                        })
-                        .collect();
-
-                    Some(Command::RichText {
-                        segments,
-                        wrap: *wrap,
-                        align: *align,
-                        margin: *margin,
-                        constraints: *constraints,
+    /// Replace the `Text` command at `idx` with a `RichText` gradient, mapping
+    /// each grapheme's starting cell to a position in `0.0..=1.0`. `is_bg`
+    /// selects background vs foreground.
+    fn apply_char_gradient(&mut self, idx: usize, is_bg: bool, color_at: impl Fn(f64) -> Color) {
+        let replacement = match self.commands.get(idx) {
+            Some(Command::Text {
+                content,
+                style,
+                wrap,
+                align,
+                margin,
+                constraints,
+                ..
+            }) => {
+                let graphemes: Vec<&str> = content.graphemes(true).collect();
+                let last_start = graphemes
+                    .iter()
+                    .take(graphemes.len().saturating_sub(1))
+                    .map(|grapheme| crate::width::str_width(grapheme))
+                    .sum::<usize>();
+                let denom = last_start.max(1) as f64;
+                let mut cell = 0usize;
+                let segments = graphemes
+                    .into_iter()
+                    .map(|grapheme| {
+                        let mut seg_style = *style;
+                        let color = color_at(cell as f64 / denom);
+                        if is_bg {
+                            seg_style.bg = Some(color);
+                        } else {
+                            seg_style.fg = Some(color);
+                        }
+                        cell = cell.saturating_add(crate::width::str_width(grapheme));
+                        (grapheme.to_string(), seg_style)
                     })
-                }
-                _ => None,
-            };
+                    .collect();
 
-            if let Some(command) = replacement {
-                self.commands[idx] = command;
+                Some(Command::RichText {
+                    segments,
+                    wrap: *wrap,
+                    align: *align,
+                    margin: *margin,
+                    constraints: *constraints,
+                })
             }
+            _ => None,
+        };
+
+        if let Some(command) = replacement {
+            self.commands[idx] = command;
         }
+    }
+}
+
+/// Deprecated "modify the last text" modifiers (issue #457).
+///
+/// Each one keeps its v0.25 behaviour for one release: it edits the most
+/// recent `text` / `styled` / `link` / `timer_display` / separator element,
+/// and silently does nothing after any other widget. Chain the same method on
+/// the [`Text`] builder instead.
+impl Context {
+    fn last_text(&self) -> Option<usize> {
+        self.rollback.last_text_idx
+    }
+
+    /// Apply bold to the last rendered text element.
+    ///
+    /// Deprecated with the other "last text" modifiers; using one warns:
+    ///
+    /// ```compile_fail
+    /// #![deny(deprecated)]
+    /// # slt::TestBackend::new(20, 2).render(|ui| {
+    /// ui.text("x");
+    /// ui.bold();
+    /// # });
+    /// ```
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).bold()`"
+    )]
+    pub fn bold(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.modifiers |= Modifiers::BOLD);
+        }
+        self
+    }
+
+    /// Apply dim styling to the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).dim()`"
+    )]
+    pub fn dim(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.dim_text_at(idx);
+        }
+        self
+    }
+
+    /// Apply italic to the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).italic()`"
+    )]
+    pub fn italic(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.modifiers |= Modifiers::ITALIC);
+        }
+        self
+    }
+
+    /// Apply underline to the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).underline()`"
+    )]
+    pub fn underline(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.modifiers |= Modifiers::UNDERLINE);
+        }
+        self
+    }
+
+    /// Apply reverse-video to the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).reversed()`"
+    )]
+    pub fn reversed(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.modifiers |= Modifiers::REVERSED);
+        }
+        self
+    }
+
+    /// Apply strikethrough to the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).strikethrough()`"
+    )]
+    pub fn strikethrough(&mut self) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.modifiers |= Modifiers::STRIKETHROUGH);
+        }
+        self
+    }
+
+    /// Set the foreground color of the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).fg(color)`"
+    )]
+    pub fn fg(&mut self, color: Color) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.fg = Some(color));
+        }
+        self
+    }
+
+    /// Set the background color of the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).bg(color)`"
+    )]
+    pub fn bg(&mut self, color: Color) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.style_text_at(idx, |s| s.bg = Some(color));
+        }
+        self
+    }
+
+    /// Apply a per-character foreground gradient to the last rendered text.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).gradient(from, to)`"
+    )]
+    pub fn gradient(&mut self, from: Color, to: Color) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.apply_char_gradient(idx, false, |t| to.blend_f64(from, t));
+        }
+        self
+    }
+
+    /// Apply a per-character multi-stop foreground gradient to the last text.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).gradient_stops_f64(stops)`"
+    )]
+    pub fn gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.gradient_stops_at(idx, false, stops);
+        }
+        self
+    }
+
+    /// Deprecated `f32` alias of the multi-stop foreground gradient.
+    #[deprecated(since = "0.22.2", note = "use `ui.text(..).gradient_stops_f64(stops)`")]
+    pub fn gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        let stops: Vec<(f64, Color)> = stops
+            .iter()
+            .map(|(pos, color)| (f64::from(*pos), *color))
+            .collect();
+        if let Some(idx) = self.last_text() {
+            self.gradient_stops_at(idx, false, &stops);
+        }
+        self
+    }
+
+    /// Apply a per-character background gradient to the last rendered text.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).bg_gradient(from, to)`"
+    )]
+    pub fn bg_gradient(&mut self, from: Color, to: Color) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.apply_char_gradient(idx, true, |t| to.blend_f64(from, t));
+        }
+        self
+    }
+
+    /// Apply a per-character multi-stop background gradient to the last text.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).bg_gradient_stops_f64(stops)`"
+    )]
+    pub fn bg_gradient_stops_f64(&mut self, stops: &[(f64, Color)]) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.gradient_stops_at(idx, true, stops);
+        }
+        self
+    }
+
+    /// Deprecated `f32` alias of the multi-stop background gradient.
+    #[deprecated(
+        since = "0.22.2",
+        note = "use `ui.text(..).bg_gradient_stops_f64(stops)`"
+    )]
+    pub fn bg_gradient_stops(&mut self, stops: &[(f32, Color)]) -> &mut Self {
+        let stops: Vec<(f64, Color)> = stops
+            .iter()
+            .map(|(pos, color)| (f64::from(*pos), *color))
+            .collect();
+        if let Some(idx) = self.last_text() {
+            self.gradient_stops_at(idx, true, &stops);
+        }
+        self
     }
 
     /// Set foreground color when the current group is hovered or focused.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).group_hover_fg(color)`"
+    )]
     pub fn group_hover_fg(&mut self, color: Color) -> &mut Self {
-        let apply_group_style = self
-            .rollback
-            .group_stack
-            .last()
-            .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
-            .unwrap_or(false);
-        if apply_group_style {
-            self.modify_last_style(|s| s.fg = Some(color));
+        if self.group_style_active()
+            && let Some(idx) = self.last_text()
+        {
+            self.style_text_at(idx, |s| s.fg = Some(color));
         }
         self
     }
 
     /// Set background color when the current group is hovered or focused.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).group_hover_bg(color)`"
+    )]
     pub fn group_hover_bg(&mut self, color: Color) -> &mut Self {
-        let apply_group_style = self
-            .rollback
-            .group_stack
-            .last()
-            .map(|name| self.is_group_hovered(name) || self.is_group_focused(name))
-            .unwrap_or(false);
-        if apply_group_style {
-            self.modify_last_style(|s| s.bg = Some(color));
+        if self.group_style_active()
+            && let Some(idx) = self.last_text()
+        {
+            self.style_text_at(idx, |s| s.bg = Some(color));
         }
-        self
-    }
-
-    /// Render a text element with an explicit [`Style`] applied immediately.
-    ///
-    /// Equivalent to calling `text(s)` followed by style-chain methods, but
-    /// more concise when you already have a `Style` value.
-    pub fn styled(&mut self, s: impl Into<String>, style: Style) -> &mut Self {
-        self.styled_with_cursor(s, style, None)
-    }
-
-    pub(crate) fn styled_with_cursor(
-        &mut self,
-        s: impl Into<String>,
-        style: Style,
-        cursor_offset: Option<usize>,
-    ) -> &mut Self {
-        self.styled_with_cursor_privacy(s, style, cursor_offset, false)
-    }
-
-    pub(crate) fn styled_with_cursor_privacy(
-        &mut self,
-        s: impl Into<String>,
-        style: Style,
-        cursor_offset: Option<usize>,
-        cursor_masked: bool,
-    ) -> &mut Self {
-        self.commands.push(Command::Text {
-            content: s.into(),
-            cursor_offset,
-            cursor_masked,
-            style,
-            grow: 0,
-            align: Align::Start,
-            wrap: false,
-            truncate: false,
-            margin: Margin::default(),
-            constraints: Constraints::default(),
-        });
-        self.rollback.last_text_idx = Some(self.commands.len() - 1);
         self
     }
 
     /// Enable word-boundary wrapping on the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).wrap()`"
+    )]
     pub fn wrap(&mut self) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text { wrap, .. }
-                | Command::Link { wrap, .. }
-                | Command::RichText { wrap, .. } => *wrap = true,
-                _ => {}
-            }
+        if let Some(idx) = self.last_text() {
+            self.wrap_text_at(idx);
         }
         self
     }
 
-    /// Truncate the last rendered text with `…` when it exceeds its allocated width.
-    /// Use with `.w()` to set a fixed width, or let the parent container constrain it.
+    /// Truncate the last rendered text with `…` when it exceeds its width.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).truncate()`"
+    )]
     pub fn truncate(&mut self) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx
-            && let Command::Text { truncate, .. } = &mut self.commands[idx]
-        {
-            *truncate = true;
+        if let Some(idx) = self.last_text() {
+            self.truncate_text_at(idx);
         }
         self
     }
-
-    fn modify_last_style(&mut self, mut f: impl FnMut(&mut Style)) {
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text { style, .. } | Command::Link { style, .. } => f(style),
-                Command::RichText { segments, .. } => {
-                    for (_, style) in segments {
-                        f(style);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn modify_last_constraints(&mut self, f: impl FnOnce(&mut Constraints)) {
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text { constraints, .. } | Command::Link { constraints, .. } => {
-                    f(constraints)
-                }
-                Command::RichText { constraints, .. } => f(constraints),
-                _ => {}
-            }
-        }
-    }
-
-    fn modify_last_margin(&mut self, f: impl FnOnce(&mut Margin)) {
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text { margin, .. } | Command::Link { margin, .. } => f(margin),
-                Command::RichText { margin, .. } => f(margin),
-                _ => {}
-            }
-        }
-    }
-
-    // ── containers ───────────────────────────────────────────────────
 
     /// Set the flex-grow factor of the last rendered text element.
-    ///
-    /// A value of `1` causes the element to expand and fill remaining space
-    /// along the main axis.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).grow(n)`"
+    )]
     pub fn grow(&mut self, value: u16) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx
-            && let Command::Text { grow, .. } = &mut self.commands[idx]
-        {
-            *grow = value;
+        if let Some(idx) = self.last_text() {
+            self.grow_text_at(idx, value);
         }
         self
     }
 
     /// Set the text alignment of the last rendered text element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).align(a)`"
+    )]
     pub fn align(&mut self, align: Align) -> &mut Self {
-        if let Some(idx) = self.rollback.last_text_idx {
-            match &mut self.commands[idx] {
-                Command::Text {
-                    align: text_align, ..
-                }
-                | Command::RichText {
-                    align: text_align, ..
-                } => *text_align = align,
-                _ => {}
-            }
+        if let Some(idx) = self.last_text() {
+            self.align_text_at(idx, align);
         }
         self
     }
 
     /// Center-align the last rendered text element horizontally.
-    /// Shorthand for `.align(Align::Center)`. Requires the text to have
-    /// a width constraint (via `.w()` or parent container) to be visible.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).text_center()`"
+    )]
     pub fn text_center(&mut self) -> &mut Self {
-        self.align(Align::Center)
+        if let Some(idx) = self.last_text() {
+            self.align_text_at(idx, Align::Center);
+        }
+        self
     }
 
     /// Right-align the last rendered text element horizontally.
-    /// Shorthand for `.align(Align::End)`.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).text_right()`"
+    )]
     pub fn text_right(&mut self) -> &mut Self {
-        self.align(Align::End)
+        if let Some(idx) = self.last_text() {
+            self.align_text_at(idx, Align::End);
+        }
+        self
     }
 
-    // ── size constraints on last text/link ──────────────────────────
+    fn last_constraints(&mut self, f: impl FnOnce(&mut Constraints)) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.constraints_text_at(idx, f);
+        }
+        self
+    }
+
+    fn last_margin(&mut self, f: impl FnOnce(&mut Margin)) -> &mut Self {
+        if let Some(idx) = self.last_text() {
+            self.margin_text_at(idx, f);
+        }
+        self
+    }
 
     /// Set a fixed width on the last rendered text or link element.
-    ///
-    /// Sets the [`WidthSpec`](crate::WidthSpec) to `Fixed(value)`, making the
-    /// element occupy exactly that many columns (padded with spaces or
-    /// truncated).
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).w(n)`"
+    )]
     pub fn w(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| {
-            *c = c.w(value);
-        });
-        self
+        self.last_constraints(|c| *c = c.w(value))
     }
 
     /// Set a fixed height on the last rendered text or link element.
-    ///
-    /// Sets the [`HeightSpec`](crate::HeightSpec) to `Fixed(value)`.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).h(n)`"
+    )]
     pub fn h(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| {
-            *c = c.h(value);
-        });
-        self
+        self.last_constraints(|c| *c = c.h(value))
     }
 
     /// Set the minimum width on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).min_w(n)`"
+    )]
     pub fn min_w(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.set_min_width(Some(value)));
-        self
+        self.last_constraints(|c| c.set_min_width(Some(value)))
     }
 
     /// Set the maximum width on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).max_w(n)`"
+    )]
     pub fn max_w(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.set_max_width(Some(value)));
-        self
+        self.last_constraints(|c| c.set_max_width(Some(value)))
     }
 
     /// Set the minimum height on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).min_h(n)`"
+    )]
     pub fn min_h(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.set_min_height(Some(value)));
-        self
+        self.last_constraints(|c| c.set_min_height(Some(value)))
     }
 
     /// Set the maximum height on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).max_h(n)`"
+    )]
     pub fn max_h(&mut self, value: u32) -> &mut Self {
-        self.modify_last_constraints(|c| c.set_max_height(Some(value)));
-        self
+        self.last_constraints(|c| c.set_max_height(Some(value)))
     }
 
-    // ── margin on last text/link ────────────────────────────────────
-
-    /// Set uniform margin on all sides of the last rendered text or link element.
+    /// Set uniform margin on all sides of the last rendered text or link.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).m(n)`"
+    )]
     pub fn m(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| *m = Margin::all(value));
-        self
+        self.last_margin(|m| *m = Margin::all(value))
     }
 
     /// Set horizontal margin (left + right) on the last rendered text or link.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).mx(n)`"
+    )]
     pub fn mx(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| {
+        self.last_margin(|m| {
             m.left = value;
             m.right = value;
-        });
-        self
+        })
     }
 
     /// Set vertical margin (top + bottom) on the last rendered text or link.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).my(n)`"
+    )]
     pub fn my(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| {
+        self.last_margin(|m| {
             m.top = value;
             m.bottom = value;
-        });
-        self
+        })
     }
 
     /// Set top margin on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).mt(n)`"
+    )]
     pub fn mt(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| m.top = value);
-        self
+        self.last_margin(|m| m.top = value)
     }
 
     /// Set right margin on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).mr(n)`"
+    )]
     pub fn mr(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| m.right = value);
-        self
+        self.last_margin(|m| m.right = value)
     }
 
     /// Set bottom margin on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).mb(n)`"
+    )]
     pub fn mb(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| m.bottom = value);
-        self
+        self.last_margin(|m| m.bottom = value)
     }
 
     /// Set left margin on the last rendered text or link element.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).ml(n)`"
+    )]
     pub fn ml(&mut self, value: u32) -> &mut Self {
-        self.modify_last_margin(|m| m.left = value);
-        self
+        self.last_margin(|m| m.left = value)
     }
-
-    /// Render an invisible spacer that expands to fill available space.
-    ///
-    /// Useful for pushing siblings to opposite ends of a row or column.
-    pub fn spacer(&mut self) -> &mut Self {
-        self.commands.push(Command::Spacer { grow: 1 });
-        self.rollback.last_text_idx = None;
-        self
-    }
-
-    // ── conditional / grouped style helpers ─────────────────────────
 
     /// Apply `f` only if `cond` is true. Returns `self` so chaining continues.
-    ///
-    /// Use this to attach a block of style modifiers to the last rendered text
-    /// without breaking the fluent chain. The closure receives the same
-    /// `&mut Context`, so any style-chain method (`.bold()`, `.fg()`, etc.)
-    /// applies to the most recent text element.
-    ///
-    /// Zero allocation: the closure is inlined and skipped entirely when
-    /// `cond` is `false`.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::Color;
-    /// let is_error = true;
-    /// let is_selected = false;
-    /// ui.text("Status")
-    ///     .with_if(is_error, |t| {
-    ///         t.bold().fg(Color::Red);
-    ///     })
-    ///     .with_if(is_selected, |t| {
-    ///         t.bg(Color::DarkGray);
-    ///     });
-    /// # });
-    /// ```
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).with_if(cond, |t| { t.bold(); })`"
+    )]
     pub fn with_if(&mut self, cond: bool, f: impl FnOnce(&mut Self)) -> &mut Self {
         if cond {
             f(self);
@@ -748,31 +1268,14 @@ impl Context {
         self
     }
 
-    /// Apply `f` unconditionally. Useful for factoring out a block of modifier
-    /// calls that should always run, while keeping the fluent chain intact.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # slt::run(|ui: &mut slt::Context| {
-    /// use slt::Color;
-    /// ui.text("hi").with(|t| {
-    ///     t.bold().fg(Color::Cyan);
-    /// });
-    /// # });
-    /// ```
+    /// Apply `f` unconditionally.
+    #[deprecated(
+        since = "0.26.0",
+        note = "chain on the Text returned by text(): `ui.text(..).with(|t| { t.bold(); })`"
+    )]
     pub fn with(&mut self, f: impl FnOnce(&mut Self)) -> &mut Self {
         f(self);
         self
-    }
-
-    fn inherited_text_fg(&self) -> Color {
-        self.rollback
-            .text_color_stack
-            .iter()
-            .rev()
-            .find_map(|color| *color)
-            .unwrap_or(self.theme.text)
     }
 }
 

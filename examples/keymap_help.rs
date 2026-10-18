@@ -71,7 +71,7 @@ fn body(ui: &mut Context, count: i32, help_open: bool) {
     ui.publish_keymap("global", GlobalKeys.key_help());
     ui.publish_keymap("counter", CounterWidget.key_help());
 
-    let _ = ui.col(|ui| {
+    ui.col(|ui| {
         ui.styled(
             "Keymap publishing demo",
             Style::new().bold().fg(Color::Cyan),

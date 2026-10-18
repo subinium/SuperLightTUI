@@ -2,6 +2,8 @@
 
 This guide covers the test paths that contributors and AI-assisted editors should reach for first.
 
+<!-- slt-check-default: illustrative fragments require application context -->
+
 ## Start with the right lane
 
 SLT testing is easier if you pick the right layer up front.
@@ -74,6 +76,7 @@ constructing raw `Event` values. The most useful ones to know:
 | `.click(x, y)` | left-button press at `(x, y)` (SLT clicks fire on press) | most click tests |
 | `.mouse_up(x, y)` | mouse up only | testing release-only handlers, drag end |
 | `.drag(x, y)` | mouse drag at `(x, y)` (button held) | scrubbing sliders, resizing splits |
+| `.hover(x, y)` / `.mouse_move(x, y)` | pointer motion, no button held | `hovered`, `group_hover_*`, tooltips (v0.26) |
 | `.key_release(c)` | key release for `c` | matched press/release pairs (e.g. modifier holds) |
 | `.focus_gained()` | terminal `FocusGained` event | windows/tabs gaining focus |
 | `.focus_lost()` | terminal `FocusLost` event | pause-on-blur, autosave |
@@ -105,11 +108,50 @@ Use `mouse_up` when you want to assert that a handler only fires on release
 | Method | Use when |
 |--------|----------|
 | `render()` | One static frame, no input needed |
-| `run_with_events()` | One frame with events, default focus state is fine |
+| `step()` / `press()` / `type_text()` | A multi-step interaction driven by one `FnMut` closure (the default) |
+| `run_with_events()` | One frame with events and a one-off `FnOnce` closure |
 | `render_with_events()` | One frame with explicit events and explicit focus bookkeeping |
 
-`render_with_events()` is the lowest-level helper.
-Use it when you need to control `focus_index` or `prev_focus_count` directly.
+`step`, `press`, `type_text` and `run_with_events` all keep the focus, hover
+and hook state carried from the previous frame. Since v0.26 `run_with_events`
+no longer resets focus to slot 0 before each call, so "press Tab, then type"
+reaches the widget a user would see focused.
+
+`render_with_events()` is the lowest-level helper. Use it when you need to
+control `focus_index` or `prev_focus_count` directly; for example
+`render_with_events(events, 0, 0, f)` reproduces the pre-0.26 focus reset.
+
+## Multi-step interactions with `step`
+
+`step(events, &mut f)` renders one frame and returns the backend, and the
+render closure is borrowed rather than consumed, so a whole interaction runs
+one closure over plain `&mut` state, with no `RefCell`:
+
+<!-- slt-check: {"name":"testing_step_sequence","features":[],"context":"module"} -->
+```rust
+use slt::{KeyCode, TestBackend, TextInputState};
+
+fn tab_then_type() {
+    let mut tb = TestBackend::new(30, 4);
+    let (mut a, mut b) = (TextInputState::new(), TextInputState::new());
+    let mut app = |ui: &mut Context| {
+        ui.text_input(&mut a);
+        ui.text_input(&mut b);
+    };
+    tb.step(vec![], &mut app) // first frame: lay out, no input
+        .press(KeyCode::Tab, &mut app) // focus moves to `b`
+        .type_text("x", &mut app); // one frame per character
+    // `app` borrows `a` and `b` until its last use above.
+    assert_eq!(a.value, "");
+    assert_eq!(b.value, "x");
+}
+```
+
+Assert on the state after the closure's last use, or on the buffer
+(`tb.assert_contains(..)`) in between. When a check in the middle of the
+sequence needs the state itself, end the closure there and start a new one;
+the backend keeps focus either way. `tb.sequence()` remains for step lists
+whose closures are independent.
 
 ## Multi-frame tests are normal in SLT
 
@@ -201,7 +243,7 @@ use slt::TestBackend;
 fn dashboard_snapshot() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
-        let _ = ui.container().border(slt::Border::Rounded).p(1).col(|ui| {
+        ui.container().border(slt::Border::Rounded).p(1).col(|ui| {
             ui.text("Dashboard").bold();
             ui.text("42 events");
         });

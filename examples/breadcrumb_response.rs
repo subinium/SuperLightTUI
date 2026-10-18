@@ -61,7 +61,7 @@ impl Default for DemoState {
 pub fn render(ui: &mut Context, state: &mut DemoState) {
     let sp = ui.spacing();
 
-    let _ = ui
+    ui
         .bordered(Border::Rounded)
         .title("v0.20.0 #213: BreadcrumbResponse")
         .p(sp.xs())

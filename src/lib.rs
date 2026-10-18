@@ -238,6 +238,8 @@ pub use context::ModalOpts;
 pub use context::Placement;
 // Issue #466: code editor builder and state.
 pub use context::CodeEditor;
+// Issue #457: scoped text builder returned by `Context::text`.
+pub use context::Text;
 pub use widgets::CodeEditorState;
 // Issues #446 / #468: terminal metadata and clipboard outcome types.
 pub use context::{ClipboardStatus, CursorShape, ProgramState, ProgramStatus, Progress};

@@ -741,3 +741,47 @@ fn list_and_table_allocations_scale_with_viewport_not_items() {
         "table 10k: {table_10k} allocations / 20 frames"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #457: the scoped `Text` builder adds no allocations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn text_builder_chain_allocates_nothing_beyond_the_content() {
+    let _guard = enter_perf_test();
+    use slt::{Color, TestBackend};
+
+    const N: usize = 200;
+    let mut tb = TestBackend::new(40, 10);
+
+    let plain = |ui: &mut slt::Context| {
+        for _ in 0..N {
+            ui.text("cell");
+        }
+    };
+    let chained = |ui: &mut slt::Context| {
+        for _ in 0..N {
+            ui.text("cell")
+                .bold()
+                .fg(Color::Cyan)
+                .bg(Color::Black)
+                .w(8)
+                .m(1)
+                .truncate();
+        }
+    };
+
+    // Warm both shapes so command and buffer capacities settle.
+    for _ in 0..3 {
+        tb.render(plain);
+        tb.render(chained);
+    }
+    let (_, plain_allocs) = measure_allocs("text_plain", || tb.render(plain));
+    let (_, chained_allocs) = measure_allocs("text_chained", || tb.render(chained));
+    // Each `text("cell")` owns one content String either way; the builder and
+    // its chain must not add any.
+    assert!(
+        chained_allocs <= plain_allocs,
+        "Text builder chain allocated: plain = {plain_allocs}, chained = {chained_allocs}"
+    );
+}

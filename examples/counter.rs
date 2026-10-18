@@ -12,14 +12,13 @@ fn main() -> std::io::Result<()> {
         if ui.key('j') || ui.key_code(KeyCode::Down) {
             count -= 1;
         }
-        let _ = ui
-            .bordered(Border::Single)
+        ui.bordered(Border::Single)
             .title("Counter")
             .p(1)
             .gap(1)
             .col(|ui| {
                 ui.text("SLT Counter").bold().fg(Color::Cyan);
-                let _ = ui.container().gap(2).row(|ui| {
+                ui.container().gap(2).row(|ui| {
                     ui.text("Count:");
                     let color = if count >= 0 { Color::Green } else { Color::Red };
                     ui.text(format!("{count}")).bold().fg(color);
