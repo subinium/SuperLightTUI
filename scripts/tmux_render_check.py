@@ -47,6 +47,9 @@ import unicodedata
 from typing import Callable, TypeVar
 
 MAIN_SCREEN_MARKER = "SLT-MAIN-SCREEN-MARKER"
+# Seconds a pane may report a closed pty without an exit status before the
+# tmux server is sent the SIGCHLD that a libutempter build can lose.
+REAP_NUDGE_AFTER = 0.5
 CONTINUATION = object()
 T = TypeVar("T")
 
@@ -162,9 +165,22 @@ class Tmux:
         handles SIGCHLD (PANE_STATUSREADY). The two arrive in either order,
         so wait for the status itself. A signal death is reported as
         `signal N`.
+
+        A tmux built with libutempter (Debian / Ubuntu packages) can lose
+        that SIGCHLD for good: on pty EOF, `server_destroy_pane` calls
+        `utempter_remove_record`, whose helper runs with SIGCHLD set to
+        SIG_DFL, so a pane process that exits during that window stays an
+        unreaped zombie and the status never appears. tmux already re-raises
+        SIGCHLD after `utempter_add_record` (spawn.c) but not after the
+        remove. When the pty has been closed for `REAP_NUDGE_AFTER` seconds
+        with no status, send the server that SIGCHLD; its `waitpid(WAIT_ANY)`
+        loop then reaps the pane and records the real exit status.
         """
+        dead_since: float | None = None
+        nudged_at: float | None = None
 
         def reaped() -> str | None:
+            nonlocal dead_since, nudged_at
             fields = self.display(
                 target, "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}"
             ).split("|")
@@ -174,6 +190,20 @@ class Tmux:
                 return fields[1]
             if fields[2]:
                 return f"signal {fields[2]}"
+            now = time.monotonic()
+            if dead_since is None:
+                dead_since = now
+            if now - dead_since >= REAP_NUDGE_AFTER and (
+                nudged_at is None or now - nudged_at >= REAP_NUDGE_AFTER
+            ):
+                if nudged_at is None:
+                    log(
+                        f"INFO  {target}: pty closed but tmux has no exit status "
+                        f"after {REAP_NUDGE_AFTER:.1f}s (libutempter builds can "
+                        "lose SIGCHLD); sending the server SIGCHLD"
+                    )
+                os.kill(int(self.display(target, "#{pid}")), signal.SIGCHLD)
+                nudged_at = now
             return None
 
         return wait_for(reaped, timeout, what)
