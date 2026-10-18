@@ -812,7 +812,9 @@ impl Drop for InlineTerminal {
     }
 }
 
-pub(crate) use session::{note_cursor_shape_written, note_pointer_shape_written};
+pub(crate) use session::{
+    note_cursor_shape_written, note_pointer_shape_written, shape_restore_epoch,
+};
 
 mod selection;
 pub(crate) use selection::{

@@ -283,6 +283,14 @@ pub(super) struct ContextCheckpoint {
     /// (and any nested ones) — keeping the recorded keys consistent with the
     /// commands that actually survived the rollback.
     region_versions_cur_len: usize,
+    /// Pointer records made by a panicking subtree (#439/#440/#443/#452):
+    /// hit-test flags of its slots, overscroll containment, scroll anchoring
+    /// policies, pointer shapes and the cursor-shape request.
+    pointer_contain_len: usize,
+    pointer_policies_len: usize,
+    pointer_shapes_len: usize,
+    pointer_passthrough_depth: u32,
+    cursor_request: Option<(crate::CursorShape, bool)>,
     rollback: ContextRollbackState,
 }
 
@@ -301,6 +309,11 @@ impl ContextCheckpoint {
             pending_tooltips_len: ctx.pending_tooltips.len(),
             pending_screen_nav_len: ctx.pending_screen_nav.len(),
             screen_nav_depth: ctx.screen_nav_depth,
+            pointer_contain_len: ctx.pointer.contain.len(),
+            pointer_policies_len: ctx.pointer.scroll_policies.len(),
+            pointer_shapes_len: ctx.pointer.shapes.len(),
+            pointer_passthrough_depth: ctx.pointer.passthrough_depth,
+            cursor_request: ctx.pointer.cursor_request,
             screen_focus_scopes_len: ctx.screen_focus_scopes.len(),
             region_versions_cur_len: ctx.region_versions_cur.len(),
             rollback: ctx.rollback.clone(),
@@ -333,5 +346,18 @@ impl ContextCheckpoint {
         // Issue #273: drop `cached` keys recorded by the panicking subtree.
         ctx.region_versions_cur
             .truncate(self.region_versions_cur_len);
+        // Slots allocated by the panicking subtree are reused by the
+        // fallback: they must not inherit its passthrough/bubble/drag flags.
+        let first_rolled_back = self.rollback.interaction_count;
+        if ctx.pointer.hit_flags.len() > first_rolled_back {
+            ctx.pointer.hit_flags.truncate(first_rolled_back);
+        }
+        ctx.pointer.contain.truncate(self.pointer_contain_len);
+        ctx.pointer
+            .scroll_policies
+            .truncate(self.pointer_policies_len);
+        ctx.pointer.shapes.truncate(self.pointer_shapes_len);
+        ctx.pointer.passthrough_depth = self.pointer_passthrough_depth;
+        ctx.pointer.cursor_request = self.cursor_request;
     }
 }

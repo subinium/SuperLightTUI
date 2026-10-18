@@ -57,7 +57,10 @@ What this means in practice:
   release. Drags a widget handles never select. A selection inside a
   scrollable stays on its text while the region scrolls, and holding the
   pointer on the region's top or bottom row scrolls it so the selection can
-  grow. Only the part visible at release is copied.
+  grow. Only the part visible at release is copied. Edge auto-scroll starts once the pointer leaves the
+region (or, for a region flush with the top or bottom of the screen, reaches
+that row while extending the selection), so selecting a word on a region's
+first line never scrolls it.
   `RunConfig::text_selection(false)` disables the built-in selection.
 - **To select natively anyway**, most terminals bypass mouse capture while
   Shift is held (Shift-drag). The modifier differs on some macOS terminals;
@@ -325,7 +328,9 @@ if ui.mouse_up().is_some() {
 Drags a widget handles never start a text selection: a press consumed by a
 split handle, a scrollbar thumb, or any other widget keeps SLT's selection
 overlay idle until the release, so dragging a control never highlights text
-or overwrites the clipboard. Apps with their own drag or selection model can
+or overwrites the clipboard. For your own drags built on `Response::dragging`
+and `drag_delta`, mark the handle `.draggable()` (HTML `draggable`, CSS
+`user-select: none`) so pressing it does not also select text. Apps with their own drag or selection model can
 turn the built-in selection off entirely with
 `RunConfig::default().text_selection(false)`.
 

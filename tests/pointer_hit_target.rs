@@ -276,3 +276,33 @@ proptest! {
         prop_assert!(total <= 1, "one press activated {total} slots: {clicked:?}");
     }
 }
+
+#[test]
+fn error_boundary_rollback_drops_the_panicking_subtrees_hit_flags() {
+    // Review finding: an overlay root (passthrough) recorded by a panicking
+    // subtree leaked its flag to the fallback widget reusing the slot id.
+    let mut tb = TestBackend::new(30, 4);
+    let mut clicks = 0;
+    let mut view = |ui: &mut Context, clicks: &mut u32| {
+        ui.error_boundary_with(
+            |ui| {
+                let _ = ui.overlay(|ui| {
+                    ui.text("transient");
+                });
+                panic!("subtree failure");
+            },
+            |ui, _| {
+                if ui.button("FALLBACK").clicked {
+                    *clicks += 1;
+                }
+            },
+        );
+    };
+    tb.render(|ui| view(ui, &mut clicks));
+    tb.render(|ui| view(ui, &mut clicks));
+    let (x, y) = tb.find_text("FALLBACK").expect("fallback rendered");
+    tb.run_with_events(EventBuilder::new().click(x, y).build(), |ui| {
+        view(ui, &mut clicks)
+    });
+    assert_eq!(clicks, 1, "the fallback button stays clickable");
+}

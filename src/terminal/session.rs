@@ -225,14 +225,29 @@ pub(crate) fn note_pointer_shape_written(non_default: bool) {
     POINTER_SHAPE_SET.store(non_default, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// Bumped each time a restore actually reset a shape, so the runtime knows to
+/// re-send its wanted shapes after a suspend/resume.
+static SHAPE_RESTORE_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Number of shape restores written so far (see [`write_shape_restore`]).
+pub(crate) fn shape_restore_epoch() -> u64 {
+    SHAPE_RESTORE_EPOCH.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Restore the default cursor and pointer shapes if SLT changed them.
 fn write_shape_restore(stdout: &mut impl Write) -> io::Result<()> {
     use std::sync::atomic::Ordering;
+    let mut restored = false;
     if CURSOR_SHAPE_SET.swap(false, Ordering::SeqCst) {
         stdout.write_all(b"\x1b[0 q")?;
+        restored = true;
     }
     if POINTER_SHAPE_SET.swap(false, Ordering::SeqCst) {
         stdout.write_all(b"\x1b]22;default\x1b\\")?;
+        restored = true;
+    }
+    if restored {
+        SHAPE_RESTORE_EPOCH.fetch_add(1, Ordering::SeqCst);
     }
     Ok(())
 }

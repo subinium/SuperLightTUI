@@ -342,13 +342,10 @@ pub trait Backend {
         false
     }
 
-    /// Write `text` to the system clipboard (OSC 52) for a backend that owns
-    /// a terminal session. The built-in terminals write through their own
-    /// output stream; the default writes to process stdout.
-    #[doc(hidden)]
     /// Write a raw control sequence (cursor or pointer shape) for a backend
     /// that owns a terminal session; the built-in terminals queue it with the
     /// frame bytes. The default writes to process stdout.
+    #[doc(hidden)]
     fn write_terminal_sequence(&mut self, sequence: &str) -> io::Result<()> {
         use std::io::Write as _;
         let mut stdout = io::stdout();
@@ -356,6 +353,9 @@ pub trait Backend {
         stdout.flush()
     }
 
+    /// Write `text` to the system clipboard (OSC 52) for a backend that owns
+    /// a terminal session. The built-in terminals write through their own
+    /// output stream; the default writes to process stdout.
     #[doc(hidden)]
     fn write_clipboard(&mut self, text: &str) -> io::Result<()> {
         #[cfg(feature = "crossterm")]

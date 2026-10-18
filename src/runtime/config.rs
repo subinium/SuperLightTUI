@@ -336,7 +336,12 @@ impl RunConfig {
     /// [`mouse_mode`](Self::mouse_mode), else [`MouseMode::Drag`] locally and
     /// [`MouseMode::Click`] in an SSH or mosh session.
     pub fn effective_mouse_mode(&self) -> MouseMode {
-        resolve_mouse_mode(self.mouse_mode, crate::context::session_is_remote())
+        // The run loops ask on every input poll; the environment is read once.
+        static REMOTE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        resolve_mouse_mode(
+            self.mouse_mode,
+            *REMOTE.get_or_init(crate::context::session_is_remote),
+        )
     }
 
     /// Enable or disable Kitty keyboard protocol.

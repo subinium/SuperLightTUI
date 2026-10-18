@@ -309,8 +309,21 @@ pub(crate) struct AnchorSample {
     path: [u32; ANCHOR_DEPTH],
     /// Fingerprint (group name, else leading text) at each level.
     prints: [u64; ANCHOR_DEPTH],
+    /// Structure (kind, child count, height, group name) at each level, the
+    /// fallback when the text changed in place (spinners, timers).
+    shapes: [u64; ANCHOR_DEPTH],
     /// Top edge relative to the scroller's content origin.
     top: u32,
+}
+
+fn node_structure(node: &LayoutNode) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::mem::discriminant(&node.kind).hash(&mut hasher);
+    node.children.len().hash(&mut hasher);
+    node.size.1.hash(&mut hasher);
+    node.group_name.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn node_fingerprint(node: &LayoutNode) -> u64 {
@@ -379,6 +392,7 @@ fn anchor_sample(scroller: &LayoutNode, origin_y: u32, offset: u32) -> Option<An
         let level = usize::from(sample.len);
         sample.path[level] = u32::try_from(index).unwrap_or(u32::MAX);
         sample.prints[level] = node_fingerprint(child);
+        sample.shapes[level] = node_structure(child);
         sample.len += 1;
         sample.top = content_top(child, origin_y);
         if !descend || usize::from(sample.len) == ANCHOR_DEPTH {
@@ -400,13 +414,26 @@ fn locate_anchor(scroller: &LayoutNode, origin_y: u32, sample: &AnchorSample) ->
                 .get(index)
                 .is_some_and(|child| node_fingerprint(child) == print)
         };
+        let same_structure = |index: usize| {
+            children
+                .get(index)
+                .is_some_and(|child| node_structure(child) == sample.shapes[level])
+        };
+        // Same index and content, else the same content nearby (inserted or
+        // removed siblings), else the same index and structure (text that
+        // changes in place, like a spinner or a timer).
         let index = if matches(want) {
             want
+        } else if let Some(index) = (1..=ANCHOR_SEARCH)
+            .flat_map(|distance| [want.checked_sub(distance), want.checked_add(distance)])
+            .flatten()
+            .find(|&index| matches(index))
+        {
+            index
+        } else if same_structure(want) {
+            want
         } else {
-            (1..=ANCHOR_SEARCH)
-                .flat_map(|distance| [want.checked_sub(distance), want.checked_add(distance)])
-                .flatten()
-                .find(|&index| matches(index))?
+            return None;
         };
         parent = &children[index];
     }

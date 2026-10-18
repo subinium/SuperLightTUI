@@ -729,7 +729,13 @@ fn shape_restore_is_written_only_after_a_shape_was_set() {
 
     note_cursor_shape_written(true);
     note_pointer_shape_written(true);
+    let epoch = shape_restore_epoch();
     let restored = exit();
+    assert_eq!(
+        shape_restore_epoch(),
+        epoch + 1,
+        "a restore that wrote shapes bumps the epoch so the runtime re-sends them"
+    );
     assert!(
         restored.contains(CURSOR_RESET),
         "exit restores the cursor shape"
@@ -739,6 +745,7 @@ fn shape_restore_is_written_only_after_a_shape_was_set() {
         "exit restores the pointer"
     );
     assert!(!exit().contains(CURSOR_RESET), "restored once");
+    assert_eq!(shape_restore_epoch(), epoch + 1, "a no-op restore keeps it");
 
     // The panic hook and suspend share the same exit writer.
     note_cursor_shape_written(true);

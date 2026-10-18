@@ -343,7 +343,9 @@ pub(crate) fn run_frame_kernel(
     #[cfg(not(feature = "crossterm"))]
     let _clipboard_text = ctx.clipboard_text.take();
 
-    // #438: widget-consumed presses and drags never start a text selection.
+    // #438: widget-consumed presses and drags never start a text selection;
+    // presses on a `draggable()` slot are claimed for their widget first.
+    ctx.claim_draggable_presses();
     #[cfg(feature = "crossterm")]
     let should_copy_selection = {
         let selection = terminal::track_selection(
@@ -351,7 +353,7 @@ pub(crate) fn run_frame_kernel(
             &ctx.events,
             &ctx.consumed,
             &state.layout_feedback.prev_content_map,
-            terminal::ScrollView::new(&ctx.prev_geometry, &ctx.prev_scroll_rects),
+            terminal::ScrollView::new(&ctx.prev_geometry, &ctx.prev_scroll_rects, size.1),
             config.text_selection,
         );
         // #445: edge auto-scroll applies at the region's next binding.
@@ -634,6 +636,7 @@ pub(crate) fn run_frame(
             terminal::ScrollView::new(
                 &state.layout_feedback.geometry,
                 &state.layout_feedback.prev_scroll_rects,
+                size.1,
             ),
         );
     }
@@ -646,6 +649,7 @@ pub(crate) fn run_frame(
             terminal::ScrollView::new(
                 &state.layout_feedback.geometry,
                 &state.layout_feedback.prev_scroll_rects,
+                size.1,
             ),
         );
         if !text.is_empty() {
@@ -684,6 +688,14 @@ fn emit_shape_requests(
     config: &RunConfig,
 ) -> io::Result<()> {
     let pointer = &mut state.pointer;
+    // A session restore (Ctrl+Z suspend) put the default shapes back; what
+    // the terminal shows no longer matches what we last wrote.
+    let epoch = terminal::shape_restore_epoch();
+    if epoch != pointer.shape_epoch {
+        pointer.shape_epoch = epoch;
+        pointer.cursor_emitted = None;
+        pointer.pointer_emitted = None;
+    }
     if pointer.cursor_wanted != pointer.cursor_emitted {
         let code = pointer
             .cursor_wanted

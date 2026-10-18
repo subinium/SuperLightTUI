@@ -42,6 +42,8 @@
   via `RunConfig::pointer_shapes(true)`, follows the hovered slot with CSS
   `cursor` inheritance). `EventBuilder::mouse_move` and
   `PtyBackend::with_run_config` support testing them.
+- `ContainerBuilder::draggable()` marks a custom drag handle so pressing it
+  never starts the built-in text selection (#438).
 - `RunConfig::text_selection(bool)` (default `true`) turns SLT's built-in
   text selection and copy-on-release off for apps with their own drag or
   selection model (#438).

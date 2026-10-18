@@ -28,13 +28,20 @@ pub(crate) struct SelectionState {
 pub(crate) struct ScrollView<'a> {
     geometry: Option<&'a crate::layout::GeometryFeedback>,
     rects: &'a [Rect],
+    /// Screen height in rows; `0` when unknown.
+    screen_height: u32,
 }
 
 impl<'a> ScrollView<'a> {
-    pub(crate) fn new(geometry: &'a crate::layout::GeometryFeedback, rects: &'a [Rect]) -> Self {
+    pub(crate) fn new(
+        geometry: &'a crate::layout::GeometryFeedback,
+        rects: &'a [Rect],
+        screen_height: u32,
+    ) -> Self {
         Self {
             geometry: Some(geometry),
             rects,
+            screen_height,
         }
     }
 
@@ -97,9 +104,24 @@ pub(crate) fn track_selection(
     }
     let mut should_copy = false;
     for (i, event) in events.iter().enumerate() {
-        let Event::Mouse(mouse) = event else {
-            continue;
+        let mouse = match event {
+            Event::FocusLost | Event::Resize(_, _) => {
+                // The release will never arrive: stop extending (and edge
+                // scrolling) but keep what was selected, like the pointer
+                // capture does.
+                selection.end_hold(view);
+                selection.captured = false;
+                continue;
+            }
+            Event::Mouse(mouse) => mouse,
+            _ => continue,
         };
+        if matches!(mouse.kind, MouseKind::Moved) {
+            // Motion without a held button: the release was lost.
+            selection.end_hold(view);
+            selection.captured = false;
+            continue;
+        }
         let taken = consumed.get(i).copied().unwrap_or(false);
         match mouse.kind {
             MouseKind::Down(MouseButton::Left) => {
@@ -197,23 +219,48 @@ impl SelectionState {
     /// End the gesture; a region selection freezes its end in content
     /// coordinates so later scrolling does not move it (#445).
     pub(crate) fn mouse_up(&mut self, view: ScrollView<'_>) {
+        self.end_hold(view);
+    }
+
+    /// The button is no longer held: freeze a region selection's end in
+    /// content coordinates and stop edge auto-scrolling.
+    fn end_hold(&mut self, view: ScrollView<'_>) {
+        if !self.holding {
+            return;
+        }
         if let Some(region) = self.region
             && let Some((rect, offset)) = view.find(region)
         {
-            self.current_content = Some(self.region_end(rect, offset));
+            self.current_content = Some(self.region_end(rect, offset, view.screen_height));
         }
         self.holding = false;
     }
 
-    /// Whether the held pointer sits on or beyond the region's top or bottom
-    /// row (the edge auto-scroll zone).
-    fn at_edge(&self, rect: Rect) -> Option<i8> {
-        let (_, y) = self.current?;
+    /// Edge auto-scroll direction for the held pointer, if any.
+    ///
+    /// A pointer above or below the region always scrolls it. The region's
+    /// own top or bottom row only counts when the region touches that screen
+    /// edge (there is no row outside it to move to) and the selection already
+    /// extends past the anchor in that direction, so selecting a word on the
+    /// edge row does not scroll.
+    fn at_edge(&self, rect: Rect, offset: u32, screen_height: u32) -> Option<i8> {
         if !self.holding {
-            None
-        } else if y <= rect.y {
+            return None;
+        }
+        let (_, y) = self.current?;
+        if y < rect.y {
+            return Some(-1);
+        }
+        if y >= rect.bottom() {
+            return Some(1);
+        }
+        let anchor_row = self.anchor?.1;
+        let row = y.saturating_add(offset);
+        let top_flush = rect.y == 0;
+        let bottom_flush = screen_height != 0 && rect.bottom() >= screen_height;
+        if top_flush && y == rect.y && row < anchor_row {
             Some(-1)
-        } else if y >= rect.bottom().saturating_sub(1) {
+        } else if bottom_flush && y.saturating_add(1) == rect.bottom() && row > anchor_row {
             Some(1)
         } else {
             None
@@ -223,9 +270,9 @@ impl SelectionState {
     /// Selection end of a region selection in content cells: follows the
     /// pointer through auto-scroll at the edges, otherwise the content under
     /// the pointer at its last drag.
-    fn region_end(&self, rect: Rect, offset: u32) -> (u32, u32) {
+    fn region_end(&self, rect: Rect, offset: u32, screen_height: u32) -> (u32, u32) {
         let screen = self.current.unwrap_or_default();
-        if self.at_edge(rect).is_some() {
+        if self.at_edge(rect, offset, screen_height).is_some() {
             return content_point(screen, rect, offset);
         }
         self.current_content
@@ -238,8 +285,9 @@ impl SelectionState {
             return None;
         }
         let region = self.region?;
-        let (rect, _) = view.find(region)?;
-        self.at_edge(rect).map(|direction| (region, direction))
+        let (rect, offset) = view.find(region)?;
+        self.at_edge(rect, offset, view.screen_height)
+            .map(|direction| (region, direction))
     }
 
     /// Resolve the selection for drawing or copying: `(start, end)` in the
@@ -255,7 +303,11 @@ impl SelectionState {
                 let (rect, offset) = view
                     .find(region)
                     .or_else(|| self.widget_rect.map(|rect| (rect, 0)))?;
-                (rect, offset, self.region_end(rect, offset))
+                (
+                    rect,
+                    offset,
+                    self.region_end(rect, offset, view.screen_height),
+                )
             }
             None => (self.widget_rect?, 0, self.current?),
         };

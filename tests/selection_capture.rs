@@ -200,3 +200,46 @@ fn text_selection_false_disables_overlay_and_copy() {
     off.frame(EventBuilder::new().mouse_up(12, 0).build(), &mut text_view);
     assert_eq!(off.backend.reversed_cells(), 0);
 }
+
+fn drag_card(ui: &mut Context, x: &mut i32) {
+    let _ = ui.col(|ui| {
+        let card = ui.bordered(slt::Border::Single).draggable().col(|ui| {
+            ui.text("DRAG CARD with selectable looking text");
+        });
+        if card.dragging {
+            *x += card.drag_delta.0;
+        }
+        ui.text("plain text below the card");
+    });
+}
+
+#[test]
+fn custom_draggable_drag_does_not_select_text() {
+    // Review finding: drags built on `Response::dragging` do not consume
+    // events, so they also started the built-in selection.
+    let mut s = Session::new(50, 6, RunConfig::default());
+    let mut x = 0;
+    s.frame(Vec::new(), &mut |ui| drag_card(ui, &mut x));
+    s.frame(Vec::new(), &mut |ui| drag_card(ui, &mut x));
+    s.frame(
+        EventBuilder::new()
+            .click(3, 1)
+            .drag(8, 1)
+            .drag(12, 3)
+            .build(),
+        &mut |ui| drag_card(ui, &mut x),
+    );
+    assert_eq!(x, 9, "the custom drag still sees its deltas");
+    assert_eq!(s.backend.reversed_cells(), 0, "no selection highlight");
+    s.frame(EventBuilder::new().mouse_up(12, 3).build(), &mut |ui| {
+        drag_card(ui, &mut x)
+    });
+    assert_eq!(s.backend.reversed_cells(), 0);
+
+    // Text outside the draggable stays selectable.
+    s.frame(
+        EventBuilder::new().click(0, 3).drag(10, 3).build(),
+        &mut |ui| drag_card(ui, &mut x),
+    );
+    assert!(s.backend.reversed_cells() > 0);
+}

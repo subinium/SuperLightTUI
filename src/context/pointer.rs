@@ -15,7 +15,11 @@
 //! captured slot sees `pressed`, `drag_started`, `dragging`, `drag_delta` and
 //! `released` even when the pointer leaves its rect. Capture ends on release,
 //! on terminal focus loss, on resize, and on motion reported without a held
-//! button (a release the terminal never delivered).
+//! button (a release the terminal never delivered; only reported in
+//! `MouseMode::Hover`). Capture follows the slot's position in the frame, so
+//! a container that appears *before* the pressed widget while it is held
+//! shifts the capture to a neighbour; render such conditional UI after the
+//! drag handle, or key it with `ui.group`.
 
 use super::*;
 use crate::layout::{HitMeta, NO_HIT_PARENT};
@@ -30,6 +34,9 @@ pub(crate) const HIT_PASSTHROUGH: u8 = 1 << 0;
 pub(crate) const HIT_BUBBLE: u8 = 1 << 1;
 /// Builder flag: a scroll region keeps wheel events at its limit (#440).
 pub(crate) const SCROLL_CONTAIN: u8 = 1 << 2;
+/// Slot flag: a press on this slot (or inside it) belongs to the widget's own
+/// drag, so it never starts the built-in text selection (#438).
+pub(crate) const HIT_DRAGGABLE: u8 = 1 << 3;
 
 /// One mouse button press (or release) observed this frame.
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +106,8 @@ pub(crate) struct PointerState {
     pub pointer_wanted: Option<crate::PointerShape>,
     /// Pointer shape last written to the terminal.
     pub pointer_emitted: Option<crate::PointerShape>,
+    /// `shape_restore_epoch` when the emitted shapes were last valid.
+    pub shape_epoch: u64,
 }
 
 impl PointerState {
@@ -608,7 +617,59 @@ impl Context {
         if let Some(shape) = shape {
             self.pointer.shapes.push((id, shape));
         }
-        self.mark_hit_flags(id, flags & (HIT_PASSTHROUGH | HIT_BUBBLE));
+        self.mark_hit_flags(id, flags & (HIT_PASSTHROUGH | HIT_BUBBLE | HIT_DRAGGABLE));
+    }
+
+    /// Mark presses that land on a [`ContainerBuilder::draggable`] slot (or a
+    /// descendant of one) as consumed, so the built-in text selection treats
+    /// the whole gesture as owned by that widget (#438). Uses the previous
+    /// frame's flags, like the press resolution itself.
+    pub(crate) fn claim_draggable_presses(&mut self) {
+        if self.pointer.presses.is_empty()
+            || !self
+                .pointer
+                .hit_flags_prev
+                .iter()
+                .any(|flags| flags & HIT_DRAGGABLE != 0)
+        {
+            return;
+        }
+        let targets = self.press_targets().clone();
+        for (press, target) in self.pointer.presses.iter().zip(targets) {
+            let Some(target) = target else {
+                continue;
+            };
+            if self.chain_has_prev_flag(target, HIT_DRAGGABLE)
+                && let Some(consumed) = self.consumed.get_mut(press.event_index)
+            {
+                *consumed = true;
+            }
+        }
+    }
+
+    /// Whether slot `id` or one of its ancestors carried `flag` last frame.
+    fn chain_has_prev_flag(&self, id: usize, flag: u8) -> bool {
+        let mut current = id;
+        for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
+            if self
+                .pointer
+                .hit_flags_prev
+                .get(current)
+                .is_some_and(|flags| flags & flag != 0)
+            {
+                return true;
+            }
+            let parent = self
+                .pointer
+                .hit_meta
+                .get(current)
+                .map_or(NO_HIT_PARENT, |meta| meta.parent);
+            if parent == NO_HIT_PARENT {
+                return false;
+            }
+            current = parent as usize;
+        }
+        false
     }
 
     /// Pointer shape of slot `id` or its nearest ancestor with one, from the
@@ -737,6 +798,32 @@ impl ContainerBuilder<'_> {
     /// ```
     pub fn bubble_clicks(mut self) -> Self {
         self.pointer_flags |= HIT_BUBBLE;
+        self
+    }
+
+    /// Mark this container as the handle of a custom drag, so pressing it (or
+    /// anything inside it) never starts SLT's built-in text selection, like
+    /// HTML `draggable` / CSS `user-select: none`.
+    ///
+    /// Built-in drag widgets (split handles, scrollbars, sliders) already own
+    /// their presses. Use this for your own drags built on
+    /// [`Response::dragging`] and [`Response::drag_delta`]. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # let mut x = 0i32;
+    /// # slt::TestBackend::new(30, 3).render(|ui| {
+    /// let r = ui.bordered(slt::Border::Rounded).draggable().col(|ui| {
+    ///     ui.text("drag me");
+    /// });
+    /// if r.dragging {
+    ///     x += r.drag_delta.0;
+    /// }
+    /// # });
+    /// ```
+    pub fn draggable(mut self) -> Self {
+        self.pointer_flags |= HIT_DRAGGABLE;
         self
     }
 

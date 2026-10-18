@@ -243,3 +243,56 @@ fn stick_to_bottom_follows_appends_until_the_user_scrolls_up() {
     assert_eq!(scroll.offset, scroll.max_offset());
     assert_eq!(scroll.offset, lines - 5);
 }
+
+fn ticking_view(ui: &mut Context, app: &mut Log, tick: u64) {
+    let open = &app.open;
+    let _ = ui.scrollable(&mut app.scroll).grow(1).col(|ui| {
+        for (i, &is_open) in open.iter().enumerate() {
+            let _ = ui.col(|ui| {
+                // Every header carries live text (a timer), so the anchor's
+                // content differs on every frame.
+                ui.text(format!("block #{i:02} running {tick}s"));
+                if is_open {
+                    for line in 0..5 {
+                        ui.text(format!("out[{i:02}:{line:02}] {tick}"));
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn anchoring_survives_text_that_changes_every_frame() {
+    let mut backend = FrameBackend {
+        buffer: Buffer::empty(Rect::new(0, 0, 80, 20)),
+    };
+    let mut state = AppState::new();
+    let config = RunConfig::default();
+    let mut app = Log::new(true);
+    let mut tick = 0u64;
+    let mut frame = |events: Vec<Event>, app: &mut Log, backend: &mut FrameBackend| {
+        tick += 1;
+        backend.buffer.reset();
+        slt::frame_owned(backend, &mut state, &config, events, &mut |ui| {
+            ticking_view(ui, app, tick)
+        })
+        .expect("frame");
+    };
+    frame(Vec::new(), &mut app, &mut backend);
+    frame(Vec::new(), &mut app, &mut backend);
+    frame(wheel_down(60), &mut app, &mut backend);
+    frame(Vec::new(), &mut app, &mut backend);
+    assert_eq!(app.scroll.offset, 60);
+    let before = backend.line(3);
+    assert!(before.starts_with("out[10:"), "row 3 before: {before}");
+
+    app.open[0] = false;
+    frame(Vec::new(), &mut app, &mut backend);
+    frame(Vec::new(), &mut app, &mut backend);
+    assert_eq!(app.scroll.offset, 55, "anchored despite the changing text");
+    assert!(
+        backend.line(3).starts_with(&before[..8]),
+        "same line stays at row 3"
+    );
+}

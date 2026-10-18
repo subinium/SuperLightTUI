@@ -377,7 +377,10 @@ pub struct Response {
     /// Whether a left press landed on this widget (as the topmost, innermost
     /// target) this frame. Unlike `clicked`, this never waits for the release
     /// and never comes from the keyboard. The press also *captures* the
-    /// pointer for this widget until the release. Available since v0.26.0.
+    /// pointer for this widget until the release. For a custom drag, mark the
+    /// container [`draggable`](crate::ContainerBuilder::draggable) so the
+    /// gesture does not also start the built-in text selection. Available
+    /// since v0.26.0.
     pub pressed: bool,
     /// Whether the button that pressed this widget was released this frame,
     /// wherever the pointer is. Fires once per gesture; not set when the
@@ -390,7 +393,8 @@ pub struct Response {
     /// Whether this widget holds the pointer capture and the pointer has moved
     /// since the press (a drag in progress at the end of this frame). Cleared
     /// on release, terminal focus loss, resize, and when motion arrives
-    /// without a held button. Available since v0.26.0.
+    /// without a held button (only reported in
+    /// [`MouseMode::Hover`](crate::MouseMode::Hover)). Available since v0.26.0.
     pub dragging: bool,
     /// Pointer motion in cells `(dx, dy)` this frame while this widget holds
     /// the capture. Sum the deltas across frames for the total drag distance.

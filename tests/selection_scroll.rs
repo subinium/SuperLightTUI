@@ -222,3 +222,94 @@ fn dragging_above_the_top_edge_auto_scrolls_up() {
     }
     assert_eq!(scroll.offset, 0);
 }
+
+#[test]
+fn selecting_a_word_on_the_top_row_does_not_auto_scroll() {
+    // Review finding: a horizontal drag on the region's first row used to
+    // scroll it to the top at ~60 rows per second.
+    let mut tb = TestBackend::new(30, 6);
+    let mut scroll = ScrollState::new();
+    scroll.offset = 5;
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    tb.run_with_events(EventBuilder::new().click(0, 0).drag(9, 0).build(), |ui| {
+        rows_view(ui, &mut scroll)
+    });
+    for _ in 0..10 {
+        tb.render(|ui| rows_view(ui, &mut scroll));
+    }
+    assert_eq!(scroll.offset, 5, "same-row selection never scrolls");
+    // Same on the bottom row of a full-height region.
+    tb.run_with_events(EventBuilder::new().mouse_up(9, 0).build(), |ui| {
+        rows_view(ui, &mut scroll)
+    });
+    tb.run_with_events(EventBuilder::new().click(0, 5).drag(9, 5).build(), |ui| {
+        rows_view(ui, &mut scroll)
+    });
+    for _ in 0..10 {
+        tb.render(|ui| rows_view(ui, &mut scroll));
+    }
+    assert_eq!(scroll.offset, 5);
+}
+
+fn inset_view(ui: &mut Context, scroll: &mut ScrollState) {
+    let _ = ui.col(|ui| {
+        ui.text("HEADER");
+        let _ = ui.scrollable(scroll).h(4).col(|ui| {
+            for i in 0..40 {
+                ui.text(format!("row {i:02} abcdef"));
+            }
+        });
+        ui.text("FOOTER");
+    });
+}
+
+#[test]
+fn inset_region_scrolls_only_once_the_pointer_leaves_it() {
+    // The region spans rows 1..=4; rows 0 and 5 are outside it.
+    let mut tb = TestBackend::new(30, 6);
+    let mut scroll = ScrollState::new();
+    scroll.offset = 5;
+    tb.render(|ui| inset_view(ui, &mut scroll));
+    tb.render(|ui| inset_view(ui, &mut scroll));
+    tb.run_with_events(EventBuilder::new().click(0, 3).drag(4, 1).build(), |ui| {
+        inset_view(ui, &mut scroll)
+    });
+    for _ in 0..5 {
+        tb.render(|ui| inset_view(ui, &mut scroll));
+    }
+    assert_eq!(
+        scroll.offset, 5,
+        "the region's own top row is not a scroll zone"
+    );
+    tb.run_with_events(EventBuilder::new().drag(4, 0).build(), |ui| {
+        inset_view(ui, &mut scroll)
+    });
+    for _ in 0..3 {
+        tb.render(|ui| inset_view(ui, &mut scroll));
+    }
+    assert!(scroll.offset < 5, "above the region it scrolls up");
+}
+
+#[test]
+fn lost_release_stops_edge_auto_scroll() {
+    let mut tb = TestBackend::new(30, 6);
+    let mut scroll = ScrollState::new();
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    tb.run_with_events(EventBuilder::new().click(0, 1).drag(5, 9).build(), |ui| {
+        rows_view(ui, &mut scroll)
+    });
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    tb.render(|ui| rows_view(ui, &mut scroll));
+    // Alt-tab away: the terminal never delivers the release.
+    tb.run_with_events(EventBuilder::new().focus_lost().build(), |ui| {
+        rows_view(ui, &mut scroll)
+    });
+    let stopped = scroll.offset;
+    for _ in 0..10 {
+        tb.render(|ui| rows_view(ui, &mut scroll));
+    }
+    assert_eq!(scroll.offset, stopped, "focus loss ends the hold");
+    assert!(stopped < scroll.max_offset());
+}
