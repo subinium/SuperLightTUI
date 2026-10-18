@@ -34,9 +34,23 @@ impl Context {
     /// Render a clickable hyperlink.
     ///
     /// The link is interactive: clicking it (or pressing Enter/Space when
-    /// focused) opens the URL in the system browser. OSC 8 is also emitted
-    /// for terminals that support native hyperlinks.
-    #[allow(clippy::print_stderr)]
+    /// focused) opens the URL with the system opener (`open` on macOS,
+    /// `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on
+    /// Windows; never through a shell). OSC 8 is also emitted for terminals
+    /// that support native hyperlinks.
+    ///
+    /// # Safety of link targets
+    ///
+    /// Only `http`, `https` and `mailto` URLs (case-insensitive) are opened.
+    /// URLs with any other scheme (`file:`, `javascript:`, `data:`, custom
+    /// protocol handlers, ...), with whitespace, control characters or `"`,
+    /// or without a scheme are still rendered, but activating them only shows
+    /// a warning toast; no process is spawned.
+    ///
+    /// When running over SSH or mosh (`SSH_CONNECTION`, `SSH_TTY` or
+    /// `MOSH_IP` set), SLT does not spawn an opener at all, since it would
+    /// open on the remote host. The OSC 8 hyperlink still lets the local
+    /// terminal open the link.
     pub fn link(&mut self, text: impl Into<String>, url: impl Into<String>) -> &mut Self {
         let url_str = url.into();
         let focused = self.register_focusable();
@@ -44,8 +58,10 @@ impl Context {
 
         let activated = response.clicked || self.consume_activation_keys(focused);
 
+        // Never print here: writing to stderr would corrupt the alternate
+        // screen. Surface the failure as a toast instead.
         if activated && let Err(e) = open_url(&url_str) {
-            eprintln!("[slt] failed to open URL: {e}");
+            self.notify(&format!("Could not open link: {e}"), ToastLevel::Warning);
         }
 
         let style = if focused {

@@ -2257,6 +2257,39 @@ fn link_default_style_is_underlined_cyan() {
 }
 
 #[test]
+fn link_with_disallowed_scheme_is_not_opened_and_warns() {
+    use slt::{EventBuilder, KeyCode};
+    // Rejected targets fail validation before any process is spawned; the
+    // failure is surfaced as a toast instead of being printed to stderr.
+    for url in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "custom-scheme:payload",
+        "not a url",
+    ] {
+        let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+        let mut tb = TestBackend::new(80, 6);
+        tb.render_with_events(events, 0, 1, |ui| {
+            ui.link("Open", url);
+        });
+        tb.assert_contains("Could not open link");
+        // The hyperlink is still emitted so the terminal can decide.
+        assert_eq!(tb.buffer().get(0, 0).hyperlink.as_deref(), Some(url));
+    }
+}
+
+#[test]
+fn markdown_link_with_disallowed_scheme_is_not_opened() {
+    use slt::{EventBuilder, KeyCode};
+    let events = EventBuilder::new().key_code(KeyCode::Enter).build();
+    let mut tb = TestBackend::new(80, 6);
+    tb.render_with_events(events, 0, 1, |ui| {
+        ui.markdown("[x](file:///etc/passwd)");
+    });
+    tb.assert_contains("Could not open link");
+}
+
+#[test]
 fn modal_dims_background_content() {
     let mut tb = TestBackend::new(40, 10);
     tb.render(|ui| {
