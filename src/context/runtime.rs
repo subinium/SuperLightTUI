@@ -141,6 +141,17 @@ impl Context {
             }
         }
 
+        // Issue #453: hand the previous frame's slot metadata to this frame
+        // and resolve which slot owns text entry as focus starts (after the
+        // click / `focus_by_name` retargeting above, so a click that moves
+        // focus out of a text field releases its keys in the same batch).
+        let focus_target = if focus.prev_focus_count > 0 {
+            focus_index % focus.prev_focus_count
+        } else {
+            focus_index
+        };
+        let focus_identity = focus.identity.begin_frame(focus_target);
+
         // Reuse `commands_buf` capacity from the previous frame (issue #150).
         // `mem::take` swaps an empty Vec into `state.commands_buf`; we then
         // clear (no-op when reclaimed from a `build_tree` drain, defensive
@@ -255,6 +266,7 @@ impl Context {
                 modal_restore_index: focus.modal_restore_index,
                 last_text_idx: None,
                 focus_count: 0,
+                text_entry_claim: None,
                 last_focusable_id: None,
                 pending_focusable_id: None,
                 interaction_count: 0,
@@ -288,6 +300,7 @@ impl Context {
             focus_name_map_prev,
             focus_name_map,
             pending_focus_name: still_pending,
+            focus_identity,
             // Issue #248: sample a single wall-clock "now" for every timer
             // method called this frame. v0.21.1: reuse the `frame_now` sampled
             // above (also used for double-click timing) so the frame has one
@@ -942,6 +955,22 @@ impl Context {
     /// instead of allocating a fresh one. That keeps the name binding
     /// pointed at the widget the user sees rather than at a dummy slot.
     pub fn register_focusable(&mut self) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta::default())
+    }
+
+    /// Issue #453: register a text-entry focus slot. While it owns focus,
+    /// [`key`](Self::key) / [`key_code`](Self::key_code) and friends do not
+    /// report the keys the widget edits with.
+    pub(crate) fn register_text_entry_focusable(
+        &mut self,
+        kind: crate::runtime::TextEntryKind,
+    ) -> bool {
+        self.register_focusable_slot(crate::runtime::FocusSlotMeta {
+            text_entry: Some(kind),
+        })
+    }
+
+    fn register_focusable_slot(&mut self, meta: crate::runtime::FocusSlotMeta) -> bool {
         if !self.interaction_allowed() {
             self.rollback.last_focusable_id = None;
             // Drop any pending reservation: the suppressed widget never
@@ -970,7 +999,51 @@ impl Context {
         if freshly_allocated {
             self.commands.push(Command::FocusMarker(id));
         }
+        self.record_focus_slot(id, meta, freshly_allocated);
         self.focus_slot_is_current(id)
+    }
+
+    /// Record `meta` for slot `id`. A fresh slot replaces anything a
+    /// rolled-back subtree left at that index; a reused reservation (from
+    /// `register_focusable_named`) merges the widget's metadata into it.
+    fn record_focus_slot(&mut self, id: usize, meta: crate::runtime::FocusSlotMeta, fresh: bool) {
+        let slots = &mut self.focus_identity.slots;
+        if fresh || slots.len() <= id {
+            slots.truncate(id);
+            slots.resize(id, crate::runtime::FocusSlotMeta::default());
+            slots.push(meta);
+        } else {
+            let slot = &mut slots[id];
+            slot.text_entry = meta.text_entry.or(slot.text_entry);
+        }
+    }
+
+    /// Issue #453: the text-entry kind that currently owns unmodified keys.
+    ///
+    /// A slot focused earlier in this frame decides; before any slot has
+    /// registered, the slot that held focus as the frame started decides.
+    /// An open command palette claims text entry without a slot.
+    pub(crate) fn text_entry_owner(&self) -> Option<crate::runtime::TextEntryKind> {
+        if let Some(kind) = self.rollback.text_entry_claim {
+            return Some(kind);
+        }
+        match self.rollback.focused_widget_id {
+            Some(id) => self
+                .focus_identity
+                .slots
+                .get(id)
+                .and_then(|slot| slot.text_entry),
+            None => self.focus_identity.prev_text_entry,
+        }
+    }
+
+    /// Issue #453: hand this frame's slot metadata back to `FrameState`.
+    pub(crate) fn finish_focus_identity(&mut self, focus: &mut crate::runtime::FocusState) {
+        focus.identity.end_frame(
+            &mut self.focus_identity,
+            self.rollback.focus_count,
+            self.rollback.text_entry_claim,
+        );
     }
 
     /// Create persistent state that survives across frames.
@@ -2101,6 +2174,7 @@ impl Context {
         self.rollback.focus_count += 1;
         self.rollback.last_focusable_id = Some(id);
         self.commands.push(Command::FocusMarker(id));
+        self.record_focus_slot(id, crate::runtime::FocusSlotMeta::default(), true);
         // First-write-wins on duplicate names within a single frame —
         // a second `register_focusable_named("dup")` keeps the first
         // slot bound to the name and orphans its own slot's name binding.

@@ -347,30 +347,41 @@ below it up, because SLT has no scroll anchoring.
 - `ui.register_focusable_named("search")` + `ui.focus_by_name("search")` move
   focus programmatically.
 
-**Check global shortcuts after rendering widgets.** `ui.key(..)` and
-`ui.key_code(..)` only see events nobody has consumed *yet*, and a focused
-`text_input` consumes the characters typed into it while it renders:
+**Focused text fields own their keys.** While a `text_input`, `textarea`,
+form field or open command palette has focus, `ui.key(..)`, `ui.key_code(..)`,
+`ui.key_mod(..)`, `ui.consume_key*(..)` and `ui.shortcut(..)` skip the keys it
+edits with: printable characters without Ctrl / Super / Meta, Backspace,
+Delete, Left, Right, Home and End (plus Enter, Up and Down for `textarea`).
+The rule does not depend on call order, so shortcut checks can sit anywhere in
+the closure:
 
 <!-- slt-check: {"name":"ix_shortcut_order","features":[],"context":"ui"} -->
 ```rust
 let mut search = TextInputState::with_placeholder("Search...");
 
-// Wrong: checked before the input renders, so typing "q" into the field
-// also triggers the shortcut.
-// if ui.key('q') { ui.quit(); }
-
-let _ = ui.text_input(&mut search);
-
-// Right: only keys the input did not consume reach this check.
-if ui.key('q') || ui.key_code(KeyCode::Esc) {
+// Safe before the input: typing "q" into the focused field inserts it and
+// does not quit. Esc and Ctrl chords still reach the checks.
+if ui.shortcut(KeyCode::Char('q'), KeyModifiers::NONE) || ui.key_code(KeyCode::Esc) {
     ui.quit();
 }
+if ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL) {
+    // save
+}
+
+let _ = ui.text_input(&mut search);
 ```
+
+Ownership is decided by the slot that holds focus as the frame starts (or a
+text slot focused earlier in the same frame). A click that moves focus to a
+button releases the keys in the same event batch; on an app's very first
+frame nothing owns them yet. `ui.shortcut` matches modifiers exactly (Shift is
+ignored for characters).
 
 To claim a key so nothing later sees it, use `ui.consume_key(c)` or
 `ui.consume_key_code(code)`. While a modal is open, `ui.key(..)` outside the
-modal returns `false`; `ui.raw_key_code(..)` and `ui.raw_key_mod(..)` ignore
-modal state for truly global shortcuts.
+modal returns `false`. `ui.raw_key(..)`, `ui.raw_key_code(..)` and
+`ui.raw_key_mod(..)` ignore both modal state and text focus for truly global
+shortcuts.
 
 Ctrl+C quits by default (`RunConfig::handle_ctrl_c(false)` hands it to your
 closure), and on Unix Ctrl+Z suspends cleanly (`handle_suspend(false)` turns

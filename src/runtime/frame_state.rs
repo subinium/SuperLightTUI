@@ -32,6 +32,84 @@ pub(crate) struct FocusState {
     /// been resolved. Consumed once the matching registration is found in
     /// `focus_name_map_prev`.
     pub pending_focus_name: Option<String>,
+    /// Issue #453: focus-slot metadata carried between frames.
+    pub identity: FocusIdentityCarry,
+}
+
+/// Issue #453: what kind of text entry a focus slot performs. Keys the
+/// widget edits with are withheld from global shortcut queries while it owns
+/// focus (see `Context::key`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextEntryKind {
+    /// Single-line editor: printable keys plus Backspace, Delete, Left,
+    /// Right, Home and End.
+    SingleLine,
+    /// Multi-line editor: everything `SingleLine` owns plus Enter, Up and
+    /// Down.
+    MultiLine,
+}
+
+/// Per-frame metadata recorded for every focus slot, indexed by slot id.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FocusSlotMeta {
+    /// Issue #453: `Some` when the slot is a text-entry widget.
+    pub text_entry: Option<TextEntryKind>,
+}
+
+/// In-frame view of the focus-slot metadata, owned by `Context`.
+#[derive(Debug, Default)]
+pub(crate) struct FocusIdentity {
+    /// Metadata recorded this frame, indexed by slot id.
+    pub slots: Vec<FocusSlotMeta>,
+    /// Metadata recorded by the previous frame, indexed by slot id.
+    pub prev_slots: Vec<FocusSlotMeta>,
+    /// Issue #453: text-entry ownership at the start of this frame.
+    pub prev_text_entry: Option<TextEntryKind>,
+}
+
+impl FocusIdentityCarry {
+    /// Hand the carried metadata to a new frame whose focus starts on
+    /// `target`, a slot id in the previous frame's numbering.
+    pub(crate) fn begin_frame(&mut self, target: usize) -> FocusIdentity {
+        let mut slots = std::mem::take(&mut self.slots_buf);
+        slots.clear();
+        let prev_slots = std::mem::take(&mut self.slots);
+        let prev_text_entry = self
+            .text_claim
+            .or_else(|| prev_slots.get(target).and_then(|slot| slot.text_entry));
+        FocusIdentity {
+            slots,
+            prev_slots,
+            prev_text_entry,
+        }
+    }
+
+    /// Take back the metadata recorded by a finished frame.
+    pub(crate) fn end_frame(
+        &mut self,
+        identity: &mut FocusIdentity,
+        count: usize,
+        text_claim: Option<TextEntryKind>,
+    ) {
+        let mut recycled = std::mem::take(&mut identity.prev_slots);
+        recycled.clear();
+        identity.slots.truncate(count);
+        self.slots = std::mem::take(&mut identity.slots);
+        self.slots_buf = recycled;
+        self.text_claim = text_claim;
+    }
+}
+
+/// Focus-slot metadata handed from one frame to the next.
+#[derive(Debug, Default)]
+pub(crate) struct FocusIdentityCarry {
+    /// Slot metadata recorded by the most recent completed frame.
+    pub slots: Vec<FocusSlotMeta>,
+    /// Recycled buffer the next frame records its slot metadata into.
+    pub slots_buf: Vec<FocusSlotMeta>,
+    /// Issue #453: text-entry ownership claimed by a widget without a focus
+    /// slot (an open command palette) on the most recent completed frame.
+    pub text_claim: Option<TextEntryKind>,
 }
 
 /// v0.21.1: maximum gap between two same-cell left clicks for them to count as

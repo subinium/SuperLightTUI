@@ -8,6 +8,17 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ---
 
+## v0.25.x → v0.26.0
+
+- **Shortcuts vs focused text fields (#453).** While `text_input`, `textarea`,
+  a form field or an open command palette has focus, `ui.key(c)`,
+  `ui.key_code(..)`, `ui.key_mod(..)` and `ui.consume_key*(..)` skip the keys
+  it edits with, in any call order. Shortcut checks no longer need to sit after
+  the widgets. If your app read typed characters through `ui.key(..)` on
+  purpose (for example a vim-style mode that also feeds an input), switch those
+  reads to `ui.raw_key(c)` / `ui.raw_key_code(..)`. New `ui.shortcut(code,
+  modifiers)` matches modifiers exactly.
+
 ## 1. v0.24.x → v0.25.0
 
 Existing `form_field`, `scrollable`, and native/browser entry points remain

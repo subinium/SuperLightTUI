@@ -1102,7 +1102,7 @@ tb.render_with_events(
 17. **Modal traps focus.** Tab and Shift+Tab cycle only within the current modal; outside widgets are not reachable while the modal is open.
 18. **Breakpoint method naming.** `xs_w`, `sm_w`, `md_w`, `lg_w`, `xl_w`, `w_at(bp, v)` — the breakpoint is a **prefix** on the base name (not `w_xs`).
 19. **Mouse capture is opt-in.** `RunConfig::default().mouse` is `false`; without `.mouse(true)` no click, hover, or wheel event reaches the app. Focused buttons still activate with Enter / Space.
-20. **Check global shortcuts after widgets.** `ui.key('q')` sees any event not consumed *so far*; called before a focused `text_input`, typing `q` both inserts it and fires the shortcut. Put global shortcut checks at the end of the closure.
+20. **Focused text fields own their keys.** While `text_input` / `textarea` / a form field / an open command palette has focus, `ui.key('q')`, `ui.key_code(..)` and `ui.shortcut(..)` skip the keys the field edits with, in any call order. Chords (Ctrl/Super/Meta), Esc, Tab and F-keys still reach shortcuts; `ui.raw_key(c)` sees every press.
 
 ---
 

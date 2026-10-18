@@ -138,10 +138,12 @@ events at all.
 
 ### 7. A shortcut fires while typing into an input
 
-`ui.key('q')` returns `true` for any matching event not consumed *so far in
-the frame*. If the check runs before a focused `text_input`, it sees the
-keystroke before the input consumes it, so typing `q` quits the app. Move
-global shortcut checks after the widgets that render in the same frame.
+Since 0.26 a focused `text_input` / `textarea` / form field keeps the keys it
+edits with, so `ui.key('q')` stays `false` while the user types into it, in
+either call order. If a shortcut still fires, check that it is not
+`ui.raw_key(..)` / `raw_events()` (those ignore text focus), and that the input
+actually had focus when the frame started: on an app's very first frame
+nothing has registered focus yet.
 
 ## Layout debugging checklist
 

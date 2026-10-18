@@ -17,8 +17,26 @@
   `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
+- **Breaking (behaviour):** while a text-entry widget (`text_input`,
+  `textarea`, `form_field`, an open `command_palette`) owns focus, `key`,
+  `key_code`, `key_mod`, `consume_key` and `consume_key_code` no longer report
+  the keys it edits with: printable keys without Ctrl / Super / Meta,
+  Backspace, Delete, Left, Right, Home, End, and for multi-line editors Enter,
+  Up and Down (#453). The result no longer depends on whether the check runs
+  before or after the widget, so the Quick Start `if ui.key('q') { ui.quit() }`
+  is safe next to a form. Ownership follows the slot focused as the frame
+  starts (a click that moves focus releases the keys in the same batch); on an
+  app's first frame nothing is withheld. Ctrl/Super/Meta chords (#349), Esc,
+  Tab and F-keys are unchanged. Migration: code that intentionally reads typed
+  characters while a field is focused switches to `raw_key`.
 
 ### Added
+
+- `Context::shortcut(code, modifiers)`: order-independent shortcut query with
+  exact modifier matching (Shift ignored for characters) that follows the
+  text-focus rule above, and `Context::raw_key(c)`, which ignores both the
+  modal guard and text-focus ownership (#453). `raw_key_code` / `raw_key_mod`
+  now also document that they ignore text-focus ownership.
 
 - Opt-in `ratatui` feature (#470): `ContainerBuilder::ratatui(|area, buf| …)`
   and `ratatui_widget(widget)` render ratatui-core `Widget`s inside SLT

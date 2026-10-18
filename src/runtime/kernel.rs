@@ -212,6 +212,7 @@ pub(crate) fn run_frame_kernel(
     }
     ctx.process_focus_keys();
     ctx.finish_screen_focus();
+    ctx.finish_focus_identity(&mut state.focus);
     ctx.render_notifications();
     ctx.emit_pending_tooltips();
 

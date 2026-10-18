@@ -42,7 +42,7 @@ fn main() -> std::io::Result<()> {
         let _ = ui.checkbox("Dark mode", &mut app.dark);
         ui.text(format!("count: {}", app.count));
 
-        // Global shortcuts last, after widgets had a chance to consume keys.
+        // Global shortcuts can go anywhere; focused text fields keep their keys.
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
@@ -454,17 +454,21 @@ if ui.raw_key_code(KeyCode::Esc) {
 
 ### Shortcuts vs focused inputs
 
-`ui.key(...)` / `ui.key_code(...)` return `true` for any matching event that
-has not been consumed *so far in this frame*. Widgets consume their keys while
-they render, so a shortcut check placed **before** a focused `text_input`
-sees the raw keystroke: typing `q` into the field then inserts `q` **and**
-quits. Put global shortcuts at the end of the closure (or after the widgets
-that might consume the key). Keys a text input does not consume, such as Esc
-and Ctrl+Q, still reach a check placed after it.
+While a text-entry widget (`text_input`, `textarea`, `form_field`, an open
+`command_palette`) holds focus, `ui.key(...)`, `ui.key_code(...)`,
+`ui.key_mod(...)`, `ui.consume_key*(...)` and `ui.shortcut(...)` skip the keys
+it edits with: printable characters without Ctrl / Super / Meta, Backspace,
+Delete, Left, Right, Home and End (and Enter, Up, Down for multi-line
+editors). The rule holds whether the check runs before or after the widget, so
+typing `q` into a field never also fires a `q` shortcut. Esc, Tab, F-keys and
+Ctrl/Super/Meta chords still reach shortcuts.
 
-Use `raw_*` shortcuts for keys that must work regardless of modal or overlay
-state. They bypass only the modal/overlay guard; like `key_code`, they still
-skip events a widget already consumed.
+`ui.shortcut(code, modifiers)` matches the modifiers exactly (Shift is ignored
+for characters), so `Ctrl+S` and plain `s` are different shortcuts.
+
+Use `raw_*` queries (`raw_key`, `raw_key_code`, `raw_key_mod`) for keys that
+must work regardless of modal state or text focus. They still skip events a
+widget already consumed.
 
 ## Screen helpers and navigation
 

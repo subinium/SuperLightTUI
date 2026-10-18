@@ -48,7 +48,7 @@ impl Context {
             !state.value.contains('\n'),
             "text_input got a newline — use textarea instead",
         );
-        let focused = self.register_focusable();
+        let focused = self.register_text_entry_focusable(crate::runtime::TextEntryKind::SingleLine);
         // v0.21.1: capture the focus-edge flags immediately — this consumes the
         // `register_focusable` marker, so the result is correct regardless of
         // the child containers rendered below. Issue #208 left text_input never
@@ -499,7 +499,7 @@ impl Context {
         // Bind the input's single focus slot to the entire field so keyboard
         // reveal includes its label/error, while a tiny viewport prefers the
         // actual input caret. Named reservations remain attached to this slot.
-        self.register_focusable();
+        self.register_text_entry_focusable(crate::runtime::TextEntryKind::SingleLine);
         self.rollback.pending_focusable_id = self.rollback.last_focusable_id;
         let layout_rect = if self.rollback.new_focus_slot {
             None

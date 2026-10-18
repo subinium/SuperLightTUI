@@ -24,7 +24,7 @@ Load this when the user asks about feature flags, version-specific APIs, or doc 
 ## Runtime defaults that change behavior
 
 - **Mouse is opt-in.** `RunConfig::default()` has `mouse: false`. Without `slt::run_with(RunConfig::default().mouse(true), ...)`, `clicked` / `hovered` / `right_clicked` / `double_clicked` / `scroll_delta`, scrollbar drag and split-pane drag never fire in a real terminal.
-- **Global shortcuts go after inputs.** Render `text_input` / `textarea` before checking `ui.key('q')`, or gate on the input's `Response.focused`; otherwise typed characters also trigger shortcuts.
+- **Focused inputs own their keys.** `ui.key('q')` / `ui.shortcut(..)` skip the keys a focused `text_input` / `textarea` edits with, in any call order; use `ui.raw_key(c)` to see every press.
 - **`ui.modal` does not trap focus.** It keeps `tab_trap: false`; `modal_with(ModalOptions::default(), ..)` traps.
 - **`RunConfig::handle_ctrl_c(true)`** is the default; pass `false` to receive Ctrl-C yourself.
 

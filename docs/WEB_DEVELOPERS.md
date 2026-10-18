@@ -184,16 +184,18 @@ activation (Enter / Space) work either way.
 | `element.focus()` | `ui.register_focusable_named("name")` + `ui.focus_by_name("name")` |
 | `onWheel` | `response.scroll_delta`, `ui.scroll_up()` / `ui.scroll_down()` |
 | `onMouseDown` / `onMouseMove` / `onMouseUp` | `ui.mouse_down()`, `ui.mouse_drag()`, `ui.mouse_up()`, `ui.mouse_pos()` |
-| `keydown` listener on `window` | `ui.key('k')`, `ui.key_code(KeyCode::Up)`, `ui.key_mod('s', KeyModifiers::CONTROL)` |
+| `keydown` listener on `window` | `ui.key('k')`, `ui.key_code(KeyCode::Up)`, `ui.shortcut(KeyCode::Char('s'), KeyModifiers::CONTROL)` |
 | `event.stopPropagation()` for keys | `ui.consume_key(c)` / `ui.consume_key_code(code)` |
 | `onPaste` | `ui.paste()` |
 
 Two rules do not exist on the web:
 
-1. **Order matters for keys.** `ui.key('q')` sees keys nobody has consumed
-   *yet*. A focused `text_input` consumes the characters typed into it while it
-   renders, so check global shortcuts **after** rendering widgets. Checked
-   before, `q` would both type a letter and quit.
+1. **Keys are polled, not dispatched.** `ui.key('q')` sees presses nobody has
+   consumed. Like a browser, a focused text field keeps the keys it edits
+   with: while a `text_input` has focus, `ui.key('q')` stays `false` in any
+   call order, and chords such as Ctrl+S still reach `ui.shortcut(..)`.
+   `ui.raw_key('q')` is the "listen on `window` in the capture phase" escape
+   hatch.
 2. **Clicks are not bubbled and stopped.** A click on a button inside a
    clickable container reports `clicked` on both. Avoid making a parent and a
    child clickable at the same time. [INTERACTION.md](INTERACTION.md) covers
@@ -372,7 +374,7 @@ fn main() -> std::io::Result<()> {
     slt::run_with(RunConfig::default().mouse(true), |ui: &mut Context| {
         card_list(ui, &mut cards, &mut scroll);
 
-        // Global shortcuts after the widgets.
+        // Global shortcuts; a focused text field keeps the keys it edits with.
         if ui.key('q') || ui.key_code(KeyCode::Esc) {
             ui.quit();
         }
