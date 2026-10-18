@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** public dependencies upgraded to `crossterm` 0.29 and
+  `compact_str` 0.10 (#475). The `slt::crossterm` re-export and
+  `event::from_crossterm` now use crossterm 0.29 types, and `Cell::symbol` is a
+  `compact_str` 0.10 `CompactString`. Default native builds now compile a single
+  `rustix` (1.x) instead of 0.38 + 1.x. crossterm is built with its 0.28 default
+  feature set (`bracketed-paste`, `events`, `windows`); 0.29's `derive-more`
+  feature is not enabled by SLT. Event decoding behaviour is unchanged.
+  Migration: apps that pass events to `from_crossterm` or name crossterm types
+  must use crossterm 0.29 (or `slt::crossterm`) to avoid two crossterm
+  versions; code that names `CompactString` for `Cell::symbol` must use
+  `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
+  because 0.27 requires Rust 1.90, and the MSRV CI job now checks
+  `--all-features` (every `syntax-*` grammar) on 1.88.
+
 ### Security
 
 - `Context::link` (and Markdown links) now only open `http`, `https` and
