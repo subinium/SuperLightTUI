@@ -220,6 +220,7 @@ Embedding with your own event loop (issue #278): the built-in crossterm backends
 | `ModeState` | Multi-mode wrapper; each mode owns its own `ScreenState` |
 | `StreamingTextState`, `StreamingMarkdownState` | `streaming_text`, `streaming_markdown` |
 | `ToolApprovalState`, `ApprovalAction` | `tool_approval` |
+| `DiffState`, `DiffResponse`, `HunkId`, `HunkAction`, `HunkDecision`, `DiffLayout`, `DiffKeys`, `DiffColors`, `DiffParseError` (model: `slt::widgets::{DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffFileStatus}`) | `diff` |
 | `ContextItem` | `context_bar(items)` |
 | `RichLogState`, `RichLogEntry` | `rich_log` |
 | `GridColumn` | Per-column spec for `grid_with` |
@@ -407,6 +408,7 @@ Finalization:
 | `ui.streaming_text(&mut state)` | `StreamingTextState` | Incrementally rendered text. `state.push(chunk)`, `.clear()`. |
 | `ui.streaming_markdown(&mut state)` | `StreamingMarkdownState` | Markdown stream. Same `.push()`/`.clear()`. |
 | `ui.tool_approval(&mut state)` | `ToolApprovalState` | Tool call dialog. `ApprovalAction`: `Pending`, `Approved`, `Rejected`. |
+| `ui.diff(&mut state)` | `DiffState` | Builder; returns `DiffResponse` from `.show()` (Deref to `Response`). Patch review viewer: `DiffState::from_unified(patch)?` parses multi-file unified / `git diff` output (renames, binary markers, no-newline markers; malformed input → `DiffParseError`, never a panic). `.layout(DiffLayout::Split)` (default `Unified`), `.split_min_width(80)`, `.h(rows)`, `.w(cols)`, `.lang("rust")` (else file extension; needs the `syntax-*` feature, plain fallback), `.tab_width(4)`, `.line_numbers(bool)`, `.colors(DiffColors { added_bg, removed_bg, hunk_fg })`. Keys while focused: Up/Down `j`/`k`, `]`/`n` / `[`/`p` hunks, Enter/Space collapse, `a`/`r` accept/reject, PageUp/PageDown/Home/End; click a hunk header to collapse. `r.hunk_actions: Vec<(HunkId, HunkAction)>` reports each decision once; `r.toggled`, `r.focused_hunk`; decisions persist in `state.decision(id)`. Only visible rows are rendered. |
 | `ui.context_bar(&[ContextItem])` | — | Context display with token counts. `ContextItem::new(label, tokens)`. |
 | `ui.rich_log(&mut state)` | `RichLogState` | Styled log viewer; `state.push(text, style)`, `.push_plain(t)`, `.push_segments(segs)`, `.clear()`, `.auto_scroll` bool. |
 

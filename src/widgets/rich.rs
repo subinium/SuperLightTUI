@@ -1,9 +1,12 @@
 //! Rich-content family state — rich log, streaming text / markdown, tool
-//! approval and context items.
+//! approval, context items and the diff viewer.
 //!
 //! Rendered by `context/widgets/rich.rs`.
 
 use super::*;
+
+mod diff;
+pub use diff::*;
 
 /// State for the rich log viewer widget.
 #[derive(Debug, Clone)]

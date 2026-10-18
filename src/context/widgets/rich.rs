@@ -9,12 +9,14 @@
 use super::*;
 
 mod code_block;
+mod diff;
 mod fallback_highlight;
 mod markdown;
 mod rich_log;
 mod streaming;
 
 pub use code_block::CodeBlock;
+pub use diff::DiffView;
 
 use fallback_highlight::*;
 

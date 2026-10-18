@@ -49,7 +49,9 @@ fn slt_warn(msg: &str) {
 fn slt_warn(_msg: &str) {}
 
 mod widgets;
-pub use widgets::{Anchor, Breadcrumb, CodeBlock, Gauge, GutterOpts, LineGauge, TreemapItem};
+pub use widgets::{
+    Anchor, Breadcrumb, CodeBlock, DiffView, Gauge, GutterOpts, LineGauge, TreemapItem,
+};
 
 mod state;
 pub use state::*;
