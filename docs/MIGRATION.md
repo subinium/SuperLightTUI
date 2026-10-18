@@ -20,6 +20,13 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
   takes clicks that land on it, so either add `.bubble_clicks()` to the card or
   check `clicked_any`. `hovered` is unchanged; `hovered_top` is the new
   winner-only variant.
+- **Pointer events (#442).** `clicked` still fires on press; opt into
+  release-to-click with `RunConfig::default().click_on_release(true)`.
+  `Response` has new public fields (`clicked_any`, `hovered_top`, `pressed`,
+  `released`, `drag_started`, `dragging`, `drag_delta`, `middle_clicked`,
+  `modifiers`): code that builds a `Response { .. }` literal must add
+  `..Response::default()`. Several presses in one frame are now all
+  delivered instead of only the last one.
 
 ---
 

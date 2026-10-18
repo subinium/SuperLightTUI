@@ -136,6 +136,15 @@ pub struct RunConfig {
     /// Messages beyond this count remain queued in FIFO order for later
     /// frames. Defaults to the async channel capacity (100).
     pub async_message_budget: usize,
+    /// Whether [`Response::clicked`](crate::Response::clicked) fires on the
+    /// mouse release instead of the press.
+    ///
+    /// `false` (the default) activates on the press, matching SLT before
+    /// v0.26. `true` activates on the frame the left button is released inside
+    /// the same slot that was pressed, so dragging off a button before letting
+    /// go cancels the click, like the browser `click` event. Keyboard
+    /// activation is unaffected. Since 0.26.0.
+    pub click_on_release: bool,
 }
 
 impl Default for RunConfig {
@@ -154,6 +163,7 @@ impl Default for RunConfig {
             handle_ctrl_c: true,
             handle_suspend: true,
             async_message_budget: 100,
+            click_on_release: false,
         }
     }
 }
@@ -297,6 +307,24 @@ impl RunConfig {
     /// ```
     pub fn handle_suspend(mut self, enabled: bool) -> Self {
         self.handle_suspend = enabled;
+        self
+    }
+
+    /// Choose whether mouse clicks activate on release instead of press.
+    ///
+    /// See [`RunConfig::click_on_release`]. With `true`, a press on a button
+    /// followed by a release outside it does not report `clicked`; a press and
+    /// release inside reports `clicked` on the release frame. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// let cfg = RunConfig::default().click_on_release(true);
+    /// assert!(cfg.click_on_release);
+    /// ```
+    pub fn click_on_release(mut self, enabled: bool) -> Self {
+        self.click_on_release = enabled;
         self
     }
 }

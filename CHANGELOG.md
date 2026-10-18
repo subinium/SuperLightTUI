@@ -8,6 +8,14 @@
   (the single slot a press at the pointer would hit) and
   `ContainerBuilder::bubble_clicks()` to let an ancestor also receive clicks
   from its descendants (#439).
+- Pointer event model (#442): every press in a frame is kept (two clicks in
+  one batch activate two widgets), and `Response` gains `pressed`, `released`,
+  `drag_started`, `dragging`, `drag_delta`, `middle_clicked` and `modifiers`.
+  A press captures the pointer for its target until the release.
+  `RunConfig::click_on_release(bool)` (default `false`) makes `clicked` fire
+  on a release inside the pressed widget, so dragging off cancels.
+  `TestBackend::with_run_config` renders headless frames with a custom
+  `RunConfig`.
 
 ### Changed
 
@@ -34,6 +42,12 @@
   `compact_str` 0.10. MSRV stays at 1.88; `tree-sitter-highlight` stays on 0.26
   because 0.27 requires Rust 1.90, and the MSRV CI job now checks
   `--all-features` (every `syntax-*` grammar) on 1.88.
+
+### Fixed
+
+- Split-pane and scrollbar drags no longer stick to the pointer when the
+  release is lost: they end on terminal focus loss, on resize, on a press
+  elsewhere and on motion reported without a held button (#442).
 
 ### Security
 

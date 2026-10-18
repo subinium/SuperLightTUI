@@ -333,9 +333,13 @@ pub struct Response {
     /// keeps the raw "press landed inside my rect" meaning. Every press in a
     /// frame is kept, so two clicks on two widgets in one batch activate both.
     ///
-    /// `clicked` fires on the mouse **press**. Widgets that act on a press
-    /// (selection, toggles) feel immediate this way, and it matches SLT's
-    /// pre-0.26 behavior.
+    /// `clicked` fires on the mouse **press** by default. Widgets that act on
+    /// a press (selection, toggles) feel immediate this way, and it matches
+    /// SLT's pre-0.26 behavior. With
+    /// [`RunConfig::click_on_release(true)`](crate::RunConfig::click_on_release)
+    /// it fires instead on the frame the button is released inside the same
+    /// slot that was pressed, so dragging off the widget before releasing
+    /// cancels the click (the browser `click` event).
     ///
     /// Keyboard-activatable widgets such as [`button`](Context::button) also
     /// set `clicked` on Enter / Space while focused, regardless of the mouse.
@@ -368,6 +372,35 @@ pub struct Response {
     ///
     /// Available since v0.26.0.
     pub hovered_top: bool,
+    /// Whether a left press landed on this widget (as the topmost, innermost
+    /// target) this frame. Unlike `clicked`, this never waits for the release
+    /// and never comes from the keyboard. The press also *captures* the
+    /// pointer for this widget until the release. Available since v0.26.0.
+    pub pressed: bool,
+    /// Whether the button that pressed this widget was released this frame,
+    /// wherever the pointer is. Fires once per gesture; not set when the
+    /// gesture is cancelled by terminal focus loss or a resize. Available
+    /// since v0.26.0.
+    pub released: bool,
+    /// Whether the pointer started moving with the button held after
+    /// pressing this widget, on this frame. Available since v0.26.0.
+    pub drag_started: bool,
+    /// Whether this widget holds the pointer capture and the pointer has moved
+    /// since the press (a drag in progress at the end of this frame). Cleared
+    /// on release, terminal focus loss, resize, and when motion arrives
+    /// without a held button. Available since v0.26.0.
+    pub dragging: bool,
+    /// Pointer motion in cells `(dx, dy)` this frame while this widget holds
+    /// the capture. Sum the deltas across frames for the total drag distance.
+    /// Drag motion needs button-motion reporting from the terminal (on with
+    /// `RunConfig::mouse(true)`). Available since v0.26.0.
+    pub drag_delta: (i32, i32),
+    /// Whether the middle button was pressed on this widget this frame
+    /// (topmost, innermost target). Available since v0.26.0.
+    pub middle_clicked: bool,
+    /// Modifier keys held during the press that targeted this widget this
+    /// frame; [`KeyModifiers::NONE`] otherwise. Available since v0.26.0.
+    pub modifiers: KeyModifiers,
     /// Whether the widget's value changed this frame.
     pub changed: bool,
     /// Whether the widget currently has keyboard focus.

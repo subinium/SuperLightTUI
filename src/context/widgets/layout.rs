@@ -822,12 +822,15 @@ impl Context {
 
         // Snapshot so `consume_indices` (mutable borrow) can run after the loop.
         // `MouseKind` is not `Copy`, so clone it (mirrors `consume_split_pane_drag`).
-        let events: Vec<(usize, MouseKind, u32, u32)> = self
+        // #442: focus loss and resize end a thumb drag (its release will
+        // never arrive); they are replayed in order as `None` kinds.
+        let events: Vec<(usize, Option<MouseKind>, u32, u32)> = self
             .events
             .iter()
             .enumerate()
             .filter_map(|(i, e)| match e {
-                Event::Mouse(m) if !self.consumed[i] => Some((i, m.kind.clone(), m.x, m.y)),
+                Event::Mouse(m) if !self.consumed[i] => Some((i, Some(m.kind.clone()), m.x, m.y)),
+                Event::FocusLost | Event::Resize(_, _) => Some((i, None, 0, 0)),
                 _ => None,
             })
             .collect();
@@ -840,6 +843,10 @@ impl Context {
         let mut consumed: Vec<usize> = Vec::new();
         let mut changed = false;
         for (i, kind, mx, my) in events {
+            let Some(kind) = kind else {
+                state.dragging = false;
+                continue;
+            };
             let in_track = mx >= rect.x && mx < rect.right() && my >= track_y && my < rect.bottom();
             match kind {
                 MouseKind::Down(MouseButton::Left)
@@ -879,6 +886,11 @@ impl Context {
                 MouseKind::Up(MouseButton::Left) if state.dragging => {
                     state.dragging = false;
                     consumed.push(i);
+                }
+                // A press outside the track, or motion without a held button,
+                // means the drag's release was lost.
+                MouseKind::Down(MouseButton::Left) | MouseKind::Moved if state.dragging => {
+                    state.dragging = false;
                 }
                 _ => {}
             }

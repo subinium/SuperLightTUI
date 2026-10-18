@@ -54,12 +54,26 @@ Most widgets and every container return a `#[must_use]` `Response`:
 | `right_clicked` | Right button pressed inside the widget | Yes |
 | `hovered` | Pointer is over the widget's rect (an outer card and the button in it are both hovered) | Yes |
 | `hovered_top` | This widget is the one a press at the pointer would hit | Yes |
+| `pressed` | A left press landed on this widget this frame (never waits for release) | Yes |
+| `drag_started` / `dragging` | The pointer started moving / is moving with the button held after pressing this widget | Yes |
+| `drag_delta` | Cells `(dx, dy)` the pointer moved this frame while this widget holds the press | Yes |
+| `released` | The button that pressed this widget was released this frame, wherever the pointer is | Yes |
+| `middle_clicked` | Middle button pressed on this widget | Yes |
+| `modifiers` | Shift/Ctrl/Alt held during the press that targeted this widget | Yes |
 | `scroll_delta` | Net wheel motion over the widget this frame (positive = up) | Yes |
 | `focused` | Widget currently has keyboard focus | No |
 | `gained_focus` / `lost_focus` | Focus arrived / left this frame | No |
 | `changed` | The widget's value changed this frame | No |
 | `submitted` | Explicit submit gesture, such as Enter in a single-line `text_input` | No |
 | `rect` | Where the widget was laid out **last frame** (all zeros on frame 1) | No |
+
+**Press or release?** `clicked` fires on the mouse *press* by default, which
+keeps toggles and selection immediate. `RunConfig::default().click_on_release(true)`
+switches to browser-style clicks: `clicked` fires on the frame the button is
+released inside the same widget that was pressed, and dragging off the widget
+before letting go cancels the click. Keyboard activation is the same in both
+modes. Every press in a frame is kept, so two quick clicks on two headers that
+arrive in one batch toggle both.
 
 Callback-style chaining is available when it reads better:
 
@@ -196,8 +210,30 @@ let _ = ui.split_pane(
 In real apps keep the `SplitPaneState` in your app struct and pass `&mut`
 directly; the hook round-trip above only keeps the snippet self-contained.
 
-For custom drag gestures, read the raw pointer events. Each returns the cell
-position of an unconsumed event this frame:
+For custom drag gestures, read the gesture fields of the widget's own
+`Response`. A press *captures* the pointer for the widget it hit, so the drag
+keeps reporting even after the pointer leaves the widget's rect, and the
+capture ends on release, when the terminal loses focus, on resize, or when
+motion arrives without a held button (a release the terminal never sent):
+
+<!-- slt-check: {"name":"ix_drag_response","features":[],"context":"ui"} -->
+```rust
+let pos = ui.use_state(|| (0i32, 0i32));
+let (x, y) = *pos.get(ui);
+let knob = ui.container().ml(x.max(0) as u32).mt(y.max(0) as u32).row(|ui| {
+    ui.text("[drag me]");
+});
+if knob.dragging {
+    let (dx, dy) = knob.drag_delta;
+    *pos.get_mut(ui) = (x + dx, y + dy);
+}
+if knob.released {
+    ui.notify("dropped", slt::ToastLevel::Info);
+}
+```
+
+The raw pointer events are still available. Each returns the cell position
+of an unconsumed event this frame:
 
 <!-- slt-check: {"name":"ix_drag","features":[],"context":"ui"} -->
 ```rust
@@ -217,7 +253,9 @@ if ui.mouse_up().is_some() {
 ```
 
 `SplitPaneState::dragging` and `ScrollState::dragging` tell you when a
-built-in handle or scrollbar thumb is being held.
+built-in handle or scrollbar thumb is being held. Both end on release, on
+terminal focus loss, on resize, and on button-less motion, so a release lost
+outside the window cannot leave a divider stuck to the pointer.
 
 ## Wheel and scrollbars
 
@@ -522,19 +560,16 @@ These are current behaviors, not misuse. Design around them for now.
    reaches its end, further wheel motion over it does not scroll the outer
    one. Avoid nesting vertical scrollables, or give the inner one a fixed
    height and keep it short.
-2. **Clicks fire on press.** `clicked` is set on mouse *down*, not release.
-3. **Only the last click per frame is kept.** Several clicks arriving in one
-   frame collapse into one.
-4. **Text selection can start during handle drags.** Dragging a scrollbar
+2. **Text selection can start during handle drags.** Dragging a scrollbar
    thumb or a split handle may also activate the built-in selection overlay
    and copy text on release.
-5. **No scroll anchoring.** Collapsing or inserting content above the
+3. **No scroll anchoring.** Collapsing or inserting content above the
    viewport shifts the visible content, and there is no stick-to-bottom mode
    for logs. Adjust `ScrollState::offset` yourself when you need either.
-6. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
+4. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
    sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
    can leave artifacts on that row.
-7. **Missing primitives.** No disabled or active (pressed) widget states, no
+5. **Missing primitives.** No disabled or active (pressed) widget states, no
    context-menu widget (use `right_clicked` plus your own overlay), and no
    cursor-shape API.
 

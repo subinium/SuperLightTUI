@@ -1,4 +1,5 @@
-//! Pointer model: per-press hit-target resolution (#439).
+//! Pointer model: per-press hit-target resolution (#439) and press /
+//! release / drag gestures with pointer capture (#442).
 //!
 //! Every mouse press in a frame is kept (not only the last one) and resolved
 //! independently to a single *winner* slot: the topmost, innermost
@@ -8,6 +9,12 @@
 //! clickable row inside a clickable card fires once. Ancestors opt back in
 //! with [`ContainerBuilder::bubble_clicks`]; raw containment stays available
 //! as [`Response::clicked_any`].
+//!
+//! A press also *captures* its winner until the matching release: the
+//! captured slot sees `pressed`, `drag_started`, `dragging`, `drag_delta` and
+//! `released` even when the pointer leaves its rect. Capture ends on release,
+//! on terminal focus loss, on resize, and on motion reported without a held
+//! button (a release the terminal never delivered).
 
 use super::*;
 use crate::layout::{HitMeta, NO_HIT_PARENT};
@@ -30,8 +37,23 @@ pub(crate) struct Press {
     pub pos: (u32, u32),
     /// Which button was pressed.
     pub button: MouseButton,
+    /// Modifier keys held at the press.
+    pub modifiers: KeyModifiers,
     /// Second left press on the same cell inside the double-click window.
     pub double: bool,
+}
+
+/// The slot holding the pointer between a press and its release (#442).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PointerCapture {
+    /// Winner of the capturing press, if any slot was hit.
+    pub target: Option<usize>,
+    /// Button that started the gesture.
+    pub button: MouseButton,
+    /// Last pointer position seen during the gesture.
+    pub last: (u32, u32),
+    /// Whether the pointer moved with the button held since the press.
+    pub moved: bool,
 }
 
 /// Pointer bookkeeping that persists across frames inside `FrameState`.
@@ -41,6 +63,62 @@ pub(crate) struct PointerState {
     pub hit_flags_prev: Vec<u8>,
     /// Recycled buffer for the current frame's slot flags.
     pub hit_flags_buf: Vec<u8>,
+    /// Active pointer capture carried across frames (#442).
+    pub capture: Option<PointerCapture>,
+    /// `RunConfig::click_on_release`, refreshed by the frame kernel.
+    pub click_on_release: bool,
+}
+
+impl PointerState {
+    /// Copy the pointer-related `RunConfig` switches for the next frame.
+    pub(crate) fn configure(&mut self, config: &crate::RunConfig) {
+        self.click_on_release = config.click_on_release;
+    }
+
+    /// Drop the active capture (focus loss, resize, layout cache reset).
+    pub(crate) fn reset_capture(&mut self) {
+        self.capture = None;
+    }
+}
+
+/// What happened to one captured slot during this frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct GestureRecord {
+    pub target: usize,
+    pub pressed: bool,
+    pub released: bool,
+    pub drag_started: bool,
+    pub drag_delta: (i32, i32),
+    pub modifiers: KeyModifiers,
+}
+
+/// Per-frame gesture summary derived from the events and the carried capture.
+#[derive(Default)]
+pub(crate) struct Gestures {
+    /// One record per slot that was pressed, dragged or released this frame.
+    pub records: SmallVec<[GestureRecord; 2]>,
+    /// Slots activated by a press and release inside the same slot
+    /// (`click_on_release` mode).
+    pub release_activations: SmallVec<[usize; 2]>,
+    /// Capture still active at the end of the frame.
+    pub capture_out: Option<PointerCapture>,
+}
+
+impl Gestures {
+    fn record(&mut self, target: Option<usize>) -> Option<&mut GestureRecord> {
+        let target = target?;
+        let index = match self.records.iter().position(|r| r.target == target) {
+            Some(index) => index,
+            None => {
+                self.records.push(GestureRecord {
+                    target,
+                    ..GestureRecord::default()
+                });
+                self.records.len() - 1
+            }
+        };
+        self.records.get_mut(index)
+    }
 }
 
 /// Per-frame pointer data owned by `Context`.
@@ -56,6 +134,12 @@ pub(crate) struct PointerFrame {
     pub hit_flags: Vec<u8>,
     /// Nesting depth of scopes whose containers are hit-transparent.
     pub passthrough_depth: u32,
+    /// Capture carried in from the previous frame (#442).
+    pub capture_in: Option<PointerCapture>,
+    /// `RunConfig::click_on_release` for this frame.
+    pub click_on_release: bool,
+    /// Lazily computed gestures for this frame.
+    gestures: OnceCell<Gestures>,
     /// Lazily resolved winner per entry of `presses`.
     targets: OnceCell<SmallVec<[Option<usize>; 2]>>,
     /// Lazily resolved winner under the hover position.
@@ -73,6 +157,9 @@ impl PointerFrame {
             hit_flags_prev: std::mem::take(&mut state.pointer.hit_flags_prev),
             hit_flags,
             passthrough_depth: 0,
+            capture_in: state.pointer.capture,
+            click_on_release: state.pointer.click_on_release,
+            gestures: OnceCell::new(),
             targets: OnceCell::new(),
             hover_target: OnceCell::new(),
         }
@@ -82,16 +169,6 @@ impl PointerFrame {
     pub(crate) fn with_presses(mut self, presses: SmallVec<[Press; 2]>) -> Self {
         self.presses = presses;
         self
-    }
-
-    /// Hand the persistent pieces back to `state` at frame end. This frame's
-    /// flags become the next frame's `hit_flags_prev`.
-    pub(crate) fn reclaim(&mut self, state: &mut FrameState) {
-        state.layout_feedback.prev_hit_meta = std::mem::take(&mut self.hit_meta);
-        let mut previous = std::mem::take(&mut self.hit_flags_prev);
-        previous.clear();
-        state.pointer.hit_flags_buf = previous;
-        state.pointer.hit_flags_prev = std::mem::take(&mut self.hit_flags);
     }
 }
 
@@ -103,6 +180,127 @@ fn rect_contains(rect: &Rect, (x, y): (u32, u32)) -> bool {
 }
 
 impl Context {
+    /// Hand the persistent pointer pieces back to `state` at frame end. This
+    /// frame's flags become the next frame's `hit_flags_prev`, and the
+    /// capture left at the end of this frame's events is carried forward.
+    pub(crate) fn reclaim_pointer(&mut self, state: &mut FrameState) {
+        state.pointer.capture = self.gestures().capture_out;
+        let pointer = &mut self.pointer;
+        state.layout_feedback.prev_hit_meta = std::mem::take(&mut pointer.hit_meta);
+        let mut previous = std::mem::take(&mut pointer.hit_flags_prev);
+        previous.clear();
+        state.pointer.hit_flags_buf = previous;
+        state.pointer.hit_flags_prev = std::mem::take(&mut pointer.hit_flags);
+        pointer.gestures = OnceCell::new();
+        pointer.targets = OnceCell::new();
+    }
+
+    /// Replay this frame's mouse events against the carried capture.
+    ///
+    /// Sequential so that a press, drag and release in one batch, or a
+    /// release followed by a new press, are attributed to the right slot.
+    fn gestures(&self) -> &Gestures {
+        self.pointer.gestures.get_or_init(|| {
+            let targets = self.press_targets();
+            let mut out = Gestures::default();
+            let mut capture = self.pointer.capture_in;
+            let mut press_index = 0usize;
+            for (event_index, event) in self.events.iter().enumerate() {
+                let mouse = match event {
+                    Event::FocusLost | Event::Resize(_, _) => {
+                        // The release will never arrive: cancel the gesture.
+                        capture = None;
+                        continue;
+                    }
+                    Event::Mouse(mouse) => mouse,
+                    _ => continue,
+                };
+                let pos = (mouse.x, mouse.y);
+                match mouse.kind {
+                    MouseKind::Down(button) => {
+                        let Some(position) = self.pointer.presses[press_index..]
+                            .iter()
+                            .position(|press| press.event_index == event_index)
+                        else {
+                            // Presses before a FocusLost were discarded.
+                            continue;
+                        };
+                        press_index += position;
+                        let target = targets[press_index];
+                        let modifiers = self.pointer.presses[press_index].modifiers;
+                        press_index += 1;
+                        capture = Some(PointerCapture {
+                            target,
+                            button,
+                            last: pos,
+                            moved: false,
+                        });
+                        if let Some(record) = out.record(target) {
+                            record.modifiers = modifiers;
+                            record.pressed |= button == MouseButton::Left;
+                        }
+                    }
+                    MouseKind::Drag(button) => {
+                        let Some(active) = capture.as_mut().filter(|c| c.button == button) else {
+                            continue;
+                        };
+                        let delta = (
+                            i64::from(pos.0) - i64::from(active.last.0),
+                            i64::from(pos.1) - i64::from(active.last.1),
+                        );
+                        active.last = pos;
+                        let started = !active.moved;
+                        active.moved = true;
+                        let target = active.target;
+                        if let Some(record) = out.record(target) {
+                            record.drag_started |= started;
+                            record.drag_delta.0 = record.drag_delta.0.saturating_add(
+                                i32::try_from(delta.0).unwrap_or(if delta.0 < 0 {
+                                    i32::MIN
+                                } else {
+                                    i32::MAX
+                                }),
+                            );
+                            record.drag_delta.1 = record.drag_delta.1.saturating_add(
+                                i32::try_from(delta.1).unwrap_or(if delta.1 < 0 {
+                                    i32::MIN
+                                } else {
+                                    i32::MAX
+                                }),
+                            );
+                        }
+                    }
+                    MouseKind::Moved => {
+                        // Motion without a held button: the release was lost
+                        // (released outside the window, pane switch, ...).
+                        capture = None;
+                    }
+                    MouseKind::Up(button) => {
+                        let Some(active) = capture.filter(|c| c.button == button) else {
+                            continue;
+                        };
+                        capture = None;
+                        if let Some(record) = out.record(active.target) {
+                            record.released = true;
+                        }
+                        if button == MouseButton::Left
+                            && let Some(target) = active.target
+                            && self
+                                .prev_hit_map
+                                .get(target)
+                                .is_some_and(|rect| rect_contains(rect, pos))
+                        {
+                            out.release_activations.push(target);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out.capture_out = capture;
+            out
+        })
+    }
+
     /// Resolve the topmost, innermost slot under `pos` against the previous
     /// frame's hit map. `None` when no non-transparent slot contains `pos`.
     ///
@@ -215,6 +413,19 @@ impl Context {
             })
     }
 
+    /// Whether slot `id` was activated by a left click this frame: on the
+    /// press by default, or on a release inside the pressed slot when
+    /// `RunConfig::click_on_release(true)` is set.
+    pub(crate) fn slot_clicked(&self, id: usize) -> bool {
+        if !self.pointer.click_on_release {
+            return self.slot_pressed(id, MouseButton::Left, false);
+        }
+        self.gestures()
+            .release_activations
+            .iter()
+            .any(|&target| self.slot_receives(id, Some(target)))
+    }
+
     /// Whether any left press this frame lands inside `rect`, ignoring the
     /// winner rule (the pre-#439 `clicked` semantics).
     pub(crate) fn any_left_press_in(&self, rect: &Rect) -> bool {
@@ -295,13 +506,25 @@ impl Context {
             .scroll_pos
             .filter(|&pos| rect_contains(&rect, pos))
             .map_or(0, |_| self.scroll_delta_frame);
+        let gestures = self.gestures();
+        let record = gestures.records.iter().find(|record| record.target == id);
+        let dragging = gestures
+            .capture_out
+            .is_some_and(|capture| capture.target == Some(id) && capture.moved);
         Response {
-            clicked: self.slot_pressed(id, MouseButton::Left, false),
+            clicked: self.slot_clicked(id),
             clicked_any: self.any_left_press_in(&rect),
             right_clicked: self.slot_pressed(id, MouseButton::Right, false),
+            middle_clicked: self.slot_pressed(id, MouseButton::Middle, false),
             double_clicked: self.slot_pressed(id, MouseButton::Left, true),
             hovered,
             hovered_top: hovered && self.hover_target() == Some(id),
+            pressed: record.is_some_and(|record| record.pressed),
+            released: record.is_some_and(|record| record.released),
+            drag_started: record.is_some_and(|record| record.drag_started),
+            dragging,
+            drag_delta: record.map_or((0, 0), |record| record.drag_delta),
+            modifiers: record.map_or(KeyModifiers::NONE, |record| record.modifiers),
             scroll_delta,
             rect,
             ..Response::default()

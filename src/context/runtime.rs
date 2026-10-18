@@ -91,6 +91,7 @@ impl Context {
                             event_index,
                             pos,
                             button: MouseButton::Left,
+                            modifiers: mouse.modifiers,
                             double: is_double,
                         });
                     }
@@ -101,6 +102,7 @@ impl Context {
                             event_index,
                             pos: (mouse.x, mouse.y),
                             button,
+                            modifiers: mouse.modifiers,
                             double: false,
                         });
                     }

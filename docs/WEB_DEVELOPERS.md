@@ -175,6 +175,11 @@ activation (Enter / Space) work either way.
 | `onClick` | `if ui.button("..").clicked { .. }` or `.on_click(ui, \|ui\| ..)` |
 | click on any `<div>` | the container's `Response`: `ui.container().col(..).clicked` |
 | `onDoubleClick` | `response.double_clicked` |
+| `onMouseDown` / `onMouseUp` | `response.pressed` / `response.released` |
+| `click` fires on release (drag-off cancels) | `RunConfig::default().click_on_release(true)`; the default fires `clicked` on press |
+| pointer capture + `pointermove` while dragging | `response.dragging` + `response.drag_delta` (the press captures the pointer until release) |
+| `onAuxClick` (middle button) | `response.middle_clicked` |
+| `event.shiftKey` / `ctrlKey` / `altKey` on a click | `response.modifiers.contains(KeyModifiers::SHIFT)` |
 | `onContextMenu` | `response.right_clicked` (no menu widget; render your own overlay) |
 | `onMouseEnter` / `:hover` | `response.hovered`, or group hover styling (below) |
 | `title` attribute | `.on_hover(ui, "tooltip")` or `ui.tooltip("..")` |
@@ -390,8 +395,9 @@ What to notice:
   while the pointer is over the group. Reusing the same name for every card
   would highlight them all together.
 - The card container's `Response` is clickable. Clicks register on mouse
-  press, and hit-testing uses last frame's layout, so a card that just
-  expanded has its new size from the next frame on.
+  press (or on release with `RunConfig::click_on_release(true)`), and
+  hit-testing uses last frame's layout, so a card that just expanded has its
+  new size from the next frame on.
 - These cards are mouse-only, like a `<div onClick>` without `tabindex`. To
   make them keyboard-reachable, use `ui.accordion(..)` per card, or register a
   focus slot yourself as shown in the expandable tool-call log in

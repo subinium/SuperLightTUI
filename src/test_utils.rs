@@ -245,6 +245,9 @@ pub struct TestBackend {
     /// `Some(_)` = recording enabled — every [`render`](TestBackend::render)
     /// call appends a [`FrameRecord`].
     frames: Option<Vec<FrameRecord>>,
+    /// Run configuration passed to every frame (defaults to
+    /// `RunConfig::default()`).
+    config: RunConfig,
 }
 
 /// Snapshot of a single rendered frame, captured by
@@ -314,7 +317,31 @@ impl TestBackend {
             height,
             frame_state: FrameState::default(),
             frames: None,
+            config: RunConfig::default(),
         }
+    }
+
+    /// Render every frame with `config` instead of `RunConfig::default()`.
+    ///
+    /// Only the per-frame switches apply headlessly (for example
+    /// [`RunConfig::click_on_release`] and `scroll_speed`); terminal session
+    /// settings such as the mouse reporting mode have no effect here because
+    /// events are injected directly. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use slt::{RunConfig, TestBackend};
+    ///
+    /// let mut tb = TestBackend::new(20, 3).with_run_config(RunConfig::default().click_on_release(true));
+    /// tb.render(|ui| {
+    ///     let _ = ui.button("OK");
+    /// });
+    /// tb.assert_contains("OK");
+    /// ```
+    pub fn with_run_config(mut self, config: RunConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Enable frame recording.
@@ -396,7 +423,7 @@ impl TestBackend {
         let result = run_frame_kernel(
             &mut self.buffer,
             &mut self.frame_state,
-            &RunConfig::default(),
+            &self.config,
             (self.width, self.height),
             events,
             false,
