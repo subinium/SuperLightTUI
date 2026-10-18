@@ -808,12 +808,16 @@ Notes:
 These are current behaviors, not misuse. Design around them for now.
 
 1. **Emoji width disagreements.** Some multiplexers and terminals measure ZWJ
-   sequences, skin-tone modifiers, and VS16 emoji differently from SLT, which
-   can leave artifacts on that row. `RunConfig::width_conservative` /
-   `width_probe` resolve which clusters are uncertain, but the explicit cursor
-   reposition in the diff flush lands with #441. For CJK terminals set to wide
-   ambiguous characters, `RunConfig::ambiguous_wide(true)` already matches
-   `→±①` widths.
+   sequences, skin-tone modifiers, flags, and VS16 emoji differently from SLT.
+   The diff flush blanks the columns a wide emoji cluster covers, draws it
+   from its own column and positions the next cell explicitly, so the rest of
+   the row stays aligned; width-conservative mode (`RunConfig::width_conservative`,
+   on by default under multiplexers, or enabled by `width_probe`) does the
+   same after every width-uncertain cluster, and under tmux older than 3.5
+   draws VS16 emoji in text presentation. The emoji glyph itself may still
+   render one or two columns wide depending on the terminal. For CJK
+   terminals set to wide ambiguous characters,
+   `RunConfig::ambiguous_wide(true)` matches `→±①` widths.
 2. **Off-screen selection text is not copied.** A selection that extends past
    a scrollable's viewport copies only the part visible at release.
 

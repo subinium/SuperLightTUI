@@ -42,7 +42,7 @@ version, and the output of the diagnostics below is very welcome.
 | Cursor shape | DECSCUSR (`CSI n SP q`) | `ui.set_cursor_shape(CursorShape::SteadyBar)`, written on change; reset to the terminal default on exit | Ignored |
 | Pointer shape | OSC 22 | Opt-in: `RunConfig::pointer_shapes(true)` plus `ContainerBuilder::pointer_shape(..)`; follows the hovered slot, written on change, reset to the default pointer on exit, panic and suspend. Needs `MouseMode::Hover` to follow plain moves | Off by default because unsupported terminals may print the payload |
 | East Asian Ambiguous width | Terminal configured for wide ambiguous characters | Opt-in: `RunConfig::ambiguous_wide(true)` measures `→±①` as two columns each in the buffer, wrapping, and truncation | One column (the Unicode default) |
-| Emoji clusters measured differently | n/a | `RunConfig::width_conservative(..)`: on by default under tmux / screen / Zellij; `RunConfig::width_probe(true)` measures VS16, ZWJ, skin-tone, and flag samples with `CSI 6 n` at startup (fullscreen, direct terminals only) and enables it on a mismatch. The policy is resolved today; the explicit cursor reposition in the diff flush lands with #441 | Rows after a wrongly measured cluster can shift on incremental updates |
+| Emoji clusters measured differently | n/a | `RunConfig::width_conservative(..)`: on by default under tmux / screen / Zellij; `RunConfig::width_probe(true)` measures VS16, ZWJ, skin-tone, and flag samples with `CSI 6 n` at startup (fullscreen, direct terminals only) and enables it on a mismatch. The diff flush positions the cell after every wide emoji cluster explicitly, and in conservative mode after every width-uncertain cluster; under tmux < 3.5 conservative mode also drops U+FE0F (text presentation) | The glyph may draw one column wide or two; the following cells stay aligned |
 | Clean Ctrl+Z | Unix job control | `RunConfig::handle_suspend` (default on, Unix only) | Ctrl+Z arrives as a key event (Windows) |
 | Scrollback | Normal screen | `run` / `run_with` use the alternate screen, which hides scrollback | Use `run_inline` / `run_static` for CLI-style output that stays in scrollback |
 
@@ -132,9 +132,10 @@ Practical consequences:
   below exist for setups with working passthrough, but they are escape
   hatches, not a promise that the protocol works there.
 - **Emoji widths** can disagree between the multiplexer, the outer terminal,
-  and SLT for ZWJ sequences, skin tones, and VS16 emoji, which can leave stray
-  cells on that row. Width-conservative mode is on by default under
-  multiplexers; the flush-side cursor reposition it drives lands with #441.
+  and SLT for ZWJ sequences, skin tones, and VS16 emoji, so the glyph itself
+  may draw one column wide or two. Width-conservative mode is on by default under
+  multiplexers: the diff flush then positions the cell after each
+  width-uncertain cluster explicitly (wide emoji clusters always are).
   Under tmux older than 3.5 (or a tmux whose version is unknown, e.g. over
   SSH) conservative mode also drops U+FE0F and draws VS16 emoji in text
   presentation with a blank second column: those tmux versions widen a VS16
@@ -499,8 +500,9 @@ ui.text(format!(
 4. `RunConfig::width_probe(true)` measures VS16, ZWJ, skin-tone, and flag
    samples at startup on a direct fullscreen terminal and turns on
    width-conservative mode when one disagrees; `width_conservative(true)`
-   forces it. The flush-side cursor reposition driven by this mode lands with
-   #441.
+   forces it. In that mode the diff flush positions the cell after each
+   width-uncertain cluster explicitly (wide emoji clusters always are), and
+   under tmux older than 3.5 draws VS16 emoji in text presentation.
 5. For UI chrome, prefer characters with unambiguous widths (ASCII, box
    drawing, common symbols) over emoji.
 
