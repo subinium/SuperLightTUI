@@ -293,7 +293,7 @@ value may look different on a 256-color or 16-color terminal. See
 | `fetch` + `await` | `ui.spawn(async { .. })` + `ui.poll(&handle)` (`async` feature), or `slt::run_async` with a message channel |
 | `setTimeout` | `ui.schedule("id", duration)` returns `true` once when the delay has passed |
 | `setInterval` | `ui.every("id", duration)` returns how many intervals elapsed |
-| `requestAnimationFrame` | the closure already runs every frame; `RunConfig::tick_rate` / `max_fps` set the cadence |
+| `requestAnimationFrame` | the closure already runs every frame; `RunConfig::tick_rate` / `max_fps` set the cadence. With `RunConfig::idle_redraw(false)` an idle loop renders nothing and `ui.request_frame()` / `ui.request_frame_after(d)` ask for the next frame, like `requestAnimationFrame` |
 | `localStorage` | none built in: read and write files yourself (`serde` feature helps) |
 | `document.title` | `RunConfig::title` for the initial value, `ui.set_title(..)` at runtime (restored on exit) |
 | `console.log` | not while the UI owns the terminal: log to a file or a `rich_log` panel |

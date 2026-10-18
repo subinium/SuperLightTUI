@@ -184,6 +184,7 @@ impl Tween {
             return self.to;
         }
 
+        request_animation_frame();
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)
@@ -407,7 +408,10 @@ impl Keyframes {
             self.loop_mode,
             &mut self.done,
         ) {
-            Some(v) => v,
+            Some(v) => {
+                request_animation_frame();
+                v
+            }
             None => {
                 self.complete_once();
                 return end_value;
@@ -570,7 +574,10 @@ impl Sequence {
             self.loop_mode,
             &mut self.done,
         ) {
-            Some(v) => v,
+            Some(v) => {
+                request_animation_frame();
+                v
+            }
             None => {
                 self.complete_once();
                 return end_value;
@@ -751,6 +758,7 @@ impl Stagger {
 
         if effective_tick < item_start {
             self.done = false;
+            request_animation_frame();
             return self.from;
         }
 
@@ -768,6 +776,7 @@ impl Stagger {
         }
 
         self.done = false;
+        request_animation_frame();
         let progress = elapsed as f64 / self.duration_ticks as f64;
         let eased = (self.easing)(clamp01(progress));
         lerp(self.from, self.to, eased)
@@ -970,6 +979,9 @@ impl Spring {
         self.value += self.velocity;
 
         let is_settled = self.is_settled();
+        if !is_settled {
+            request_animation_frame();
+        }
         if !self.settled && is_settled {
             self.settled = true;
             if let Some(cb) = &mut self.on_settle {
@@ -990,6 +1002,24 @@ impl Spring {
     pub fn is_settled(&self) -> bool {
         (self.target - self.value).abs() < 0.01 && self.velocity.abs() < 0.01
     }
+}
+
+thread_local! {
+    /// Issue #490: set when a running animation is sampled during a frame.
+    static ANIMATION_FRAME_REQUESTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Record that a running animation was sampled, so an idle-skipping run loop
+/// renders the next tick (issue #490).
+fn request_animation_frame() {
+    ANIMATION_FRAME_REQUESTED.with(|flag| flag.set(true));
+}
+
+/// Return and clear the "a running animation was sampled" flag. The frame
+/// kernel clears it before the closure and turns it into a frame request
+/// after the closure.
+pub(crate) fn take_animation_frame_request() -> bool {
+    ANIMATION_FRAME_REQUESTED.with(|flag| flag.replace(false))
 }
 
 fn clamp01(t: f64) -> f64 {

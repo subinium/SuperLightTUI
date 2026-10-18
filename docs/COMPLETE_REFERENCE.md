@@ -1698,6 +1698,12 @@ Frame N:
 Frame N+1 reads prev_* data populated in steps 6/8.
 ```
 
+With `RunConfig::idle_redraw(false)` the loop runs steps 2–10 only when
+something can change: input, resize, async messages, a resume, a due
+`ui.request_frame()` / `ui.request_frame_after(d)` (built-in animations,
+spinners, toasts, timers and tooltips request their own), or one follow-up
+frame after each of these. Otherwise it only polls input, so `tick` pauses.
+
 Diagnostics: F12 toggles an overlay showing container bounds and FPS. `ui.debug_enabled()` is `true` while it is on. `RunConfig::max_fps(Some(u32))` caps rendering. Synchronized output (DECSET 2026) is emitted automatically on supported terminals to avoid tearing.
 
 ---

@@ -155,6 +155,8 @@ pub struct Terminal {
     /// Title / progress / status / cursor-shape emitter, clipboard delivery
     /// and cluster-width policy (issues #446, #449, #468).
     effects: TerminalEffects,
+    /// Whether the last flush changed the screen (#490).
+    last_flush_changed: bool,
 }
 
 /// Inline crossterm terminal backend: renders into a fixed-height region
@@ -182,6 +184,29 @@ pub struct InlineTerminal {
     run_buf: String,
     /// See [`Terminal`]'s field of the same name.
     effects: TerminalEffects,
+    /// Whether the last flush changed the screen (#490).
+    last_flush_changed: bool,
+}
+
+/// Whether presenting `current` over `previous` changes anything besides
+/// cells: the cursor, raw sequences or image placements (#490).
+fn screen_extras_changed(current: &Buffer, previous: &Buffer) -> bool {
+    let kitty = |p: &crate::buffer::KittyPlacement| {
+        (p.content_hash, p.x, p.y, p.cols, p.rows, p.crop_y, p.crop_h)
+    };
+    let sprixel = |p: &crate::buffer::SprixelPlacement| (p.content_hash, p.x, p.y, p.cols, p.rows);
+    current.cursor_pos != previous.cursor_pos
+        || current.raw_sequences != previous.raw_sequences
+        || !current
+            .kitty_placements
+            .iter()
+            .map(kitty)
+            .eq(previous.kitty_placements.iter().map(kitty))
+        || !current
+            .sprixels
+            .iter()
+            .map(sprixel)
+            .eq(previous.sprixels.iter().map(sprixel))
 }
 
 /// Initial capacity for the reused per-frame run-coalescing buffer. Sized to
@@ -240,6 +265,7 @@ impl Terminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            last_flush_changed: true,
             effects: TerminalEffects::detect(),
         })
     }
@@ -275,7 +301,7 @@ impl Terminal {
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
         let width_policy = self.width_policy();
-        flush_buffer_diff_rows(
+        let cells_changed = flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
@@ -323,6 +349,8 @@ impl Terminal {
             self.effects.deliver_clipboard(&mut self.stdout, &staged);
         }
 
+        self.last_flush_changed =
+            cells_changed || screen_extras_changed(&self.current, &self.previous);
         std::mem::swap(&mut self.current, &mut self.previous);
         if let Some(bg) = self.theme_bg {
             self.current.reset_with_bg(bg);
@@ -343,6 +371,13 @@ impl Terminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
+    /// Whether the last [`flush`](Self::flush) changed anything on screen
+    /// (cells, cursor, raw sequences or images). Read by idle frame
+    /// skipping (#490).
+    pub(crate) fn last_flush_changed(&self) -> bool {
+        self.last_flush_changed
+    }
+
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -405,6 +440,7 @@ impl Terminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support: GraphicsEmissionSupport::capture(),
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            last_flush_changed: true,
             effects: TerminalEffects::capture(),
         }
     }
@@ -524,6 +560,7 @@ impl InlineTerminal {
             kitty_mgr: KittyImageManager::new(),
             graphics_support,
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            last_flush_changed: true,
             effects: TerminalEffects::detect(),
         })
     }
@@ -539,6 +576,13 @@ impl InlineTerminal {
     }
 
     /// Cluster-width policy for the diff flush (issue #449).
+    /// Whether the last [`flush`](Self::flush) changed anything on screen
+    /// (cells, cursor, raw sequences or images). Read by idle frame
+    /// skipping (#490).
+    pub(crate) fn last_flush_changed(&self) -> bool {
+        self.last_flush_changed
+    }
+
     pub(crate) fn width_policy(&self) -> WidthPolicy {
         self.effects.width
     }
@@ -588,7 +632,7 @@ impl InlineTerminal {
                     .should_emit_sprixel(sprixel_protocol(&placement.seq))
             });
         let width_policy = self.width_policy();
-        flush_buffer_diff_rows(
+        let cells_changed = flush_buffer_diff_rows(
             &mut self.stdout,
             &self.current,
             &self.previous,
@@ -640,6 +684,8 @@ impl InlineTerminal {
             self.effects.deliver_clipboard(&mut self.stdout, &staged);
         }
 
+        self.last_flush_changed =
+            cells_changed || screen_extras_changed(&self.current, &self.previous);
         std::mem::swap(&mut self.current, &mut self.previous);
         reset_current_buffer(&mut self.current, self.theme_bg);
         Ok(())
@@ -786,6 +832,7 @@ impl InlineTerminal {
                 force_iterm: false,
             },
             run_buf: String::with_capacity(RUN_BUF_INITIAL_CAPACITY),
+            last_flush_changed: true,
             effects: TerminalEffects::capture(),
         }
     }

@@ -21,7 +21,8 @@ pub(super) fn flush_buffer_diff(
         run_buf,
         &[],
         WidthPolicy::default(),
-    )
+    )?;
+    Ok(())
 }
 
 /// Whether `cluster` is an emoji sequence whose rendered width differs
@@ -51,7 +52,10 @@ pub(super) fn flush_buffer_diff_rows(
     run_buf: &mut String,
     forced_rows: &[u32],
     width_policy: WidthPolicy,
-) -> io::Result<()> {
+) -> io::Result<bool> {
+    // Returns whether any cell was emitted (#490: an idle-skipping run loop
+    // stops rendering follow-up frames once a frame changes nothing).
+    //
     // Run-coalescing: consecutive changed cells in the same row that share
     // `Style` + `hyperlink` + contiguous x-coordinates are emitted as one text
     // run after one cursor move and one style delta, so a full redraw costs
@@ -280,7 +284,7 @@ pub(super) fn flush_buffer_diff_rows(
     if !run_buf.is_empty() {
         stdout.write_all(run_buf.as_bytes())?;
     }
-    Ok(())
+    Ok(has_updates)
 }
 
 pub(super) fn flush_cursor(

@@ -4,6 +4,22 @@
 
 ### Added
 
+- Idle frame skipping, opt-in (#490): `RunConfig::idle_redraw(false)` makes
+  `run_with`, `run_inline_with`, `run_static_with` and `run_async_with` skip
+  the frame pipeline on ticks where nothing can change (no input, resize,
+  async message or task completion, resume, due frame request, or pending
+  follow-up frame). An idle app then writes no bytes and builds no frames.
+  New `Context::request_frame()` / `request_frame_after(Duration)` let a
+  closure that shows time-dependent state ask for the next frame; built-in
+  animations (`Tween`, `Spring`, `Keyframes`, `Sequence`, `Stagger`,
+  `animate_bool` / `animate_value` and their `_keyed` forms), spinners,
+  toasts, notifications,
+  streaming cursors, scheduler timers, `elapsed`, tooltip delay, hover
+  timeout, chord timeout and selection auto-scroll request their own frames.
+  The default stays `idle_redraw(true)` (every tick renders) because SLT cannot
+  see clock or cross-thread reads inside the closure. `Context::tick()` counts
+  rendered frames, so it does not advance while an opted-in loop is idle.
+  Measurements are in docs/PERFORMANCE.md#idle-cost.
 - Element-level interactive state styles on `ContainerBuilder` (#458), the
   CSS pseudo-classes as builder calls: `hover_bg` / `hover_fg` /
   `hover_border_fg` (`:hover`, from the container's own previous-frame rect,

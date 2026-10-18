@@ -23,6 +23,8 @@ impl Context {
         if state.streaming {
             state.cursor_tick = state.cursor_tick.wrapping_add(1);
             state.cursor_visible = (state.cursor_tick / 8).is_multiple_of(2);
+            // #490: the cursor blinks on rendered ticks.
+            self.request_frame();
         }
 
         if state.content.is_empty() && state.streaming {
@@ -70,6 +72,8 @@ impl Context {
         if state.streaming {
             state.cursor_tick = state.cursor_tick.wrapping_add(1);
             state.cursor_visible = (state.cursor_tick / 8).is_multiple_of(2);
+            // #490: the cursor blinks on rendered ticks.
+            self.request_frame();
         }
 
         if state.content.is_empty() && state.streaming {

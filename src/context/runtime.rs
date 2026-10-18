@@ -365,6 +365,7 @@ impl Context {
             // coherent clock reading.
             frame_instant: frame_now,
             scheduler,
+            frame_request: std::cell::Cell::new(None),
             // Issue #234: async task registry round-tripped like `scheduler`.
             #[cfg(feature = "async")]
             async_tasks,
@@ -1534,6 +1535,68 @@ impl Context {
         state.sample(target, duration_ticks, tick)
     }
 
+    /// Ask for another frame on the next tick (issue #490).
+    ///
+    /// Only matters with [`RunConfig::idle_redraw(false)`](crate::RunConfig::idle_redraw),
+    /// where an idle loop renders nothing until something can change. Call
+    /// it on every frame that shows something time-dependent SLT does not
+    /// know about (the wall clock, a value another thread updates, a custom
+    /// animation driven by [`tick`](Self::tick)) so the next frame arrives
+    /// at the normal `tick_rate`. Built-in animations, spinners, toasts,
+    /// timers and tooltips already request their own frames. The request
+    /// covers one frame; call it again while the change continues. With the
+    /// default `idle_redraw(true)` every tick renders anyway.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// # TestBackend::new(40, 3).render(|ui| {
+    /// let loading = true;
+    /// if loading {
+    ///     ui.text(format!("frame {}", ui.tick()));
+    ///     ui.request_frame();
+    /// }
+    /// # });
+    /// ```
+    pub fn request_frame(&self) {
+        self.request_frame_at(self.frame_instant);
+    }
+
+    /// Ask for another frame once `delay` has passed (issue #490).
+    ///
+    /// Like [`request_frame`](Self::request_frame), but an idle loop sleeps
+    /// until `delay` after this frame started instead of rendering on the
+    /// next tick: a clock that changes once a second requests
+    /// `Duration::from_secs(1)` and costs one frame per second. Several
+    /// requests in one frame keep the earliest. Precision is bounded by the
+    /// input poll: the frame starts no later than the next `tick_rate`
+    /// boundary after the deadline.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use slt::*;
+    /// use std::time::Duration;
+    /// # TestBackend::new(40, 3).render(|ui| {
+    /// ui.text("12:00:00");
+    /// ui.request_frame_after(Duration::from_secs(1));
+    /// # });
+    /// ```
+    pub fn request_frame_after(&self, delay: std::time::Duration) {
+        if let Some(at) = self.frame_instant.checked_add(delay) {
+            self.request_frame_at(at);
+        }
+    }
+
+    fn request_frame_at(&self, at: crate::clock::Instant) {
+        let earliest = match self.frame_request.get() {
+            Some(current) => current.min(at),
+            None => at,
+        };
+        self.frame_request.set(Some(earliest));
+    }
+
     /// [`animate_bool`](Self::animate_bool) keyed by a runtime string, for one
     /// transition per row, item or element (#458).
     ///
@@ -1833,6 +1896,8 @@ impl Context {
     /// Useful for progress UIs ("retrying in 3s…") that want the raw elapsed
     /// duration rather than a fire/no-fire signal. Measured against the same
     /// frame instant the timer methods use.
+    /// A call also [requests the next frame](Self::request_frame), so the
+    /// display keeps counting under `RunConfig::idle_redraw(false)`.
     ///
     /// # Example
     /// ```no_run
@@ -1853,6 +1918,8 @@ impl Context {
             .get(id)
             .or_else(|| self.scheduler.keyed.get(id))
             .map(|slot| slot.started)?;
+        // #490: a displayed elapsed time changes every tick.
+        self.request_frame();
         Some(self.frame_instant.saturating_duration_since(started))
     }
 

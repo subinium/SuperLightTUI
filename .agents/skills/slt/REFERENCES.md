@@ -104,6 +104,11 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `ui.a11y_label("Email")` — accessible name of the next widget; `ui.is_accessible()` — hide visual-only hints
 - Details: `docs/TERMINAL_COMPATIBILITY.md#accessibility`
 
+### Idle frame skipping (v0.26)
+- `RunConfig::idle_redraw(false)` — opt-in: idle ticks render no frame and write no bytes (default `true` redraws every tick)
+- `ui.request_frame()` / `ui.request_frame_after(Duration)` — ask for the next frame when showing the clock, cross-thread state or a hand-rolled `ui.tick()` animation; built-in animations, spinners, toasts, timers and tooltips request their own
+- Details: `docs/PERFORMANCE.md#idle-cost`
+
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
 - `tb.step(events, &mut app).press(KeyCode::Tab, &mut app).type_text("hi", &mut app)` (v0.26) — one `FnMut` over plain `&mut` state drives the sequence; focus is kept (as in `run_with_events`, which no longer resets it). `EventBuilder::hover(x, y)` for hover

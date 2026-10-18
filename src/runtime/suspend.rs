@@ -90,13 +90,16 @@ pub(super) fn suspend_current_session(snapshot: terminal::SessionSnapshot) -> io
 /// set, clear + repaint the whole frame (issue #263).
 ///
 /// Called at the top of each run-loop iteration. No-op on non-unix builds.
+/// Returns whether a repaint was requested, so an idle-skipping loop renders
+/// the frame (#490).
 #[cfg(all(feature = "crossterm", unix))]
 pub(super) fn drain_resume_redraw(
     handle_resize: &mut impl FnMut() -> io::Result<()>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     use std::sync::atomic::Ordering;
     if terminal::NEEDS_FULL_REDRAW.swap(false, Ordering::SeqCst) {
         handle_resize()?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }

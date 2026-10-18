@@ -396,6 +396,9 @@ fn run_async_loop_inner<M: Send + 'static>(
         .async_tasks
         .set_waker(std::sync::Arc::clone(&wake.notify));
     let mut input_disconnected = false;
+    // Issue #490: a message, task completion or sender wake seen while
+    // waiting; an idle-skipping loop renders a frame for it.
+    let mut woken = false;
 
     'app: loop {
         if cancel.load(std::sync::atomic::Ordering::Acquire) {
@@ -404,7 +407,9 @@ fn run_async_loop_inner<M: Send + 'static>(
         let frame_start = Instant::now();
         // Issue #263: after a SIGCONT resume, repaint the whole frame.
         #[cfg(unix)]
-        drain_resume_redraw(&mut || term.handle_resize())?;
+        let resumed = drain_resume_redraw(&mut || term.handle_resize())?;
+        #[cfg(not(unix))]
+        let resumed = false;
         let observed_wake = wake.generation();
         let (w, h) = term.size();
         if w > 0 && h > 0 {
@@ -418,25 +423,36 @@ fn run_async_loop_inner<M: Send + 'static>(
             {
                 break;
             }
-            let mut render = |ctx: &mut Context| {
-                f(ctx, &mut messages);
+            // Issue #490: with `idle_redraw(false)`, skip frames nothing can
+            // change. Undelivered messages always render.
+            let signals = LoopSignals {
+                input: !events.is_empty(),
+                resumed,
+                woken: woken || !messages.is_empty(),
             };
-            if !run_frame(
-                &mut term,
-                &mut state,
-                &config,
-                std::mem::take(&mut events),
-                true,
-                &mut render,
-            )? {
-                break;
-            }
-            // Issue #233: full-screen async mode has no scrollback channel — warn
-            // and drop any pending static_log lines.
-            discard_static_log(&mut state, "run_async()");
-            events = std::mem::take(&mut state.events_buf);
-            if input_disconnected && state.pending_input.is_empty() {
-                break;
+            if should_render(&mut state, &config, (w, h), signals, frame_start) {
+                let mut render = |ctx: &mut Context| {
+                    f(ctx, &mut messages);
+                };
+                if !run_frame(
+                    &mut term,
+                    &mut state,
+                    &config,
+                    std::mem::take(&mut events),
+                    true,
+                    &mut render,
+                )? {
+                    break;
+                }
+                // #490: an unchanged frame lets an idle-skipping loop go quiet.
+                record_frame_change(&mut state, &config, term.last_flush_changed());
+                // Issue #233: full-screen async mode has no scrollback channel —
+                // warn and drop any pending static_log lines.
+                discard_static_log(&mut state, "run_async()");
+                events = std::mem::take(&mut state.events_buf);
+                if input_disconnected && state.pending_input.is_empty() {
+                    break;
+                }
             }
         } else if rx.is_closed() && rx.is_empty() {
             break;
@@ -467,14 +483,16 @@ fn run_async_loop_inner<M: Send + 'static>(
                 });
             let pending = async_work_pending(
                 term.size(),
-                !events.is_empty() || !state.pending_input.is_empty(),
+                !events.is_empty()
+                    || !state.pending_input.is_empty()
+                    || frame_due(&state, &config, Instant::now()),
                 notified || !rx.is_empty() || rx.is_closed(),
             );
             let remaining = async_wait_remaining(
                 config.tick_rate,
                 wait_start.elapsed(),
                 config.max_fps,
-                frame_start.elapsed(),
+                idle_fps_elapsed(&state, &config, frame_start),
                 pending,
             );
             let wait = remaining.min(Duration::from_millis(4));
@@ -496,18 +514,21 @@ fn run_async_loop_inner<M: Send + 'static>(
             }
             let pending = async_work_pending(
                 term.size(),
-                !events.is_empty() || !state.pending_input.is_empty(),
+                !events.is_empty()
+                    || !state.pending_input.is_empty()
+                    || frame_due(&state, &config, Instant::now()),
                 notified || !rx.is_empty() || rx.is_closed(),
             );
             if async_wait_remaining(
                 config.tick_rate,
                 wait_start.elapsed(),
                 config.max_fps,
-                frame_start.elapsed(),
+                idle_fps_elapsed(&state, &config, frame_start),
                 pending,
             )
             .is_zero()
             {
+                woken = notified;
                 break;
             }
         }

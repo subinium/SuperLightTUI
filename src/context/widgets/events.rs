@@ -682,7 +682,10 @@ impl Context {
     /// Get the current tick count (increments each frame).
     ///
     /// Useful for animations and time-based logic. The tick starts at 0 and
-    /// increases by 1 on every rendered frame.
+    /// increases by 1 on every rendered frame. With
+    /// [`RunConfig::idle_redraw(false)`](crate::RunConfig::idle_redraw) an idle
+    /// loop renders no frames, so the tick pauses until input, a timer or
+    /// [`request_frame`](Self::request_frame) wakes it.
     pub fn tick(&self) -> u64 {
         self.tick
     }

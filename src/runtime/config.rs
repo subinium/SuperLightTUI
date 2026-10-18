@@ -317,6 +317,11 @@ pub struct RunConfig {
     /// See [`accessible`](Self::accessible). Defaults to `true` when the
     /// `SLT_ACCESSIBLE` environment variable is truthy, otherwise `false`.
     pub accessible: bool,
+    /// Whether the loop runs a frame on every tick even when nothing changed.
+    ///
+    /// See [`idle_redraw`](Self::idle_redraw). Defaults to `true` (every tick
+    /// renders, the pre-0.26 behavior).
+    pub idle_redraw: bool,
 }
 
 impl Default for RunConfig {
@@ -346,6 +351,7 @@ impl Default for RunConfig {
             width_conservative: None,
             width_probe: false,
             accessible: super::accessible::accessible_from_env(),
+            idle_redraw: true,
         }
     }
 }
@@ -756,6 +762,59 @@ impl RunConfig {
     /// ```
     pub fn accessible(mut self, enabled: bool) -> Self {
         self.accessible = enabled;
+        self
+    }
+    /// Choose whether idle ticks still run the frame pipeline (issue #490).
+    ///
+    /// `true` (the default) keeps the pre-0.26 behavior: every `tick_rate`
+    /// timeout runs the closure, layout, render and diff even when no input
+    /// arrived, so code that reads the clock, [`Context::tick`](crate::Context::tick)
+    /// or shared state stays live without doing anything.
+    ///
+    /// `false` skips the frame when nothing can change: [`run_with`](crate::run_with),
+    /// [`run_inline_with`](crate::run_inline_with), [`run_static_with`](crate::run_static_with)
+    /// and [`run_async_with`](crate::run_async_with) render only for input,
+    /// resize, focus, async messages and task completions, a `SIGCONT`
+    /// resume, a due frame request, and one follow-up frame after each of
+    /// these (more while the output keeps changing). An idle app then writes
+    /// no bytes and does no frame work; the loop still polls input every
+    /// `tick_rate`.
+    ///
+    /// Built-in time-based features request their own frames: tween, spring,
+    /// keyframe, sequence and stagger animations while running,
+    /// [`animate_bool`](crate::Context::animate_bool) /
+    /// [`animate_value`](crate::Context::animate_value) and their `_keyed`
+    /// forms, spinners, toasts and
+    /// notifications, streaming-text cursors, `schedule` / `every` /
+    /// `debounce` timers and [`elapsed`](crate::Context::elapsed), the tooltip delay,
+    /// the hover timeout, key-chord timeouts and selection auto-scroll. A
+    /// closure that renders anything else that changes over time (the wall
+    /// clock, a value another thread updates, a `ThemeWatcher` or channel
+    /// polled in the closure) must call
+    /// [`Context::request_frame`](crate::Context::request_frame) or
+    /// [`Context::request_frame_after`](crate::Context::request_frame_after);
+    /// in the async loop, sending a message wakes the frame instead.
+    ///
+    /// [`Context::tick`](crate::Context::tick) counts rendered frames, so it
+    /// does not advance while the loop is idle. Since 0.26.0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use slt::RunConfig;
+    /// use std::time::Duration;
+    ///
+    /// let config = RunConfig::default().idle_redraw(false);
+    /// assert!(!config.idle_redraw);
+    /// slt::run_with(config, |ui| {
+    ///     ui.text("Costs nothing while idle");
+    ///     // Redraw once a second for a clock display.
+    ///     ui.request_frame_after(Duration::from_secs(1));
+    /// })?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
+    pub fn idle_redraw(mut self, enabled: bool) -> Self {
+        self.idle_redraw = enabled;
         self
     }
 }

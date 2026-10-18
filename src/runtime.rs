@@ -11,6 +11,7 @@ mod accessible;
 mod async_run;
 mod config;
 mod frame_state;
+mod idle;
 mod kernel;
 #[cfg(feature = "crossterm")]
 mod native;
@@ -31,6 +32,7 @@ pub(crate) use accessible::*;
 #[cfg(all(test, feature = "crossterm", feature = "async"))]
 use async_run::*;
 pub(crate) use frame_state::*;
+pub(crate) use idle::*;
 pub(crate) use kernel::*;
 #[cfg(feature = "crossterm")]
 pub(crate) use native::*;

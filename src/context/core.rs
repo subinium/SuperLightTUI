@@ -171,6 +171,10 @@ pub struct Context {
     /// frame start and moved back at frame end (where untouched slots are
     /// GC'd), identical to the `named_states` lifetime.
     pub(crate) scheduler: SchedulerState,
+    /// Issue #490: earliest instant this frame asked to be redrawn at
+    /// ([`Context::request_frame`] / [`Context::request_frame_after`]). A
+    /// `Cell` so `&self` paths such as [`Context::elapsed`] can request too.
+    pub(crate) frame_request: std::cell::Cell<Option<crate::clock::Instant>>,
     /// Issue #234: in-frame async task registry backing
     /// [`Context::spawn`](crate::Context::spawn) /
     /// [`Context::poll`](crate::Context::poll). Round-tripped through

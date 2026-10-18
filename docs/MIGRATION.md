@@ -10,6 +10,15 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ## v0.25.x → v0.26.0
 
+- **Idle frame skipping is opt-in (#490).** Nothing changes by default:
+  every `tick_rate` still renders a frame. To stop idle apps from rendering,
+  pass `RunConfig::default().idle_redraw(false)`, then call
+  `ui.request_frame()` (next tick) or `ui.request_frame_after(d)` on frames
+  that show something SLT cannot see change: the wall clock, a value another
+  thread updates, a `ThemeWatcher` or channel polled in the closure, or a
+  custom animation driven by `ui.tick()`. Built-in animations, spinners,
+  toasts, timers and tooltips need no change. `ui.tick()` then counts only
+  rendered frames.
 - **`modal()` traps focus (#462).** `ui.modal(f)` now equals
   `ui.modal_with(ModalOpts::default(), f)`: Tab cannot leave the modal and a
   stale `set_focus_index` pointing at the background is pulled back in. For
