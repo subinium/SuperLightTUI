@@ -189,6 +189,8 @@ impl Context {
             state.focus_key(),
         );
         let focus_slot = self.rollback.last_focusable_id;
+        // Issue #469: an accessible-mode line answer replaces the value.
+        let mut a11y = self.a11y_begin(focused);
         // v0.21.1: capture the focus-edge flags immediately — this consumes the
         // `register_focusable` marker, so the result is correct regardless of
         // the child containers rendered below. Issue #208 left text_input never
@@ -197,6 +199,12 @@ impl Context {
         let (gained_focus, lost_focus) = self.focus_transitions(focused);
         let mut submitted = false;
         let old_value = state.value.clone();
+        if let Some(text) = crate::runtime::A11yBegin::take_text(a11y.as_mut()) {
+            if let Some(text) = text {
+                state.set_value(text);
+            }
+            submitted = true;
+        }
         state.cursor = state.cursor.min(grapheme_count(&state.value));
         let input_padx = self.theme.spacing.xs();
         // Issue #465: the bordered box below takes the next interaction slot;
@@ -667,6 +675,9 @@ impl Context {
                     }
                 });
         }
+        if let Some(begin) = a11y {
+            self.a11y_end_text_input(begin, state);
+        }
         response
     }
 
@@ -752,6 +763,11 @@ impl Context {
             layout_rect
         };
         let mut resp = Response::none();
+        // Issue #469: the field label names the input in accessible mode.
+        let a11y_start = self.commands.len();
+        if self.accessible {
+            self.a11y_default_name(&field.label);
+        }
         let mut response = self.col(|ui| {
             ui.styled(field.label.as_str(), Style::new().bold().fg(ui.theme.text));
             resp = ui.text_input(&mut field.input);
@@ -768,10 +784,15 @@ impl Context {
             ValidateTrigger::OnChange if resp.changed => {
                 field.run_validators();
             }
-            ValidateTrigger::OnBlur if lost_focus => {
+            // An accessible-mode answer commits the field like a blur, so
+            // its validation message is read back before moving on.
+            ValidateTrigger::OnBlur if lost_focus || (self.accessible && resp.submitted) => {
                 field.run_validators();
             }
             _ => {}
+        }
+        if self.accessible {
+            self.a11y_extend_last(a11y_start, field.error.as_deref());
         }
         response.focused = resp.focused;
         response.gained_focus = resp.gained_focus;

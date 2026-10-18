@@ -97,6 +97,11 @@ These shipped in v0.20 and are NOT in older docs. Every entry verified against `
 - `Context::keymap_help_overlay(open: bool)` — auto-rendered overlay
 - `RunConfig::handle_ctrl_c(bool)` — opt-out of auto Ctrl-C quit
 
+### Accessibility (v0.26)
+- `RunConfig::accessible(bool)` / `SLT_ACCESSIBLE=1` — linear prompt mode for screen readers (no screen takeover; widgets become sequential prompts). Explicit call wins over the env var
+- `ui.a11y_label("Email")` — accessible name of the next widget; `ui.is_accessible()` — hide visual-only hints
+- Details: `docs/TERMINAL_COMPATIBILITY.md#accessibility`
+
 ### Testing (v0.20)
 - `TestBackend::new(w, h).record_frames()` + `tb.frames()[i]` — frame history
 - `tb.sequence().tick(\|ui\| ..).key(KeyCode::Esc, \|ui\| ..).type_string("hi", \|ui\| ..).run()` — every step takes its render closure

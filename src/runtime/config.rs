@@ -166,6 +166,11 @@ pub struct RunConfig {
     /// Measure representative emoji clusters with a startup cursor-position
     /// probe. See [`width_probe`](Self::width_probe). Defaults to `false`.
     pub width_probe: bool,
+    /// Accessible linear output mode for screen readers and pipelines.
+    ///
+    /// See [`accessible`](Self::accessible). Defaults to `true` when the
+    /// `SLT_ACCESSIBLE` environment variable is truthy, otherwise `false`.
+    pub accessible: bool,
 }
 
 impl Default for RunConfig {
@@ -189,6 +194,7 @@ impl Default for RunConfig {
             ambiguous_wide: false,
             width_conservative: None,
             width_probe: false,
+            accessible: super::accessible::accessible_from_env(),
         }
     }
 }
@@ -431,6 +437,40 @@ impl RunConfig {
     /// ```
     pub fn width_probe(mut self, enabled: bool) -> Self {
         self.width_probe = enabled;
+        self
+    }
+
+    /// Run in accessible linear output mode (issue #469).
+    ///
+    /// The runtime does not take over the screen: no alternate screen, no
+    /// raw mode outside masked input, no mouse capture, no colors and no
+    /// cursor-positioning repaint. The same frame closure runs, but each
+    /// frame is turned into plain lines: display text is printed once when
+    /// it appears or changes, focus moves are announced as
+    /// `Focused: <name>, <role>`, and the focused widget is asked for as a
+    /// one-line prompt (text fields read a line, selects and radios read a
+    /// number, checkboxes, toggles and `confirm` read `y`/`n`, buttons
+    /// activate on Enter). Answers are applied to the widget state and focus
+    /// moves to the next answerable widget, so a form is completed field by
+    /// field. stdin and stdout do not need to be terminals.
+    ///
+    /// [`RunConfig::default`] enables it when `SLT_ACCESSIBLE` is `1`,
+    /// `true`, `yes` or `on`. An explicit call wins over the variable:
+    /// `accessible(false)` keeps the visual renderer even when
+    /// `SLT_ACCESSIBLE=1`, so apps that pass it take on the duty of offering
+    /// their own opt-in. Use [`Context::is_accessible`](crate::Context::is_accessible)
+    /// to adapt hints, and [`Context::a11y_label`](crate::Context::a11y_label)
+    /// to name a widget. Not supported by `run_async` yet, which keeps the
+    /// visual renderer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let cfg = slt::RunConfig::default().accessible(true);
+    /// assert!(cfg.accessible);
+    /// ```
+    pub fn accessible(mut self, enabled: bool) -> Self {
+        self.accessible = enabled;
         self
     }
 }

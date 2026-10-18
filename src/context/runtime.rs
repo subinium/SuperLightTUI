@@ -306,6 +306,7 @@ impl Context {
             pending_focus_name: still_pending,
             focus_identity,
             text_pointer_capture: false,
+            accessible: state.accessible,
             // Issue #248: sample a single wall-clock "now" for every timer
             // method called this frame. v0.21.1: reuse the `frame_now` sampled
             // above (also used for double-click timing) so the frame has one

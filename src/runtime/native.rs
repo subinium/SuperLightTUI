@@ -146,6 +146,11 @@ pub(crate) fn sanitize_terminal_text(input: &str) -> String {
 #[cfg(feature = "crossterm")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crossterm")))]
 pub fn run_with(config: RunConfig, f: impl FnMut(&mut Context)) -> io::Result<()> {
+    // Issue #469: accessible mode prints lines and reads answers instead of
+    // taking over the screen, so it needs no terminal on either end.
+    if config.accessible {
+        return run_accessible(&config, f, &mut Vec::new);
+    }
     ensure_interactive_terminal()?;
     with_session_panic_hook(|| run_with_inner(config, f))
 }
@@ -318,6 +323,9 @@ pub fn run_inline_with(
     f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
     validate_inline_height(height)?;
+    if config.accessible {
+        return run_accessible(&config, f, &mut Vec::new);
+    }
     ensure_interactive_terminal()?;
     with_session_panic_hook(|| run_inline_with_inner(height, config, f))
 }
@@ -432,6 +440,9 @@ pub fn run_static_with(
     f: impl FnMut(&mut Context),
 ) -> io::Result<()> {
     validate_inline_height(dynamic_height)?;
+    if config.accessible {
+        return run_accessible(&config, f, &mut || output.drain_new());
+    }
     ensure_interactive_terminal()?;
     with_session_panic_hook(|| run_static_with_inner(output, dynamic_height, config, f))
 }

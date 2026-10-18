@@ -10,6 +10,13 @@ current APIs, see `docs/PATTERNS.md` and `docs/COOKBOOK.md`.
 
 ## v0.25.x → v0.26.0
 
+- **Accessible mode (#469).** `SLT_ACCESSIBLE=1` now switches
+  `RunConfig::default()` (and so `slt::run`) to a line-oriented prompt mode
+  for screen readers; nothing changes unless a user sets it. If your app must
+  always render visually (for example a full-screen game), pass
+  `RunConfig::default().accessible(false)`, which wins over the variable.
+  Consider `ui.a11y_label("...")` for inputs without a visible label and
+  `ui.is_accessible()` to hide key legends.
 - **Shortcuts vs focused text fields (#453).** While `text_input`, `textarea`,
   a form field or an open command palette has focus, `ui.key(c)`,
   `ui.key_code(..)`, `ui.key_mod(..)` and `ui.consume_key*(..)` skip the keys

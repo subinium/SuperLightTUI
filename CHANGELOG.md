@@ -4,6 +4,22 @@
 
 ### Added
 
+- Accessible linear output mode for screen readers and pipelines (#469):
+  `RunConfig::accessible(bool)`, enabled by default with `SLT_ACCESSIBLE=1`
+  (an explicit call wins). `run`, `run_inline` and `run_static` then never
+  take over the screen (no alternate screen, cursor movement, colors or mouse)
+  and stdin / stdout need not be terminals. Display text is printed once when
+  it changes, focus moves are announced (`Focused: Username, text field`), and
+  `text_input` (masked input read without echo), `textarea`, `select`,
+  `radio`, `multi_select`, `checkbox`, `toggle`, `confirm`, `button` and
+  `form_field` become sequential prompts whose answers reach the widget as
+  normal `changed` / `submitted` / `clicked` responses; validation errors are
+  printed and the field is asked again. New `Context::a11y_label` names the
+  next widget and `Context::is_accessible` lets apps drop visual-only hints.
+  The visual path pays one `bool` check per widget. `run_async` keeps the
+  visual renderer for now. Screen-reader walkthroughs (VoiceOver, Orca) are
+  not yet recorded; see docs/TERMINAL_COMPATIBILITY.md#accessibility.
+
 - `ListState` and `TableState` selection helpers that are correct under a
   filter or sort (#455): `selected_index()` / `set_selected_index()` (data
   index), `selected_view_index()` / `set_selected_view_index()` (view index)

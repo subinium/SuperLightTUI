@@ -293,6 +293,9 @@ pub(crate) type FrameDeferredDrawSlot =
 
 #[derive(Default)]
 pub(crate) struct FrameState {
+    /// Issue #469: frames run under the accessible linear runtime. Copied
+    /// into `Context::accessible`; `false` for every other run mode.
+    pub accessible: bool,
     pub consumed_buf: Vec<bool>,
     pub events_buf: Vec<Event>,
     pub pending_input: std::collections::VecDeque<Event>,

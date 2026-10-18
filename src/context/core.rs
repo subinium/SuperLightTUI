@@ -162,6 +162,10 @@ pub struct Context {
     /// frame for its own selection, so the screen-level selection overlay
     /// must not start or copy.
     pub(crate) text_pointer_capture: bool,
+    /// Issue #469: this frame runs under the accessible linear runtime.
+    /// Interactive widgets check this one flag before recording accessible
+    /// nodes or applying a line answer, so the visual path pays nothing else.
+    pub(crate) accessible: bool,
     /// Issue #248: wall-clock instant sampled once at frame start. All
     /// frame-clock timer deadlines (`schedule`/`every`/`debounce`) compare
     /// against this single instant so every timer sampled in the same frame
